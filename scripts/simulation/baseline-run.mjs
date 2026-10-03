@@ -1288,23 +1288,91 @@ async function finalizeSimulationMatrix(matrix, { exec, repoRoot, deadline, prep
   return { ...matrix, finalized: true, determinism_check: { seed: rerunSeed, first_digest: canonical.sha256, rerun_digest: rerun.sha256, identical: true, revision: persisted.revision, receipt: path.basename(receiptPath) } };
 }
 
-async function finalizeSensitivityReports(dimensions, options) {
-  const uniqueReports = new Map();
-  for (const dimension of dimensions) {
-    const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
-    if (!uniqueReports.has(key)) uniqueReports.set(key, dimension.report);
+class SimulationBatchContext {
+  constructor({ deadline, batchSize, ...shared }) {
+    validateSimulationResourcePolicy(shared.resourcePolicy);
+    Object.assign(this, shared, {
+      deadline,
+      batchSize,
+      permit: createExecutionPermit(batchSize),
+      executionPool: createSimulationExecutionPool(shared.resourcePolicy.max_concurrent_child_executions),
+    });
+    // 固定 source identity 与执行边界只在本次进程内组合；不写入持久产物。
+    Object.freeze(this);
   }
-  const entries = [...uniqueReports.entries()];
-  const finalized = new Map();
-  for (let offset = 0; offset < entries.length; offset += 3) {
-    const group = entries.slice(offset, offset + 3);
-    const reports = await settleAllOrThrow(group.map(([, report]) => finalizeSimulationMatrix(report, options)));
-    for (let index = 0; index < group.length; index += 1) finalized.set(group[index][0], reports[index]);
+
+  static async prepare(options) {
+    validateSimulationResourcePolicy(options.resourcePolicy);
+    return Object.freeze(await prepareSimulationOutput(options));
   }
-  return dimensions.map((dimension) => {
-    const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
-    return { ...dimension, report: finalized.get(key) };
-  });
+
+  matrix_options() {
+    const { outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, permit, resume, atomicWrite } = this;
+    return { outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, permit, resume, atomicWrite };
+  }
+
+  capture_matrix(request) {
+    return captureSimulationMatrix({ ...this.matrix_options(), ...request });
+  }
+
+  finalize_matrix(matrix) {
+    return finalizeSimulationMatrix(matrix, this.matrix_options());
+  }
+
+  async capture_after_matrices({ seeds, primaryNaturalDays, crossYearNaturalDays }) {
+    const primary = () => this.capture_matrix({ scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1 });
+    const crossYear = () => this.capture_matrix({ scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1 });
+    return this.batchSize === Number.POSITIVE_INFINITY
+      ? settleAllOrThrow([primary(), crossYear()])
+      : [await primary(), await crossYear()];
+  }
+
+  async finalize_after_matrices(primary, crossYear) {
+    return this.batchSize === Number.POSITIVE_INFINITY
+      ? settleAllOrThrow([this.finalize_matrix(primary), this.finalize_matrix(crossYear)])
+      : [await this.finalize_matrix(primary), await this.finalize_matrix(crossYear)];
+  }
+
+  async capture_sensitivity_matrices(requests, naturalDays) {
+    const uniqueRequests = new Map();
+    for (const request of requests) {
+      const key = `${request.behavior}/${request.event}/${request.c01}`;
+      if (!uniqueRequests.has(key)) uniqueRequests.set(key, request);
+    }
+    const uniqueEntries = [...uniqueRequests.entries()];
+    const canonical = new Map();
+    for (let offset = 0; offset < uniqueEntries.length; offset += 3) {
+      const group = uniqueEntries.slice(offset, offset + 3);
+      const reports = await settleAllOrThrow(group.map(([, request]) => this.capture_matrix({ scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01 })));
+      for (let index = 0; index < group.length; index += 1) canonical.set(group[index][0], reports[index]);
+    }
+    const seen = new Set();
+    return requests.map((request) => {
+      const key = `${request.behavior}/${request.event}/${request.c01}`;
+      const reused = seen.has(key);
+      seen.add(key);
+      return { dimension: request.dimension, multiplier: request.multiplier, reuse: reused ? { canonical_spec: key, validated: true } : { executed_or_resumed: true }, report: canonical.get(key) };
+    });
+  }
+
+  async finalize_sensitivity(dimensions) {
+    const uniqueReports = new Map();
+    for (const dimension of dimensions) {
+      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
+      if (!uniqueReports.has(key)) uniqueReports.set(key, dimension.report);
+    }
+    const entries = [...uniqueReports.entries()];
+    const finalized = new Map();
+    for (let offset = 0; offset < entries.length; offset += 3) {
+      const group = entries.slice(offset, offset + 3);
+      const reports = await settleAllOrThrow(group.map(([, report]) => this.finalize_matrix(report)));
+      for (let index = 0; index < group.length; index += 1) finalized.set(group[index][0], reports[index]);
+    }
+    return dimensions.map((dimension) => {
+      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
+      return { ...dimension, report: finalized.get(key) };
+    });
+  }
 }
 
 export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, crossYearNaturalDays = SIMULATION_CROSS_YEAR_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
@@ -1312,29 +1380,12 @@ export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO
   if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match Task 1 seed matrix");
   resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
   validateSimulationResourcePolicy(resourcePolicy);
-  const { git, sourceFingerprint, preparedFixture } = await prepareSimulationOutput({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
+  const { git, sourceFingerprint, preparedFixture } = await SimulationBatchContext.prepare({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
   return withSimulationDeadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
-  const permit = createExecutionPermit(batchSize);
-  const executionPool = createSimulationExecutionPool(resourcePolicy.max_concurrent_child_executions);
-  const capturePrimary = () => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
-  const captureCrossYear = () => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
-  let primary;
-  let crossYear;
-  if (batchSize === Number.POSITIVE_INFINITY) {
-    [primary, crossYear] = await settleAllOrThrow([capturePrimary(), captureCrossYear()]);
-  } else {
-    primary = await capturePrimary();
-    crossYear = await captureCrossYear();
-  }
+  const batch = new SimulationBatchContext({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, batchSize, resume, atomicWrite });
+  let [primary, crossYear] = await batch.capture_after_matrices({ seeds, primaryNaturalDays, crossYearNaturalDays });
   if (!primary.complete || !crossYear.complete) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
-  const finalizePrimary = () => finalizeSimulationMatrix(primary, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
-  const finalizeCrossYear = () => finalizeSimulationMatrix(crossYear, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
-  if (batchSize === Number.POSITIVE_INFINITY) {
-    [primary, crossYear] = await settleAllOrThrow([finalizePrimary(), finalizeCrossYear()]);
-  } else {
-    primary = await finalizePrimary();
-    crossYear = await finalizeCrossYear();
-  }
+  [primary, crossYear] = await batch.finalize_after_matrices(primary, crossYear);
   if (!primary.finalized || !crossYear.finalized) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
   deadline.assertRemaining("after manifest publication");
   const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
@@ -1349,36 +1400,17 @@ export async function captureSensitivity({ outputDir, exec = realExec, repoRoot 
   requireSensitivityMatrix(c01Multipliers, "C01 denominator");
   resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
   validateSimulationResourcePolicy(resourcePolicy);
-  const { git, sourceFingerprint, preparedFixture } = await prepareSimulationOutput({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
+  const { git, sourceFingerprint, preparedFixture } = await SimulationBatchContext.prepare({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
   return withSimulationDeadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
   const requests = [
     ...behaviorMultipliers.map((multiplier) => ({ dimension: "behavior", multiplier, behavior: multiplier, event: 1, c01: 1 })),
     ...eventMultipliers.map((multiplier) => ({ dimension: "event", multiplier, behavior: 1, event: multiplier, c01: 1 })),
     ...c01Multipliers.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, behavior: 1, event: 1, c01: multiplier })),
   ];
-  const permit = createExecutionPermit(batchSize);
-  const executionPool = createSimulationExecutionPool(resourcePolicy.max_concurrent_child_executions);
-  const uniqueRequests = new Map();
-  for (const request of requests) {
-    const key = `${request.behavior}/${request.event}/${request.c01}`;
-    if (!uniqueRequests.has(key)) uniqueRequests.set(key, request);
-  }
-  const uniqueEntries = [...uniqueRequests.entries()];
-  const canonical = new Map();
-  for (let offset = 0; offset < uniqueEntries.length; offset += 3) {
-    const group = uniqueEntries.slice(offset, offset + 3);
-    const reports = await settleAllOrThrow(group.map(([, request]) => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01, permit, resume, atomicWrite })));
-    for (let index = 0; index < group.length; index += 1) canonical.set(group[index][0], reports[index]);
-  }
-  const seen = new Set();
-  const dimensions = requests.map((request) => {
-    const key = `${request.behavior}/${request.event}/${request.c01}`;
-    const reused = seen.has(key);
-    seen.add(key);
-    return { dimension: request.dimension, multiplier: request.multiplier, reuse: reused ? { canonical_spec: key, validated: true } : { executed_or_resumed: true }, report: canonical.get(key) };
-  });
+  const batch = new SimulationBatchContext({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, batchSize, resume, atomicWrite });
+  const dimensions = await batch.capture_sensitivity_matrices(requests, naturalDays);
   if (dimensions.some((dimension) => !dimension.report.complete)) return { command: "sensitivity", incomplete: true, dimensions };
-  const finalizedDimensions = await finalizeSensitivityReports(dimensions, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
+  const finalizedDimensions = await batch.finalize_sensitivity(dimensions);
   if (finalizedDimensions.some((dimension) => !dimension.report.finalized)) return { command: "sensitivity", incomplete: true, dimensions: finalizedDimensions };
   deadline.assertRemaining("sensitivity manifest publication");
   const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_applicable_synthetic_history_only" };

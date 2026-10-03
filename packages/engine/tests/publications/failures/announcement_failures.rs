@@ -1,9 +1,9 @@
 //! 拒绝路径套件（公告面）：发生日之前 / 相位外 / 非次相位拒绝；
 //! 无默认日期兜底（缺失 published_at = 显式反序列化失败）。
 //!
-//! 共享基线（`base`）在 `super`。
+//! 共享基线（`Base`）在 `super`。
 
-use super::{base, COMPANY};
+use super::{Base, COMPANY};
 use crate::fixture::d;
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, ShockKind};
@@ -12,7 +12,7 @@ use engine::information::{AnnouncedEvent, AnnouncementRequest, InformationError}
 /// 公告时序：发生日之前 / 相位外 / 非次相位（晚一天）拒绝。
 #[test]
 fn announcement_timing_rejected() {
-    let mut library = base().library;
+    let mut library = Base::valid_q1().library;
     let event = AnnouncedEvent {
         kind: ShockKind::CreditDeterioration,
         amplitude_bp: 500,
@@ -50,7 +50,7 @@ fn announcement_timing_rejected() {
 /// 绝不静默补今天/补 18:00。
 #[test]
 fn missing_instant_field_is_a_deserialize_error() {
-    let base = base();
+    let base = Base::valid_q1();
     let id = base.library.publication_ids()[0];
     let report = base
         .library

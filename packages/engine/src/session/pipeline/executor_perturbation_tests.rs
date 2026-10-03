@@ -10,12 +10,13 @@ fn fixture(auction: bool) -> GameSession {
     setup.ticks_per_day = 8;
     setup.closing_auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     // Closed production StrategyState remains installed. Exogenous test candidates
     // exercise the normal P2/P3 path without replacing the production dispatcher.
     for account in [AccountId(1), AccountId(2)] {
         for code in &codes {
-            game.accounts
+            game.state
+                .accounts
                 .get_mut(&account)
                 .unwrap()
                 .grant_position(code.clone(), 1_000, Money::from_cents(1_000_000))
@@ -28,7 +29,7 @@ fn fixture(auction: bool) -> GameSession {
         (AccountId(1), Side::Sell, 100),
     ] {
         for code in codes.iter().rev() {
-            game.pending_player.push((
+            game.state.pending_player.push((
                 account,
                 Intent::PlaceLimit {
                     code: code.clone(),
@@ -59,7 +60,7 @@ fn run(auction: bool, threads: usize, config: ExecutorPerturbation) -> Vec<Execu
         .install(|| {
             with_executor_perturbation(config, || {
                 let mut game = fixture(auction);
-                let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+                let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
                 let mut player_fills = BTreeMap::<_, u64>::new();
                 // Includes auction completion, PreOpen, continuous, and day-end finalizers.
                 for _ in 0..8 {
@@ -80,12 +81,12 @@ fn run(auction: bool, threads: usize, config: ExecutorPerturbation) -> Vec<Execu
                     }
                     game.save().unwrap();
                 }
-                let player = game.accounts.get(&AccountId(0)).unwrap();
-                assert!(player.cash < game.setup.config.starting_cash);
+                let player = game.state.accounts.get(&AccountId(0)).unwrap();
+                assert!(player.cash() < game.state.setup.config.starting_cash);
                 for code in codes {
                     assert_eq!(player_fills.get(&code), Some(&300), "{code:?} player fill");
                     assert_eq!(
-                        player.positions.get(&code).map(|position| position.qty),
+                        player.positions().get(&code).map(|position| position.qty()),
                         Some(300)
                     );
                 }
@@ -151,10 +152,10 @@ fn executor_perturbation_allows_stock_output_reordering() {
         let mut game = fixture(auction);
         let perturbation = config(ExecutorPermutation::Reverse);
         for _ in 0..8 {
-            let before_tick = game.tick;
+            let before_tick = game.state.tick;
             let (result, _) = with_executor_perturbation(perturbation, || game.step()).unwrap();
             result.expect("cross-stock output order must not fail the tick");
-            assert_eq!(game.tick, before_tick + 1);
+            assert_eq!(game.state.tick, before_tick + 1);
             assert!(game.poison_reason().is_none());
         }
     }

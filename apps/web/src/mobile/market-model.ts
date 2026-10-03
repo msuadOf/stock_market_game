@@ -1,3 +1,5 @@
+import type { IndicatorResultState } from "../components/useIndicatorResults.ts";
+import type { TradeEvent, MarketSnap } from "../types/engine.ts";
 import type { EngineEvent, PriceLevel } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
@@ -606,4 +608,167 @@ export function formatGameClock(tick: number): string {
   const minutes = Math.floor((secondsFromMidnight % 3_600) / 60);
   const seconds = secondsFromMidnight % 60;
   return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+export interface MobileIntradayInputs {
+  market: Pick<MarketSnap, "last_close">;
+  minutePoints: readonly PricePoint[];
+  auctionPoints: readonly AuctionPoint[];
+  trades: readonly TradeEvent[];
+  elapsedMinutes: number;
+  totalMinutes: number;
+  gameDay: number;
+  gameTick: number;
+}
+
+/** 单次 render 的分时投影；只借用行情事实，不维护跨 tick history。 */
+export class MobileIntradayProjection {
+  readonly visiblePoints: readonly Readonly<PricePoint>[];
+  readonly visibleAuctionPoints: readonly Readonly<AuctionPoint>[];
+  readonly visibleAuctionPricePoints: readonly Readonly<AuctionPoint & { value: number }>[];
+  readonly scale: Readonly<SymmetricIntradayScale>;
+  readonly volumeScale: Readonly<IntradayVolumeScale>;
+  readonly progress: number;
+  readonly displayedAverage: number;
+  readonly recentTrades: readonly Readonly<TradeEvent>[];
+  readonly signature: string;
+  readonly tradeTime: string;
+  readonly clockTime: string;
+
+  static fromInputs(inputs: MobileIntradayInputs): MobileIntradayProjection {
+    return new MobileIntradayProjection(inputs);
+  }
+
+  private constructor(inputs: MobileIntradayInputs) {
+    this.visiblePoints = inputs.minutePoints.slice(-inputs.totalMinutes);
+    this.visibleAuctionPoints = inputs.auctionPoints.slice(-CALL_AUCTION_ENTRY_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
+    this.visibleAuctionPricePoints = this.visibleAuctionPoints.filter(
+      (point): point is Readonly<AuctionPoint & { value: number }> => point.value !== null,
+    );
+    const lastClose = inputs.market.last_close / 100;
+    this.scale = symmetricIntradayScale([...this.visibleAuctionPricePoints, ...this.visiblePoints].map(point => point.value), lastClose);
+    this.volumeScale = intradayVolumeScale(this.visibleAuctionPoints.map(point => point.volume ?? 0), this.visiblePoints.map(point => point.volume ?? 0));
+    this.progress = tradingDayProgress(this.visibleAuctionPoints.length / AUCTION_VOLUME_LINES_PER_MINUTE + inputs.elapsedMinutes, CALL_AUCTION_ENTRY_MINUTES + inputs.totalMinutes);
+    const averageSource = this.visiblePoints.length > 0 ? this.visiblePoints : this.visibleAuctionPricePoints;
+    // 沿用价格点算术均值；此显示值不是撮合均价或 VWAP。
+    this.displayedAverage = averageSource.length > 0 ? averageSource.reduce((sum, point) => sum + point.value, 0) / averageSource.length : lastClose;
+    this.recentTrades = inputs.trades.slice(-7).reverse();
+    const latestPoint = this.visiblePoints.at(-1);
+    const latestAuctionPoint = this.visibleAuctionPoints.at(-1);
+    this.signature = latestPoint
+      ? `${inputs.gameDay}:continuous:${latestPoint.time}:${latestPoint.value}:${latestPoint.volume ?? 0}`
+      : latestAuctionPoint
+        ? `${inputs.gameDay}:auction:${latestAuctionPoint.time}:${latestAuctionPoint.value}:${latestAuctionPoint.volume ?? 0}`
+        : `${inputs.gameDay}:empty`;
+    this.tradeTime = formatTradingMinute(Math.max(0, inputs.elapsedMinutes - 1));
+    this.clockTime = formatGameClock(inputs.gameTick).slice(0, 5);
+  }
+
+  priceY(value: number): number {
+    return 8 + (this.scale.top - value) / (this.scale.top - this.scale.bottom) * 84;
+  }
+
+  auctionLine(): string {
+    return this.visibleAuctionPricePoints.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${this.priceY(point.value)}`).join(" ");
+  }
+
+  continuousLine(): string {
+    return this.visiblePoints.map(point => `${intradayChartX({ phase: "continuous", minute: point.time })},${this.priceY(point.value)}`).join(" ");
+  }
+
+  averageLine(): string {
+    return this.visiblePoints.map((point, index) => {
+      const average = this.visiblePoints.slice(0, index + 1).reduce((sum, entry) => sum + entry.value, 0) / (index + 1);
+      return `${intradayChartX({ phase: "continuous", minute: point.time })},${this.priceY(average)}`;
+    }).join(" ");
+  }
+
+  volumeMarks() {
+    return [
+      ...this.visibleAuctionPoints.map(point => ({ ...point, phase: "auction" as const })),
+      ...this.visiblePoints.map(point => ({ ...point, phase: "continuous" as const })),
+    ].map(point => ({
+      ...point,
+      x: intradayChartX({ phase: point.phase, minute: point.time }),
+      height: Math.max(1, (point.volume ?? 0) / (point.phase === "auction" ? this.volumeScale.auctionMax : this.volumeScale.continuousMax) * 100),
+    }));
+  }
+}
+
+/** 共享当前 K 线、MA、成交量和 Rust KDJ 的只读窗口与 geometry。 */
+export class MobileKlineProjection {
+  readonly allCandles: readonly Readonly<KlinePoint>[];
+  readonly visibleWindow: Readonly<KlineWindow>;
+  readonly visibleCandles: readonly Readonly<KlinePoint>[];
+  readonly kdj: { readonly k: readonly number[]; readonly d: readonly number[]; readonly j: readonly number[] } | null;
+  readonly volumes: readonly number[];
+  readonly latestSignature: string;
+  private readonly priceMax: number;
+  private readonly priceRange: number;
+  private readonly indicatorMin: number;
+  private readonly indicatorRange: number;
+  private readonly maxVolume: number;
+  private readonly averages: ReadonlyMap<number, readonly number[]>;
+
+  static fromInputs(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState): MobileKlineProjection {
+    return new MobileKlineProjection(allCandles, viewport, result);
+  }
+
+  private constructor(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState) {
+    this.allCandles = allCandles;
+    this.visibleWindow = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
+    const { start, end } = this.visibleWindow;
+    this.visibleCandles = allCandles.slice(start, end);
+    const values = this.visibleCandles.flatMap(candle => [candle.high, candle.low]);
+    this.priceMax = values.length === 0 ? 0 : Math.max(...values);
+    const priceMin = values.length === 0 ? 0 : Math.min(...values);
+    this.priceRange = Math.max(.01, this.priceMax - priceMin);
+    this.averages = new Map([5, 10, 20].map(days => [days, allCandles.map((_, index) => allCandles.slice(Math.max(0, index - days + 1), index + 1).reduce((sum, candle) => sum + candle.close, 0) / Math.min(days, index + 1)).slice(start, end)]));
+    const completeKdj = result.kind === "ready" ? result.value.candleKdj : null;
+    this.kdj = completeKdj === null ? null : { k: completeKdj.k.slice(start, end), d: completeKdj.d.slice(start, end), j: completeKdj.j.slice(start, end) };
+    this.indicatorMin = this.kdj === null ? 0 : Math.min(0, ...this.kdj.j);
+    const indicatorMax = this.kdj === null ? 100 : Math.max(100, ...this.kdj.j);
+    this.indicatorRange = Math.max(1, indicatorMax - this.indicatorMin);
+    this.volumes = this.visibleCandles.map(candle => candle.volume ?? 0);
+    this.maxVolume = Math.max(1, ...this.volumes);
+    const latest = allCandles.at(-1);
+    this.latestSignature = latest ? `${latest.time}:${latest.open}:${latest.high}:${latest.low}:${latest.close}:${latest.volume ?? 0}` : "empty";
+  }
+
+  priceY(value: number): number {
+    return 8 + (this.priceMax - value) / this.priceRange * 166;
+  }
+
+  slotFor(index: number): ChartSlotGeometry {
+    return chartSlotGeometry(index, this.visibleCandles.length, 390, this.visibleWindow.capacity);
+  }
+
+  candleBodyAndWick(index: number) {
+    const slot = this.slotFor(index);
+    const candle = this.visibleCandles[index];
+    const body = candleBodyPrices(candle);
+    const wick = candleWickPrices(candle);
+    return { slot, rise: candle.close >= candle.open, body: { top: this.priceY(body.top), bottom: this.priceY(body.bottom) }, wick: {
+      upper: { start: this.priceY(wick.upper.start), end: this.priceY(wick.upper.end) },
+      lower: { start: this.priceY(wick.lower.start), end: this.priceY(wick.lower.end) },
+    } };
+  }
+
+  movingAverage(days: 5 | 10 | 20): readonly number[] {
+    const average = this.averages.get(days);
+    if (average === undefined) throw new RangeError(`不支持的移动均线周期：${days}`);
+    return average;
+  }
+
+  movingAverageLine(days: 5 | 10 | 20): string {
+    return this.movingAverage(days).map((value, index) => `${this.slotFor(index).center},${this.priceY(value)}`).join(" ");
+  }
+
+  indicatorLine(series: readonly number[]): string {
+    return series.map((value, index) => `${this.slotFor(index).center},${68 - (value - this.indicatorMin) / this.indicatorRange * 64}`).join(" ");
+  }
+
+  volumeMarks() {
+    return this.volumes.map((volume, index) => ({ volume, slot: this.slotFor(index), height: Math.max(1, volume / this.maxVolume * 66), rise: this.visibleCandles[index].close >= this.visibleCandles[index].open }));
+  }
 }

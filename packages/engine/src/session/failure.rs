@@ -11,7 +11,7 @@ pub enum StepFatal {
 
 impl GameSession {
     pub fn publication_ids(&self) -> Vec<crate::information::PublicationId> {
-        self.library.publication_ids()
+        self.state.library.publication_ids()
     }
     pub const fn poison_reason(&self) -> Option<&StepFatal> {
         self.poison.as_ref()
@@ -58,11 +58,9 @@ impl GameSession {
                 return Err(self.poison_failed_step(fatal));
             }
         }
-        if self
-            .accounts
-            .values()
-            .any(|account| account.kind != crate::AccountKind::Player && account.strategy.is_none())
-        {
+        if self.state.accounts.values().any(|account| {
+            account.kind() != crate::AccountKind::Player && account.strategy().is_none()
+        }) {
             let fatal = StepFatal::InvariantViolation {
                 description: "non-player account has no authoritative strategy".to_owned(),
                 location: "GameSession::step".to_owned(),

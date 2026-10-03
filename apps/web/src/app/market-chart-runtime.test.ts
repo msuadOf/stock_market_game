@@ -6,7 +6,7 @@ import { createServer, type ViteDevServer } from "vite";
 import type { HostUpdate } from "../host/host-update.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "../host/host-update.ts";
 import { parseProtocolSnapshot } from "../host/protocol/parse.ts";
-import { dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
+import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
 
 let vite: ViteDevServer;
@@ -44,10 +44,13 @@ function update(active: unknown, tick = 1, cursor = 0): Extract<HostUpdate, { ty
   } });
 }
 
-function render(updates: readonly Extract<HostUpdate, { type: "protocol" }>[]) {
+function render(updates: readonly Extract<HostUpdate, { type: "protocol" }>[], options: {
+  baseline?: Extract<HostUpdate, { type: "baseline" }>;
+  afterUpdates?: NonNullable<Parameters<typeof probe.MarketChartRuntimeProbe>[0]["afterUpdates"]>;
+} = {}) {
   const observed: Partial<Record<"baseline" | "updated", ChartRuntimeObservation>> = {};
   renderToStaticMarkup(createElement(probe.MarketChartRuntimeProbe, {
-    baseline: baseline(), updates,
+    baseline: options.baseline ?? baseline(), updates, afterUpdates: options.afterUpdates,
     observe: (stage, value) => { observed[stage] = value; },
   }));
   assert.ok(observed.baseline);
@@ -65,6 +68,43 @@ test("production delta updates selected daily K and mobile active K cache while 
   assert.equal(after.daily[0], before.daily[0]);
   assert.equal(after.active["600101"]!.volume, 250);
   assert.deepEqual(after.active["600101"]!.tradeStats, { turnoverCents: "300000", tradeCount: 2 });
+});
+
+test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot", { timeout: 10000 }, () => {
+  const authoritative = { ...baseline().snapshot, tick: 1,
+    daily_candles: { "600101": [{ ...dailyCandle(), time: -2, close: 800 }] },
+    active_daily_candles: { "600101": { ...dailyCandle(), close: 1400 } },
+  };
+  const { after } = render([createProtocolUpdate("1", { TickBatch: {
+    frames: [{ ...frame(1, 0, []), timeseries_payload: { ...timeseries(1),
+      continuous_points: {}, active_daily_candles: { "600101": { ...dailyCandle(), close: 1200 } },
+    } }], runtime_snapshot: authoritative,
+  } })]);
+  assert.equal(after.daily.length, 2);
+  assert.equal(after.daily[0].close, 8);
+  assert.equal(after.daily.at(-1)!.close, 14);
+  assert.equal(after.active["600101"]!.close, 14);
+});
+
+test("production civil 重建日内历史并清旧证券，select 与 reset 读取当前投影", { timeout: 10000 }, () => {
+  const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(0, 0)));
+  const first = createProtocolUpdate("1", { TickBatch: {
+    frames: [{ ...frame(1, 0, ["600000"]), timeseries_payload: {
+      ...timeseries(1), continuous_points: { old: { tick: 1, phase: "Continuous", last_price: 1000, cumulative_volume: 100, bids: [], asks: [] } },
+    } }], runtime_snapshot: snapshot(1, 1),
+  } });
+  const civil = createProtocolUpdate("1", civilUpdate());
+  const selected = render([first, civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("600000") }).after;
+  assert.equal(selected.code, "600000");
+  assert.equal(Object.hasOwn(selected.history, "old"), false);
+  assert.equal(selected.prices.length, 1);
+  assert.equal(selected.prices[0].volume, 1);
+  assert.equal(selected.active["600000"]!.close, 10);
+  const reset = render([first, civil], { baseline: initial, afterUpdates: (runtime) => runtime.resetMarketHistory(initial.snapshot) }).after;
+  assert.deepEqual(reset.history, {});
+  assert.deepEqual(reset.prices, []);
+  assert.deepEqual(reset.auctions, []);
+  assert.equal(reset.active["600000"]!.close, 10);
 });
 
 test("successive production deltas use final authoritative active candles and remove absent active codes", () => {

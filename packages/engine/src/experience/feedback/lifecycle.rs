@@ -4,9 +4,69 @@
 //! 都不动 feedback 状态；legacy 成功后才推进账户时钟并登记生命周期/退出
 //! 历史/受挫事件。失败确认严格镜像 legacy 计数增点，不新增任何计数路径。
 
+use super::super::position_transition::PositionExperienceTransition;
 use super::*;
 
 impl RetailExperienceState {
+    /// 机构本人观察：使用调用方冻结的独立门槛，协调 legacy 与 feedback 事实。
+    pub fn observe_institution_position_dated(
+        &mut self,
+        code: &StockCode,
+        price: Money,
+        moment: ExperienceMoment,
+        adverse_move_threshold_bp: u32,
+    ) -> Result<(), ExperienceError> {
+        if price.cents() <= 0 {
+            return Err(ExperienceError::NonPositiveMoney {
+                field: "observed institution position price",
+                cents: price.cents(),
+            });
+        }
+        self.feedback.ensure_moment_forward(moment)?;
+        if !self.feedback.stocks.contains_key(code) || !self.stocks.contains_key(code) {
+            return Err(ExperienceError::NoActiveEntry {
+                code: code.0.clone(),
+            });
+        }
+
+        let stock = self.stocks.get(code);
+        let confirms_failure = stock.is_some_and(|stock| {
+            !stock.adverse_move_recorded
+                && stock.last_buy_order_id.is_some()
+                && stock.last_buy_price.is_some_and(|buy| {
+                    (i128::from(buy.cents()) - i128::from(price.cents())) * 10_000
+                        >= i128::from(buy.cents()) * i128::from(adverse_move_threshold_bp)
+                })
+        });
+        let order_id = stock.and_then(|stock| stock.last_buy_order_id);
+
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .observe_institutional_position(price, moment, confirms_failure);
+        self.feedback.advance_clocks(moment);
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_own_observation(price, moment);
+        if confirms_failure {
+            self.feedback.failure_events.push(FailureEventRecord {
+                code: code.clone(),
+                order_id,
+                moment,
+            });
+        }
+        Ok(())
+    }
+
+    /// 对账仅清理已不存在的持仓；不生成成交、退出或冷静期事实。
+    pub fn clear_stale_institutional_holding(&mut self, code: &StockCode) {
+        self.feedback.stocks.remove(code);
+        if let Some(stock) = self.stocks.get_mut(code) {
+            stock.entry_reference_price = None;
+            stock.peak_price_since_entry = None;
+            stock.last_buy_price = None;
+            stock.last_buy_order_id = None;
+            stock.adverse_move_recorded = false;
+        }
+    }
+
     /// Institutional settlement writer: records actual position transitions, own trade-price
     /// observations, and realized exit facts without retail loss counters or cooldown policy.
     #[allow(clippy::too_many_arguments)]
@@ -85,51 +145,29 @@ impl RetailExperienceState {
                 .map_err(|_| ExperienceError::InstitutionalFeesOverflow)?
         };
         let starts_new_buy_order = side == Side::Buy && previous_buy_order_id != Some(order_id);
-        let stock = self.stocks.entry(code.clone()).or_default();
-        stock.last_trade_market_minute = moment.market_minute;
-        stock.last_observed_market_minute = moment.market_minute;
-        match side {
-            Side::Buy => {
-                stock.last_buy_price = Some(price);
-                stock.last_buy_order_id = Some(order_id);
-                if starts_new_buy_order {
-                    stock.adverse_move_recorded = false;
-                }
-                if before_qty == 0 {
-                    stock.entry_reference_price = Some(price);
-                    stock.peak_price_since_entry = Some(price);
-                    self.feedback.stocks.insert(
-                        code.clone(),
-                        HoldingEpoch {
-                            entry_moment: moment,
-                            last_own_observation: None,
-                            institutional_fees_paid: Some(total_fees),
-                        },
-                    );
-                } else {
-                    stock.peak_price_since_entry = Some(
-                        stock
-                            .peak_price_since_entry
-                            .map_or(price, |peak| peak.max(price)),
-                    );
-                }
-            }
-            Side::Sell => {
-                stock.last_sell_order_id = Some(order_id);
-                if after_qty == 0 {
-                    stock.entry_reference_price = None;
-                    stock.peak_price_since_entry = None;
-                    stock.last_buy_price = None;
-                    stock.last_buy_order_id = None;
-                    stock.adverse_move_recorded = false;
-                }
-            }
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_institutional_fill(
+                side,
+                price,
+                before_qty,
+                after_qty,
+                order_id,
+                moment.market_minute,
+                starts_new_buy_order,
+            );
+        if side == Side::Buy && before_qty == 0 {
+            self.feedback.stocks.insert(
+                code.clone(),
+                HoldingEpoch {
+                    entry_moment: moment,
+                    last_own_observation: None,
+                    institutional_fees_paid: Some(total_fees),
+                },
+            );
         }
         self.feedback.advance_clocks(moment);
-        if let Some(epoch) = self.feedback.stocks.get_mut(code) {
-            epoch.institutional_fees_paid = Some(total_fees);
-            epoch.last_own_observation = Some(OwnObservation { price, moment });
-        }
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_institutional_observation(price, moment, total_fees);
         if side == Side::Sell && after_qty == 0 {
             self.feedback.stocks.remove(code);
             self.feedback.exit_records.push(ExitRecord {
@@ -161,24 +199,14 @@ impl RetailExperienceState {
                 code: code.0.clone(),
             });
         }
-        self.initialize_holding(
+        let epoch = PositionExperienceTransition::from_maps(
+            &mut self.stocks,
+            &mut self.feedback.stocks,
             code,
-            entry_reference_price,
-            current_price,
-            moment.market_minute,
-        )?;
+        )
+        .reset_initial_holding(entry_reference_price, current_price, moment);
         self.feedback.advance_clocks(moment);
-        self.feedback.stocks.insert(
-            code.clone(),
-            HoldingEpoch {
-                entry_moment: moment,
-                last_own_observation: Some(OwnObservation {
-                    price: current_price,
-                    moment,
-                }),
-                institutional_fees_paid: None,
-            },
-        );
+        self.feedback.stocks.insert(code.clone(), epoch);
         Ok(())
     }
 
@@ -190,11 +218,8 @@ impl RetailExperienceState {
         moment: ExperienceMoment,
     ) -> Result<(), ExperienceError> {
         self.initialize_holding_dated(code, entry_reference_price, current_price, moment)?;
-        self.feedback
-            .stocks
-            .get_mut(code)
-            .expect("institutional holding was initialized above")
-            .institutional_fees_paid = Some(Money::ZERO);
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .initialize_institutional_fees();
         Ok(())
     }
 
@@ -265,7 +290,7 @@ impl RetailExperienceState {
             order_id,
         )?;
 
-        // 提交段：legacy 成功后才动 feedback，任一拒绝都不留半截状态。
+        // 提交段：保留 legacy 原有部分写入失败面；仅成功后才提交 feedback。
         self.feedback.advance_clocks(moment);
         if side == Side::Buy && before_qty == 0 {
             self.feedback.stocks.insert(
@@ -277,15 +302,15 @@ impl RetailExperienceState {
                 },
             );
         }
-        self.feedback
-            .stocks
-            .get_mut(code)
-            .expect("epoch existence is guarded above")
-            .last_own_observation = Some(OwnObservation { price, moment });
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_own_observation(price, moment);
         if side == Side::Sell && after_qty == 0 {
-            let cooldown_until = self.stocks[code]
-                .cooldown_until_market_minute
-                .expect("legacy sell-to-zero always sets the post-exit cooldown");
+            let cooldown_until = PositionExperienceTransition::from_maps(
+                &mut self.stocks,
+                &mut self.feedback.stocks,
+                code,
+            )
+            .cooldown_until();
             self.feedback.stocks.remove(code);
             self.feedback.exit_records.push(ExitRecord {
                 code: code.clone(),
@@ -333,11 +358,8 @@ impl RetailExperienceState {
         self.observe_position(code, price, moment.market_minute)?;
 
         self.feedback.advance_clocks(moment);
-        self.feedback
-            .stocks
-            .get_mut(code)
-            .expect("epoch existence is guarded above")
-            .last_own_observation = Some(OwnObservation { price, moment });
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_own_observation(price, moment);
         if will_confirm {
             self.feedback.failure_events.push(FailureEventRecord {
                 code: code.clone(),
@@ -348,3 +370,6 @@ impl RetailExperienceState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod institutional_transition_tests;

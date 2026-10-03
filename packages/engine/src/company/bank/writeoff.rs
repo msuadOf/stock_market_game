@@ -22,33 +22,27 @@ impl BankBooks {
         let state = self.loan(loan).ok_or(BankError::UnknownLoan {
             contract: loan.clone(),
         })?;
-        if state.is_written_off() {
-            return Err(BankError::LoanAlreadyWrittenOff {
-                contract: loan.clone(),
-            });
-        }
-        let principal = state.principal();
-        let accrued = state.accrued_receivable();
-        let gross = state.gross_carrying();
-        if state.allowance() < gross {
-            return Err(BankError::InsufficientAllowance {
-                contract: loan.clone(),
-                allowance: state.allowance(),
-                gross,
-            });
-        }
+        let snapshot = state.preview_write_off(loan)?;
         let event = BusinessEventId::new(self.next_event_id);
         // Dr 1303（准备）/ Cr 1301（本金）/ Cr 1131（应计利息）——借贷平衡由
         // 准备足额守卫保证（allowance ≥ gross = principal + accrued）。
         let mut lines = vec![
-            super::line(chart::acct::LOAN_ALLOWANCE, PostingSide::Debit, gross),
-            super::line(chart::acct::LOAN_PRINCIPAL, PostingSide::Credit, principal),
+            super::line(
+                chart::acct::LOAN_ALLOWANCE,
+                PostingSide::Debit,
+                snapshot.gross,
+            ),
+            super::line(
+                chart::acct::LOAN_PRINCIPAL,
+                PostingSide::Credit,
+                snapshot.principal,
+            ),
         ];
-        if accrued.is_positive() {
+        if snapshot.accrued.is_positive() {
             lines.push(super::line(
                 chart::acct::LOAN_INT_RCV,
                 PostingSide::Credit,
-                accrued,
+                snapshot.accrued,
             ));
         }
         self.post_with_commit(
@@ -78,24 +72,7 @@ impl BankBooks {
         let state = self.loan(loan).ok_or(BankError::UnknownLoan {
             contract: loan.clone(),
         })?;
-        if !state.is_written_off() {
-            return Err(BankError::LoanNotWrittenOff {
-                contract: loan.clone(),
-            });
-        }
-        if !amount.is_positive() {
-            return Err(BankError::NonPositiveAmount {
-                what: "recovery",
-                amount,
-            });
-        }
-        if amount > state.recoverable() {
-            return Err(BankError::RecoveryBeyondRecoverable {
-                contract: loan.clone(),
-                requested: amount,
-                recoverable: state.recoverable(),
-            });
-        }
+        state.validate_recovery(amount, loan)?;
         let event = BusinessEventId::new(self.next_event_id);
         self.post_with_commit(
             self.next_event_id + 1,

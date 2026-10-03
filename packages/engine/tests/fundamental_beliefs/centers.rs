@@ -1,10 +1,14 @@
 //! 映射金样：能力中心 / λ / 期限（K5a 行 154 + K5 行 133 的计划锁定值）
 //! 与信念簿 serde 往返。
 
-use crate::priors::{cash_flow_analysis, form_on, profile, total_of};
-use crate::{assumptions_rng, market, scenario};
-use engine::information::{NpcInformationState, NpcObservationContext};
+use crate::priors::{cash_flow_analysis, profile, total_of};
+use crate::{
+    assumptions_rng, hour_after, market, scenario, BeliefIssuerInputs, FundamentalBeliefCase,
+    ISSUED_SHARES,
+};
+use engine::company::CompanyKind;
 use engine::orderbook::AccountId;
+use engine::strategy::BeliefCause;
 use engine::strategy::{
     belief_horizon_days, capability_center, revision_lambda_bp, BeliefBook, CapabilityCenter,
     HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
@@ -79,19 +83,30 @@ fn capability_centers_lambda_and_horizons() {
 fn belief_book_serde_round_trip() {
     let sc = scenario();
     let npc = AccountId(3);
-    let mut state = NpcInformationState::new(npc);
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         profile(),
         cash_flow_analysis(),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    form_on(&sc, npc, &mut state, 3, &mut book, 1_000, &market_view);
-    let total = total_of(&book);
-    let json = serde_json::to_string(&book).expect("serializes");
+    let report = case.scenario.annual_ids[3];
+    case.acquire(report, hour_after(case.scenario.annual_instants[3]))
+        .expect("acquire");
+    case.apply_cause(
+        &crate::priors::stock_code(),
+        BeliefCause::NewMaterial { report },
+        1_000,
+    )
+    .expect("material applies");
+    let total = total_of(&case.book);
+    let json = serde_json::to_string(&case.book).expect("serializes");
     let restored: BeliefBook = serde_json::from_str(&json).expect("restores");
-    assert_eq!(restored, book);
+    assert_eq!(restored, case.book);
     assert_eq!(total_of(&restored), total);
-    let _ = NpcObservationContext::new(npc, &state, &sc.library, &market_view);
 }

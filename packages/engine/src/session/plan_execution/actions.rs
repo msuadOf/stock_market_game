@@ -11,26 +11,26 @@ impl GameSession {
     ) -> Result<(), PlanExecutionError> {
         if child.qty == 0 {
             return Err(PlanExecutionError::InvalidChildQuantity {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
             });
         }
         if child.qty > child.remaining {
             return Err(PlanExecutionError::QuantityExceedsRemaining {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 requested_qty: child.qty,
                 remaining_qty: child.remaining,
             });
         }
         let required = live_cash_reservation(
-            &self.setup.config,
-            plan.direction,
+            &self.state.setup.config,
+            plan.direction(),
             child.price,
             child.qty,
             Money::ZERO,
         )?;
         if required > allocation.allocated_cash {
             return Err(PlanExecutionError::AllocationInsufficient {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 allocated_cents: allocation.allocated_cash.cents(),
                 required_cents: required.cents(),
             });
@@ -47,9 +47,9 @@ impl GameSession {
             return Ok(progress);
         }
 
-        let working = self.plan_working_orders(plan.account, &plan.code);
+        let working = self.plan_working_orders(plan.account(), plan.code());
         if let [candidate] = working.as_slice() {
-            if candidate.side == plan.direction
+            if candidate.side == plan.direction()
                 && candidate.price == child.price
                 && candidate.qty == child.qty
             {
@@ -80,29 +80,30 @@ impl GameSession {
         plan: &crate::plans::TradingPlan,
     ) -> Result<Option<PlanExecutionProgress>, PlanExecutionError> {
         if let Some(parent) = self
+            .state
             .parent_orders
-            .get(&plan.account)
-            .and_then(|parents| parents.get(&plan.code))
+            .get(&plan.account())
+            .and_then(|parents| parents.get(plan.code()))
         {
-            if parent.linked_plan_id != Some(plan.plan_id) {
+            if parent.linked_plan_id() != Some(plan.plan_id()) {
                 return Err(PlanExecutionError::IncompatibleExecutionState {
-                    plan_id: plan.plan_id,
+                    plan_id: plan.plan_id(),
                 });
             }
-            if let Some(order_id) = parent.active_child_order_id {
+            if let Some(order_id) = parent.active_child_order_id() {
                 let working = self
-                    .plan_working_orders(plan.account, &plan.code)
+                    .plan_working_orders(plan.account(), plan.code())
                     .into_iter()
                     .find(|working| working.id == order_id);
                 if !matches!(working, Some(order)
-                    if plan.active_child_order_id == Some(order_id)
-                        && parent.side == plan.direction
-                        && order.side == plan.direction
-                        && parent.limit_price == order.price
-                        && parent.active_child_remaining_qty == Some(order.qty))
+                    if plan.active_child_order_id() == Some(order_id)
+                        && parent.side() == plan.direction()
+                        && order.side == plan.direction()
+                        && parent.limit_price() == order.price
+                        && parent.active_child_remaining_qty() == Some(order.qty))
                 {
                     return Err(PlanExecutionError::IncompatibleExecutionState {
-                        plan_id: plan.plan_id,
+                        plan_id: plan.plan_id(),
                     });
                 }
                 // A quote prepared before an earlier route completed can now
@@ -113,9 +114,9 @@ impl GameSession {
                 )));
             }
         }
-        if plan.active_child_order_id.is_some() {
+        if plan.active_child_order_id().is_some() {
             return Err(PlanExecutionError::IncompatibleExecutionState {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
             });
         }
         Ok(None)
@@ -136,24 +137,26 @@ impl GameSession {
                 order_id,
                 replaced,
             } => {
-                let current = self.plan_working_orders(plan.account, &plan.code);
+                let current = self.plan_working_orders(plan.account(), plan.code());
                 if !matches!(current.as_slice(), [order]
                     if order.id == order_id
-                        && order.side == plan.direction
+                        && order.side == plan.direction()
                         && order.price == child.price
                         && order.qty == child.qty)
                 {
                     return Err(PlanExecutionError::IncompatibleExecutionState {
-                        plan_id: plan.plan_id,
+                        plan_id: plan.plan_id(),
                     });
                 }
                 self.install_plan_parent(&plan, child, Some((order_id, child.qty)))?;
-                self.remove_npc_order_lifecycle(plan.account, &plan.code, order_id);
-                self.pending_plan_events.push(PendingPlanEvent::Accepted {
-                    plan_id: plan.plan_id,
-                    order_id,
-                    trading_day: u64::from(self.day),
-                });
+                self.remove_npc_order_lifecycle(plan.account(), plan.code(), order_id);
+                self.state
+                    .pending_plan_events
+                    .push(PendingPlanEvent::Accepted {
+                        plan_id: plan.plan_id(),
+                        order_id,
+                        trading_day: u64::from(self.state.day),
+                    });
                 self.synchronize_owned_plan_execution(plans)?;
                 let disposition = match replaced {
                     Some(canceled_order_id) => PlanExecutionDisposition::Replaced {
@@ -181,11 +184,12 @@ impl GameSession {
         order_id: OrderId,
     ) -> Result<(), PlanExecutionError> {
         let active = self
+            .state
             .parent_orders
             .values()
             .flat_map(|parents| parents.get(code))
-            .find(|parent| parent.linked_plan_id == Some(plan_id))
-            .and_then(|parent| parent.active_child_order_id);
+            .find(|parent| parent.linked_plan_id() == Some(plan_id))
+            .and_then(|parent| parent.active_child_order_id());
         if active != Some(order_id) {
             return Err(PlanExecutionError::ChildMismatch {
                 plan_id,
@@ -200,7 +204,8 @@ impl GameSession {
         match self.phase() {
             TradingPhase::Continuous => true,
             TradingPhase::CallAuction => {
-                self.tick % self.setup.ticks_per_day < self.setup.auction_ticks / 3
+                self.state.tick % self.state.setup.ticks_per_day
+                    < self.state.setup.auction_ticks / 3
             }
             TradingPhase::PreOpen | TradingPhase::ClosingAuction => false,
         }

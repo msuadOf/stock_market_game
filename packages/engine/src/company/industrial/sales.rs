@@ -8,8 +8,8 @@
 //! 标签映射：核销/准备 = ReceivableCollection(NonCash)/Depreciation(NonCash)。
 
 use crate::accounting::{
-    ecl_allowance_target, output_vat_on, AccountingAmount, BusinessEventId, BusinessKind,
-    CashFlowClass, InventoryItemCode, JournalEntry, OpenItemId, PostingSide,
+    ecl_allowance_target, AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass,
+    InventoryItemCode, JournalEntry, OpenItemId, PostingSide,
 };
 use crate::calendar::CivilDate;
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
@@ -73,7 +73,7 @@ impl IndustrialBooks {
             .map(|state| state.account().clone())
             .expect("preview_issue validated existence");
         let revenue = unit_price_excl_vat.mul_i128(quantity)?;
-        let output_vat = output_vat_on(revenue, &self.tax_policy().vat)?;
+        let output_vat = self.tax_policy().vat.output_vat_on(revenue)?;
         let receivable_amount = revenue.add(output_vat)?;
 
         let base = self.next_event_id;

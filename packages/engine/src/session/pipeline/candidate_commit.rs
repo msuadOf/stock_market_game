@@ -49,24 +49,28 @@ pub(super) fn prepare_candidate_commit<'authority>(
 ) -> Result<PreparedCandidateCommit<'authority>, StepFatal> {
     authority.require_healthy()?;
     candidate.require_healthy()?;
-    if candidate.tick
+    if candidate.state.tick
         == authority
+            .state
             .tick
             .checked_add(1)
             .ok_or_else(|| invariant("market tick overflow".to_owned()))?
     {
         super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
-    } else if candidate.tick != authority.tick {
+    } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
             "P9 candidate advanced more than one market tick".to_owned(),
         ));
     }
     validate_receipt_cursor(&candidate)?;
-    let receipt_cursor = candidate.next_receipt_base;
+    let receipt_cursor = candidate.state.next_receipt_base;
 
-    candidate.envelope_ledger.rebase_private_for_tick_commit()?;
+    candidate
+        .state
+        .envelope_ledger
+        .rebase_private_for_tick_commit()?;
     validate_receipt_cursor(&candidate)?;
-    if candidate.next_receipt_base != receipt_cursor {
+    if candidate.state.next_receipt_base != receipt_cursor {
         return Err(invariant(
             "live-ledger rebase changed the global receipt cursor".to_owned(),
         ));
@@ -130,13 +134,13 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     validate_event_keys(&events, &event_keys, plan.expiry.releases.len())?;
     let candidate = plan.state.into_session()?;
     validate_applied_receipt_journal(
-        &candidate.envelope_ledger,
+        &candidate.state.envelope_ledger,
         &plan.applied_receipts,
         &plan.receipt_keys,
     )?;
     let evidence = if capture_commit_evidence {
         Some(TickCommitEvidence::capture(
-            &candidate.envelope_ledger,
+            &candidate.state.envelope_ledger,
             &plan.applied_receipts,
             &plan.receipt_keys,
             plan.auction_finalizers,
@@ -255,11 +259,11 @@ impl PreparedTickPlanCommit<'_> {
 }
 
 fn validate_receipt_cursor(candidate: &GameSession) -> Result<(), StepFatal> {
-    let ledger_cursor = candidate.envelope_ledger.next_receipt_index();
-    if candidate.next_receipt_base != ledger_cursor {
+    let ledger_cursor = candidate.state.envelope_ledger.next_receipt_index();
+    if candidate.state.next_receipt_base != ledger_cursor {
         return Err(invariant(format!(
             "candidate receipt cursor {} does not match envelope ledger cursor {ledger_cursor}",
-            candidate.next_receipt_base
+            candidate.state.next_receipt_base
         )));
     }
     Ok(())

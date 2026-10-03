@@ -296,12 +296,7 @@ fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
         AccountId(1),
         BTreeMap::from([(
             code(),
-            Position {
-                qty,
-                t1_locked: 0,
-                invested_cents: i64::from(qty) * 1_000,
-                recovered_cents: 0,
-            },
+            Position::from_restored_parts(qty, 0, i64::from(qty) * 1_000, 0),
         )]),
     )])
 }
@@ -658,4 +653,175 @@ fn retail_processing_error_precedes_another_accounts_final_position_error() {
             account: AccountId(2)
         }
     );
+}
+
+#[test]
+fn retail_order_average_truncates_fractional_cents_without_changing_gross() {
+    let receipt = fill(1, Side::Buy, 10, 100, 100_099);
+    let result = project_retail_receipts(RetailProjectionInput {
+        retail_experience: &retail(),
+        retail_accounts: &retail_accounts(),
+        positions_before: &BTreeMap::new(),
+        positions_after: &positions(100),
+        seen: &RetailProjectionSeen::default(),
+        market_minute: 10,
+        receipts: &[receipt],
+    })
+    .unwrap();
+
+    assert_eq!(
+        result.retail_experience[&AccountId(1)].stocks[&code()].last_buy_price,
+        Some(Money::from_cents(1_000))
+    );
+    assert!(
+        matches!(result.events.as_slice(), [RetailReceiptEvent::Filled { gross, .. }] if *gross == Money::from_cents(100_099))
+    );
+}
+
+#[test]
+fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
+    let account = AccountId(1);
+    let held = StockCode("600002".to_owned());
+    let mut second = fill(2, Side::Buy, 11, 100, 100_000);
+    second.envelope.stock = held.clone();
+    second.local_key = ReceiptLocalKey::new(
+        JournalRank::SealedBatch,
+        ReceiptSource::SealedIntent(2),
+        ReceiptTransition {
+            envelope: second.envelope.clone(),
+            ordinal: 0,
+        },
+    )
+    .unwrap();
+    let mut experience = RetailExperienceState::without_equity_reference();
+    let unheld = (0..9)
+        .map(|index| StockCode(format!("watch-{index}")))
+        .collect::<Vec<_>>();
+    for (index, stock) in unheld.iter().enumerate() {
+        experience.observe_stock(stock, index as u64);
+    }
+    let untouched = StockCode("600003".to_owned());
+    experience
+        .initialize_holding(
+            &untouched,
+            Some(Money::from_cents(900)),
+            Money::from_cents(1_000),
+            0,
+        )
+        .unwrap();
+    let untouched_before = experience.stocks[&untouched].clone();
+    let mut after = positions(100);
+    let position = after[&account][&code()].clone();
+    after
+        .get_mut(&account)
+        .unwrap()
+        .insert(held.clone(), position.clone());
+    after
+        .get_mut(&account)
+        .unwrap()
+        .insert(untouched.clone(), position);
+    let input_states = BTreeMap::from([(account, experience)]).into();
+    let result = project_retail_receipts(RetailProjectionInput {
+        retail_experience: &input_states,
+        retail_accounts: &retail_accounts(),
+        positions_before: &BTreeMap::new(),
+        positions_after: &after,
+        seen: &RetailProjectionSeen::default(),
+        market_minute: 10,
+        receipts: &[second, fill(1, Side::Buy, 10, 100, 100_000)],
+    })
+    .unwrap();
+
+    let stocks = &result.retail_experience[&account].stocks;
+    assert_eq!(stocks[&untouched], untouched_before);
+    assert!(stocks.contains_key(&code()) && stocks.contains_key(&held));
+    assert!(!stocks.contains_key(&unheld[0]));
+    assert!(unheld[1..].iter().all(|stock| stocks.contains_key(stock)));
+    assert_eq!(result.events.len(), 2);
+}
+
+#[test]
+fn institutional_exit_missing_actual_fee_history_returns_no_patch() {
+    let account = AccountId(1);
+    let stock = code();
+    let mut experience = RetailExperienceState::without_equity_reference();
+    experience
+        .initialize_holding(
+            &stock,
+            Some(Money::from_cents(1_000)),
+            Money::from_cents(1_000),
+            0,
+        )
+        .unwrap();
+    let original = experience.clone();
+    let experience = BTreeMap::from([(account, experience)]).into();
+    let seen = RetailProjectionSeen::default();
+    let error = super::retail_projection::project_institutional_receipts(
+        RetailProjectionInput {
+            retail_experience: &experience,
+            retail_accounts: &retail_accounts(),
+            positions_before: &positions(100),
+            positions_after: &BTreeMap::new(),
+            seen: &seen,
+            market_minute: 10,
+            receipts: &[fill(1, Side::Sell, 10, 100, 100_000)],
+        },
+        crate::experience::ExperienceMoment {
+            civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            market_minute: 10,
+            trading_day: 0,
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        matches!(error, RetailProjectionError::Experience(crate::ExperienceError::InconsistentFeedback { detail })
+        if detail == "institutional exit is missing actual fee history")
+    );
+    assert_eq!(experience[&account], original);
+    assert!(seen.is_empty());
+}
+
+#[test]
+fn retail_sell_beyond_the_running_position_returns_no_patch() {
+    let experience = retail();
+    let original = experience.clone();
+    let seen = RetailProjectionSeen::default();
+    let error = project_retail_receipts(RetailProjectionInput {
+        retail_experience: &experience,
+        retail_accounts: &retail_accounts(),
+        positions_before: &positions(100),
+        positions_after: &BTreeMap::new(),
+        seen: &seen,
+        market_minute: 10,
+        receipts: &[fill(1, Side::Sell, 10, 200, 200_000)],
+    })
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        RetailProjectionError::PositionTransition {
+            account: AccountId(1)
+        }
+    );
+    assert_eq!(experience, original);
+    assert!(seen.is_empty());
+}
+
+#[test]
+fn retail_zero_quantity_fill_reports_non_positive_gross() {
+    let mut receipt = fill(1, Side::Buy, 10, 100, 100_000);
+    receipt.qty_after = receipt.qty_before;
+    let error = project_retail_receipts(RetailProjectionInput {
+        retail_experience: &retail(),
+        retail_accounts: &retail_accounts(),
+        positions_before: &BTreeMap::new(),
+        positions_after: &positions(100),
+        seen: &RetailProjectionSeen::default(),
+        market_minute: 10,
+        receipts: &[receipt],
+    })
+    .unwrap_err();
+
+    assert_eq!(error, RetailProjectionError::NonPositiveGross { index: 1 });
 }

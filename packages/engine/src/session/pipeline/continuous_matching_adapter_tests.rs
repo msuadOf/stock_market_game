@@ -30,7 +30,7 @@ fn continuous_inputs_capture_all_markets_without_preloaded_operations() {
     for input in &inputs {
         assert_eq!(
             serde_json::to_vec(&input.config).unwrap(),
-            serde_json::to_vec(&game.setup.config).unwrap()
+            serde_json::to_vec(&game.state.setup.config).unwrap()
         );
     }
     assert_eq!(game.session_state_hash().unwrap(), before);
@@ -45,7 +45,12 @@ fn continuous_adapter_carries_only_tick_start_envelopes_matching_each_order_book
     .unwrap();
     let code = StockCode("600889".to_owned());
     let order = resting_buy(OrderId(91), AccountId(1));
-    game.markets.get_mut(&code).unwrap().place(order).unwrap();
+    game.state
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(order)
+        .unwrap();
     game.hydrate_or_validate_envelope_ledger().unwrap();
     let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
 
@@ -78,20 +83,25 @@ fn continuous_adapter_preserves_prior_fill_fee_audit_from_the_authoritative_ledg
         owner,
         seq: 0,
     };
-    game.markets.get_mut(&code).unwrap().place(order).unwrap();
+    game.state
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(order)
+        .unwrap();
     let nominal = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::ZERO,
         transfer_fee: Money::from_cents(1),
     };
     let cash = crate::session::buy_order_reservation(
-        &game.setup.config,
+        &game.state.setup.config,
         Money::from_cents(900),
         100,
         Money::from_cents(90_000),
     )
     .unwrap();
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             EnvelopeKey {
@@ -125,7 +135,8 @@ fn continuous_adapter_rejects_residual_auction_orders_in_continuous_phase() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = StockCode("600888".to_owned());
-    game.auction_orders
+    game.state
+        .auction_orders
         .entry(code)
         .or_default()
         .push(crate::session::AuctionOrderSnap {
@@ -155,8 +166,8 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
     .unwrap();
     let first = StockCode("600888".to_owned());
     let second = StockCode("600889".to_owned());
-    let first_market = game.markets.remove(&first).unwrap();
-    game.markets.insert(second, first_market);
+    let first_market = game.state.markets.remove(&first).unwrap();
+    game.state.markets.insert(second, first_market);
 
     let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
 
@@ -174,6 +185,7 @@ fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = StockCode("600888".to_owned());
     missing
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -189,6 +201,7 @@ fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
 
     missing.hydrate_or_validate_envelope_ledger().unwrap();
     missing
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -209,12 +222,13 @@ fn continuous_adapter_rejects_underfunded_live_resources_with_matching_order_fie
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = StockCode("600888".to_owned());
     let owner = AccountId(1);
-    game.markets
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(resting_buy(OrderId(102), owner))
         .unwrap();
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             EnvelopeKey {
@@ -252,7 +266,7 @@ fn continuous_adapter_rejects_same_tick_envelopes_in_the_live_ledger() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = StockCode("600888".to_owned());
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::created_at_validation(
             EnvelopeKey {

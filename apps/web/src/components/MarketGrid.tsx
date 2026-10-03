@@ -4,7 +4,7 @@
  * 点击行 → 选股（回调）。
  */
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef, CellClassParams, GridApi, GridReadyEvent, IRowNode } from "ag-grid-community";
+import type { ColDef, CellClassParams, GridReadyEvent, IRowNode } from "ag-grid-community";
 import { CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, ModuleRegistry, RowStyleModule } from "ag-grid-community";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cents, MarketSnap } from "../types/engine";
@@ -12,7 +12,8 @@ import type { PricePoint } from "./PriceChart";
 import { STOCK_LIST } from "../config/defaults";
 import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
 import { marketCodesForView, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
-import { buildMarketRows, diffMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
+import { MarketGridRowSynchronizer } from "./market-grid-row-synchronizer.ts";
+import { buildMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
 
 ModuleRegistry.registerModules([ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule]);
 
@@ -25,7 +26,7 @@ interface Props {
   selectedCode: string | null;
   onSelect: (code: string) => void;
   heldCodes: ReadonlySet<string>;
-  priceHistoryByCode: Readonly<Record<string, PricePoint[]>>;
+  priceHistoryByCode: Readonly<Record<string, readonly PricePoint[]>>;
 }
 
 function yuan(cents: Cents): number {
@@ -42,28 +43,19 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
     builtRowsRef.current = rows;
     return rows;
   }, [heldCodes, markets]);
-  const latestRowsRef = useRef(allRowData);
-  latestRowsRef.current = allRowData;
   const initialRowsRef = useRef(allRowData);
-  const appliedRowsRef = useRef(initialRowsRef.current);
-  const gridApiRef = useRef<GridApi<RowData> | null>(null);
+  const [rowSynchronizer] = useState(() => new MarketGridRowSynchronizer(initialRowsRef.current));
+  rowSynchronizer.recordLatest(allRowData);
 
-  const applyLatestRows = useCallback((api: GridApi<RowData>, rows: RowData[]) => {
-    const transaction = diffMarketRows(appliedRowsRef.current, rows);
-    if (transaction.add.length > 0 || transaction.update.length > 0 || transaction.remove.length > 0) {
-      api.applyTransactionAsync(transaction);
-    }
-    appliedRowsRef.current = rows;
-  }, []);
-
+  // ready 可能在本组件的 effect 前到达；先登记本次渲染的最新目标。
   useEffect(() => {
-    if (gridApiRef.current) applyLatestRows(gridApiRef.current, allRowData);
-  }, [allRowData, applyLatestRows]);
+    rowSynchronizer.updateLatest(allRowData);
+  }, [allRowData, rowSynchronizer]);
 
   const onGridReady = useCallback((event: GridReadyEvent<RowData>) => {
-    gridApiRef.current = event.api;
-    applyLatestRows(event.api, latestRowsRef.current);
-  }, [applyLatestRows]);
+    rowSynchronizer.attach(event.api, initialRowsRef.current);
+  }, [rowSynchronizer]);
+  const onGridPreDestroyed = useCallback(() => rowSynchronizer.dispose(), [rowSynchronizer]);
   const getRowId = useCallback((params: { data: RowData }) => params.data.code, []);
 
   const mobileRowData = useMemo(() => {
@@ -167,6 +159,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
           rowData={initialRowsRef.current}
           getRowId={getRowId}
           onGridReady={onGridReady}
+          onGridPreDestroyed={onGridPreDestroyed}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}

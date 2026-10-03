@@ -60,8 +60,8 @@ impl GameSession {
                 }
             }
             TradingPhase::CallAuction => {
-                let cancelable =
-                    self.tick % self.setup.ticks_per_day < self.setup.auction_ticks / 3;
+                let cancelable = self.state.tick % self.state.setup.ticks_per_day
+                    < self.state.setup.auction_ticks / 3;
                 for (code, order) in working.auction {
                     if !in_scope(code) {
                         continue;
@@ -77,6 +77,7 @@ impl GameSession {
                         });
                     } else {
                         let market = self
+                            .state
                             .markets
                             .get(code)
                             .expect("working auction stock exists");

@@ -44,11 +44,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownPresale {
                 contract: contract.clone(),
             })?;
-        if presale.delivered() {
-            return Err(RealEstateError::PresaleAlreadyDelivered {
-                contract: contract.clone(),
-            });
-        }
+        presale.validate_delivery(contract)?;
         let project_id = presale.project().clone();
         let project_state =
             self.project(&project_id)
@@ -64,7 +60,7 @@ impl RealEstateBooks {
         let units = presale.units();
         let revenue = presale.price_total();
         let collected = presale.collected();
-        let receivable_amount = revenue.sub(collected).expect("collected within price");
+        let receivable_amount = presale.remaining_payment().expect("collected within price");
         let buyer = presale.buyer().clone();
         let cost = project_state.preview_carry_out(&project_id, units)?;
 

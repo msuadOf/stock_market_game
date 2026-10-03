@@ -23,13 +23,20 @@ use engine::accounting::{
 };
 use engine::calendar::{CivilDate, CivilInstant};
 use engine::company::industrial::industrial_chart_v2;
+use engine::company::CompanyKind;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
     scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
     AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
     ScheduledReportKind,
 };
-use engine::strategy::Rng;
+use engine::information::{
+    AcquisitionError, AcquisitionOutcome, NpcInformationState, NpcObservationContext,
+};
+use engine::strategy::{
+    AnalysisProfile, BeliefBook, BeliefCause, BeliefError, BeliefInputs, Rng, StrategyProfile,
+};
+use engine::{AccountId, StockCode};
 
 /// 披露域种子（测试固定值，确定性钉死）。
 pub(crate) const OPS_SEED: u64 = 21;
@@ -94,6 +101,74 @@ pub(crate) struct Scenario {
     pub annual_instants: [CivilInstant; 4],
     /// 临时公告公布 id（2031-04-01 18:00，ContractWon）。
     pub announcement_id: PublicationId,
+}
+
+/// 估值使用的发行人输入；total_issued_shares 表示已发行普通股总股数。
+pub(crate) struct BeliefIssuerInputs {
+    pub kind: CompanyKind,
+    pub total_issued_shares: u64,
+}
+
+/// 单个 NPC 的获知、行情与信念生命周期；借用 context 仅在调用期间存在。
+pub(crate) struct FundamentalBeliefCase {
+    pub scenario: Scenario,
+    npc: AccountId,
+    pub state: NpcInformationState,
+    pub market: BeliefMarket,
+    pub book: BeliefBook,
+    issuer: BeliefIssuerInputs,
+}
+
+impl FundamentalBeliefCase {
+    pub fn new(
+        scenario: Scenario,
+        npc: AccountId,
+        market: BeliefMarket,
+        profile: StrategyProfile,
+        analysis: AnalysisProfile,
+        issuer: BeliefIssuerInputs,
+        rng: &mut impl Rng,
+    ) -> Self {
+        Self {
+            scenario,
+            npc,
+            state: NpcInformationState::new(npc),
+            market,
+            book: BeliefBook::new(npc, profile, analysis, rng),
+            issuer,
+        }
+    }
+
+    pub fn acquire(
+        &mut self,
+        report: PublicationId,
+        instant: CivilInstant,
+    ) -> Result<AcquisitionOutcome, AcquisitionError> {
+        self.state
+            .record_acquisition(self.npc, &self.scenario.library, report, instant)
+    }
+
+    pub fn apply_cause(
+        &mut self,
+        stock: &StockCode,
+        cause: BeliefCause,
+        as_of: u64,
+    ) -> Result<(), BeliefError> {
+        let ctx = NpcObservationContext::new(
+            self.npc,
+            &self.state,
+            &self.scenario.library,
+            &self.market,
+        )?;
+        let inputs = BeliefInputs {
+            ctx: &ctx,
+            company: self.scenario.company.clone(),
+            kind: self.issuer.kind,
+            total_issued_shares: self.issuer.total_issued_shares,
+            as_of_trading_day: as_of,
+        };
+        self.book.apply_cause(stock, cause, &inputs).map(|_| ())
+    }
 }
 
 pub(crate) fn scenario() -> Scenario {

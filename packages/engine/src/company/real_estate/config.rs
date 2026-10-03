@@ -52,29 +52,31 @@ pub struct RealEstateConfig {
     pub max_projects: usize,
 }
 
-/// 开局行子账种子守卫：触碰任何地产子账/损益科目（开发存货/准备/合同负债/
-/// 应收/借款/应付利息/收入成本/费用/减值）→ `OpeningRealEstateSeeded`。
-/// 现金（1002）与权益（4001/4103）是开局唯一合法落点。
-pub(super) fn check_opening_lines(lines: &[JournalLine]) -> Result<(), RealEstateError> {
-    const SEEDED_ACCOUNTS: [&str; 11] = [
-        codes::AR,
-        codes::DEV_INVENTORY,
-        codes::DEV_IMPAIR_ALLOW,
-        codes::ST_DEBT,
-        codes::CONTRACT_LIAB,
-        codes::INT_PAYABLE,
-        codes::LT_DEBT,
-        codes::REVENUE,
-        codes::COGS,
-        codes::FIN_EXP,
-        codes::IMPAIR_LOSS,
-    ];
-    for line in lines {
-        if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
-            return Err(RealEstateError::OpeningRealEstateSeeded {
-                account: LedgerAccountId(line.account.0.clone()),
-            });
+impl RealEstateConfig {
+    /// 开局行子账种子守卫：触碰任何地产子账/损益科目（开发存货/准备/合同负债/
+    /// 应收/借款/应付利息/收入成本/费用/减值）→ `OpeningRealEstateSeeded`。
+    /// 现金（1002）与权益（4001/4103）是开局唯一合法落点。
+    pub(super) fn check_opening_lines(&self) -> Result<(), RealEstateError> {
+        const SEEDED_ACCOUNTS: [&str; 11] = [
+            codes::AR,
+            codes::DEV_INVENTORY,
+            codes::DEV_IMPAIR_ALLOW,
+            codes::ST_DEBT,
+            codes::CONTRACT_LIAB,
+            codes::INT_PAYABLE,
+            codes::LT_DEBT,
+            codes::REVENUE,
+            codes::COGS,
+            codes::FIN_EXP,
+            codes::IMPAIR_LOSS,
+        ];
+        for line in &self.opening_lines {
+            if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
+                return Err(RealEstateError::OpeningRealEstateSeeded {
+                    account: LedgerAccountId(line.account.0.clone()),
+                });
+            }
         }
+        Ok(())
     }
-    Ok(())
 }

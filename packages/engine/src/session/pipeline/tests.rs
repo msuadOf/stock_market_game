@@ -45,9 +45,8 @@ fn committed_shadow_advances_authority_once() {
 fn shadow_capture_rehydrates_production_strategy_without_identity_drift() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(1), 42).unwrap();
-    let before = game.accounts[&crate::AccountId(1)]
-        .strategy
-        .as_ref()
+    let before = game.state.accounts[&crate::AccountId(1)]
+        .strategy()
         .unwrap()
         .production_state()
         .unwrap();

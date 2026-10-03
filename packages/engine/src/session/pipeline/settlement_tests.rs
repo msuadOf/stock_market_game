@@ -1,4 +1,4 @@
-use super::settlement::{apply_receipt_settlements, prepare_receipt_settlements};
+use super::settlement::{apply_receipt_settlements, ReceiptSettlementPlan};
 use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, FeeComponents,
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
@@ -42,7 +42,12 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
             .num_threads(threads)
             .build()
             .unwrap()
-            .install(|| prepare_receipt_settlements(&accounts, &receipts, true).unwrap())
+            .install(|| {
+                ReceiptSettlementPlan::from_receipts(&receipts)
+                    .unwrap()
+                    .prepare_accounts(&accounts, true)
+                    .unwrap()
+            })
     };
     let (one, one_counts) = run(1);
     let (four, four_counts) = run(4);
@@ -54,7 +59,7 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
     assert_eq!(account_state(&one.into()), account_state(&four.into()));
     assert_eq!(one_counts.applied_groups, 2);
     assert_eq!(one_counts.applied_receipts, 2);
-    assert_eq!(accounts[&AccountId(2)].cash, Money::from_cents(200_000));
+    assert_eq!(accounts[&AccountId(2)].cash(), Money::from_cents(200_000));
 }
 
 fn stock() -> StockCode {
@@ -196,19 +201,19 @@ fn account_state(accounts: &AccountBook) -> AccountState {
         .iter()
         .map(|(id, account)| {
             let positions = account
-                .positions
+                .positions()
                 .iter()
                 .map(|(code, position)| {
                     (
                         code.clone(),
-                        position.qty,
-                        position.t1_locked,
-                        position.invested_cents,
-                        position.recovered_cents,
+                        position.qty(),
+                        position.t1_locked(),
+                        position.invested_cents(),
+                        position.recovered_cents(),
                     )
                 })
                 .collect();
-            (*id, (account.cash, positions))
+            (*id, (account.cash(), positions))
         })
         .collect()
 }
@@ -254,11 +259,11 @@ fn settles_receipt_actual_fee_components_without_recomputing_them() {
 
     assert_eq!(applied.applied_receipts, 1);
     assert_eq!(applied.applied_groups, 1);
-    assert_eq!(accounts[&account].cash, Money::from_cents(99_499));
-    let position = &accounts[&account].positions[&stock()];
-    assert_eq!(position.qty, 100);
-    assert_eq!(position.t1_locked, 100);
-    assert_eq!(position.invested_cents, 100_000);
+    assert_eq!(accounts[&account].cash(), Money::from_cents(99_499));
+    let position = &accounts[&account].positions()[&stock()];
+    assert_eq!(position.qty(), 100);
+    assert_eq!(position.t1_locked(), 100);
+    assert_eq!(position.invested_cents(), 100_000);
 }
 
 #[test]
@@ -288,12 +293,12 @@ fn applies_same_account_stock_buy_before_sell_to_preserve_t1_lifecycle() {
 
     assert_eq!(applied.applied_receipts, 2);
     assert_eq!(applied.applied_groups, 2);
-    assert_eq!(accounts[&account].cash, Money::from_cents(198_948));
-    let position = &accounts[&account].positions[&stock()];
-    assert_eq!(position.qty, 100);
-    assert_eq!(position.t1_locked, 100);
-    assert_eq!(position.invested_cents, 200_000);
-    assert_eq!(position.recovered_cents, 100_000);
+    assert_eq!(accounts[&account].cash(), Money::from_cents(198_948));
+    let position = &accounts[&account].positions()[&stock()];
+    assert_eq!(position.qty(), 100);
+    assert_eq!(position.t1_locked(), 100);
+    assert_eq!(position.invested_cents(), 200_000);
+    assert_eq!(position.recovered_cents(), 100_000);
 }
 
 #[test]
@@ -304,7 +309,7 @@ fn non_fill_receipts_do_not_settle_accounts() {
         Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
     )])
     .into();
-    let before_cash = accounts[&account].cash;
+    let before_cash = accounts[&account].cash();
 
     let applied = apply_receipt_settlements(
         &mut accounts,
@@ -319,8 +324,8 @@ fn non_fill_receipts_do_not_settle_accounts() {
 
     assert_eq!(applied.applied_receipts, 0);
     assert_eq!(applied.applied_groups, 0);
-    assert_eq!(accounts[&account].cash, before_cash);
-    assert!(accounts[&account].positions.is_empty());
+    assert_eq!(accounts[&account].cash(), before_cash);
+    assert!(accounts[&account].positions().is_empty());
 }
 
 #[test]
@@ -348,7 +353,7 @@ fn buyer_stamp_tax_is_a_typed_fatal_instead_of_a_silent_drop() {
     assert!(error
         .to_string()
         .contains("buyer receipt has non-zero stamp tax"));
-    assert_eq!(accounts[&account].cash, Money::from_cents(200_000));
+    assert_eq!(accounts[&account].cash(), Money::from_cents(200_000));
 }
 
 #[test]
@@ -438,8 +443,8 @@ fn seller_settlement_charges_only_the_capped_receipt_amount_when_nominal_fee_exc
 
     apply_receipt_settlements(&mut accounts, &[receipt], true).unwrap();
 
-    assert_eq!(accounts[&account].cash, Money::ZERO);
-    assert!(!accounts[&account].positions.contains_key(&stock()));
+    assert_eq!(accounts[&account].cash(), Money::ZERO);
+    assert!(!accounts[&account].positions().contains_key(&stock()));
 }
 
 #[test]
@@ -490,10 +495,10 @@ fn seller_settlement_deducts_charged_not_nominal_and_recovers_full_gross() {
 
     apply_receipt_settlements(&mut accounts, &[receipt], true).unwrap();
 
-    assert_eq!(accounts[&account].cash, Money::from_cents(1_900));
-    let position = &accounts[&account].positions[&stock()];
-    assert_eq!(position.qty, 1);
-    assert_eq!(position.recovered_cents, 1_000);
+    assert_eq!(accounts[&account].cash(), Money::from_cents(1_900));
+    let position = &accounts[&account].positions()[&stock()];
+    assert_eq!(position.qty(), 1);
+    assert_eq!(position.recovered_cents(), 1_000);
 }
 
 #[test]
@@ -583,9 +588,76 @@ fn multiple_orders_and_legs_share_one_account_stock_side_settlement_group() {
 
     assert_eq!(applied.applied_receipts, 3);
     assert_eq!(applied.applied_groups, 1);
-    assert_eq!(accounts[&account].cash, Money::from_cents(99_000));
-    let position = &accounts[&account].positions[&stock()];
-    assert_eq!(position.qty, 300);
-    assert_eq!(position.t1_locked, 300);
-    assert_eq!(position.invested_cents, 300_000);
+    assert_eq!(accounts[&account].cash(), Money::from_cents(99_000));
+    let position = &accounts[&account].positions()[&stock()];
+    assert_eq!(position.qty(), 300);
+    assert_eq!(position.t1_locked(), 300);
+    assert_eq!(position.invested_cents(), 300_000);
+}
+
+#[test]
+fn settlement_plan_ignores_zero_quantity_fill_before_gross_and_fee_checks() {
+    let mut receipt = non_fill(ReceiptKind::Fill);
+    receipt.charged.stamp_tax = Money::from_cents(1);
+    let (patch, application) = ReceiptSettlementPlan::from_receipts(&[receipt])
+        .unwrap()
+        .prepare_accounts(&AccountBook::default(), true)
+        .unwrap();
+    assert!(patch.is_empty());
+    assert_eq!(application.applied_receipts, 0);
+    assert_eq!(application.applied_groups, 0);
+}
+
+#[test]
+fn settlement_plan_later_malformed_receipt_does_not_apply_earlier_fill() {
+    let account = AccountId(1);
+    let mut accounts: AccountBook = [(
+        account,
+        Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
+    )]
+    .into_iter()
+    .collect();
+    let before = account_state(&accounts);
+    let first = fill(account, 1, Side::Buy, 100, 100_000, FeeComponents::ZERO);
+    let mut second = first.clone();
+    second.qty_after = second.qty_before + 1;
+    let error = apply_receipt_settlements(&mut accounts, &[first, second], true).unwrap_err();
+    assert!(
+        matches!(error, super::StepFatal::InvariantViolation { description, location }
+        if description == "fill receipt quantity chain regressed" && location == "pipeline::settlement")
+    );
+    assert_eq!(account_state(&accounts), before);
+}
+
+#[test]
+fn settlement_plan_accumulates_each_actual_seller_fee_component() {
+    let account = AccountId(1);
+    let mut holder = Account::new(account, AccountKind::Player, Money::ZERO);
+    holder
+        .grant_position(stock(), 300, Money::from_cents(1_000))
+        .unwrap();
+    let mut accounts: AccountBook = [(account, holder)].into_iter().collect();
+    let mut receipts = Vec::new();
+    for (order, commission, stamp_tax, transfer_fee) in [(1, 500, 50, 1), (2, 501, 51, 2)] {
+        receipts.push(fill(
+            account,
+            order,
+            Side::Sell,
+            100,
+            100_000,
+            FeeComponents {
+                commission: Money::from_cents(commission),
+                stamp_tax: Money::from_cents(stamp_tax),
+                transfer_fee: Money::from_cents(transfer_fee),
+            },
+        ));
+    }
+    let application = apply_receipt_settlements(&mut accounts, &receipts, true).unwrap();
+    assert_eq!(application.applied_groups, 1);
+    assert_eq!(application.applied_receipts, 2);
+    assert_eq!(accounts[&account].cash(), Money::from_cents(198_895));
+    assert_eq!(
+        accounts[&account].positions()[&stock()].recovered_cents(),
+        200_000
+    );
 }

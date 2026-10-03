@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { it } from "node:test";
@@ -20,6 +21,7 @@ import {
 } from "./run-full-regression.mjs";
 import { prepareWorkspacePaths, resolveWorkspaceRoot } from "./workspace-paths.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
+import * as regression from "./run-full-regression.mjs";
 
 it("resolves a linked worktree through the Git common directory", async () => {
   const actualWorkspaceRoot = await resolveWorkspaceRoot(process.cwd());
@@ -411,6 +413,158 @@ it("seals the source identity and exact binary bytes in an atomic build inventor
     const temporaryFiles = (await readdir(path.dirname(fixture.inventoryPath)))
       .filter((entry) => entry.startsWith(`${path.basename(fixture.inventoryPath)}.`) && entry.endsWith(".tmp"));
     assert.deepEqual(temporaryFiles, []);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+function resealInventory(record) {
+  const { identity_digest: ignored, ...state } = record;
+  return { ...record, identity_digest: createHash("sha256").update(JSON.stringify(state)).digest("hex") };
+}
+
+it("owns an immutable inventory while preserving decoded order, extras and duplicate artifacts", async () => {
+  assert.equal(typeof regression.ArtifactInventory, "function", "ArtifactInventory must own the sealed record");
+  const fixture = await createSealedFixture();
+  try {
+    const decoded = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    const reordered = resealInventory({
+      extra: { note: "保留扩展字段" },
+      artifacts: [decoded.artifacts[0], decoded.artifacts[0]],
+      ...Object.fromEntries(Object.entries(decoded).filter(([key]) => key !== "artifacts")),
+    });
+    const expectedIdentity = {
+      sourceRoot: decoded.source_root,
+      workspacePaths: {
+        workspaceRoot: decoded.workspace_root,
+        cargoTargetDir: decoded.cargo_target_dir,
+        processTmpDir: decoded.process_tmp_dir,
+      },
+      fingerprint: fixture.fingerprint,
+    };
+    const inventory = regression.ArtifactInventory.fromDecodedInventory(reordered, expectedIdentity);
+    const originalJson = JSON.stringify(reordered);
+    reordered.extra.note = "调用方修改";
+    reordered.artifacts[0].bytes += 1;
+    assert.equal(JSON.stringify(inventory.toJson()), originalJson);
+    const exported = inventory.toJson();
+    exported.artifacts.pop();
+    exported.extra.note = "输出修改";
+    assert.equal(JSON.stringify(inventory.toJson()), originalJson);
+    assert.equal(inventory.artifactDescriptors().length, 2);
+    assert.throws(() => inventory.artifactDescriptors().pop(), TypeError);
+    assert.throws(() => { inventory.artifactDescriptors()[0].bytes += 1; }, TypeError);
+    const staleOrder = { ...decoded };
+    delete staleOrder.schema;
+    staleOrder.schema = decoded.schema;
+    assert.throws(() => regression.ArtifactInventory.fromDecodedInventory(staleOrder, expectedIdentity), /malformed, stale, or bound/i);
+    assert.equal(JSON.stringify(regression.ArtifactInventory.fromDecodedInventory(
+      resealInventory(staleOrder), expectedIdentity,
+    ).toJson()), JSON.stringify(resealInventory(staleOrder)));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it("accepts a correctly sealed reordered inventory with extras and duplicate artifacts during execution", async () => {
+  const fixture = await createSealedFixture();
+  try {
+    const decoded = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    const reordered = resealInventory({ extra: "保留", ...decoded, artifacts: [...decoded.artifacts, ...decoded.artifacts] });
+    await writeFile(fixture.inventoryPath, JSON.stringify(reordered));
+    let ordinaryExecutions = 0;
+    await assert.rejects(executeFullRegression({
+      inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async ({ command }) => {
+        assert.equal(command, fixture.artifact);
+        ordinaryExecutions += 1;
+      },
+    }), /required long validation target.*resolved to 2 prebuilt binaries/i);
+    assert.equal(ordinaryExecutions, 2, "重复 artifacts 必须保留现有执行语义");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it("preserves deeply nested JSON extras accepted by the inventory wire format", async () => {
+  const fixture = await createSealedFixture();
+  try {
+    const decoded = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    let extra = { note: "保留深层扩展", empty: null };
+    for (let depth = 0; depth < 2000; depth += 1) extra = { nested: extra, empty: null };
+    const record = resealInventory({ ...decoded, extra });
+    const originalJson = JSON.stringify(record);
+    const callerRecord = JSON.parse(originalJson);
+    const inventory = regression.ArtifactInventory.fromDecodedInventory(callerRecord, {
+      sourceRoot: decoded.source_root,
+      workspacePaths: {
+        workspaceRoot: decoded.workspace_root,
+        cargoTargetDir: decoded.cargo_target_dir,
+        processTmpDir: decoded.process_tmp_dir,
+      },
+      fingerprint: fixture.fingerprint,
+    });
+    assert.equal(JSON.stringify(inventory.toJson()), originalJson);
+    let callerExtra = callerRecord.extra;
+    let exportedExtra = inventory.toJson().extra;
+    for (let depth = 0; depth < 2000; depth += 1) {
+      assert.equal(exportedExtra.empty, null);
+      callerExtra = callerExtra.nested;
+      exportedExtra = exportedExtra.nested;
+    }
+    callerExtra.note = "修改输入叶子";
+    exportedExtra.note = "修改输出叶子";
+    assert.equal(JSON.stringify(inventory.toJson()), originalJson);
+    await writeFile(fixture.inventoryPath, originalJson);
+    let calls = 0;
+    await executeFullRegression({
+      inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async () => { calls += 1; },
+    });
+    assert.equal(calls, 4);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it("rejects missing identity fields and changed seals before starting any test", async () => {
+  const fixture = await createSealedFixture();
+  let runs = 0;
+  try {
+    const original = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    const mutations = [
+      ["missing schema", (record) => { delete record.schema; }, /malformed, stale, or bound/i],
+      ["missing digest", (record) => { delete record.identity_digest; }, /malformed, stale, or bound/i, false],
+      ["changed source", (record) => { record.source_root += "-other"; }, /malformed, stale, or bound/i],
+      ["changed workspace", (record) => { record.workspace_root += "-other"; }, /malformed, stale, or bound/i],
+      ["changed target", (record) => { record.cargo_target_dir += "-other"; }, /malformed, stale, or bound/i],
+      ["changed temp", (record) => { record.process_tmp_dir += "-other"; }, /malformed, stale, or bound/i],
+      ["changed fingerprint", (record) => { record.source_fingerprint.digest = "b".repeat(64); }, /malformed, stale, or bound/i],
+      ["missing artifacts", (record) => { delete record.artifacts; }, /malformed, stale, or bound/i],
+      ["empty artifacts", (record) => { record.artifacts = []; }, /malformed, stale, or bound/i],
+      ["missing artifact label", (record) => { delete record.artifacts[0].label; }, /invalid artifact entry/i],
+      ["invalid artifact bytes", (record) => { record.artifacts[0].bytes = -1; }, /invalid artifact entry/i],
+      ["invalid artifact digest", (record) => { record.artifacts[0].sha256 = "invalid"; }, /invalid artifact entry/i],
+      ["absolute artifact path", (record) => { record.artifacts[0].executable_relative_path = fixture.artifact; }, /invalid artifact entry/i],
+      ["escaped artifact path", (record) => { record.artifacts[0].executable_relative_path = "../escaped"; }, /escaped the Cargo target/i],
+      ["changed artifact bytes", (record) => { record.artifacts[0].bytes += 1; }, /does not match its sealed inventory/i],
+      ["changed artifact hash", (record) => { record.artifacts[0].sha256 = "0".repeat(64); }, /SHA-256 mismatch/i],
+      ["unsealed extra field", (record) => { record.extra = "修改"; }, /malformed, stale, or bound/i, false],
+      ["unsealed field order", (record) => { delete record.schema; record.schema = original.schema; }, /malformed, stale, or bound/i, false],
+    ];
+    for (const [label, mutate, errorPattern, reseal = true] of mutations) {
+      const record = structuredClone(original);
+      mutate(record);
+      await writeFile(fixture.inventoryPath, JSON.stringify(reseal ? resealInventory(record) : record));
+      await assert.rejects(executeFullRegression({
+        inventoryPath: fixture.inventoryPath,
+        collectFingerprint: async () => fixture.fingerprint,
+        run: async () => { runs += 1; },
+      }), errorPattern, label);
+      assert.equal(runs, 0, label);
+    }
   } finally {
     await fixture.cleanup();
   }

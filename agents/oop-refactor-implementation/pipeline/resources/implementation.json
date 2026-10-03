@@ -1,0 +1,140 @@
+{
+  "status": "实现已落盘；等待主协调者统一编译、短单测及未实施者独立复核",
+  "actions": [
+    {
+      "id": "engine-pipeline-01-A01",
+      "owner": "AccountBudget",
+      "methods": [
+        "ensure_from_snapshot",
+        "ensure_sellable_from_snapshot",
+        "apply_update",
+        "adopt_cash_lane",
+        "adopt_shares_lane"
+      ],
+      "callers": [
+        "AccountValidationState::ensure_account_budget",
+        "AccountValidationState::ensure_sellable_budget",
+        "AccountValidationState::apply_budget_update",
+        "AccountValidationState::prepare_account_round"
+      ],
+      "preserved": "快照错误直接传播；Cash与逐stock Shares分开补丁；worker轮次暂存、首错选择、two-pass OrderId与commit_round不变"
+    },
+    {
+      "id": "pipeline-R2-N07",
+      "owner": "SellerChargeAllocation",
+      "methods": [
+        "calculate",
+        "allocate_components"
+      ],
+      "callers": [
+        "FillTransition::sell（continuous_matching与stock_auction继续调用）"
+      ],
+      "preserved": "原unpaid→total→cap→commission/stamp_tax/transfer_fee→charged_after→chain→deliver checked顺序；ledger_validation独立复算未修改"
+    },
+    {
+      "id": "pipeline-R2-N12",
+      "owner": "ReceiptSettlementPlan",
+      "methods": [
+        "from_receipts",
+        "record_receipt",
+        "prepare_accounts"
+      ],
+      "callers": [
+        "prepare_settlement_transaction_with_beliefs",
+        "cfg(test) apply_receipt_settlements"
+      ],
+      "preserved": "原过滤、零数量skip、字段累加、账户并行/stock顺序、Buy-before-Sell、clone_for_shadow、首错、整体提交边界；删除旧prepare_receipt_settlements写口"
+    }
+  ],
+  "cross_group_callers": "本簇GameSession字段转state；Account/Position改getter与cfg(test)fixture；事务belief参数改AccountPagedMap<BeliefParticipantState>，belief_patch仍BeliefBook且仅替换participant.belief_mut()，不形成第二份权威belief",
+  "tests": {
+    "features": [],
+    "filters": [
+      "session::pipeline::account_validation_tests::",
+      "session::pipeline::account_validation_driver_tests::account_validation_independent_share_reservations_of_one_account_use_two_workers",
+      "session::pipeline::account_validation_driver_tests::account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried",
+      "session::pipeline::transition_tests::",
+      "session::pipeline::transition::seller_charge_tests::",
+      "session::pipeline::ledger_receipt_tests::",
+      "session::pipeline::ledger_state_tests::",
+      "session::pipeline::settlement_tests::",
+      "session::pipeline::account_settlement_tests::"
+    ],
+    "new": [
+      "seller_charge_allocation_caps_at_each_component_boundary",
+      "seller_charge_allocation_rejects_component_excess_and_total_overflow",
+      "settlement_plan_ignores_zero_quantity_fill_before_gross_and_fee_checks",
+      "settlement_plan_later_malformed_receipt_does_not_apply_earlier_fill",
+      "settlement_plan_accumulates_each_actual_seller_fee_component",
+      "settlement_plan_account_failure_preserves_all_four_transaction_containers"
+    ],
+    "execution": "未运行cargo或产品测试；主协调者统一预编译与10秒普通测试deadline，多线程参数由其记录",
+    "tdd": "先写SellerChargeAllocation测试再迁实现，但受子代理禁止cargo限制未取得实际red；本批语义不变重构不伪造red/green"
+  },
+  "static_checks": [
+    "指定文件rustfmt --edition 2021 --config skip_children=true成功",
+    "指定文件git diff --check成功（只读）"
+  ],
+  "semantic_basis": [
+    "docs/decisions/0017-escrow-parallel-tick.md顶部修订及§1、§2",
+    "docs/decisions/0018-long-running-immutable-timeline.md§7",
+    "challenge-2026-10-03/action-index.md和relationships.md"
+  ],
+  "domain_scope": "不新增交易制度；Money分、shares股、T+1及nominal/charged区别保留；卖方分项优先级仍ADR-0017游戏简化，无重新认证现实清算之声明",
+  "read_files": [
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation.rs",
+      "sha256_current": "6552b7cc7debe368ee45f2e9b332df4635eb3a1eaee6ce0f219df2f2d6ab41ad",
+      "lines_current": 1179,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/transition.rs",
+      "sha256_current": "d319d220d1d03b7d93ce32181299d3057905ec6bc4f756d669b62b9604ba87a0",
+      "lines_current": 356,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/ledger_validation.rs",
+      "sha256_current": "c558e8fef760e6c93842c0fecf92525fb0eda818ee7104d70fa192651fea21bc",
+      "lines_current": 402,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/settlement.rs",
+      "sha256_current": "1f1a39fa73d00eaf0755c4c1cfc8c61d61bc58096a2bd9092d05203aa2d9722c",
+      "lines_current": 185,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement.rs",
+      "sha256_current": "fce6ad3082fc4808a8b07be8cdff9b8da76ad7fe59b8755da5f316ae3d71b893",
+      "lines_current": 248,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation_tests.rs",
+      "sha256_current": "77cc8917605b5ab5af319fcf25489d4436aef4f5f82bb96302403d6995e8b702",
+      "lines_current": 956,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/transition_tests.rs",
+      "sha256_current": "f774682a6d97e90f410eff23b45bc728491172ed6be65deddb69eb2b20de7ae6",
+      "lines_current": 249,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/settlement_tests.rs",
+      "sha256_current": "4b690541486400c8ee98696a457c7b237e94503257e3d9203878898f683b6559",
+      "lines_current": 663,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement_tests.rs",
+      "sha256_current": "df96cb6963dc422463be7ef327c261b528f145b674eb9a7c5a69f6b53df3d1de",
+      "lines_current": 1118,
+      "reading": "实施前分段全文读取至EOF；ledger_validation和transition_tests未改变生产算法/断言"
+    }
+  ]
+}

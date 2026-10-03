@@ -41,7 +41,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
     let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
-    assert_eq!(authority.pending_player.len(), 2);
+    assert_eq!(authority.state.pending_player.len(), 2);
     assert_eq!(
         output
             .candidates
@@ -131,18 +131,26 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         .commit();
 
     assert_eq!(committed.tick.events, output.events);
-    assert!(authority.pending_player.is_empty());
-    assert_eq!(authority.next_order_id, 4);
+    assert!(authority.state.pending_player.is_empty());
+    assert_eq!(authority.state.next_order_id, 4);
     assert_eq!(authority.seq(), 3);
-    assert_eq!(authority.next_receipt_base, 4);
-    assert_eq!(authority.envelope_ledger.next_receipt_index(), 4);
-    assert_eq!(authority.envelope_ledger.iter().count(), 0);
-    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
-    assert!(authority.markets[&code].resting_orders().is_empty());
-    assert_eq!(authority.accounts[&PLAYER].positions[&code].qty, LOT * 2);
-    assert_eq!(authority.accounts[&PLAYER].sellable_qty(&code), 0);
-    assert!(!authority.accounts[&SELLER].positions.contains_key(&code));
-    assert_eq!(authority.accounts[&SELLER].cash, Money::from_cents(199_398));
+    assert_eq!(authority.state.next_receipt_base, 4);
+    assert_eq!(authority.state.envelope_ledger.next_receipt_index(), 4);
+    assert_eq!(authority.state.envelope_ledger.iter().count(), 0);
+    assert_eq!(authority.state.envelope_ledger.terminal_count(), 0);
+    assert!(authority.state.markets[&code].resting_orders().is_empty());
+    assert_eq!(
+        authority.state.accounts[&PLAYER].positions()[&code].qty(),
+        LOT * 2
+    );
+    assert_eq!(authority.state.accounts[&PLAYER].sellable_qty(&code), 0);
+    assert!(!authority.state.accounts[&SELLER]
+        .positions()
+        .contains_key(&code));
+    assert_eq!(
+        authority.state.accounts[&SELLER].cash(),
+        Money::from_cents(199_398)
+    );
     assert_eq!(
         authority.business_state_hash().unwrap(),
         committed.receipt.business_hash()
@@ -158,9 +166,11 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
 fn projects_retail_submission_and_bilateral_fills_from_typed_facts() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     authority
+        .state
         .retail_experience
         .insert(PLAYER, RetailExperienceState::without_equity_reference());
     authority
+        .state
         .retail_experience
         .insert(SELLER, RetailExperienceState::without_equity_reference());
     enqueue_crossing_buy(&mut authority, &code);
@@ -200,6 +210,7 @@ fn projects_each_retail_fill_with_its_own_request() {
     let (mut authority, code) = session_with_resting_sell(true, LOT * 2);
     for account in [PLAYER, SELLER] {
         authority
+            .state
             .retail_experience
             .insert(account, RetailExperienceState::without_equity_reference());
     }
@@ -251,6 +262,7 @@ fn projects_each_retail_fill_with_its_own_request() {
 fn market_remainder_is_not_reported_as_an_auction_abort() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     authority
+        .state
         .retail_experience
         .insert(PLAYER, RetailExperienceState::without_equity_reference());
     authority
@@ -292,8 +304,9 @@ fn crossing_trade_has_a_complete_causal_chain() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     // The fixture installs the maker directly. Seed its genuine pre-existing origin so the
     // diagnostic report can reconcile both sides of the Continuous execution.
-    authority.causal_submitted(&authority.markets[&code].resting_orders()[0], &code);
+    authority.causal_submitted(&authority.state.markets[&code].resting_orders()[0], &code);
     authority
+        .state
         .retail_experience
         .insert(PLAYER, RetailExperienceState::without_equity_reference());
     authority
@@ -337,7 +350,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
-    assert_eq!(authority.pending_player.len(), 1);
+    assert_eq!(authority.state.pending_player.len(), 1);
     assert_eq!(
         output
             .candidates
@@ -377,27 +390,27 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
         .commit();
 
     assert_eq!(committed.tick.events, output.events);
-    assert!(authority.pending_player.is_empty());
-    assert_eq!(authority.next_order_id, 3);
+    assert!(authority.state.pending_player.is_empty());
+    assert_eq!(authority.state.next_order_id, 3);
     assert_eq!(authority.seq(), 2);
-    assert_eq!(authority.next_receipt_base, 2);
-    assert_eq!(authority.envelope_ledger.next_receipt_index(), 2);
-    assert_eq!(authority.envelope_ledger.iter().count(), 0);
-    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
-    assert!(authority.markets[&code].resting_orders().is_empty());
+    assert_eq!(authority.state.next_receipt_base, 2);
+    assert_eq!(authority.state.envelope_ledger.next_receipt_index(), 2);
+    assert_eq!(authority.state.envelope_ledger.iter().count(), 0);
+    assert_eq!(authority.state.envelope_ledger.terminal_count(), 0);
+    assert!(authority.state.markets[&code].resting_orders().is_empty());
 
-    let buyer = &authority.accounts[&PLAYER];
-    let buyer_position = &buyer.positions[&code];
-    assert_eq!(buyer.cash, Money::from_cents(9_899_499));
-    assert_eq!(buyer_position.qty, LOT);
-    assert_eq!(buyer_position.t1_locked, expected_locked);
-    assert_eq!(buyer_position.invested_cents, 100_000);
-    assert_eq!(buyer_position.recovered_cents, 0);
+    let buyer = &authority.state.accounts[&PLAYER];
+    let buyer_position = &buyer.positions()[&code];
+    assert_eq!(buyer.cash(), Money::from_cents(9_899_499));
+    assert_eq!(buyer_position.qty(), LOT);
+    assert_eq!(buyer_position.t1_locked(), expected_locked);
+    assert_eq!(buyer_position.invested_cents(), 100_000);
+    assert_eq!(buyer_position.recovered_cents(), 0);
     assert_eq!(buyer.sellable_qty(&code), expected_sellable);
 
-    let seller = &authority.accounts[&SELLER];
-    assert_eq!(seller.cash, Money::from_cents(99_449));
-    assert!(!seller.positions.contains_key(&code));
+    let seller = &authority.state.accounts[&SELLER];
+    assert_eq!(seller.cash(), Money::from_cents(99_449));
+    assert!(!seller.positions().contains_key(&code));
     assert_eq!(
         authority.business_state_hash().unwrap(),
         committed.receipt.business_hash()
@@ -415,14 +428,15 @@ fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, S
     let mut game = GameSession::new(setup, 42).unwrap();
     // Product sessions are correctly fixed to A-share T+1. The false branch is an
     // in-crate test seam for the lower settlement transaction only.
-    game.setup.t1_enabled = t1_enabled;
-    let code = game.markets.keys().next().unwrap().clone();
+    game.state.setup.t1_enabled = t1_enabled;
+    let code = game.state.markets.keys().next().unwrap().clone();
     let mut seller = Account::new(SELLER, AccountKind::Player, Money::ZERO);
     seller
         .grant_position(code.clone(), sell_qty, Money::from_cents(PRICE_CENTS))
         .unwrap();
-    assert!(game.accounts.insert(SELLER, seller).is_none());
+    assert!(game.state.accounts.insert(SELLER, seller).is_none());
     let placed = game
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -440,10 +454,10 @@ fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, S
         .unwrap();
     assert!(placed.trades.is_empty());
     assert_eq!(placed.resting.unwrap().qty, sell_qty);
-    game.next_order_id = FIRST_BUY_ORDER.0;
+    game.state.next_order_id = FIRST_BUY_ORDER.0;
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    let (key, envelope) = game.envelope_ledger.iter().next().unwrap();
-    assert_eq!(game.envelope_ledger.iter().count(), 1);
+    let (key, envelope) = game.state.envelope_ledger.iter().next().unwrap();
+    assert_eq!(game.state.envelope_ledger.iter().count(), 1);
     assert_eq!(key.account, SELLER);
     assert_eq!(key.stock, code);
     assert_eq!(key.order, SELL_ORDER);

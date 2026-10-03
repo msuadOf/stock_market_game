@@ -2,17 +2,23 @@ import { createElement, useRef } from "react";
 import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
 import { ProtocolCoordinator } from "../host/protocol-coordinator.ts";
 import type { HostUpdate } from "../host/host-update.ts";
-import type { KlinePoint } from "../components/PriceChart.tsx";
+import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
+import type { AuctionPoint } from "../mobile/market-model.ts";
 
 export type ChartRuntimeObservation = {
   readonly daily: readonly KlinePoint[];
   readonly active: Readonly<Record<string, KlinePoint>>;
+  readonly prices: readonly PricePoint[];
+  readonly auctions: readonly AuctionPoint[];
+  readonly history: Readonly<Record<string, readonly PricePoint[]>>;
+  readonly code: string;
 };
 
-export function MarketChartRuntimeProbe({ baseline, updates, observe }: {
+export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdates }: {
   readonly baseline: Extract<HostUpdate, { type: "baseline" }>;
   readonly updates: readonly Extract<HostUpdate, { type: "protocol" }>[];
   readonly observe: (stage: "baseline" | "updated", observation: ChartRuntimeObservation) => void;
+  readonly afterUpdates?: (runtime: ReturnType<typeof useMarketChartRuntime>) => void;
 }) {
   const runtime = useMarketChartRuntime({ autoOrderManagerRef: { current: null }, setNotice: () => {} });
   const latestRuntime = useRef(runtime);
@@ -31,10 +37,16 @@ export function MarketChartRuntimeProbe({ baseline, updates, observe }: {
     coordinator.current.accept(baseline);
   } else if (stage.current === 1) {
     stage.current = 2;
-    observe("baseline", { daily: runtime.dailyChartData, active: runtime.activeDailyCandlesRef.current });
+    observe("baseline", observation(runtime));
     for (const update of updates) coordinator.current.accept(update);
+    afterUpdates?.(runtime);
   } else {
-    observe("updated", { daily: runtime.dailyChartData, active: runtime.activeDailyCandlesRef.current });
+    observe("updated", observation(runtime));
   }
   return createElement("output", null, JSON.stringify(runtime.dailyChartData));
+}
+
+function observation(runtime: ReturnType<typeof useMarketChartRuntime>): ChartRuntimeObservation {
+  return { daily: runtime.dailyChartData, active: runtime.getActiveDailyCandles(), prices: runtime.chartData,
+    auctions: runtime.auctionChartData, history: runtime.getPriceHistory(), code: runtime.chartCode };
 }

@@ -79,47 +79,22 @@ use engine::account::Position;
 #[test]
 fn position_cost_price_integer_rounding() {
     // 整除：invested=100000(1000元), recovered=0, qty=100 → cost=1000 分/股 = 10.00 元
-    let p = Position {
-        qty: 100,
-        t1_locked: 0,
-        invested_cents: 100_000,
-        recovered_cents: 0,
-    };
+    let p = Position::from_restored_parts(100, 0, 100_000, 0);
     assert_eq!(p.cost_price().unwrap().cents(), 1000);
 
     // 加权：invested=220000, qty=200 → 1100 分 = 11.00
-    let npc_decisions = Position {
-        qty: 200,
-        t1_locked: 0,
-        invested_cents: 220_000,
-        recovered_cents: 0,
-    };
+    let npc_decisions = Position::from_restored_parts(200, 0, 220_000, 0);
     assert_eq!(npc_decisions.cost_price().unwrap().cents(), 1100);
 
     // 非整除 half-to-even：invested=1000, recovered=0, qty=3 → 1000/3=333.33… → 333（<.5 向下）
-    let validator = Position {
-        qty: 3,
-        t1_locked: 0,
-        invested_cents: 1000,
-        recovered_cents: 0,
-    };
+    let validator = Position::from_restored_parts(3, 0, 1000, 0);
     assert_eq!(validator.cost_price().unwrap().cents(), 333);
 
     // 恰好半（half-to-even）：invested=5, qty=2 → 2.5 → 偶数取 2
-    let stock_execution = Position {
-        qty: 2,
-        t1_locked: 0,
-        invested_cents: 5,
-        recovered_cents: 0,
-    };
+    let stock_execution = Position::from_restored_parts(2, 0, 5, 0);
     assert_eq!(stock_execution.cost_price().unwrap().cents(), 2); // 2.5 → 2 (偶)
                                                                   // invested=7, qty=2 → 3.5 → 偶数取 4
-    let receipt_aggregation = Position {
-        qty: 2,
-        t1_locked: 0,
-        invested_cents: 7,
-        recovered_cents: 0,
-    };
+    let receipt_aggregation = Position::from_restored_parts(2, 0, 7, 0);
     assert_eq!(receipt_aggregation.cost_price().unwrap().cents(), 4); // 3.5 → 4 (偶)
 }
 
@@ -127,35 +102,20 @@ fn position_cost_price_integer_rounding() {
 fn position_cost_price_negative() {
     // 净投入/持仓：invested < recovered → 负成本
     // invested=100000, recovered=200000, qty=100 → (100000-200000)/100 = -1000 分
-    let p = Position {
-        qty: 100,
-        t1_locked: 0,
-        invested_cents: 100_000,
-        recovered_cents: 200_000,
-    };
+    let p = Position::from_restored_parts(100, 0, 100_000, 200_000);
     assert_eq!(p.cost_price().unwrap().cents(), -1000);
 }
 
 #[test]
 fn position_cost_price_none_when_zero_qty() {
-    let p = Position {
-        qty: 0,
-        t1_locked: 0,
-        invested_cents: 0,
-        recovered_cents: 0,
-    };
+    let p = Position::from_restored_parts(0, 0, 0, 0);
     assert!(p.cost_price().is_none());
     assert_eq!(p.sellable(), 0);
 }
 
 #[test]
 fn position_sellable_minus_t1_locked() {
-    let p = Position {
-        qty: 100,
-        t1_locked: 30,
-        invested_cents: 0,
-        recovered_cents: 0,
-    };
+    let p = Position::from_restored_parts(100, 30, 0, 0);
     assert_eq!(p.sellable(), 70);
 }
 
@@ -169,8 +129,8 @@ fn account_new_player_has_no_strategy() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    assert_eq!(a.cash.cents(), 10_000_000);
-    assert!(a.positions.is_empty());
+    assert_eq!(a.cash().cents(), 10_000_000);
+    assert!(a.positions().is_empty());
     assert!(!a.has_strategy()); // 玩家 None
     assert_eq!(a.cost_price(&StockCode("600101".to_string())), None); // 无持仓
     assert_eq!(a.sellable_qty(&StockCode("600101".to_string())), 0);
@@ -194,12 +154,12 @@ fn apply_buy_debits_cash_and_adds_position() {
     // 买 10.00 × 100 = 1000 元 = 100000 分；佣金 max(100000*0.00025=25, 500)=500 分
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap();
-    assert_eq!(a.cash.cents(), 10_000_000 - 100_000 - 500 - 1);
-    let pos = a.positions.get(&code).unwrap();
-    assert_eq!(pos.qty, 100);
-    assert_eq!(pos.invested_cents, 100_000);
-    assert_eq!(pos.recovered_cents, 0);
-    assert_eq!(pos.t1_locked, 0); // T+0
+    assert_eq!(a.cash().cents(), 10_000_000 - 100_000 - 500 - 1);
+    let pos = a.positions().get(&code).unwrap();
+    assert_eq!(pos.qty(), 100);
+    assert_eq!(pos.invested_cents(), 100_000);
+    assert_eq!(pos.recovered_cents(), 0);
+    assert_eq!(pos.t1_locked(), 0); // T+0
     assert_eq!(pos.cost_price().unwrap().cents(), 1000); // 10.00
     assert_eq!(a.sellable_qty(&code), 100); // T+0 可卖
 }
@@ -226,9 +186,9 @@ fn apply_buy_batch_charges_minimum_commission_once_across_fills() {
         )
         .unwrap();
 
-    assert_eq!(account.cash, Money::ZERO);
-    assert_eq!(account.positions[&code].qty, 200);
-    assert_eq!(account.positions[&code].invested_cents, 200_000);
+    assert_eq!(account.cash(), Money::ZERO);
+    assert_eq!(account.positions()[&code].qty(), 200);
+    assert_eq!(account.positions()[&code].invested_cents(), 200_000);
 }
 
 #[test]
@@ -243,9 +203,9 @@ fn apply_buy_weighted_cost_price() {
         .unwrap(); // 10.00×100
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1200), 100, false)
         .unwrap(); // 12.00×100
-    let pos = a.positions.get(&code).unwrap();
-    assert_eq!(pos.qty, 200);
-    assert_eq!(pos.invested_cents, 220_000); // 100000+120000
+    let pos = a.positions().get(&code).unwrap();
+    assert_eq!(pos.qty(), 200);
+    assert_eq!(pos.invested_cents(), 220_000); // 100000+120000
     assert_eq!(pos.cost_price().unwrap().cents(), 1100); // 11.00 加权
 }
 
@@ -258,8 +218,8 @@ fn apply_buy_insufficient_cash_rejected_and_unchanged() {
         .apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap_err();
     assert!(matches!(err, AccountError::InsufficientCash { .. }));
-    assert_eq!(a.cash.cents(), 1000); // 不变
-    assert!(a.positions.is_empty()); // 无半成交
+    assert_eq!(a.cash().cents(), 1000); // 不变
+    assert!(a.positions().is_empty()); // 无半成交
 }
 
 #[test]
@@ -278,7 +238,7 @@ fn public_trade_boundary_rejects_zero_quantity_and_non_positive_price() {
         account.apply_sell(&cfg_t0(), code, Money::ZERO, 1),
         Err(AccountError::InvalidTrade { .. })
     ));
-    assert!(account.positions.is_empty());
+    assert!(account.positions().is_empty());
 }
 
 #[test]
@@ -289,22 +249,16 @@ fn buy_position_overflow_is_rejected_without_debiting_cash() {
         Money::from_cents(i64::MAX),
     );
     let code = StockCode("600101".to_string());
-    account.positions.insert(
-        code.clone(),
-        Position {
-            qty: u32::MAX,
-            t1_locked: 0,
-            invested_cents: 0,
-            recovered_cents: 0,
-        },
-    );
-    let cash_before = account.cash;
+    account
+        .grant_position(code.clone(), u32::MAX, Money::ZERO)
+        .unwrap();
+    let cash_before = account.cash();
     let error = account
         .apply_buy(&cfg_t0(), code, Money::from_cents(1), 1, false)
         .unwrap_err();
     assert!(matches!(error, AccountError::MoneyErr(_)));
-    assert_eq!(account.cash, cash_before);
-    assert_eq!(account.positions.values().next().unwrap().qty, u32::MAX);
+    assert_eq!(account.cash(), cash_before);
+    assert_eq!(account.positions().values().next().unwrap().qty(), u32::MAX);
 }
 
 #[test]
@@ -317,7 +271,7 @@ fn apply_buy_t1_locks_sellable() {
     let code = StockCode("600101".to_string());
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, true)
         .unwrap(); // t1_enabled
-    assert_eq!(a.positions.get(&code).unwrap().t1_locked, 100);
+    assert_eq!(a.positions().get(&code).unwrap().t1_locked(), 100);
     assert_eq!(a.sellable_qty(&code), 0); // T+1 当日不可卖
 }
 
@@ -331,12 +285,12 @@ fn apply_sell_credits_net_and_clears_position() {
     let code = StockCode("600101".to_string());
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap(); // 持 100 股
-    let cash_before = a.cash.cents();
+    let cash_before = a.cash().cents();
     // 卖 10.00×100：佣金 500；印花税 50；过户费 1；净额 99449。
     a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 100)
         .unwrap();
-    assert_eq!(a.cash.cents(), cash_before + 99_449);
-    assert!(!a.positions.contains_key(&code)); // 清仓删除
+    assert_eq!(a.cash().cents(), cash_before + 99_449);
+    assert!(!a.positions().contains_key(&code)); // 清仓删除
 }
 
 #[test]
@@ -346,7 +300,7 @@ fn apply_sell_rejects_when_fees_would_make_cash_negative_and_is_atomic() {
     account
         .grant_position(code.clone(), 50, Money::from_cents(1))
         .unwrap();
-    let position_before = account.positions[&code].clone();
+    let position_before = account.positions()[&code].clone();
 
     let error = account
         .apply_sell(&cfg_t0(), code, Money::from_cents(1), 50)
@@ -356,17 +310,17 @@ fn apply_sell_rejects_when_fees_would_make_cash_negative_and_is_atomic() {
         error,
         AccountError::InsufficientCashForFees { .. }
     ));
-    assert_eq!(account.cash, Money::ZERO);
-    let position_after = &account.positions[&StockCode("600101".to_string())];
-    assert_eq!(position_after.qty, position_before.qty);
-    assert_eq!(position_after.t1_locked, position_before.t1_locked);
+    assert_eq!(account.cash(), Money::ZERO);
+    let position_after = &account.positions()[&StockCode("600101".to_string())];
+    assert_eq!(position_after.qty(), position_before.qty());
+    assert_eq!(position_after.t1_locked(), position_before.t1_locked());
     assert_eq!(
-        position_after.invested_cents,
-        position_before.invested_cents
+        position_after.invested_cents(),
+        position_before.invested_cents()
     );
     assert_eq!(
-        position_after.recovered_cents,
-        position_before.recovered_cents
+        position_after.recovered_cents(),
+        position_before.recovered_cents()
     );
 }
 
@@ -391,7 +345,7 @@ fn apply_sell_rejects_oversell() {
             ..
         }
     ));
-    assert_eq!(a.positions.get(&code).unwrap().qty, 100); // 不变
+    assert_eq!(a.positions().get(&code).unwrap().qty(), 100); // 不变
 }
 
 #[test]
@@ -401,7 +355,7 @@ fn apply_trade_batch_rejects_oversell_without_mutation() {
     account
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
-    let cash_before = account.cash;
+    let cash_before = account.cash();
 
     let error = account
         .apply_trade_batch(
@@ -417,8 +371,8 @@ fn apply_trade_batch_rejects_oversell_without_mutation() {
         .unwrap_err();
 
     assert!(matches!(error, AccountError::InsufficientShares { .. }));
-    assert_eq!(account.cash, cash_before);
-    assert_eq!(account.positions[&code].qty, 100);
+    assert_eq!(account.cash(), cash_before);
+    assert_eq!(account.positions()[&code].qty(), 100);
 }
 
 #[test]
@@ -450,9 +404,9 @@ fn apply_sell_partial_updates_recovered() {
         .unwrap();
     a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1200), 50)
         .unwrap(); // 12.00 卖 50
-    let pos = a.positions.get(&code).unwrap();
-    assert_eq!(pos.qty, 50);
-    assert_eq!(pos.recovered_cents, 60_000); // 12.00×50=600 元=60000 分
+    let pos = a.positions().get(&code).unwrap();
+    assert_eq!(pos.qty(), 50);
+    assert_eq!(pos.recovered_cents(), 60_000); // 12.00×50=600 元=60000 分
 }
 
 #[test]
@@ -472,7 +426,7 @@ fn apply_trade_dispatches_buy_and_sell() {
         false,
     )
     .unwrap();
-    assert_eq!(a.positions.get(&code).unwrap().qty, 100);
+    assert_eq!(a.positions().get(&code).unwrap().qty(), 100);
     a.apply_trade(
         &cfg_t0(),
         Side::Sell,
@@ -482,7 +436,7 @@ fn apply_trade_dispatches_buy_and_sell() {
         false,
     )
     .unwrap();
-    assert!(!a.positions.contains_key(&code));
+    assert!(!a.positions().contains_key(&code));
 }
 
 #[test]
@@ -527,11 +481,11 @@ fn grant_position_sets_cost_basis() {
         Money::from_cents(1000),
     )
     .unwrap();
-    let p = a.positions.get(&StockCode("600101".to_string())).unwrap();
-    assert_eq!(p.qty, 1000);
-    assert_eq!(p.invested_cents, 1_000_000); // 1000 × 1000
-    assert_eq!(p.recovered_cents, 0);
-    assert_eq!(p.t1_locked, 0);
+    let p = a.positions().get(&StockCode("600101".to_string())).unwrap();
+    assert_eq!(p.qty(), 1000);
+    assert_eq!(p.invested_cents(), 1_000_000); // 1000 × 1000
+    assert_eq!(p.recovered_cents(), 0);
+    assert_eq!(p.t1_locked(), 0);
     assert_eq!(p.cost_price().unwrap().cents(), 1000);
 }
 
@@ -566,15 +520,10 @@ fn reexport_from_crate_root() {
     assert!(matches!(strategy.profile(), StrategyProfile::Retail(_)));
     npc.set_strategy(Box::new(strategy));
     assert!(npc.has_strategy());
-    assert!(npc.strategy.as_ref().unwrap().production_state().is_ok());
+    assert!(npc.strategy().unwrap().production_state().is_ok());
 
     let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
-    let _: Position = Position {
-        qty: 0,
-        t1_locked: 0,
-        invested_cents: 0,
-        recovered_cents: 0,
-    };
+    let _: Position = Position::from_restored_parts(0, 0, 0, 0);
     let _: AccountError = AccountError::NoPosition(StockCode("x".to_string()));
     let _: Intent = Intent::PlaceMarket {
         code: StockCode("x".to_string()),

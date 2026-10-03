@@ -1,0 +1,52 @@
+{
+  "command": [
+    "cargo",
+    "check",
+    "-p",
+    "engine",
+    "-p",
+    "server",
+    "-p",
+    "web-wasm",
+    "-p",
+    "stock-market-game",
+    "--all-targets",
+    "--message-format=json",
+    "-j",
+    "32"
+  ],
+  "environment": {
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0"
+  },
+  "exit_code": 0,
+  "timed_out": false,
+  "seconds": 39.535,
+  "samples": [
+    {
+      "seconds": 0.0,
+      "processes": 1,
+      "threads": 1,
+      "cpu": 0.0
+    },
+    {
+      "seconds": 10.01,
+      "processes": 4,
+      "threads": 17,
+      "cpu": 299.4
+    },
+    {
+      "seconds": 20.02,
+      "processes": 2,
+      "threads": 7,
+      "cpu": 109.9
+    },
+    {
+      "seconds": 30.03,
+      "processes": 1,
+      "threads": 3,
+      "cpu": 7.4
+    }
+  ],
+  "meaning": "仅编译或类型检查，不运行测试"
+}

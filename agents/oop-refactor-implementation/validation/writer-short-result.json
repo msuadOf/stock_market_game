@@ -1,0 +1,78 @@
+{
+  "binary": "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+  "parallel_processes": 5,
+  "rayon_per_process": 4,
+  "process_deadline_seconds": 10,
+  "tests": [
+    {
+      "filter": "runtime::tests::capture_artifact_receipts_bind_empty_and_large_bytes",
+      "command": [
+        "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+        "--exact",
+        "runtime::tests::capture_artifact_receipts_bind_empty_and_large_bytes",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "seconds": 0.018,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest runtime::tests::capture_artifact_receipts_bind_empty_and_large_bytes ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "filter": "runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure",
+      "command": [
+        "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+        "--exact",
+        "runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "seconds": 0.01,
+      "timed_out": false,
+      "passed": false,
+      "output": "\nrunning 1 test\ntest runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure ... FAILED\n\nfailures:\n\n---- runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure stdout ----\n\nthread 'runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure' (15) panicked at packages/engine/examples/escrow_verification_harness/runtime.rs:846:13:\nassertion failed: parent.ancestors().any(|path|\n        path.file_name().is_some_and(|name| name == \".tmp\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    runtime::tests::capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "filter": "runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output",
+      "command": [
+        "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+        "--exact",
+        "runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "seconds": 0.008,
+      "timed_out": false,
+      "passed": false,
+      "output": "\nrunning 1 test\ntest runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output ... FAILED\n\nfailures:\n\n---- runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output stdout ----\n\nthread 'runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output' (14) panicked at packages/engine/examples/escrow_verification_harness/runtime.rs:846:13:\nassertion failed: parent.ancestors().any(|path|\n        path.file_name().is_some_and(|name| name == \".tmp\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    runtime::tests::capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "filter": "runtime::tests::workspace_directory_inputs_must_be_absolute",
+      "command": [
+        "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+        "--exact",
+        "runtime::tests::workspace_directory_inputs_must_be_absolute",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "seconds": 0.008,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest runtime::tests::workspace_directory_inputs_must_be_absolute ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "filter": "runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink",
+      "command": [
+        "target/debug/examples/escrow_verification_harness-ce9dd5ba6aa18b21",
+        "--exact",
+        "runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink",
+        "--test-threads=1"
+      ],
+      "exit_code": 101,
+      "seconds": 0.008,
+      "timed_out": false,
+      "passed": false,
+      "output": "\nrunning 1 test\ntest runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink ... FAILED\n\nfailures:\n\n---- runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink stdout ----\n\nthread 'runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink' (17) panicked at packages/engine/examples/escrow_verification_harness/runtime.rs:1103:14:\nfocused tests must use the registered workspace-local CARGO_TARGET_DIR: NotPresent\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    runtime::tests::workspace_path_validation_rejects_parent_escape_and_outside_symlink\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s\n\n"
+    }
+  ]
+}

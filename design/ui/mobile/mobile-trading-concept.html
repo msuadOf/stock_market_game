@@ -107,7 +107,80 @@ html,body{margin:0;width:100%;overflow-x:hidden}
 <main class="page" id="watch" hidden><section class="watchtitle"><b>我的自选</b><span>编辑　多股同列</span></section><nav class="watchtabs"><b>自选股</b><span>持仓股</span><span>板块</span></nav><section class="row"><div><b>华夏科技</b><small>600001　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="rr" d="M0 27L9 16L20 22L29 8L40 18L50 13L61 21L72 15L83 18L95 11L106 17L119 13L129 25L140 20L151 29L160 22"/></svg></div><div class="rate"><strong class="rb">+0.24%</strong><small>18.36</small></div></section><section class="row"><div><b>远航能源</b><small>300158　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−2.85%</strong><small>32.70</small></div></section><section class="row"><div><b>新锐制造</b><small>002668　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="rr" d="M0 27L9 16L20 22L29 8L40 18L50 13L61 21L72 15L83 18L95 11L106 17L119 13L129 25L140 20L151 29L160 22"/></svg></div><div class="rate"><strong class="rb">+0.90%</strong><small>9.84</small></div></section><section class="row"><div><b>东岳汽车</b><small>000725　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−1.75%</strong><small>5.61</small></div></section><section class="row"><div><b>半导体设备</b><small>560780　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−3.70%</strong><small>0.964</small></div></section></main>
 <footer class="nav"><button data-p="watch"><i>⌂</i>自选</button><button class="on" data-p="detail"><i>⌁</i>行情</button><button data-p="book"><i>⇄</i>交易</button><button data-p="watch"><i>▣</i>持仓</button><button data-p="watch"><i>◉</i>我的</button></footer></div>
 <script>
-const root=document.getElementById("m"),panels={time:document.getElementById("time"),day:document.getElementById("day"),book:document.getElementById("book")};root.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{if(!panels[b.dataset.v])return;Object.entries(panels).forEach(([k,v])=>v.hidden=k!==b.dataset.v);root.querySelectorAll("[data-v]").forEach(x=>x.classList.toggle("on",x===b))});root.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const to=b.dataset.p;if(to==="book"){document.getElementById("detail").hidden=false;document.getElementById("watch").hidden=true;root.querySelector('[data-v="book"]').click()}else{document.getElementById("detail").hidden=to!=="detail";document.getElementById("watch").hidden=to!=="watch";document.getElementById("ttl").textContent=to==="watch"?"模拟股市":"华夏科技"}root.querySelectorAll("[data-p]").forEach(x=>x.classList.toggle("on",x===b))});const p=document.getElementById("p"),r=document.getElementById("cliprect"),d=document.getElementById("dot"),o=document.getElementById("po");function draw(){let v=+p.value,x=3.6*v,m=Math.round(570+v*2.4);r.setAttribute("width",x);d.setAttribute("cx",x);d.setAttribute("cy",v<42?94:v<60?132:v<80?151:184);o.value=String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}p.oninput=draw;draw();
+// 此映射只驱动图稿动画，不代表真实交易时段或行情。
+function conceptProgress(value) {
+  const minutes = Math.round(570 + value * 2.4);
+  return {
+    x: 3.6 * value,
+    y: value < 42 ? 94 : value < 60 ? 132 : value < 80 ? 151 : 184,
+    time: String(Math.floor(minutes / 60)).padStart(2, "0") + ":" + String(minutes % 60).padStart(2, "0"),
+  };
+}
+
+class MobileTradingConceptController {
+  #root;
+  #panels;
+  #chartButtons;
+  #navButtons;
+  #detail;
+  #watch;
+  #title;
+  #progress;
+  #clip;
+  #dot;
+  #output;
+
+  constructor(document) {
+    this.#root = document.getElementById("m");
+    this.#panels = { time: document.getElementById("time"), day: document.getElementById("day"), book: document.getElementById("book") };
+    this.#chartButtons = this.#root.querySelectorAll("[data-v]");
+    this.#navButtons = this.#root.querySelectorAll("[data-p]");
+    this.#detail = document.getElementById("detail");
+    this.#watch = document.getElementById("watch");
+    this.#title = document.getElementById("ttl");
+    this.#progress = document.getElementById("p");
+    this.#clip = document.getElementById("cliprect");
+    this.#dot = document.getElementById("dot");
+    this.#output = document.getElementById("po");
+  }
+
+  bindEvents() {
+    this.#chartButtons.forEach(button => button.onclick = () => this.selectChartView(button));
+    this.#navButtons.forEach(button => button.onclick = () => this.navigateTo(button));
+    this.#progress.oninput = () => this.renderProgress();
+    this.renderProgress();
+  }
+
+  selectChartView(button) {
+    if (!this.#panels[button.dataset.v]) return;
+    Object.entries(this.#panels).forEach(([key, panel]) => panel.hidden = key !== button.dataset.v);
+    this.#chartButtons.forEach(candidate => candidate.classList.toggle("on", candidate === button));
+  }
+
+  navigateTo(button) {
+    const to = button.dataset.p;
+    if (to === "book") {
+      this.#detail.hidden = false;
+      this.#watch.hidden = true;
+      this.#root.querySelector('[data-v="book"]').click();
+    } else {
+      this.#detail.hidden = to !== "detail";
+      this.#watch.hidden = to !== "watch";
+      this.#title.textContent = to === "watch" ? "模拟股市" : "华夏科技";
+    }
+    this.#navButtons.forEach(candidate => candidate.classList.toggle("on", candidate === button));
+  }
+
+  renderProgress() {
+    const position = conceptProgress(+this.#progress.value);
+    this.#clip.setAttribute("width", position.x);
+    this.#dot.setAttribute("cx", position.x);
+    this.#dot.setAttribute("cy", position.y);
+    this.#output.value = position.time;
+  }
+}
+
+new MobileTradingConceptController(document).bindEvents();
 </script>
 <style>
 /* 以参考图为基准：报价最大、盘口次之、图表标尺最小，形成紧凑的信息密度。 */

@@ -1,0 +1,3485 @@
+diff --git a/packages/engine/src/session/pipeline/account_settlement.rs b/packages/engine/src/session/pipeline/account_settlement.rs
+index f1f6036..3221684 100644
+--- a/packages/engine/src/session/pipeline/account_settlement.rs
++++ b/packages/engine/src/session/pipeline/account_settlement.rs
+@@ -1,12 +1,13 @@
+-//! Atomic Settlement settlement plus retail-experience projection.
++//! 原子准备 Settlement 及经验 projection，成功后一起采纳账户 patch。
+ 
+ use super::institutional_experience_projection::project_institutional_experience;
+ use super::retail_projection::{
+     canonical_unseen_receipts, project_retail_receipts, RetailProjectionError,
+     RetailProjectionInput, RetailProjectionSeen, RetailReceiptEvent,
+ };
+-use super::settlement::{prepare_receipt_settlements, SettlementApplication};
++use super::settlement::{ReceiptSettlementPlan, SettlementApplication};
+ use super::{EnvelopeReceipt, StepFatal};
++use crate::session::decision_chain::personal_state::BeliefParticipantState;
+ use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
+ use crate::{
+     Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockCode,
+@@ -35,9 +36,8 @@ pub(super) enum SettlementTransactionError {
+     Projection(#[from] RetailProjectionError),
+ }
+ 
+-/// Applies Settlement directly to the three replay-sensitive containers owned by a
+-/// prospective session shadow. Preparation touches only settled accounts and
+-/// commits both experience projections only after they succeed.
++/// 在 session shadow 的重放敏感容器中应用 Settlement。
++/// 只准备实际成交账户，两个经验 projection 均成功后再一起提交。
+ pub(super) fn apply_session_settlement_transaction(
+     session: &mut GameSession,
+     receipts: &[EnvelopeReceipt],
+@@ -45,22 +45,21 @@ pub(super) fn apply_session_settlement_transaction(
+     let moment = crate::experience::ExperienceMoment {
+         civil_date: session.civil_date(),
+         market_minute: session.current_market_minute(),
+-        trading_day: u64::from(session.day),
++        trading_day: u64::from(session.state.day),
+     };
+-    let t1_enabled = session.setup.t1_enabled;
++    let t1_enabled = session.state.setup.t1_enabled;
+     apply_settlement_transaction_with_beliefs(
+-        &mut session.accounts,
+-        &mut session.retail_experience,
+-        &mut session.belief_books,
+-        &mut session.retail_projection_seen,
++        &mut session.state.accounts,
++        &mut session.state.retail_experience,
++        &mut session.state.belief_participants,
++        &mut session.state.retail_projection_seen,
+         moment,
+         receipts,
+         t1_enabled,
+     )
+ }
+ 
+-/// Runs settlement and experience projections on private shadows and commits
+-/// all affected authoritative containers together only after every phase succeeds.
++/// 在私有 shadow 中结算和投影；全部阶段成功后一起提交受影响的权威容器。
+ #[cfg(test)]
+ pub(super) fn apply_settlement_transaction(
+     accounts: &mut AccountBook,
+@@ -70,11 +69,11 @@ pub(super) fn apply_settlement_transaction(
+     receipts: &[EnvelopeReceipt],
+     t1_enabled: bool,
+ ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
+-    let mut belief_books = AccountPagedMap::default();
++    let mut belief_participants = AccountPagedMap::default();
+     apply_settlement_transaction_with_beliefs(
+         accounts,
+         retail_experience,
+-        &mut belief_books,
++        &mut belief_participants,
+         seen,
+         test_experience_moment(market_minute),
+         receipts,
+@@ -85,7 +84,7 @@ pub(super) fn apply_settlement_transaction(
+ pub(super) fn apply_settlement_transaction_with_beliefs(
+     accounts: &mut AccountBook,
+     retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
+-    belief_books: &mut AccountPagedMap<crate::strategy::BeliefBook>,
++    belief_participants: &mut AccountPagedMap<BeliefParticipantState>,
+     seen: &mut RetailProjectionSeen,
+     moment: crate::experience::ExperienceMoment,
+     receipts: &[EnvelopeReceipt],
+@@ -94,31 +93,42 @@ pub(super) fn apply_settlement_transaction_with_beliefs(
+     let prepared = prepare_settlement_transaction_with_beliefs(
+         accounts,
+         retail_experience,
+-        belief_books,
++        belief_participants,
+         seen,
+         moment,
+         receipts,
+         t1_enabled,
+     )?;
+-    apply_prepared_settlement_transaction(accounts, retail_experience, belief_books, seen, prepared)
++    apply_prepared_settlement_transaction(
++        accounts,
++        retail_experience,
++        belief_participants,
++        seen,
++        prepared,
++    )
+ }
+ 
+ fn apply_prepared_settlement_transaction(
+     accounts: &mut AccountBook,
+     retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
+-    belief_books: &mut AccountPagedMap<crate::strategy::BeliefBook>,
++    belief_participants: &mut AccountPagedMap<BeliefParticipantState>,
+     seen: &mut RetailProjectionSeen,
+     prepared: PreparedSettlementTransaction,
+ ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
+     accounts.extend(prepared.account_patch);
+     retail_experience.extend(prepared.retail_patch);
+-    belief_books.extend(prepared.belief_patch);
++    for (account_id, belief) in prepared.belief_patch {
++        let mut participant = belief_participants
++            .remove(&account_id)
++            .expect("prepared institutional belief participant is missing");
++        *participant.belief_mut() = belief;
++        belief_participants.insert(account_id, participant);
++    }
+     *seen = prepared.seen;
+     Ok(prepared.output)
+ }
+ 
+-/// Produces a detached Settlement patch so P4-Projection need not clone every account before
+-/// asking Settlement to clone the accounts touched by this receipt batch.
++/// 准备独立 Settlement patch，仅克隆本批收据实际触及的账户。
+ #[cfg(test)]
+ pub(super) fn prepare_settlement_transaction(
+     accounts: &AccountBook,
+@@ -128,11 +138,11 @@ pub(super) fn prepare_settlement_transaction(
+     receipts: &[EnvelopeReceipt],
+     t1_enabled: bool,
+ ) -> Result<PreparedSettlementTransaction, SettlementTransactionError> {
+-    let belief_books = AccountPagedMap::default();
++    let belief_participants = AccountPagedMap::default();
+     prepare_settlement_transaction_with_beliefs(
+         accounts,
+         retail_experience,
+-        &belief_books,
++        &belief_participants,
+         seen,
+         test_experience_moment(market_minute),
+         receipts,
+@@ -143,7 +153,7 @@ pub(super) fn prepare_settlement_transaction(
+ pub(super) fn prepare_settlement_transaction_with_beliefs(
+     accounts: &AccountBook,
+     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
+-    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
++    belief_participants: &AccountPagedMap<BeliefParticipantState>,
+     seen: &RetailProjectionSeen,
+     moment: crate::experience::ExperienceMoment,
+     receipts: &[EnvelopeReceipt],
+@@ -154,17 +164,16 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
+         .cloned()
+         .collect();
+     let (account_shadow, settlement) =
+-        prepare_receipt_settlements(accounts, &canonical, t1_enabled)?;
+-    // Source observation and Settlement fills prune their own changed accounts. Saves
+-    // reject overfull unheld watchlists, so an empty receipt batch has no
+-    // retail account to visit or repair.
++        ReceiptSettlementPlan::from_receipts(&canonical)?.prepare_accounts(accounts, t1_enabled)?;
++    // Source observation 和 Settlement Fill 各自修剪发生变更的账户。
++    // Save 会拒绝超限的未持仓 watchlist，空收据批次没有要访问或修复的 retail 账户。
+     let experience_accounts: BTreeSet<AccountId> = canonical
+         .iter()
+         .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
+         .filter_map(|receipt| {
+             accounts
+                 .get(&receipt.envelope.account)
+-                .filter(|account| matches!(account.kind, AccountKind::Retail | AccountKind::Inst))
++                .filter(|account| matches!(account.kind(), AccountKind::Retail | AccountKind::Inst))
+                 .map(|_| receipt.envelope.account)
+         })
+         .collect();
+@@ -173,7 +182,7 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
+         .filter(|account_id| {
+             accounts
+                 .get(account_id)
+-                .is_some_and(|account| account.kind == AccountKind::Retail)
++                .is_some_and(|account| account.kind() == AccountKind::Retail)
+         })
+         .copied()
+         .collect();
+@@ -181,7 +190,7 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
+     let mut positions_after = positions_before.clone();
+     for (account_id, account) in &account_shadow {
+         if experience_accounts.contains(account_id) {
+-            positions_after.insert(*account_id, account.positions.clone());
++            positions_after.insert(*account_id, account.positions().clone());
+         }
+     }
+     let projection = project_retail_receipts(RetailProjectionInput {
+@@ -195,7 +204,7 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
+     })?;
+     let belief_patch = project_institutional_experience(
+         &account_shadow,
+-        belief_books,
++        belief_participants,
+         &positions_before,
+         &positions_after,
+         seen,
+@@ -233,7 +242,7 @@ fn positions_of_accounts(
+         .filter_map(|account_id| {
+             accounts
+                 .get(account_id)
+-                .map(|account| (*account_id, account.positions.clone()))
++                .map(|account| (*account_id, account.positions().clone()))
+         })
+         .collect()
+ }
+diff --git a/packages/engine/src/session/pipeline/account_settlement_tests.rs b/packages/engine/src/session/pipeline/account_settlement_tests.rs
+index 252dc10..77659cd 100644
+--- a/packages/engine/src/session/pipeline/account_settlement_tests.rs
++++ b/packages/engine/src/session/pipeline/account_settlement_tests.rs
+@@ -9,6 +9,7 @@ use super::{
+     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
+     ResVec,
+ };
++use crate::session::decision_chain::personal_state::BeliefParticipantState;
+ use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
+ use crate::{
+     Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockCode,
+@@ -21,9 +22,9 @@ fn retail_session(cash: i64) -> crate::GameSession {
+         42,
+     )
+     .unwrap();
+-    game.accounts = accounts(cash);
+-    game.retail_experience = retail();
+-    game.retail_projection_seen = RetailProjectionSeen::default();
++    game.state.accounts = accounts(cash);
++    game.state.retail_experience = retail();
++    game.state.retail_projection_seen = RetailProjectionSeen::default();
+     game
+ }
+ 
+@@ -227,6 +228,33 @@ fn institutional_belief(account: AccountId) -> crate::strategy::BeliefBook {
+     )
+ }
+ 
++fn institutional_participant(account: AccountId) -> BeliefParticipantState {
++    BeliefParticipantState::new(
++        crate::experience::PersonalWatchlist::default(),
++        crate::experience::PersonalPriceMemory::default(),
++        crate::information::NpcInformationState::new(account),
++        institutional_belief(account),
++    )
++}
++
++fn participant_values(participants: &AccountPagedMap<BeliefParticipantState>) -> serde_json::Value {
++    let values: BTreeMap<_, _> = participants
++        .iter()
++        .map(|(account, participant)| {
++            (
++                account.0.to_string(),
++                (
++                    participant.watchlist(),
++                    participant.price_memory(),
++                    participant.information(),
++                    participant.belief(),
++                ),
++            )
++        })
++        .collect();
++    serde_json::to_value(values).unwrap()
++}
++
+ #[test]
+ fn institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically() {
+     let mut experience = RetailExperienceState::without_equity_reference();
+@@ -322,12 +350,12 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
+     let account = AccountId(1);
+     let mut accounts = accounts(200_000);
+     let institutional = accounts.get_mut(&account).unwrap();
+-    institutional.kind = AccountKind::Inst;
++    institutional.fixture_set_kind(AccountKind::Inst);
+     institutional.set_strategy(Box::new(
+         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+     ));
+-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+-        BTreeMap::from([(account, institutional_belief(account))]).into();
++    let mut books: AccountPagedMap<BeliefParticipantState> =
++        BTreeMap::from([(account, institutional_participant(account))]).into();
+     let mut retail_experience = AccountPagedMap::default();
+     let mut seen = RetailProjectionSeen::default();
+     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
+@@ -347,7 +375,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
+     )
+     .unwrap();
+ 
+-    let experience = books.get(&account).unwrap().experience();
++    let experience = books.get(&account).unwrap().belief().experience();
+     let traded = experience.stocks.get(&stock()).unwrap();
+     assert_eq!(traded.last_trade_market_minute, 10);
+     assert_eq!(traded.last_buy_order_id, Some(10));
+@@ -378,7 +406,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
+         false,
+     )
+     .unwrap();
+-    let experience = books.get(&account).unwrap().experience();
++    let experience = books.get(&account).unwrap().belief().experience();
+     assert!(experience.feedback.stocks.is_empty());
+     assert_eq!(experience.feedback.exit_records.len(), 1);
+     assert!(
+@@ -403,7 +431,10 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
+         false,
+     )
+     .unwrap();
+-    assert_eq!(books.get(&account).unwrap().experience(), &before_replay);
++    assert_eq!(
++        books.get(&account).unwrap().belief().experience(),
++        &before_replay
++    );
+     assert!(retail_experience.is_empty());
+ }
+ 
+@@ -412,12 +443,12 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
+     let account = AccountId(1);
+     let mut accounts = accounts(200_000);
+     let institutional = accounts.get_mut(&account).unwrap();
+-    institutional.kind = AccountKind::Inst;
++    institutional.fixture_set_kind(AccountKind::Inst);
+     institutional.set_strategy(Box::new(
+         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+     ));
+-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+-        BTreeMap::from([(account, institutional_belief(account))]).into();
++    let mut books: AccountPagedMap<BeliefParticipantState> =
++        BTreeMap::from([(account, institutional_participant(account))]).into();
+     let mut retail_experience = AccountPagedMap::default();
+     let mut seen = RetailProjectionSeen::default();
+     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
+@@ -442,14 +473,14 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
+         .unwrap();
+     }
+ 
+-    let experience = books.get(&account).unwrap().experience();
++    let experience = books.get(&account).unwrap().belief().experience();
+     assert_eq!(experience.feedback.exit_records.len(), 1);
+     assert!(
+         matches!(experience.feedback.exit_records.last(), Some(record)
+         if record.order_id == Some(12) && !record.realized_profit)
+     );
+     assert_eq!(
+-        accounts.get(&account).unwrap().cash,
++        accounts.get(&account).unwrap().cash(),
+         Money::from_cents(200_000 - 10_100 + 6_020 + 3_980)
+     );
+     assert_eq!(experience.consecutive_failed_buys, 0);
+@@ -461,12 +492,12 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
+     let account = AccountId(1);
+     let mut accounts = accounts(200_000);
+     let institutional = accounts.get_mut(&account).unwrap();
+-    institutional.kind = AccountKind::Inst;
++    institutional.fixture_set_kind(AccountKind::Inst);
+     institutional.set_strategy(Box::new(
+         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+     ));
+-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+-        BTreeMap::from([(account, institutional_belief(account))]).into();
++    let mut books: AccountPagedMap<BeliefParticipantState> =
++        BTreeMap::from([(account, institutional_participant(account))]).into();
+     let mut retail_experience = AccountPagedMap::default();
+     let mut seen = RetailProjectionSeen::default();
+     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
+@@ -503,10 +534,10 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
+     .unwrap();
+ 
+     assert_eq!(
+-        accounts.get(&account).unwrap().cash,
++        accounts.get(&account).unwrap().cash(),
+         Money::from_cents(99_801)
+     );
+-    let experience = books.get(&account).unwrap().experience();
++    let experience = books.get(&account).unwrap().belief().experience();
+     let exit = experience.feedback.exit_records.last().unwrap();
+     assert_eq!(exit.order_id, Some(11));
+     assert!(!exit.realized_profit);
+@@ -516,7 +547,10 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
+ #[test]
+ fn non_belief_institution_account_does_not_require_a_belief_book() {
+     let mut accounts = accounts(200_000);
+-    accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Inst;
++    accounts
++        .get_mut(&AccountId(1))
++        .unwrap()
++        .fixture_set_kind(AccountKind::Inst);
+     let mut experience = AccountPagedMap::default();
+     let mut seen = RetailProjectionSeen::default();
+ 
+@@ -551,7 +585,7 @@ fn settlement_without_new_fills_prepares_no_account_or_retail_state_patch() {
+     assert!(prepared.retail_patch.is_empty());
+     assert!(prepared.output.events.is_empty());
+     assert_eq!(prepared.seen, seen);
+-    assert_eq!(accounts[&AccountId(1)].cash, Money::from_cents(200_000));
++    assert_eq!(accounts[&AccountId(1)].cash(), Money::from_cents(200_000));
+     assert_eq!(experience, retail());
+ }
+ 
+@@ -625,7 +659,7 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
+     .unwrap();
+ 
+     assert_eq!(result.settlement.applied_receipts, 1);
+-    assert!(!accounts[&AccountId(1)].positions.contains_key(&stock()));
++    assert!(!accounts[&AccountId(1)].positions().contains_key(&stock()));
+     assert_eq!(experience[&AccountId(1)].stocks.len(), 8);
+     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
+     assert!(!experience[&AccountId(1)]
+@@ -647,7 +681,7 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
+     let mut accounts = accounts(200_000);
+     let mut experience = retail();
+     let mut seen = RetailProjectionSeen::default();
+-    let before_cash = accounts[&AccountId(1)].cash;
++    let before_cash = accounts[&AccountId(1)].cash();
+     let before_experience = experience.clone();
+ 
+     for _ in 0..2 {
+@@ -663,8 +697,8 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
+         assert_eq!(result.settlement.applied_receipts, 0);
+         assert!(result.events.is_empty());
+         assert_eq!(seen.len(), 1);
+-        assert_eq!(accounts[&AccountId(1)].cash, before_cash);
+-        assert!(accounts[&AccountId(1)].positions.is_empty());
++        assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
++        assert!(accounts[&AccountId(1)].positions().is_empty());
+         assert_eq!(experience, before_experience);
+     }
+ }
+@@ -701,28 +735,28 @@ fn session_settlement_failure_keeps_all_authoritative_containers_unchanged() {
+ fn session_settlement_uses_the_sessions_t1_policy() {
+     for (t1_enabled, expected_locked) in [(false, 0), (true, 100)] {
+         let mut game = retail_session(200_000);
+-        game.setup.t1_enabled = t1_enabled;
++        game.state.setup.t1_enabled = t1_enabled;
+ 
+         apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
+             .unwrap();
+ 
+-        let position = &game.accounts[&AccountId(1)].positions[&stock()];
+-        assert_eq!(position.qty, 100);
+-        assert_eq!(position.t1_locked, expected_locked);
++        let position = &game.state.accounts[&AccountId(1)].positions()[&stock()];
++        assert_eq!(position.qty(), 100);
++        assert_eq!(position.t1_locked(), expected_locked);
+     }
+ }
+ 
+ #[test]
+ fn session_settlement_records_the_sessions_nonzero_market_minute() {
+     let mut game = retail_session(200_000);
+-    game.tick = 1;
++    game.state.tick = 1;
+     let market_minute = game.current_market_minute();
+     assert!(market_minute > 0);
+ 
+     apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
+         .unwrap();
+ 
+-    let experience = &game.retail_experience[&AccountId(1)].stocks[&stock()];
++    let experience = &game.state.retail_experience[&AccountId(1)].stocks[&stock()];
+     assert_eq!(experience.last_trade_market_minute, market_minute);
+     assert_eq!(experience.last_observed_market_minute, market_minute);
+ }
+@@ -742,7 +776,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
+         true,
+     )
+     .unwrap();
+-    let cash_after_first = accounts[&AccountId(1)].cash;
++    let cash_after_first = accounts[&AccountId(1)].cash();
+     let experience_after_first = experience.clone();
+     let second = apply_settlement_transaction(
+         &mut accounts,
+@@ -756,7 +790,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
+     assert_eq!(first.settlement.applied_receipts, 1);
+     assert_eq!(second.settlement.applied_receipts, 0);
+     assert!(second.events.is_empty());
+-    assert_eq!(accounts[&AccountId(1)].cash, cash_after_first);
++    assert_eq!(accounts[&AccountId(1)].cash(), cash_after_first);
+     assert_eq!(experience, experience_after_first);
+ }
+ 
+@@ -767,7 +801,7 @@ fn projection_failure_rolls_back_successful_settlement() {
+     let mut accounts = accounts(200_000);
+     let mut experience = retail();
+     let mut seen = RetailProjectionSeen::default();
+-    let before_cash = accounts[&AccountId(1)].cash;
++    let before_cash = accounts[&AccountId(1)].cash();
+     let before_experience = experience.clone();
+     assert!(apply_settlement_transaction(
+         &mut accounts,
+@@ -778,7 +812,7 @@ fn projection_failure_rolls_back_successful_settlement() {
+         true
+     )
+     .is_err());
+-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
++    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
+     assert_eq!(experience, before_experience);
+     assert!(seen.is_empty());
+ }
+@@ -802,7 +836,7 @@ fn same_order_multi_leg_receipts_settle_once_and_project_one_event() {
+     .unwrap();
+     assert_eq!(result.settlement.applied_receipts, 2);
+     assert_eq!(result.events.len(), 1);
+-    assert_eq!(accounts[&AccountId(1)].positions[&stock()].qty, 100);
++    assert_eq!(accounts[&AccountId(1)].positions()[&stock()].qty(), 100);
+ }
+ 
+ #[test]
+@@ -827,9 +861,9 @@ fn same_account_buy_then_sell_preserves_the_buy_before_sell_lifecycle() {
+         true,
+     )
+     .unwrap();
+-    let position = &accounts[&AccountId(1)].positions[&stock()];
+-    assert_eq!(position.qty, 100);
+-    assert_eq!(position.t1_locked, 100);
++    let position = &accounts[&AccountId(1)].positions()[&stock()];
++    assert_eq!(position.qty(), 100);
++    assert_eq!(position.t1_locked(), 100);
+ }
+ 
+ #[test]
+@@ -870,7 +904,7 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
+     .into();
+     let mut experience = AccountPagedMap::<crate::RetailExperienceState>::default();
+     let mut seen = RetailProjectionSeen::default();
+-    let before_cash = accounts[&AccountId(1)].cash;
++    let before_cash = accounts[&AccountId(1)].cash();
+ 
+     let error = apply_settlement_transaction(
+         &mut accounts,
+@@ -888,8 +922,8 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
+             account: AccountId(1),
+         })
+     ));
+-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
+-    assert!(accounts[&AccountId(1)].positions.is_empty());
++    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
++    assert!(accounts[&AccountId(1)].positions().is_empty());
+     assert!(experience.is_empty());
+     assert!(seen.is_empty());
+ }
+@@ -949,8 +983,8 @@ fn later_retail_account_failure_does_not_commit_an_earlier_accounts_settlement()
+         })
+     ));
+     for account in accounts.values() {
+-        assert_eq!(account.cash, Money::from_cents(200_000));
+-        assert!(account.positions.is_empty());
++        assert_eq!(account.cash(), Money::from_cents(200_000));
++        assert!(account.positions().is_empty());
+     }
+     assert_eq!(experience, experience_before);
+     assert_eq!(seen, seen_before);
+@@ -984,7 +1018,7 @@ fn non_retail_fill_settles_without_projecting_even_if_an_experience_entry_exists
+ 
+     assert_eq!(result.settlement.applied_receipts, 1);
+     assert!(result.events.is_empty());
+-    assert_eq!(accounts[&AccountId(1)].positions[&stock()].qty, 100);
++    assert_eq!(accounts[&AccountId(1)].positions()[&stock()].qty(), 100);
+     assert_eq!(experience, before_experience);
+     assert_eq!(seen.len(), 1);
+ }
+@@ -1013,7 +1047,7 @@ fn settlement_overflow_rolls_back_every_container() {
+     let mut accounts = accounts(i64::MAX);
+     let mut experience = retail();
+     let mut seen = RetailProjectionSeen::default();
+-    let before_cash = accounts[&AccountId(1)].cash;
++    let before_cash = accounts[&AccountId(1)].cash();
+     let before_experience = experience.clone();
+     assert!(apply_settlement_transaction(
+         &mut accounts,
+@@ -1024,7 +1058,61 @@ fn settlement_overflow_rolls_back_every_container() {
+         true
+     )
+     .is_err());
+-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
++    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
+     assert_eq!(experience, before_experience);
+     assert!(seen.is_empty());
+ }
++
++#[test]
++fn settlement_plan_account_failure_preserves_all_four_transaction_containers() {
++    let first = AccountId(1);
++    let second = AccountId(2);
++    let mut accounts = accounts(200_000);
++    accounts.insert(
++        second,
++        Account::new(second, AccountKind::Inst, Money::from_cents(200_000)),
++    );
++    let mut experience = retail();
++    let mut books: AccountPagedMap<BeliefParticipantState> =
++        [(second, institutional_participant(second))]
++            .into_iter()
++            .collect();
++    let mut seen = RetailProjectionSeen::default();
++    let experience_before = experience.clone();
++    let books_before = participant_values(&books);
++    let seen_before = seen.clone();
++    let buy = fill(1, Side::Buy, 10, 100, 100_000);
++    let mut sell = fill(2, Side::Sell, 11, 100, 100_000);
++    sell.envelope.account = second;
++    sell.local_key = ReceiptLocalKey::new(
++        JournalRank::SealedBatch,
++        ReceiptSource::SealedIntent(2),
++        ReceiptTransition {
++            envelope: sell.envelope.clone(),
++            ordinal: 0,
++        },
++    )
++    .unwrap();
++    let error = apply_settlement_transaction_with_beliefs(
++        &mut accounts,
++        &mut experience,
++        &mut books,
++        &mut seen,
++        crate::experience::ExperienceMoment {
++            civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
++            market_minute: 10,
++            trading_day: 0,
++        },
++        &[buy, sell],
++        true,
++    )
++    .unwrap_err();
++    assert!(matches!(error, SettlementTransactionError::Settlement(_)));
++    for account in [first, second] {
++        assert_eq!(accounts[&account].cash(), Money::from_cents(200_000));
++        assert!(accounts[&account].positions().is_empty());
++    }
++    assert_eq!(experience, experience_before);
++    assert_eq!(participant_values(&books), books_before);
++    assert_eq!(seen, seen_before);
++}
+diff --git a/packages/engine/src/session/pipeline/account_validation.rs b/packages/engine/src/session/pipeline/account_validation.rs
+index 90a7752..cd32f0b 100644
+--- a/packages/engine/src/session/pipeline/account_validation.rs
++++ b/packages/engine/src/session/pipeline/account_validation.rs
+@@ -478,15 +478,14 @@ impl AccountValidationState {
+                         self.budgets
+                             .entry(account)
+                             .or_insert_with(|| budget.clone())
+-                            .cash = budget.cash;
++                            .adopt_cash_lane(budget);
+                     }
+                     AccountResourceLane::Shares(_, code) => {
+                         if let Some(shares) = budget.sellable.get(&code) {
+                             self.budgets
+                                 .entry(account)
+                                 .or_insert_with(|| budget.clone())
+-                                .sellable
+-                                .insert(code, *shares);
++                                .adopt_shares_lane(code, *shares);
+                         }
+                     }
+                     AccountResourceLane::Cancel(_, _, _) => {}
+@@ -685,10 +684,7 @@ impl AccountValidationState {
+         if !self.budgets.contains_key(&account) {
+             self.budgets.insert(
+                 account,
+-                AccountBudget {
+-                    cash: self.resources.available_cash(account)?,
+-                    sellable: BTreeMap::new(),
+-                },
++                AccountBudget::ensure_from_snapshot(account, &self.resources)?,
+             );
+         }
+         Ok(())
+@@ -703,11 +699,7 @@ impl AccountValidationState {
+             .budgets
+             .get_mut(&account)
+             .ok_or_else(|| invariant("P3 validation context is missing an account budget"))?;
+-        if !budget.sellable.contains_key(code) {
+-            let available = self.resources.available_sell_qty(account, code)?;
+-            budget.sellable.insert(code.clone(), available);
+-        }
+-        Ok(())
++        budget.ensure_sellable_from_snapshot(account, code, &self.resources)
+     }
+ 
+     fn validate_place(
+@@ -780,14 +772,7 @@ impl AccountValidationState {
+             .budgets
+             .get_mut(&account)
+             .expect("P3 context budgets were exhaustively initialized");
+-        match update {
+-            BudgetUpdate::Cash { cash_after } => {
+-                budget.cash = cash_after;
+-            }
+-            BudgetUpdate::Shares { code, shares_after } => {
+-                budget.sellable.insert(code, shares_after);
+-            }
+-        }
++        budget.apply_update(update);
+     }
+ 
+     fn commit_step(&mut self, step: ValidatedStep) {
+@@ -1127,6 +1112,48 @@ struct AccountBudget {
+     sellable: BTreeMap<StockCode, u32>,
+ }
+ 
++impl AccountBudget {
++    fn ensure_from_snapshot(
++        account: AccountId,
++        resources: &DecisionResourceSnapshot,
++    ) -> Result<Self, StepFatal> {
++        Ok(Self {
++            cash: resources.available_cash(account)?,
++            sellable: BTreeMap::new(),
++        })
++    }
++
++    fn ensure_sellable_from_snapshot(
++        &mut self,
++        account: AccountId,
++        code: &StockCode,
++        resources: &DecisionResourceSnapshot,
++    ) -> Result<(), StepFatal> {
++        if !self.sellable.contains_key(code) {
++            let available = resources.available_sell_qty(account, code)?;
++            self.sellable.insert(code.clone(), available);
++        }
++        Ok(())
++    }
++
++    fn apply_update(&mut self, update: BudgetUpdate) {
++        match update {
++            BudgetUpdate::Cash { cash_after } => self.cash = cash_after,
++            BudgetUpdate::Shares { code, shares_after } => {
++                self.sellable.insert(code, shares_after);
++            }
++        }
++    }
++
++    fn adopt_cash_lane(&mut self, lane: &Self) {
++        self.cash = lane.cash;
++    }
++
++    fn adopt_shares_lane(&mut self, code: StockCode, shares: u32) {
++        self.sellable.insert(code, shares);
++    }
++}
++
+ struct PreparedReservation {
+     required: ResVec,
+     budget_update: BudgetUpdate,
+diff --git a/packages/engine/src/session/pipeline/account_validation_tests.rs b/packages/engine/src/session/pipeline/account_validation_tests.rs
+index c43e87d..2b79148 100644
+--- a/packages/engine/src/session/pipeline/account_validation_tests.rs
++++ b/packages/engine/src/session/pipeline/account_validation_tests.rs
+@@ -26,21 +26,26 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         build_account_validation_context(&game).unwrap(),
+     )
+     .unwrap()
+     .validate()
+     .unwrap();
+     let draft = &output.drafts()[0];
+-    let bound = game.markets[&code].down_stop().unwrap();
++    let bound = game.state.markets[&code].down_stop().unwrap();
+     assert_eq!(draft.requested_price(), Some(crate::LimitPrice::Lowest));
+     assert_eq!(draft.limit(), bound);
+     assert_eq!(
+         draft.required().cash,
+-        crate::session::buy_order_reservation(&game.setup.config, bound, 100, crate::Money::ZERO)
+-            .unwrap()
++        crate::session::buy_order_reservation(
++            &game.state.setup.config,
++            bound,
++            100,
++            crate::Money::ZERO
++        )
++        .unwrap()
+     );
+     let envelope = draft.materialize_envelope();
+     assert_eq!(envelope.live(), draft.required());
+@@ -52,7 +57,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
+     let code = crate::StockCode("600888".to_owned());
+     let setup = crate::session::npc_working_quote_tests::quote_setup(0);
+     let probe = GameSession::new(setup.clone(), 42).unwrap();
+-    let up = probe.markets[&code].up_stop().unwrap();
++    let up = probe.state.markets[&code].up_stop().unwrap();
+     let exact =
+         crate::session::buy_order_reservation(&setup.config, up, 100, crate::Money::ZERO).unwrap();
+ 
+@@ -61,7 +66,11 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
+         (exact.sub(crate::Money::from_cents(1)).unwrap(), false),
+     ] {
+         let mut game = GameSession::new(setup.clone(), 42).unwrap();
+-        game.accounts.get_mut(&crate::AccountId(0)).unwrap().cash = cash;
++        game.state
++            .accounts
++            .get_mut(&crate::AccountId(0))
++            .unwrap()
++            .fixture_set_cash(cash);
+         let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+         let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+             IntentCandidateKey::player(0),
+@@ -78,8 +87,8 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
+             batch,
+             plan.decision_resources().unwrap().clone(),
+             plan.envelope_ledger().unwrap(),
+-            game.next_order_id,
+-            game.setup.config.clone(),
++            game.state.next_order_id,
++            game.state.setup.config.clone(),
+             build_account_validation_context(&game).unwrap(),
+         )
+         .unwrap()
+@@ -105,7 +114,11 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
+     let code = crate::StockCode("600888".to_owned());
+     let mut game =
+         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+-    game.accounts.get_mut(&account).unwrap().strategy = None;
++    game.state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .fixture_set_strategy(None);
+     let before = game.business_state_hash().unwrap();
+     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+     let batch = IntentCandidateBatch::new(vec![
+@@ -146,8 +159,8 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         build_account_validation_context(&game).unwrap(),
+     )
+     .unwrap();
+@@ -165,11 +178,11 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
+     );
+     assert_eq!(
+         output.drafts()[0].order_id(),
+-        crate::OrderId(game.next_order_id)
++        crate::OrderId(game.state.next_order_id)
+     );
+     assert_eq!(
+         output.drafts()[1].order_id(),
+-        crate::OrderId(game.next_order_id + 1)
++        crate::OrderId(game.state.next_order_id + 1)
+     );
+     assert_eq!(game.business_state_hash().unwrap(), before);
+ }
+@@ -197,7 +210,7 @@ fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts(
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+         u64::MAX,
+-        game.setup.config.clone(),
++        game.state.setup.config.clone(),
+         build_account_validation_context(&game).unwrap(),
+     )
+     .unwrap();
+@@ -225,8 +238,8 @@ fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         build_account_validation_context(&game).unwrap(),
+     )
+     .unwrap();
+@@ -258,8 +271,8 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context(std::iter::empty()),
+     )
+     .unwrap();
+@@ -280,7 +293,7 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
+             ..
+         }] if *owner == account && code == &unknown
+     ));
+-    assert_eq!(output.next_order_id_after(), game.next_order_id);
++    assert_eq!(output.next_order_id_after(), game.state.next_order_id);
+ }
+ 
+ #[test]
+@@ -325,8 +338,8 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context([(
+             known,
+             StockValidation::new(
+@@ -371,11 +384,11 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
+             .map(EnvelopeDraft::order_id)
+             .collect::<Vec<_>>(),
+         vec![
+-            crate::OrderId(game.next_order_id),
+-            crate::OrderId(game.next_order_id + 1),
++            crate::OrderId(game.state.next_order_id),
++            crate::OrderId(game.state.next_order_id + 1),
+         ]
+     );
+-    assert_eq!(output.next_order_id_after(), game.next_order_id + 2);
++    assert_eq!(output.next_order_id_after(), game.state.next_order_id + 2);
+ }
+ 
+ #[test]
+@@ -384,7 +397,8 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
+     let code = crate::StockCode("600888".to_owned());
+     let mut game =
+         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+-    game.accounts
++    game.state
++        .accounts
+         .get_mut(&account)
+         .unwrap()
+         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
+@@ -433,8 +447,8 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context,
+     )
+     .unwrap()
+@@ -462,14 +476,17 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
+     assert_eq!(market.kind(), PlaceKind::Market);
+     assert_eq!(market.limit(), crate::Money::from_cents(1_100));
+     assert_eq!(market.qty(), 100);
+-    assert_eq!(market.order_id(), crate::OrderId(game.next_order_id + 1));
++    assert_eq!(
++        market.order_id(),
++        crate::OrderId(game.state.next_order_id + 1)
++    );
+     assert_eq!(market.order(), market.order_id());
+     assert_eq!(market.key().account, account);
+     assert_eq!(market.required().shares, 0);
+     assert_eq!(
+         market.required().cash,
+         crate::session::buy_order_reservation(
+-            &game.setup.config,
++            &game.state.setup.config,
+             crate::Money::from_cents(1_100),
+             100,
+             crate::Money::ZERO,
+@@ -478,7 +495,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
+     );
+     let sell = &output.drafts()[0];
+     assert_eq!(sell.kind(), PlaceKind::Limit);
+-    assert_eq!(sell.order_id(), crate::OrderId(game.next_order_id));
++    assert_eq!(sell.order_id(), crate::OrderId(game.state.next_order_id));
+     assert_eq!(sell.required(), ResVec::new(crate::Money::ZERO, 50));
+     let envelope = sell.materialize_envelope();
+     assert_eq!(envelope.origin(), EnvelopeOrigin::CreatedAtValidation);
+@@ -488,7 +505,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
+     assert_eq!(envelope.audit().remaining_qty, sell.qty());
+     assert_eq!(
+         output.next_order_id_after(),
+-        game.next_order_id.checked_add(2).unwrap()
++        game.state.next_order_id.checked_add(2).unwrap()
+     );
+     assert_eq!(game.business_state_hash().unwrap(), before);
+ }
+@@ -501,19 +518,26 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
+     let unknown = crate::StockCode("600999".to_owned());
+     let mut game =
+         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
+-    game.accounts
++    game.state
++        .accounts
+         .get_mut(&account)
+         .unwrap()
+-        .grant_position(main.clone(), 150, crate::Money::from_cents(150_000))
+-        .unwrap();
+-    game.accounts
++        .fixture_set_cash(crate::Money::ZERO);
++    game.state
++        .accounts
+         .get_mut(&account)
+         .unwrap()
+-        .positions
+-        .get_mut(&main)
+-        .unwrap()
+-        .t1_locked = 100;
++        .grant_position(main.clone(), 150, crate::Money::from_cents(150_000))
++        .unwrap();
++    let holder = game.state.accounts.get_mut(&account).unwrap();
++    let position = holder.position(&main).unwrap();
++    let locked = crate::Position::from_restored_parts(
++        position.qty(),
++        100,
++        position.invested_cents(),
++        position.recovered_cents(),
++    );
++    holder.fixture_insert_position(main.clone(), locked);
+     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+     let candidates = vec![
+         limit(0, account, unknown, crate::Side::Buy, 100),
+@@ -556,8 +580,8 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
+         IntentCandidateBatch::new(candidates).unwrap(),
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context,
+     )
+     .unwrap()
+@@ -623,13 +647,17 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
+     )
+     .unwrap();
+     let reservation = crate::session::buy_order_reservation(
+-        &game.setup.config,
++        &game.state.setup.config,
+         crate::Money::from_cents(900),
+         100,
+         crate::Money::ZERO,
+     )
+     .unwrap();
+-    game.accounts.get_mut(&account).unwrap().cash = reservation;
++    game.state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .fixture_set_cash(reservation);
+     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+     let batch = IntentCandidateBatch::new(vec![
+         limit(0, account, first.clone(), crate::Side::Buy, 100),
+@@ -645,8 +673,8 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
+         batch,
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context([(first, validation), (second, validation)]),
+     )
+     .unwrap()
+@@ -686,7 +714,7 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
+         plan.decision_resources().unwrap().clone(),
+         ledger.clone(),
+         u64::MAX - 1,
+-        game.setup.config.clone(),
++        game.state.setup.config.clone(),
+         context([(
+             code,
+             StockValidation::new(
+@@ -716,7 +744,11 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
+     let chinext = crate::StockCode("300888".to_owned());
+     let mut game =
+         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(10_000_000_000);
++    game.state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .fixture_set_cash(crate::Money::from_cents(10_000_000_000));
+     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+     let candidates = vec![
+         limit(0, account, main.clone(), crate::Side::Buy, 1_000_000),
+@@ -764,8 +796,8 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
+         IntentCandidateBatch::new(candidates).unwrap(),
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context([
+             (
+                 main,
+@@ -843,7 +875,8 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
+     let code = crate::StockCode("600888".to_owned());
+     let mut game =
+         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+-    game.accounts
++    game.state
++        .accounts
+         .get_mut(&account)
+         .unwrap()
+         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
+@@ -858,8 +891,8 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
+         .unwrap(),
+         plan.decision_resources().unwrap().clone(),
+         plan.envelope_ledger().unwrap(),
+-        game.next_order_id,
+-        game.setup.config.clone(),
++        game.state.next_order_id,
++        game.state.setup.config.clone(),
+         context([(
+             code,
+             StockValidation::new(
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+index f5d9b53..d05bce6 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+@@ -6,8 +6,8 @@
+ use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
+ use crate::behavior::BehaviorMarketObservation;
+ use crate::observation::{
+-    build_account_risk_observation, build_equal_weight_market_observation, ObservationError,
+-    RiskPositionInput,
++    build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
++    ObservationError, RiskPositionInput,
+ };
+ use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
+ use crate::strategy::{PositionView, SelfView, StrategyStateError};
+@@ -15,7 +15,6 @@ use crate::{
+     AccountId, AccountKind, ExperienceError, Money, MoneyError, RetailExperienceState, StockCode,
+ };
+ use rayon::prelude::*;
+-use std::cmp::Reverse;
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
+@@ -96,7 +95,7 @@ pub(in crate::session) fn capture_decision_snapshot(
+ fn capture_decision_snapshot_in_place(
+     shadow: &mut super::GameSession,
+ ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
+-    let tick = shadow.tick;
++    let tick = shadow.state.tick;
+     let phase = shadow.phase();
+     validate_market_view_inputs(shadow)?;
+     let market = shadow.build_market_view();
+@@ -106,18 +105,18 @@ fn capture_decision_snapshot_in_place(
+     if let Some(account) = popped
+         .iter()
+         .map(|(_, account)| *account)
+-        .find(|account| !shadow.npc_attention.contains_key(account))
++        .find(|account| !shadow.state.npc_attention.contains_key(account))
+     {
+         return Err(DecisionSnapshotCaptureError::MissingAttention(account));
+     }
+-    let accounts = &shadow.accounts;
+-    let attention_results = shadow.npc_attention.mutate_existing_parallel(
++    let accounts = &shadow.state.accounts;
++    let attention_results = shadow.state.npc_attention.mutate_existing_parallel(
+         &due_npc_ids,
+         DecisionSnapshotCaptureError::MissingAttention,
+         |account, attention| {
+             let kind = accounts
+                 .get(&account)
+-                .map(|entry| entry.kind)
++                .map(|entry| entry.kind())
+                 .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
+             if kind == AccountKind::Player {
+                 return Err(DecisionSnapshotCaptureError::PlayerAccount(account));
+@@ -152,9 +151,10 @@ fn capture_decision_snapshot_in_place(
+     };
+     let has_retail_observer = accepted_due_npc_ids.iter().any(|account| {
+         shadow
++            .state
+             .accounts
+             .get(account)
+-            .is_some_and(|entry| entry.kind == AccountKind::Retail)
++            .is_some_and(|entry| entry.kind() == AccountKind::Retail)
+     });
+     let behavior_market = has_retail_observer
+         .then(|| build_behavior_market_checked(shadow))
+@@ -163,46 +163,28 @@ fn capture_decision_snapshot_in_place(
+         .par_iter()
+         .map(|account| {
+             let entry = shadow
++                .state
+                 .accounts
+                 .get(account)
+                 .ok_or(DecisionSnapshotCaptureError::MissingAccount(*account))?;
+-            let (experience, risk_positions, self_positions) =
+-                observe_retail_experience_for(shadow, *account, market_minute)?;
+-            let self_view = build_self_view_for(
+-                shadow,
+-                *account,
+-                phase,
+-                &working_continuous,
+-                &working_auction,
+-                self_positions,
+-            )?;
+-            if entry.kind == AccountKind::Retail && experience.is_none() {
+-                return Err(DecisionSnapshotCaptureError::MissingAccount(*account));
+-            }
+-            let account_risk = risk_positions
+-                .map(|positions| {
+-                    let experience = experience
+-                        .as_ref()
+-                        .expect("risk positions require retail experience");
+-                    build_account_risk_observation(
+-                        entry.cash,
+-                        &positions,
+-                        experience.reference_equity,
+-                        experience.peak_equity,
+-                    )
+-                    .map_err(|source| {
+-                        DecisionSnapshotCaptureError::Observation {
+-                            location: "account risk",
+-                            account: Some(*account),
+-                            source,
+-                        }
+-                    })
+-                })
+-                .transpose()?;
+-            let experience = experience.map(Arc::new);
++            let observation =
++                CapturedExperienceObservation::capture(shadow, *account, market_minute)?;
++            let CapturedAccountObservation {
++                self_view,
++                account_risk,
++                experience,
++            } = observation.consume(*account, entry.kind(), entry.cash(), |self_positions| {
++                build_self_view_for(
++                    shadow,
++                    *account,
++                    phase,
++                    &working_continuous,
++                    &working_auction,
++                    self_positions,
++                )
++            })?;
+             let strategy_state = entry
+-                .strategy
+-                .as_ref()
++                .strategy()
+                 .ok_or(DecisionSnapshotCaptureError::MissingStrategy(*account))?
+                 .production_state()
+                 .map_err(|source| DecisionSnapshotCaptureError::StrategyState {
+@@ -210,7 +192,7 @@ fn capture_decision_snapshot_in_place(
+                     source,
+                 })?;
+             let input = DecisionAccountInput::new_shared(
+-                entry.kind,
++                entry.kind(),
+                 self_view,
+                 strategy_state,
+                 account_risk,
+@@ -232,7 +214,7 @@ fn capture_decision_snapshot_in_place(
+ 
+     let snapshot = DecisionSnapshot::new(
+         tick,
+-        shadow.seed,
++        shadow.state.seed,
+         phase,
+         market_minute,
+         market,
+@@ -241,15 +223,16 @@ fn capture_decision_snapshot_in_place(
+         accounts,
+     )
+     .map_err(DecisionSnapshotCaptureError::Snapshot)?
+-    .with_urgency_policy(shadow.urgency_policy)?;
++    .with_urgency_policy(shadow.state.urgency_policy)?;
+ 
+     shadow
++        .state
+         .retail_experience
+         .replace_existing_shared_parallel(experience_updates)
+         .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
+-    shadow
+-        .attention_queue
+-        .extend(scheduled.into_iter().map(Reverse));
++    for (tick, account) in scheduled {
++        shadow.state.attention_scheduler.enqueue(tick, account);
++    }
+     Ok(CapturedDecisionSnapshot {
+         snapshot: Arc::new(snapshot),
+         working_continuous,
+@@ -260,17 +243,20 @@ fn capture_decision_snapshot_in_place(
+ fn validate_market_view_inputs(
+     session: &super::GameSession,
+ ) -> Result<(), DecisionSnapshotCaptureError> {
+-    for code in session.markets.keys() {
++    for code in session.state.markets.keys() {
+         for (location, present) in [
+             (
+                 "market price history",
+-                session.price_history.contains_key(code),
++                session.state.price_history.contains_key(code),
+             ),
+             (
+                 "market-minute history",
+-                session.market_minute_closes.contains_key(code),
++                session.state.market_minute_closes.contains_key(code),
++            ),
++            (
++                "daily history",
++                session.state.candle_book.histories().contains_key(code),
+             ),
+-            ("daily history", session.daily_candles.contains_key(code)),
+         ] {
+             if !present {
+                 return Err(DecisionSnapshotCaptureError::MissingMarketData {
+@@ -283,88 +269,181 @@ fn validate_market_view_inputs(
+     Ok(())
+ }
+ 
+-type RetailExperienceObservation = (
+-    Option<RetailExperienceState>,
+-    Option<BTreeMap<StockCode, RiskPositionInput>>,
+-    Option<BTreeMap<StockCode, PositionView>>,
+-);
++/// 同一次账户观察的派生事实；非 Retail 的已有 experience 仍可不携带风险输入。
++enum CapturedExperienceObservation {
++    NoExperience,
++    Captured {
++        experience: RetailExperienceState,
++        risk_positions: Option<BTreeMap<StockCode, RiskPositionInput>>,
++        self_positions: BTreeMap<StockCode, PositionView>,
++    },
++}
+ 
+-fn observe_retail_experience_for(
+-    session: &super::GameSession,
+-    account: AccountId,
+-    market_minute: u64,
+-) -> Result<RetailExperienceObservation, DecisionSnapshotCaptureError> {
+-    let Some(mut experience) = session.retail_experience.get(&account).cloned() else {
+-        return Ok((None, None, None));
+-    };
+-    let entry = session
+-        .accounts
+-        .get(&account)
+-        .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
+-    let mut equity = entry.cash;
+-    let mut positions = Vec::with_capacity(entry.positions.len());
+-    let mut self_positions = BTreeMap::new();
+-    for (code, position) in &entry.positions {
+-        let price = session
+-            .markets
+-            .get(code)
+-            .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
+-                location: "retail experience position",
+-                code: code.clone(),
+-            })?
+-            .last_price();
+-        equity = equity
+-            .add(price.mul_shares(position.qty).map_err(|source| {
+-                DecisionSnapshotCaptureError::Money {
++struct CapturedAccountObservation {
++    self_view: SelfView,
++    account_risk: Option<AccountRiskObservation>,
++    experience: Option<Arc<RetailExperienceState>>,
++}
++
++impl CapturedExperienceObservation {
++    fn capture(
++        session: &super::GameSession,
++        account: AccountId,
++        market_minute: u64,
++    ) -> Result<Self, DecisionSnapshotCaptureError> {
++        let Some(mut experience) = session.state.retail_experience.get(&account).cloned() else {
++            return Ok(Self::NoExperience);
++        };
++        let entry = session
++            .state
++            .accounts
++            .get(&account)
++            .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
++        let mut equity = entry.cash();
++        let mut positions = Vec::with_capacity(entry.positions().len());
++        let mut self_positions = BTreeMap::new();
++        for (code, position) in entry.positions() {
++            let price = session
++                .state
++                .markets
++                .get(code)
++                .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
++                    location: "retail experience position",
++                    code: code.clone(),
++                })?
++                .last_price();
++            equity = equity
++                .add(price.mul_shares(position.qty()).map_err(|source| {
++                    DecisionSnapshotCaptureError::Money {
++                        location: "retail experience equity",
++                        account,
++                        source,
++                    }
++                })?)
++                .map_err(|source| DecisionSnapshotCaptureError::Money {
+                     location: "retail experience equity",
+                     account,
+                     source,
+-                }
+-            })?)
+-            .map_err(|source| DecisionSnapshotCaptureError::Money {
+-                location: "retail experience equity",
+-                account,
+-                source,
+-            })?;
+-        positions.push((code.clone(), price, position.qty, position.cost_price()));
+-        self_positions.insert(
+-            code.clone(),
+-            PositionView {
+-                qty: position.qty,
+-                sellable_qty: position.sellable(),
+-                cost_price: position.cost_price(),
+-            },
+-        );
+-    }
+-    if equity.cents() > 0 {
+-        experience
+-            .observe_equity(equity)
+-            .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
+-    }
+-    let held: BTreeSet<_> = self_positions.keys().cloned().collect();
+-    let mut risk_positions = BTreeMap::new();
+-    for (code, price, qty, cost_price) in positions {
+-        experience
+-            .observe_position(&code, price, market_minute)
+-            .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
+-        if entry.kind == AccountKind::Retail {
+-            risk_positions.insert(
++                })?;
++            positions.push((code.clone(), price, position.qty(), position.cost_price()));
++            self_positions.insert(
+                 code.clone(),
+-                RiskPositionInput {
+-                    qty,
+-                    cost_price: cost_price.filter(|price| price.cents() > 0),
+-                    last_price: price,
+-                    peak_price_since_entry: experience
+-                        .stocks
+-                        .get(&code)
+-                        .and_then(|stock| stock.peak_price_since_entry),
++                PositionView {
++                    qty: position.qty(),
++                    sellable_qty: position.sellable(),
++                    cost_price: position.cost_price(),
+                 },
+             );
+         }
++        if equity.cents() > 0 {
++            experience
++                .observe_equity(equity)
++                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
++        }
++        let held: BTreeSet<_> = self_positions.keys().cloned().collect();
++        let mut risk_positions = BTreeMap::new();
++        for (code, price, qty, cost_price) in positions {
++            experience
++                .observe_position(&code, price, market_minute)
++                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
++            if entry.kind() == AccountKind::Retail {
++                risk_positions.insert(
++                    code.clone(),
++                    RiskPositionInput {
++                        qty,
++                        cost_price: cost_price.filter(|price| price.cents() > 0),
++                        last_price: price,
++                        peak_price_since_entry: experience
++                            .stocks
++                            .get(&code)
++                            .and_then(|stock| stock.peak_price_since_entry),
++                    },
++                );
++            }
++        }
++        experience.prune_watchlist(&held);
++        let risk_positions = (entry.kind() == AccountKind::Retail).then_some(risk_positions);
++        Ok(Self::Captured {
++            experience,
++            risk_positions,
++            self_positions,
++        })
++    }
++
++    fn consume(
++        self,
++        account: AccountId,
++        kind: AccountKind,
++        cash: Money,
++        build_self_view: impl FnOnce(
++            Option<BTreeMap<StockCode, PositionView>>,
++        ) -> Result<SelfView, DecisionSnapshotCaptureError>,
++    ) -> Result<CapturedAccountObservation, DecisionSnapshotCaptureError> {
++        match self {
++            Self::NoExperience => {
++                let self_view = build_self_view(None)?;
++                if kind == AccountKind::Retail {
++                    return Err(DecisionSnapshotCaptureError::MissingAccount(account));
++                }
++                Ok(CapturedAccountObservation {
++                    self_view,
++                    account_risk: None,
++                    experience: None,
++                })
++            }
++            Self::Captured {
++                experience,
++                risk_positions,
++                self_positions,
++            } => {
++                // SelfView 的 Money 错误仍先于风险观察错误；不得在 capture 中提前计算风险。
++                let self_view = build_self_view(Some(self_positions))?;
++                let account_risk = risk_positions
++                    .map(|positions| {
++                        build_account_risk_observation(
++                            cash,
++                            &positions,
++                            experience.reference_equity,
++                            experience.peak_equity,
++                        )
++                        .map_err(|source| {
++                            DecisionSnapshotCaptureError::Observation {
++                                location: "account risk",
++                                account: Some(account),
++                                source,
++                            }
++                        })
++                    })
++                    .transpose()?;
++                Ok(CapturedAccountObservation {
++                    self_view,
++                    account_risk,
++                    experience: Some(Arc::new(experience)),
++                })
++            }
++        }
++    }
++}
++
++/// SelfView 的报价现金累计；可替换部分不构成本轮 P1 执行预算。
++#[derive(Default)]
++struct SelfViewCashReservations {
++    reserved: Money,
++    replaceable: Money,
++}
++
++impl SelfViewCashReservations {
++    fn record(&mut self, required: Money, may_replace: bool) -> Result<(), MoneyError> {
++        self.reserved = self.reserved.add(required)?;
++        if may_replace {
++            self.replaceable = self.replaceable.add(required)?;
++        }
++        Ok(())
++    }
++
++    fn available_cash(&self, raw_cash: Money) -> Result<Money, MoneyError> {
++        raw_cash.sub(self.reserved)?.add(self.replaceable)
+     }
+-    experience.prune_watchlist(&held);
+-    let risk_positions = (entry.kind == AccountKind::Retail).then_some(risk_positions);
+-    Ok((Some(experience), risk_positions, Some(self_positions)))
+ }
+ 
+ fn build_self_view_for(
+@@ -376,68 +455,62 @@ fn build_self_view_for(
+     self_positions: Option<BTreeMap<StockCode, PositionView>>,
+ ) -> Result<SelfView, DecisionSnapshotCaptureError> {
+     let auction_cancelable = phase == crate::TradingPhase::CallAuction
+-        && session.tick % session.setup.ticks_per_day < session.setup.auction_ticks / 3;
++        && session.state.tick % session.state.setup.ticks_per_day
++            < session.state.setup.auction_ticks / 3;
+     let entry = session
++        .state
+         .accounts
+         .get(&account)
+         .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
+-    let mut reserved = Money::ZERO;
+-    let mut replaceable = Money::ZERO;
+-    let mut record = |required: Money, may_replace: bool| -> Result<(), MoneyError> {
+-        reserved = reserved.add(required)?;
+-        if may_replace {
+-            replaceable = replaceable.add(required)?;
+-        }
+-        Ok(())
+-    };
++    let mut reservations = SelfViewCashReservations::default();
+     for (_, order) in continuous.get(&account).into_iter().flatten() {
+-        record(
+-            super::super::live_cash_reservation(
+-                &session.setup.config,
+-                order.side,
+-                order.price,
+-                order.qty,
+-                order.filled_value,
++        reservations
++            .record(
++                super::super::live_cash_reservation(
++                    &session.state.setup.config,
++                    order.side,
++                    order.price,
++                    order.qty,
++                    order.filled_value,
++                )
++                .map_err(|source| DecisionSnapshotCaptureError::Money {
++                    location: "continuous self-view reservation",
++                    account,
++                    source,
++                })?,
++                phase == crate::TradingPhase::Continuous,
+             )
+             .map_err(|source| DecisionSnapshotCaptureError::Money {
+-                location: "continuous self-view reservation",
++                location: "continuous self-view reservation sum",
+                 account,
+                 source,
+-            })?,
+-            phase == crate::TradingPhase::Continuous,
+-        )
+-        .map_err(|source| DecisionSnapshotCaptureError::Money {
+-            location: "continuous self-view reservation sum",
+-            account,
+-            source,
+-        })?;
++            })?;
+     }
+     for (_, order) in auction.get(&account).into_iter().flatten() {
+-        record(
+-            super::super::live_cash_reservation(
+-                &session.setup.config,
+-                order.side,
+-                order.limit,
+-                order.qty,
+-                Money::ZERO,
++        reservations
++            .record(
++                super::super::live_cash_reservation(
++                    &session.state.setup.config,
++                    order.side,
++                    order.limit,
++                    order.qty,
++                    Money::ZERO,
++                )
++                .map_err(|source| DecisionSnapshotCaptureError::Money {
++                    location: "auction self-view reservation",
++                    account,
++                    source,
++                })?,
++                auction_cancelable,
+             )
+             .map_err(|source| DecisionSnapshotCaptureError::Money {
+-                location: "auction self-view reservation",
++                location: "auction self-view reservation sum",
+                 account,
+                 source,
+-            })?,
+-            auction_cancelable,
+-        )
+-        .map_err(|source| DecisionSnapshotCaptureError::Money {
+-            location: "auction self-view reservation sum",
+-            account,
+-            source,
+-        })?;
++            })?;
+     }
+-    let cash = entry
+-        .cash
+-        .sub(reserved)
+-        .and_then(|cash| cash.add(replaceable))
++    let cash = reservations
++        .available_cash(entry.cash())
+         .map_err(|source| DecisionSnapshotCaptureError::Money {
+             location: "available self-view cash",
+             account,
+@@ -445,13 +518,13 @@ fn build_self_view_for(
+         })?;
+     let positions = self_positions.unwrap_or_else(|| {
+         entry
+-            .positions
++            .positions()
+             .iter()
+             .map(|(code, position)| {
+                 (
+                     code.clone(),
+                     PositionView {
+-                        qty: position.qty,
++                        qty: position.qty(),
+                         sellable_qty: position.sellable(),
+                         cost_price: position.cost_price(),
+                     },
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+index 89b8103..0fb55eb 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+@@ -11,18 +11,20 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
+     let observed = AccountId(1);
+     let unobserved = AccountId(2);
+     let player = AccountId(0);
+-    let codes = shadow.markets.keys().cloned().collect::<Vec<_>>();
+-    let tick = shadow.tick;
+-    shadow.attention_queue.clear();
++    let codes = shadow.state.markets.keys().cloned().collect::<Vec<_>>();
++    let tick = shadow.state.tick;
++    shadow.state.attention_scheduler.clear();
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, observed, tick);
+     shadow
++        .state
+         .npc_attention
+         .get_mut(&unobserved)
+         .unwrap()
+         .next_attention_candidate_tick = tick + 1;
+     shadow
+-        .attention_queue
+-        .push(std::cmp::Reverse((tick + 1, unobserved)));
++        .state
++        .attention_scheduler
++        .enqueue(tick + 1, unobserved);
+     for (code, id, owner) in [
+         (&codes[0], 9, observed),
+         (&codes[0], 3, observed),
+@@ -31,6 +33,7 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
+         (&codes[1], 11, observed),
+     ] {
+         shadow
++            .state
+             .markets
+             .get_mut(code)
+             .unwrap()
+@@ -46,15 +49,18 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
+                 seq: id,
+             })
+             .unwrap();
+-        shadow.auction_orders.entry(code.clone()).or_default().push(
+-            crate::session::AuctionOrderSnap {
++        shadow
++            .state
++            .auction_orders
++            .entry(code.clone())
++            .or_default()
++            .push(crate::session::AuctionOrderSnap {
+                 owner,
+                 side: crate::Side::Buy,
+                 limit: Money::from_cents(900),
+                 qty: 100,
+                 order_id: id,
+-            },
+-        );
++            });
+     }
+ 
+     let captured = capture_decision_snapshot(&mut shadow).unwrap();
+@@ -97,11 +103,7 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
+ }
+ 
+ fn queue_entries(session: &GameSession) -> Vec<(u64, AccountId)> {
+-    let mut entries: Vec<_> = session
+-        .attention_queue
+-        .iter()
+-        .map(|entry| entry.0)
+-        .collect();
++    let mut entries: Vec<_> = session.state.attention_scheduler.iter().copied().collect();
+     entries.sort_unstable();
+     entries
+ }
+@@ -110,7 +112,7 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
+     let account = AccountId(1);
+     let source = GameSession::new(npc_working_quote_tests::retail_quote_setup(), seed).unwrap();
+     let mut shadow = source.clone_for_tick_shadow().unwrap();
+-    let tick = shadow.tick;
++    let tick = shadow.state.tick;
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+     (source, shadow, account)
+ }
+@@ -119,8 +121,8 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
+ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
+     let (source, mut shadow, account) = due_retail_shadow(0xC0FFEE);
+     let source_before = source.session_state_hash().unwrap();
+-    let attention_before = shadow.npc_attention[&account].clone();
+-    let attention_keys_before: Vec<_> = shadow.npc_attention.keys().copied().collect();
++    let attention_before = shadow.state.npc_attention[&account].clone();
++    let attention_keys_before: Vec<_> = shadow.state.npc_attention.keys().copied().collect();
+ 
+     let captured = capture_decision_snapshot(&mut shadow).unwrap();
+     // 夹具前置：quote_setup 的 float_shares=0，唯一 NPC 无持仓、无工作单。
+@@ -131,7 +133,7 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
+     // 夹具把唯一 NPC 强制为到期且观察概率 1：due 列表就是该账户。
+     assert_eq!(snapshot.due_npc_ids(), &[account]);
+     assert_eq!(snapshot.npc_seed_base(), 0xC0FFEE);
+-    assert_eq!(snapshot.tick(), shadow.tick);
++    assert_eq!(snapshot.tick(), shadow.state.tick);
+     assert_eq!(snapshot.phase(), shadow.phase());
+     // 市场与行为观察必须取自捕获前的输入状态；source 是未被触碰的同源副本。
+     assert_eq!(
+@@ -145,26 +147,29 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
+     let input = snapshot.account(account).unwrap();
+     assert_eq!(input.kind(), AccountKind::Retail);
+     // 显式期望：无工作单 → 冻结额为 0，视图现金即账户现金；无持仓 → 空持仓表。
+-    assert_eq!(input.self_view().cash, source.accounts[&account].cash);
++    assert_eq!(
++        input.self_view().cash,
++        source.state.accounts[&account].cash()
++    );
+     assert!(input.self_view().positions.is_empty());
+     // 风险观察存在即可：其内容契约由 observation 模块与 worker 一致性测试覆盖。
+     assert!(input.account_risk().is_some());
+     // 快照中的经验观察与捕获后的 shadow 状态一致（观察真实发生并写入 shadow）。
+     assert_eq!(
+         serde_json::to_vec(input.retail_experience().unwrap()).unwrap(),
+-        serde_json::to_vec(&shadow.retail_experience[&account]).unwrap()
++        serde_json::to_vec(&shadow.state.retail_experience[&account]).unwrap()
+     );
+     // 注意力在 shadow 上推进：唯一账户候选刻后移，新候选已入队，且无逾期条目残留
+     // （重复入队由 pop_due_npc_ids 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
+-    assert_ne!(shadow.npc_attention[&account], attention_before);
+-    assert!(shadow.npc_attention[&account].next_attention_candidate_tick > shadow.tick);
+-    let next = shadow.npc_attention[&account].next_attention_candidate_tick;
++    assert_ne!(shadow.state.npc_attention[&account], attention_before);
++    assert!(shadow.state.npc_attention[&account].next_attention_candidate_tick > shadow.state.tick);
++    let next = shadow.state.npc_attention[&account].next_attention_candidate_tick;
+     let entries = queue_entries(&shadow);
+     assert!(entries.contains(&(next, account)));
+     assert!(entries
+         .iter()
+-        .all(|(scheduled, _)| *scheduled > shadow.tick));
+-    let attention_keys_after: Vec<_> = shadow.npc_attention.keys().copied().collect();
++        .all(|(scheduled, _)| *scheduled > shadow.state.tick));
++    let attention_keys_after: Vec<_> = shadow.state.npc_attention.keys().copied().collect();
+     assert_eq!(attention_keys_after, attention_keys_before);
+     // 捕获只写 shadow：源会话状态哈希不变。
+     assert_eq!(source.session_state_hash().unwrap(), source_before);
+@@ -173,9 +178,9 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
+ #[test]
+ fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations() {
+     let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 17).unwrap();
+-    shadow.attention_queue.clear();
+-    let attention_before = shadow.npc_attention.clone();
+-    let experience_before = shadow.retail_experience.clone();
++    shadow.state.attention_scheduler.clear();
++    let attention_before = shadow.state.npc_attention.clone();
++    let experience_before = shadow.state.retail_experience.clone();
+ 
+     let captured = capture_decision_snapshot(&mut shadow).unwrap();
+     assert!(captured.working_continuous.is_empty());
+@@ -184,34 +189,36 @@ fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations()
+ 
+     assert!(snapshot.due_npc_ids().is_empty());
+     assert!(
+-        super::npc_decisions::run_npc_decisions(snapshot.clone(), &shadow.setup.config)
++        super::npc_decisions::run_npc_decisions(snapshot.clone(), &shadow.state.setup.config)
+             .unwrap()
+             .intents()
+             .is_empty()
+     );
+     assert!(snapshot.behavior_market().is_none());
+-    assert_eq!(shadow.npc_attention, attention_before);
+-    assert_eq!(shadow.retail_experience, experience_before);
++    assert_eq!(shadow.state.npc_attention, attention_before);
++    assert_eq!(shadow.state.retail_experience, experience_before);
+ }
+ 
+ #[test]
+ fn capture_reports_retail_experience_overflow() {
+     let (_, mut shadow, account) = due_retail_shadow(23);
+     let code = shadow
++        .state
+         .markets
+         .keys()
+         .next()
+         .cloned()
+         .expect("retail fixture has a market");
+-    let last = shadow.markets[&code].last_price();
++    let last = shadow.state.markets[&code].last_price();
+     shadow
++        .state
+         .accounts
+         .get_mut(&account)
+         .unwrap()
+         .grant_position(code.clone(), 100, last)
+         .unwrap();
+     let market_minute = shadow.current_market_minute();
+-    let experience = shadow.retail_experience.get_mut(&account).unwrap();
++    let experience = shadow.state.retail_experience.get_mut(&account).unwrap();
+     experience
+         .initialize_holding(&code, Some(last), last, market_minute)
+         .unwrap();
+@@ -233,7 +240,12 @@ fn capture_reports_retail_experience_overflow() {
+ #[test]
+ fn capture_reports_a_due_npc_without_a_strategy() {
+     let (_, mut shadow, account) = due_retail_shadow(29);
+-    shadow.accounts.get_mut(&account).unwrap().strategy = None;
++    shadow
++        .state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .fixture_set_strategy(None);
+     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
+ 
+     assert!(matches!(
+@@ -245,7 +257,7 @@ fn capture_reports_a_due_npc_without_a_strategy() {
+ #[test]
+ fn capture_reports_missing_due_attention_without_panic() {
+     let (_, mut shadow, account) = due_retail_shadow(31);
+-    shadow.npc_attention.remove(&account);
++    shadow.state.npc_attention.remove(&account);
+     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
+ 
+     assert!(matches!(
+@@ -257,7 +269,12 @@ fn capture_reports_missing_due_attention_without_panic() {
+ #[test]
+ fn capture_reports_risk_view_failure() {
+     let (_, mut shadow, account) = due_retail_shadow(37);
+-    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(-1);
++    shadow
++        .state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .fixture_set_cash(Money::from_cents(-1));
+     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
+ 
+     assert!(matches!(
+@@ -275,13 +292,14 @@ fn capture_reports_invalid_attention_after_an_earlier_account() {
+     let mut setup = npc_working_quote_tests::retail_quote_setup();
+     setup.npcs.retail_count = 3;
+     let mut shadow = GameSession::new(setup, 0xA77E).unwrap();
+-    shadow.tick = 1;
++    shadow.state.tick = 1;
+     let first = AccountId(1);
+     let second = AccountId(2);
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, first, 1);
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, second, 1);
+-    shadow.attention_queue.push(std::cmp::Reverse((0, first)));
++    shadow.state.attention_scheduler.enqueue(0, first);
+     shadow
++        .state
+         .npc_attention
+         .get_mut(&second)
+         .unwrap()
+@@ -298,7 +316,7 @@ fn capture_two_retail_accounts_is_identical_with_one_or_four_workers() {
+     let mut setup = npc_working_quote_tests::retail_quote_setup();
+     setup.npcs.retail_count = 2;
+     let mut source = GameSession::new(setup, 0xC011EC7).unwrap();
+-    let tick = source.tick;
++    let tick = source.state.tick;
+     for account in [AccountId(1), AccountId(2)] {
+         npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
+     }
+@@ -339,3 +357,285 @@ fn capture_two_retail_accounts_is_identical_with_one_or_four_workers() {
+     assert_eq!(one, four);
+     assert_eq!(one.0, vec![AccountId(1), AccountId(2)]);
+ }
++
++#[test]
++fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
++    let mut setup = npc_working_quote_tests::two_stock_quote_setup();
++    setup.npcs.inst_count = 0;
++    setup.npcs.retail_count = 1;
++    setup.stocks[1].initial_price = Money::from_cents(2_000);
++    let mut source = GameSession::new(setup, 53).unwrap();
++    let account = AccountId(1);
++    let codes = source.state.markets.keys().cloned().collect::<Vec<_>>();
++    let mut experience = crate::RetailExperienceState::without_equity_reference();
++    for (index, qty, locked, peak) in [(0, 100, 40, 2_000), (1, 200, 150, 1_500)] {
++        let price = source.state.markets[&codes[index]].last_price();
++        let entry = source.state.accounts.get_mut(&account).unwrap();
++        entry
++            .grant_position(codes[index].clone(), qty, price)
++            .unwrap();
++        entry.fixture_insert_position(
++            codes[index].clone(),
++            crate::Position::from_restored_parts(qty, locked, i64::from(qty) * price.cents(), 0),
++        );
++        experience
++            .initialize_holding(&codes[index], Some(price), Money::from_cents(peak), 0)
++            .unwrap();
++    }
++    // 两个持仓不占未持仓关注列表额度；九个未持仓项目中只移除最旧者。
++    let unheld = (0..9)
++        .map(|index| crate::StockCode(format!("watch-{index}")))
++        .collect::<Vec<_>>();
++    for (index, code) in unheld.iter().enumerate() {
++        experience.observe_stock(code, index as u64);
++    }
++    source.state.retail_experience.insert(account, experience);
++    let tick = source.state.tick;
++    npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
++    let before = source.session_state_hash().unwrap();
++    let raw_cash = source.state.accounts[&account].cash();
++    let mut shadow = source.clone_for_tick_shadow().unwrap();
++
++    let captured = capture_decision_snapshot(&mut shadow).unwrap();
++    let input = captured.snapshot.account(account).unwrap();
++    let experience = input.retail_experience().unwrap();
++    let risk = input.account_risk().unwrap();
++    let equity = raw_cash.add(Money::from_cents(500_000)).unwrap();
++    assert_eq!(risk.equity, equity);
++    assert_eq!(experience.reference_equity, Some(equity));
++    assert_eq!(experience.peak_equity, Some(equity));
++    assert_eq!(
++        risk.positions[&codes[0]].market_value,
++        Money::from_cents(100_000)
++    );
++    assert_eq!(
++        risk.positions[&codes[1]].market_value,
++        Money::from_cents(400_000)
++    );
++    assert_eq!(
++        risk.positions[&codes[0]].drawdown_from_position_peak,
++        Some(-0.5)
++    );
++    assert_eq!(
++        risk.positions[&codes[1]].drawdown_from_position_peak,
++        Some(0.0)
++    );
++    for (index, qty, sellable, peak) in [(0, 100, 60, 2_000), (1, 200, 50, 2_000)] {
++        let position = &input.self_view().positions[&codes[index]];
++        assert_eq!((position.qty, position.sellable_qty), (qty, sellable));
++        let stock = &experience.stocks[&codes[index]];
++        assert_eq!(stock.peak_price_since_entry, Some(Money::from_cents(peak)));
++        assert_eq!(
++            stock.last_observed_market_minute,
++            captured.snapshot.market_minute()
++        );
++    }
++    assert!(!experience.stocks.contains_key(&unheld[0]));
++    assert!(unheld[1..]
++        .iter()
++        .all(|code| experience.stocks.contains_key(code)));
++    assert_eq!(experience, &shadow.state.retail_experience[&account]);
++    assert_eq!(source.session_state_hash().unwrap(), before);
++}
++
++#[test]
++fn capture_non_retail_experience_keeps_self_positions_without_retail_risk() {
++    let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 59).unwrap();
++    let account = AccountId(1);
++    let code = shadow.state.markets.keys().next().unwrap().clone();
++    let price = shadow.state.markets[&code].last_price();
++    shadow
++        .state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .grant_position(code.clone(), 100, price)
++        .unwrap();
++    let mut experience = crate::RetailExperienceState::without_equity_reference();
++    experience
++        .initialize_holding(&code, Some(price), price, 0)
++        .unwrap();
++    shadow.state.retail_experience.insert(account, experience);
++    let tick = shadow.state.tick;
++    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
++
++    let captured = capture_decision_snapshot(&mut shadow).unwrap();
++    let input = captured.snapshot.account(account).unwrap();
++    assert_eq!(input.kind(), AccountKind::Inst);
++    assert!(input.account_risk().is_none());
++    assert!(captured.snapshot.behavior_market().is_none());
++    assert_eq!(input.self_view().positions[&code].qty, 100);
++    assert_eq!(
++        input.retail_experience(),
++        Some(&shadow.state.retail_experience[&account])
++    );
++}
++
++#[test]
++fn capture_missing_position_market_does_not_update_the_source_session() {
++    let (mut source, _, account) = due_retail_shadow(61);
++    let code = crate::StockCode("600999".to_owned());
++    source
++        .state
++        .accounts
++        .get_mut(&account)
++        .unwrap()
++        .grant_position(code.clone(), 100, Money::from_cents(1_000))
++        .unwrap();
++    let tick = source.state.tick;
++    npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
++    let before = source.session_state_hash().unwrap();
++    let mut shadow = source.clone_for_tick_shadow().unwrap();
++    let error = capture_decision_snapshot(&mut shadow).unwrap_err();
++
++    assert!(
++        matches!(error, DecisionSnapshotCaptureError::MissingMarketData {
++        location: "retail experience position", code: failed
++    } if failed == code)
++    );
++    assert_eq!(source.session_state_hash().unwrap(), before);
++}
++
++#[test]
++fn capture_equity_overflow_does_not_install_observed_experience() {
++    let (mut source, _, account) = due_retail_shadow(67);
++    let code = source.state.markets.keys().next().unwrap().clone();
++    let entry = source.state.accounts.get_mut(&account).unwrap();
++    entry
++        .grant_position(code, 100, Money::from_cents(1_000))
++        .unwrap();
++    entry.fixture_set_cash(Money::from_cents(i64::MAX));
++    let tick = source.state.tick;
++    npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
++    let before = source.session_state_hash().unwrap();
++    let experience_before = source.state.retail_experience.clone();
++    let mut shadow = source.clone_for_tick_shadow().unwrap();
++    let error = capture_decision_snapshot(&mut shadow).unwrap_err();
++
++    assert!(matches!(error, DecisionSnapshotCaptureError::Money {
++        location: "retail experience equity", account: failed, ..
++    } if failed == account));
++    assert_eq!(shadow.state.retail_experience, experience_before);
++    assert_eq!(source.session_state_hash().unwrap(), before);
++}
++
++#[test]
++fn capture_self_view_money_error_precedes_risk_and_missing_strategy() {
++    let (_, mut shadow, account) = due_retail_shadow(71);
++    let code = shadow.state.markets.keys().next().unwrap().clone();
++    let entry = shadow.state.accounts.get_mut(&account).unwrap();
++    entry.fixture_set_cash(Money::from_cents(i64::MIN));
++    entry.fixture_set_strategy(None);
++    shadow
++        .state
++        .markets
++        .get_mut(&code)
++        .unwrap()
++        .place(crate::Order {
++            id: crate::OrderId(1),
++            owner: account,
++            side: crate::Side::Buy,
++            price: Money::from_cents(900),
++            qty: 100,
++            original_qty: 100,
++            filled_qty: 0,
++            filled_value: Money::ZERO,
++            seq: 1,
++        })
++        .unwrap();
++    let error = capture_decision_snapshot(&mut shadow).unwrap_err();
++
++    assert!(matches!(error, DecisionSnapshotCaptureError::Money {
++        location: "available self-view cash", account: failed, ..
++    } if failed == account));
++}
++
++#[test]
++fn capture_risk_error_precedes_missing_strategy() {
++    let (_, mut shadow, account) = due_retail_shadow(73);
++    let entry = shadow.state.accounts.get_mut(&account).unwrap();
++    entry.fixture_set_cash(Money::from_cents(-1));
++    entry.fixture_set_strategy(None);
++    let error = capture_decision_snapshot(&mut shadow).unwrap_err();
++
++    assert!(matches!(error, DecisionSnapshotCaptureError::Observation {
++        location: "account risk", account: Some(failed),
++        source: crate::observation::ObservationError::NegativeCash { cents: -1 },
++    } if failed == account));
++}
++
++#[test]
++fn capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset() {
++    let mut setup = npc_working_quote_tests::retail_quote_setup();
++    setup.ticks_per_day = 15_300;
++    setup.auction_ticks = 900;
++    setup.closing_auction_ticks = 300;
++    let source = GameSession::new(setup, 79).unwrap();
++    let account = AccountId(1);
++    let code = source.state.markets.keys().next().unwrap().clone();
++    for (tick, expected_phase, replace_continuous, replace_auction) in [
++        (0, crate::TradingPhase::CallAuction, false, true),
++        (300, crate::TradingPhase::CallAuction, false, false),
++        (600, crate::TradingPhase::PreOpen, false, false),
++        (900, crate::TradingPhase::Continuous, true, false),
++        (15_000, crate::TradingPhase::ClosingAuction, false, false),
++    ] {
++        let mut shadow = source.clone_for_tick_shadow().unwrap();
++        shadow.state.tick = tick;
++        shadow.state.attention_scheduler.clear();
++        npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
++        for (id, side) in [(1, crate::Side::Buy), (2, crate::Side::Sell)] {
++            shadow
++                .state
++                .markets
++                .get_mut(&code)
++                .unwrap()
++                .place(crate::Order {
++                    id: crate::OrderId(id),
++                    owner: account,
++                    side,
++                    price: Money::from_cents(if side == crate::Side::Buy { 900 } else { 1_100 }),
++                    qty: 100,
++                    original_qty: 100,
++                    filled_qty: 0,
++                    filled_value: Money::ZERO,
++                    seq: id,
++                })
++                .unwrap();
++            shadow
++                .state
++                .auction_orders
++                .entry(code.clone())
++                .or_default()
++                .push(crate::session::AuctionOrderSnap {
++                    owner: account,
++                    side,
++                    limit: Money::from_cents(800),
++                    qty: 100,
++                    order_id: id + 2,
++                });
++        }
++        // 买单预留分别为成交额 + 500 分佣金 + 1 分过户费；卖单不预留现金。
++        let continuous = Money::from_cents(90_501);
++        let auction = Money::from_cents(80_501);
++        let mut expected = shadow.state.accounts[&account]
++            .cash()
++            .sub(continuous)
++            .unwrap()
++            .sub(auction)
++            .unwrap();
++        if replace_continuous {
++            expected = expected.add(continuous).unwrap();
++        }
++        if replace_auction {
++            expected = expected.add(auction).unwrap();
++        }
++
++        let captured = capture_decision_snapshot(&mut shadow).unwrap();
++        assert_eq!(captured.snapshot.phase(), expected_phase);
++        assert_eq!(
++            captured.snapshot.account(account).unwrap().self_view().cash,
++            expected
++        );
++    }
++}
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_tests.rs b/packages/engine/src/session/pipeline/decision_snapshot_tests.rs
+index e29f3cb..a0cd692 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_tests.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_tests.rs
+@@ -292,3 +292,34 @@ fn decision_snapshot_rejects_player_duplicate_and_market_minute_drift() {
+         Err(DecisionSnapshotError::MarketClockMismatch { .. })
+     ));
+ }
++
++#[test]
++fn decision_snapshot_accepts_non_retail_experience_without_retail_risk() {
++    let account = AccountId(1);
++    let input = DecisionAccountInput::new(
++        AccountKind::Inst,
++        SelfView {
++            cash: crate::Money::from_cents(10_000),
++            positions: BTreeMap::new(),
++        },
++        StrategyState::Momentum(MomentumStrategy::new(5, 0.02, 100).unwrap()),
++        None,
++        Some(crate::RetailExperienceState::without_equity_reference()),
++    );
++    let snapshot = DecisionSnapshot::new(
++        7,
++        42,
++        crate::TradingPhase::Continuous,
++        11,
++        market(7, 11),
++        None,
++        vec![account],
++        BTreeMap::from([(account, input)]),
++    )
++    .unwrap();
++
++    let input = snapshot.account(account).unwrap();
++    assert!(input.retail_experience().is_some());
++    assert!(input.account_risk().is_none());
++    assert!(snapshot.behavior_market().is_none());
++}
+diff --git a/packages/engine/src/session/pipeline/retail_projection.rs b/packages/engine/src/session/pipeline/retail_projection.rs
+index 4a41640..372812d 100644
+--- a/packages/engine/src/session/pipeline/retail_projection.rs
++++ b/packages/engine/src/session/pipeline/retail_projection.rs
+@@ -322,30 +322,25 @@ struct AccountProjection {
+ pub(super) fn project_retail_receipts(
+     input: RetailProjectionInput<'_>,
+ ) -> Result<RetailProjectionOutput, RetailProjectionError> {
+-    project_receipts(input, ExperienceUpdateMode::Retail, None)
++    project_receipts(input, ExperienceUpdateMode::Retail)
+ }
+ 
+ pub(super) fn project_institutional_receipts(
+     input: RetailProjectionInput<'_>,
+     moment: crate::experience::ExperienceMoment,
+ ) -> Result<RetailProjectionOutput, RetailProjectionError> {
+-    project_receipts(
+-        input,
+-        ExperienceUpdateMode::InstitutionalFacts,
+-        Some(moment),
+-    )
++    project_receipts(input, ExperienceUpdateMode::InstitutionalFacts(moment))
+ }
+ 
+ #[derive(Clone, Copy)]
+ enum ExperienceUpdateMode {
+     Retail,
+-    InstitutionalFacts,
++    InstitutionalFacts(crate::experience::ExperienceMoment),
+ }
+ 
+ fn project_receipts(
+     input: RetailProjectionInput<'_>,
+     mode: ExperienceUpdateMode,
+-    moment: Option<crate::experience::ExperienceMoment>,
+ ) -> Result<RetailProjectionOutput, RetailProjectionError> {
+     let mut seen = input.seen.clone();
+     let mut aggregates = BTreeMap::new();
+@@ -409,7 +404,13 @@ fn project_receipts(
+         .collect();
+     let prepared: Vec<Result<AccountProjection, RetailProjectionError>> = jobs
+         .into_par_iter()
+-        .map(|(account, orders)| project_retail_account(&input, account, orders, mode, moment))
++        .map(|(account, orders)| {
++            let mut projection = AccountFillProjection::new(&input, account, mode, orders.len());
++            for (order, aggregate) in orders {
++                projection.apply_order(order, aggregate)?;
++            }
++            Ok(projection.finish())
++        })
+         .collect();
+ 
+     // Complete every account's fill processing before checking final positions.
+@@ -433,32 +434,66 @@ fn project_receipts(
+     })
+ }
+ 
+-fn project_retail_account(
+-    input: &RetailProjectionInput<'_>,
++/// 单个账户在本批 Fill 中的可丢弃累积态；Settlement 的持仓快照仍是权威。
++struct AccountFillProjection<'a> {
+     account: AccountId,
+-    orders: Vec<(RetailOrderIdentity, Aggregate)>,
+     mode: ExperienceUpdateMode,
+-    moment: Option<crate::experience::ExperienceMoment>,
+-) -> Result<AccountProjection, RetailProjectionError> {
+-    let mut state = input.retail_experience.get(&account).cloned();
+-    let before_positions = input.positions_before.get(&account);
+-    let mut running_qty = BTreeMap::new();
+-    let mut running_positions = match mode {
+-        ExperienceUpdateMode::InstitutionalFacts => before_positions.cloned().unwrap_or_default(),
+-        ExperienceUpdateMode::Retail => BTreeMap::new(),
+-    };
+-    let mut events = Vec::with_capacity(orders.len());
+-    for (order, aggregate) in orders {
+-        let before_qty = *running_qty.entry(order.stock.clone()).or_insert_with(|| {
+-            before_positions
+-                .and_then(|positions| positions.get(&order.stock))
+-                .map_or(0, |position| position.qty)
+-        });
++    state: Option<RetailExperienceState>,
++    market_minute: u64,
++    positions_before: Option<&'a BTreeMap<StockCode, Position>>,
++    positions_after: Option<&'a BTreeMap<StockCode, Position>>,
++    running_qty: BTreeMap<StockCode, u32>,
++    running_positions: BTreeMap<StockCode, Position>,
++    events: Vec<RetailReceiptEvent>,
++}
++
++impl<'a> AccountFillProjection<'a> {
++    fn new(
++        input: &'a RetailProjectionInput<'_>,
++        account: AccountId,
++        mode: ExperienceUpdateMode,
++        order_count: usize,
++    ) -> Self {
++        let positions_before = input.positions_before.get(&account);
++        let running_positions = match mode {
++            ExperienceUpdateMode::InstitutionalFacts(_) => {
++                positions_before.cloned().unwrap_or_default()
++            }
++            ExperienceUpdateMode::Retail => BTreeMap::new(),
++        };
++        Self {
++            account,
++            mode,
++            state: input.retail_experience.get(&account).cloned(),
++            market_minute: input.market_minute,
++            positions_before,
++            positions_after: input.positions_after.get(&account),
++            running_qty: BTreeMap::new(),
++            running_positions,
++            events: Vec::with_capacity(order_count),
++        }
++    }
++
++    fn apply_order(
++        &mut self,
++        order: RetailOrderIdentity,
++        aggregate: Aggregate,
++    ) -> Result<(), RetailProjectionError> {
++        let before_qty = *self
++            .running_qty
++            .entry(order.stock.clone())
++            .or_insert_with(|| {
++                self.positions_before
++                    .and_then(|positions| positions.get(&order.stock))
++                    .map_or(0, |position| position.qty())
++            });
+         let after_qty = match aggregate.side {
+             Side::Buy => before_qty.checked_add(aggregate.qty),
+             Side::Sell => before_qty.checked_sub(aggregate.qty),
+         }
+-        .ok_or(RetailProjectionError::PositionTransition { account })?;
++        .ok_or(RetailProjectionError::PositionTransition {
++            account: self.account,
++        })?;
+         let average = Money::from_cents(
+             aggregate
+                 .gross
+@@ -469,14 +504,18 @@ fn project_retail_account(
+         if average <= Money::ZERO {
+             return Err(RetailProjectionError::NonPositiveAveragePrice { order: order.order });
+         }
+-        let cost_before = before_positions
++        let cost_before = self
++            .positions_before
+             .and_then(|positions| positions.get(&order.stock))
+             .and_then(Position::cost_price)
+             .filter(|cost| *cost > Money::ZERO);
+-        let experience = state
+-            .as_mut()
+-            .ok_or(RetailProjectionError::MissingRetailExperience { account })?;
+-        match mode {
++        let experience =
++            self.state
++                .as_mut()
++                .ok_or(RetailProjectionError::MissingRetailExperience {
++                    account: self.account,
++                })?;
++        match self.mode {
+             ExperienceUpdateMode::Retail => experience.record_fill_with_order(
+                 &order.stock,
+                 aggregate.side,
+@@ -484,10 +523,10 @@ fn project_retail_account(
+                 before_qty,
+                 after_qty,
+                 cost_before,
+-                input.market_minute,
++                self.market_minute,
+                 Some(order.order.0),
+             )?,
+-            ExperienceUpdateMode::InstitutionalFacts => {
++            ExperienceUpdateMode::InstitutionalFacts(moment) => {
+                 let fees = aggregate
+                     .charged
+                     .commission
+@@ -497,25 +536,27 @@ fn project_retail_account(
+                 let mut realized_profit = false;
+                 match aggregate.side {
+                     Side::Buy => {
+-                        let position =
+-                            running_positions
+-                                .entry(order.stock.clone())
+-                                .or_insert(Position {
+-                                    qty: 0,
+-                                    t1_locked: 0,
+-                                    invested_cents: 0,
+-                                    recovered_cents: 0,
+-                                });
+-                        position.qty = after_qty;
+-                        position.invested_cents = position
+-                            .invested_cents
++                        let position = self
++                            .running_positions
++                            .entry(order.stock.clone())
++                            .or_insert_with(|| Position::from_restored_parts(0, 0, 0, 0));
++                        let invested_cents = position
++                            .invested_cents()
+                             .checked_add(aggregate.gross.cents())
+                             .ok_or(RetailProjectionError::Overflow)?;
++                        *position = Position::from_restored_parts(
++                            after_qty,
++                            position.t1_locked(),
++                            invested_cents,
++                            position.recovered_cents(),
++                        );
+                     }
+                     Side::Sell => {
+-                        let position = running_positions
+-                            .get(&order.stock)
+-                            .ok_or(RetailProjectionError::PositionTransition { account })?;
++                        let position = self.running_positions.get(&order.stock).ok_or(
++                            RetailProjectionError::PositionTransition {
++                                account: self.account,
++                            },
++                        )?;
+                         if after_qty == 0 {
+                             let paid = experience
+                                 .feedback
+@@ -531,20 +572,25 @@ fn project_retail_account(
+                             let total_fees = paid
+                                 .add(fees)
+                                 .map_err(|_| RetailProjectionError::Overflow)?;
+-                            realized_profit = i128::from(position.recovered_cents)
++                            realized_profit = i128::from(position.recovered_cents())
+                                 + i128::from(aggregate.gross.cents())
+-                                > i128::from(position.invested_cents)
++                                > i128::from(position.invested_cents())
+                                     + i128::from(total_fees.cents());
+                         }
+-                        if let Some(position) = running_positions.get_mut(&order.stock) {
+-                            position.qty = after_qty;
+-                            position.recovered_cents = position
+-                                .recovered_cents
++                        if let Some(position) = self.running_positions.get_mut(&order.stock) {
++                            let recovered_cents = position
++                                .recovered_cents()
+                                 .checked_add(aggregate.gross.cents())
+                                 .ok_or(RetailProjectionError::Overflow)?;
++                            *position = Position::from_restored_parts(
++                                after_qty,
++                                position.t1_locked(),
++                                position.invested_cents(),
++                                recovered_cents,
++                            );
+                         }
+                         if after_qty == 0 {
+-                            running_positions.remove(&order.stock);
++                            self.running_positions.remove(&order.stock);
+                         }
+                     }
+                 }
+@@ -557,13 +603,13 @@ fn project_retail_account(
+                     fees,
+                     realized_profit,
+                     order.order.0,
+-                    moment.expect("institutional fact projection supplies the full moment"),
++                    moment,
+                 )?;
+             }
+         }
+-        running_qty.insert(order.stock.clone(), after_qty);
+-        events.push(RetailReceiptEvent::Filled {
+-            account,
++        self.running_qty.insert(order.stock.clone(), after_qty);
++        self.events.push(RetailReceiptEvent::Filled {
++            account: self.account,
+             stock: order.stock,
+             side: aggregate.side,
+             order: order.order,
+@@ -571,30 +617,34 @@ fn project_retail_account(
+             gross: aggregate.gross,
+             charged: aggregate.charged,
+         });
++        Ok(())
+     }
+ 
+-    let final_position_error = running_qty.iter().find_map(|(stock, qty)| {
+-        let settled_qty = input
+-            .positions_after
+-            .get(&account)
+-            .and_then(|positions| positions.get(stock))
+-            .map_or(0, |position| position.qty);
+-        (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition { account })
+-    });
+-    if let (ExperienceUpdateMode::Retail, Some(state)) = (mode, &mut state) {
+-        let held = input
+-            .positions_after
+-            .get(&account)
+-            .map(|positions| positions.keys().cloned().collect())
+-            .unwrap_or_default();
+-        state.prune_watchlist(&held);
++    // 对账错误留到所有 job 的 Fill 处理错误检查之后，不能提前变成 Err。
++    fn finish(mut self) -> AccountProjection {
++        let final_position_error = self.running_qty.iter().find_map(|(stock, qty)| {
++            let settled_qty = self
++                .positions_after
++                .and_then(|positions| positions.get(stock))
++                .map_or(0, |position| position.qty());
++            (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition {
++                account: self.account,
++            })
++        });
++        if let (ExperienceUpdateMode::Retail, Some(state)) = (self.mode, &mut self.state) {
++            let held = self
++                .positions_after
++                .map(|positions| positions.keys().cloned().collect())
++                .unwrap_or_default();
++            state.prune_watchlist(&held);
++        }
++        AccountProjection {
++            account: self.account,
++            state: self.state,
++            events: self.events,
++            final_position_error,
++        }
+     }
+-    Ok(AccountProjection {
+-        account,
+-        state,
+-        events,
+-        final_position_error,
+-    })
+ }
+ 
+ /// Produces the deterministic ReceiptAggregation receipt subset that this Settlement transaction has
+diff --git a/packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs b/packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs
+index 8062e36..060211c 100644
+--- a/packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs
++++ b/packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs
+@@ -148,16 +148,16 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
+         44,
+     )
+     .expect("v2 retail fixture must be valid");
+-    let code = source.setup.stocks[0].code.clone();
++    let code = source.state.setup.stocks[0].code.clone();
+     let old = receipt_for_stock(0, 1, code.clone());
+-    source.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
++    source.state.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
+         [(old.index, old.local_key.clone())],
+         1,
+     )
+     .expect("one committed receipt must form a complete prefix");
+-    source.next_receipt_base = 1;
+-    source.next_order_id = 3;
+-    source.envelope_ledger = EnvelopeLedger::new(1, []).unwrap();
++    source.state.next_receipt_base = 1;
++    source.state.next_order_id = 3;
++    source.state.envelope_ledger = EnvelopeLedger::new(1, []).unwrap();
+ 
+     let save = source
+         .save()
+@@ -170,6 +170,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
+         .expect("complete SaveSlot must restore the non-empty seen prefix");
+     assert_eq!(
+         restored
++            .state
+             .retail_projection_seen
+             .authoritative_identities()
+             .iter()
+@@ -206,21 +207,25 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
+     )
+     .expect("P5 must allocate from the restored cursor");
+     assert_eq!(committed[0].index, 1, "receipt index must not be reused");
+-    assert_eq!(restored.next_receipt_base, 2);
++    assert_eq!(restored.state.next_receipt_base, 2);
+ 
+-    let cash_before = restored.accounts[&AccountId(1)].cash;
++    let cash_before = restored.state.accounts[&AccountId(1)].cash();
+     let first =
+         apply_session_settlement_transaction(&mut restored, &[old.clone(), committed[0].clone()])
+             .expect("P6 must ignore the restored old identity and consume the next one");
+     assert_eq!(first.settlement.applied_receipts, 1);
+     assert_eq!(first.events.len(), 1);
+-    assert_eq!(restored.accounts[&AccountId(1)].positions[&code].qty, 100);
+     assert_eq!(
+-        restored.accounts[&AccountId(1)].cash,
++        restored.state.accounts[&AccountId(1)].positions()[&code].qty(),
++        100
++    );
++    assert_eq!(
++        restored.state.accounts[&AccountId(1)].cash(),
+         cash_before.sub(Money::from_cents(100_100)).unwrap(),
+     );
+     assert_eq!(
+         restored
++            .state
+             .retail_projection_seen
+             .authoritative_identities()
+             .iter()
+@@ -237,6 +242,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
+     assert_eq!(restored.business_state_hash().unwrap(), after_first);
+ 
+     restored
++        .state
+         .envelope_ledger
+         .rebase_live_for_next_tick()
+         .expect("terminal tick evidence must rebase at the quiet point");
+diff --git a/packages/engine/src/session/pipeline/retail_projection_tests.rs b/packages/engine/src/session/pipeline/retail_projection_tests.rs
+index 4298627..200f2c8 100644
+--- a/packages/engine/src/session/pipeline/retail_projection_tests.rs
++++ b/packages/engine/src/session/pipeline/retail_projection_tests.rs
+@@ -296,12 +296,7 @@ fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
+         AccountId(1),
+         BTreeMap::from([(
+             code(),
+-            Position {
+-                qty,
+-                t1_locked: 0,
+-                invested_cents: i64::from(qty) * 1_000,
+-                recovered_cents: 0,
+-            },
++            Position::from_restored_parts(qty, 0, i64::from(qty) * 1_000, 0),
+         )]),
+     )])
+ }
+@@ -659,3 +654,174 @@ fn retail_processing_error_precedes_another_accounts_final_position_error() {
+         }
+     );
+ }
++
++#[test]
++fn retail_order_average_truncates_fractional_cents_without_changing_gross() {
++    let receipt = fill(1, Side::Buy, 10, 100, 100_099);
++    let result = project_retail_receipts(RetailProjectionInput {
++        retail_experience: &retail(),
++        retail_accounts: &retail_accounts(),
++        positions_before: &BTreeMap::new(),
++        positions_after: &positions(100),
++        seen: &RetailProjectionSeen::default(),
++        market_minute: 10,
++        receipts: &[receipt],
++    })
++    .unwrap();
++
++    assert_eq!(
++        result.retail_experience[&AccountId(1)].stocks[&code()].last_buy_price,
++        Some(Money::from_cents(1_000))
++    );
++    assert!(
++        matches!(result.events.as_slice(), [RetailReceiptEvent::Filled { gross, .. }] if *gross == Money::from_cents(100_099))
++    );
++}
++
++#[test]
++fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
++    let account = AccountId(1);
++    let held = StockCode("600002".to_owned());
++    let mut second = fill(2, Side::Buy, 11, 100, 100_000);
++    second.envelope.stock = held.clone();
++    second.local_key = ReceiptLocalKey::new(
++        JournalRank::SealedBatch,
++        ReceiptSource::SealedIntent(2),
++        ReceiptTransition {
++            envelope: second.envelope.clone(),
++            ordinal: 0,
++        },
++    )
++    .unwrap();
++    let mut experience = RetailExperienceState::without_equity_reference();
++    let unheld = (0..9)
++        .map(|index| StockCode(format!("watch-{index}")))
++        .collect::<Vec<_>>();
++    for (index, stock) in unheld.iter().enumerate() {
++        experience.observe_stock(stock, index as u64);
++    }
++    let untouched = StockCode("600003".to_owned());
++    experience
++        .initialize_holding(
++            &untouched,
++            Some(Money::from_cents(900)),
++            Money::from_cents(1_000),
++            0,
++        )
++        .unwrap();
++    let untouched_before = experience.stocks[&untouched].clone();
++    let mut after = positions(100);
++    let position = after[&account][&code()].clone();
++    after
++        .get_mut(&account)
++        .unwrap()
++        .insert(held.clone(), position.clone());
++    after
++        .get_mut(&account)
++        .unwrap()
++        .insert(untouched.clone(), position);
++    let input_states = BTreeMap::from([(account, experience)]).into();
++    let result = project_retail_receipts(RetailProjectionInput {
++        retail_experience: &input_states,
++        retail_accounts: &retail_accounts(),
++        positions_before: &BTreeMap::new(),
++        positions_after: &after,
++        seen: &RetailProjectionSeen::default(),
++        market_minute: 10,
++        receipts: &[second, fill(1, Side::Buy, 10, 100, 100_000)],
++    })
++    .unwrap();
++
++    let stocks = &result.retail_experience[&account].stocks;
++    assert_eq!(stocks[&untouched], untouched_before);
++    assert!(stocks.contains_key(&code()) && stocks.contains_key(&held));
++    assert!(!stocks.contains_key(&unheld[0]));
++    assert!(unheld[1..].iter().all(|stock| stocks.contains_key(stock)));
++    assert_eq!(result.events.len(), 2);
++}
++
++#[test]
++fn institutional_exit_missing_actual_fee_history_returns_no_patch() {
++    let account = AccountId(1);
++    let stock = code();
++    let mut experience = RetailExperienceState::without_equity_reference();
++    experience
++        .initialize_holding(
++            &stock,
++            Some(Money::from_cents(1_000)),
++            Money::from_cents(1_000),
++            0,
++        )
++        .unwrap();
++    let original = experience.clone();
++    let experience = BTreeMap::from([(account, experience)]).into();
++    let seen = RetailProjectionSeen::default();
++    let error = super::retail_projection::project_institutional_receipts(
++        RetailProjectionInput {
++            retail_experience: &experience,
++            retail_accounts: &retail_accounts(),
++            positions_before: &positions(100),
++            positions_after: &BTreeMap::new(),
++            seen: &seen,
++            market_minute: 10,
++            receipts: &[fill(1, Side::Sell, 10, 100, 100_000)],
++        },
++        crate::experience::ExperienceMoment {
++            civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
++            market_minute: 10,
++            trading_day: 0,
++        },
++    )
++    .unwrap_err();
++
++    assert!(
++        matches!(error, RetailProjectionError::Experience(crate::ExperienceError::InconsistentFeedback { detail })
++        if detail == "institutional exit is missing actual fee history")
++    );
++    assert_eq!(experience[&account], original);
++    assert!(seen.is_empty());
++}
++
++#[test]
++fn retail_sell_beyond_the_running_position_returns_no_patch() {
++    let experience = retail();
++    let original = experience.clone();
++    let seen = RetailProjectionSeen::default();
++    let error = project_retail_receipts(RetailProjectionInput {
++        retail_experience: &experience,
++        retail_accounts: &retail_accounts(),
++        positions_before: &positions(100),
++        positions_after: &BTreeMap::new(),
++        seen: &seen,
++        market_minute: 10,
++        receipts: &[fill(1, Side::Sell, 10, 200, 200_000)],
++    })
++    .unwrap_err();
++
++    assert_eq!(
++        error,
++        RetailProjectionError::PositionTransition {
++            account: AccountId(1)
++        }
++    );
++    assert_eq!(experience, original);
++    assert!(seen.is_empty());
++}
++
++#[test]
++fn retail_zero_quantity_fill_reports_non_positive_gross() {
++    let mut receipt = fill(1, Side::Buy, 10, 100, 100_000);
++    receipt.qty_after = receipt.qty_before;
++    let error = project_retail_receipts(RetailProjectionInput {
++        retail_experience: &retail(),
++        retail_accounts: &retail_accounts(),
++        positions_before: &BTreeMap::new(),
++        positions_after: &positions(100),
++        seen: &RetailProjectionSeen::default(),
++        market_minute: 10,
++        receipts: &[receipt],
++    })
++    .unwrap_err();
++
++    assert_eq!(error, RetailProjectionError::NonPositiveGross { index: 1 });
++}
+diff --git a/packages/engine/src/session/pipeline/settlement.rs b/packages/engine/src/session/pipeline/settlement.rs
+index 5dcce85..89ca390 100644
+--- a/packages/engine/src/session/pipeline/settlement.rs
++++ b/packages/engine/src/session/pipeline/settlement.rs
+@@ -1,9 +1,6 @@
+-//! Settlement receipt-driven account settlement.
++//! Settlement 消费 ReceiptAggregation 校验后的收据增量。
+ //!
+-//! This module deliberately consumes only ReceiptAggregation-validated receipt deltas.  It does
+-//! not invoke fee helpers or inspect `GameConfig`: nominal fee calculation is a
+-//! P4 responsibility and `EnvelopeReceipt::charged` is the actual amount Settlement
+-//! must settle.
++//! nominal 费用由 P4 计算；此处只累计 EnvelopeReceipt::charged 的实际实收金额。
+ 
+ use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
+ use crate::account::SettlementTotals;
+@@ -12,8 +9,7 @@ use crate::{Account, AccountId, Money, Side, StockCode};
+ use rayon::prelude::*;
+ use std::collections::BTreeMap;
+ 
+-/// Audit counts for the Settlement work that was actually applied.  A non-fill receipt
+-/// must not produce an account settlement call.
++/// 实际 Settlement 工作的审计计数；非 Fill 收据不触发账户结算。
+ #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+ pub(super) struct SettlementApplication {
+     pub(super) applied_groups: usize,
+@@ -26,39 +22,45 @@ struct SideTotals {
+     sell: SettlementTotals,
+ }
+ 
+-/// Aggregate positive-quantity fill receipts and settle each account/stock
+-/// lifecycle in Buy-before-Sell order.
++/// 聚合正数量 Fill，按 account/stock 的 Buy-before-Sell 生命周期结算。
+ #[cfg(test)]
+ pub(super) fn apply_receipt_settlements(
+     accounts: &mut AccountBook,
+     receipts: &[EnvelopeReceipt],
+     t1_enabled: bool,
+ ) -> Result<SettlementApplication, StepFatal> {
+-    let (settled, application) = prepare_receipt_settlements(accounts, receipts, t1_enabled)?;
++    let (settled, application) =
++        ReceiptSettlementPlan::from_receipts(receipts)?.prepare_accounts(accounts, t1_enabled)?;
+     accounts.extend(settled);
+     Ok(application)
+ }
+ 
+-/// Build each changed account independently. Results are collected in account
+-/// order, and nothing is written to the caller until every lifecycle succeeds.
+-pub(super) fn prepare_receipt_settlements(
+-    accounts: &AccountBook,
+-    receipts: &[EnvelopeReceipt],
+-    t1_enabled: bool,
+-) -> Result<(BTreeMap<AccountId, Account>, SettlementApplication), StepFatal> {
+-    let mut totals_by_account_stock: BTreeMap<(AccountId, StockCode), SideTotals> = BTreeMap::new();
+-    let mut application = SettlementApplication::default();
++/// 本批实际 charged 收据的临时结算计划；权威 AccountBook 由 caller 持有。
++#[derive(Debug, Default)]
++pub(super) struct ReceiptSettlementPlan {
++    totals_by_account_stock: BTreeMap<(AccountId, StockCode), SideTotals>,
++    application: SettlementApplication,
++}
++
++impl ReceiptSettlementPlan {
++    pub(super) fn from_receipts(receipts: &[EnvelopeReceipt]) -> Result<Self, StepFatal> {
++        let mut plan = Self::default();
++        for receipt in receipts {
++            plan.record_receipt(receipt)?;
++        }
++        Ok(plan)
++    }
+ 
+-    for receipt in receipts {
++    fn record_receipt(&mut self, receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
+         if receipt.kind != ReceiptKind::Fill {
+-            continue;
++            return Ok(());
+         }
+         let qty = receipt
+             .qty_before
+             .checked_sub(receipt.qty_after)
+             .ok_or_else(|| invariant("fill receipt quantity chain regressed"))?;
+         if qty == 0 {
+-            continue;
++            return Ok(());
+         }
+         let gross = receipt
+             .value_after
+@@ -73,7 +75,8 @@ pub(super) fn prepare_receipt_settlements(
+             return Err(invariant("buyer receipt has non-zero stamp tax"));
+         }
+ 
+-        let totals = totals_by_account_stock
++        let totals = self
++            .totals_by_account_stock
+             .entry((receipt.envelope.account, receipt.envelope.stock.clone()))
+             .or_default();
+         let side_totals = match receipt.envelope.side {
+@@ -81,58 +84,68 @@ pub(super) fn prepare_receipt_settlements(
+             Side::Sell => &mut totals.sell,
+         };
+         add_receipt(side_totals, gross, qty, receipt)?;
+-        application.applied_receipts = application
++        self.application.applied_receipts = self
++            .application
+             .applied_receipts
+             .checked_add(1)
+             .ok_or_else(|| invariant("settlement receipt count overflow"))?;
++        Ok(())
+     }
+ 
+-    let mut grouped: BTreeMap<AccountId, Vec<(StockCode, SideTotals)>> = BTreeMap::new();
+-    for ((account_id, stock), totals) in totals_by_account_stock {
+-        grouped.entry(account_id).or_default().push((stock, totals));
+-    }
+-    let prepared: Vec<Result<_, StepFatal>> = grouped
+-        .into_par_iter()
+-        .map(|(account_id, stocks)| {
+-            let mut account = accounts
+-                .get(&account_id)
+-                .ok_or_else(|| {
+-                    invariant(&format!("settlement account {} is missing", account_id.0))
+-                })?
+-                .clone_for_shadow()
+-                .map_err(|error| invariant(&error.to_string()))?;
+-            let mut applied_groups = 0_usize;
+-            for (stock, totals) in stocks {
+-                if totals.buy.qty > 0 {
+-                    account
+-                        .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
+-                        .map_err(|error| invariant(&error.to_string()))?;
+-                    applied_groups = applied_groups
+-                        .checked_add(1)
+-                        .ok_or_else(|| invariant("settlement group count overflow"))?;
+-                }
+-                if totals.sell.qty > 0 {
+-                    account
+-                        .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
+-                        .map_err(|error| invariant(&error.to_string()))?;
+-                    applied_groups = applied_groups
+-                        .checked_add(1)
+-                        .ok_or_else(|| invariant("settlement group count overflow"))?;
++    /// 按账户并行准备 shadow，按原账户顺序取首错；全部成功才交出 patch。
++    pub(super) fn prepare_accounts(
++        mut self,
++        accounts: &AccountBook,
++        t1_enabled: bool,
++    ) -> Result<(BTreeMap<AccountId, Account>, SettlementApplication), StepFatal> {
++        let mut grouped: BTreeMap<AccountId, Vec<(StockCode, SideTotals)>> = BTreeMap::new();
++        for ((account_id, stock), totals) in self.totals_by_account_stock {
++            grouped.entry(account_id).or_default().push((stock, totals));
++        }
++        let prepared: Vec<Result<_, StepFatal>> = grouped
++            .into_par_iter()
++            .map(|(account_id, stocks)| {
++                let mut account = accounts
++                    .get(&account_id)
++                    .ok_or_else(|| {
++                        invariant(&format!("settlement account {} is missing", account_id.0))
++                    })?
++                    .clone_for_shadow()
++                    .map_err(|error| invariant(&error.to_string()))?;
++                let mut applied_groups = 0_usize;
++                for (stock, totals) in stocks {
++                    if totals.buy.qty > 0 {
++                        account
++                            .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
++                            .map_err(|error| invariant(&error.to_string()))?;
++                        applied_groups = applied_groups
++                            .checked_add(1)
++                            .ok_or_else(|| invariant("settlement group count overflow"))?;
++                    }
++                    if totals.sell.qty > 0 {
++                        account
++                            .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
++                            .map_err(|error| invariant(&error.to_string()))?;
++                        applied_groups = applied_groups
++                            .checked_add(1)
++                            .ok_or_else(|| invariant("settlement group count overflow"))?;
++                    }
+                 }
+-            }
+-            Ok((account_id, account, applied_groups))
+-        })
+-        .collect();
+-    let mut settled = BTreeMap::new();
+-    for result in prepared {
+-        let (account_id, account, groups) = result?;
+-        application.applied_groups = application
+-            .applied_groups
+-            .checked_add(groups)
+-            .ok_or_else(|| invariant("settlement group count overflow"))?;
+-        settled.insert(account_id, account);
++                Ok((account_id, account, applied_groups))
++            })
++            .collect();
++        let mut settled = BTreeMap::new();
++        for result in prepared {
++            let (account_id, account, groups) = result?;
++            self.application.applied_groups =
++                self.application
++                    .applied_groups
++                    .checked_add(groups)
++                    .ok_or_else(|| invariant("settlement group count overflow"))?;
++            settled.insert(account_id, account);
++        }
++        Ok((settled, self.application))
+     }
+-    Ok((settled, application))
+ }
+ 
+ fn add_receipt(
+diff --git a/packages/engine/src/session/pipeline/settlement_tests.rs b/packages/engine/src/session/pipeline/settlement_tests.rs
+index 9567cd2..6aee1c5 100644
+--- a/packages/engine/src/session/pipeline/settlement_tests.rs
++++ b/packages/engine/src/session/pipeline/settlement_tests.rs
+@@ -1,4 +1,4 @@
+-use super::settlement::{apply_receipt_settlements, prepare_receipt_settlements};
++use super::settlement::{apply_receipt_settlements, ReceiptSettlementPlan};
+ use super::{
+     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, FeeComponents,
+     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
+@@ -42,7 +42,12 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
+             .num_threads(threads)
+             .build()
+             .unwrap()
+-            .install(|| prepare_receipt_settlements(&accounts, &receipts, true).unwrap())
++            .install(|| {
++                ReceiptSettlementPlan::from_receipts(&receipts)
++                    .unwrap()
++                    .prepare_accounts(&accounts, true)
++                    .unwrap()
++            })
+     };
+     let (one, one_counts) = run(1);
+     let (four, four_counts) = run(4);
+@@ -54,7 +59,7 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
+     assert_eq!(account_state(&one.into()), account_state(&four.into()));
+     assert_eq!(one_counts.applied_groups, 2);
+     assert_eq!(one_counts.applied_receipts, 2);
+-    assert_eq!(accounts[&AccountId(2)].cash, Money::from_cents(200_000));
++    assert_eq!(accounts[&AccountId(2)].cash(), Money::from_cents(200_000));
+ }
+ 
+ fn stock() -> StockCode {
+@@ -196,19 +201,19 @@ fn account_state(accounts: &AccountBook) -> AccountState {
+         .iter()
+         .map(|(id, account)| {
+             let positions = account
+-                .positions
++                .positions()
+                 .iter()
+                 .map(|(code, position)| {
+                     (
+                         code.clone(),
+-                        position.qty,
+-                        position.t1_locked,
+-                        position.invested_cents,
+-                        position.recovered_cents,
++                        position.qty(),
++                        position.t1_locked(),
++                        position.invested_cents(),
++                        position.recovered_cents(),
+                     )
+                 })
+                 .collect();
+-            (*id, (account.cash, positions))
++            (*id, (account.cash(), positions))
+         })
+         .collect()
+ }
+@@ -254,11 +259,11 @@ fn settles_receipt_actual_fee_components_without_recomputing_them() {
+ 
+     assert_eq!(applied.applied_receipts, 1);
+     assert_eq!(applied.applied_groups, 1);
+-    assert_eq!(accounts[&account].cash, Money::from_cents(99_499));
+-    let position = &accounts[&account].positions[&stock()];
+-    assert_eq!(position.qty, 100);
+-    assert_eq!(position.t1_locked, 100);
+-    assert_eq!(position.invested_cents, 100_000);
++    assert_eq!(accounts[&account].cash(), Money::from_cents(99_499));
++    let position = &accounts[&account].positions()[&stock()];
++    assert_eq!(position.qty(), 100);
++    assert_eq!(position.t1_locked(), 100);
++    assert_eq!(position.invested_cents(), 100_000);
+ }
+ 
+ #[test]
+@@ -288,12 +293,12 @@ fn applies_same_account_stock_buy_before_sell_to_preserve_t1_lifecycle() {
+ 
+     assert_eq!(applied.applied_receipts, 2);
+     assert_eq!(applied.applied_groups, 2);
+-    assert_eq!(accounts[&account].cash, Money::from_cents(198_948));
+-    let position = &accounts[&account].positions[&stock()];
+-    assert_eq!(position.qty, 100);
+-    assert_eq!(position.t1_locked, 100);
+-    assert_eq!(position.invested_cents, 200_000);
+-    assert_eq!(position.recovered_cents, 100_000);
++    assert_eq!(accounts[&account].cash(), Money::from_cents(198_948));
++    let position = &accounts[&account].positions()[&stock()];
++    assert_eq!(position.qty(), 100);
++    assert_eq!(position.t1_locked(), 100);
++    assert_eq!(position.invested_cents(), 200_000);
++    assert_eq!(position.recovered_cents(), 100_000);
+ }
+ 
+ #[test]
+@@ -304,7 +309,7 @@ fn non_fill_receipts_do_not_settle_accounts() {
+         Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
+     )])
+     .into();
+-    let before_cash = accounts[&account].cash;
++    let before_cash = accounts[&account].cash();
+ 
+     let applied = apply_receipt_settlements(
+         &mut accounts,
+@@ -319,8 +324,8 @@ fn non_fill_receipts_do_not_settle_accounts() {
+ 
+     assert_eq!(applied.applied_receipts, 0);
+     assert_eq!(applied.applied_groups, 0);
+-    assert_eq!(accounts[&account].cash, before_cash);
+-    assert!(accounts[&account].positions.is_empty());
++    assert_eq!(accounts[&account].cash(), before_cash);
++    assert!(accounts[&account].positions().is_empty());
+ }
+ 
+ #[test]
+@@ -348,7 +353,7 @@ fn buyer_stamp_tax_is_a_typed_fatal_instead_of_a_silent_drop() {
+     assert!(error
+         .to_string()
+         .contains("buyer receipt has non-zero stamp tax"));
+-    assert_eq!(accounts[&account].cash, Money::from_cents(200_000));
++    assert_eq!(accounts[&account].cash(), Money::from_cents(200_000));
+ }
+ 
+ #[test]
+@@ -438,8 +443,8 @@ fn seller_settlement_charges_only_the_capped_receipt_amount_when_nominal_fee_exc
+ 
+     apply_receipt_settlements(&mut accounts, &[receipt], true).unwrap();
+ 
+-    assert_eq!(accounts[&account].cash, Money::ZERO);
+-    assert!(!accounts[&account].positions.contains_key(&stock()));
++    assert_eq!(accounts[&account].cash(), Money::ZERO);
++    assert!(!accounts[&account].positions().contains_key(&stock()));
+ }
+ 
+ #[test]
+@@ -490,10 +495,10 @@ fn seller_settlement_deducts_charged_not_nominal_and_recovers_full_gross() {
+ 
+     apply_receipt_settlements(&mut accounts, &[receipt], true).unwrap();
+ 
+-    assert_eq!(accounts[&account].cash, Money::from_cents(1_900));
+-    let position = &accounts[&account].positions[&stock()];
+-    assert_eq!(position.qty, 1);
+-    assert_eq!(position.recovered_cents, 1_000);
++    assert_eq!(accounts[&account].cash(), Money::from_cents(1_900));
++    let position = &accounts[&account].positions()[&stock()];
++    assert_eq!(position.qty(), 1);
++    assert_eq!(position.recovered_cents(), 1_000);
+ }
+ 
+ #[test]
+@@ -583,9 +588,76 @@ fn multiple_orders_and_legs_share_one_account_stock_side_settlement_group() {
+ 
+     assert_eq!(applied.applied_receipts, 3);
+     assert_eq!(applied.applied_groups, 1);
+-    assert_eq!(accounts[&account].cash, Money::from_cents(99_000));
+-    let position = &accounts[&account].positions[&stock()];
+-    assert_eq!(position.qty, 300);
+-    assert_eq!(position.t1_locked, 300);
+-    assert_eq!(position.invested_cents, 300_000);
++    assert_eq!(accounts[&account].cash(), Money::from_cents(99_000));
++    let position = &accounts[&account].positions()[&stock()];
++    assert_eq!(position.qty(), 300);
++    assert_eq!(position.t1_locked(), 300);
++    assert_eq!(position.invested_cents(), 300_000);
++}
++
++#[test]
++fn settlement_plan_ignores_zero_quantity_fill_before_gross_and_fee_checks() {
++    let mut receipt = non_fill(ReceiptKind::Fill);
++    receipt.charged.stamp_tax = Money::from_cents(1);
++    let (patch, application) = ReceiptSettlementPlan::from_receipts(&[receipt])
++        .unwrap()
++        .prepare_accounts(&AccountBook::default(), true)
++        .unwrap();
++    assert!(patch.is_empty());
++    assert_eq!(application.applied_receipts, 0);
++    assert_eq!(application.applied_groups, 0);
++}
++
++#[test]
++fn settlement_plan_later_malformed_receipt_does_not_apply_earlier_fill() {
++    let account = AccountId(1);
++    let mut accounts: AccountBook = [(
++        account,
++        Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
++    )]
++    .into_iter()
++    .collect();
++    let before = account_state(&accounts);
++    let first = fill(account, 1, Side::Buy, 100, 100_000, FeeComponents::ZERO);
++    let mut second = first.clone();
++    second.qty_after = second.qty_before + 1;
++    let error = apply_receipt_settlements(&mut accounts, &[first, second], true).unwrap_err();
++    assert!(
++        matches!(error, super::StepFatal::InvariantViolation { description, location }
++        if description == "fill receipt quantity chain regressed" && location == "pipeline::settlement")
++    );
++    assert_eq!(account_state(&accounts), before);
++}
++
++#[test]
++fn settlement_plan_accumulates_each_actual_seller_fee_component() {
++    let account = AccountId(1);
++    let mut holder = Account::new(account, AccountKind::Player, Money::ZERO);
++    holder
++        .grant_position(stock(), 300, Money::from_cents(1_000))
++        .unwrap();
++    let mut accounts: AccountBook = [(account, holder)].into_iter().collect();
++    let mut receipts = Vec::new();
++    for (order, commission, stamp_tax, transfer_fee) in [(1, 500, 50, 1), (2, 501, 51, 2)] {
++        receipts.push(fill(
++            account,
++            order,
++            Side::Sell,
++            100,
++            100_000,
++            FeeComponents {
++                commission: Money::from_cents(commission),
++                stamp_tax: Money::from_cents(stamp_tax),
++                transfer_fee: Money::from_cents(transfer_fee),
++            },
++        ));
++    }
++    let application = apply_receipt_settlements(&mut accounts, &receipts, true).unwrap();
++    assert_eq!(application.applied_groups, 1);
++    assert_eq!(application.applied_receipts, 2);
++    assert_eq!(accounts[&account].cash(), Money::from_cents(198_895));
++    assert_eq!(
++        accounts[&account].positions()[&stock()].recovered_cents(),
++        200_000
++    );
+ }
+diff --git a/packages/engine/src/session/pipeline/transition.rs b/packages/engine/src/session/pipeline/transition.rs
+index 2fc5148..8f84dee 100644
+--- a/packages/engine/src/session/pipeline/transition.rs
++++ b/packages/engine/src/session/pipeline/transition.rs
+@@ -95,12 +95,11 @@ impl FillTransition {
+             .map_err(invariant)?;
+         let nominal_after = seller_nominal_total(input.config, filled_value_after)?;
+         let nominal = nominal_after.checked_sub(nominal_before)?;
+-        let unpaid = nominal_after.checked_sub(input.charged_before)?;
+-        let charge_cap = unpaid.total()?.min(input.gross_delta);
+-        let charged = allocate_charged_components(unpaid, charge_cap)?;
+-        let charged_after = input.charged_before.checked_add(charged)?;
+-        validate_charged_chain(charged_after, nominal_after)?;
+-        let deliver_cash = input.gross_delta.sub(charge_cap).map_err(invariant)?;
++        let allocation = SellerChargeAllocation::calculate(
++            nominal_after,
++            input.charged_before,
++            input.gross_delta,
++        )?;
+ 
+         Ok(Self {
+             delta: ReceiptDelta::sealed(
+@@ -110,10 +109,10 @@ impl FillTransition {
+             ),
+             nominal,
+             nominal_after,
+-            charged,
+-            charged_after,
++            charged: allocation.charged_delta,
++            charged_after: allocation.charged_after,
+             deliver_qty: 0,
+-            deliver_cash,
++            deliver_cash: allocation.deliver_cash,
+         })
+     }
+ }
+@@ -187,26 +186,53 @@ fn seller_nominal_total(
+     })
+ }
+ 
+-fn allocate_charged_components(
+-    unpaid: FeeComponents,
+-    charge_cap: Money,
+-) -> Result<FeeComponents, super::super::StepFatal> {
+-    let commission = unpaid.commission.min(charge_cap);
+-    let after_commission = charge_cap.sub(commission).map_err(invariant)?;
+-    let stamp_tax = unpaid.stamp_tax.min(after_commission);
+-    let after_stamp_tax = after_commission.sub(stamp_tax).map_err(invariant)?;
+-    let transfer_fee = unpaid.transfer_fee.min(after_stamp_tax);
+-    let charged = FeeComponents {
+-        commission,
+-        stamp_tax,
+-        transfer_fee,
+-    };
+-    if charged.total()? != charge_cap {
+-        return Err(invariant_message(
+-            "seller charge allocation does not exhaust capped charge",
+-        ));
++/// 单腿卖出费用的实收分配；分项优先级沿用 ADR-0017 的游戏简化。
++struct SellerChargeAllocation {
++    charged_delta: FeeComponents,
++    charged_after: FeeComponents,
++    deliver_cash: Money,
++}
++
++impl SellerChargeAllocation {
++    fn calculate(
++        nominal_after: FeeComponents,
++        charged_before: FeeComponents,
++        gross_delta: Money,
++    ) -> Result<Self, super::super::StepFatal> {
++        let unpaid = nominal_after.checked_sub(charged_before)?;
++        let charge_cap = unpaid.total()?.min(gross_delta);
++        let charged_delta = Self::allocate_components(unpaid, charge_cap)?;
++        let charged_after = charged_before.checked_add(charged_delta)?;
++        validate_charged_chain(charged_after, nominal_after)?;
++        let deliver_cash = gross_delta.sub(charge_cap).map_err(invariant)?;
++        Ok(Self {
++            charged_delta,
++            charged_after,
++            deliver_cash,
++        })
++    }
++
++    fn allocate_components(
++        unpaid: FeeComponents,
++        charge_cap: Money,
++    ) -> Result<FeeComponents, super::super::StepFatal> {
++        let commission = unpaid.commission.min(charge_cap);
++        let after_commission = charge_cap.sub(commission).map_err(invariant)?;
++        let stamp_tax = unpaid.stamp_tax.min(after_commission);
++        let after_stamp_tax = after_commission.sub(stamp_tax).map_err(invariant)?;
++        let transfer_fee = unpaid.transfer_fee.min(after_stamp_tax);
++        let charged = FeeComponents {
++            commission,
++            stamp_tax,
++            transfer_fee,
++        };
++        if charged.total()? != charge_cap {
++            return Err(invariant_message(
++                "seller charge allocation does not exhaust capped charge",
++            ));
++        }
++        Ok(charged)
+     }
+-    Ok(charged)
+ }
+ 
+ fn validate_charged_chain(
+@@ -263,3 +289,68 @@ fn invariant_message(description: &str) -> super::super::StepFatal {
+         location: "pipeline::transition".to_owned(),
+     }
+ }
++
++#[cfg(test)]
++mod seller_charge_tests {
++    use super::*;
++
++    #[test]
++    fn seller_charge_allocation_caps_at_each_component_boundary() {
++        let nominal_after = FeeComponents {
++            commission: Money::from_cents(5),
++            stamp_tax: Money::from_cents(3),
++            transfer_fee: Money::from_cents(2),
++        };
++        for (gross, commission, stamp_tax, transfer_fee, delivery) in [
++            (4, 4, 0, 0, 0),
++            (5, 5, 0, 0, 0),
++            (7, 5, 2, 0, 0),
++            (8, 5, 3, 0, 0),
++            (9, 5, 3, 1, 0),
++            (10, 5, 3, 2, 0),
++            (11, 5, 3, 2, 1),
++        ] {
++            let allocation = SellerChargeAllocation::calculate(
++                nominal_after,
++                FeeComponents::ZERO,
++                Money::from_cents(gross),
++            )
++            .unwrap();
++            assert_eq!(
++                allocation.charged_delta,
++                FeeComponents {
++                    commission: Money::from_cents(commission),
++                    stamp_tax: Money::from_cents(stamp_tax),
++                    transfer_fee: Money::from_cents(transfer_fee),
++                }
++            );
++            assert_eq!(allocation.charged_after, allocation.charged_delta);
++            assert_eq!(allocation.deliver_cash, Money::from_cents(delivery));
++        }
++    }
++
++    #[test]
++    fn seller_charge_allocation_rejects_component_excess_and_total_overflow() {
++        let nominal = FeeComponents {
++            commission: Money::from_cents(5),
++            stamp_tax: Money::from_cents(3),
++            ..FeeComponents::ZERO
++        };
++        let charged = FeeComponents {
++            commission: Money::from_cents(6),
++            ..FeeComponents::ZERO
++        };
++        assert!(
++            matches!(SellerChargeAllocation::calculate(nominal, charged, Money::from_cents(10)), Err(super::super::StepFatal::InvariantViolation { location, .. }) if location == "pipeline::transition")
++        );
++        let nominal = FeeComponents {
++            commission: Money::from_cents(i64::MAX),
++            stamp_tax: Money::from_cents(1),
++            ..FeeComponents::ZERO
++        };
++        assert!(matches!(
++            SellerChargeAllocation::calculate(nominal, FeeComponents::ZERO, Money::from_cents(1)),
++            Err(super::super::StepFatal::InvariantViolation { .. })
++        ));
++    }
++}

@@ -93,6 +93,56 @@ pub enum FlowParams {
     RealEstate(RealEstateFlowParams),
 }
 
+/// 仅在既有 guard 处建立的短期行业借用；不改变公开 DTO 或存档的接受集合。
+pub(super) enum IndustryPairView<'a> {
+    Industrial(&'a mut IndustrialBooks, &'a IndustrialFlowParams),
+    Bank(&'a mut BankBooks, &'a BankFlowParams),
+    Insurance(&'a mut InsuranceBooks, &'a InsuranceFlowParams),
+    RealEstate(&'a mut RealEstateBooks, &'a RealEstateFlowParams),
+}
+
+impl<'a> IndustryPairView<'a> {
+    pub(super) fn at_build_guard(
+        books: &'a mut IndustryBooks,
+        params: &'a FlowParams,
+        spec: &CompanySpec,
+    ) -> Result<Self, OperationsError> {
+        if spec.kind != books.kind() {
+            return Err(Self::mismatch(spec, params));
+        }
+        Self::at_existing_guard(books, params, spec)
+    }
+
+    /// 日经营原 guard 只检查 books/params；spec.kind 的额外约束仅属于 build。
+    pub(super) fn at_existing_guard(
+        books: &'a mut IndustryBooks,
+        params: &'a FlowParams,
+        spec: &CompanySpec,
+    ) -> Result<Self, OperationsError> {
+        match (books, params) {
+            (IndustryBooks::Industrial(books), FlowParams::Industrial(params)) => {
+                Ok(Self::Industrial(books, params))
+            }
+            (IndustryBooks::Bank(books), FlowParams::Bank(params)) => Ok(Self::Bank(books, params)),
+            (IndustryBooks::Insurance(books), FlowParams::Insurance(params)) => {
+                Ok(Self::Insurance(books, params))
+            }
+            (IndustryBooks::RealEstate(books), FlowParams::RealEstate(params)) => {
+                Ok(Self::RealEstate(books, params))
+            }
+            _ => Err(Self::mismatch(spec, params)),
+        }
+    }
+
+    fn mismatch(spec: &CompanySpec, params: &FlowParams) -> OperationsError {
+        OperationsError::KindFlowMismatch {
+            company: spec.id.clone(),
+            kind: spec.kind,
+            flow: params.variant_name(),
+        }
+    }
+}
+
 impl FlowParams {
     pub fn variant_name(&self) -> &'static str {
         match self {

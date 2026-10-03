@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::consolidation::{
-    consolidate, ConsolidationOutput, ConsolidationRequest, MemberId, MinorityInterest, ScopeId,
+    consolidate, ConsolidationOutput, ConsolidationRequest, GroupMember, MemberId,
+    MinorityInterest, ScopeId,
 };
 use crate::accounting::error::AccountingError;
 use crate::accounting::journal::{JournalEntry, PostingSide};
@@ -53,114 +54,135 @@ pub(crate) fn consolidated(
     window: Window,
     prior_window: Window,
 ) -> Result<StatementWindows, ReportError> {
-    let ConsolidationRequest {
-        root,
-        members,
-        intercompany_balances,
-        intercompany_sales,
-    } = request;
-    let mut acc = Accumulator::new(window, prior_window)?;
-    let mut defs: BTreeMap<LedgerAccountId, AccountDef> = BTreeMap::new();
-    let mut sub_ids: BTreeSet<MemberId> = BTreeSet::new();
-    for member in &members {
-        if member.spec.group_parent.is_some() {
-            sub_ids.insert(member.spec.id.clone());
-        }
-        for (id, def) in member.books.ledger().chart().iter() {
-            defs.entry(id.clone()).or_insert_with(|| def.clone());
-        }
-    }
-    let mut member_prior_equity: BTreeMap<MemberId, AccountingAmount> = BTreeMap::new();
-    let mut non_root_equity: BTreeMap<LedgerAccountId, AccountingAmount> = BTreeMap::new();
-    let mut root_prior_capital = AccountingAmount::ZERO;
-    for member in &members {
-        let is_sub = sub_ids.contains(&member.spec.id);
-        let is_root = member.spec.id == root;
-        let mut prior_equity = AccountingAmount::ZERO;
-        for entry in member.books.journal().entries() {
-            acc.add_entry(entry, entry.period(), false, &defs)
-                .map_err(|e| ReportError::Accounting(Box::new(e)))?;
-            prior_equity = prior_equity
-                .add(equity_rolling_delta(
-                    entry,
-                    member.books,
-                    acc.prior_dec_bound(),
-                )?)
-                .map_err(|e| ReportError::Accounting(Box::new(e)))?;
-            if is_sub {
-                credit_of_equity(entry, member.books, Some(&mut non_root_equity), window.1)?;
-            }
-            if is_root {
-                root_prior_capital = root_prior_capital
-                    .add(credit_of_equity(
-                        entry,
-                        member.books,
-                        None,
-                        acc.prior_dec_bound(),
-                    )?)
-                    .map_err(|e| ReportError::Accounting(Box::new(e)))?;
-            }
-        }
-        member_prior_equity.insert(member.spec.id.clone(), prior_equity);
-    }
-    let output: ConsolidationOutput = consolidate(ConsolidationRequest {
-        root,
-        members,
-        intercompany_balances,
-        intercompany_sales,
-    })?;
-    apply_worksheet(&mut acc, &output)?;
-    let prior_split = prior_year_split(
-        &output,
-        &member_prior_equity,
-        root_prior_capital,
-        acc.has_prior_history(),
-    )?;
-    let ConsolidationOutput {
-        scope,
-        minority_equity_total,
-        equity_to_parent,
-        net_income_to_minority,
-        net_income_to_parent,
-        consolidated_net_income,
-        ..
-    } = output;
-    let facts = ConsolidationFacts {
-        root: match &scope {
-            ScopeId::Consolidated(root) => root.clone(),
-            ScopeId::Standalone(_) => {
-                return Err(ReportError::InternalWindowInconsistent {
-                    detail: "consolidation output scope must be Consolidated".to_string(),
-                })
-            }
-        },
-        minority_equity: minority_equity_total,
-        equity_to_parent,
-        minority_ni: net_income_to_minority,
-        ni_to_parent: net_income_to_parent,
-        consolidated_ni: consolidated_net_income,
-        non_root_equity,
-        prior_split,
-    };
-    Ok(acc.finish(defs, Some(facts)))
+    let mut builder = WindowConsolidationBuilder::new(window, prior_window)?;
+    builder.scan_members(&request.root, &request.members)?;
+    let output = consolidate(request)?;
+    builder.apply_consolidation_output(&output)?;
+    builder.finish(output)
 }
 
-/// 工作底稿行折入有效期间各桶（无现金——任务 12 红线）。
-fn apply_worksheet(acc: &mut Accumulator, output: &ConsolidationOutput) -> Result<(), ReportError> {
-    for entry in &output.worksheet {
-        for line in &entry.lines {
-            let delta = match line.side {
-                PostingSide::Debit => line.amount,
-                PostingSide::Credit => line
-                    .amount
-                    .neg()
-                    .map_err(|e| ReportError::Accounting(Box::new(e)))?,
-            };
-            acc.bucket_all(&line.account, delta)
-                .map_err(|e| ReportError::Accounting(Box::new(e)))?;
-        }
+/// 合并窗口构建期间的成员事实；最终金额仍由 Consolidation 与 Accumulator 计算。
+struct WindowConsolidationBuilder {
+    window: Window,
+    acc: Accumulator,
+    defs: BTreeMap<LedgerAccountId, AccountDef>,
+    sub_ids: BTreeSet<MemberId>,
+    member_prior_equity: BTreeMap<MemberId, AccountingAmount>,
+    non_root_equity: BTreeMap<LedgerAccountId, AccountingAmount>,
+    root_prior_capital: AccountingAmount,
+}
+
+impl WindowConsolidationBuilder {
+    fn new(window: Window, prior_window: Window) -> Result<Self, ReportError> {
+        Ok(Self {
+            window,
+            acc: Accumulator::new(window, prior_window)?,
+            defs: BTreeMap::new(),
+            sub_ids: BTreeSet::new(),
+            member_prior_equity: BTreeMap::new(),
+            non_root_equity: BTreeMap::new(),
+            root_prior_capital: AccountingAmount::ZERO,
+        })
     }
-    Ok(())
+
+    fn scan_members(
+        &mut self,
+        root: &MemberId,
+        members: &[GroupMember<'_>],
+    ) -> Result<(), ReportError> {
+        for member in members {
+            if member.spec.group_parent.is_some() {
+                self.sub_ids.insert(member.spec.id.clone());
+            }
+            for (id, def) in member.books.ledger().chart().iter() {
+                self.defs.entry(id.clone()).or_insert_with(|| def.clone());
+            }
+        }
+        for member in members {
+            let is_sub = self.sub_ids.contains(&member.spec.id);
+            let is_root = &member.spec.id == root;
+            let mut prior_equity = AccountingAmount::ZERO;
+            for entry in member.books.journal().entries() {
+                self.acc
+                    .add_entry(entry, entry.period(), false, &self.defs)
+                    .map_err(|e| ReportError::Accounting(Box::new(e)))?;
+                prior_equity = prior_equity
+                    .add(equity_rolling_delta(
+                        entry,
+                        member.books,
+                        self.acc.prior_dec_bound(),
+                    )?)
+                    .map_err(|e| ReportError::Accounting(Box::new(e)))?;
+                if is_sub {
+                    credit_of_equity(
+                        entry,
+                        member.books,
+                        Some(&mut self.non_root_equity),
+                        self.window.1,
+                    )?;
+                }
+                if is_root {
+                    self.root_prior_capital = self
+                        .root_prior_capital
+                        .add(credit_of_equity(
+                            entry,
+                            member.books,
+                            None,
+                            self.acc.prior_dec_bound(),
+                        )?)
+                        .map_err(|e| ReportError::Accounting(Box::new(e)))?;
+                }
+            }
+            self.member_prior_equity
+                .insert(member.spec.id.clone(), prior_equity);
+        }
+        Ok(())
+    }
+
+    fn apply_consolidation_output(
+        &mut self,
+        output: &ConsolidationOutput,
+    ) -> Result<(), ReportError> {
+        self.acc
+            .add_current_worksheet(&output.worksheet)
+            .map_err(|e| ReportError::Accounting(Box::new(e)))
+    }
+
+    fn finish(self, output: ConsolidationOutput) -> Result<StatementWindows, ReportError> {
+        let prior_split = prior_year_split(
+            &output,
+            &self.member_prior_equity,
+            self.root_prior_capital,
+            self.acc.has_prior_history(),
+        )?;
+        let ConsolidationOutput {
+            scope,
+            minority_equity_total,
+            equity_to_parent,
+            net_income_to_minority,
+            net_income_to_parent,
+            consolidated_net_income,
+            ..
+        } = output;
+        let facts = ConsolidationFacts {
+            root: match &scope {
+                ScopeId::Consolidated(root) => root.clone(),
+                ScopeId::Standalone(_) => {
+                    return Err(ReportError::InternalWindowInconsistent {
+                        detail: "consolidation output scope must be Consolidated".to_string(),
+                    });
+                }
+            },
+            minority_equity: minority_equity_total,
+            equity_to_parent,
+            minority_ni: net_income_to_minority,
+            ni_to_parent: net_income_to_parent,
+            consolidated_ni: consolidated_net_income,
+            non_root_equity: self.non_root_equity,
+            prior_split,
+        };
+        Ok(self.acc.finish(self.defs, Some(facts)))
+    }
 }
 
 /// 单成员权益科目净贷方贡献（≤ bound）：按代码累计（`into` 为 Some 时）
@@ -287,4 +309,85 @@ fn apply_minority_bp(
     amount
         .apply_basis_points(bp)
         .map_err(|e| ReportError::Accounting(Box::new(e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounting::consolidation::MemberSpec;
+    use crate::accounting::journal::{BusinessEventId, BusinessKind, CashFlowClass, JournalLine};
+    use crate::accounting::ledger::AccountChart;
+    use crate::calendar::CivilDate;
+
+    fn books(capital: i128, date: &str) -> Books {
+        let mut books = Books::new(AccountChart::generic_v1());
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(1),
+                date: CivilDate::from_iso(date).unwrap(),
+                kind: BusinessKind::OpeningBalance,
+                cash_flow: CashFlowClass::Financing,
+                lines: vec![
+                    JournalLine {
+                        account: LedgerAccountId("1001".into()),
+                        side: PostingSide::Debit,
+                        amount: AccountingAmount::from_cents(capital),
+                    },
+                    JournalLine {
+                        account: LedgerAccountId("4001".into()),
+                        side: PostingSide::Credit,
+                        amount: AccountingAmount::from_cents(capital),
+                    },
+                ],
+            }])
+            .unwrap();
+        books
+    }
+
+    #[test]
+    fn member_scan_keeps_multiple_minority_splits_and_no_history() {
+        for date in ["2029-12-01", "2030-01-01"] {
+            let root = books(8, date);
+            let first = books(10, date);
+            let second = books(20, date);
+            let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+                spec: MemberSpec {
+                    id: MemberId(id.into()),
+                    group_parent: parent.map(|id| MemberId(id.into())),
+                    issued_shares: 100,
+                    parent_held_shares: held,
+                },
+                books,
+            };
+            let request = ConsolidationRequest {
+                root: MemberId("root".into()),
+                members: vec![
+                    member("second", Some("root"), 80, &second),
+                    member("root", None, 0, &root),
+                    member("first", Some("root"), 60, &first),
+                ],
+                intercompany_balances: vec![],
+                intercompany_sales: vec![],
+            };
+            let current = AccountingPeriod::from_ymd(2030, 1).unwrap();
+            let prior = AccountingPeriod::from_ymd(2029, 1).unwrap();
+            let windows = consolidated(request, (current, current), (prior, prior)).unwrap();
+            let facts = windows.consolidation.unwrap();
+            assert_eq!(
+                facts.non_root_equity[&LedgerAccountId("4001".into())].cents(),
+                30
+            );
+            assert_eq!(facts.minority_equity.cents(), 8);
+            assert_eq!(facts.equity_to_parent.cents(), 30);
+            if date.starts_with("2029") {
+                let split = facts.prior_split.unwrap();
+                assert_eq!(split.root_capital.cents(), 8);
+                assert_eq!(split.minority.cents(), 8);
+                assert_eq!(split.parent.cents(), 30);
+            } else {
+                assert!(facts.prior_split.is_none());
+                assert!(windows.prior_year_end.is_none());
+            }
+        }
+    }
 }

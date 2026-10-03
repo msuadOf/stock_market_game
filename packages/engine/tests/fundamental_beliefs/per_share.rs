@@ -6,13 +6,13 @@ use crate::gold::{
 };
 use crate::hand::{hand_report, HandReportSpec};
 use crate::{assumptions_rng, d, hour_after, market, scenario, COMPANY, ISSUED_SHARES};
+use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, CompanyKind};
-use engine::information::{NpcInformationState, NpcObservationContext};
 use engine::orderbook::AccountId;
 use engine::strategy::{
     equity_roe, estimate_by_method, extract_annual_facts, per_share_price, to_per_share_range,
-    BeliefBook, BeliefCause, BeliefInputs, FundamentalMethod, ValuationOutcome,
+    BeliefCause, FundamentalMethod, ValuationOutcome,
 };
 use engine::Money;
 
@@ -43,48 +43,42 @@ fn equity_roe_method_gold_and_per_share_mandate() {
 /// 快照字段）不改变任何信念字节；信念操作期间行情快照零变化（spy）。
 #[test]
 fn float_shares_never_enter_valuation_and_market_untouched() {
-    let sc = scenario();
     let mut books = Vec::new();
     for float in [40_000u64, 25_000] {
+        let sc = scenario();
         let npc = AccountId(3);
-        let mut state = NpcInformationState::new(npc);
-        state
-            .record_acquisition(
-                npc,
-                &sc.library,
-                sc.annual_ids[3],
-                hour_after(sc.annual_instants[3]),
-            )
-            .expect("acquire");
-        let market_view = market(float);
-        let market_before = market_view.clone();
-        let mut book = BeliefBook::new(
+        let mut case = FundamentalBeliefCase::new(
+            sc,
             npc,
+            market(float),
             momentum_profile(),
             momentum_analysis(FundamentalMethod::CashFlow),
+            BeliefIssuerInputs {
+                kind: CompanyKind::Industrial,
+                total_issued_shares: ISSUED_SHARES,
+            },
             &mut assumptions_rng(0.0),
         );
-        let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
-        let inputs = BeliefInputs {
-            ctx: &ctx,
-            company: sc.company.clone(),
-            kind: CompanyKind::Industrial,
-            total_issued_shares: ISSUED_SHARES,
-            as_of_trading_day: 1_000,
-        };
-        book.apply_cause(
+        case.acquire(
+            case.scenario.annual_ids[3],
+            hour_after(case.scenario.annual_instants[3]),
+        )
+        .expect("acquire");
+        let market_before = case.market.clone();
+
+        case.apply_cause(
             &stock_code(),
             BeliefCause::NewMaterial {
-                report: sc.annual_ids[3],
+                report: case.scenario.annual_ids[3],
             },
-            &inputs,
+            1_000,
         )
         .expect("formation");
         assert_eq!(
-            market_view, market_before,
+            case.market, market_before,
             "belief ops never touch market state"
         );
-        books.push(serde_json::to_string(&book).expect("book serializes"));
+        books.push(serde_json::to_string(&case.book).expect("book serializes"));
     }
     assert_eq!(
         books[0], books[1],

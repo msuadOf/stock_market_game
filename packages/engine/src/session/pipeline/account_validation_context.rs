@@ -36,18 +36,19 @@ pub(super) fn build_account_validation_context(
 pub(super) fn collect_account_validation_context_facts(
     session: &GameSession,
 ) -> Result<AccountValidationFacts, StepFatal> {
-    if session.markets.len() != session.setup.stocks.len() {
+    if session.state.markets.len() != session.state.setup.stocks.len() {
         return Err(invariant(
             "stock specifications and configured markets are not one-to-one",
         ));
     }
     let mut specifications = BTreeMap::new();
-    for stock in &session.setup.stocks {
+    for stock in &session.state.setup.stocks {
         if specifications.insert(&stock.code, stock.category).is_some() {
             return Err(invariant("duplicate stock specification in P3 context"));
         }
     }
     let stocks = session
+        .state
         .markets
         .par_iter()
         .map(|(code, market)| {

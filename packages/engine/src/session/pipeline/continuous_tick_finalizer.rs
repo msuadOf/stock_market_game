@@ -1,4 +1,4 @@
-//! Continuous P4 tail and the single ReceiptAggregation-Projection pass, entirely on the Continuous private candidate.
+//! 在 Continuous private candidate 上执行 P4 收尾与唯一一次 ReceiptAggregation/Projection。
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
@@ -10,7 +10,7 @@ use super::{
     session_execution_transaction::{
         SessionExecutionTransactionError, SessionExecutionTransactionOutput,
     },
-    stock_auction::auction_day_end::finalize_trading_day,
+    stock_auction::auction_day_end::TradingDayEndTransition,
     stock_execution_transaction::{
         apply_stock_execution_transaction_with_preceding_beliefs, SettlementApplicationContext,
     },
@@ -48,21 +48,24 @@ impl ContinuousTickBoundary {
             ));
         }
         let tick_after = session
+            .state
             .tick
             .checked_add(1)
             .ok_or_else(|| invariant("continuous tick overflow"))?;
-        let ends_day = tick_after.is_multiple_of(session.setup.ticks_per_day);
-        if ends_day && session.day == u32::MAX {
+        let ends_day = tick_after.is_multiple_of(session.state.setup.ticks_per_day);
+        if ends_day && session.state.day == u32::MAX {
             return Err(invariant("continuous trading day overflow"));
         }
         let continuous_ticks = session
+            .state
             .setup
             .ticks_per_day
-            .checked_sub(session.setup.auction_ticks)
-            .and_then(|ticks| ticks.checked_sub(session.setup.closing_auction_ticks))
+            .checked_sub(session.state.setup.auction_ticks)
+            .and_then(|ticks| ticks.checked_sub(session.state.setup.closing_auction_ticks))
             .ok_or_else(|| invariant("invalid continuous trading window"))?;
-        let completed_ticks =
-            session.tick % session.setup.ticks_per_day - session.setup.auction_ticks + 1;
+        let completed_ticks = session.state.tick % session.state.setup.ticks_per_day
+            - session.state.setup.auction_ticks
+            + 1;
         let completed_minutes = completed_market_minute_count(completed_ticks, continuous_ticks)
             .map_err(|error| {
                 invariant(&format!("continuous market-minute mapping failed: {error}"))
@@ -75,9 +78,8 @@ impl ContinuousTickBoundary {
     }
 }
 
-/// `session` is the discardable candidate owned by Continuous, never external authority.
-/// Price/depth facts were frozen by P4 before the day-end worker cleared its book.
-/// Settlement uses the original tick's minute; only after settlement is the clock advanced and T+1 unlocked.
+/// `session` 是 Continuous 的可丢弃 candidate；P4 在日终清簿前冻结行情与深度。
+/// Settlement 使用原 tick 的 market minute，之后才推进时钟并按既定日界规则解锁 T+1。
 pub(super) fn finalize_continuous_tick(
     session: &mut GameSession,
     finish: IncrementalContinuousStockFinish,
@@ -91,7 +93,7 @@ pub(super) fn finalize_continuous_tick(
         lifecycle,
     } = context;
     let finalize_error = ContinuousTransactionError::Finalization;
-    if session.next_receipt_base != session.envelope_ledger.next_receipt_index() {
+    if session.state.next_receipt_base != session.state.envelope_ledger.next_receipt_index() {
         return Err(finalize_error(invariant(
             "session and ledger receipt cursors disagree",
         )));
@@ -112,15 +114,16 @@ pub(super) fn finalize_continuous_tick(
         })?;
         let (last, bids, asks) = (price.last, price.bids.clone(), price.asks.clone());
         checked_update_candle(session, code, last, 0).map_err(finalize_error)?;
-        let prices = session
-            .price_history
-            .get_mut(code)
-            .ok_or_else(|| finalize_error(invariant("continuous market has no price history")))?;
+        let prices =
+            session.state.price_history.get_mut(code).ok_or_else(|| {
+                finalize_error(invariant("continuous market has no price history"))
+            })?;
         prices.push_back(last);
-        while prices.len() > session.setup.history_len {
+        while prices.len() > session.state.setup.history_len {
             prices.pop_front();
         }
         let minutes = session
+            .state
             .market_minute_closes
             .get_mut(code)
             .ok_or_else(|| finalize_error(invariant("continuous market has no minute history")))?;
@@ -131,7 +134,7 @@ pub(super) fn finalize_continuous_tick(
                 "continuous minute history is ahead of tick",
             )));
         }
-        let day_start = u64::from(session.day) * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
+        let day_start = u64::from(session.state.day) * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
         for minute in recorded..boundary.completed_minutes {
             minutes.push(MarketMinuteClose {
                 absolute_trading_minute: day_start + u64::from(minute),
@@ -144,7 +147,7 @@ pub(super) fn finalize_continuous_tick(
                 tick: boundary.tick_after,
                 code: code.clone(),
                 last_price: last,
-                daily_candle: session.active_daily_candles[code].clone(),
+                daily_candle: session.state.candle_book.active()[code].clone(),
                 bids,
                 asks,
             },
@@ -153,20 +156,20 @@ pub(super) fn finalize_continuous_tick(
     }
 
     let transaction = apply_stock_execution_transaction_with_preceding_beliefs(
-        &session.envelope_ledger,
-        &session.accounts,
-        &session.retail_experience,
-        &session.belief_books,
-        &session.retail_projection_seen,
+        &session.state.envelope_ledger,
+        &session.state.accounts,
+        &session.state.retail_experience,
+        &session.state.belief_participants,
+        &session.state.retail_projection_seen,
         finish.workers,
         SettlementApplicationContext::new(
             crate::experience::ExperienceMoment {
                 civil_date: session.civil_date(),
                 market_minute: session.current_market_minute(),
-                trading_day: u64::from(session.day),
+                trading_day: u64::from(session.state.day),
             },
             preceding_receipts,
-            session.setup.t1_enabled,
+            session.state.setup.t1_enabled,
         ),
     )
     .map_err(|error| {
@@ -175,14 +178,25 @@ pub(super) fn finalize_continuous_tick(
         )
     })?;
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
-    session.envelope_ledger = transaction.ledger;
-    session.next_receipt_base = session.envelope_ledger.next_receipt_index();
-    session.accounts.extend(transaction.account_patch);
-    session.retail_experience.extend(transaction.retail_patch);
-    session.belief_books.extend(transaction.belief_patch);
-    session.retail_projection_seen = transaction.seen;
+    session.state.envelope_ledger = transaction.ledger;
+    session.state.next_receipt_base = session.state.envelope_ledger.next_receipt_index();
+    session.state.accounts.extend(transaction.account_patch);
+    session
+        .state
+        .retail_experience
+        .extend(transaction.retail_patch);
+    for (id, book) in transaction.belief_patch {
+        let mut participant = session
+            .state
+            .belief_participants
+            .remove(&id)
+            .expect("prepared institutional belief participant is missing");
+        *participant.belief_mut() = book;
+        session.state.belief_participants.insert(id, participant);
+    }
+    session.state.retail_projection_seen = transaction.seen;
     for (code, stock) in transaction.stocks {
-        session.markets.insert(code, stock.market);
+        session.state.markets.insert(code, stock.market);
     }
     project_continuous_retail_lifecycle(
         session,
@@ -193,17 +207,61 @@ pub(super) fn finalize_continuous_tick(
         lifecycle.consumed,
     )
     .map_err(finalize_error)?;
-    session.tick = boundary.tick_after;
+    session.state.tick = boundary.tick_after;
 
     if boundary.ends_day {
+        facts.extend(
+            ContinuousDayEndLifecycleProjection::new(
+                session,
+                &transaction.receipts,
+                day_end_event_base,
+            )
+            .apply()
+            .map_err(finalize_error)?,
+        );
+        facts.extend(
+            TradingDayEndTransition::new(session)
+                .apply()
+                .map_err(|error| {
+                    finalize_error(invariant(&format!("continuous DayEnd failed: {error}")))
+                })?,
+        );
+    }
+    let collected = collect_events(facts, session.state.seq).map_err(finalize_error)?;
+    session.state.seq = collected.next_seq;
+    Ok(SessionExecutionTransactionOutput {
+        events: collected.events,
+        event_keys: collected.keys,
+        receipts: transaction.receipts,
+        settlement: transaction.settlement,
+    })
+}
+
+/// 只投影 DayEnd release；Settlement 与共同日终转换由外层继续执行。
+struct ContinuousDayEndLifecycleProjection<'a> {
+    candidate: &'a mut GameSession,
+    releases: Vec<&'a super::EnvelopeReceipt>,
+    day_end_event_base: u64,
+    facts: Vec<OwnedEventFact>,
+    #[cfg(feature = "simulation-diagnostics")]
+    day_end_causal_time: crate::diagnostics::causal::FactTime,
+    #[cfg(feature = "simulation-diagnostics")]
+    cleared_quote_codes: std::collections::BTreeSet<StockCode>,
+}
+
+impl<'a> ContinuousDayEndLifecycleProjection<'a> {
+    fn new(
+        session: &'a mut GameSession,
+        receipts: &'a [super::EnvelopeReceipt],
+        day_end_event_base: u64,
+    ) -> Self {
         #[cfg(feature = "simulation-diagnostics")]
         let day_end_causal_time = {
             let mut time = session.causal_time();
             time.phase = TradingPhase::Continuous;
             time
         };
-        let mut releases = transaction
-            .receipts
+        let mut releases = receipts
             .iter()
             .filter(|receipt| matches!(receipt.local_key.source(), ReceiptSource::DayEnd(_)))
             .collect::<Vec<_>>();
@@ -213,77 +271,104 @@ pub(super) fn finalize_continuous_tick(
             .iter()
             .map(|release| release.envelope.stock.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        for (ordinal, release) in releases.into_iter().enumerate() {
-            let key = &release.envelope;
+
+        Self {
+            candidate: session,
+            releases,
+            day_end_event_base,
+            facts: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
-            session.causal_terminated_at(
-                day_end_causal_time,
-                (key.account, key.order, release.qty_before),
-                &key.stock,
-                crate::diagnostics::causal::Termination::DayEnd,
-            );
-            session.record_parent_order_canceled(key.account, &key.stock, key.order);
-            session.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
-            if session.retail_experience.contains_key(&key.account) {
-                session
-                    .last_retail_order_events
-                    .push(RetailOrderDiagnosticEvent::Canceled {
-                        account: key.account,
-                        code: key.stock.clone(),
-                        order_id: key.order,
-                        remaining_qty: release.qty_before,
-                    });
-            }
-            let local_index = u64::try_from(ordinal)
-                .ok()
-                .and_then(|ordinal| day_end_event_base.checked_add(ordinal))
-                .ok_or_else(|| {
-                    finalize_error(invariant("continuous DayEnd event index overflow"))
-                })?;
-            facts.push(owned_event(
-                Event::OrderCanceled {
-                    seq: 0,
+            day_end_causal_time,
+            #[cfg(feature = "simulation-diagnostics")]
+            cleared_quote_codes,
+        }
+    }
+
+    fn apply(mut self) -> Result<Vec<OwnedEventFact>, StepFatal> {
+        for (ordinal, release) in std::mem::take(&mut self.releases).into_iter().enumerate() {
+            self.apply_release(ordinal, release)?;
+        }
+        self.finish()
+    }
+
+    fn apply_release(
+        &mut self,
+        ordinal: usize,
+        release: &super::EnvelopeReceipt,
+    ) -> Result<(), StepFatal> {
+        let key = &release.envelope;
+        #[cfg(feature = "simulation-diagnostics")]
+        self.candidate.causal_terminated_at(
+            self.day_end_causal_time,
+            (key.account, key.order, release.qty_before),
+            &key.stock,
+            crate::diagnostics::causal::Termination::DayEnd,
+        );
+        self.candidate
+            .record_parent_order_canceled(key.account, &key.stock, key.order);
+        self.candidate
+            .remove_npc_order_lifecycle(key.account, &key.stock, key.order);
+        if self
+            .candidate
+            .state
+            .retail_experience
+            .contains_key(&key.account)
+        {
+            self.candidate.state.last_retail_order_events.push(
+                RetailOrderDiagnosticEvent::Canceled {
                     account: key.account,
                     code: key.stock.clone(),
-                    id: key.order,
+                    order_id: key.order,
                     remaining_qty: release.qty_before,
                 },
-                local_index,
-            ));
+            );
         }
+        let local_index = u64::try_from(ordinal)
+            .ok()
+            .and_then(|ordinal| self.day_end_event_base.checked_add(ordinal))
+            .ok_or_else(|| invariant("continuous DayEnd event index overflow"))?;
+        self.facts.push(owned_event(
+            Event::OrderCanceled {
+                seq: 0,
+                account: key.account,
+                code: key.stock.clone(),
+                id: key.order,
+                remaining_qty: release.qty_before,
+            },
+            local_index,
+        ));
+
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Vec<OwnedEventFact>, StepFatal> {
         #[cfg(feature = "simulation-diagnostics")]
-        for code in cleared_quote_codes {
-            session.causal_snapshot_at(day_end_causal_time, &code);
+        for code in self.cleared_quote_codes {
+            self.candidate
+                .causal_snapshot_at(self.day_end_causal_time, &code);
         }
-        let ended = session
+        let ended = self
+            .candidate
+            .state
             .parent_orders
             .values()
             .flat_map(|plans| plans.values())
-            .filter(|parent| parent.filled_qty < parent.target_qty)
-            .filter_map(|parent| parent.linked_plan_id)
+            .filter(|parent| parent.filled_qty() < parent.target_qty())
+            .filter_map(|parent| parent.linked_plan_id())
             .collect::<Vec<_>>();
-        session
+        self.candidate
+            .state
             .pending_plan_events
             .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
                 plan_id,
-                trading_day: u64::from(session.day),
+                trading_day: u64::from(self.candidate.state.day),
             }));
-        facts.extend(finalize_trading_day(session).map_err(|error| {
-            finalize_error(invariant(&format!("continuous DayEnd failed: {error}")))
-        })?);
+
+        Ok(self.facts)
     }
-    let collected = collect_events(facts, session.seq).map_err(finalize_error)?;
-    session.seq = collected.next_seq;
-    Ok(SessionExecutionTransactionOutput {
-        events: collected.events,
-        event_keys: collected.keys,
-        receipts: transaction.receipts,
-        settlement: transaction.settlement,
-    })
 }
 
-/// Keep the legacy candle reducer and its first-trade/open semantics; validate its checked
-/// arithmetic first so the new tick returns a typed fatal rather than panicking mid-candidate.
+/// 保持既有 candle reducer 的首笔成交与 open 语义；先检查算术，使失败返回 typed fatal。
 fn checked_update_candle(
     session: &mut GameSession,
     code: &StockCode,
@@ -299,7 +384,9 @@ fn checked_update_candle(
                 invariant("continuous candle trade turnover overflow or invalid price")
             })?;
         if let Some(candle) = session
-            .active_daily_candles
+            .state
+            .candle_book
+            .active()
             .get(code)
             .filter(|candle| candle.volume > 0)
         {
@@ -336,5 +423,101 @@ fn invariant(description: &str) -> StepFatal {
     StepFatal::InvariantViolation {
         description: description.to_owned(),
         location: "pipeline::continuous_tick_finalizer".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::session::pipeline::{Envelope, EnvelopeAudit, EnvelopeKey, FeeComponents};
+    use crate::{AccountId, OrderId, Side};
+
+    fn candidate() -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+        setup.npcs.retail_count = 1;
+        setup.npcs.inst_count = 0;
+        GameSession::new(setup, 42).unwrap()
+    }
+
+    fn release(code: StockCode, account: AccountId, order: u64) -> super::super::EnvelopeReceipt {
+        let envelope = Envelope::tick_start_existing(
+            EnvelopeKey {
+                account,
+                stock: code,
+                order: OrderId(order),
+                side: Side::Sell,
+            },
+            Money::ZERO,
+            100,
+            EnvelopeAudit {
+                limit: Money::from_cents(1_000),
+                remaining_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                nominal: FeeComponents::ZERO,
+                charged: FeeComponents::ZERO,
+            },
+        );
+        super::super::stock_auction::day_end_release_receipt(
+            &envelope,
+            u32::try_from(order).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn empty_day_end_release_projection_has_no_order_outbox() {
+        let mut session = candidate();
+        let before = session.state.last_retail_order_events.clone();
+        let facts = ContinuousDayEndLifecycleProjection::new(&mut session, &[], 10)
+            .apply()
+            .unwrap();
+        assert!(facts.is_empty());
+        assert_eq!(session.state.last_retail_order_events, before);
+    }
+
+    #[test]
+    fn day_end_release_projection_orders_envelopes_and_keeps_partial_candidate_on_index_error() {
+        let mut session = candidate();
+        let code = session.state.markets.keys().next().unwrap().clone();
+        let receipts = [
+            release(code.clone(), AccountId(1), 11),
+            release(code, AccountId(0), 10),
+        ];
+        let facts = ContinuousDayEndLifecycleProjection::new(&mut session, &receipts, 20)
+            .apply()
+            .unwrap();
+        assert_eq!(
+            facts.iter().map(|fact| &fact.event).collect::<Vec<_>>(),
+            vec![
+                &Event::OrderCanceled {
+                    seq: 0,
+                    account: AccountId(0),
+                    code: receipts[1].envelope.stock.clone(),
+                    id: OrderId(10),
+                    remaining_qty: 100
+                },
+                &Event::OrderCanceled {
+                    seq: 0,
+                    account: AccountId(1),
+                    code: receipts[0].envelope.stock.clone(),
+                    id: OrderId(11),
+                    remaining_qty: 100
+                },
+            ]
+        );
+        assert_ne!(facts[0].key, facts[1].key);
+        assert_eq!(session.state.last_retail_order_events.len(), 1);
+
+        let mut session = candidate();
+        let error = ContinuousDayEndLifecycleProjection::new(&mut session, &receipts, u64::MAX)
+            .apply()
+            .unwrap_err();
+        assert_eq!(error, invariant("continuous DayEnd event index overflow"));
+        assert_eq!(
+            session.state.last_retail_order_events.len(),
+            1,
+            "index 错误前已有的 candidate 生命周期写入保留，外层丢弃整个 candidate"
+        );
     }
 }

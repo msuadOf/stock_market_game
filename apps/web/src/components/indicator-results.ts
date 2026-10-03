@@ -29,6 +29,63 @@ export interface IndicatorResults {
 
 export type IndicatorCalculator = (input: IndicatorInput) => Promise<IndicatorResults>;
 
+export type IndicatorResultState =
+  | { kind: "idle" }
+  | { kind: "unavailable" }
+  | { kind: "pending" }
+  | { kind: "ready"; value: IndicatorResults }
+  | { kind: "error"; message: string };
+
+export interface IndicatorResultRecord {
+  readonly request: IndicatorResultRequest;
+  readonly state: IndicatorResultState;
+}
+
+export class IndicatorResultRequest {
+  private readonly gate: IndicatorRequestGate;
+  private readonly generation: number;
+  private readonly calculator: IndicatorCalculator;
+  private readonly input: IndicatorInput;
+
+  private constructor(gate: IndicatorRequestGate, calculator: IndicatorCalculator, input: IndicatorInput) {
+    this.gate = gate;
+    this.generation = gate.capture();
+    this.calculator = calculator;
+    this.input = input;
+  }
+
+  static capture(gate: IndicatorRequestGate, calculator: IndicatorCalculator, input: IndicatorInput): IndicatorResultRequest {
+    return new IndicatorResultRequest(gate, calculator, input);
+  }
+
+  matches(calculator: IndicatorCalculator, input: IndicatorInput): boolean {
+    return this.calculator === calculator && this.input === input;
+  }
+
+  pendingRecord(): IndicatorResultRecord {
+    return { request: this, state: { kind: "pending" } };
+  }
+
+  resolveRecord(response: unknown): IndicatorResultRecord | null {
+    if (!this.gate.isCurrent(this.generation)) return null;
+    try {
+      const value = parseIndicatorResults(response, this.input.prices.length, this.input.candles?.length ?? 0);
+      return { request: this, state: { kind: "ready", value } };
+    } catch (error) {
+      return { request: this, state: { kind: "error", message: describeIndicatorFailure(error) } };
+    }
+  }
+
+  rejectRecord(error: unknown): IndicatorResultRecord | null {
+    if (!this.gate.isCurrent(this.generation)) return null;
+    return { request: this, state: { kind: "error", message: describeIndicatorFailure(error) } };
+  }
+}
+
+function describeIndicatorFailure(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
 export class IndicatorRequestGate {
   private generation = 0;
 

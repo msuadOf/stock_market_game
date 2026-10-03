@@ -194,8 +194,8 @@ fn execute(
                 .plans
                 .plan(plan_id)
                 .map_err(|error| error.to_string())?;
-            if plan_accounts.contains(&plan.account)
-                && (plan.active_child_order_id.is_some() || plan.filled_qty > 0)
+            if plan_accounts.contains(&plan.account())
+                && (plan.active_child_order_id().is_some() || plan.filled_qty() > 0)
             {
                 plan_children_or_fills += 1;
             }

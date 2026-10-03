@@ -148,16 +148,16 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         44,
     )
     .expect("v2 retail fixture must be valid");
-    let code = source.setup.stocks[0].code.clone();
+    let code = source.state.setup.stocks[0].code.clone();
     let old = receipt_for_stock(0, 1, code.clone());
-    source.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
+    source.state.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
         [(old.index, old.local_key.clone())],
         1,
     )
     .expect("one committed receipt must form a complete prefix");
-    source.next_receipt_base = 1;
-    source.next_order_id = 3;
-    source.envelope_ledger = EnvelopeLedger::new(1, []).unwrap();
+    source.state.next_receipt_base = 1;
+    source.state.next_order_id = 3;
+    source.state.envelope_ledger = EnvelopeLedger::new(1, []).unwrap();
 
     let save = source
         .save()
@@ -170,6 +170,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         .expect("complete SaveSlot must restore the non-empty seen prefix");
     assert_eq!(
         restored
+            .state
             .retail_projection_seen
             .authoritative_identities()
             .iter()
@@ -206,21 +207,25 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     )
     .expect("P5 must allocate from the restored cursor");
     assert_eq!(committed[0].index, 1, "receipt index must not be reused");
-    assert_eq!(restored.next_receipt_base, 2);
+    assert_eq!(restored.state.next_receipt_base, 2);
 
-    let cash_before = restored.accounts[&AccountId(1)].cash;
+    let cash_before = restored.state.accounts[&AccountId(1)].cash();
     let first =
         apply_session_settlement_transaction(&mut restored, &[old.clone(), committed[0].clone()])
             .expect("P6 must ignore the restored old identity and consume the next one");
     assert_eq!(first.settlement.applied_receipts, 1);
     assert_eq!(first.events.len(), 1);
-    assert_eq!(restored.accounts[&AccountId(1)].positions[&code].qty, 100);
     assert_eq!(
-        restored.accounts[&AccountId(1)].cash,
+        restored.state.accounts[&AccountId(1)].positions()[&code].qty(),
+        100
+    );
+    assert_eq!(
+        restored.state.accounts[&AccountId(1)].cash(),
         cash_before.sub(Money::from_cents(100_100)).unwrap(),
     );
     assert_eq!(
         restored
+            .state
             .retail_projection_seen
             .authoritative_identities()
             .iter()
@@ -237,6 +242,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     assert_eq!(restored.business_state_hash().unwrap(), after_first);
 
     restored
+        .state
         .envelope_ledger
         .rebase_live_for_next_tick()
         .expect("terminal tick evidence must rebase at the quiet point");

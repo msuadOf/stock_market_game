@@ -45,7 +45,7 @@ mod npc_tick_preparation;
 mod phase;
 mod pre_open_transaction;
 mod price_resolution;
-mod quote_expiry;
+pub(in crate::session) mod quote_expiry;
 mod ready_ingress;
 mod ready_stock_stream;
 mod receipt_aggregation;
@@ -249,8 +249,8 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         decision_resources: None,
     };
     shadow.state.execute(|game| {
-        game.last_retail_decisions.clear();
-        game.last_retail_order_events.clear();
+        game.state.last_retail_decisions.clear();
+        game.state.last_retail_order_events.clear();
         Ok(())
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);

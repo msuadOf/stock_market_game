@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::MAX_UNHELD_WATCHLIST_STOCKS;
+use super::{retention::RetentionCandidates, MAX_UNHELD_WATCHLIST_STOCKS};
 use crate::{Money, StockCode};
 
 /// 个人价格记忆失败。绝不静默吞掉（铁律二）。
@@ -67,6 +67,53 @@ pub struct StockPriceMemory {
     pub last_touched_minute: u64,
 }
 
+impl StockPriceMemory {
+    fn first_observation(price: Money, market_minute: u64) -> Self {
+        Self {
+            first_observed_minute: market_minute,
+            first_observed_price: price,
+            last_observed_minute: market_minute,
+            last_observed_price: price,
+            observed_high: price,
+            observed_low: price,
+            last_public_history_read_minute: None,
+            public_history_read_count: 0,
+            last_touched_minute: market_minute,
+        }
+    }
+
+    fn observe_price(&mut self, price: Money, market_minute: u64) -> Result<(), PriceMemoryError> {
+        self.ensure_time_not_backwards(market_minute)?;
+        self.last_observed_minute = market_minute;
+        self.last_observed_price = price;
+        self.observed_high = self.observed_high.max(price);
+        self.observed_low = self.observed_low.min(price);
+        self.last_touched_minute = market_minute;
+        Ok(())
+    }
+
+    fn record_public_history_read(&mut self, market_minute: u64) -> Result<(), PriceMemoryError> {
+        self.ensure_time_not_backwards(market_minute)?;
+        self.last_public_history_read_minute = Some(market_minute);
+        self.public_history_read_count = self
+            .public_history_read_count
+            .checked_add(1)
+            .expect("read count is bounded by observed read events per session");
+        self.last_touched_minute = market_minute;
+        Ok(())
+    }
+
+    fn ensure_time_not_backwards(&self, attempted: u64) -> Result<(), PriceMemoryError> {
+        if attempted < self.last_touched_minute {
+            return Err(PriceMemoryError::TimeWentBackwards {
+                attempted,
+                last: self.last_touched_minute,
+            });
+        }
+        Ok(())
+    }
+}
+
 /// 一个自然人独立持有的个人价格记忆；不与其他账户共享。
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
@@ -103,28 +150,11 @@ impl PersonalPriceMemory {
             });
         }
         match self.stocks.get_mut(code) {
-            Some(entry) => {
-                ensure_time_not_backwards(market_minute, entry.last_touched_minute)?;
-                entry.last_observed_minute = market_minute;
-                entry.last_observed_price = price;
-                entry.observed_high = entry.observed_high.max(price);
-                entry.observed_low = entry.observed_low.min(price);
-                entry.last_touched_minute = market_minute;
-            }
+            Some(entry) => entry.observe_price(price, market_minute)?,
             None => {
                 self.stocks.insert(
                     code.clone(),
-                    StockPriceMemory {
-                        first_observed_minute: market_minute,
-                        first_observed_price: price,
-                        last_observed_minute: market_minute,
-                        last_observed_price: price,
-                        observed_high: price,
-                        observed_low: price,
-                        last_public_history_read_minute: None,
-                        public_history_read_count: 0,
-                        last_touched_minute: market_minute,
-                    },
+                    StockPriceMemory::first_observation(price, market_minute),
                 );
             }
         }
@@ -146,14 +176,7 @@ impl PersonalPriceMemory {
             .ok_or_else(|| PriceMemoryError::UnobservedStock {
                 code: code.0.clone(),
             })?;
-        ensure_time_not_backwards(market_minute, entry.last_touched_minute)?;
-        entry.last_public_history_read_minute = Some(market_minute);
-        entry.public_history_read_count = entry
-            .public_history_read_count
-            .checked_add(1)
-            .expect("read count is bounded by observed read events per session");
-        entry.last_touched_minute = market_minute;
-        Ok(())
+        entry.record_public_history_read(market_minute)
     }
 
     /// 按最近接触时间驱逐未受保护股票，最多保留 8 个。
@@ -162,22 +185,63 @@ impl PersonalPriceMemory {
     /// 未受保护股票按 `(last_touched_minute, StockCode)` 降序保留前
     /// [`MAX_UNHELD_WATCHLIST_STOCKS`] 个：同分钟时代码较大者保留。
     pub fn prune(&mut self, protected: &BTreeSet<StockCode>) {
-        let mut unprotected: Vec<(u64, StockCode)> = self
-            .stocks
-            .iter()
-            .filter(|(code, _)| !protected.contains(*code))
-            .map(|(code, entry)| (entry.last_touched_minute, code.clone()))
-            .collect();
-        unprotected.sort_by(|left, right| right.cmp(left));
-        for (_, code) in unprotected.into_iter().skip(MAX_UNHELD_WATCHLIST_STOCKS) {
-            self.stocks.remove(&code);
-        }
+        let kept = RetentionCandidates::from_contacts(
+            self.stocks
+                .iter()
+                .map(|(code, entry)| (code, entry.last_touched_minute)),
+            protected,
+            MAX_UNHELD_WATCHLIST_STOCKS,
+        )
+        .select_kept_unprotected();
+        self.stocks
+            .retain(|code, _| protected.contains(code) || kept.contains(code));
     }
 }
 
-fn ensure_time_not_backwards(attempted: u64, last: u64) -> Result<(), PriceMemoryError> {
-    if attempted < last {
-        return Err(PriceMemoryError::TimeWentBackwards { attempted, last });
+#[cfg(test)]
+mod protection_tests {
+    use super::*;
+
+    #[test]
+    fn price_memory_rejection_and_read_overflow_preserve_existing_failure_surface() {
+        let code = StockCode("600101".to_owned());
+        let mut memory = PersonalPriceMemory::default();
+        assert!(memory.record_public_history_read(&code, 1).is_err());
+        assert!(memory.stocks.is_empty());
+        memory
+            .observe_price(&code, Money::from_cents(100), 2)
+            .unwrap();
+        memory.record_public_history_read(&code, 3).unwrap();
+        let before = memory.clone();
+        assert_eq!(
+            memory.observe_price(&code, Money::ZERO, 1),
+            Err(PriceMemoryError::NonPositiveMoney {
+                field: "observed price",
+                cents: 0
+            })
+        );
+        assert_eq!(
+            memory.record_public_history_read(&code, 2),
+            Err(PriceMemoryError::TimeWentBackwards {
+                attempted: 2,
+                last: 3
+            })
+        );
+        assert_eq!(memory, before);
+        memory
+            .stocks
+            .get_mut(&code)
+            .unwrap()
+            .public_history_read_count = u32::MAX;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            memory.record_public_history_read(&code, 4)
+        }));
+        assert!(result.is_err());
+        let entry = &memory.stocks[&code];
+        assert_eq!(entry.last_public_history_read_minute, Some(4));
+        assert_eq!(entry.last_touched_minute, 3);
+        assert_eq!(entry.last_observed_minute, 2);
+        assert_eq!(entry.observed_high, Money::from_cents(100));
+        assert_eq!(entry.observed_low, Money::from_cents(100));
     }
-    Ok(())
 }

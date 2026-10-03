@@ -1,0 +1,20 @@
+{
+  "meaning": "排除baseline任意源文件中原样保留/搬移注释；其余机械候选须人工核实。",
+  "candidates": [
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 621,
+      "text": "///         handles.subscribe_events();"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "line": 629,
+      "text": "* i128::from(plan.review().min_price_change_bp)"
+    },
+    {
+      "path": "packages/engine/src/strategy/retail.rs",
+      "line": 178,
+      "text": "* (1.0 - 0.25 * stock_view.order_book_imbalance)"
+    }
+  ]
+}

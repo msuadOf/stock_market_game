@@ -1,0 +1,360 @@
+{
+  "meaning": "机械候选；未出现于同文件baseline的注释且无中文，不自动判为违规；须人工区分专业符号/历史搬移。",
+  "records": [
+    {
+      "path": "apps/desktop/src-tauri/src/actor.rs",
+      "line": 329,
+      "text": "/// fn bypass(handles: &stock_market_game_lib::actor::SessionHandles) {"
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/actor.rs",
+      "line": 330,
+      "text": "///     let _ = handles.cmd_tx.clone();"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 596,
+      "text": "/// fn bypass(handles: &server::SessionHandles) {"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 597,
+      "text": "///     let _ = handles.cmd_tx.clone();"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 602,
+      "text": "/// fn publish(handles: &server::SessionHandles) {"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 603,
+      "text": "///     let _ = handles.event_tx.clone();"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 619,
+      "text": "/// fn subscribe(handles: &server::SessionHandles) {"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 620,
+      "text": "///     let _: tokio::sync::broadcast::Receiver<server::actor::EngineUpdate> ="
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "line": 621,
+      "text": "///         handles.subscribe_events();"
+    },
+    {
+      "path": "apps/server/tests/ws.rs",
+      "line": 611,
+      "text": "*test_resources.lock().unwrap() = Some((fixture.manager.clone(), id, handles, address));"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/expenses.rs",
+      "line": 244,
+      "text": "#[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/loans.rs",
+      "line": 84,
+      "text": "#[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/mod.rs",
+      "line": 68,
+      "text": "#[serde(rename = \"loss_pool\")]"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/claims.rs",
+      "line": 36,
+      "text": "#[derive(Clone, Eq, PartialEq, Debug)]"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/groups.rs",
+      "line": 25,
+      "text": "#[derive(Clone, Eq, PartialEq, Debug)]"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/groups.rs",
+      "line": 35,
+      "text": "#[derive(Clone, Eq, PartialEq, Debug)]"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/groups.rs",
+      "line": 426,
+      "text": "#[derive(serde::Serialize, serde::Deserialize)]"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/groups.rs",
+      "line": 427,
+      "text": "#[serde(rename = \"ContractGroupState\")]"
+    },
+    {
+      "path": "packages/engine/src/diagnostics/causal.rs",
+      "line": 167,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/diagnostics/causal.rs",
+      "line": 185,
+      "text": "*tracked = value_after;"
+    },
+    {
+      "path": "packages/engine/src/market.rs",
+      "line": 478,
+      "text": "// last_close=last_price=10.00，limit=0.10，tick=0.01"
+    },
+    {
+      "path": "packages/engine/src/plans/candidates/targets.rs",
+      "line": 88,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/session/attention.rs",
+      "line": 262,
+      "text": "#[derive(Clone, Debug, Default)]"
+    },
+    {
+      "path": "packages/engine/src/session/candles.rs",
+      "line": 91,
+      "text": "#[derive(Clone, Debug, Default)]"
+    },
+    {
+      "path": "packages/engine/src/session/candles.rs",
+      "line": 376,
+      "text": "#[should_panic(expected = \"daily candle volume overflow: engine state invariant violated\")]"
+    },
+    {
+      "path": "packages/engine/src/session/candles.rs",
+      "line": 396,
+      "text": "#[should_panic(expected = \"daily trade turnover overflow: engine invariant violated\")]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "line": 625,
+      "text": "* i128::from(plan.review().min_price_change_bp)"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "line": 1185,
+      "text": "*per_stock.entry(plan.code().clone()).or_default() += 1;"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/personal_state.rs",
+      "line": 227,
+      "text": "#[should_panic(expected = \"attention state was installed twice\")]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/personal_state.rs",
+      "line": 240,
+      "text": "#[should_panic(expected = \"watchlist was installed twice\")]"
+    },
+    {
+      "path": "packages/engine/src/session/execution.rs",
+      "line": 51,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/session/execution.rs",
+      "line": 78,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/session/institutional_behavior.rs",
+      "line": 183,
+      "text": "*belief.experience_mut() = experience.clone();"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement.rs",
+      "line": 124,
+      "text": "*participant.belief_mut() = belief;"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "line": 939,
+      "text": "#[derive(Clone, Copy, Debug, PartialEq, Eq)]"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "line": 2282,
+      "text": "#[path = \"auction_refactor_tests.rs\"]"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "line": 194,
+      "text": "*participant.belief_mut() = book;"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "line": 83,
+      "text": "*total = total.checked_add(release.resources)?;"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "line": 330,
+      "text": "#[should_panic(expected = \"NPC quote lifecycle already exists for order 1\")]"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection.rs",
+      "line": 547,
+      "text": "*position = Position::from_restored_parts("
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection.rs",
+      "line": 585,
+      "text": "*position = Position::from_restored_parts("
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/session_execution_transaction.rs",
+      "line": 96,
+      "text": "*participant.belief_mut() = book;"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/settlement.rs",
+      "line": 39,
+      "text": "#[derive(Debug, Default)]"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/civil/session.rs",
+      "line": 33,
+      "text": "#[derive(Clone, Default)]"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/civil/session.rs",
+      "line": 222,
+      "text": "*self.state.published_runtime.borrow_mut() = None;"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/civil/session.rs",
+      "line": 329,
+      "text": "*self.state.published_runtime.borrow_mut() = None;"
+    },
+    {
+      "path": "packages/engine/src/session/snapshot.rs",
+      "line": 72,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/session/snapshot.rs",
+      "line": 345,
+      "text": "#[should_panic(expected = \"validated live sell reservations cannot exceed u32 holdings\")]"
+    },
+    {
+      "path": "packages/engine/src/session/snapshot.rs",
+      "line": 364,
+      "text": "#[should_panic(expected = \"validated live cash reservations cannot exceed account cash\")]"
+    },
+    {
+      "path": "packages/engine/src/strategy/retail.rs",
+      "line": 149,
+      "text": "#[derive(Clone, Copy, Debug, Eq, PartialEq)]"
+    },
+    {
+      "path": "packages/engine/src/strategy/retail.rs",
+      "line": 178,
+      "text": "* (1.0 - 0.25 * stock_view.order_book_imbalance)"
+    },
+    {
+      "path": "packages/engine/src/verification_evidence/phase_timing_tests.rs",
+      "line": 308,
+      "text": "*ledger.accumulator_mut(phase) = Accumulator {"
+    },
+    {
+      "path": "scripts/run-with-deadline.mjs",
+      "line": 93,
+      "text": "#onOutput(stream, chunk) {"
+    },
+    {
+      "path": "scripts/run-with-deadline.mjs",
+      "line": 118,
+      "text": "#onClose(code, signal) {"
+    },
+    {
+      "path": "scripts/simulation/escrow-performance-harness.mjs",
+      "line": 483,
+      "text": "#samples = { before: [], after: [] };"
+    },
+    {
+      "path": "scripts/simulation/escrow-performance-harness.mjs",
+      "line": 507,
+      "text": "#appendSample(side, sample) {"
+    },
+    {
+      "path": "apps/web/src/app/usePausePreferences.ts",
+      "line": 65,
+      "text": "// eslint-disable-next-line react-hooks/exhaustive-deps"
+    },
+    {
+      "path": "apps/web/src/app/useSessionHostLifecycle.ts",
+      "line": 231,
+      "text": "// eslint-disable-next-line react-hooks/exhaustive-deps"
+    },
+    {
+      "path": "apps/web/src/app/useSpeedMetricsPolling.ts",
+      "line": 56,
+      "text": "// eslint-disable-next-line react-hooks/exhaustive-deps"
+    },
+    {
+      "path": "packages/engine/src/orderbook/book_state.rs",
+      "line": 9,
+      "text": "#[derive(Clone, Debug, Default)]"
+    },
+    {
+      "path": "packages/engine/src/orderbook/persistent_index.rs",
+      "line": 5,
+      "text": "#[derive(Clone, Debug)]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/lifecycle.rs",
+      "line": 145,
+      "text": "// ActiveTrader has zero fundamental weight; its plan must not require"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/lifecycle.rs",
+      "line": 146,
+      "text": "// a valuation it never uses. Other styles still require personal value."
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 229,
+      "text": "#[allow(clippy::too_many_arguments)]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 326,
+      "text": "// An active plan remains observable even after the position and belief"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 327,
+      "text": "// entry that originally led to it disappear. Its order and review state"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 328,
+      "text": "// must not silently fall out of the account's decision domain."
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 348,
+      "text": "#[cfg(feature = \"simulation-diagnostics\")]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 380,
+      "text": "#[cfg(feature = \"simulation-diagnostics\")]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 494,
+      "text": "#[cfg(feature = \"simulation-diagnostics\")]"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "line": 500,
+      "text": "#[cfg(not(feature = \"simulation-diagnostics\"))]"
+    }
+  ]
+}

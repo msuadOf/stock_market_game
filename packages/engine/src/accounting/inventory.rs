@@ -33,6 +33,118 @@ pub struct InventoryItemState {
 }
 
 impl InventoryItemState {
+    fn validate_receipt_input(
+        code: &InventoryItemCode,
+        quantity: i128,
+        cost: AccountingAmount,
+    ) -> Result<(), InventoryError> {
+        if quantity <= 0 {
+            return Err(InventoryError::NonPositiveQuantity {
+                item: code.clone(),
+                quantity,
+            });
+        }
+        if !cost.is_positive() {
+            return Err(InventoryError::NonPositiveCost {
+                item: code.clone(),
+                cost,
+            });
+        }
+        Ok(())
+    }
+
+    fn new(
+        code: &InventoryItemCode,
+        account: LedgerAccountId,
+        quantity: i128,
+        total_cost: AccountingAmount,
+    ) -> Result<Self, InventoryError> {
+        Self::validate_receipt_input(code, quantity, total_cost)?;
+        Ok(Self {
+            account,
+            quantity,
+            total_cost,
+        })
+    }
+
+    fn receipt(
+        &mut self,
+        code: &InventoryItemCode,
+        account: LedgerAccountId,
+        quantity: i128,
+        cost: AccountingAmount,
+    ) -> Result<(), InventoryError> {
+        Self::validate_receipt_input(code, quantity, cost)?;
+        if self.account != account {
+            return Err(InventoryError::AccountMismatch {
+                item: code.clone(),
+                registered: self.account.clone(),
+                requested: account,
+            });
+        }
+        let new_quantity =
+            self.quantity
+                .checked_add(quantity)
+                .ok_or(InventoryError::Accounting(
+                    AccountingError::AmountOverflow {
+                        op: "inventory receipt",
+                        detail: format!("quantity {} + {quantity} overflow", self.quantity),
+                    },
+                ))?;
+        self.quantity = new_quantity;
+        self.total_cost = self
+            .total_cost
+            .add(cost)
+            .map_err(InventoryError::Accounting)?;
+        Ok(())
+    }
+
+    fn preview_issue(
+        &self,
+        code: &InventoryItemCode,
+        quantity: i128,
+    ) -> Result<AccountingAmount, InventoryError> {
+        if quantity <= 0 {
+            return Err(InventoryError::NonPositiveQuantity {
+                item: code.clone(),
+                quantity,
+            });
+        }
+        if quantity > self.quantity {
+            return Err(InventoryError::InsufficientQuantity {
+                item: code.clone(),
+                requested: quantity,
+                available: self.quantity,
+            });
+        }
+        let scaled =
+            self.total_cost
+                .cents()
+                .checked_mul(quantity)
+                .ok_or(InventoryError::Accounting(
+                    AccountingError::AmountOverflow {
+                        op: "weighted_issue_cost",
+                        detail: format!("{} * {quantity}", self.total_cost.cents()),
+                    },
+                ))?;
+        let cents = rhe_div(scaled, self.quantity)?;
+        Ok(AccountingAmount::from_cents(cents))
+    }
+
+    fn apply_issue(
+        &mut self,
+        code: &InventoryItemCode,
+        quantity: i128,
+    ) -> Result<AccountingAmount, InventoryError> {
+        let cost = self.preview_issue(code, quantity)?;
+        self.quantity -= quantity;
+        self.total_cost = self
+            .total_cost
+            .sub(cost)
+            .map_err(InventoryError::Accounting)?;
+        Ok(cost)
+    }
+
     pub fn account(&self) -> &LedgerAccountId {
         &self.account
     }
@@ -61,52 +173,13 @@ impl InventoryLedger {
         quantity: i128,
         cost: AccountingAmount,
     ) -> Result<(), InventoryError> {
-        if quantity <= 0 {
-            return Err(InventoryError::NonPositiveQuantity {
-                item: code,
-                quantity,
-            });
-        }
-        if !cost.is_positive() {
-            return Err(InventoryError::NonPositiveCost { item: code, cost });
-        }
         match self.items.get_mut(&code) {
             Some(state) => {
-                if state.account != account {
-                    return Err(InventoryError::AccountMismatch {
-                        item: code,
-                        registered: state.account.clone(),
-                        requested: account,
-                    });
-                }
-                let new_quantity =
-                    state
-                        .quantity
-                        .checked_add(quantity)
-                        .ok_or(InventoryError::Accounting(
-                            AccountingError::AmountOverflow {
-                                op: "inventory receipt",
-                                detail: format!(
-                                    "quantity {} + {quantity} overflow",
-                                    state.quantity
-                                ),
-                            },
-                        ))?;
-                state.quantity = new_quantity;
-                state.total_cost = state
-                    .total_cost
-                    .add(cost)
-                    .map_err(InventoryError::Accounting)?;
+                state.receipt(&code, account, quantity, cost)?;
             }
             None => {
-                self.items.insert(
-                    code,
-                    InventoryItemState {
-                        account,
-                        quantity,
-                        total_cost: cost,
-                    },
-                );
+                let state = InventoryItemState::new(&code, account, quantity, cost)?;
+                self.items.insert(code, state);
             }
         }
         Ok(())
@@ -122,7 +195,7 @@ impl InventoryLedger {
             .items
             .get(code)
             .ok_or(InventoryError::UnknownItem { item: code.clone() })?;
-        weighted_issue_cost(code, state, quantity)
+        state.preview_issue(code, quantity)
     }
 
     /// 发出：验证 → 移动加权成本出账 → 结存按差额结转（守恒）。
@@ -131,17 +204,10 @@ impl InventoryLedger {
         code: &InventoryItemCode,
         quantity: i128,
     ) -> Result<AccountingAmount, InventoryError> {
-        let cost = self.preview_issue(code, quantity)?;
-        let state = self
-            .items
+        self.items
             .get_mut(code)
-            .expect("preview_issue validated existence");
-        state.quantity -= quantity;
-        state.total_cost = state
-            .total_cost
-            .sub(cost)
-            .map_err(InventoryError::Accounting)?;
-        Ok(cost)
+            .ok_or_else(|| InventoryError::UnknownItem { item: code.clone() })?
+            .apply_issue(code, quantity)
     }
 
     pub fn quantity(&self, code: &InventoryItemCode) -> i128 {
@@ -161,40 +227,6 @@ impl InventoryLedger {
     pub fn iter(&self) -> impl Iterator<Item = (&InventoryItemCode, &InventoryItemState)> {
         self.items.iter()
     }
-}
-
-/// 移动加权发出成本（纯函数；数量 ≤ 0 或超过结存 → 类型化拒绝）。
-fn weighted_issue_cost(
-    code: &InventoryItemCode,
-    state: &InventoryItemState,
-    quantity: i128,
-) -> Result<AccountingAmount, InventoryError> {
-    if quantity <= 0 {
-        return Err(InventoryError::NonPositiveQuantity {
-            item: code.clone(),
-            quantity,
-        });
-    }
-    if quantity > state.quantity {
-        return Err(InventoryError::InsufficientQuantity {
-            item: code.clone(),
-            requested: quantity,
-            available: state.quantity,
-        });
-    }
-    let scaled =
-        state
-            .total_cost
-            .cents()
-            .checked_mul(quantity)
-            .ok_or(InventoryError::Accounting(
-                AccountingError::AmountOverflow {
-                    op: "weighted_issue_cost",
-                    detail: format!("{} * {quantity}", state.total_cost.cents()),
-                },
-            ))?;
-    let cents = rhe_div(scaled, state.quantity)?;
-    Ok(AccountingAmount::from_cents(cents))
 }
 
 /// 存货子账错误（类型化，携带项目与数值上下文）。
@@ -248,4 +280,32 @@ pub(in crate::accounting) fn rhe_div(n: i128, d: i128) -> Result<i128, Accountin
     let magnitude = i128::try_from(if round_up { quotient + 1 } else { quotient })
         .expect("quotient of |i128| by positive divisor fits i128");
     Ok(if negative { -magnitude } else { magnitude })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipt_cost_overflow_preserves_quantity_write_order() {
+        let mut ledger = InventoryLedger::default();
+        let code = InventoryItemCode("overflow".into());
+        let account = LedgerAccountId("1403".into());
+        ledger
+            .receipt(
+                code.clone(),
+                account.clone(),
+                1,
+                AccountingAmount::from_cents(i128::MAX),
+            )
+            .unwrap();
+        assert!(matches!(
+            ledger.receipt(code.clone(), account, 1, AccountingAmount::from_cents(1)),
+            Err(InventoryError::Accounting(
+                AccountingError::AmountOverflow { .. }
+            ))
+        ));
+        assert_eq!(ledger.quantity(&code), 2);
+        assert_eq!(ledger.total_cost(&code).cents(), i128::MAX);
+    }
 }

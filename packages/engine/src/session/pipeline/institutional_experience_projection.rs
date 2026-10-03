@@ -8,7 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_institutional_experience(
     accounts: &BTreeMap<AccountId, Account>,
-    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
+    belief_participants: &AccountPagedMap<
+        crate::session::decision_chain::personal_state::BeliefParticipantState,
+    >,
     positions_before: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
     positions_after: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
     seen: &RetailProjectionSeen,
@@ -21,14 +23,13 @@ pub(super) fn project_institutional_experience(
         .filter_map(|receipt| {
             accounts
                 .get(&receipt.envelope.account)
-                .filter(|account| account.kind == AccountKind::Inst)
+                .filter(|account| account.kind() == AccountKind::Inst)
                 .filter(|account| {
                     account
-                        .strategy
-                        .as_ref()
+                        .strategy()
                         .is_some_and(|strategy| strategy.belief_chain_params().is_some())
                 })
-                .map(|account| account.id)
+                .map(|account| account.id())
         })
         .collect();
     if institutional_accounts.is_empty() {
@@ -38,9 +39,9 @@ pub(super) fn project_institutional_experience(
     let experiences = institutional_accounts
         .iter()
         .filter_map(|account| {
-            belief_books
+            belief_participants
                 .get(account)
-                .map(|book| (*account, book.experience().clone()))
+                .map(|book| (*account, book.belief().experience().clone()))
         })
         .collect::<BTreeMap<_, _>>();
     if let Some(account) = institutional_accounts
@@ -67,9 +68,9 @@ pub(super) fn project_institutional_experience(
         .retail_experience
         .into_iter()
         .map(|(account, experience)| {
-            let mut book = belief_books
+            let mut book = belief_participants
                 .get(&account)
-                .cloned()
+                .map(|participant| participant.belief().clone())
                 .ok_or(RetailProjectionError::MissingInstitutionExperience { account })?;
             *book.experience_mut() = experience;
             Ok((account, book))

@@ -55,8 +55,12 @@ mod reconciliation_plan_tests;
 
 use account_book::AccountBook;
 use account_paged_map::AccountPagedMap;
-use candles::{generate_preset_daily_candles, stock_code_hash, DailyCandleHistory};
+use attention::NpcAttentionScheduler;
+use candles::{
+    generate_preset_daily_candles, stock_code_hash, DailyCandleHistory, SessionCandleBook,
+};
 use civil_clock::{default_civil_start_date, session_calendar_exchange};
+use decision_chain::personal_state::BeliefParticipantState;
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
@@ -113,8 +117,7 @@ use crate::strategy::{
     Intent, LimitPrice, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams,
     StrategyProfile,
 };
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use thiserror::Error;
 
 /// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
@@ -512,33 +515,33 @@ pub struct SaveParentOrderPlan {
 impl From<&ParentOrderPlan> for SaveParentOrderPlan {
     fn from(plan: &ParentOrderPlan) -> Self {
         Self {
-            code: plan.code.clone(),
-            side: plan.side,
-            target_qty: plan.target_qty,
-            filled_qty: plan.filled_qty,
-            child_qty: plan.child_qty,
-            active_child_order_id: plan.active_child_order_id,
-            linked_plan_id: plan.linked_plan_id,
-            limit_price: plan.limit_price,
-            expires_market_minute: plan.expires_market_minute,
+            code: plan.code().clone(),
+            side: plan.side(),
+            target_qty: plan.target_qty(),
+            filled_qty: plan.filled_qty(),
+            child_qty: plan.child_qty(),
+            active_child_order_id: plan.active_child_order_id(),
+            linked_plan_id: plan.linked_plan_id(),
+            limit_price: plan.limit_price(),
+            expires_market_minute: plan.expires_market_minute(),
         }
     }
 }
 
 impl From<SaveParentOrderPlan> for ParentOrderPlan {
     fn from(plan: SaveParentOrderPlan) -> Self {
-        Self {
-            code: plan.code,
-            side: plan.side,
-            target_qty: plan.target_qty,
-            filled_qty: plan.filled_qty,
-            child_qty: plan.child_qty,
-            active_child_order_id: plan.active_child_order_id,
-            active_child_remaining_qty: None,
-            linked_plan_id: plan.linked_plan_id,
-            limit_price: plan.limit_price,
-            expires_market_minute: plan.expires_market_minute,
-        }
+        Self::from_saved_facts(
+            plan.code,
+            plan.side,
+            plan.target_qty,
+            plan.filled_qty,
+            plan.child_qty,
+            plan.active_child_order_id,
+            None,
+            plan.linked_plan_id,
+            plan.limit_price,
+            plan.expires_market_minute,
+        )
     }
 }
 
@@ -1125,6 +1128,11 @@ pub struct GameSession {
     injected_failure: Option<StepFatal>,
     #[cfg(test)]
     post_shadow_failure: Option<StepFatal>,
+    state: CommittableSessionState,
+}
+
+/// tick shadow 与自然日日结共同提交的唯一状态集合。
+struct CommittableSessionState {
     setup: SessionSetup,
     rng: SplitMix64,
     seed: u64,
@@ -1132,8 +1140,7 @@ pub struct GameSession {
     accounts: AccountBook,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
     market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
-    daily_candles: BTreeMap<StockCode, DailyCandleHistory>,
-    active_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    candle_book: SessionCandleBook,
     auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     pending_player: Vec<(AccountId, Intent)>,
     pending_npc: Option<PendingNpcBatch>,
@@ -1150,7 +1157,7 @@ pub struct GameSession {
     npc_decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     #[cfg(feature = "simulation-diagnostics")]
     causal: crate::diagnostics::causal::CausalCollector,
-    attention_queue: BinaryHeap<Reverse<(u64, AccountId)>>,
+    attention_scheduler: NpcAttentionScheduler,
     // ── 公司域 + 决策链状态（任务 26；持久化契约归任务 27，当前为会话期状态：
     //    恢复时前史确定性重建 + 经营按自然日重放，个人信念/计划/信息集复位，
     //    已在 issues.md 登记）──
@@ -1169,17 +1176,11 @@ pub struct GameSession {
     /// 跨日个人交易计划（K6；PlanBook 本身支持全账户）。
     plans: crate::plans::PlanBook,
     urgency_policy: crate::plans::UrgencyPolicy,
-    /// 信念机构账户的个人信息集（K4 任务 16）。
-    information: BTreeMap<AccountId, crate::information::NpcInformationState>,
-    /// 信念机构账户的信念簿（K5 任务 18）。
-    belief_books: AccountPagedMap<crate::strategy::BeliefBook>,
-    /// 信念机构账户的关注列表（任务 25）。
-    watchlists: AccountPagedMap<crate::experience::PersonalWatchlist>,
-    price_memories: AccountPagedMap<crate::experience::PersonalPriceMemory>,
+    /// 每个信念机构的独立个人认识、经历和关注事实。
+    belief_participants: AccountPagedMap<BeliefParticipantState>,
     /// 在簿回执账本；跨存档由 `SaveRuntimeV2` 的 `live_envelopes` 持久恢复。
     envelope_ledger: pipeline::EnvelopeLedger,
-    /// Receipts already consumed by the atomic Settlement account/experience projection.
-    /// This is authoritative replay protection and must travel with the tick shadow.
+    /// 已由原子 Settlement 账户/经历投影消费的回执；随 tick shadow 提交的权威去重事实。
     retail_projection_seen: pipeline::RetailProjectionSeen,
     /// 下一个全局回执索引；跨存档由 `SaveRuntimeV2` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
@@ -1324,275 +1325,19 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
 }
 
 impl GameSession {
-    /// Frozen input for `run_chain_for_account`. A plan root reads account and
-    /// issuer facts, current market prices, the public library and the live plan
-    /// index. Order queues, histories and mutable personal state belong to the
-    /// tick candidate and must not be copied into each root wave.
-    pub(super) fn clone_for_plan_roots(&self) -> Self {
-        Self {
-            poison: None,
-            #[cfg(test)]
-            injected_failure: None,
-            #[cfg(test)]
-            post_shadow_failure: None,
-            setup: self.setup.clone(),
-            rng: self.rng.clone(),
-            seed: self.seed,
-            markets: BTreeMap::new(),
-            accounts: self.accounts.clone(),
-            price_history: BTreeMap::new(),
-            market_minute_closes: BTreeMap::new(),
-            daily_candles: BTreeMap::new(),
-            active_daily_candles: BTreeMap::new(),
-            auction_orders: BTreeMap::new(),
-            pending_player: Vec::new(),
-            pending_npc: None,
-            npc_attention: AccountPagedMap::default(),
-            retail_experience: AccountPagedMap::default(),
-            parent_orders: BTreeMap::new(),
-            pending_plan_events: Vec::new(),
-            npc_order_lifecycles: Vec::new(),
-            last_retail_decisions: Vec::new(),
-            last_retail_order_events: Vec::new(),
-            #[cfg(feature = "simulation-diagnostics")]
-            npc_decision_traces: Default::default(),
-            #[cfg(feature = "simulation-diagnostics")]
-            causal: Default::default(),
-            attention_queue: BinaryHeap::new(),
-            company_registry: self.company_registry.clone(),
-            operations: self.operations.clone(),
-            closing: self.closing.clone(),
-            library: self.library.clone(),
-            ops_wiring: self.ops_wiring.clone(),
-            disclosures: self.disclosures.clone(),
-            plans: self.plans.clone(),
-            urgency_policy: self.urgency_policy,
-            information: BTreeMap::new(),
-            belief_books: AccountPagedMap::default(),
-            watchlists: AccountPagedMap::default(),
-            price_memories: AccountPagedMap::default(),
-            envelope_ledger: pipeline::EnvelopeLedger::new(self.next_receipt_base, [])
-                .expect("empty plan observation ledger is valid"),
-            retail_projection_seen: Default::default(),
-            next_receipt_base: self.next_receipt_base,
-            next_order_id: self.next_order_id,
-            tick: self.tick,
-            day: self.day,
-            seq: self.seq,
-            civil_clock: self.civil_clock.clone(),
-        }
-    }
-
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
-        let Self {
-            poison: _,
-            #[cfg(test)]
-                injected_failure: _,
-            #[cfg(test)]
-                post_shadow_failure: _,
-            setup,
-            rng,
-            seed,
-            markets,
-            accounts,
-            price_history,
-            market_minute_closes,
-            daily_candles,
-            active_daily_candles,
-            auction_orders,
-            pending_player,
-            pending_npc,
-            npc_attention,
-            retail_experience,
-            parent_orders,
-            pending_plan_events,
-            npc_order_lifecycles,
-            last_retail_decisions,
-            last_retail_order_events,
-            #[cfg(feature = "simulation-diagnostics")]
-            npc_decision_traces,
-            #[cfg(feature = "simulation-diagnostics")]
-            causal,
-            attention_queue,
-            company_registry,
-            operations,
-            closing,
-            library,
-            ops_wiring,
-            disclosures,
-            plans,
-            urgency_policy,
-            information,
-            belief_books,
-            watchlists,
-            price_memories,
-            envelope_ledger,
-            retail_projection_seen,
-            next_receipt_base,
-            next_order_id,
-            tick,
-            day,
-            seq,
-            civil_clock,
-        } = self;
-        let accounts =
-            accounts
-                .clone_for_shadow()
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: error.to_string(),
-                    location: "GameSession::clone_for_tick_shadow".to_owned(),
-                })?;
         Ok(Self {
             poison: None,
             #[cfg(test)]
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
-            setup: setup.clone(),
-            rng: rng.clone(),
-            seed: *seed,
-            markets: markets.clone(),
-            accounts,
-            price_history: price_history.clone(),
-            market_minute_closes: market_minute_closes.clone(),
-            daily_candles: daily_candles.clone(),
-            active_daily_candles: active_daily_candles.clone(),
-            auction_orders: auction_orders.clone(),
-            pending_player: pending_player.clone(),
-            pending_npc: pending_npc.clone(),
-            npc_attention: npc_attention.clone(),
-            retail_experience: retail_experience.clone(),
-            parent_orders: parent_orders.clone(),
-            pending_plan_events: pending_plan_events.clone(),
-            npc_order_lifecycles: npc_order_lifecycles.clone(),
-            last_retail_decisions: last_retail_decisions.clone(),
-            last_retail_order_events: last_retail_order_events.clone(),
-            #[cfg(feature = "simulation-diagnostics")]
-            npc_decision_traces: npc_decision_traces.clone(),
-            #[cfg(feature = "simulation-diagnostics")]
-            causal: causal.clone(),
-            attention_queue: attention_queue.clone(),
-            company_registry: company_registry.clone(),
-            operations: operations.clone(),
-            closing: closing.clone(),
-            library: library.clone(),
-            ops_wiring: ops_wiring.clone(),
-            disclosures: disclosures.clone(),
-            plans: plans.clone(),
-            urgency_policy: *urgency_policy,
-            information: information.clone(),
-            belief_books: belief_books.clone(),
-            watchlists: watchlists.clone(),
-            price_memories: price_memories.clone(),
-            envelope_ledger: envelope_ledger.clone(),
-            retail_projection_seen: retail_projection_seen.clone(),
-            next_receipt_base: *next_receipt_base,
-            next_order_id: *next_order_id,
-            tick: *tick,
-            day: *day,
-            seq: *seq,
-            civil_clock: civil_clock.clone(),
+            state: self.state.clone_for_shadow()?,
         })
     }
 
     pub(super) fn commit_tick_shadow(&mut self, shadow: Self) {
-        let Self {
-            poison: _,
-            #[cfg(test)]
-                injected_failure: _,
-            #[cfg(test)]
-                post_shadow_failure: _,
-            setup,
-            rng,
-            seed,
-            markets,
-            accounts,
-            price_history,
-            market_minute_closes,
-            daily_candles,
-            active_daily_candles,
-            auction_orders,
-            pending_player,
-            pending_npc,
-            npc_attention,
-            retail_experience,
-            parent_orders,
-            pending_plan_events,
-            npc_order_lifecycles,
-            last_retail_decisions,
-            last_retail_order_events,
-            #[cfg(feature = "simulation-diagnostics")]
-            npc_decision_traces,
-            #[cfg(feature = "simulation-diagnostics")]
-            causal,
-            attention_queue,
-            company_registry,
-            operations,
-            closing,
-            library,
-            ops_wiring,
-            disclosures,
-            plans,
-            information,
-            belief_books,
-            watchlists,
-            price_memories,
-            envelope_ledger,
-            retail_projection_seen,
-            next_receipt_base,
-            next_order_id,
-            tick,
-            day,
-            seq,
-            civil_clock,
-            urgency_policy,
-        } = shadow;
-        self.urgency_policy = urgency_policy;
-        self.setup = setup;
-        self.rng = rng;
-        self.seed = seed;
-        self.markets = markets;
-        self.accounts.replace_and_drop_parallel(accounts);
-        self.price_history = price_history;
-        self.market_minute_closes = market_minute_closes;
-        self.daily_candles = daily_candles;
-        self.active_daily_candles = active_daily_candles;
-        self.auction_orders = auction_orders;
-        self.pending_player = pending_player;
-        self.pending_npc = pending_npc;
-        self.npc_attention.replace_and_drop_parallel(npc_attention);
-        self.retail_experience
-            .replace_and_drop_parallel(retail_experience);
-        self.parent_orders = parent_orders;
-        self.pending_plan_events = pending_plan_events;
-        self.npc_order_lifecycles = npc_order_lifecycles;
-        self.last_retail_decisions = last_retail_decisions;
-        self.last_retail_order_events = last_retail_order_events;
-        #[cfg(feature = "simulation-diagnostics")]
-        {
-            self.npc_decision_traces = npc_decision_traces;
-            self.causal = causal;
-        }
-        self.attention_queue = attention_queue;
-        self.company_registry = company_registry;
-        self.operations = operations;
-        self.closing = closing;
-        self.library = library;
-        self.ops_wiring = ops_wiring;
-        self.disclosures = disclosures;
-        self.plans = plans;
-        self.information = information;
-        self.belief_books = belief_books;
-        self.watchlists = watchlists;
-        self.price_memories = price_memories;
-        self.envelope_ledger = envelope_ledger;
-        self.retail_projection_seen = retail_projection_seen;
-        self.next_receipt_base = next_receipt_base;
-        self.next_order_id = next_order_id;
-        self.tick = tick;
-        self.day = day;
-        self.seq = seq;
-        self.civil_clock = civil_clock;
+        self.state.commit_from(shadow.state);
     }
     /// 构造 session。校验参数 → 建 markets/accounts → 注入 NPC 策略。
     ///
@@ -1668,52 +1413,50 @@ impl GameSession {
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
-            #[cfg(feature = "simulation-diagnostics")]
-            causal: crate::diagnostics::causal::CausalCollector::default(),
-            setup,
-            rng,
-            seed,
-            markets,
-            accounts,
-            price_history,
-            market_minute_closes,
-            daily_candles,
-            active_daily_candles: BTreeMap::new(),
-            auction_orders: BTreeMap::new(),
-            pending_player: Vec::new(),
-            pending_npc: None,
-            npc_attention: AccountPagedMap::default(),
-            retail_experience: AccountPagedMap::default(),
-            parent_orders: BTreeMap::new(),
-            pending_plan_events: Vec::new(),
-            npc_order_lifecycles: Vec::new(),
-            last_retail_decisions: Vec::new(),
-            last_retail_order_events: Vec::new(),
-            #[cfg(feature = "simulation-diagnostics")]
-            npc_decision_traces:
-                crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
-            attention_queue: BinaryHeap::new(),
-            company_registry: std::sync::Arc::new(registry),
-            operations: std::sync::Arc::new(ops),
-            closing,
-            library,
-            ops_wiring,
-            disclosures,
-            plans: crate::plans::PlanBook::default(),
-            urgency_policy: crate::plans::UrgencyPolicy::default(),
-            information: BTreeMap::new(),
-            belief_books: AccountPagedMap::default(),
-            watchlists: AccountPagedMap::default(),
-            price_memories: AccountPagedMap::default(),
-            envelope_ledger: pipeline::EnvelopeLedger::new(0, [])
-                .expect("an empty envelope ledger is valid"),
-            retail_projection_seen: pipeline::RetailProjectionSeen::default(),
-            next_receipt_base: 0,
-            next_order_id: 1,
-            tick: 0,
-            day: 0,
-            seq: 0,
-            civil_clock,
+            state: CommittableSessionState {
+                #[cfg(feature = "simulation-diagnostics")]
+                causal: crate::diagnostics::causal::CausalCollector::default(),
+                setup,
+                rng,
+                seed,
+                markets,
+                accounts,
+                price_history,
+                market_minute_closes,
+                candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
+                auction_orders: BTreeMap::new(),
+                pending_player: Vec::new(),
+                pending_npc: None,
+                npc_attention: AccountPagedMap::default(),
+                retail_experience: AccountPagedMap::default(),
+                parent_orders: BTreeMap::new(),
+                pending_plan_events: Vec::new(),
+                npc_order_lifecycles: Vec::new(),
+                last_retail_decisions: Vec::new(),
+                last_retail_order_events: Vec::new(),
+                #[cfg(feature = "simulation-diagnostics")]
+                npc_decision_traces:
+                    crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
+                attention_scheduler: NpcAttentionScheduler::default(),
+                company_registry: std::sync::Arc::new(registry),
+                operations: std::sync::Arc::new(ops),
+                closing,
+                library,
+                ops_wiring,
+                disclosures,
+                plans: crate::plans::PlanBook::default(),
+                urgency_policy: crate::plans::UrgencyPolicy::default(),
+                belief_participants: AccountPagedMap::default(),
+                envelope_ledger: pipeline::EnvelopeLedger::new(0, [])
+                    .expect("an empty envelope ledger is valid"),
+                retail_projection_seen: pipeline::RetailProjectionSeen::default(),
+                next_receipt_base: 0,
+                next_order_id: 1,
+                tick: 0,
+                day: 0,
+                seq: 0,
+                civil_clock,
+            },
         };
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
@@ -1727,35 +1470,38 @@ impl GameSession {
 
     fn account_equity(&self, id: AccountId) -> Result<Money, MoneyError> {
         let account = self
+            .state
             .accounts
             .get(&id)
             .expect("equity may only be computed for an existing account");
         account
-            .positions
+            .positions()
             .iter()
-            .try_fold(account.cash, |total, (code, position)| {
+            .try_fold(account.cash(), |total, (code, position)| {
                 let price = self
+                    .state
                     .markets
                     .get(code)
                     .unwrap_or_else(|| panic!("account {} holds unknown stock {}", id.0, code.0))
                     .last_price();
-                total.add(price.mul_shares(position.qty)?)
+                total.add(price.mul_shares(position.qty())?)
             })
     }
 
     fn current_market_minute(&self) -> u64 {
-        let day_start = u64::from(self.day)
+        let day_start = u64::from(self.state.day)
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("u32 session day times 240 fits u64");
-        let day_tick = self.tick % self.setup.ticks_per_day;
+        let day_tick = self.state.tick % self.state.setup.ticks_per_day;
         let continuous_ticks_per_day = self
+            .state
             .setup
             .ticks_per_day
-            .saturating_sub(self.setup.auction_ticks)
-            .saturating_sub(self.setup.closing_auction_ticks);
+            .saturating_sub(self.state.setup.auction_ticks)
+            .saturating_sub(self.state.setup.closing_auction_ticks);
         let completed = completed_market_minute_count(
             day_tick
-                .saturating_sub(self.setup.auction_ticks)
+                .saturating_sub(self.state.setup.auction_ticks)
                 .min(continuous_ticks_per_day),
             continuous_ticks_per_day,
         )
@@ -1766,9 +1512,10 @@ impl GameSession {
     fn initialize_retail_experience(&mut self) -> Result<(), SessionError> {
         let market_minute = self.current_market_minute();
         let retail_ids: Vec<_> = self
+            .state
             .accounts
             .iter()
-            .filter_map(|(id, account)| (account.kind == AccountKind::Retail).then_some(*id))
+            .filter_map(|(id, account)| (account.kind() == AccountKind::Retail).then_some(*id))
             .collect();
         for id in retail_ids {
             let equity = self.account_equity(id)?;
@@ -1777,11 +1524,11 @@ impl GameSession {
             } else {
                 RetailExperienceState::without_equity_reference()
             };
-            let holdings: Vec<_> = self.accounts[&id]
-                .positions
+            let holdings: Vec<_> = self.state.accounts[&id]
+                .positions()
                 .iter()
                 .map(|(code, position)| {
-                    let current = self.markets[code].last_price();
+                    let current = self.state.markets[code].last_price();
                     (
                         code.clone(),
                         position.cost_price().filter(|price| price.cents() > 0),
@@ -1792,36 +1539,37 @@ impl GameSession {
             for (code, reference, current) in holdings {
                 experience.initialize_holding(&code, reference, current, market_minute)?;
             }
-            self.retail_experience.insert(id, experience);
+            self.state.retail_experience.insert(id, experience);
         }
         Ok(())
     }
 
     fn reconcile_institutional_holdings(&mut self) -> Result<(), SessionError> {
-        let account_ids: Vec<_> = self.belief_books.keys().copied().collect();
+        let account_ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
         let moment = crate::experience::ExperienceMoment {
-            civil_date: self.civil_clock.current_date(),
+            civil_date: self.state.civil_clock.current_date(),
             market_minute: self.current_market_minute(),
-            trading_day: u64::from(self.day),
+            trading_day: u64::from(self.state.day),
         };
         for account_id in account_ids {
-            let held: Vec<_> = self.accounts[&account_id]
-                .positions
+            let held: Vec<_> = self.state.accounts[&account_id]
+                .positions()
                 .iter()
                 .map(|(code, position)| {
                     (
                         code.clone(),
                         position.cost_price().filter(|price| price.cents() > 0),
-                        self.markets[code].last_price(),
+                        self.state.markets[code].last_price(),
                     )
                 })
                 .collect();
             let held_codes: BTreeSet<_> = held.iter().map(|(code, _, _)| code.clone()).collect();
-            let mut book = self
-                .belief_books
+            let mut participant = self
+                .state
+                .belief_participants
                 .remove(&account_id)
                 .expect("collected institution experience account exists");
-            let experience = book.experience_mut();
+            let experience = participant.belief_mut().experience_mut();
             let stale_codes: BTreeSet<_> = experience
                 .feedback
                 .stocks
@@ -1831,14 +1579,7 @@ impl GameSession {
                 .cloned()
                 .collect();
             for code in stale_codes {
-                experience.feedback.stocks.remove(&code);
-                if let Some(stock) = experience.stocks.get_mut(&code) {
-                    stock.entry_reference_price = None;
-                    stock.peak_price_since_entry = None;
-                    stock.last_buy_price = None;
-                    stock.last_buy_order_id = None;
-                    stock.adverse_move_recorded = false;
-                }
+                experience.clear_stale_institutional_holding(&code);
             }
             for (code, reference, current_price) in held {
                 if experience.feedback.stocks.contains_key(&code) {
@@ -1860,7 +1601,9 @@ impl GameSession {
                     )?;
                 }
             }
-            self.belief_books.insert(account_id, book);
+            self.state
+                .belief_participants
+                .insert(account_id, participant);
         }
         Ok(())
     }
@@ -1870,21 +1613,22 @@ impl GameSession {
         let market_minute = self.current_market_minute();
         let observations: Vec<_> = ids
             .iter()
-            .filter(|id| self.retail_experience.contains_key(id))
+            .filter(|id| self.state.retail_experience.contains_key(id))
             .map(|id| {
                 let equity = self
                     .account_equity(*id)
                     .expect("validated account equity must remain representable");
-                let positions: Vec<_> = self.accounts[id]
-                    .positions
+                let positions: Vec<_> = self.state.accounts[id]
+                    .positions()
                     .keys()
-                    .map(|code| (code.clone(), self.markets[code].last_price()))
+                    .map(|code| (code.clone(), self.state.markets[code].last_price()))
                     .collect();
                 (*id, equity, positions)
             })
             .collect();
         for (id, equity, positions) in observations {
             let experience = self
+                .state
                 .retail_experience
                 .get_mut(&id)
                 .expect("filtered retail experience must exist");
@@ -1907,6 +1651,7 @@ impl GameSession {
     /// 缺类自动归一化分摊）。
     fn seed_float(&mut self) -> Result<(), SessionError> {
         let npc_ids: Vec<AccountId> = self
+            .state
             .accounts
             .keys()
             .copied()
@@ -1915,13 +1660,13 @@ impl GameSession {
         if npc_ids.is_empty() {
             return Ok(());
         }
-        for spec in self.setup.stocks.clone() {
+        for spec in self.state.setup.stocks.clone() {
             if spec.float_shares == 0 {
                 continue;
             }
             let code = spec.code.clone();
             let price = spec.initial_price;
-            let alloc: Vec<(AccountId, u32)> = match &self.setup.float_allocation {
+            let alloc: Vec<(AccountId, u32)> = match &self.state.setup.float_allocation {
                 FloatAllocation::Random => self.split_random(spec.float_shares, &npc_ids),
                 FloatAllocation::ByKind { retail, inst, hot } => {
                     self.split_by_kind(spec.float_shares, *retail, *inst, *hot)
@@ -1929,7 +1674,7 @@ impl GameSession {
             };
             for (id, qty) in alloc {
                 if qty > 0 {
-                    if let Some(acc) = self.accounts.get_mut(&id) {
+                    if let Some(acc) = self.state.accounts.get_mut(&id) {
                         acc.grant_position(code.clone(), qty, price)?;
                     }
                 }
@@ -1955,11 +1700,12 @@ impl GameSession {
             (AccountKind::Inst, r_inst, Vec::new()),
             (AccountKind::Hot, r_hot, Vec::new()),
         ];
-        for id in self.accounts.keys().copied().filter(|id| id.0 != 0) {
+        for id in self.state.accounts.keys().copied().filter(|id| id.0 != 0) {
             let kind = self
+                .state
                 .accounts
                 .get(&id)
-                .map(|a| a.kind)
+                .map(|a| a.kind())
                 .unwrap_or(AccountKind::Retail);
             for entry in by_kind.iter_mut() {
                 if entry.0 == kind {
@@ -1995,10 +1741,10 @@ impl GameSession {
                 let mut selected: Vec<AccountId> = ids
                     .iter()
                     .copied()
-                    .filter(|_| self.rng.next_f64() < 0.40)
+                    .filter(|_| self.state.rng.next_f64() < 0.40)
                     .collect();
                 if selected.is_empty() {
-                    selected.push(ids[self.rng.next_range_u32(0, ids.len() as u32) as usize]);
+                    selected.push(ids[self.state.rng.next_range_u32(0, ids.len() as u32) as usize]);
                 }
                 selected
             } else {
@@ -2039,7 +1785,7 @@ impl GameSession {
         // Pareto 尾部让大量小持仓与少量大持仓共存；上限避免一个账户吞掉全部流通盘。
         let weights: Vec<f64> = (0..n)
             .map(|_| {
-                (1.0 - self.rng.next_f64())
+                (1.0 - self.state.rng.next_f64())
                     .max(1e-9)
                     .powf(-1.0 / tail_exponent)
                     .min(100.0)
@@ -2067,28 +1813,37 @@ impl GameSession {
     /// 策略参数非法时返回 [`SessionError::Strategy`]；不创建无策略 NPC。
     fn populate_npcs(&mut self, kind: AccountKind) -> Result<(), SessionError> {
         let count = match kind {
-            AccountKind::Retail => self.setup.npcs.retail_count,
-            AccountKind::Inst => self.setup.npcs.inst_count,
-            AccountKind::Hot => self.setup.npcs.hot_count,
+            AccountKind::Retail => self.state.setup.npcs.retail_count,
+            AccountKind::Inst => self.state.setup.npcs.inst_count,
+            AccountKind::Hot => self.state.setup.npcs.hot_count,
             AccountKind::Player => 0,
         };
-        let first_id = self.accounts.keys().next_back().map_or(1, |id| id.0 + 1);
+        let first_id = self
+            .state
+            .accounts
+            .keys()
+            .next_back()
+            .map_or(1, |id| id.0 + 1);
         let end_id = first_id.checked_add(u64::from(count)).ok_or_else(|| {
             SessionError::InvalidSetup("NPC account id range overflow".to_string())
         })?;
         for (ordinal, next_id) in (first_id..end_id).enumerate() {
             let id = AccountId(next_id);
-            let initial_cash =
-                sample_npc_cash(kind, self.setup.npcs.retail_cash_median, self.seed, id)?;
+            let initial_cash = sample_npc_cash(
+                kind,
+                self.state.setup.npcs.retail_cash_median,
+                self.state.seed,
+                id,
+            )?;
             let mut acc = Account::new(id, kind, initial_cash);
             if let Some(s) = StrategyFactory::build_for_market_day_with_ordinal(
                 kind,
-                &self.setup.strategy_params,
-                self.setup.ticks_per_day,
+                &self.state.setup.strategy_params,
+                self.state.setup.ticks_per_day,
                 u32::try_from(ordinal).map_err(|_| {
                     SessionError::InvalidSetup("NPC ordinal exceeds u32".to_string())
                 })?,
-                &mut self.rng,
+                &mut self.state.rng,
             )? {
                 let base_probability = json_canonical_f64(s.base_observation_probability())?;
                 if !(base_probability.is_finite()
@@ -2115,8 +1870,8 @@ impl GameSession {
                 acc.set_strategy(s);
                 // 计划型机构的决策链状态：分析档案 + 信念簿 +
                 // 个人信息集 + 关注列表。RNG 纪律（extraction_replay 教训）：
-                // 全部使用 seed ^ FNV1a(账户派生标签) 的独立流，绝不用 self.rng。
-                let profile = acc.strategy.as_ref().expect("just set").profile();
+                // 全部使用 seed ^ FNV1a(账户派生标签) 的独立流，绝不用 self.state.rng。
+                let profile = acc.strategy().expect("just set").profile();
                 if kind == AccountKind::Inst
                     && matches!(
                         profile,
@@ -2130,7 +1885,7 @@ impl GameSession {
                     )
                 {
                     let mut analysis_rng = SplitMix64::new(decision_chain::derived_stream(
-                        self.seed,
+                        self.state.seed,
                         "analysis-profile",
                         id,
                     ));
@@ -2138,21 +1893,20 @@ impl GameSession {
                         crate::strategy::derive_analysis_profile(&profile, id, &mut analysis_rng)
                             .map_err(SessionError::StrategyAnalysis)?;
                     let mut belief_rng = SplitMix64::new(decision_chain::derived_stream(
-                        self.seed,
+                        self.state.seed,
                         "belief-assumptions",
                         id,
                     ));
                     let mut belief =
                         crate::strategy::BeliefBook::new(id, profile, analysis, &mut belief_rng);
                     let style = acc
-                        .strategy
-                        .as_ref()
+                        .strategy()
                         .expect("institution strategy exists")
                         .institution_style()
                         .expect("institution belief strategy has a style");
                     // 个体执行参数使用独立随机流，不改变已有估值假设的六次采样纪律。
                     let mut policy_rng = SplitMix64::new(decision_chain::derived_stream(
-                        self.seed,
+                        self.state.seed,
                         "institution-experience-policy",
                         id,
                     ));
@@ -2162,22 +1916,25 @@ impl GameSession {
                             &mut policy_rng,
                         ),
                     );
-                    self.belief_books.insert(id, belief);
-                    self.information
-                        .insert(id, crate::information::NpcInformationState::new(id));
-                    self.watchlists
-                        .insert(id, crate::experience::PersonalWatchlist::new());
-                    self.price_memories
-                        .insert(id, crate::experience::PersonalPriceMemory::default());
+                    self.state.belief_participants.insert(
+                        id,
+                        BeliefParticipantState::new(
+                            crate::experience::PersonalWatchlist::new(),
+                            crate::experience::PersonalPriceMemory::default(),
+                            crate::information::NpcInformationState::new(id),
+                            belief,
+                        ),
+                    );
                 }
-                let attention_seed =
-                    self.seed ^ next_id.wrapping_mul(0x6A09_E667_F3BC_C908) ^ 0xA77E_7710_D15C_A11E;
+                let attention_seed = self.state.seed
+                    ^ next_id.wrapping_mul(0x6A09_E667_F3BC_C908)
+                    ^ 0xA77E_7710_D15C_A11E;
                 let mut attention_rng = SplitMix64::new(attention_seed);
                 let first_candidate_tick = sample_attention_wait(
                     maximum_observation_probability(kind, base_probability),
                     &mut attention_rng,
                 ) - 1;
-                self.npc_attention.insert(
+                self.state.npc_attention.insert(
                     id,
                     NpcAttentionState {
                         base_probability,
@@ -2185,56 +1942,55 @@ impl GameSession {
                         rng_state: attention_rng.state,
                     },
                 );
-                self.attention_queue
-                    .push(Reverse((first_candidate_tick, id)));
+                self.state
+                    .attention_scheduler
+                    .enqueue(first_candidate_tick, id);
             }
-            self.accounts.insert(id, acc);
+            self.state.accounts.insert(id, acc);
         }
         Ok(())
     }
 
     /// 股票数量。
     pub fn market_count(&self) -> usize {
-        self.markets.len()
+        self.state.markets.len()
     }
     /// 账户数量（含玩家）。
     pub fn account_count(&self) -> usize {
-        self.accounts.len()
+        self.state.accounts.len()
     }
     /// 当前每个 NPC 的策略身份档案。诊断可用它归因成交参与度；玩家没有策略，故不在结果中。
     ///
     /// 档案只标识公开的策略种类/风格，不泄露账户现金、库存、成本或策略私有参数。
     pub fn account_strategy_profiles(&self) -> BTreeMap<AccountId, StrategyProfile> {
-        self.accounts
+        self.state
+            .accounts
             .iter()
             .filter_map(|(id, account)| {
-                account
-                    .strategy
-                    .as_ref()
-                    .map(|strategy| (*id, strategy.profile()))
+                account.strategy().map(|strategy| (*id, strategy.profile()))
             })
             .collect()
     }
     /// 只读账户引用。
     pub fn account(&self, id: AccountId) -> Option<&Account> {
-        self.accounts.get(&id)
+        self.state.accounts.get(&id)
     }
     /// 当前 tick（从 0 起，step 后自增）。
     pub fn tick(&self) -> u64 {
-        self.tick
+        self.state.tick
     }
     /// 当前交易日（0 起，日界自增）。
     pub fn day(&self) -> u32 {
-        self.day
+        self.state.day
     }
 
     /// 当前交易阶段。`auction_ticks` 表示 09:15–09:30 的整段开盘时间；
     /// 前 2/3 接受集合竞价申报，后 1/3 为不接受申报的盘前窗口。
     pub fn phase(&self) -> TradingPhase {
-        let day_tick = self.tick % self.setup.ticks_per_day;
+        let day_tick = self.state.tick % self.state.setup.ticks_per_day;
         if day_tick < self.auction_entry_ticks() {
             TradingPhase::CallAuction
-        } else if day_tick < self.setup.auction_ticks {
+        } else if day_tick < self.state.setup.auction_ticks {
             TradingPhase::PreOpen
         } else if day_tick >= self.closing_auction_start_tick() {
             TradingPhase::ClosingAuction
@@ -2245,25 +2001,25 @@ impl GameSession {
 
     /// 把可配置的 15 分钟开盘窗口按 10:5 映射为申报期和盘前期。
     fn auction_entry_ticks(&self) -> u64 {
-        self.setup.auction_ticks - self.setup.auction_ticks / 3
+        self.state.setup.auction_ticks - self.state.setup.auction_ticks / 3
     }
 
     fn closing_auction_start_tick(&self) -> u64 {
-        self.setup.ticks_per_day - self.setup.closing_auction_ticks
+        self.state.setup.ticks_per_day - self.state.setup.closing_auction_ticks
     }
     /// 最新事件 seq。
     pub fn seq(&self) -> u64 {
-        self.seq
+        self.state.seq
     }
     /// 自增并返回下一个事件 seq（单调）。
     fn next_seq(&mut self) -> u64 {
-        self.seq += 1;
-        self.seq
+        self.state.seq += 1;
+        self.state.seq
     }
 
     /// 当前自然日（K1：与交易日计数 `day` 分离；休市日推进只动这里）。
     pub fn civil_date(&self) -> crate::calendar::CivilDate {
-        self.civil_clock.current_date()
+        self.state.civil_clock.current_date()
     }
 
     /// Returns one host-safe page of reports visible at the current civil instant.
@@ -2273,7 +2029,8 @@ impl GameSession {
     ) -> Result<crate::company::PublicReportPage, SessionError> {
         let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
             .map_err(crate::calendar::CalendarError::from)?;
-        self.library
+        self.state
+            .library
             .query_public_reports(query, as_of)
             .map_err(|error| SessionError::Information(Box::new(error)))
     }
@@ -2285,20 +2042,21 @@ impl GameSession {
     ) -> Result<crate::company::PublicReportSummary, SessionError> {
         let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
             .map_err(crate::calendar::CalendarError::from)?;
-        self.library
+        self.state
+            .library
             .public_report_by_id(id, as_of)
             .map_err(|error| SessionError::Information(Box::new(error)))
     }
 
     /// 自然日经营时钟只读访问（诊断/测试）。
     pub fn civil_clock(&self) -> &CivilClock {
-        &self.civil_clock
+        &self.state.civil_clock
     }
 
     /// 自然日经营时钟可变访问：注册到期业务、显式日期日结等高级用法。
     /// **绕过会话同步守卫**；宿主常规循环必须走 [`Self::end_civil_day`]。
     pub fn civil_clock_mut(&mut self) -> &mut CivilClock {
-        &mut self.civil_clock
+        &mut self.state.civil_clock
     }
 
     /// 自然日日结（K1）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
@@ -2314,12 +2072,15 @@ impl GameSession {
     /// （`DisclosureDispatch::run_day_end`，公告先于定期报告）。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
         self.require_healthy()?;
-        let expected_sessions = self.civil_clock.completed_trading_sessions_expected()?;
-        if self.day != expected_sessions {
+        let expected_sessions = self
+            .state
+            .civil_clock
+            .completed_trading_sessions_expected()?;
+        if self.state.day != expected_sessions {
             return Err(SessionError::CivilClock(
                 CivilClockError::MarketSessionOutOfSync {
-                    date: self.civil_clock.current_date(),
-                    completed_sessions: self.day,
+                    date: self.state.civil_clock.current_date(),
+                    completed_sessions: self.state.day,
                     expected_sessions,
                 },
             ));
@@ -2337,25 +2098,31 @@ impl GameSession {
     }
 
     fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        let mut report = self.civil_clock.end_day(self.civil_clock.current_date())?;
-        self.ops_wiring.run_day_end(
+        let mut report = self
+            .state
+            .civil_clock
+            .end_day(self.state.civil_clock.current_date())?;
+        self.state.ops_wiring.run_day_end(
             &report,
-            &mut self.civil_clock,
-            std::sync::Arc::make_mut(&mut self.operations),
+            &mut self.state.civil_clock,
+            std::sync::Arc::make_mut(&mut self.state.operations),
         )?;
         self.close_accounting_periods(report.settled_date)?;
         let disclosures = self
+            .state
             .disclosures
             .run_day_end(DayEndDisclosureCtx {
                 report: &report,
-                ops: &self.operations,
-                closing: &mut self.closing,
-                library: &mut self.library,
+                ops: &self.state.operations,
+                closing: &mut self.state.closing,
+                library: &mut self.state.library,
             })
             .map_err(SessionError::Disclosure)?;
-        self.ops_wiring.prune_dispatched(&self.operations);
+        self.state
+            .ops_wiring
+            .prune_dispatched(&self.state.operations);
         self.record_civil_day_events(&mut report, disclosures)?;
-        for observer in self.civil_clock.disclosure_observers() {
+        for observer in self.state.civil_clock.disclosure_observers() {
             observer(report.disclosure_instant);
         }
         Ok(report)
@@ -2368,6 +2135,7 @@ impl GameSession {
     ) -> Result<(), SessionError> {
         for publication_id in disclosures.announcements_published {
             let (company, published_at) = self
+                .state
                 .library
                 .announcement(publication_id, report.disclosure_instant)
                 .map(|announcement| (announcement.company.clone(), announcement.published_at))
@@ -2382,6 +2150,7 @@ impl GameSession {
         }
         for publication_id in disclosures.reports_published {
             let (company, published_at, report_revision) = self
+                .state
                 .library
                 .report(publication_id, report.disclosure_instant)
                 .map(|published| {
@@ -2433,6 +2202,7 @@ impl GameSession {
             crate::accounting::consolidation::MemberId,
             crate::accounting::reports::IndustryPresentation,
         )> = self
+            .state
             .operations
             .companies
             .iter()
@@ -2446,17 +2216,19 @@ impl GameSession {
             .collect();
         for (company_id, member, industry) in targets {
             let Some(company) =
-                std::sync::Arc::make_mut(&mut self.operations).company_mut(&company_id)
+                std::sync::Arc::make_mut(&mut self.state.operations).company_mut(&company_id)
             else {
                 continue;
             };
             let books = company.books_mut();
             let result = if year_end {
-                self.closing
+                self.state
+                    .closing
                     .close_year(books, &member, industry, settled.year())
                     .map(|_| ())
             } else {
-                self.closing
+                self.state
+                    .closing
                     .close_month(books, &member, industry, period)
                     .map(|_| ())
             };
@@ -2469,12 +2241,12 @@ impl GameSession {
     ///
     /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
     pub fn last_retail_decisions(&self) -> &[RetailDecisionTrace] {
-        &self.last_retail_decisions
+        &self.state.last_retail_decisions
     }
 
     /// 读取上一 tick 的散户订单生命周期诊断事件；不属于存档或撮合状态。
     pub fn last_retail_order_events(&self) -> &[RetailOrderDiagnosticEvent] {
-        &self.last_retail_order_events
+        &self.state.last_retail_order_events
     }
 
     pub fn npc_decision_diagnostics(
@@ -2500,7 +2272,8 @@ impl GameSession {
         &self,
         account: AccountId,
     ) -> Option<Vec<crate::diagnostics::NpcDecisionTraceRecord>> {
-        self.npc_decision_traces
+        self.state
+            .npc_decision_traces
             .records(account)
             .map(|records| records.iter().cloned().collect())
     }
@@ -2512,8 +2285,9 @@ impl GameSession {
         order_id: OrderId,
         remaining_qty: u32,
     ) {
-        if self.retail_experience.contains_key(&account) {
-            self.last_retail_order_events
+        if self.state.retail_experience.contains_key(&account) {
+            self.state
+                .last_retail_order_events
                 .push(RetailOrderDiagnosticEvent::Canceled {
                     account,
                     code,
@@ -2524,7 +2298,7 @@ impl GameSession {
     }
 
     fn record_retail_intent_rejections(&mut self, account: AccountId, events: &[Event]) {
-        if !self.retail_experience.contains_key(&account) {
+        if !self.state.retail_experience.contains_key(&account) {
             return;
         }
         for event in events {
@@ -2536,12 +2310,13 @@ impl GameSession {
             } = event
             {
                 if *rejected_account == account {
-                    self.last_retail_order_events
-                        .push(RetailOrderDiagnosticEvent::Rejected {
+                    self.state.last_retail_order_events.push(
+                        RetailOrderDiagnosticEvent::Rejected {
                             account,
                             code: code.clone(),
                             reason: reason.clone(),
-                        });
+                        },
+                    );
                 }
             }
         }
@@ -2549,13 +2324,14 @@ impl GameSession {
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {
         let auction_reserved = self
+            .state
             .auction_orders
             .values()
             .flatten()
             .filter(|order| order.owner == account)
             .try_fold(Money::ZERO, |total, order| {
                 let required = live_cash_reservation(
-                    &self.setup.config,
+                    &self.state.setup.config,
                     order.side,
                     order.limit,
                     order.qty,
@@ -2563,12 +2339,13 @@ impl GameSession {
                 )?;
                 total.add(required)
             })?;
-        self.markets
+        self.state
+            .markets
             .values()
             .flat_map(|market| market.resting_orders_for(account))
             .try_fold(auction_reserved, |total, order| {
                 let required = live_cash_reservation(
-                    &self.setup.config,
+                    &self.state.setup.config,
                     order.side,
                     order.price,
                     order.qty,
@@ -2589,41 +2366,35 @@ impl GameSession {
     ) {
         if self.phase() != TradingPhase::Continuous
             || self
+                .state
                 .accounts
                 .get(&account)
-                .is_none_or(|candidate| candidate.kind == AccountKind::Player)
+                .is_none_or(|candidate| candidate.kind() == AccountKind::Player)
             || self.is_active_parent_child(account, code, order.id)
         {
             return;
         }
-        if self
-            .npc_order_lifecycles
-            .iter()
-            .any(|lifecycle| lifecycle.order_id == order.id)
-        {
-            panic!(
-                "NPC quote lifecycle already exists for order {}",
-                order.id.0
-            );
-        }
+        pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
+            .ensure_order_absent(order.id);
         let placed_market_minute = self.current_market_minute();
         let lifetime_minutes = self.npc_quote_lifetime_minutes_at_quote(
             account, code, order, last_price, best_bid, best_ask,
         );
-        let day_end = (u64::from(self.day) + 1)
+        let day_end = (u64::from(self.state.day) + 1)
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("session day plus one fits market-minute range");
         let expires_market_minute = placed_market_minute
             .checked_add(lifetime_minutes)
             .expect("NPC quote lifetime fits market-minute range")
             .min(day_end);
-        self.npc_order_lifecycles.push(NpcOrderLifecycle {
-            account,
-            code: code.clone(),
-            order_id: order.id,
-            placed_market_minute,
-            expires_market_minute,
-        });
+        pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
+            .append_prepared(NpcOrderLifecycle {
+                account,
+                code: code.clone(),
+                order_id: order.id,
+                placed_market_minute,
+                expires_market_minute,
+            });
     }
 
     #[cfg(test)]
@@ -2634,6 +2405,7 @@ impl GameSession {
         order: &Order,
     ) -> u64 {
         let market = self
+            .state
             .markets
             .get(code)
             .expect("NPC quote requires a known market");
@@ -2659,10 +2431,11 @@ impl GameSession {
         best_ask: Option<Money>,
     ) -> u64 {
         let kind = self
+            .state
             .accounts
             .get(&account)
             .expect("lifecycle registration only accepts an existing account")
-            .kind;
+            .kind();
         let base = match kind {
             AccountKind::Retail => 18_u64,
             AccountKind::Inst => 36_u64,
@@ -2670,6 +2443,7 @@ impl GameSession {
             AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
         };
         let tick_cents = self
+            .state
             .setup
             .stocks
             .iter()
@@ -2684,6 +2458,7 @@ impl GameSession {
         let quote_distance_ticks = (order.price.cents() - last_price.cents()).unsigned_abs()
             / u64::try_from(tick_cents).expect("market tick is positive");
         let volatility_ticks = self
+            .state
             .price_history
             .get(code)
             .map(|history| {
@@ -2699,7 +2474,7 @@ impl GameSession {
                 }
             })
             .unwrap_or(0);
-        let deterministic_jitter = self.seed
+        let deterministic_jitter = self.state.seed
             ^ account.0.rotate_left(17)
             ^ order.id.0.rotate_left(31)
             ^ stock_code_hash(code);
@@ -2721,10 +2496,11 @@ impl GameSession {
         code: &StockCode,
         order_id: OrderId,
     ) -> bool {
-        self.parent_orders
+        self.state
+            .parent_orders
             .get(&account)
             .and_then(|plans| plans.get(code))
-            .is_some_and(|plan| plan.active_child_order_id == Some(order_id))
+            .is_some_and(|plan| plan.active_child_order_id() == Some(order_id))
     }
 
     fn remove_npc_order_lifecycle(
@@ -2733,11 +2509,8 @@ impl GameSession {
         code: &StockCode,
         order_id: OrderId,
     ) {
-        self.npc_order_lifecycles.retain(|lifecycle| {
-            !(lifecycle.account == account
-                && lifecycle.code == *code
-                && lifecycle.order_id == order_id)
-        });
+        pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
+            .remove(account, code, order_id);
     }
 
     ///
@@ -2748,13 +2521,14 @@ impl GameSession {
         intent: Intent,
     ) -> Result<(), SessionError> {
         let account = self
+            .state
             .accounts
             .get(&player_id)
             .ok_or(SessionError::UnknownPlayer(player_id))?;
-        if account.kind != AccountKind::Player {
+        if account.kind() != AccountKind::Player {
             return Err(SessionError::NotPlayer(player_id));
         }
-        self.pending_player.push((player_id, intent));
+        self.state.pending_player.push((player_id, intent));
         Ok(())
     }
 
@@ -2762,9 +2536,10 @@ impl GameSession {
     /// 在 DayBoundary 后调用 → snapshot 含 end_of_day 后的状态（last_close 已更新）。
     fn save_snapshot_projection(&self) -> SaveSnapshot {
         SaveSnapshot {
-            seq: self.seq,
-            tick: self.tick,
+            seq: self.state.seq,
+            tick: self.state.tick,
             markets: self
+                .state
                 .markets
                 .iter()
                 .map(|(code, market)| {
@@ -2778,24 +2553,25 @@ impl GameSession {
                 })
                 .collect(),
             accounts: self
+                .state
                 .accounts
                 .iter()
                 .map(|(id, account)| {
                     (
                         *id,
                         SaveAccountSnap {
-                            cash: account.cash,
+                            cash: account.cash(),
                             positions: account
-                                .positions
+                                .positions()
                                 .iter()
                                 .map(|(code, position)| {
                                     (
                                         code.clone(),
                                         PositionSnap {
-                                            qty: position.qty,
-                                            t1_locked: position.t1_locked,
-                                            invested_cents: position.invested_cents,
-                                            recovered_cents: position.recovered_cents,
+                                            qty: position.qty(),
+                                            t1_locked: position.t1_locked(),
+                                            invested_cents: position.invested_cents(),
+                                            recovered_cents: position.recovered_cents(),
                                         },
                                     )
                                 })
@@ -2805,11 +2581,13 @@ impl GameSession {
                 })
                 .collect(),
             daily_candles: self
-                .daily_candles
+                .state
+                .candle_book
+                .histories()
                 .iter()
                 .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
                 .collect(),
-            active_daily_candles: self.active_daily_candles.clone(),
+            active_daily_candles: self.state.candle_book.active().clone(),
         }
     }
 
@@ -2817,21 +2595,24 @@ impl GameSession {
         SaveSlot {
             schema_version: SAVE_SCHEMA_VERSION_V2,
             runtime_v2,
-            setup: self.setup.clone(),
-            seed: self.seed,
+            setup: self.state.setup.clone(),
+            seed: self.state.seed,
             snapshot: self.save_snapshot_projection(),
-            auction_orders: self.auction_orders.clone(),
+            auction_orders: self.state.auction_orders.clone(),
             resting_orders: self
+                .state
                 .markets
                 .iter()
                 .map(|(code, market)| (code.clone(), market.resting_orders()))
                 .collect(),
             book_next_sequences: self
+                .state
                 .markets
                 .iter()
                 .map(|(code, market)| (code.clone(), market.book_next_sequence()))
                 .collect(),
             filled_orders: self
+                .state
                 .markets
                 .iter()
                 .map(|(code, market)| {
@@ -2846,15 +2627,17 @@ impl GameSession {
                 })
                 .collect(),
             price_history: self
+                .state
                 .price_history
                 .iter()
                 .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
                 .collect(),
-            market_minute_closes: self.market_minute_closes.clone(),
-            rng_state: self.rng.state,
-            npc_attention: self.npc_attention.to_map(),
-            retail_experience: self.retail_experience.to_map(),
+            market_minute_closes: self.state.market_minute_closes.clone(),
+            rng_state: self.state.rng.state,
+            npc_attention: self.state.npc_attention.to_map(),
+            retail_experience: self.state.retail_experience.to_map(),
             parent_orders: self
+                .state
                 .parent_orders
                 .iter()
                 .map(|(account, plans)| {
@@ -2867,31 +2650,53 @@ impl GameSession {
                     )
                 })
                 .collect(),
-            npc_order_lifecycles: self.npc_order_lifecycles.clone(),
-            pending_player: self.pending_player.clone(),
-            pending_npc: self.pending_npc.clone(),
-            next_order_id: self.next_order_id,
-            civil_clock: self.civil_clock.save(),
+            npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
+            pending_player: self.state.pending_player.clone(),
+            pending_npc: self.state.pending_npc.clone(),
+            next_order_id: self.state.next_order_id,
+            civil_clock: self.state.civil_clock.save(),
             // K7（任务 27）：公司域与个体决策链权威状态全量入档。
-            company_operations: self.operations.as_ref().clone(),
-            closing_registry: self.closing.clone(),
-            public_library: self.library.clone(),
-            ops_wiring: self.ops_wiring.clone(),
-            disclosures: self.disclosures.clone(),
-            plans: self.plans.clone(),
-            urgency_policy: self.urgency_policy,
-            information_states: self.information.clone(),
-            belief_books: self.belief_books.to_map(),
-            watchlists: self.watchlists.to_map(),
-            price_memories: self.price_memories.to_map(),
+            company_operations: self.state.operations.as_ref().clone(),
+            closing_registry: self.state.closing.clone(),
+            public_library: self.state.library.clone(),
+            ops_wiring: self.state.ops_wiring.clone(),
+            disclosures: self.state.disclosures.clone(),
+            plans: self.state.plans.clone(),
+            urgency_policy: self.state.urgency_policy,
+            information_states: self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (*id, participant.information().clone()))
+                .collect(),
+            belief_books: self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (*id, participant.belief().clone()))
+                .collect(),
+            watchlists: self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (*id, participant.watchlist().clone()))
+                .collect(),
+            price_memories: self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (*id, participant.price_memory().clone()))
+                .collect(),
             // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
             // 的迟到条目在此显式丢弃（永不适用；见 issues.md 任务 27 §3）。
             pending_plan_events: self
+                .state
                 .pending_plan_events
                 .iter()
                 .copied()
                 .filter(|event| {
-                    self.plans
+                    self.state
+                        .plans
                         .plan(event.plan_id())
                         .is_ok_and(|plan| !plan.is_terminal())
                 })
@@ -2916,43 +2721,50 @@ impl GameSession {
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
 
         // 清空初始持仓分配 → 用快照精确覆盖
-        for acc in sess.accounts.values_mut() {
-            acc.positions.clear();
+        for acc in sess.state.accounts.values_mut() {
+            acc.restore_balances(acc.cash(), BTreeMap::new());
         }
 
         // 恢复账户状态（cash + positions 精确值）
         for (id, snap_acc) in &save.snapshot.accounts {
             let acc = sess
+                .state
                 .accounts
                 .get_mut(id)
                 .expect("validated save account set exactly matches setup");
-            acc.cash = snap_acc.cash;
-            for (code, pos) in &snap_acc.positions {
-                acc.positions.insert(
-                    code.clone(),
-                    crate::account::Position {
-                        qty: pos.qty,
-                        t1_locked: pos.t1_locked,
-                        invested_cents: pos.invested_cents,
-                        recovered_cents: pos.recovered_cents,
-                    },
-                );
-            }
+            acc.restore_balances(
+                snap_acc.cash,
+                snap_acc
+                    .positions
+                    .iter()
+                    .map(|(code, pos)| {
+                        (
+                            code.clone(),
+                            crate::account::Position::from_restored_parts(
+                                pos.qty,
+                                pos.t1_locked,
+                                pos.invested_cents,
+                                pos.recovered_cents,
+                            ),
+                        )
+                    })
+                    .collect(),
+            );
         }
 
         // 恢复市场状态（last_price/last_close）
         for (code, snap_mkt) in &save.snapshot.markets {
             let market = sess
+                .state
                 .markets
                 .get_mut(code)
                 .expect("validated save market set exactly matches setup");
-            market.set_last_price(snap_mkt.last_price);
-            market.set_last_close(snap_mkt.last_close);
+            market.restore_prices(snap_mkt.last_price, snap_mkt.last_close);
         }
 
         // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
         // 在私有订单簿内验证，不允许恢复过程产生新的成交。
-        for (code, market) in &mut sess.markets {
+        for (code, market) in &mut sess.state.markets {
             let orders = save
                 .resting_orders
                 .get(code)
@@ -2968,7 +2780,8 @@ impl GameSession {
                 })?;
         }
         for (code, filled) in &save.filled_orders {
-            sess.markets
+            sess.state
+                .markets
                 .get_mut(code)
                 .expect("validated filled-order market must exist")
                 .restore_filled_orders(filled.iter().map(|order| (order.id, order.owner)))
@@ -2980,38 +2793,42 @@ impl GameSession {
                 })?;
         }
         // 恢复进度
-        sess.tick = save.snapshot.tick;
-        sess.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
+        sess.state.tick = save.snapshot.tick;
+        sess.state.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
             .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
-        sess.seq = save.snapshot.seq;
+        sess.state.seq = save.snapshot.seq;
         // 恢复自然日时钟（自洽全量校验；政策 v1 重建，任务 27 起随档冻结）。
-        sess.civil_clock = CivilClock::from_parts(
+        sess.state.civil_clock = CivilClock::from_parts(
             save.setup.start_date,
             &save.civil_clock,
             session_calendar_exchange(save.setup.stocks[0].exchange),
         )?;
         validate_saved_order_state(&sess, save)?;
-        sess.auction_orders = save.auction_orders.clone();
-        sess.next_order_id = save.next_order_id;
+        sess.state.auction_orders = save.auction_orders.clone();
+        sess.state.next_order_id = save.next_order_id;
 
         // 当前存档完整覆盖所有影响后续演进的确定性状态。
-        sess.daily_candles = save
-            .snapshot
-            .daily_candles
-            .iter()
-            .map(|(code, candles)| (code.clone(), candles.clone().into()))
-            .collect();
-        sess.active_daily_candles = save.snapshot.active_daily_candles.clone();
-        sess.price_history = save
+        sess.state.candle_book.replace_histories(
+            save.snapshot
+                .daily_candles
+                .iter()
+                .map(|(code, candles)| (code.clone(), candles.clone().into()))
+                .collect(),
+        );
+        sess.state
+            .candle_book
+            .replace_active(save.snapshot.active_daily_candles.clone());
+        sess.state.price_history = save
             .price_history
             .iter()
             .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
             .collect();
-        sess.market_minute_closes = save.market_minute_closes.clone();
-        sess.rng.state = save.rng_state;
+        sess.state.market_minute_closes = save.market_minute_closes.clone();
+        sess.state.rng.state = save.rng_state;
         let mut restored_attention = BTreeMap::new();
         for (id, saved_state) in &save.npc_attention {
             let reconstructed = sess
+                .state
                 .npc_attention
                 .get(id)
                 .expect("validated attention account must exist after reconstruction");
@@ -3039,14 +2856,15 @@ impl GameSession {
                 },
             );
         }
-        sess.npc_attention = restored_attention.into();
-        sess.attention_queue = sess
+        sess.state.npc_attention = restored_attention.into();
+        sess.state.attention_scheduler = sess
+            .state
             .npc_attention
             .iter()
-            .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
+            .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
-        sess.retail_experience = save.retail_experience.clone().into();
-        sess.parent_orders = save
+        sess.state.retail_experience = save.retail_experience.clone().into();
+        sess.state.parent_orders = save
             .parent_orders
             .iter()
             .map(|(account, plans)| {
@@ -3059,10 +2877,10 @@ impl GameSession {
                 )
             })
             .collect();
-        for (account, plans) in &mut sess.parent_orders {
+        for (account, plans) in &mut sess.state.parent_orders {
             for (code, plan) in plans {
-                let Some(active_id) = plan.active_child_order_id else {
-                    plan.active_child_remaining_qty = None;
+                let Some(active_id) = plan.active_child_order_id() else {
+                    plan.restore_active_child_remaining_qty(None);
                     continue;
                 };
                 let active_quantities = save
@@ -3073,7 +2891,7 @@ impl GameSession {
                     .filter(|order| {
                         order.order_id == active_id.0
                             && order.owner == *account
-                            && order.side == plan.side
+                            && order.side == plan.side()
                     })
                     .map(|order| order.qty)
                     .chain(
@@ -3084,7 +2902,7 @@ impl GameSession {
                             .filter(|order| {
                                 order.id == active_id
                                     && order.owner == *account
-                                    && order.side == plan.side
+                                    && order.side == plan.side()
                             })
                             .map(|order| order.qty),
                     )
@@ -3095,15 +2913,15 @@ impl GameSession {
                         account.0, code.0
                     )));
                 };
-                plan.active_child_remaining_qty = Some(*remaining_qty);
+                plan.restore_active_child_remaining_qty(Some(*remaining_qty));
             }
         }
-        sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
-        sess.pending_player = save.pending_player.clone();
-        sess.pending_npc = save.pending_npc.clone();
+        sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
+        sess.state.pending_player = save.pending_player.clone();
+        sess.state.pending_npc = save.pending_npc.clone();
         // new() prepares its own first NPC batch; the saved batch replaces it, so its
         // diagnostic samples must not leak into the restored session.
-        sess.last_retail_decisions.clear();
+        sess.state.last_retail_decisions.clear();
 
         // K7（任务 27）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
@@ -3112,7 +2930,7 @@ impl GameSession {
             .setup
             .stocks
             .iter()
-            .filter_map(|stock| sess.company_registry.issuer_of(&stock.code))
+            .filter_map(|stock| sess.state.company_registry.issuer_of(&stock.code))
             .collect();
         let saved_issuers: BTreeSet<&crate::company::CompanyId> =
             save.company_operations.companies.keys().collect();
@@ -3125,7 +2943,7 @@ impl GameSession {
         // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
         // 重建信念机构集合）：缺失任一账户的个人状态 = 不完整存档。
         let expected_belief_accounts: BTreeSet<AccountId> =
-            sess.belief_books.keys().copied().collect();
+            sess.state.belief_participants.keys().copied().collect();
         let saved_belief_accounts: BTreeSet<AccountId> =
             save.belief_books.keys().copied().collect();
         if expected_belief_accounts != saved_belief_accounts {
@@ -3134,21 +2952,32 @@ impl GameSession {
                  reconstructed belief accounts {expected_belief_accounts:?}"
             )));
         }
-        sess.operations = std::sync::Arc::new(save.company_operations.clone());
-        sess.closing = save.closing_registry.clone();
-        sess.library = save.public_library.clone();
-        sess.ops_wiring = save.ops_wiring.clone();
-        sess.disclosures = save.disclosures.clone();
-        sess.plans = save.plans.clone();
-        sess.urgency_policy = save.urgency_policy;
-        sess.information = save.information_states.clone();
-        sess.belief_books = save.belief_books.clone().into();
+        sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
+        sess.state.closing = save.closing_registry.clone();
+        sess.state.library = save.public_library.clone();
+        sess.state.ops_wiring = save.ops_wiring.clone();
+        sess.state.disclosures = save.disclosures.clone();
+        sess.state.plans = save.plans.clone();
+        sess.state.urgency_policy = save.urgency_policy;
+        sess.state.belief_participants = save
+            .belief_books
+            .iter()
+            .map(|(id, belief)| {
+                (
+                    *id,
+                    BeliefParticipantState::new(
+                        save.watchlists[id].clone(),
+                        save.price_memories[id].clone(),
+                        save.information_states[id].clone(),
+                        belief.clone(),
+                    ),
+                )
+            })
+            .collect();
         sess.reconcile_institutional_holdings()?;
-        sess.watchlists = save.watchlists.clone().into();
-        sess.price_memories = save.price_memories.clone().into();
-        sess.pending_plan_events = save.pending_plan_events.clone();
+        sess.state.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
-        sess.disclosures.install(&mut sess.civil_clock);
+        sess.state.disclosures.install(&mut sess.state.civil_clock);
 
         // 最后原子替换 v2-only authority。到此账户、市场、订单、ID/seq、RNG 与
         // 计划/信念/信息域均已恢复，runtime 可以对完整 live-order 域做交叉校验。
@@ -3265,14 +3094,14 @@ mod candle_open_tests {
             session.update_active_daily_candle(&code, auction_open, 100);
             session.update_active_daily_candle(&code, close, 50);
 
-            let candle = session.active_daily_candles.get(&code).unwrap();
+            let candle = session.state.candle_book.active().get(&code).unwrap();
             assert_eq!(candle.open, auction_open);
             assert_ne!(candle.open, previous_close);
             assert_eq!(candle.close, close);
             assert_eq!(candle.volume, 150);
 
             session.commit_active_daily_candles();
-            session.day += 1;
+            session.state.day += 1;
             previous_close = close;
         }
     }
@@ -3291,7 +3120,7 @@ mod candle_open_tests {
             session.update_active_daily_candle(&code, auction_open, 100);
             session.update_active_daily_candle(&code, close, 50);
 
-            let candle = session.active_daily_candles.get(&code).unwrap();
+            let candle = session.state.candle_book.active().get(&code).unwrap();
             assert!(candle.open < previous_close, "测试数据必须保持跳空低开");
             assert_eq!(candle.open, auction_open);
             assert_eq!(candle.high, auction_open);
@@ -3300,7 +3129,7 @@ mod candle_open_tests {
             assert_eq!(candle.volume, 150);
 
             session.commit_active_daily_candles();
-            session.day += 1;
+            session.state.day += 1;
             previous_close = close;
         }
     }
@@ -3366,14 +3195,16 @@ impl GameSession {
                 price: LimitPrice::Fixed(price),
                 qty,
             } => {
-                let id = OrderId(self.next_order_id);
-                self.next_order_id = self
+                let id = OrderId(self.state.next_order_id);
+                self.state.next_order_id = self
+                    .state
                     .next_order_id
                     .checked_add(1)
                     .expect("fixture order IDs");
                 let seq = self.next_seq();
                 if auction {
-                    self.auction_orders
+                    self.state
+                        .auction_orders
                         .entry(code.clone())
                         .or_default()
                         .push(AuctionOrderSnap {
@@ -3385,17 +3216,22 @@ impl GameSession {
                         });
                 } else {
                     let (last_price, best_bid, best_ask) = {
-                        let market = self.markets.get(&code).expect("fixture stock exists");
+                        let market = self.state.markets.get(&code).expect("fixture stock exists");
                         (market.last_price(), market.best_bid(), market.best_ask())
                     };
-                    if self.accounts[&account].kind != AccountKind::Player {
-                        let working = self.markets[&code]
+                    if self.state.accounts[&account].kind() != AccountKind::Player {
+                        let working = self.state.markets[&code]
                             .resting_orders_for(account)
                             .into_iter()
                             .filter(|order| order.side == side)
                             .collect::<Vec<_>>();
                         for old in working {
-                            self.markets.get_mut(&code).unwrap().cancel(old.id).unwrap();
+                            self.state
+                                .markets
+                                .get_mut(&code)
+                                .unwrap()
+                                .cancel(old.id)
+                                .unwrap();
                             self.remove_npc_order_lifecycle(account, &code, old.id);
                             events.push(Event::OrderCanceled {
                                 seq: self.next_seq(),
@@ -3418,6 +3254,7 @@ impl GameSession {
                         seq,
                     };
                     let result = self
+                        .state
                         .markets
                         .get_mut(&code)
                         .expect("fixture stock exists")
@@ -3449,6 +3286,7 @@ impl GameSession {
             Intent::Cancel { code, id } => {
                 if !auction {
                     let order = self
+                        .state
                         .markets
                         .get_mut(&code)
                         .expect("fixture stock exists")
@@ -3465,6 +3303,7 @@ impl GameSession {
                     });
                 } else {
                     let orders = self
+                        .state
                         .auction_orders
                         .get_mut(&code)
                         .expect("fixture stock exists");
@@ -3484,8 +3323,8 @@ impl GameSession {
             }
             Intent::PlaceMarket { .. } => panic!("fixtures seed passive limit orders only"),
         }
-        self.envelope_ledger = crate::session::pipeline::EnvelopeLedger::new(
-            self.next_receipt_base,
+        self.state.envelope_ledger = crate::session::pipeline::EnvelopeLedger::new(
+            self.state.next_receipt_base,
             self.project_live_envelopes()
                 .expect("fixture live envelopes are valid"),
         )
@@ -3567,7 +3406,9 @@ mod npc_working_quote_tests {
             );
 
         let restored = GameSession::restore(&save).unwrap();
-        let experience = restored.belief_books[&account_id].experience();
+        let experience = restored.state.belief_participants[&account_id]
+            .belief()
+            .experience();
         assert_eq!(
             experience.feedback.stocks[&code].institutional_fees_paid,
             Some(Money::ZERO)
@@ -3594,7 +3435,9 @@ mod npc_working_quote_tests {
             .unwrap()
             .adverse_move_recorded = true;
         let reconciled = GameSession::restore(&edited_save).unwrap();
-        let experience = reconciled.belief_books[&account_id].experience();
+        let experience = reconciled.state.belief_participants[&account_id]
+            .belief()
+            .experience();
         assert!(!experience.feedback.stocks.contains_key(&code));
         assert_eq!(experience.stocks[&code].last_buy_price, None);
         assert_eq!(experience.stocks[&code].last_buy_order_id, None);
@@ -3608,19 +3451,27 @@ mod npc_working_quote_tests {
         let mut setup = quote_setup(0);
         setup.stocks[0].float_shares = 100;
         let session = GameSession::new(setup, 42).unwrap();
-        assert!(session.belief_books.values().any(|book| !book
-            .experience()
-            .feedback
-            .stocks
-            .is_empty()));
+        assert!(session
+            .state
+            .belief_participants
+            .values()
+            .map(|participant| participant.belief())
+            .any(|book| !book.experience().feedback.stocks.is_empty()));
         let opening_experiences: BTreeMap<_, _> = session
-            .belief_books
+            .state
+            .belief_participants
             .iter()
+            .map(|(id, participant)| (id, participant.belief()))
             .map(|(id, book)| (*id, book.experience().clone()))
             .collect();
         let restored = GameSession::restore(&session.save().unwrap()).unwrap();
         for (id, opening) in opening_experiences {
-            assert_eq!(restored.belief_books[&id].experience(), &opening);
+            assert_eq!(
+                restored.state.belief_participants[&id]
+                    .belief()
+                    .experience(),
+                &opening
+            );
         }
     }
 
@@ -3773,10 +3624,10 @@ mod npc_working_quote_tests {
         account: AccountId,
         tick: u64,
     ) {
-        let attention = session.npc_attention.get_mut(&account).unwrap();
+        let attention = session.state.npc_attention.get_mut(&account).unwrap();
         attention.base_probability = 1.0;
         attention.next_attention_candidate_tick = tick;
-        session.attention_queue.push(Reverse((tick, account)));
+        session.state.attention_scheduler.enqueue(tick, account);
     }
 
     #[test]
@@ -3788,7 +3639,7 @@ mod npc_working_quote_tests {
 
         session.step().expect("healthy step");
 
-        let experience = &session.retail_experience[&retail];
+        let experience = &session.state.retail_experience[&retail];
         let stock = experience
             .stocks
             .get(&code)
@@ -3807,23 +3658,24 @@ mod npc_working_quote_tests {
         let institution = AccountId(1);
         let mut session = GameSession::new(quote_setup(0), 992).unwrap();
         session
+            .state
             .parent_orders
             .entry(institution)
             .or_default()
             .insert(
                 code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    target_qty: 400,
-                    filled_qty: 350,
-                    child_qty: 100,
-                    active_child_order_id: None,
-                    active_child_remaining_qty: None,
-                    linked_plan_id: None,
-                    limit_price: Money::from_cents(1_000),
-                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES,
-                },
+                ParentOrderPlan::from_saved_facts(
+                    code.clone(),
+                    Side::Buy,
+                    400,
+                    350,
+                    100,
+                    None,
+                    None,
+                    None,
+                    Money::from_cents(1_000),
+                    PARENT_ORDER_HORIZON_MINUTES,
+                ),
             );
 
         let mut desired = Vec::new();
@@ -3840,7 +3692,7 @@ mod npc_working_quote_tests {
 
         assert!(desired.is_empty(), "不足一手的残余不得触发超额或非法买单");
         assert_eq!(
-            session.parent_orders[&institution][&code].remaining_qty(),
+            session.state.parent_orders[&institution][&code].remaining_qty(),
             50
         );
     }
@@ -3864,7 +3716,7 @@ mod npc_working_quote_tests {
                 ..
             }]
         ));
-        assert!(session.parent_orders[&institution].contains_key(&code));
+        assert!(session.state.parent_orders[&institution].contains_key(&code));
 
         let symbolic = Intent::PlaceLimit {
             code: code.clone(),
@@ -3881,7 +3733,7 @@ mod npc_working_quote_tests {
                 ..
             }]
         ));
-        assert!(!session.parent_orders.contains_key(&institution));
+        assert!(!session.state.parent_orders.contains_key(&institution));
     }
 
     #[test]
@@ -3935,9 +3787,9 @@ mod npc_working_quote_tests {
                     }
                 ] if *price == Money::from_cents(1_000)
             ));
-            let parent = &session.parent_orders[&institution][&code];
-            assert_eq!(parent.target_qty, 100);
-            assert_eq!(parent.limit_price, Money::from_cents(1_000));
+            let parent = &session.state.parent_orders[&institution][&code];
+            assert_eq!(parent.target_qty(), 100);
+            assert_eq!(parent.limit_price(), Money::from_cents(1_000));
             let result = (
                 serde_json::to_value(&desired).unwrap(),
                 serde_json::to_value(parent).unwrap(),
@@ -3958,25 +3810,26 @@ mod npc_working_quote_tests {
         setup.ticks_per_day = 100;
         setup.closing_auction_ticks = 10;
         let mut session = GameSession::new(setup, 993).unwrap();
-        session.tick = 90;
+        session.state.tick = 90;
         session
+            .state
             .parent_orders
             .entry(institution)
             .or_default()
             .insert(
                 code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    target_qty: 400,
-                    filled_qty: 0,
-                    child_qty: 100,
-                    active_child_order_id: Some(OrderId(1)),
-                    active_child_remaining_qty: Some(100),
-                    linked_plan_id: None,
-                    limit_price: Money::from_cents(1_000),
-                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
-                },
+                ParentOrderPlan::from_saved_facts(
+                    code.clone(),
+                    Side::Buy,
+                    400,
+                    0,
+                    100,
+                    Some(OrderId(1)),
+                    Some(100),
+                    None,
+                    Money::from_cents(1_000),
+                    PARENT_ORDER_HORIZON_MINUTES * 2,
+                ),
             );
         let continuous = [(
             code.clone(),
@@ -4018,6 +3871,7 @@ mod npc_working_quote_tests {
         session.step().expect("healthy step");
         assert_eq!(session.phase(), TradingPhase::ClosingAuction);
         session
+            .state
             .markets
             .get_mut(&code)
             .unwrap()
@@ -4033,25 +3887,26 @@ mod npc_working_quote_tests {
                 seq: 0,
             })
             .unwrap();
-        session.next_order_id = 2;
+        session.state.next_order_id = 2;
         session
+            .state
             .parent_orders
             .entry(institution)
             .or_default()
             .insert(
                 code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    target_qty: 400,
-                    filled_qty: 0,
-                    child_qty: 100,
-                    active_child_order_id: Some(OrderId(1)),
-                    active_child_remaining_qty: Some(100),
-                    linked_plan_id: None,
-                    limit_price: Money::from_cents(1_000),
-                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
-                },
+                ParentOrderPlan::from_saved_facts(
+                    code.clone(),
+                    Side::Buy,
+                    400,
+                    0,
+                    100,
+                    Some(OrderId(1)),
+                    Some(100),
+                    None,
+                    Money::from_cents(1_000),
+                    PARENT_ORDER_HORIZON_MINUTES * 2,
+                ),
             );
 
         session
@@ -4059,20 +3914,20 @@ mod npc_working_quote_tests {
             .expect("direct order-book fixture must synchronize current save authority");
 
         let restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
-        assert_eq!(restored.parent_orders, session.parent_orders);
+        assert_eq!(restored.state.parent_orders, session.state.parent_orders);
     }
 
     #[test]
     fn market_view_keeps_tick_samples_separate_from_completed_market_minutes() {
         let code = StockCode("600888".to_string());
         let mut session = GameSession::new(quote_setup(0), 1_001).unwrap();
-        session.price_history.insert(
+        session.state.price_history.insert(
             code.clone(),
             [Money::from_cents(1_000), Money::from_cents(1_050)]
                 .into_iter()
                 .collect(),
         );
-        session.market_minute_closes.insert(
+        session.state.market_minute_closes.insert(
             code.clone(),
             vec![
                 MarketMinuteClose {
@@ -4101,8 +3956,8 @@ mod npc_working_quote_tests {
     fn behavior_observation_remains_bounded_after_six_thousand_completed_days() {
         let code = StockCode("600888".to_string());
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
-        let template = session.daily_candles[&code][0].clone();
-        session.daily_candles.insert(
+        let template = session.state.candle_book.histories()[&code][0].clone();
+        session.state.candle_book.replace_history(
             code.clone(),
             (0..6_000)
                 .map(|day| DailyCandle {
@@ -4113,7 +3968,7 @@ mod npc_working_quote_tests {
                 .collect::<Vec<_>>()
                 .into(),
         );
-        session.market_minute_closes.insert(
+        session.state.market_minute_closes.insert(
             code.clone(),
             vec![MarketMinuteClose {
                 absolute_trading_minute: 0,
@@ -4121,13 +3976,14 @@ mod npc_working_quote_tests {
             }],
         );
 
-        let retained = retained_behavior_daily_closes_history(&session.daily_candles[&code]);
+        let retained =
+            retained_behavior_daily_closes_history(&session.state.candle_book.histories()[&code]);
         assert_eq!(retained.len(), 250);
         assert_eq!(retained.first().unwrap().trading_day, 5_750);
         assert_eq!(retained.last().unwrap().trading_day, 5_999);
 
         let short = retained_behavior_daily_closes(
-            &session.daily_candles[&code]
+            &session.state.candle_book.histories()[&code]
                 .iter()
                 .take(100)
                 .cloned()
@@ -4147,21 +4003,31 @@ mod npc_working_quote_tests {
     fn closing_day_keeps_history_beyond_the_preset_window() {
         let code = StockCode("600888".to_string());
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
-        let first = session.daily_candles[&code][0].clone();
-        let previous = session.daily_candles[&code].len();
+        let first = session.state.candle_book.histories()[&code][0].clone();
+        let previous = session.state.candle_book.histories()[&code].len();
         let closed = DailyCandle {
             time: 0,
-            ..session.daily_candles[&code].last().unwrap().clone()
+            ..session.state.candle_book.histories()[&code]
+                .last()
+                .unwrap()
+                .clone()
         };
         session
-            .active_daily_candles
-            .insert(code.clone(), closed.clone());
+            .state
+            .candle_book
+            .set_active(code.clone(), closed.clone());
 
         session.commit_active_daily_candles();
 
-        assert_eq!(session.daily_candles[&code].len(), previous + 1);
-        assert_eq!(session.daily_candles[&code][0], first);
-        assert_eq!(session.daily_candles[&code].last(), Some(&closed));
+        assert_eq!(
+            session.state.candle_book.histories()[&code].len(),
+            previous + 1
+        );
+        assert_eq!(session.state.candle_book.histories()[&code][0], first);
+        assert_eq!(
+            session.state.candle_book.histories()[&code].last(),
+            Some(&closed)
+        );
         assert_eq!(session.snapshot().daily_candles[&code].len(), previous + 1);
     }
 
@@ -4170,8 +4036,8 @@ mod npc_working_quote_tests {
         let code = StockCode("600888".to_string());
         let account = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 121).unwrap();
-        let config = session.setup.config.clone();
-        let holder = session.accounts.get_mut(&account).unwrap();
+        let config = session.state.setup.config.clone();
+        let holder = session.state.accounts.get_mut(&account).unwrap();
         holder
             .grant_position(code.clone(), 1_000, Money::from_cents(1_000))
             .unwrap();
@@ -4194,6 +4060,7 @@ mod npc_working_quote_tests {
         setup.npcs.inst_count = 0;
         let session = GameSession::new(setup, 0xA77E_7710).unwrap();
         let candidate_ticks: BTreeSet<u64> = session
+            .state
             .npc_attention
             .values()
             .map(|state| state.next_attention_candidate_tick)
@@ -4201,5 +4068,278 @@ mod npc_working_quote_tests {
 
         assert!(candidate_ticks.len() > 1);
         assert!(candidate_ticks.iter().any(|tick| *tick > 0));
+    }
+}
+
+impl CommittableSessionState {
+    fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
+        let Self {
+            setup,
+            rng,
+            seed,
+            markets,
+            accounts,
+            price_history,
+            market_minute_closes,
+            candle_book,
+            auction_orders,
+            pending_player,
+            pending_npc,
+            npc_attention,
+            retail_experience,
+            parent_orders,
+            pending_plan_events,
+            npc_order_lifecycles,
+            last_retail_decisions,
+            last_retail_order_events,
+            #[cfg(feature = "simulation-diagnostics")]
+            npc_decision_traces,
+            #[cfg(feature = "simulation-diagnostics")]
+            causal,
+            attention_scheduler,
+            company_registry,
+            operations,
+            closing,
+            library,
+            ops_wiring,
+            disclosures,
+            plans,
+            urgency_policy,
+            belief_participants,
+            envelope_ledger,
+            retail_projection_seen,
+            next_receipt_base,
+            next_order_id,
+            tick,
+            day,
+            seq,
+            civil_clock,
+        } = self;
+        let accounts =
+            accounts
+                .clone_for_shadow()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    description: error.to_string(),
+                    location: "GameSession::clone_for_tick_shadow".to_owned(),
+                })?;
+        Ok(Self {
+            setup: setup.clone(),
+            rng: rng.clone(),
+            seed: *seed,
+            markets: markets.clone(),
+            accounts,
+            price_history: price_history.clone(),
+            market_minute_closes: market_minute_closes.clone(),
+            candle_book: candle_book.clone(),
+            auction_orders: auction_orders.clone(),
+            pending_player: pending_player.clone(),
+            pending_npc: pending_npc.clone(),
+            npc_attention: npc_attention.clone(),
+            retail_experience: retail_experience.clone(),
+            parent_orders: parent_orders.clone(),
+            pending_plan_events: pending_plan_events.clone(),
+            npc_order_lifecycles: npc_order_lifecycles.clone(),
+            last_retail_decisions: last_retail_decisions.clone(),
+            last_retail_order_events: last_retail_order_events.clone(),
+            #[cfg(feature = "simulation-diagnostics")]
+            npc_decision_traces: npc_decision_traces.clone(),
+            #[cfg(feature = "simulation-diagnostics")]
+            causal: causal.clone(),
+            attention_scheduler: attention_scheduler.clone(),
+            company_registry: company_registry.clone(),
+            operations: operations.clone(),
+            closing: closing.clone(),
+            library: library.clone(),
+            ops_wiring: ops_wiring.clone(),
+            disclosures: disclosures.clone(),
+            plans: plans.clone(),
+            urgency_policy: *urgency_policy,
+            belief_participants: belief_participants.clone(),
+            envelope_ledger: envelope_ledger.clone(),
+            retail_projection_seen: retail_projection_seen.clone(),
+            next_receipt_base: *next_receipt_base,
+            next_order_id: *next_order_id,
+            tick: *tick,
+            day: *day,
+            seq: *seq,
+            civil_clock: civil_clock.clone(),
+        })
+    }
+
+    fn commit_from(&mut self, shadow: Self) {
+        let Self {
+            setup,
+            rng,
+            seed,
+            markets,
+            accounts,
+            price_history,
+            market_minute_closes,
+            candle_book,
+            auction_orders,
+            pending_player,
+            pending_npc,
+            npc_attention,
+            retail_experience,
+            parent_orders,
+            pending_plan_events,
+            npc_order_lifecycles,
+            last_retail_decisions,
+            last_retail_order_events,
+            #[cfg(feature = "simulation-diagnostics")]
+            npc_decision_traces,
+            #[cfg(feature = "simulation-diagnostics")]
+            causal,
+            attention_scheduler,
+            company_registry,
+            operations,
+            closing,
+            library,
+            ops_wiring,
+            disclosures,
+            plans,
+            belief_participants,
+            envelope_ledger,
+            retail_projection_seen,
+            next_receipt_base,
+            next_order_id,
+            tick,
+            day,
+            seq,
+            civil_clock,
+            urgency_policy,
+        } = shadow;
+        self.urgency_policy = urgency_policy;
+        self.setup = setup;
+        self.rng = rng;
+        self.seed = seed;
+        self.markets = markets;
+        self.accounts.replace_and_drop_parallel(accounts);
+        self.price_history = price_history;
+        self.market_minute_closes = market_minute_closes;
+        self.candle_book = candle_book;
+        self.auction_orders = auction_orders;
+        self.pending_player = pending_player;
+        self.pending_npc = pending_npc;
+        self.npc_attention.replace_and_drop_parallel(npc_attention);
+        self.retail_experience
+            .replace_and_drop_parallel(retail_experience);
+        self.parent_orders = parent_orders;
+        self.pending_plan_events = pending_plan_events;
+        self.npc_order_lifecycles = npc_order_lifecycles;
+        self.last_retail_decisions = last_retail_decisions;
+        self.last_retail_order_events = last_retail_order_events;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.npc_decision_traces = npc_decision_traces;
+            self.causal = causal;
+        }
+        self.attention_scheduler = attention_scheduler;
+        self.company_registry = company_registry;
+        self.operations = operations;
+        self.closing = closing;
+        self.library = library;
+        self.ops_wiring = ops_wiring;
+        self.disclosures = disclosures;
+        self.plans = plans;
+        self.belief_participants = belief_participants;
+        self.envelope_ledger = envelope_ledger;
+        self.retail_projection_seen = retail_projection_seen;
+        self.next_receipt_base = next_receipt_base;
+        self.next_order_id = next_order_id;
+        self.tick = tick;
+        self.day = day;
+        self.seq = seq;
+        self.civil_clock = civil_clock;
+    }
+}
+
+#[cfg(test)]
+mod committable_state_tests {
+    use super::*;
+
+    fn fatal(description: &str) -> StepFatal {
+        StepFatal::InvariantViolation {
+            description: description.to_owned(),
+            location: "committable_state_tests".to_owned(),
+        }
+    }
+
+    #[test]
+    fn shadow_keeps_the_complete_save_projection_and_resets_facade_hooks() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 717).unwrap();
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::Cancel {
+                    code: StockCode("600888".to_owned()),
+                    id: OrderId(101),
+                },
+            )
+            .unwrap();
+        let expected = serde_json::to_value(session.save().unwrap()).unwrap();
+        session.poison = Some(fatal("authority poison"));
+        session.injected_failure = Some(fatal("authority injection"));
+        session.post_shadow_failure = Some(fatal("authority post-shadow"));
+
+        let shadow = session.clone_for_tick_shadow().unwrap();
+
+        assert_eq!(
+            serde_json::to_value(shadow.save().unwrap()).unwrap(),
+            expected
+        );
+        assert_eq!(shadow.poison, None);
+        assert_eq!(shadow.injected_failure, None);
+        assert_eq!(shadow.post_shadow_failure, None);
+        assert_eq!(session.state.pending_player.len(), 1);
+        assert_eq!(session.poison, Some(fatal("authority poison")));
+    }
+
+    #[test]
+    fn state_commit_installs_candidate_facts_and_keeps_authority_hooks() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 718).unwrap();
+        let mut shadow = session.clone_for_tick_shadow().unwrap();
+        shadow
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::Cancel {
+                    code: StockCode("600888".to_owned()),
+                    id: OrderId(102),
+                },
+            )
+            .unwrap();
+        shadow.state.rng.next_u64();
+        shadow
+            .state
+            .last_retail_order_events
+            .push(RetailOrderDiagnosticEvent::Canceled {
+                account: AccountId(1),
+                code: StockCode("600888".to_owned()),
+                order_id: OrderId(103),
+                remaining_qty: 100,
+            });
+        let expected = serde_json::to_value(shadow.save().unwrap()).unwrap();
+        let expected_rng = shadow.state.rng.state;
+        session.poison = Some(fatal("preserved poison"));
+        session.injected_failure = Some(fatal("preserved injection"));
+        session.post_shadow_failure = Some(fatal("preserved post-shadow"));
+
+        session.commit_tick_shadow(shadow);
+
+        assert_eq!(session.poison, Some(fatal("preserved poison")));
+        assert_eq!(session.injected_failure, Some(fatal("preserved injection")));
+        assert_eq!(
+            session.post_shadow_failure,
+            Some(fatal("preserved post-shadow"))
+        );
+        assert_eq!(session.state.rng.state, expected_rng);
+        assert_eq!(session.state.last_retail_order_events.len(), 1);
+        session.poison = None;
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            expected
+        );
     }
 }

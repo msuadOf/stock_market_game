@@ -1,0 +1,34 @@
+{
+  "meaning": "主协调者对最终五组台账的机械身份与数量复核，不替代具名独立完整 diff 审查。",
+  "actions": 128,
+  "duplicates": [],
+  "missing": [],
+  "extra": [],
+  "groups": [
+    {
+      "path": "domain/completion-ledger.json",
+      "count": 39,
+      "sha256": "fe86c10db204f673d94cd58e28de314e5b16284a03e05c9aa337692beec77a08"
+    },
+    {
+      "path": "pipeline/implementation-ledger.json",
+      "count": 20,
+      "sha256": "a5f34b1cf2c08944326b277c192a9beda508eba1b46f8d0fea96d1588914e703"
+    },
+    {
+      "path": "session/action-ledger.json",
+      "count": 19,
+      "sha256": "38a8a001e3a96d31fc0c0be67cb10c77292096f3dd04d7d02d21d033e2429de6"
+    },
+    {
+      "path": "frontend/completion.json",
+      "count": 16,
+      "sha256": "0f02f3f4348756e6d403b4e1515b600901129e298f4811ad6a9acf965ea5edf0"
+    },
+    {
+      "path": "hosts/status.json",
+      "count": 34,
+      "sha256": "f1173552d03b62dd302af0c2671bc87d962c7bd2092eb372b2119e07b7a6cb7d"
+    }
+  ]
+}

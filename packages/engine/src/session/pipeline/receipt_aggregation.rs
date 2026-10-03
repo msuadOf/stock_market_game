@@ -10,19 +10,19 @@ pub(super) fn apply_session_receipt_transaction(
     worker_batches: Vec<Vec<EnvelopeReceipt>>,
     terminal_keys: Vec<EnvelopeKey>,
 ) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
-    if session.next_receipt_base != session.envelope_ledger.next_receipt_index() {
+    if session.state.next_receipt_base != session.state.envelope_ledger.next_receipt_index() {
         return Err(session_cursor_mismatch(
-            session.next_receipt_base,
-            session.envelope_ledger.next_receipt_index(),
+            session.state.next_receipt_base,
+            session.state.envelope_ledger.next_receipt_index(),
         ));
     }
     let receipts = apply_receipt_transaction(
-        &mut session.envelope_ledger,
+        &mut session.state.envelope_ledger,
         created_envelopes,
         worker_batches,
         terminal_keys,
     )?;
-    session.next_receipt_base = session.envelope_ledger.next_receipt_index();
+    session.state.next_receipt_base = session.state.envelope_ledger.next_receipt_index();
     Ok(receipts)
 }
 

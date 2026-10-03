@@ -46,34 +46,27 @@ impl PhaseTimingPhase {
         Self::CommitTick,
     ];
 
-    pub const fn rank(self) -> u8 {
+    const fn metadata(self) -> (u8, &'static str) {
         match self {
-            Self::ExpiryShadow => 0,
-            Self::SealAllocationSnapshot => 1,
-            Self::DecisionAndCoordinatorWork => 2,
-            Self::AccountValidation => 3,
-            Self::StockProcessing => 4,
-            Self::ReceiptAggregation => 5,
-            Self::SettlementShadow => 6,
-            Self::DerivationAudit => 7,
-            Self::PreCommitValidation => 8,
-            Self::CommitTick => 9,
+            Self::ExpiryShadow => (0, "expiry_shadow"),
+            Self::SealAllocationSnapshot => (1, "seal_allocation_snapshot"),
+            Self::DecisionAndCoordinatorWork => (2, "decision_and_coordinator_work"),
+            Self::AccountValidation => (3, "account_validation"),
+            Self::StockProcessing => (4, "stock_processing"),
+            Self::ReceiptAggregation => (5, "receipt_aggregation"),
+            Self::SettlementShadow => (6, "settlement_shadow"),
+            Self::DerivationAudit => (7, "derivation_audit"),
+            Self::PreCommitValidation => (8, "pre_commit_validation"),
+            Self::CommitTick => (9, "commit_tick"),
         }
     }
 
+    pub const fn rank(self) -> u8 {
+        self.metadata().0
+    }
+
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::ExpiryShadow => "expiry_shadow",
-            Self::SealAllocationSnapshot => "seal_allocation_snapshot",
-            Self::DecisionAndCoordinatorWork => "decision_and_coordinator_work",
-            Self::AccountValidation => "account_validation",
-            Self::StockProcessing => "stock_processing",
-            Self::ReceiptAggregation => "receipt_aggregation",
-            Self::SettlementShadow => "settlement_shadow",
-            Self::DerivationAudit => "derivation_audit",
-            Self::PreCommitValidation => "pre_commit_validation",
-            Self::CommitTick => "commit_tick",
-        }
+        self.metadata().1
     }
 
     const fn index(self) -> usize {
@@ -256,6 +249,83 @@ impl Accumulator {
     }
 }
 
+struct PhaseTimingLedger {
+    accumulators: [Accumulator; PhaseTimingPhase::ALL.len()],
+}
+
+impl PhaseTimingLedger {
+    fn new() -> Self {
+        Self {
+            accumulators: [Accumulator::EMPTY; PhaseTimingPhase::ALL.len()],
+        }
+    }
+
+    fn accumulator(&self, phase: PhaseTimingPhase) -> &Accumulator {
+        &self.accumulators[phase.index()]
+    }
+
+    fn accumulator_mut(&mut self, phase: PhaseTimingPhase) -> &mut Accumulator {
+        &mut self.accumulators[phase.index()]
+    }
+
+    fn record_span(&mut self, phase: PhaseTimingPhase, elapsed: u128) -> Option<&'static str> {
+        let mut overflow = None;
+        let accumulator = self.accumulator_mut(phase);
+        accumulator.wall_time_ns = match accumulator.wall_time_ns.checked_add(elapsed) {
+            Some(total) => total,
+            None => {
+                overflow = Some("wall_time_ns");
+                accumulator.wall_time_ns
+            }
+        };
+        accumulator.span_count = match accumulator.span_count.checked_add(1) {
+            Some(total) => total,
+            None => {
+                overflow = Some("span_count");
+                accumulator.span_count
+            }
+        };
+        if let Err(field) = accumulator.sample(current_runnable_threads()) {
+            overflow = Some(field);
+        }
+        overflow
+    }
+
+    fn sample(&mut self, phase: PhaseTimingPhase, runnable: usize) -> Result<(), &'static str> {
+        self.accumulator_mut(phase).sample(runnable)
+    }
+
+    fn missing_precommit_phase(&self) -> Option<PhaseTimingPhase> {
+        PhaseTimingPhase::ALL
+            .into_iter()
+            .take(9)
+            .find(|phase| self.accumulator(*phase).span_count == 0)
+    }
+
+    fn records(&self) -> Result<Vec<PhaseTimingRecord>, PhaseTimingCaptureError> {
+        let mut records = Vec::with_capacity(PhaseTimingPhase::ALL.len());
+        for phase in PhaseTimingPhase::ALL {
+            let accumulator = *self.accumulator(phase);
+            if accumulator.span_count == 0 || accumulator.sample_count == 0 {
+                return Err(PhaseTimingCaptureError::IncompletePhase {
+                    phase: phase.name(),
+                });
+            }
+            records.push(PhaseTimingRecord {
+                phase,
+                wall_time_ns: accumulator.wall_time_ns,
+                span_count: accumulator.span_count,
+                runnable_threads: RunnableThreadSample {
+                    sample_count: accumulator.sample_count,
+                    minimum: accumulator.runnable_minimum,
+                    maximum: accumulator.runnable_maximum,
+                },
+            });
+        }
+        Ok(records)
+    }
+}
+
 struct ActiveSpan {
     phase: PhaseTimingPhase,
     started: Instant,
@@ -265,7 +335,7 @@ struct Collector {
     tick_before: Option<u64>,
     tick_after: Option<u64>,
     current: Option<ActiveSpan>,
-    accumulators: [Accumulator; 10],
+    ledger: PhaseTimingLedger,
     overflow: Option<&'static str>,
 }
 
@@ -275,7 +345,7 @@ impl Collector {
             tick_before: None,
             tick_after: None,
             current: None,
-            accumulators: [Accumulator::EMPTY; 10],
+            ledger: PhaseTimingLedger::new(),
             overflow: None,
         }
     }
@@ -285,29 +355,14 @@ impl Collector {
             return;
         };
         let elapsed = span.started.elapsed().as_nanos();
-        let accumulator = &mut self.accumulators[span.phase.index()];
-        accumulator.wall_time_ns = match accumulator.wall_time_ns.checked_add(elapsed) {
-            Some(total) => total,
-            None => {
-                self.overflow = Some("wall_time_ns");
-                accumulator.wall_time_ns
-            }
-        };
-        accumulator.span_count = match accumulator.span_count.checked_add(1) {
-            Some(total) => total,
-            None => {
-                self.overflow = Some("span_count");
-                accumulator.span_count
-            }
-        };
-        if let Err(field) = accumulator.sample(current_runnable_threads()) {
+        if let Some(field) = self.ledger.record_span(span.phase, elapsed) {
             self.overflow = Some(field);
         }
     }
 
     fn enter(&mut self, phase: PhaseTimingPhase) {
         self.close_current();
-        if let Err(field) = self.accumulators[phase.index()].sample(current_runnable_threads()) {
+        if let Err(field) = self.ledger.sample(phase, current_runnable_threads()) {
             self.overflow = Some(field);
         }
         self.current = Some(ActiveSpan {
@@ -333,25 +388,7 @@ impl Collector {
                 after: tick_after,
             });
         }
-        let mut records = Vec::with_capacity(PhaseTimingPhase::ALL.len());
-        for phase in PhaseTimingPhase::ALL {
-            let accumulator = self.accumulators[phase.index()];
-            if accumulator.span_count == 0 || accumulator.sample_count == 0 {
-                return Err(PhaseTimingCaptureError::IncompletePhase {
-                    phase: phase.name(),
-                });
-            }
-            records.push(PhaseTimingRecord {
-                phase,
-                wall_time_ns: accumulator.wall_time_ns,
-                span_count: accumulator.span_count,
-                runnable_threads: RunnableThreadSample {
-                    sample_count: accumulator.sample_count,
-                    minimum: accumulator.runnable_minimum,
-                    maximum: accumulator.runnable_maximum,
-                },
-            });
-        }
+        let records = self.ledger.records()?;
         Ok(CommittedPhaseTiming {
             schema: CommittedPhaseTiming::SCHEMA,
             tick_before,
@@ -424,13 +461,11 @@ pub(crate) fn validate_precommit() -> Result<(), crate::session::StepFatal> {
             return Ok(());
         };
         collector.close_current();
-        for phase in PhaseTimingPhase::ALL.into_iter().take(9) {
-            if collector.accumulators[phase.index()].span_count == 0 {
-                return Err(invariant(&format!(
-                    "phase-timing capture reached P9 without {}",
-                    phase.name()
-                )));
-            }
+        if let Some(phase) = collector.ledger.missing_precommit_phase() {
+            return Err(invariant(&format!(
+                "phase-timing capture reached P9 without {}",
+                phase.name()
+            )));
         }
         if let Some(field) = collector.overflow {
             return Err(invariant(&format!(

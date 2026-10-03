@@ -15,7 +15,7 @@ use crate::accounting::{
     PostingSide,
 };
 use crate::calendar::CivilDate;
-use crate::company::bank::loans::validate_terms;
+use crate::company::bank::loans::{accrue_act_365f, validate_terms};
 use crate::company::bank::{chart, BankBooks, BankError, BankProductKind};
 use crate::company::contracts::ContractId;
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
@@ -87,6 +87,61 @@ impl DepositState {
 
     pub fn maturity_date(&self) -> CivilDate {
         self.maturity_date
+    }
+
+    /// 单合同预览：到期停息，零分仍交回日期与余数；不修改子账。
+    pub(super) fn preview_accrual(
+        &self,
+        through: CivilDate,
+        contract: &ContractId,
+    ) -> Result<Option<DepositAccrualItem>, BankError> {
+        let effective = if through > self.maturity_date {
+            self.maturity_date
+        } else {
+            through
+        };
+        let days = effective.days_since(self.last_accrual_date);
+        if days < 0 {
+            return Err(BankError::AccrualNotForward {
+                contract: contract.clone(),
+                through,
+                last_accrual: self.last_accrual_date,
+            });
+        }
+        if days == 0 {
+            return Ok(None);
+        }
+        let (amount, remaining_carried) =
+            accrue_act_365f(self.principal, self.rate_bp, days, self.carried)?;
+        Ok(Some(DepositAccrualItem {
+            deposit: contract.clone(),
+            days,
+            amount,
+            remaining_carried,
+            accrued_through: effective,
+        }))
+    }
+
+    /// 提取前只校验合同局部限额；现金是否足够仍由 BankBooks 过账决定。
+    pub(super) fn validate_withdraw(
+        &self,
+        amount: AccountingAmount,
+        contract: &ContractId,
+    ) -> Result<(), BankError> {
+        if !amount.is_positive() {
+            return Err(BankError::NonPositiveAmount {
+                what: "withdrawal",
+                amount,
+            });
+        }
+        if amount > self.principal {
+            return Err(BankError::WithdrawalBeyondPrincipal {
+                contract: contract.clone(),
+                requested: amount,
+                outstanding: self.principal,
+            });
+        }
+        Ok(())
     }
 
     /// 存款过账科目：期限 ≤ 365 天 → 短期（2011）；否则长期（2601）。
@@ -201,19 +256,7 @@ impl BankBooks {
         let state = self.deposit(deposit).ok_or(BankError::UnknownDeposit {
             contract: deposit.clone(),
         })?;
-        if !amount.is_positive() {
-            return Err(BankError::NonPositiveAmount {
-                what: "withdrawal",
-                amount,
-            });
-        }
-        if amount > state.principal() {
-            return Err(BankError::WithdrawalBeyondPrincipal {
-                contract: deposit.clone(),
-                requested: amount,
-                outstanding: state.principal(),
-            });
-        }
+        state.validate_withdraw(amount, deposit)?;
         let account = state.deposit_account();
         let depositor = state.counterparty().clone();
         let event = BusinessEventId::new(self.next_event_id);

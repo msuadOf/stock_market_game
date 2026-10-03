@@ -6,8 +6,8 @@ fn production_account_validation_context_uses_configured_category_and_authoritat
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = crate::StockCode("600888".to_owned());
-    game.setup.stocks[0].category = crate::SecurityCategory::StMainBoard;
-    let market = &game.markets[&code];
+    game.state.setup.stocks[0].category = crate::SecurityCategory::StMainBoard;
+    let market = &game.state.markets[&code];
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 

@@ -21,22 +21,33 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     let mut session = GameSession::restore(&save).unwrap();
     let mut with_acquisition = GameSession::restore(&save).unwrap();
     let public_id = *with_acquisition
+        .state
         .library
         .all_publication_ids()
         .unwrap()
         .first()
         .unwrap();
-    let owner = *with_acquisition.information.keys().next().unwrap();
+    let owner = *with_acquisition
+        .state
+        .belief_participants
+        .keys()
+        .next()
+        .unwrap();
     let mut private = crate::information::NpcInformationState::new(owner);
     private
         .record_acquisition(
             owner,
-            &with_acquisition.library,
+            &with_acquisition.state.library,
             public_id,
             crate::calendar::CivilInstant::new(date, 0).unwrap(),
         )
         .unwrap();
-    with_acquisition.information.insert(owner, private);
+    *with_acquisition
+        .state
+        .belief_participants
+        .get_mut(&owner)
+        .unwrap()
+        .information_mut() = private;
     let update = session.end_civil_day_update(&[]).unwrap();
     let acquired_update = with_acquisition.end_civil_day_update(&[]).unwrap();
     assert_eq!(
@@ -45,7 +56,7 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     );
     update.validate().unwrap();
     let reconnected = GameSession::restore(&session.save().unwrap()).unwrap();
-    let public = &reconnected.library;
+    let public = &reconnected.state.library;
     let mut announcements = 0;
     for event in &update.events {
         if let Event::CompanyDisclosurePublished {

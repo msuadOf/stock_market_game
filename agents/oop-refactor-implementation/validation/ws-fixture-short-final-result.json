@@ -1,0 +1,52 @@
+{
+  "execution": "沙箱外；仅两个本地临时 listener 生命周期短测试，原断言不变",
+  "parallel_processes": 2,
+  "rayon_per_process": 4,
+  "case_and_command_deadline_ms": 10000,
+  "tests": [
+    {
+      "id": "R271",
+      "package": "server",
+      "target_kind": "test",
+      "target": "ws",
+      "filter": "server_fixture_shutdown_stops_listener_and_removes_sessions",
+      "source": "apps/server/tests/ws.rs",
+      "source_sha256_now": "1df145ed37a6670dbefeb00d7875734589dd0e67ef1e44e9ab48083c71314dce",
+      "binary": "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/ws-f1b131f89bc0c64f",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/ws-f1b131f89bc0c64f",
+        "--exact",
+        "server_fixture_shutdown_stops_listener_and_removes_sessions",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "seconds": 0.1487,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest server_fixture_shutdown_stops_listener_and_removes_sessions ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.14s\n\n"
+    },
+    {
+      "id": "R272",
+      "package": "server",
+      "target_kind": "test",
+      "target": "ws",
+      "filter": "server_fixture_cleans_resources_after_assertion_panic",
+      "source": "apps/server/tests/ws.rs",
+      "source_sha256_now": "1df145ed37a6670dbefeb00d7875734589dd0e67ef1e44e9ab48083c71314dce",
+      "binary": "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/ws-f1b131f89bc0c64f",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/ws-f1b131f89bc0c64f",
+        "--exact",
+        "server_fixture_cleans_resources_after_assertion_panic",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "seconds": 0.1491,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest server_fixture_cleans_resources_after_assertion_panic ... \nthread 'server_fixture_cleans_resources_after_assertion_panic' (1356195) panicked at apps/server/tests/ws.rs:612:9:\nfixture 断言路径\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.14s\n\n"
+    }
+  ]
+}

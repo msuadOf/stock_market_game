@@ -108,21 +108,37 @@ fn merge_lists(base: Vec<Assignment>, extra: Vec<Assignment>) -> Vec<Assignment>
     out
 }
 
-/// 建立归类：多行业表合并后校验**科目表全覆盖**（漏归类 = 拒绝）。
-pub(crate) fn classification(
-    defs: &BTreeMap<LedgerAccountId, crate::accounting::ledger::AccountDef>,
-    industries: &[IndustryPresentation],
-) -> Result<BTreeMap<LedgerAccountId, NoteTarget>, super::ReportError> {
-    let mut merged: BTreeMap<LedgerAccountId, NoteTarget> = BTreeMap::new();
-    for industry in industries {
-        merged = merge_into(merged, assignments_for(*industry))?;
-    }
-    for code in defs.keys() {
-        if !merged.contains_key(code) {
-            return Err(super::ReportError::UnclassifiedAccount { code: code.clone() });
+/// 已核验冲突与科目表覆盖的列报分类；额外行业映射仍保留。
+pub(crate) struct ReportClassification {
+    assignments: BTreeMap<LedgerAccountId, NoteTarget>,
+}
+
+impl ReportClassification {
+    pub(crate) fn from_industries(
+        defs: &BTreeMap<LedgerAccountId, crate::accounting::ledger::AccountDef>,
+        industries: &[IndustryPresentation],
+    ) -> Result<Self, super::ReportError> {
+        let mut merged = BTreeMap::new();
+        for industry in industries {
+            merged = merge_into(merged, assignments_for(*industry))?;
         }
+        for code in defs.keys() {
+            if !merged.contains_key(code) {
+                return Err(super::ReportError::UnclassifiedAccount { code: code.clone() });
+            }
+        }
+        Ok(Self {
+            assignments: merged,
+        })
     }
-    Ok(merged)
+
+    pub(crate) fn target_for(&self, code: &LedgerAccountId) -> Option<&NoteTarget> {
+        self.assignments.get(code)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&LedgerAccountId, &NoteTarget)> {
+        self.assignments.iter()
+    }
 }
 
 /// 附注明细行。
@@ -154,11 +170,11 @@ pub struct Notes {
 /// 期初 = 期末 − 运动，溢出为类型化错误——已公布附注绝不以 0 掩盖。
 pub(crate) fn build_notes(
     windows: &StatementWindows,
-    classification: &BTreeMap<LedgerAccountId, NoteTarget>,
+    classification: &ReportClassification,
 ) -> Result<Notes, super::ReportError> {
     let zero = AccountingAmount::ZERO;
     let mut items = Vec::new();
-    for (code, target) in classification {
+    for (code, target) in classification.iter() {
         let closing = windows.closing.get(code).copied().unwrap_or(zero);
         let movement = windows.movement.get(code).copied().unwrap_or(zero);
         let ytd = windows.ytd.get(code).copied().unwrap_or(zero);
@@ -187,7 +203,7 @@ pub(crate) fn build_notes(
                 continue;
             }
             let target = classification
-                .get(code)
+                .target_for(code)
                 .cloned()
                 .unwrap_or(NoteTarget::BalanceSheet(BsLine::PaidInCapital));
             let name = windows
@@ -248,5 +264,53 @@ impl BsLine {
             BsLine::RetainedEarnings => "未分配利润",
             BsLine::MinorityEquity => "少数股东权益",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounting::ledger::{AccountDef, AccountElement};
+
+    #[test]
+    fn classification_keeps_extra_mappings_and_same_target_idempotence() {
+        for industry in [
+            IndustryPresentation::Industrial,
+            IndustryPresentation::Bank,
+            IndustryPresentation::Insurance,
+            IndustryPresentation::RealEstate,
+        ] {
+            let classification =
+                ReportClassification::from_industries(&BTreeMap::new(), &[industry]).unwrap();
+            let repeated =
+                ReportClassification::from_industries(&BTreeMap::new(), &[industry, industry])
+                    .unwrap();
+            assert!(!classification.assignments.is_empty());
+            assert_eq!(classification.assignments, repeated.assignments);
+            let defs = classification
+                .iter()
+                .map(|(code, _)| (code.clone(), AccountDef::new("科目", AccountElement::Asset)))
+                .collect();
+            assert!(ReportClassification::from_industries(&defs, &[industry]).is_ok());
+        }
+    }
+
+    #[test]
+    fn classification_rejects_missing_code_and_conflicting_targets() {
+        let code = LedgerAccountId("unknown".into());
+        let defs = BTreeMap::from([(
+            code.clone(),
+            AccountDef::new("未分类", AccountElement::Asset),
+        )]);
+        assert!(
+            matches!(ReportClassification::from_industries(&defs, &[IndustryPresentation::Industrial]), Err(super::super::ReportError::UnclassifiedAccount { code: rejected }) if rejected == code)
+        );
+        assert!(matches!(
+            merge_assignments(
+                vec![a("1001", NoteTarget::BalanceSheet(BsLine::CashFunds))],
+                vec![a("1001", NoteTarget::BalanceSheet(BsLine::Inventory))]
+            ),
+            Err(super::super::ReportError::DuplicateClassification { .. })
+        ));
     }
 }

@@ -1,0 +1,2054 @@
+{
+  "meaning": "中间态结构化台账版本绑定机械对账；缺失不等于未审，需补review正文证据。",
+  "changed_product_paths": 340,
+  "sha_bound_paths": 291,
+  "unbound_paths": [
+    "packages/engine/src/session/pipeline/account_settlement.rs",
+    "packages/engine/src/session/pipeline/account_settlement_tests.rs",
+    "packages/engine/src/session/pipeline/account_validation.rs",
+    "packages/engine/src/session/pipeline/account_validation_context.rs",
+    "packages/engine/src/session/pipeline/account_validation_context_tests.rs",
+    "packages/engine/src/session/pipeline/account_validation_driver_tests.rs",
+    "packages/engine/src/session/pipeline/account_validation_tests.rs",
+    "packages/engine/src/session/pipeline/auction_day_end_tests.rs",
+    "packages/engine/src/session/pipeline/auction_tick_transaction.rs",
+    "packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs",
+    "packages/engine/src/session/pipeline/authoritative_tick_tests.rs",
+    "packages/engine/src/session/pipeline/candidate_commit.rs",
+    "packages/engine/src/session/pipeline/candidate_commit_tests.rs",
+    "packages/engine/src/session/pipeline/commit_evidence_tests.rs",
+    "packages/engine/src/session/pipeline/continuous_matching_adapter.rs",
+    "packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs",
+    "packages/engine/src/session/pipeline/continuous_tick_transaction.rs",
+    "packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs",
+    "packages/engine/src/session/pipeline/continuous_trade_acceptance_tests.rs",
+    "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+    "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+    "packages/engine/src/session/pipeline/decision_snapshot_tests.rs",
+    "packages/engine/src/session/pipeline/executor_perturbation_tests.rs",
+    "packages/engine/src/session/pipeline/incremental_auction_round_tests.rs",
+    "packages/engine/src/session/pipeline/institutional_experience_projection.rs",
+    "packages/engine/src/session/pipeline/local_admission.rs",
+    "packages/engine/src/session/pipeline/npc_state_projection.rs",
+    "packages/engine/src/session/pipeline/npc_state_projection_tests.rs",
+    "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+    "packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs",
+    "packages/engine/src/session/pipeline/pre_open_transaction.rs",
+    "packages/engine/src/session/pipeline/pre_open_transaction_tests.rs",
+    "packages/engine/src/session/pipeline/receipt_aggregation.rs",
+    "packages/engine/src/session/pipeline/receipt_aggregation_tests.rs",
+    "packages/engine/src/session/pipeline/retail_projection.rs",
+    "packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs",
+    "packages/engine/src/session/pipeline/retail_projection_tests.rs",
+    "packages/engine/src/session/pipeline/session_execution_transaction.rs",
+    "packages/engine/src/session/pipeline/settlement.rs",
+    "packages/engine/src/session/pipeline/settlement_tests.rs",
+    "packages/engine/src/session/pipeline/shadow.rs",
+    "packages/engine/src/session/pipeline/stock_auction_adapter.rs",
+    "packages/engine/src/session/pipeline/stock_auction_adapter_tests.rs",
+    "packages/engine/src/session/pipeline/stock_execution_transaction.rs",
+    "packages/engine/src/session/pipeline/stock_execution_transaction_tests.rs",
+    "packages/engine/src/session/pipeline/stock_stream.rs",
+    "packages/engine/src/session/pipeline/stock_stream/auction_tests.rs",
+    "packages/engine/src/session/pipeline/tests.rs",
+    "packages/engine/src/session/pipeline/transition.rs"
+  ],
+  "mismatches": [
+    {
+      "path": "packages/engine/src/experience/feedback/lifecycle.rs",
+      "source": "agents/oop-refactor-implementation/domain/completion-ledger.json",
+      "recorded": "138128c9758f15b943c93b5e1b1977d6ca97c9041adb57595da72bfcf6fcbcfd",
+      "actual": "cb62433d343add8cdf277cb17eaf50b231ec60941059edb8af2e8c95b9eaeb8c"
+    }
+  ],
+  "bindings": {
+    "apps/web/src/App.tsx": [
+      {
+        "sha256": "3d84652a168d94c4b37b276830a04316befe2cb17ce7153e8c45ff40b9fa6b92",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/LocalRefreshViews.tsx": [
+      {
+        "sha256": "9a3ad9a4ff97b7bbdc349e4d2609b03f29101f1816c5a69c3a1cdd1c4b558f3e",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/MarketRuntimeProvider.tsx": [
+      {
+        "sha256": "15ad134ae9915934c3d36c3fc0df210f02b4c5bc65ba3c1e0fa8e12418c9106d",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/app-persistence-wiring.test.ts": [
+      {
+        "sha256": "340647679377bb83a4676fd3ba7ec6686baa750a9ddbd3d7e30729805a21ee80",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/app-startup-wiring.test.ts": [
+      {
+        "sha256": "9ed8b0909289f946d02522c6f0c4b680c210a0c3b1089dd0b103777a0b7b1bdf",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/command-host-test-fixture.ts": [
+      {
+        "sha256": "5ce29e0860dbf4463aea28730133e9908d1049a6b9582e506776451450a8136f",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/hook-test-runtime.ts": [
+      {
+        "sha256": "5aabe94acc18938b593e7755ba7e1a0fd348558ec85a8530854e12c42858f360",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/market-chart-projection.test.ts": [
+      {
+        "sha256": "ca17f272d8f7170564653a143671895ce31378e71bcec72d4cb0e617feea3137",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/market-chart-projection.ts": [
+      {
+        "sha256": "878f5ecbcbd20e20191725c04021033ceef88888cafe66ba763b761a3e16efab",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/market-chart-runtime.test-support.tsx": [
+      {
+        "sha256": "c81d084248875fdb0dc179cf966daa0190b8838f4313677623e0a5cd1630eb31",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/market-chart-runtime.test.ts": [
+      {
+        "sha256": "4dfd7dcc07dc6f8111fae2dfa7ac6f11acccd8f430f9b868ea941e255c464330",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/pause-preferences-runtime.test.ts": [
+      {
+        "sha256": "fa724889142314fd50293749e5c7a738f2b0defeb88f2c383b5cb799fc1c31e5",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/save-commands.test.ts": [
+      {
+        "sha256": "04013b4a9cddd9c278654b2586dfd85598962d37718a2a8b2b7e2477716acbfe",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/session-host-lifecycle.test.ts": [
+      {
+        "sha256": "b0da1d9ab569149a02c1384cdc5e5bb865fff8d2614cd542942074de0c01f4e8",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/speed-metrics-polling.test.ts": [
+      {
+        "sha256": "758dacb029778a95fa92ffd2a230ad30ef354314f691686a3ff7b3bc0006a292",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/trading-commands.test.ts": [
+      {
+        "sha256": "489d36f571a3c6f23490de9965807e269de7c4e5f4554a5a23f2314a0556b9c0",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/useMarketChartRuntime.ts": [
+      {
+        "sha256": "166db8e85a19a5e1bf6977d633c7822d3a5a6b77793504f3c7b46901147da07b",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/usePausePreferences.ts": [
+      {
+        "sha256": "56620b5c9c2e4cfda41bfed008913faaec5dc8d758b7b26bdd624b3ad8887687",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/useSaveCommands.ts": [
+      {
+        "sha256": "ce6d3ad6e7ff901ea6342b1b31b483e5e9eeddb4808a20502a1dd4aa03a0a795",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/useSessionHostLifecycle.ts": [
+      {
+        "sha256": "b74b23deddf1782050c3fd6e95534dc6aa1e7d166a515ed0aedbac6e7e589eb2",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/useSpeedMetricsPolling.ts": [
+      {
+        "sha256": "c6fd5c2cde9062166fb358975195bd2e173b3d1ea37d1be693566dcce1f323df",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/app/useTradingCommands.ts": [
+      {
+        "sha256": "4458169a3debc5f4abe6e406f0995545d05cafd4dff7ce7d890d02073943cfd2",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/MarketGrid.tsx": [
+      {
+        "sha256": "ba4d75c85ecc7cd55798c4c1d461530ed664140ca1eff2a6b2c18af466f6275b",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/PriceChart.tsx": [
+      {
+        "sha256": "2bdb388cfe2d9f46e32c045f0eec715f74c70cb3ef254e0f68dd59f2a6880a8b",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/indicator-results.test.ts": [
+      {
+        "sha256": "117ee311e578a67470c902a2b21ed2515609aa8bce70c36cf4ae169301db4e27",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/indicator-results.ts": [
+      {
+        "sha256": "934e5d0d5ff68e6863077ee8c111429353e59cd1405cf879fd66fe3a1c58e108",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/local-refresh-boundaries.test.ts": [
+      {
+        "sha256": "65e71e18a1a9f383828c96d1a7fef52fa078acff35503d10d1699b8209fecec9",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/market-grid-row-synchronizer.test.ts": [
+      {
+        "sha256": "a574956628e65de65ece5254c67c787c04e35253ec127b1452c3b387f0fb7a1e",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/market-grid-row-synchronizer.ts": [
+      {
+        "sha256": "87939159e366760f7c34cc0bda31515b8349e1043ad002c870f629efbf0dca28",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/price-chart-runtime.test.ts": [
+      {
+        "sha256": "b7b5cb74420d3d27507f51c1727a28abe8a26032a3d7ea10a52b8b7d22e5fd6c",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/price-chart-runtime.ts": [
+      {
+        "sha256": "839962174d7d17a350f92de9f96b2609d235fafaa9c44715557ddabcdf349c8a",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/use-indicator-results.test.ts": [
+      {
+        "sha256": "b1de0402044e7ee74c625eb7345799ea5daa5343e1d98d06bce9318ba9cbefa3",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/components/useIndicatorResults.ts": [
+      {
+        "sha256": "29f03aafa5c176905e08e8836be83405693897f7d157de329dbf7f0e0615bba2",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/dev/npc-decision-inspector.test.ts": [
+      {
+        "sha256": "2f6c9d3bc6682df82d2c2d1bd84c0b1b8819c83ac5f58b15e8226ace6914ce5d",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/company-query-coordinator.test.ts": [
+      {
+        "sha256": "42662e54bfca81b8e11e4ba41e6a80fb4b5ed3760610c2b9b413307d3b671446",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/company-query-coordinator.ts": [
+      {
+        "sha256": "733e770c13e633f20b33fb318776b2c403ae93df0a005fb892275a71c1f1936c",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/company-request-registry.ts": [
+      {
+        "sha256": "6d77620e4f8d2a001aabf4d6020191baeb24d59f70cdba577bfdbc5b48f2636b",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-command-registry.test.ts": [
+      {
+        "sha256": "afe5f14f14e006b7bb5cacaf31108101f52391eea8a8c180b9a8e87659a5ddbd",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-command-registry.ts": [
+      {
+        "sha256": "13078e0c46f18bf956df2e2ffcf3b429919113446e3bf9dd6ec6101b25409d90",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-company-reports.test.ts": [
+      {
+        "sha256": "9c2c3f38505ce7813a4e0d958a7f4a304a0fcd509cdb4c24639a2f69894068bf",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-host.ts": [
+      {
+        "sha256": "a3a32aa2eeac33ce4c8f65837fb3a14cd6609bb85ae2d437b20825c38ab913af",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-publisher-state.test.ts": [
+      {
+        "sha256": "cebf8df9b16eac3900d238fbc9ee0627fb882cc475db84c904bcc37dc0da999d",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-publisher-state.ts": [
+      {
+        "sha256": "2893b9f5b5ee7ada9ea747b424c3c9d4babff82607027b8e625fa9a3c4ea7add",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/remote-state-contract.test.ts": [
+      {
+        "sha256": "6528de90b58949e88b5130f73da3f7fb46f7651c782cbc5a2c52b6ecd3682506",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/report-query-context.test.ts": [
+      {
+        "sha256": "6668ca8d1f1e6c2b638789bf134b0e2c8daa084b1ceac313e96e66b70ad58182",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/report-query-context.ts": [
+      {
+        "sha256": "e54fc63389d196fa42646027169ec25e6179834f53ebec0f7acea82d37474fd3",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/tauri-host.test.ts": [
+      {
+        "sha256": "817a606812e21d7c159d90d47e58998c2de0e9b15ce36ae52dd151a91978d190",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/tauri-host.ts": [
+      {
+        "sha256": "1c0a31ad3d3dea667fbe74a979f9866a878b19d9885eae94c0d0f670e49f022b",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/tauri-startup-contract.test.ts": [
+      {
+        "sha256": "c004eb73b19ce280c221d487f4e952e16af22404ccf501fccce1c83e625ce2e3",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/tauri-timeline-state.test.ts": [
+      {
+        "sha256": "666f911f08f6ece026e5f87ccaa031bde6b91a8ab484b0d8b7f4f0b139f16c41",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/tauri-timeline-state.ts": [
+      {
+        "sha256": "90c671a14585f035f333f7a6decef47cf6629a5226080313c24a26153ef1a68d",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-session-slot.test.ts": [
+      {
+        "sha256": "414c080122cc4090c061aaf7f8080a57216d109918ba34ef20b1b0e34d4ad298",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-session-slot.ts": [
+      {
+        "sha256": "f4cd028d99bc944392e45e41f3a99583878c71a897366245ecb52e1b24ca67a9",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-tick-loop.test.ts": [
+      {
+        "sha256": "9147fa6f4bb6be25de2a5546767f2fbcf07e82d45879c239267f3d4b8fe81d4a",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-tick-loop.ts": [
+      {
+        "sha256": "62e9f8fb145d8907cf446c6ed02b9d29787ba0561cd4d2532cac485a015ae089",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-worker-ownership.test.ts": [
+      {
+        "sha256": "1d75c371870defe61e9aabba8009196dfcd60cce165b65a202e629c2ec7324e5",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/wasm-worker.ts": [
+      {
+        "sha256": "b52692d191a0efedacd3c719229ec3e412d7fee3c8cf53b0e59ba638abbca754",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/worker-host.test.ts": [
+      {
+        "sha256": "cecd53e906f5b7fd2e663ce93767ccdaa94a0356152d9c6860019330b63fed70",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/worker-host.ts": [
+      {
+        "sha256": "11139fec6a2a7c104816a6ef7812e49677a47fb032c8281c222de4d4a9988e72",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/worker-request-scope.test.ts": [
+      {
+        "sha256": "1df10b97d9527e877cac14335f8d69a5d821be78f80ebe9acba5a0cc07451990",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/host/worker-request.ts": [
+      {
+        "sha256": "963bb337403726de4338b9e8a5473e17b11b218491e98da4edc7a0e2131ff8fd",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/MobileStockDetail.tsx": [
+      {
+        "sha256": "77b666477d51c29b18bb2728ca571824b76ac3eec57b161aa765d47ba52e2f40",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/market-model.ts": [
+      {
+        "sha256": "8b04e3b448bb29148b401f3de7360ceafb2aa621e28694676ed81cf9320cdaeb",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/mobile-component-render.test.ts": [
+      {
+        "sha256": "1e341489f57178e201c2966c7828241c63552364a8ac1131416e89c4607b0617",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/mobile-intraday-projection.test.ts": [
+      {
+        "sha256": "de7139ffc70d355dd242efeca3455edf3b8c2070b9638f0a5677061eda011efd",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/mobile-kline-projection.test.ts": [
+      {
+        "sha256": "c6cdd4cecdbbd872d1f43f6c2cc02bb6fdd7f8fffaa4d8075a33f7e1ddb13685",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/mobile/mobile-trading-concept.test.ts": [
+      {
+        "sha256": "a68c26c250264c3b760ffd0a1edf92d03c81cbf8516256ca7f2821b559e4122d",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/utils/symbolic-limit-order.test.ts": [
+      {
+        "sha256": "73c13dd9066ac5c86b0ea483530fd5a36bdb9709b2ca545a4ba0e603e3d0aec3",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/web/src/utils/trade-input.test.ts": [
+      {
+        "sha256": "af1331277ba3765fb32c4cca2d87283ebad9b107d14394ea3e0e62fd2eb5a988",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "design/ui/mobile/mobile-trading-concept.html": [
+      {
+        "sha256": "0665fbe6caf7dfb96c8d98dc9a8cc31b0b94a6618c79c4a8c16c978f79150ba9",
+        "source": "agents/oop-refactor-implementation/frontend/completion.json"
+      }
+    ],
+    "apps/desktop/src-tauri/src/actor.rs": [
+      {
+        "sha256": "de9537f90e887de7c167489391fb8ffb912b00547098b4499d5c2092a805e64e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/desktop/src-tauri/src/actor/failure.rs": [
+      {
+        "sha256": "85923c1ecd302efe69e315774105108d8d53c10ebaa018485aea3bef37cc9ff9",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/desktop/src-tauri/src/actor/fatal_tests.rs": [
+      {
+        "sha256": "4105d14b3d31e7cb9ec200c4662a7e8a74c80a222bb92ebfee0abdf8f77d9221",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/desktop/src-tauri/src/actor/protocol_tests.rs": [
+      {
+        "sha256": "edd912fade4421a8fda7f5c294c21f6f4dd8d57c733290384d72b95f7cb3a82c",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/src/actor.rs": [
+      {
+        "sha256": "89f89674f29080c9f68ea6623cb28b11bee7986c7d3a5d05f7efe211231e2005",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/src/actor/fatal_tests.rs": [
+      {
+        "sha256": "1e8cd0d02b2c6c573657b04722e17f701c6213fc0f5285bab175801b28edc4a7",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/src/routes.rs": [
+      {
+        "sha256": "fbddfd6e20ebb7f734eaa2ebc87150c207ec3df3de9aff69a554ae1544668c7e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      },
+      {
+        "sha256": "fbddfd6e20ebb7f734eaa2ebc87150c207ec3df3de9aff69a554ae1544668c7e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/tests/actor.rs": [
+      {
+        "sha256": "1ddaf7f3da6b734e2af5c27086851a05a7a3cd9140ededf3b3ad87489b44cff1",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/tests/protocol_updates.rs": [
+      {
+        "sha256": "7fad05dca4192027ad20ad4f9000565b991ad2cd4d8af5c545065a2686264cdf",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/src/web_ui.rs": [
+      {
+        "sha256": "46f5f422a52ac454fc5e272998232d7e9165e6542912d8cbd411ed5b7b1b11e8",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/tests/api_contract.rs": [
+      {
+        "sha256": "85718282ca733ca915d7e1c4efcbd2d5cd3092b381b9e906fe505790dd55c7b8",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/tests/deployment_cli.rs": [
+      {
+        "sha256": "2eb3ab29c85d58d479ad0954dec78472baf866f22891bf296bb962f7fb59e549",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/server/tests/ws.rs": [
+      {
+        "sha256": "1df145ed37a6670dbefeb00d7875734589dd0e67ef1e44e9ab48083c71314dce",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/web-wasm/src/lib.rs": [
+      {
+        "sha256": "e60cc2ffb199438a7418af8f6864b15947c145751ba2c2be87c5dae900004914",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "apps/web-wasm/src/protocol_tests.rs": [
+      {
+        "sha256": "b2387d8b8f91991a807bfee3d3f560b7b1da00273fa5a6bd5f07d0ce6e000bdb",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/attention_discovery/exposure.rs": [
+      {
+        "sha256": "82e43ee8a67922ea6856555ec6035d7c0e85e3fa84d11ce154d47987af6346e5",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/attention_discovery/failures/discovery.rs": [
+      {
+        "sha256": "1f18c77cc73af9e621f874ecaefb95f829cf18c73a278d34064b5f19271a4df7",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/auction.rs": [
+      {
+        "sha256": "b06572d1b65a4f0bf5060439e686196989a4884992650baa3676b1e9d259ea3f",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/behavior.rs": [
+      {
+        "sha256": "6b5556e0f6f89cab1737749d737e53390a821665c67a08f609905a3b38564e87",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/information_acquisition/acquisition_gold.rs": [
+      {
+        "sha256": "4885655e3a8874d0acdc277801b102481cc4fcdc5b36833d72ad8df3fd08ea63",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/information_acquisition/failures.rs": [
+      {
+        "sha256": "9931e4fe69909595139e8fa132e34a2ecf70e5d3aa8a08ed90d0cee44f2a9269",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/information_acquisition/fixture.rs": [
+      {
+        "sha256": "b1ba50f808d1c9eef78902bb8c65ac5e7f63ef14cf67da18392d69eb029daf07",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/information_acquisition/view_gold.rs": [
+      {
+        "sha256": "d88e3a1e386c38c26cd763ec099c2cc716b2038f7561f7a828548c0c1db7456a",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/publications/weekend_publish.rs": [
+      {
+        "sha256": "b3b53905e915a1719ac40d03e36fddf5ffa11685da014ab35b3aa956bce30279",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/save_contract/failures.rs": [
+      {
+        "sha256": "0067fc91e96bf67f2e80e067270d05ab1a59a3efbd7c6b75fdfb225970d9a51f",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/save_contract/main.rs": [
+      {
+        "sha256": "a613dd823200e69e8135b6376ce68a8e6429a9cfc57cd70f4202b6f14707e454",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/civil_clock.rs": [
+      {
+        "sha256": "38e7dc68d583b6f11d8e1d0edae73af1dfb04825a73872736a117762b98e7a5e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/fundamental_beliefs/centers.rs": [
+      {
+        "sha256": "ff991da87927ddbc39277c5aff5a6ece7f90f01a26cdc3d607e566c72ad706dc",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/fundamental_beliefs/failures/mod.rs": [
+      {
+        "sha256": "5638530b8c806892b3519d0c62d5fb3bc083fcf566d52f7d4fbcbb1f586fb2bc",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/fundamental_beliefs/gold.rs": [
+      {
+        "sha256": "22654726f120b7b21ba3242b3f2391e3796e99cea1995896748c1bbddd6aeaca",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/fundamental_beliefs/main.rs": [
+      {
+        "sha256": "59ba7ffcfe5b53e685b98751c00884fab4ce01c15e4f5c07d9df0c8134bda50f",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/fundamental_beliefs/per_share.rs": [
+      {
+        "sha256": "debf98d195c32d60b8b099a128ffcb1a9adc856dab77b3902bd83b96c3663701",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/industry_reports/correction_restatement.rs": [
+      {
+        "sha256": "68d98b78d840cff1ad6fdf0dbf6d0ce8d7aafdc43a69aff5487db25931af269e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/plans.rs": [
+      {
+        "sha256": "e3453beb9b7096404575c8e091ee8b0dbdbcd54f804a378dc55e8875dac831ad",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/publications/failures/announcement_failures.rs": [
+      {
+        "sha256": "86a374765a0326ad10615640b16805072d4832b13241effe6e6ed13ba29e60f2",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/publications/failures/mod.rs": [
+      {
+        "sha256": "754513a44bd39cfdf0f68a45239560b00a14c750026251092fdcd23874b771f0",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/publications/failures/publication_failures.rs": [
+      {
+        "sha256": "81073be3733d21bb59d96f11546d57325edad16ee8089cb0cca589fc9c3557d6",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/session.rs": [
+      {
+        "sha256": "64005cb861f40666d7948c971ba9a8783702a852a58610e90c75823f5b80ba1d",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/examples/escrow_verification_harness/committed.rs": [
+      {
+        "sha256": "43e8e3c7b90e7d12f5d219961e35b412472bc9082612810adab091e5f3e42f44",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/examples/escrow_verification_harness/runtime.rs": [
+      {
+        "sha256": "c82e88edca6e4e2a50be8de7e9cc2091fe7a54fff3c700903f830ddf0a26e95a",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/build-targets.mjs": [
+      {
+        "sha256": "c24c2a0b1dd32f20e144b0ad6f750909c7116c2fdcd7df939919f9b6d329607d",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/desktop/build-matrix.mjs": [
+      {
+        "sha256": "c8c9f5dc8b0e0362da2a58be612e3915734bd17f1eb66ecc8e1a7c94e130c0a5",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/desktop/build-matrix.test.mjs": [
+      {
+        "sha256": "d7505427b688464f5803cf5b3cab3ad3f5fa256158e4750f9566e22cd9a8bb27",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/audit-diagnostic-divergence.test.mjs": [
+      {
+        "sha256": "0afdaf64ac355eb46f80e2d933293ecc5a35182130b8ee518b898d77223ac37d",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/baseline-run.mjs": [
+      {
+        "sha256": "7c554df1538e797920ab2f6f537e477d9f46a63fc3aea66f88f07ed80f4c9041",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/run-escrow-verification-matrix.mjs": [
+      {
+        "sha256": "8488754fa80a5ac32496f143f361adc0f6af0ff2035ce39663011f8920701b8b",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/run-escrow-verification-matrix.test.mjs": [
+      {
+        "sha256": "cd8d8ecb51cab50dc7ff810a12495f4e4b49f69a7707b6f77aa162dc0f0a5340",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/run-full-regression.mjs": [
+      {
+        "sha256": "ef0e0fc588793a7348844c302acb0236e33b9ea7172f70f02a519d02a6753482",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/run-full-regression.test.mjs": [
+      {
+        "sha256": "22de264fe416ebf7718e5e00daf6fc35cfa6638c505d1a7709f706bdef926f00",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/run-with-deadline.mjs": [
+      {
+        "sha256": "4767d2338543956d3a7c77b7b842cb4f79ceb34774e1867ed5268c9a93e23e3b",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/run-with-deadline.test.mjs": [
+      {
+        "sha256": "fe20d4fae53f727cc816bbe4bd6bb9e26cd0e04dd69e098682f067f96155da94",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/performance/market-ui-report.mjs": [
+      {
+        "sha256": "98ced04a7c2f178085765aae293e0281cf347eabc1db9b05c1bbfc734ae280cf",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/performance/market-ui-report.test.mjs": [
+      {
+        "sha256": "0bf9c8afa1501f0ff5b40eb179634c4a82c9b524ce8e5ec22a177eec3761b98d",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/escrow-performance-harness.mjs": [
+      {
+        "sha256": "425d472abcb3adfe75a8a024e0f06b555b4a943baa9cc8280501088bcd8cd7ca",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/escrow-performance-harness.test.mjs": [
+      {
+        "sha256": "c5c89deb7c1d112599b6adce3a44f452341ad969eab5ba061586ec5d0af58804",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/escrow-verification-contracts.mjs": [
+      {
+        "sha256": "766ad3da1008067801ffaf539de6ef8fcc939e7723584d3bad6ec88346f6fea3",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "scripts/simulation/escrow-verification-contracts.test.mjs": [
+      {
+        "sha256": "559135a9fe2d532d793d3dfb623ad2e8d6d9913ae3a0e6ac6b9222f49e62dcae",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/account.rs": [
+      {
+        "sha256": "ce1d8a0c78419cca409f638f473e57438d8a0fed19ffa2cc7b5a59ebe65dd4c6",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/strategy_state.rs": [
+      {
+        "sha256": "00015946426523303fa372e9a62d7e564c1119c63190f93c4aed2d245056ddb2",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/company_opening/isolation.rs": [
+      {
+        "sha256": "718be88ea7639e018b4a62e240b4e18384dd3715a3a80a05b4ac8c86f36b7066",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/company_scenarios/controlled_experience.rs": [
+      {
+        "sha256": "fefef52a815a21aba4ee10b5e9b974c19b7e48246e73123440156bf5ea4a0ef2",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/tests/market/price_limits.rs": [
+      {
+        "sha256": "90d6a89eed8532ed08ca42292047252e9b7fe12df45c27cfc7866797114a0d5e",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      }
+    ],
+    "packages/engine/src/market.rs": [
+      {
+        "sha256": "00e2ccdb609e4d38c4b879b20580dfe56886030b9802fb545437b622bd8518c9",
+        "source": "agents/oop-refactor-implementation/hosts/source-review-manifest.json"
+      },
+      {
+        "sha256": "00e2ccdb609e4d38c4b879b20580dfe56886030b9802fb545437b622bd8518c9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/plans/candidates.rs": [
+      {
+        "sha256": "11e36eb7bcc8535d256c45ec6fbdade674fa4d245810edd918c522fe624f2ac2",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/plans/candidates/targets.rs": [
+      {
+        "sha256": "dbc5238a44bf26c7047aa232713bd68c632d40bff043c302b5c065fa5e5564f1",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/plans/mod.rs": [
+      {
+        "sha256": "b2ab5492ff8e2e74bec5c7dfb292f544ab950dc78a994b1f1fa0d070e7e6186b",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/plans/revision.rs": [
+      {
+        "sha256": "c55e1cd4b157777a17f8520c1d6619f83e9380144e5638a541fad821422ca23c",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/plans/state.rs": [
+      {
+        "sha256": "c601a22b188540e021c90e2ec03195fb048369f36526a556854fe2e938e9439c",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/plans/validation.rs": [
+      {
+        "sha256": "2930661212f736c26750c729553db7ccdeacd266320d73471e3dfbc8c8e02e69",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session.rs": [
+      {
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      },
+      {
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/session/account_book.rs": [
+      {
+        "sha256": "1385a460975449e967acdb2c2864d1fd61390b565736abbbf6fb20a555984bd0",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/attention.rs": [
+      {
+        "sha256": "eb31033e2ff7a030fd4a220247ce9c8bebde964ce8a0ef3ce506c8d19d974266",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/candles.rs": [
+      {
+        "sha256": "01eaa497889978a3dd11cca1f428b772de851e97fd5374e1c29a3b21d0302bd4",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/causal.rs": [
+      {
+        "sha256": "c2bf7eedfa4d3a97a7f56aa83e16cb0e0613005e5b9284ef07a33e0662520cfb",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/company_assembly.rs": [
+      {
+        "sha256": "843667970a1a890e5572aeff915015f18b1fd70aeca59180a069b4070fa2e47c",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/continuous_cancellation.rs": [
+      {
+        "sha256": "e516c7f0d0baefb4e043ba10e95cda06b778f0e66572c8d9c054328a4686693d",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/continuous_cancellation_tests.rs": [
+      {
+        "sha256": "afb784a7151608a274215dd41466383087a3a1ae03f894aa6fe2e51f31a6b7f7",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain.rs": [
+      {
+        "sha256": "a24654a76aff7302916d9f36e41f01e7c7b0d29b45abc6604555c0ed104e6fb9",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain/lifecycle.rs": [
+      {
+        "sha256": "3d400b95ce0d698f26f57fae0b77f2fb09a9e827e6415393d169ccdea44d0f4d",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain/personal_state.rs": [
+      {
+        "sha256": "f523212df76d13a7d253df349d318828d0f115afb59efc440dd1f6f61f3d5caa",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain/quote.rs": [
+      {
+        "sha256": "8d5227f6106de9ba4d35235af124578da68fd9891642ff45052eb531ca63af1c",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain/roots.rs": [
+      {
+        "sha256": "e9c03356cd80cc7da54e6e4c82b5aee3a848754c7bb8a35bbaf8e407abbd3a8d",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/decision_chain/urgency.rs": [
+      {
+        "sha256": "5a861bdc56bd29218d114101e737428f7c3afc1a4b54a6d7cbadbcf037f70551",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/envelope_projection.rs": [
+      {
+        "sha256": "a619bde3a7181aa757938ee0cc3da7cfd9c1a579b8fbacf6f91f1c4b0f9a8144",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/envelope_projection_hydration_tests.rs": [
+      {
+        "sha256": "a336f4761aefb843984dddddee6f311749ad8eeef314d3f0582e6c42ac6744ba",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/envelope_projection_tests.rs": [
+      {
+        "sha256": "340e760df0c974747a839746aeb44ce8b12ef7ce93c7ed455f8d9a807e00b59c",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/execution.rs": [
+      {
+        "sha256": "754cfdddc552344cc44d0108a294d94eb14546b5060f88a7ce5051bb17f34495",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/execution/orders.rs": [
+      {
+        "sha256": "05a4e3fce6fea325b76ed04c5f57fdd44a4839feec2b1bd4089857d1c60ee7b3",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/execution/reconcile_plan.rs": [
+      {
+        "sha256": "5a5ac6e2f25b789addd26c9dda09f1e1c23d918c05c15f9dc82eb7c7a65f0361",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/execution/records.rs": [
+      {
+        "sha256": "2006786b472c23e7d904e560c489f4962cd7d4c974d2761b75fe5ed4149301f7",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/failure.rs": [
+      {
+        "sha256": "6f1f4fa1c3ba370a10a2442c005c27288734b64f8c5c64480208b0aab2b45adf",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/failure_tests.rs": [
+      {
+        "sha256": "bcc8dee1db70652464be9be323d596b65f0bb62252102ab251e740c1ff1ea6f0",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/hash.rs": [
+      {
+        "sha256": "d171f00dc61d0e847c59daf647c42d2fafb8dbc43995fe0b0e11c1c70658da13",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/hash_contract_tests.rs": [
+      {
+        "sha256": "7528667d4c45dc04872597f4d42a63f6a4c02db5fdde2582d06e05398e1d79f5",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/institutional_behavior.rs": [
+      {
+        "sha256": "8a7d64484bd128421af125d91129276ca42a7a37be79b1b6e58518d0640a8649",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      },
+      {
+        "sha256": "8a7d64484bd128421af125d91129276ca42a7a37be79b1b6e58518d0640a8649",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/session/observation_clock.rs": [
+      {
+        "sha256": "2e13f5fc3d3867d9d2decfcad24e8bbeb66b2a53a25902c7d462e4bfb3d7d835",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/persistence.rs": [
+      {
+        "sha256": "41754f6014a909ce9ae1666869291d0a5c00c7c5bd145c462016d27f40f40da9",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/persistence/v2.rs": [
+      {
+        "sha256": "328aae85f4a346fa596418ddca7b3b190ed20516828b4f9304c2ccc3143684e3",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/persistence/v2_tests.rs": [
+      {
+        "sha256": "2f84d83557af16f2c00036cc904d1b556efe39c2f5261d8ed1dde23951393032",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_chain_candidates.rs": [
+      {
+        "sha256": "7eff20608f6b3642144a6e82cf1718f50a78982f8228dac2788fe6365e4fa48b",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_chain_candidates/adaptive.rs": [
+      {
+        "sha256": "6fae566e176b623f579cb67e16afbc4fe80c3b3837bf8e3c3849e2587081855f",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs": [
+      {
+        "sha256": "df46f999ff142773a4ba686044b214a175c678172121200ed10032bfdac0b945",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_chain_candidates/source_tests.rs": [
+      {
+        "sha256": "35d60f4a9652f29c27eccd25334039fb0fab32de5f2df4fc018d00231c7f7a76",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_chain_candidates_tests.rs": [
+      {
+        "sha256": "d6d7d1cf3a94f41df946b2b750d0115f3543f13958e7c375f2ffb39264455c9b",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution.rs": [
+      {
+        "sha256": "ef9b48ed9411336cf6f0cc6b36b652ead1c046cb7129e677448d1fca0a5ce730",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/actions.rs": [
+      {
+        "sha256": "2f1c4dfd125e0328e1bf36ca7a0e03400ce13dad257388966e411cf7f60e803a",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/continuation_tests.rs": [
+      {
+        "sha256": "1ad42f3b714dda7e2546eb71af3167e163fc39a90259d9cf0ca84f08c8f80276",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/interpreter.rs": [
+      {
+        "sha256": "96c30829b8045aa27802f86378ed2702d3d23545d140e7e946f2be9760949a0f",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/interpreter/resume.rs": [
+      {
+        "sha256": "aee716bc1de76975f8e2340a7eacb7fe395b7474119625074e073b3a07425871",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/routing.rs": [
+      {
+        "sha256": "71bec4082b73092b487b5a43a2e0fcb4bc4da6514eeff05cf8bf93abb7f1fbdb",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/plan_execution/synchronization.rs": [
+      {
+        "sha256": "a39772c8e471429de75d068c0d96c4e9e89f632ef67a998fc1c0a54fb1abf8dc",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/player_candidates.rs": [
+      {
+        "sha256": "2807798b1657b758aaad803f2ca1354e4a5ec9e2994c1f1745c5765cb3d4eb40",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/player_candidates_tests.rs": [
+      {
+        "sha256": "75b468da671ae87e28d3d0b1201923b2f453a406dd6b56e61ea5eff3524398d6",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/protocol/civil/mod.rs": [
+      {
+        "sha256": "b475e6436fa19198cb8c03b8344731d3300361a51dd1400794db94db0f885ab1",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/protocol/civil/publication_tests.rs": [
+      {
+        "sha256": "3c598384bec9a99f491a75fb23994dde582fd2bc5c4eb4f1b2c7e34b31b219b3",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/protocol/civil/session.rs": [
+      {
+        "sha256": "abf6bacb61b218c147bd8f5de9855ae1b0363a98bffe8865eac4187ea749491a",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/protocol/delta.rs": [
+      {
+        "sha256": "22f002390487087585f718c0d51fc06296f8d83b3b46eabeb9ec565e468b316f",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/protocol/player_orders.rs": [
+      {
+        "sha256": "94d5df333af9835c0bc93da00c6f02b3bedc415f2368944feb7ca3664932b497",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/reconciliation_plan_phase_tests.rs": [
+      {
+        "sha256": "b9c4c5276424f929dd31f4f69a9f95eddfc260406a4160cad289983ac389e777",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/reconciliation_plan_tests.rs": [
+      {
+        "sha256": "90ffff1823e22367cefada259dddcbd3566935888f5a1f693fc3932680852cd9",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/self_views.rs": [
+      {
+        "sha256": "9f73e4973fbf8e8b3fd8f4cd3e6a8b4f01e2da616a1f07a4901f4d2609eb2e7a",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/snapshot.rs": [
+      {
+        "sha256": "b14b7b6b614561f5942d5ec793a18e0077f8b2c510c02bac5fbd1d565a05d17e",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/session/views.rs": [
+      {
+        "sha256": "f4df3b745f6aa229a8b84c930a5266725c39d0a148e8c88d02168473534a58e0",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/strategy/beliefs.rs": [
+      {
+        "sha256": "e43b10b3bf3b56fc983e6739a3142b277fb573af42ba6e963b661bf2b4a5f5d4",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/strategy/retail.rs": [
+      {
+        "sha256": "c9cfb56ca5a80afd5d1b84c733593d22d2cd8682624bc4a5f63cf8f3cf290e66",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/strategy/zi_noise.rs": [
+      {
+        "sha256": "b56bfa63fdd714345ae67e836cb2e45bd1bc2ad71eeae03b25b1f6e623861db1",
+        "source": "agents/oop-refactor-implementation/session/source-manifest.json"
+      }
+    ],
+    "packages/engine/src/account.rs": [
+      {
+        "sha256": "a4f183102d68e28885b2ddddbf465f2b9f3253558226c6784e984924802e8ae3",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/indicators.rs": [
+      {
+        "sha256": "2df29d2f0cca57aeb0c8c846ad1f7cbe9f1422e5b0cb0bf4c5dad700b59e7305",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "2df29d2f0cca57aeb0c8c846ad1f7cbe9f1422e5b0cb0bf4c5dad700b59e7305",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook.rs": [
+      {
+        "sha256": "065f211533ee51595c35f10a31655733073be1622f142408be8d630366cd52f9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "065f211533ee51595c35f10a31655733073be1622f142408be8d630366cd52f9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook/book_state.rs": [
+      {
+        "sha256": "160e896ec0b10d3c27fc647fbc1157470b70119ebdf91f427baf73df2afd5a77",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "160e896ec0b10d3c27fc647fbc1157470b70119ebdf91f427baf73df2afd5a77",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook/state_contract_tests.rs": [
+      {
+        "sha256": "5131bafb1af4bf8fe7b4f1212ce00e0ea046695610a278543bb5535bd3470a9e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "5131bafb1af4bf8fe7b4f1212ce00e0ea046695610a278543bb5535bd3470a9e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/config.rs": [
+      {
+        "sha256": "09f16f4d5675f33325a228e586d428f3ec4958e74db9bd8176c0cb7ede450aad",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "09f16f4d5675f33325a228e586d428f3ec4958e74db9bd8176c0cb7ede450aad",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/mod.rs": [
+      {
+        "sha256": "ffa6307a60577c308e77361dc01d6afffcd68af3a04266e259115a93253bd50d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "ffa6307a60577c308e77361dc01d6afffcd68af3a04266e259115a93253bd50d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "ffa6307a60577c308e77361dc01d6afffcd68af3a04266e259115a93253bd50d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "ffa6307a60577c308e77361dc01d6afffcd68af3a04266e259115a93253bd50d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/config.rs": [
+      {
+        "sha256": "d30d14a440a2c470fc2aa2b0a3af6aa451de315aa0254a64116867f88eb2012a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/mod.rs": [
+      {
+        "sha256": "9c78d06a0f6cd4406804605bae31e18f2b81d27fe08924b49e50f08c2aa08f79",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "9c78d06a0f6cd4406804605bae31e18f2b81d27fe08924b49e50f08c2aa08f79",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/config.rs": [
+      {
+        "sha256": "c2a411919cd14f78b3006df9c9a688f159a6182b2e2d184a0bf45d6e8263a7e3",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/mod.rs": [
+      {
+        "sha256": "c2759084795f74036f6c1b9bb688e999dbea0c69e1996956d02630f47eeaf6a7",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "c2759084795f74036f6c1b9bb688e999dbea0c69e1996956d02630f47eeaf6a7",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "c2759084795f74036f6c1b9bb688e999dbea0c69e1996956d02630f47eeaf6a7",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/consolidated_window.rs": [
+      {
+        "sha256": "68c92af612106930dd07e2ce15eeba17ad81ee01669f06bb4c2709aae0132d2f",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "68c92af612106930dd07e2ce15eeba17ad81ee01669f06bb4c2709aae0132d2f",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/window.rs": [
+      {
+        "sha256": "4213b053b7d9081892121431b21c8496a8c8fa860bf15cd1a4358285f3d55098",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/mod.rs": [
+      {
+        "sha256": "104b19ba32f2562a65958d2b8c5a3c7b1e593a233ccf4ef51b1dadc499d0e92e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/tax.rs": [
+      {
+        "sha256": "baaa3eb811c27ca35a78023771ea1cecf0c5cb13d57a96aa8741819c0c113a7b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/expenses.rs": [
+      {
+        "sha256": "a3e1aed8a4a59f2eddc9bdc6b3051afe1cf1269f973e93ba3db94e6d3d284c6f",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "a3e1aed8a4a59f2eddc9bdc6b3051afe1cf1269f973e93ba3db94e6d3d284c6f",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/purchasing.rs": [
+      {
+        "sha256": "5da6c4cccb784d9ba26c38272c11340106cc59780a66237f0133c822491701a9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/sales.rs": [
+      {
+        "sha256": "24ee743e113618d62e9f6ff62afa2d0b77e3d77aa09ddb55600d862a32c51b01",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/tests/industrial_accounting/tax_gold.rs": [
+      {
+        "sha256": "e5def8c28b29d5d25785d92e0f58b0e643f0919969888184e16169ec4b18323d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience.rs": [
+      {
+        "sha256": "3dcf703c42bde1a4d4bbd2a2049e433084e491d9db49bb9a9b6142dc03fd8bd2",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/feedback.rs": [
+      {
+        "sha256": "904ebf72f91cc0b728044a93e8fb0e139e0bb966f6595008031f62a575035935",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/feedback/lifecycle.rs": [
+      {
+        "sha256": "138128c9758f15b943c93b5e1b1977d6ca97c9041adb57595da72bfcf6fcbcfd",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/position_transition.rs": [
+      {
+        "sha256": "4ea4f7fe1b955c306a7809e0da501ab8fa4eb3ad2c4e2ab10153b19825c8baa1",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/closing/mod.rs": [
+      {
+        "sha256": "cbef8f9363d485909decfbeaabd50ca41784347ae7f6c83692b8976992859bdb",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/closing/save.rs": [
+      {
+        "sha256": "5c29bd62dc8efbc68f1831ed573825365d15731a4ee05c1f1a25c3983be3e9dd",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/fixed_assets.rs": [
+      {
+        "sha256": "f26c9cffefdd54e7e9d1aba1308b4affc80ab909bb680b8858d9d224b8eeff1b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/inventory.rs": [
+      {
+        "sha256": "ab6f387d25fff4e4f08471ee55ba68b36ab5b3ba20f37fa26be02ec1131740ad",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/consolidation/eliminate.rs": [
+      {
+        "sha256": "5ea1c1bea31d8c2d2103d98a270ba18b7288d7f32aad182d5750c0455c9948a9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/consolidation/mod.rs": [
+      {
+        "sha256": "7df0f99eefc8f0b46df18f03fa553a3d9757f930506557e890625086723db44d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/consolidation/sale.rs": [
+      {
+        "sha256": "61818a89559649263560da19f146b195c158edd5287b5e52b7f593141cb75d63",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/consolidation/worksheet.rs": [
+      {
+        "sha256": "74989486aef7bf5a765bc7b853ff590638c7ecec8a86650adab282b2e77a5ec5",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/balance_sheet.rs": [
+      {
+        "sha256": "469c184215923db7e5915fbe16aa95a3206b11f19c20ebf8bfdc05e5d8c751f9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/income.rs": [
+      {
+        "sha256": "d65999d234c4dcc0c605ada74433487ef2a12768406ee4c1803903c4716881ea",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/mod.rs": [
+      {
+        "sha256": "fa15e3bcafe7737568c39240a9465477c740c446b975bf4132db83cd99d4a0bf",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/accounting/reports/notes.rs": [
+      {
+        "sha256": "076da9ee56a672bf01a71153b415467373dff8074d835546e85f1b4c5b3757b2",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/deposits.rs": [
+      {
+        "sha256": "815f7b3331bce467772fe9a3b40d796ad850cb2dfe3cbce3887e2977eaea39bd",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/interest.rs": [
+      {
+        "sha256": "43addf8f097424a186a71cef8dfa2fe14a29fa9d8ca34f8e894ef0317dfead3d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "43addf8f097424a186a71cef8dfa2fe14a29fa9d8ca34f8e894ef0317dfead3d",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/ecl.rs": [
+      {
+        "sha256": "24d4a70aed59e0e5b6f7778f0fe15036d9674048459437358cb843e1deede394",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/error.rs": [
+      {
+        "sha256": "af4c59dd2fbde4fbf1f9ca3bdb34946bde106dbcd2117feb8369e3b1e0201af6",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/lending.rs": [
+      {
+        "sha256": "eb0a6bc0f180499f8c72133de0b459250be811488c539d6cd48e85b1758b95c4",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/loans.rs": [
+      {
+        "sha256": "33f3337bad79e3e4c0c5fcebece5b7da02a038b15edc123f883bd87a0d13ec1b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/bank/writeoff.rs": [
+      {
+        "sha256": "a0ea1de9188f62f43010732191fd6c82b812ef2808a51744ef0fa3164a4a0d81",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/config.rs": [
+      {
+        "sha256": "0d6a435940f2293d5965796ac653694d435d4a77fa73e378271fa375dff5fcb6",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/mod.rs": [
+      {
+        "sha256": "d771b7f38fb2b8f13d24772c740f62430c33849fb467abfcbc967b6d40ac5ca5",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "d771b7f38fb2b8f13d24772c740f62430c33849fb467abfcbc967b6d40ac5ca5",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "d771b7f38fb2b8f13d24772c740f62430c33849fb467abfcbc967b6d40ac5ca5",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/interest.rs": [
+      {
+        "sha256": "1eff08bbbfb7658036ac4f4b9ff1793b23f68008b5d05dea72e42f0897b20db8",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/loans.rs": [
+      {
+        "sha256": "540513c622ead925b9104e45f7ba6930f7789a29877e5e3ea3fc726508679fda",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/industrial/repayment.rs": [
+      {
+        "sha256": "02c5ab803b5655cd01cda0f495229727e18d8ecab69769dff72f69b84c28373b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/behavior_tests.rs": [
+      {
+        "sha256": "a6f81e12cda38b502efb1502dbc5c012ecf8c770a06bd26020d4960111032c01",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/claims.rs": [
+      {
+        "sha256": "c6d4c89b6d91ab488e2c3d493144eadc750c73a1cc3f41729b2c397f851eef99",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/groups.rs": [
+      {
+        "sha256": "dde8467e70664b439e66dbee4c8b8be9d2f7bf7a29afd11dfbb550f74c7d4e19",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/premium.rs": [
+      {
+        "sha256": "9b0b74c9784b5edbc36a5ceb6627569ba56fa288b958e3c53b681836a677c5c2",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/remeasure.rs": [
+      {
+        "sha256": "d5e817a9a1e1648500837cb73220777f6c28d5f7342986547231e403b5e33351",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/insurance/service_release.rs": [
+      {
+        "sha256": "87791ced250d599213feae331316ead55d76760c201127f895f8f173e114658a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/config.rs": [
+      {
+        "sha256": "4165473d10b4e8c31b88894f9f6eab0dff7564636c43c3a8f8f22616c1fe8cc2",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/core.rs": [
+      {
+        "sha256": "6ecd385334484d5de9dce920714db46f3ef2a73fcc2c36950bc3de982871c7e9",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/day.rs": [
+      {
+        "sha256": "90da4e8b13b4151d0fb36267a0e188000ef8457a83628717d99b69052cfb5f9a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "90da4e8b13b4151d0fb36267a0e188000ef8457a83628717d99b69052cfb5f9a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/dispatch.rs": [
+      {
+        "sha256": "9f15ec362a306a7ad6e877ed34ac32b0ee38b9a9f4f990f15a3b1a11f9eead3a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "9f15ec362a306a7ad6e877ed34ac32b0ee38b9a9f4f990f15a3b1a11f9eead3a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/industrial.rs": [
+      {
+        "sha256": "7982c7b2384d42ac45667a7cbc18f398ed77b5139212a9e27068d20f32e0c068",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/insurance.rs": [
+      {
+        "sha256": "9951b477f3c8a2db817b1a2a76f661b6bf9dec20cc4a2191c852c89bcec99922",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/real_estate.rs": [
+      {
+        "sha256": "8a158a06f826e69950524471b23839203e91e210d6825a8d51d0ffc6f0698dba",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/operations/injections.rs": [
+      {
+        "sha256": "de365fcc5e50f1258f9acc13e9d51390530f1eb2dd4199a798c48e90229aa2fa",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/borrowing_costs.rs": [
+      {
+        "sha256": "ed36caa86d3cb38a59f015adf579a84402716290b30200d52bd2eb973aa9424a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "ed36caa86d3cb38a59f015adf579a84402716290b30200d52bd2eb973aa9424a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "ed36caa86d3cb38a59f015adf579a84402716290b30200d52bd2eb973aa9424a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/debt_service.rs": [
+      {
+        "sha256": "26c44853040e93ba0496139eee77e3fc6e90b3599426c4e73b7bfea2ae1a6a4a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "26c44853040e93ba0496139eee77e3fc6e90b3599426c4e73b7bfea2ae1a6a4a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/development.rs": [
+      {
+        "sha256": "481b507f5657b030fb9e581609ae0c77bcdc0ca0e923b0cbe6e1cb01c9793903",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "481b507f5657b030fb9e581609ae0c77bcdc0ca0e923b0cbe6e1cb01c9793903",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/delivery.rs": [
+      {
+        "sha256": "6b4480b06d54823d27e51eff1240e65b1b0faafa1be07f9e6c9684b07d2c4d2c",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "6b4480b06d54823d27e51eff1240e65b1b0faafa1be07f9e6c9684b07d2c4d2c",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/land.rs": [
+      {
+        "sha256": "03d381d523d62b82ecb0113b0c77782d62ba9ed039c9156eed69dba9f95c0afd",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/projects.rs": [
+      {
+        "sha256": "982f7a4d9a7ad203368237fe77301e28ab4ccb147e0225abef22286ac6006fed",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/loans.rs": [
+      {
+        "sha256": "a110422296ccbe76594f0848721c608c10887513190c5439aa990e826a4cde9a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/company/real_estate/presales.rs": [
+      {
+        "sha256": "f095b6b3ee1f9f3f0119d29114e6dc33c596e3e9687c6d1fd01b2657bde46e14",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/behavior/decision.rs": [
+      {
+        "sha256": "7f7b8712a6255d72fdfcc6d23bd5872e3981fb1f2d0b807371782be4d9272c67",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/behavior/heuristics.rs": [
+      {
+        "sha256": "dc40fdd7f787fa63c0d3863b49e216820c8880bde1cdbfea6545373f7578b742",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/behavior/mod.rs": [
+      {
+        "sha256": "3ab36b115949f950f7748b6e590dfc6e705e3daa28a8ecdda06f72fb06b340e3",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/diagnostics.rs": [
+      {
+        "sha256": "198cda3f590efe19039e654dc20bc5f4a2e6661ada4463d43f505406d1eaf124",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "198cda3f590efe19039e654dc20bc5f4a2e6661ada4463d43f505406d1eaf124",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/diagnostics/causal.rs": [
+      {
+        "sha256": "02ecc41e89395271b1bec3976fda2208f51368bd698cbfb5486838c90b61597b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "02ecc41e89395271b1bec3976fda2208f51368bd698cbfb5486838c90b61597b",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/diagnostics/causal/aggregate.rs": [
+      {
+        "sha256": "51ed48325c76650a70cd7a5e67f87169a218ef618c3293460e2f4e564b387788",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/diagnostics/causal/microstructure.rs": [
+      {
+        "sha256": "9f42ebb516634f1b484732618a0edc8e5f60d877c5d618841c9824fa02f4ccfe",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/diagnostics/causal/report.rs": [
+      {
+        "sha256": "015521d90fe0a14a4fe0cb614a6b4298c4183f1a293c4c07bc74501a3021821e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/price_memory.rs": [
+      {
+        "sha256": "1846bd1160e07390d4d06d1181c137b2fdcad5dbad79a6fc7b203790617767e0",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "1846bd1160e07390d4d06d1181c137b2fdcad5dbad79a6fc7b203790617767e0",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/retention.rs": [
+      {
+        "sha256": "d8caa2a4fe891bcf38fa749d082f4b5cabb7986f6ebd9a2d3e8caa1a2c307d2c",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/experience/watchlist.rs": [
+      {
+        "sha256": "45499ac5e83f017f7ce5565c82d483864b47404a5ce522db81b5fcdee937f8e8",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook/filled_orders.rs": [
+      {
+        "sha256": "b981ad53b2a81f351d7fadeeb11a0910c542058acb20f25d5dfa4ab267a1809e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "b981ad53b2a81f351d7fadeeb11a0910c542058acb20f25d5dfa4ab267a1809e",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook/resting_index.rs": [
+      {
+        "sha256": "907fa9277d6b4d62dbf9ab88ac15024f442cc2d3ec4c86ce6c78a81e2ee312cf",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      },
+      {
+        "sha256": "907fa9277d6b4d62dbf9ab88ac15024f442cc2d3ec4c86ce6c78a81e2ee312cf",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/orderbook/persistent_index.rs": [
+      {
+        "sha256": "e958a4e88c57d25be13196128ce51693163ae4187c4c43e468a37a27f4eeed96",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/verification_evidence/phase_timing.rs": [
+      {
+        "sha256": "77591e0791ec04eed5665db400d3e922c9f32f59ef53d67ccb534997286d7c52",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/verification_evidence/phase_timing_tests.rs": [
+      {
+        "sha256": "856331f70fd9209da49ec6dcddf7ae737200ef2b8aef087b28579f4a9902ac8a",
+        "source": "agents/oop-refactor-implementation/domain/completion-ledger.json"
+      }
+    ],
+    "packages/engine/src/session/pipeline/auction_refactor_tests.rs": [
+      {
+        "sha256": "a7b268ab50c16f13cf35bc8825eff96e8e3d6aa2abc9a968804f7471460f90e3",
+        "source": "agents/oop-refactor-implementation/pipeline/implementation-ledger.json"
+      }
+    ],
+    "packages/engine/examples/production_entry_performance.rs": [
+      {
+        "sha256": "003bf62d67b6ccff1ead8e528ca943afb5048f2d14529c8e9e69eab932370a85",
+        "source": "agents/oop-refactor-implementation/hosts/review-production-entry-caller.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/company/bank/behavior_tests.rs": [
+      {
+        "sha256": "cb1ef9f23b21b4300069c4f1ab036adf41d0b68651d9a36ebeff6d5502365a19",
+        "source": "agents/oop-refactor-implementation/domain/bank-review.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/company/industrial/ownership_tests.rs": [
+      {
+        "sha256": "5373b8d6ff0c10c52f074fc67f8713d77f8bc7188173e8b8365e9d26ad2e03ad",
+        "source": "agents/oop-refactor-implementation/domain/industrial-review.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/company/real_estate/ownership_tests.rs": [
+      {
+        "sha256": "6fede901143cbf4f97b1a13d56d58680677be8bd5dcc8088dce8aff5cc65fc03",
+        "source": "agents/oop-refactor-implementation/domain/real-estate-review.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/experience/feedback/lifecycle/institutional_transition_tests.rs": [
+      {
+        "sha256": "d944b95a942d7adcf33d618590f92b8ee9b14427c9c8f1137cb616d97fa3cb5e",
+        "source": "agents/oop-refactor-implementation/domain/experience-review.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/adaptive_plan_chain.rs": [
+      {
+        "sha256": "9904016208096d0c20a3565fc13ee06937e946d67d6d8a02064f1a3e7add5826",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs": [
+      {
+        "sha256": "8632c86c50676203c91151700f956127d0dc346db081b867c8a5ffa28ce5835e",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/auction_day_end.rs": [
+      {
+        "sha256": "306eb1faec499f99a1fab984eb2058951c17f3eb344cc8a3bcc44f1652fe7d21",
+        "source": "agents/oop-refactor-implementation/domain/diagnostics-review.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs": [
+      {
+        "sha256": "4e46884d6b2bf8eb6dad91886c518a1719afe4ec1e70b494033afe4b91828a58",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/continuous_matching.rs": [
+      {
+        "sha256": "7d833ea793bca35078a1c38c5f88746285f90701aa5c312b233e70aa215bab89",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/continuous_matching_tests.rs": [
+      {
+        "sha256": "df52a6920761ab758bb725a94b05ae40e20ed4028aa689bd9a33f261ebe6763b",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs": [
+      {
+        "sha256": "96829d0a386463e276abcd5938d3d3ac0df99176ff9cdd554c27ee45762ed19e",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs": [
+      {
+        "sha256": "a5028f9f38e784ee7ed604c07c3fe15d601c401b9c91dccb8abc9c9a73e2572e",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/decision_resources.rs": [
+      {
+        "sha256": "f738eeb1ab65de56770faa97dae9a0669b829dfc6b8dc26c652499c6afe232da",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/decision_resources_tests.rs": [
+      {
+        "sha256": "90e15b1e9a308f6fedfd7263136bf7e805c2020e1d0512a09a34354db39d30ef",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs": [
+      {
+        "sha256": "8007ec010def75a3c71d20f93b648bf481684121ffbeb881c40f8016f29c28b4",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs": [
+      {
+        "sha256": "6f0fe31143372eb7741d1ed6ae75550eb23ea127910a92fc9ee03e505f7fce8c",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/initial_candidate_round_tests.rs": [
+      {
+        "sha256": "da6fb7835858000f792287dd0ffb284a5062e89df0946b4903112a1bf69817cc",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/mod.rs": [
+      {
+        "sha256": "c72782c4bf4b4699922311da8038467fd0a4b531c9051106fd3b1b3493243d97",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs": [
+      {
+        "sha256": "0753be5b857ab86a06c65101f3f5e4073b84de8f0da3bb9ad0d824f7d0178e89",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/quote_expiry.rs": [
+      {
+        "sha256": "8ccf1e5a49b369f4864cedc0bdff8d3917682b84662ad7fe0e0e5bb18cf5fe78",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs": [
+      {
+        "sha256": "370de23def02457d49bff6cfd0fd7b3d9d57c1d6ac732b8b6499324a059c807f",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/quote_expiry_tests.rs": [
+      {
+        "sha256": "68dcef530d65dbcf3879ce5b25db19b7953664cb448a686aff6a4b6fb0c97a62",
+        "source": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ],
+    "packages/engine/src/session/pipeline/session_execution_transaction_tests.rs": [
+      {
+        "sha256": "06b675be990c1e0e2eb5661a942022d769f5ba03264618122077b94f7a597d84",
+        "source": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+        "meaning": "当前文件digest出现在具名review报告中；需配合其明确scope承接"
+      }
+    ]
+  }
+}

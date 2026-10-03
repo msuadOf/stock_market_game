@@ -33,6 +33,67 @@ pub struct FixedAssetEntry {
 }
 
 impl FixedAssetEntry {
+    fn preview_depreciation(
+        &self,
+        code: &FixedAssetCode,
+    ) -> Result<AccountingAmount, FixedAssetError> {
+        if self.remaining_months() <= 0 {
+            return Err(FixedAssetError::FullyDepreciated { code: code.clone() });
+        }
+        let base = self
+            .depreciable_base_remaining()
+            .map_err(FixedAssetError::Accounting)?;
+        let cents = rhe_div(base.cents(), i128::from(self.remaining_months()))
+            .map_err(FixedAssetError::Accounting)?;
+        Ok(AccountingAmount::from_cents(cents))
+    }
+
+    fn apply_depreciation(
+        &mut self,
+        code: &FixedAssetCode,
+    ) -> Result<AccountingAmount, FixedAssetError> {
+        let depreciation = self.preview_depreciation(code)?;
+        self.accumulated_depreciation = self
+            .accumulated_depreciation
+            .add(depreciation)
+            .map_err(FixedAssetError::Accounting)?;
+        self.depreciated_months += 1;
+        Ok(depreciation)
+    }
+
+    fn validate_impairment(
+        &self,
+        code: &FixedAssetCode,
+        amount: AccountingAmount,
+    ) -> Result<(), FixedAssetError> {
+        let floor = self
+            .carrying_amount()
+            .map_err(FixedAssetError::Accounting)?
+            .sub(self.salvage_value)
+            .map_err(FixedAssetError::Accounting)?;
+        if amount > floor {
+            return Err(FixedAssetError::ImpairmentBeyondFloor {
+                code: code.clone(),
+                requested: amount,
+                floor,
+            });
+        }
+        Ok(())
+    }
+
+    fn apply_impairment(
+        &mut self,
+        code: &FixedAssetCode,
+        amount: AccountingAmount,
+    ) -> Result<(), FixedAssetError> {
+        self.validate_impairment(code, amount)?;
+        self.accumulated_impairment = self
+            .accumulated_impairment
+            .add(amount)
+            .map_err(FixedAssetError::Accounting)?;
+        Ok(())
+    }
+
     /// 账面价值 = 成本 − 累计折旧 − 累计减值（checked）。
     pub fn carrying_amount(&self) -> Result<AccountingAmount, AccountingError> {
         self.cost
@@ -134,15 +195,7 @@ impl FixedAssetRegister {
         code: &FixedAssetCode,
     ) -> Result<AccountingAmount, FixedAssetError> {
         let entry = self.entry(code)?;
-        if entry.remaining_months() <= 0 {
-            return Err(FixedAssetError::FullyDepreciated { code: code.clone() });
-        }
-        let base = entry
-            .depreciable_base_remaining()
-            .map_err(FixedAssetError::Accounting)?;
-        let cents = rhe_div(base.cents(), i128::from(entry.remaining_months()))
-            .map_err(FixedAssetError::Accounting)?;
-        Ok(AccountingAmount::from_cents(cents))
+        entry.preview_depreciation(code)
     }
 
     /// 计提一月折旧（预览同一公式，推进状态；守恒由结构保证）。
@@ -150,17 +203,10 @@ impl FixedAssetRegister {
         &mut self,
         code: &FixedAssetCode,
     ) -> Result<AccountingAmount, FixedAssetError> {
-        let depreciation = self.preview_depreciation(code)?;
-        let entry = self
-            .assets
+        self.assets
             .get_mut(code)
-            .expect("preview_depreciation validated existence");
-        entry.accumulated_depreciation = entry
-            .accumulated_depreciation
-            .add(depreciation)
-            .map_err(FixedAssetError::Accounting)?;
-        entry.depreciated_months += 1;
-        Ok(depreciation)
+            .ok_or_else(|| FixedAssetError::UnknownAsset { code: code.clone() })?
+            .apply_depreciation(code)
     }
 
     /// 减值前纯校验：正金额且不超过（账面 − 残值）——残值是折旧/减值的共同下限。
@@ -173,19 +219,7 @@ impl FixedAssetRegister {
             return Err(policy_invalid("impairment amount must be positive"));
         }
         let entry = self.entry(code)?;
-        let floor = entry
-            .carrying_amount()
-            .map_err(FixedAssetError::Accounting)?
-            .sub(entry.salvage_value)
-            .map_err(FixedAssetError::Accounting)?;
-        if amount > floor {
-            return Err(FixedAssetError::ImpairmentBeyondFloor {
-                code: code.clone(),
-                requested: amount,
-                floor,
-            });
-        }
-        Ok(())
+        entry.validate_impairment(code, amount)
     }
 
     /// 计提减值（验证后入账；剩余寿命内以新基础继续摊销）。
@@ -194,16 +228,13 @@ impl FixedAssetRegister {
         code: &FixedAssetCode,
         amount: AccountingAmount,
     ) -> Result<(), FixedAssetError> {
-        self.validate_impairment(code, amount)?;
-        let entry = self
-            .assets
+        if !amount.is_positive() {
+            return Err(policy_invalid("impairment amount must be positive"));
+        }
+        self.assets
             .get_mut(code)
-            .expect("validate_impairment validated existence");
-        entry.accumulated_impairment = entry
-            .accumulated_impairment
-            .add(amount)
-            .map_err(FixedAssetError::Accounting)?;
-        Ok(())
+            .ok_or_else(|| FixedAssetError::UnknownAsset { code: code.clone() })?
+            .apply_impairment(code, amount)
     }
 
     pub fn get(&self, code: &FixedAssetCode) -> Option<&FixedAssetEntry> {
@@ -246,4 +277,42 @@ pub enum FixedAssetError {
     },
     #[error(transparent)]
     Accounting(#[from] AccountingError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn impairment_keeps_life_and_salvage_floor() {
+        let mut register = FixedAssetRegister::default();
+        let code = FixedAssetCode("asset".into());
+        register
+            .register(
+                code.clone(),
+                AccountingAmount::from_cents(11),
+                AccountingAmount::from_cents(2),
+                2,
+            )
+            .unwrap();
+        register
+            .apply_impairment(&code, AccountingAmount::from_cents(4))
+            .unwrap();
+        assert_eq!(register.get(&code).unwrap().remaining_months(), 2);
+        assert_eq!(register.apply_depreciation(&code).unwrap().cents(), 2);
+        assert_eq!(register.apply_depreciation(&code).unwrap().cents(), 3);
+        assert_eq!(
+            register
+                .get(&code)
+                .unwrap()
+                .carrying_amount()
+                .unwrap()
+                .cents(),
+            2
+        );
+        assert!(matches!(
+            register.validate_impairment(&FixedAssetCode("missing".into()), AccountingAmount::ZERO),
+            Err(FixedAssetError::AssetPolicyInvalid { .. })
+        ));
+    }
 }

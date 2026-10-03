@@ -143,172 +143,172 @@ pub(crate) struct Scenario {
     pub announcement_instant: CivilInstant,
 }
 
-/// 组装场景（确定性：同 seed 同公司 ⇒ 同偏移 ⇒ 同公布时点/id 序列）。
-pub(crate) fn scenario() -> Scenario {
-    let company = CompanyId(COMPANY.to_string());
-    let member = MemberId(COMPANY.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
-    let annual_instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
-        .expect("annual 2030 schedule legal");
-    let correction_instant =
-        scheduled_instant(ScheduledReportKind::Q1, 2031, offset).expect("q1 2031 schedule legal");
+impl Scenario {
+    /// 组装场景（确定性：同 seed 同公司 ⇒ 同偏移 ⇒ 同公布时点/id 序列）。
+    pub(crate) fn new() -> Self {
+        let company = CompanyId(COMPANY.to_string());
+        let member = MemberId(COMPANY.to_string());
+        let offset = stable_company_offset(OPS_SEED, &company);
+        let annual_instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
+            .expect("annual 2030 schedule legal");
+        let correction_instant = scheduled_instant(ScheduledReportKind::Q1, 2031, offset)
+            .expect("q1 2031 schedule legal");
 
-    // 2029 开局 + 2030 全年经营流（publications/books_fixture 同款已证可年结）。
-    let mut books = Books::new(industrial_chart_v2());
-    books
-        .post_batch(vec![
-            entry(
-                1,
-                "2029-12-31",
-                BusinessKind::OpeningBalance,
-                CashFlowClass::Financing,
-                &[
-                    ("1002", PostingSide::Debit, 90_000),
-                    ("1601", PostingSide::Debit, 10_000),
-                    ("4001", PostingSide::Credit, 100_000),
-                ],
-            ),
-            cash_rev(2, "2030-01-15", 2_000),
-            two_line(
-                3,
-                "2030-02-10",
-                BusinessKind::CreditSale,
-                CashFlowClass::NonCash,
-                ("1122", 1_500),
-                ("6001", 1_500),
-            ),
-            two_line(
-                4,
-                "2030-02-20",
-                BusinessKind::ReceivableCollection,
-                CashFlowClass::Operating,
-                ("1002", 1_000),
-                ("1122", 1_000),
-            ),
-            two_line(
-                5,
-                "2030-03-15",
-                BusinessKind::Depreciation,
-                CashFlowClass::NonCash,
-                ("6602", 120),
-                ("1602", 120),
-            ),
-            cash_rev(6, "2030-11-05", 3_000),
-        ])
-        .expect("fixture entries must post");
+        // 2029 开局 + 2030 全年经营流（publications/books_fixture 同款已证可年结）。
+        let mut books = Books::new(industrial_chart_v2());
+        books
+            .post_batch(vec![
+                entry(
+                    1,
+                    "2029-12-31",
+                    BusinessKind::OpeningBalance,
+                    CashFlowClass::Financing,
+                    &[
+                        ("1002", PostingSide::Debit, 90_000),
+                        ("1601", PostingSide::Debit, 10_000),
+                        ("4001", PostingSide::Credit, 100_000),
+                    ],
+                ),
+                cash_rev(2, "2030-01-15", 2_000),
+                two_line(
+                    3,
+                    "2030-02-10",
+                    BusinessKind::CreditSale,
+                    CashFlowClass::NonCash,
+                    ("1122", 1_500),
+                    ("6001", 1_500),
+                ),
+                two_line(
+                    4,
+                    "2030-02-20",
+                    BusinessKind::ReceivableCollection,
+                    CashFlowClass::Operating,
+                    ("1002", 1_000),
+                    ("1122", 1_000),
+                ),
+                two_line(
+                    5,
+                    "2030-03-15",
+                    BusinessKind::Depreciation,
+                    CashFlowClass::NonCash,
+                    ("6602", 120),
+                    ("1602", 120),
+                ),
+                cash_rev(6, "2030-11-05", 3_000),
+            ])
+            .expect("fixture entries must post");
 
-    let mut closing = ClosingEngine::new();
-    let (_monthly, annual_v1) = closing
-        .close_year(&mut books, &member, IndustryPresentation::Industrial, 2030)
-        .expect("year close");
-    assert_eq!(annual_v1.sequence, 1);
+        let mut closing = ClosingEngine::new();
+        let (_monthly, annual_v1) = closing
+            .close_year(&mut books, &member, IndustryPresentation::Industrial, 2030)
+            .expect("year close");
+        assert_eq!(annual_v1.sequence, 1);
 
-    let approval = CivilInstant::from_hms(annual_instant.date(), 8, 0, 0).expect("approval");
-    let mut library = PublicLibrary::new();
-    let annual_v1_id = library
-        .publish_closed(
-            &closing,
-            PublicationRequest {
-                company: company.clone(),
-                scope: ScopeId::Standalone(member.clone()),
-                period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
-                kind: ReportKind::Annual,
-                sequence: 1,
-                policy: AccountingPolicyRef { chart_version: 2 },
-                approved_at: approval,
-                published_at: annual_instant,
-                origin: PublicationOrigin::ScheduledDisclosure {
-                    fiscal_year: 2030,
-                    kind: ScheduledReportKind::Annual,
-                    offset_days: offset,
+        let approval = CivilInstant::from_hms(annual_instant.date(), 8, 0, 0).expect("approval");
+        let mut library = PublicLibrary::new();
+        let annual_v1_id = library
+            .publish_closed(
+                &closing,
+                PublicationRequest {
+                    company: company.clone(),
+                    scope: ScopeId::Standalone(member.clone()),
+                    period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
+                    kind: ReportKind::Annual,
+                    sequence: 1,
+                    policy: AccountingPolicyRef { chart_version: 2 },
+                    approved_at: approval,
+                    published_at: annual_instant,
+                    origin: PublicationOrigin::ScheduledDisclosure {
+                        fiscal_year: 2030,
+                        kind: ScheduledReportKind::Annual,
+                        offset_days: offset,
+                    },
+                    supersedes: None,
                 },
-                supersedes: None,
-            },
-        )
-        .expect("annual v1 publishes");
+            )
+            .expect("annual v1 publishes");
 
-    // 临时公告：发生日 = 公布日（发生后的下一个 18:00 相位），条款只含已确认事实。
-    let announcement_date = d("2031-04-01");
-    let announcement_instant =
-        CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("announcement phase");
-    let announcement_id = library
-        .publish_announcement(AnnouncementRequest {
-            company: company.clone(),
-            occurred_on: announcement_date,
-            published_at: announcement_instant,
-            event: AnnouncedEvent {
-                kind: ShockKind::ContractWon,
-                amplitude_bp: 1_200,
-                starts_on: announcement_date,
-                expires_on: d("2031-04-10"),
-            },
-        })
-        .expect("announcement publishes");
+        // 临时公告：发生日 = 公布日（发生后的下一个 18:00 相位），条款只含已确认事实。
+        let announcement_date = d("2031-04-01");
+        let announcement_instant =
+            CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("announcement phase");
+        let announcement_id = library
+            .publish_announcement(AnnouncementRequest {
+                company: company.clone(),
+                occurred_on: announcement_date,
+                published_at: announcement_instant,
+                event: AnnouncedEvent {
+                    kind: ShockKind::ContractWon,
+                    amplitude_bp: 1_200,
+                    starts_on: announcement_date,
+                    expires_on: d("2031-04-10"),
+                },
+            })
+            .expect("announcement publishes");
 
-    Scenario {
-        company,
-        member,
-        books,
-        closing,
-        library,
-        annual_instant,
-        correction_instant,
-        annual_v1_id,
-        announcement_id,
-        announcement_instant,
+        Scenario {
+            company,
+            member,
+            books,
+            closing,
+            library,
+            annual_instant,
+            correction_instant,
+            annual_v1_id,
+            announcement_id,
+            announcement_instant,
+        }
     }
-}
 
-/// 未披露事实变更：向开放期间（2031-02）过账新分录——总账事实改变，但
-/// 不结账、不公布：公开库与一切个人状态都不受影响。
-pub(crate) fn post_undisclosed_fact(scenario: &mut Scenario) {
-    scenario
-        .books
-        .post_batch(vec![cash_rev(90, "2031-02-10", 800)])
-        .expect("undisclosed entry posts");
-}
+    /// 未披露事实变更：向开放期间（2031-02）过账新分录——总账事实改变，但
+    /// 不结账、不公布：公开库与一切个人状态都不受影响。
+    pub(crate) fn post_undisclosed_fact(&mut self) {
+        self.books
+            .post_batch(vec![cash_rev(90, "2031-02-10", 800)])
+            .expect("undisclosed entry posts");
+    }
 
-/// 公开更正 v2：先经结账登记簿重述（调整分录过账于开放期间 2031-01，
-/// 生成年报 v2 supersedes v1），再在更正后的下一个排期相位公开。
-pub(crate) fn publish_correction(scenario: &mut Scenario) -> PublicationId {
-    let corrected = scenario
-        .closing
-        .correct(
-            &mut scenario.books,
-            &scenario.member,
-            IndustryPresentation::Industrial,
-            (
-                AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
-                ReportKind::Annual,
-            ),
-            CorrectionRequest {
-                entries: vec![cash_rev(99, "2031-01-15", 300)],
-                reason: "遗漏现金收入更正".to_string(),
-            },
-        )
-        .expect("correction registers v2");
-    assert_eq!(corrected.sequence, 2);
+    /// 公开更正 v2：先经结账登记簿重述（调整分录过账于开放期间 2031-01，
+    /// 生成年报 v2 supersedes v1），再在更正后的下一个排期相位公开。
+    pub(crate) fn publish_correction(&mut self) -> PublicationId {
+        let corrected = self
+            .closing
+            .correct(
+                &mut self.books,
+                &self.member,
+                IndustryPresentation::Industrial,
+                (
+                    AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
+                    ReportKind::Annual,
+                ),
+                CorrectionRequest {
+                    entries: vec![cash_rev(99, "2031-01-15", 300)],
+                    reason: "遗漏现金收入更正".to_string(),
+                },
+            )
+            .expect("correction registers v2");
+        assert_eq!(corrected.sequence, 2);
 
-    let approval =
-        CivilInstant::from_hms(scenario.correction_instant.date(), 8, 0, 0).expect("approval");
-    scenario
-        .library
-        .publish_closed(
-            &scenario.closing,
-            PublicationRequest {
-                company: scenario.company.clone(),
-                scope: ScopeId::Standalone(scenario.member.clone()),
-                period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
-                kind: ReportKind::Annual,
-                sequence: 2,
-                policy: AccountingPolicyRef { chart_version: 2 },
-                approved_at: approval,
-                published_at: scenario.correction_instant,
-                origin: PublicationOrigin::Correction,
-                supersedes: Some(scenario.annual_v1_id),
-            },
-        )
-        .expect("correction publishes as v2")
+        let approval =
+            CivilInstant::from_hms(self.correction_instant.date(), 8, 0, 0).expect("approval");
+        self.library
+            .publish_closed(
+                &self.closing,
+                PublicationRequest {
+                    company: self.company.clone(),
+                    scope: ScopeId::Standalone(self.member.clone()),
+                    period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
+                    kind: ReportKind::Annual,
+                    sequence: 2,
+                    policy: AccountingPolicyRef { chart_version: 2 },
+                    approved_at: approval,
+                    published_at: self.correction_instant,
+                    origin: PublicationOrigin::Correction,
+                    supersedes: Some(self.annual_v1_id),
+                },
+            )
+            .expect("correction publishes as v2")
+    }
 }
 
 /// 18:00 相位后一小时（合法获知时点：≥ published_at 且同日）。

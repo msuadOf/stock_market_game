@@ -11,9 +11,9 @@ fn empty_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
     setup.npcs.hot_count = 0;
     setup.closing_auction_ticks = closing_auction_ticks;
     let mut session = GameSession::new(setup, 42).unwrap();
-    session.tick = tick;
+    session.state.tick = tick;
     if tick > 0 {
-        session.pending_npc = Some(crate::session::PendingNpcBatch {
+        session.state.pending_npc = Some(crate::session::PendingNpcBatch {
             dependencies: Vec::new(),
             observed_tick: tick,
             observed_accounts: Vec::new(),
@@ -31,8 +31,8 @@ fn reachable_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
     session
         .step()
         .expect("opening completion must establish the day's candle state");
-    session.tick = tick;
-    session.pending_npc = Some(crate::session::PendingNpcBatch {
+    session.state.tick = tick;
+    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
         dependencies: Vec::new(),
         observed_tick: tick,
         observed_accounts: Vec::new(),
@@ -126,11 +126,16 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
     let second = AccountId(2);
     let player = AccountId(0);
     for account in [first, second] {
-        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(1_000_000);
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(1_000_000));
     }
-    session.pending_npc = Some(crate::session::PendingNpcBatch {
+    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
         dependencies: Vec::new(),
-        observed_tick: session.tick,
+        observed_tick: session.state.tick,
         observed_accounts: vec![first, second],
         intents: [first, second]
             .into_iter()
@@ -190,19 +195,22 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         [OrderId(1), OrderId(2), OrderId(3)].into_iter().collect()
     );
     assert_eq!(
-        session.markets[&code].bid_depth(),
+        session.state.markets[&code].bid_depth(),
         vec![(Money::from_cents(900), 500)]
     );
-    assert_eq!(session.markets[&code].resting_orders_for(first)[0].qty, 200);
     assert_eq!(
-        session.markets[&code].resting_orders_for(second)[0].qty,
+        session.state.markets[&code].resting_orders_for(first)[0].qty,
         200
     );
     assert_eq!(
-        session.markets[&code].resting_orders_for(player)[0].qty,
+        session.state.markets[&code].resting_orders_for(second)[0].qty,
+        200
+    );
+    assert_eq!(
+        session.state.markets[&code].resting_orders_for(player)[0].qty,
         100
     );
-    assert!(session.pending_player.is_empty());
+    assert!(session.state.pending_player.is_empty());
 }
 
 #[test]
@@ -215,6 +223,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         .unwrap();
         let account = AccountId(1);
         session
+            .state
             .accounts
             .get_mut(&account)
             .unwrap()
@@ -227,7 +236,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         );
 
         session.step().unwrap();
-        let queued = session.pending_npc.as_ref().unwrap();
+        let queued = session.state.pending_npc.as_ref().unwrap();
         assert_eq!(queued.observed_tick, session.tick());
         let [(
             owner,
@@ -246,19 +255,24 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         // ADR-0022 sizes Highest buys against the daily upper limit including fees.
         // The test concerns next-tick admission, not the strategy's chosen position size.
         let required_cash = crate::session::buy_order_reservation(
-            &session.setup.config,
-            session.markets[code].up_stop().unwrap(),
+            &session.state.setup.config,
+            session.state.markets[code].up_stop().unwrap(),
             *qty,
             Money::ZERO,
         )
         .unwrap();
-        assert!(session.accounts[&account].cash >= required_cash);
+        assert!(session.state.accounts[&account].cash() >= required_cash);
         let expected_qty = *qty;
-        session.accounts.get_mut(&account).unwrap().cash = if has_exact_cash {
-            required_cash
-        } else {
-            required_cash.sub(Money::from_cents(1)).unwrap()
-        };
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_set_cash(if has_exact_cash {
+                required_cash
+            } else {
+                required_cash.sub(Money::from_cents(1)).unwrap()
+            });
         let events = session.step().unwrap();
         if has_exact_cash {
             assert!(events.iter().any(|event| matches!(
@@ -342,8 +356,8 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         session.step().unwrap();
     }
     assert_eq!(session.phase(), TradingPhase::PreOpen);
-    let code = session.markets.keys().next().unwrap().clone();
-    session.retail_experience.insert(
+    let code = session.state.markets.keys().next().unwrap().clone();
+    session.state.retail_experience.insert(
         AccountId(0),
         crate::experience::RetailExperienceState::without_equity_reference(),
     );
@@ -436,7 +450,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             _ => None,
         })
         .expect("continuous public step must publish the accepted resting order");
-    assert_eq!(session.markets[&code].resting_order_count(), 1);
+    assert_eq!(session.state.markets[&code].resting_order_count(), 1);
 
     session
         .enqueue_player_intent(
@@ -458,14 +472,14 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             ..
         } if canceled_code == &code && *id == order_id
     )));
-    assert_eq!(session.markets[&code].resting_order_count(), 0);
+    assert_eq!(session.state.markets[&code].resting_order_count(), 0);
 }
 
 #[test]
 fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
     let mut session = empty_session_at(900, 10);
-    let code = session.markets.keys().next().unwrap().clone();
-    session.retail_experience.insert(
+    let code = session.state.markets.keys().next().unwrap().clone();
+    session.state.retail_experience.insert(
         AccountId(0),
         crate::experience::RetailExperienceState::without_equity_reference(),
     );
@@ -503,5 +517,5 @@ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
                 reason: RejectionReason::InvalidQuantity,
             } if rejected_code == &code
         )));
-    assert_eq!(session.markets[&code].resting_order_count(), 0);
+    assert_eq!(session.state.markets[&code].resting_order_count(), 0);
 }

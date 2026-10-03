@@ -8,9 +8,14 @@ fn decision_resources_fixture(
     let code = crate::StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
     if side == crate::Side::Sell {
-        game.accounts
+        game.state
+            .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
@@ -28,7 +33,7 @@ fn decision_resources_fixture(
         &mut events,
     );
     if expires {
-        game.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
+        game.state.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
     }
     (game, account, code)
 }
@@ -37,9 +42,18 @@ fn decision_resources_fixture(
 fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
     let (mut game, account, _code) = decision_resources_fixture(crate::Side::Buy, true);
     let reservation = game.project_live_envelopes().unwrap()[0].live().cash;
-    game.accounts.get_mut(&account).unwrap().cash = reservation;
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(reservation);
     let (mut before_expiry, _, _) = decision_resources_fixture(crate::Side::Buy, false);
-    before_expiry.accounts.get_mut(&account).unwrap().cash = reservation;
+    before_expiry
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(reservation);
     let before_reservation = before_expiry.project_live_envelopes().unwrap()[0]
         .live()
         .cash;
@@ -79,13 +93,13 @@ fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservatio
             .unwrap(),
         reservation.add(reservation).unwrap()
     );
-    assert_eq!(game.accounts[&account].cash, reservation);
+    assert_eq!(game.state.accounts[&account].cash(), reservation);
 }
 
 #[test]
 fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position() {
     let (game, account, code) = decision_resources_fixture(crate::Side::Sell, true);
-    let sellable_before = game.accounts[&account].sellable_qty(&code);
+    let sellable_before = game.state.accounts[&account].sellable_qty(&code);
     let reserved = game.project_live_envelopes().unwrap()[0].live().shares;
     let before_expiry = decision_resources_fixture(crate::Side::Sell, false).0;
     let before_plan = plan_tick(PhaseInput {
@@ -117,7 +131,10 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
             .unwrap(),
         sellable_before.checked_add(reserved).unwrap()
     );
-    assert_eq!(game.accounts[&account].sellable_qty(&code), sellable_before);
+    assert_eq!(
+        game.state.accounts[&account].sellable_qty(&code),
+        sellable_before
+    );
 }
 
 #[test]
@@ -130,7 +147,7 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
             .unwrap()
             .available_cash(buy_account)
             .unwrap()
-            < buy_game.accounts[&buy_account].cash
+            < buy_game.state.accounts[&buy_account].cash()
     );
     assert_eq!(
         buy_plan
@@ -152,7 +169,7 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
             .unwrap()
             .available_cash(sell_account)
             .unwrap(),
-        sell_game.accounts[&sell_account].cash
+        sell_game.state.accounts[&sell_account].cash()
     );
     assert_eq!(
         sell_plan
@@ -177,10 +194,12 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
 #[test]
 fn decision_resources_sell_reservation_uses_account_book_key() {
     let (mut game, account, code) = decision_resources_fixture(crate::Side::Sell, false);
-    let original = game.accounts.get(&account).unwrap().clone();
-    let mut mismatched = original;
-    mismatched.id = crate::AccountId(99);
-    game.accounts.insert(account, mismatched);
+    let original = game.state.accounts.get(&account).unwrap().clone();
+    let mut mismatched =
+        crate::Account::new(crate::AccountId(99), original.kind(), original.cash());
+    mismatched.fixture_set_positions(original.positions().clone());
+    mismatched.fixture_set_strategy(original.strategy().cloned());
+    game.state.accounts.insert(account, mismatched);
 
     let resources = DecisionResourceSnapshot::seal(&game).unwrap();
 
@@ -194,14 +213,19 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
     let player = crate::AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
-    game.accounts.get_mut(&seller).unwrap().strategy = None;
-    game.accounts
+    game.state
+        .accounts
+        .get_mut(&seller)
+        .unwrap()
+        .fixture_set_strategy(None);
+    game.state
+        .accounts
         .get_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
         .unwrap();
-    let seller_cash = game.accounts[&seller].cash;
-    let player_cash = game.accounts[&player].cash;
+    let seller_cash = game.state.accounts[&seller].cash();
+    let player_cash = game.state.accounts[&player].cash();
     let mut events = Vec::new();
     game.seed_order_for_test(
         seller,
@@ -224,11 +248,12 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
         &mut events,
     );
     let baseline = plan_tick(PhaseInput { session: &game }).unwrap();
-    game.pending_plan_events
-        .push(crate::session::plan_execution::PendingPlanEvent::DayEnded {
+    game.state.pending_plan_events.push(
+        crate::session::plan_execution::PendingPlanEvent::DayEnded {
             plan_id: crate::PlanId(1),
             trading_day: 0,
-        });
+        },
+    );
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let allocation = plan.decision_resources().unwrap();
@@ -236,7 +261,7 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
     assert_eq!(allocation.available_sell_qty(seller, &code).unwrap(), 0);
     assert!(allocation.available_cash(player).unwrap() < player_cash);
-    assert_eq!(game.pending_plan_events.len(), 1);
+    assert_eq!(game.state.pending_plan_events.len(), 1);
     assert_eq!(
         allocation.available_cash(player).unwrap(),
         baseline
@@ -257,20 +282,33 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         42,
     )
     .unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
-    game.accounts
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(held.clone(), 200, crate::Money::from_cents(1_000))
         .unwrap();
-    game.accounts
+    {
+        let account = game.state.accounts.get_mut(&account).unwrap();
+        let mut position = account.position(&held).unwrap().clone();
+        position = crate::account::Position::from_restored_parts(
+            position.qty(),
+            100,
+            position.invested_cents(),
+            position.recovered_cents(),
+        );
+        account.fixture_insert_position(held.clone(), position);
+    }
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
-        .positions
-        .get_mut(&held)
-        .unwrap()
-        .t1_locked = 100;
-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(500_000);
+        .fixture_set_cash(crate::Money::from_cents(500_000));
 
     let mut events = Vec::new();
     game.seed_order_for_test(
@@ -293,11 +331,12 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         },
         &mut events,
     );
-    game.markets
+    game.state
+        .markets
         .get_mut(&held)
         .unwrap()
-        .set_last_price(crate::Money::from_cents(1_250));
-    let raw_cash = game.accounts[&account].cash;
+        .fixture_set_last_price(crate::Money::from_cents(1_250));
+    let raw_cash = game.state.accounts[&account].cash();
     let expected_equity = raw_cash
         .add(crate::Money::from_cents(1_250).mul_shares(200).unwrap())
         .unwrap();
@@ -359,16 +398,22 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
-    game.accounts
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 2, crate::Money::from_cents(1))
         .unwrap();
-    game.markets
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
-        .set_last_price(crate::Money::from_cents(i64::MAX));
+        .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let before = game.business_state_hash().unwrap();
 
     let error = match plan_tick(PhaseInput { session: &game }) {
@@ -386,7 +431,7 @@ fn account_resources_are_identical_with_one_or_four_workers() {
     setup.npcs.inst_count = 0;
     setup.npcs.retail_count = 3;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     for (index, account) in [
         crate::AccountId(1),
         crate::AccountId(2),
@@ -395,7 +440,8 @@ fn account_resources_are_identical_with_one_or_four_workers() {
     .into_iter()
     .enumerate()
     {
-        game.accounts
+        game.state
+            .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(
@@ -421,7 +467,8 @@ fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_chang
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
@@ -430,18 +477,27 @@ fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_chang
     let cash = sealed.available_cash(account).unwrap();
     let equity = sealed.equity(account).unwrap();
 
-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
-        .positions
+        .fixture_set_cash(crate::Money::ZERO);
+    {
+        let account = game.state.accounts.get_mut(&account).unwrap();
+        let mut position = account.position(&code).unwrap().clone();
+        position = crate::account::Position::from_restored_parts(
+            0,
+            position.t1_locked(),
+            position.invested_cents(),
+            position.recovered_cents(),
+        );
+        account.fixture_insert_position(code.clone(), position);
+    }
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
-        .qty = 0;
-    game.markets
-        .get_mut(&code)
-        .unwrap()
-        .set_last_price(crate::Money::from_cents(2_000));
+        .fixture_set_last_price(crate::Money::from_cents(2_000));
 
     assert_eq!(sealed.available_cash(account).unwrap(), cash);
     assert_eq!(sealed.equity(account).unwrap(), equity);
@@ -453,10 +509,11 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.setup.stocks[0].code.clone();
+    let code = game.state.setup.stocks[0].code.clone();
     let seller = crate::AccountId(1);
     let buyer = crate::AccountId(2);
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
@@ -483,14 +540,22 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
         &mut events,
     );
     assert_eq!(game.project_live_envelopes().unwrap().len(), 2);
-    game.accounts
-        .get_mut(&seller)
+    {
+        let account = game.state.accounts.get_mut(&seller).unwrap();
+        let mut position = account.position(&code).unwrap().clone();
+        position = crate::account::Position::from_restored_parts(
+            0,
+            position.t1_locked(),
+            position.invested_cents(),
+            position.recovered_cents(),
+        );
+        account.fixture_insert_position(code.clone(), position);
+    }
+    game.state
+        .accounts
+        .get_mut(&buyer)
         .unwrap()
-        .positions
-        .get_mut(&code)
-        .unwrap()
-        .qty = 0;
-    game.accounts.get_mut(&buyer).unwrap().cash = crate::Money::ZERO;
+        .fixture_set_cash(crate::Money::ZERO);
     let run = |threads| {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -516,20 +581,23 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
     let npc = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 2, crate::Money::from_cents(1))
         .unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&npc)
         .unwrap()
         .grant_position(code.clone(), 1, crate::Money::from_cents(1))
         .unwrap();
-    game.markets
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
-        .set_last_price(crate::Money::from_cents(i64::MAX));
+        .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let run = |threads, session: &GameSession| {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -549,13 +617,17 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         ));
     }
 
-    game.accounts
-        .get_mut(&player)
-        .unwrap()
-        .positions
-        .get_mut(&code)
-        .unwrap()
-        .qty = 0;
+    {
+        let account = game.state.accounts.get_mut(&player).unwrap();
+        let mut position = account.position(&code).unwrap().clone();
+        position = crate::account::Position::from_restored_parts(
+            0,
+            position.t1_locked(),
+            position.invested_cents(),
+            position.recovered_cents(),
+        );
+        account.fixture_insert_position(code.clone(), position);
+    }
     let second = run(4, &game);
     assert!(matches!(
         &second,

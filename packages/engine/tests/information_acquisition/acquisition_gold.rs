@@ -3,10 +3,7 @@
 //! 核心验收（无前视）：改变**未披露事实**、或**已披露但本人未读**的内容，
 //! 不改变未观察 NPC 的观察前判断输入——以观察上下文内容的字节投影断言。
 
-use crate::fixture::{
-    hour_after, npc_a, npc_b, post_undisclosed_fact, publish_correction, scenario, FixtureMarket,
-    COMPANY,
-};
+use crate::fixture::{hour_after, npc_a, npc_b, FixtureMarket, Scenario, COMPANY};
 use engine::company::CompanyId;
 use engine::information::{
     AcquisitionError, AcquisitionOutcome, NpcInformationState, NpcObservationContext, PublicLibrary,
@@ -66,7 +63,7 @@ pub(crate) fn judgment_projection(ctx: &NpcObservationContext<'_, FixtureMarket>
 /// 已披露但本人未读的内容（更正 v2 公开），乙的观察前判断输入字节不变。
 #[test]
 fn unread_publication_never_enters_unread_npc_inputs() {
-    let mut sc = scenario();
+    let mut sc = Scenario::new();
     let (a, b) = (npc_a(), npc_b());
     let mut state_a = NpcInformationState::new(a);
     let mut state_b = NpcInformationState::new(b);
@@ -102,7 +99,7 @@ fn unread_publication_never_enters_unread_npc_inputs() {
     let baseline = judgment_projection(&ctx_b);
 
     // —— 未披露事实变更：开放期间新分录（总账变了、未公开）——
-    post_undisclosed_fact(&mut sc);
+    sc.post_undisclosed_fact();
     assert_eq!(
         judgment_projection(&build_ctx(b, &state_b, &sc.library, &market)),
         baseline,
@@ -110,7 +107,7 @@ fn unread_publication_never_enters_unread_npc_inputs() {
     );
 
     // —— 已披露但本人未读：更正 v2 公开，乙仍未阅读 ——
-    let v2_id = publish_correction(&mut sc);
+    let v2_id = sc.publish_correction();
     assert_eq!(
         judgment_projection(&build_ctx(b, &state_b, &sc.library, &market)),
         baseline,
@@ -155,7 +152,7 @@ fn unread_publication_never_enters_unread_npc_inputs() {
 /// 金样 2：重复阅读——一次获知只记一次（幂等，保留首次时点，状态字节不变）。
 #[test]
 fn repeat_acquisition_is_recorded_once() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let t1 = hour_after(sc.annual_instant);
@@ -200,7 +197,7 @@ fn repeat_acquisition_is_recorded_once() {
 /// 金样 6：存档往返——获知登记 serde 字节往返一致；恢复态可继续构造上下文。
 #[test]
 fn state_serde_round_trip_preserves_acquisitions() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let t1 = hour_after(sc.annual_instant);

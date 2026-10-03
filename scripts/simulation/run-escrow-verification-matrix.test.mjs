@@ -336,4 +336,53 @@ describe("escrow verification matrix runner", () => {
     assert.equal(duplicate.failure.code, "SOURCE_HASH_DRIFT");
     assert.equal(duplicateCalls, 0);
   });
+  it("does not reuse partial evidence when publication fails after the final child", async () => {
+    const { config } = await fixture();
+    const fake = fakeHarness();
+    const summary = await runEscrowVerificationMatrix(config, { runChild: async (invocation) => {
+      const result = await fake.runChild(invocation);
+      if (invocation.entry.mode === "negative-control") {
+        await writeFile(path.join(config.outputRoot, "determinism.sha256"), "occupied publication path");
+      }
+      return result;
+    } });
+    assert.equal(fake.calls.length, 17);
+    assert.equal(summary.status, "FAIL");
+    assert.equal(summary.failure.code, "RUNNER_INTERNAL");
+    assert.equal(summary.entries.length, 17);
+    assert.equal(JSON.parse(await readFile(path.join(config.outputRoot, "summary.json"), "utf8")).status, "FAIL");
+    const duplicate = await runEscrowVerificationMatrix(config, { runChild: async () => {
+      assert.fail("partial publication must never start another child");
+    } });
+    assert.equal(duplicate.status, "FAIL");
+    assert.equal(duplicate.failure.code, "OUTPUT_NOT_FRESH");
+  });
+
+  it("rejects a forged negative-control witness even when its capture receipts are recomputed", async () => {
+    const { config } = await fixture();
+    const original = await runEscrowVerificationMatrix(config, { runChild: fakeHarness().runChild });
+    assert.equal(original.status, "PASS");
+    const entry = original.entries.find((value) => value.configuration.mode === "negative-control");
+    const output = path.join(config.outputRoot, entry.output);
+    const capturePath = path.join(output, "capture.json");
+    const capture = JSON.parse(await readFile(capturePath, "utf8"));
+    capture.negative_control.enabled_merge_same_step_passed = false;
+    const bytes = Buffer.from(JSON.stringify(capture));
+    const receipt = { sha256: sha256Hex(bytes), byte_length: String(bytes.length) };
+    await writeFile(capturePath, bytes);
+    await writeFile(path.join(output, "capture-receipt.json"), JSON.stringify({
+      schema: "escrow-capture-receipt-v1", file: "capture.json", ...receipt,
+    }));
+    entry.capture_receipt = receipt;
+    await writeFile(path.join(config.outputRoot, "summary.json"), JSON.stringify(original));
+    let children = 0;
+    const duplicate = await runEscrowVerificationMatrix(config, { runChild: async () => {
+      children += 1;
+      assert.fail("forged negative-control witness must not restart a child");
+    } });
+    assert.equal(children, 0);
+    assert.equal(duplicate.status, "FAIL");
+    assert.equal(duplicate.failure.code, "NEGATIVE_CONTROL_NOT_DETECTED");
+  });
+
 });

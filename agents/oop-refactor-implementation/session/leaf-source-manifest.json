@@ -1,0 +1,114 @@
+{
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "reviewer": "/root/implement_session/review_leaf",
+  "scope_manifest": "agents/oop-refactor-implementation/session/source-manifest.json",
+  "review": "agents/oop-refactor-implementation/session/leaf-review.md",
+  "diff_command": [
+    "git",
+    "diff",
+    "--binary",
+    "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+    "--",
+    "packages/engine/src/plans/candidates.rs",
+    "packages/engine/src/plans/mod.rs",
+    "packages/engine/src/plans/revision.rs",
+    "packages/engine/src/plans/state.rs",
+    "packages/engine/src/plans/validation.rs",
+    "packages/engine/src/session/company_assembly.rs",
+    "packages/engine/src/session/institutional_behavior.rs",
+    "packages/engine/src/session/persistence.rs",
+    "packages/engine/src/session/persistence/v2.rs",
+    "packages/engine/src/session/persistence/v2_tests.rs",
+    "packages/engine/src/session/snapshot.rs",
+    "packages/engine/src/strategy/beliefs.rs",
+    "packages/engine/src/strategy/retail.rs",
+    "packages/engine/src/strategy/zi_noise.rs"
+  ],
+  "diff_sha256": "ad938b9b0bf753c8a59a3b831ec8e02df773254c7980f5218f309e869ade2965",
+  "files": [
+    {
+      "file": "packages/engine/src/plans/candidates.rs",
+      "sha256": "11e36eb7bcc8535d256c45ec6fbdade674fa4d245810edd918c522fe624f2ac2",
+      "lines": 86,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/mod.rs",
+      "sha256": "b2ab5492ff8e2e74bec5c7dfb292f544ab950dc78a994b1f1fa0d070e7e6186b",
+      "lines": 642,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/revision.rs",
+      "sha256": "c55e1cd4b157777a17f8520c1d6619f83e9380144e5638a541fad821422ca23c",
+      "lines": 331,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/state.rs",
+      "sha256": "c601a22b188540e021c90e2ec03195fb048369f36526a556854fe2e938e9439c",
+      "lines": 404,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/validation.rs",
+      "sha256": "2930661212f736c26750c729553db7ccdeacd266320d73471e3dfbc8c8e02e69",
+      "lines": 277,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/company_assembly.rs",
+      "sha256": "843667970a1a890e5572aeff915015f18b1fd70aeca59180a069b4070fa2e47c",
+      "lines": 549,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/institutional_behavior.rs",
+      "sha256": "8a7d64484bd128421af125d91129276ca42a7a37be79b1b6e58518d0640a8649",
+      "lines": 462,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence.rs",
+      "sha256": "41754f6014a909ce9ae1666869291d0a5c00c7c5bd145c462016d27f40f40da9",
+      "lines": 2057,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence/v2.rs",
+      "sha256": "328aae85f4a346fa596418ddca7b3b190ed20516828b4f9304c2ccc3143684e3",
+      "lines": 788,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence/v2_tests.rs",
+      "sha256": "2f84d83557af16f2c00036cc904d1b556efe39c2f5261d8ed1dde23951393032",
+      "lines": 1375,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/snapshot.rs",
+      "sha256": "b14b7b6b614561f5942d5ec793a18e0077f8b2c510c02bac5fbd1d565a05d17e",
+      "lines": 383,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/beliefs.rs",
+      "sha256": "e43b10b3bf3b56fc983e6739a3142b277fb573af42ba6e963b661bf2b4a5f5d4",
+      "lines": 412,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/retail.rs",
+      "sha256": "c9cfb56ca5a80afd5d1b84c733593d22d2cd8682624bc4a5f63cf8f3cf290e66",
+      "lines": 421,
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/zi_noise.rs",
+      "sha256": "b56bfa63fdd714345ae67e836cb2e45bd1bc2ad71eeae03b25b1f6e623861db1",
+      "lines": 328,
+      "new_file": false
+    }
+  ]
+}

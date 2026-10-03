@@ -11,13 +11,15 @@ impl GameSession {
     ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
         let (mut continuous_stocks, mut auction_stocks) = rayon::join(
             || {
-                self.markets
+                self.state
+                    .markets
                     .par_iter()
                     .map(|(code, market)| (code.clone(), market.resting_orders_for_owners(owners)))
                     .collect::<Vec<_>>()
             },
             || {
-                self.auction_orders
+                self.state
+                    .auction_orders
                     .par_iter()
                     .map(|(code, orders)| {
                         (
@@ -60,7 +62,7 @@ impl GameSession {
     pub(super) fn working_orders_by_account(
         &self,
     ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
-        let owners = self.accounts.keys().copied().collect();
+        let owners = self.state.accounts.keys().copied().collect();
         self.working_orders_for_accounts(&owners)
     }
 }
@@ -81,6 +83,7 @@ mod parallel_index_tests {
             for (owner, offset) in [(AccountId(0), 0_u64), (AccountId(1), 1_u64)] {
                 let seq = stock_index as u64 * 10 + offset;
                 session
+                    .state
                     .markets
                     .get_mut(&code)
                     .unwrap()
@@ -97,6 +100,7 @@ mod parallel_index_tests {
                     })
                     .unwrap();
                 session
+                    .state
                     .auction_orders
                     .entry(code.clone())
                     .or_default()

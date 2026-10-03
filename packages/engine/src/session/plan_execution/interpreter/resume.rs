@@ -14,14 +14,14 @@ impl GameSession {
                 event,
                 terminating,
             } => {
-                let plan_id = observed.plan_id;
+                let plan_id = observed.plan_id();
                 let disposition = match outcome {
                     PlanRouteOutcome::Canceled(id) if id == order_id => {
                         let current = plans.plan(plan_id)?;
-                        let changed = current.version != observed.version
-                            || current.filled_qty != observed.filled_qty
-                            || current.status != observed.status
-                            || current.active_child_order_id != observed.active_child_order_id;
+                        let changed = current.version() != observed.version()
+                            || current.filled_qty() != observed.filled_qty()
+                            || current.status() != observed.status()
+                            || current.active_child_order_id() != observed.active_child_order_id();
                         self.clear_canceled_plan_child(plans, plan_id, order_id)?;
                         if changed {
                             PlanExecutionDisposition::Waiting {
@@ -41,7 +41,7 @@ impl GameSession {
                     other => {
                         let failure = other.failure()?;
                         if !plans.plan(plan_id)?.is_terminal() {
-                            Self::observe_plan(plans, plan_id, u64::from(self.day));
+                            Self::observe_plan(plans, plan_id, u64::from(self.state.day));
                         }
                         failure
                     }
@@ -68,7 +68,7 @@ impl GameSession {
                 order_id,
             } => match outcome {
                 PlanRouteOutcome::Canceled(id) if id == order_id => {
-                    self.clear_canceled_plan_child(plans, plan.plan_id, order_id)?;
+                    self.clear_canceled_plan_child(plans, plan.plan_id(), order_id)?;
                     match self.refresh_canceled_child_plan(plans, &plan, child)? {
                         Ok((plan, child)) => self
                             .submit_plan_child(&plan, child)?
@@ -86,7 +86,7 @@ impl GameSession {
                 expected_order_id,
             } => match outcome {
                 PlanRouteOutcome::Canceled(order_id) if order_id == expected_order_id => {
-                    self.clear_canceled_plan_child(plans, plan.plan_id, order_id)?;
+                    self.clear_canceled_plan_child(plans, plan.plan_id(), order_id)?;
                     match self.refresh_canceled_child_plan(plans, &plan, child)? {
                         Ok((plan, child)) => self.submit_plan_child(&plan, child)?,
                         Err(progress) => progress,
@@ -106,7 +106,7 @@ impl GameSession {
                         }
                     }
                     other => {
-                        self.remove_empty_linked_parent(plan.plan_id);
+                        self.remove_empty_linked_parent(plan.plan_id());
                         other.failure()?
                     }
                 };
@@ -122,15 +122,15 @@ impl GameSession {
         child: NewChildSpec,
     ) -> Result<Result<(TradingPlan, NewChildSpec), PlanExecutionProgress>, PlanExecutionError>
     {
-        let current = plans.plan(observed.plan_id)?;
+        let current = plans.plan(observed.plan_id())?;
         let remaining =
             current
                 .remaining_share_qty()
                 .ok_or(PlanExecutionError::UnconvertedFractionTarget {
-                    plan_id: current.plan_id,
+                    plan_id: current.plan_id(),
                 })?;
-        if current.status != crate::plans::PlanStatus::Active
-            || current.version != observed.version
+        if current.status() != crate::plans::PlanStatus::Active
+            || current.version() != observed.version()
             || remaining != child.remaining
         {
             // A fill or revision during P4 invalidates the quote quantity and possibly its
@@ -151,12 +151,12 @@ impl GameSession {
         order_id: OrderId,
     ) -> Result<(), PlanExecutionError> {
         let current = plans.plan(plan_id)?;
-        if !current.is_terminal() && current.active_child_order_id == Some(order_id) {
+        if !current.is_terminal() && current.active_child_order_id() == Some(order_id) {
             plans.apply(
                 plan_id,
                 PlanEvent::ChildOrderCanceled {
                     order_id,
-                    trading_day: u64::from(self.day),
+                    trading_day: u64::from(self.state.day),
                 },
             )?;
         }

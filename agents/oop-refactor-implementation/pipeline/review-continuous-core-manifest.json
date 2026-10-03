@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "reviewer": "review_continuous_core",
+  "independent_of_implementation": true,
+  "review_date": "2026-10-03",
+  "baseline_commit": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "action_labels": [
+    "A05",
+    "N01",
+    "R2N01",
+    "N04",
+    "N06",
+    "N09",
+    "N10"
+  ],
+  "status": "ready",
+  "review_record": {
+    "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+    "link": "review-continuous-core.md",
+    "sha256": "cbfc6fc279e32c98a7a9703e6e7a4acfa242f931e25ea336ff9b1c9999bf9754"
+  },
+  "file_count": 17,
+  "combined_sha256": "ecc516acb97a2547c7f115075b444846d138d01d9470a542b0e783646dbe3546",
+  "combined_sha256_algorithm": "按路径排序，以路径 + NUL + 文件 SHA-256 + 换行连接，再计算 SHA-256。",
+  "drift_check": {
+    "checked_file_count": 17,
+    "drifted_files": [],
+    "result": "当前文件与独立复核已签内容一致；没有用未经复核的当前内容替换旧绑定。"
+  },
+  "complete_diff_review": {
+    "status": "独立复核完成",
+    "scope": "17 个指定文件的完整 baseline diff、生产源码及测试源码。",
+    "baseline_diff_sha256": "653143a7414211a5b9189fdf63b8a2562f0809f42f23e274931c92fa1f52512e",
+    "diff_command": [
+      "git",
+      "diff",
+      "--no-ext-diff",
+      "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+      "--",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+      "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs",
+      "packages/engine/src/session/pipeline/continuous_matching.rs",
+      "packages/engine/src/session/pipeline/continuous_matching_tests.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs",
+      "packages/engine/src/session/pipeline/decision_resources.rs",
+      "packages/engine/src/session/pipeline/decision_resources_tests.rs",
+      "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs",
+      "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs",
+      "packages/engine/src/session/pipeline/initial_candidate_round_tests.rs",
+      "packages/engine/src/session/pipeline/mod.rs",
+      "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs",
+      "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs",
+      "packages/engine/src/session/pipeline/quote_expiry_tests.rs"
+    ],
+    "evidence": {
+      "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "link": "review-continuous-core.md",
+      "sections": [
+        "结论",
+        "有效发现与复核关闭",
+        "大 A 语义和依据",
+        "必要性、范围和测试边界"
+      ]
+    }
+  },
+  "incremental_reviews": [
+    {
+      "id": "compile-02",
+      "status": "独立复核完成",
+      "files": [
+        "packages/engine/src/session/pipeline/decision_resources_tests.rs"
+      ],
+      "change": "四处 private Position 写口改用 from_restored_parts，只改变原目标 qty 或 t1_locked，保留其余数量及 invested/recovered facts；原断言保持。",
+      "evidence": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md",
+        "section": "有效发现与复核关闭"
+      }
+    },
+    {
+      "id": "compile-04",
+      "status": "独立复核完成",
+      "files": [
+        "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs"
+      ],
+      "change": "两处 literal 改为 from_restored_parts(50, 0, 0, 0) 与 (100, 0, 0, 0)；还原文本后与上次复核字节一致，其余 16 文件无变化。",
+      "evidence": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md",
+        "section": "编译 04 后 fixture 收口再次复核"
+      }
+    }
+  ],
+  "findings": [
+    {
+      "id": "continuous-core-01",
+      "status": "已修复并独立复核关闭",
+      "file": "packages/engine/src/session/pipeline/mod.rs",
+      "line": 252,
+      "description": "plan_tick closure 的两个已迁入 state 的 Vec 旧字段访问已改为 game.state 对应字段，清理位置和 P0/P1 顺序保持。",
+      "evidence": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md",
+        "section": "有效发现与复核关闭"
+      }
+    }
+  ],
+  "unresolved_findings": [],
+  "files": [
+    {
+      "path": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "sha256": "9904016208096d0c20a3565fc13ee06937e946d67d6d8a02064f1a3e7add5826",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+      "sha256": "8632c86c50676203c91151700f956127d0dc346db081b867c8a5ffa28ce5835e",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs",
+      "sha256": "4e46884d6b2bf8eb6dad91886c518a1719afe4ec1e70b494033afe4b91828a58",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching.rs",
+      "sha256": "7d833ea793bca35078a1c38c5f88746285f90701aa5c312b233e70aa215bab89",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching_tests.rs",
+      "sha256": "df52a6920761ab758bb725a94b05ae40e20ed4028aa689bd9a33f261ebe6763b",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "sha256": "96829d0a386463e276abcd5938d3d3ac0df99176ff9cdd554c27ee45762ed19e",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs",
+      "sha256": "a5028f9f38e784ee7ed604c07c3fe15d601c401b9c91dccb8abc9c9a73e2572e",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_resources.rs",
+      "sha256": "f738eeb1ab65de56770faa97dae9a0669b829dfc6b8dc26c652499c6afe232da",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_resources_tests.rs",
+      "sha256": "90e15b1e9a308f6fedfd7263136bf7e805c2020e1d0512a09a34354db39d30ef",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs",
+      "sha256": "8007ec010def75a3c71d20f93b648bf481684121ffbeb881c40f8016f29c28b4",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs",
+      "sha256": "6f0fe31143372eb7741d1ed6ae75550eb23ea127910a92fc9ee03e505f7fce8c",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/initial_candidate_round_tests.rs",
+      "sha256": "da6fb7835858000f792287dd0ffb284a5062e89df0946b4903112a1bf69817cc",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/mod.rs",
+      "sha256": "c72782c4bf4b4699922311da8038467fd0a4b531c9051106fd3b1b3493243d97",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs",
+      "sha256": "0753be5b857ab86a06c65101f3f5e4073b84de8f0da3bb9ad0d824f7d0178e89",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "sha256": "8ccf1e5a49b369f4864cedc0bdff8d3917682b84662ad7fe0e0e5bb18cf5fe78",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs",
+      "sha256": "370de23def02457d49bff6cfd0fd7b3d9d57c1d6ac732b8b6499324a059c807f",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry_tests.rs",
+      "sha256": "68dcef530d65dbcf3879ce5b25db19b7953664cb448a686aff6a4b6fb0c97a62",
+      "review_status": "独立复核完成",
+      "review_record": {
+        "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+        "link": "review-continuous-core.md"
+      }
+    }
+  ],
+  "validation_limits": {
+    "cargo_run_by_reviewer": false,
+    "tests_run_by_reviewer": false,
+    "source_or_test_edits_by_reviewer": false,
+    "statement": "仅证明指定内容的静态独立复核与无漂移，不将父任务验证冒称本复核者的编译或测试结果。"
+  }
+}

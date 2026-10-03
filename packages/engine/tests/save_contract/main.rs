@@ -112,24 +112,54 @@ fn run_full_day(session: &mut GameSession) {
         .expect("a fully completed trading day must settle");
 }
 
-/// 两天真实决策链活动后的会话与权威存档（获知/信念/计划/披露游标/经营演化
-/// 全部非平凡；保留会话引用供「拒绝不得动原会话」断言复用）。
-pub(crate) fn seasoned_session() -> GameSession {
-    let mut session = GameSession::new(contract_setup(), SEED).expect("fixture must be valid");
-    run_full_day(&mut session);
-    run_full_day(&mut session);
-    session
+/// 两日真实决策场景拥有配置与 seed；只缓存不可变 baseline JSON。
+struct SeasonedSaveFixture {
+    setup: SessionSetup,
+    seed: u64,
+    baseline_json: std::sync::OnceLock<serde_json::Value>,
 }
 
-/// 全套件共享的两天权威存档 JSON（构建一次；篡改测试一律 clone 再改）。
-pub(crate) fn seasoned_json() -> serde_json::Value {
-    static CACHE: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            serde_json::to_value(seasoned_session().save().expect("healthy save"))
-                .expect("save must serialize")
-        })
-        .clone()
+impl SeasonedSaveFixture {
+    fn new() -> Self {
+        Self {
+            setup: contract_setup(),
+            seed: SEED,
+            baseline_json: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// 每次鲜建会话并执行原两日经营与决策链，不从缓存存档恢复。
+    fn build_session(&self) -> GameSession {
+        let mut session =
+            GameSession::new(self.setup.clone(), self.seed).expect("fixture must be valid");
+        run_full_day(&mut session);
+        run_full_day(&mut session);
+        session
+    }
+
+    fn clone_save_value(&self) -> serde_json::Value {
+        self.baseline_json
+            .get_or_init(|| {
+                serde_json::to_value(self.build_session().save().expect("healthy save"))
+                    .expect("save must serialize")
+            })
+            .clone()
+    }
+}
+
+fn seasoned_fixture() -> &'static SeasonedSaveFixture {
+    static FIXTURE: std::sync::OnceLock<SeasonedSaveFixture> = std::sync::OnceLock::new();
+    FIXTURE.get_or_init(SeasonedSaveFixture::new)
+}
+
+#[test]
+fn cached_baseline_clones_do_not_share_tampering() {
+    let fixture = seasoned_fixture();
+    let baseline = fixture.clone_save_value();
+    let mut tampered = fixture.clone_save_value();
+    tampered["schema_version"] = serde_json::Value::from(0);
+    assert_ne!(tampered, baseline);
+    assert_eq!(fixture.clone_save_value(), baseline);
 }
 
 fn assert_restore_then_resave_is_byte_identical(session: &GameSession, boundary: &str) {
@@ -180,7 +210,7 @@ fn every_approved_quiet_point_restores_and_resaves_byte_identically() {
 
 #[test]
 fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
-    let session = seasoned_session();
+    let session = seasoned_fixture().build_session();
     let save = session.save().expect("healthy save");
 
     assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION_V2);
@@ -271,7 +301,10 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
 
 #[test]
 fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
-    let save = seasoned_session().save().expect("healthy save");
+    let save = seasoned_fixture()
+        .build_session()
+        .save()
+        .expect("healthy save");
 
     // 日历政策本体随档冻结（digest 字段在场；恢复路径重算复核）。
     let value = serde_json::to_value(&save).unwrap();

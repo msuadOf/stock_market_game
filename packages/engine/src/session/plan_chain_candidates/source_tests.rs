@@ -16,10 +16,11 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
     // placing the next one. This adapter fixture requires two simultaneously live
     // commands, so make its otherwise strategy-free account a player explicitly.
     session
+        .state
         .accounts
         .get_mut(&owner)
         .expect("fixture plan owner must exist")
-        .kind = AccountKind::Player;
+        .fixture_set_kind(AccountKind::Player);
     let mut setup_events = Vec::new();
     for price in [901, 902] {
         session.seed_order_for_test(
@@ -49,7 +50,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         "fixture must not replace either working order"
     );
     assert_eq!(
-        session.markets[&code].resting_orders_for(owner).len(),
+        session.state.markets[&code].resting_orders_for(owner).len(),
         2,
         "fixture orders must both remain live"
     );
@@ -60,12 +61,12 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
 fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
     let code = request.allocation.code.clone();
-    let mut plans = std::mem::take(&mut session.plans);
+    let mut plans = std::mem::take(&mut session.state.plans);
     let first_route = match session.prepare_plan_observation(&plans, request).unwrap() {
         PlanExecutionProgress::Route(route) => route,
         _ => panic!("fixture must yield a route continuation"),
     };
-    let next_order_id = session.next_order_id;
+    let next_order_id = session.state.next_order_id;
     let mut batch = PlanChainOperationBatch::empty();
 
     let before_first = candidate_observation(&session);
@@ -167,13 +168,13 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
         ])
         .unwrap()
     );
-    assert_eq!(session.next_order_id, next_order_id);
+    assert_eq!(session.state.next_order_id, next_order_id);
 }
 
 #[test]
 fn source_rejects_a_conflicting_cancel_outcome_for_the_wrong_order() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
-    let mut plans = std::mem::take(&mut session.plans);
+    let mut plans = std::mem::take(&mut session.state.plans);
     let route = match session
         .prepare_plan_observation(&plans, request)
         .expect("fixture must prepare a conflicting-order cancellation")

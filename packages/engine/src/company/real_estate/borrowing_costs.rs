@@ -16,10 +16,168 @@ use crate::calendar::CivilDate;
 use crate::company::contracts::{ContractId, ContractRole, DayCountBasis, OperatingContract};
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
 use crate::company::real_estate::loans::{
-    accrue_act_365f, apply_split, loan_account, InterestSplitItem, ProjectLoanState,
+    accrue_act_365f, loan_account, InterestSplitItem, ProjectLoanState,
 };
 use crate::company::real_estate::projects::ProjectId;
 use crate::company::real_estate::{chart, RealEstateBooks, RealEstateError};
+
+/// 一次计提调用的私有计划；只拥有 split、分录和提交后项目汇总，
+/// 不复制任何持久子账，也不承诺 post 后步骤原子。
+struct BorrowingCostAccrualPlan {
+    through: CivilDate,
+    base: u64,
+    items: Vec<InterestSplitItem>,
+    entries: Vec<JournalEntry>,
+    capital_by_project: BTreeMap<ProjectId, AccountingAmount>,
+}
+
+impl BorrowingCostAccrualPlan {
+    /// 按合同目录的既有顺序规划，零天数合同不产生 split。
+    fn plan_accrual(books: &RealEstateBooks, through: CivilDate) -> Result<Self, RealEstateError> {
+        let min_days = books.capitalization_policy().suspension_min_days;
+        let loans: Vec<(ContractId, ProjectLoanState)> = books
+            .loans_map()
+            .iter()
+            .map(|(id, state)| (id.clone(), state.clone()))
+            .collect();
+        let mut plan = Self {
+            through,
+            base: books.next_event_id,
+            items: Vec::new(),
+            entries: Vec::new(),
+            capital_by_project: BTreeMap::new(),
+        };
+        for (contract_id, state) in loans {
+            if through < state.last_accrual_date() {
+                return Err(RealEstateError::AccrualNotForward {
+                    contract: contract_id,
+                    through,
+                    last_accrual: state.last_accrual_date(),
+                });
+            }
+            let days = through.days_since(state.last_accrual_date());
+            if days == 0 {
+                continue;
+            }
+            let cap_days = match state.project() {
+                Some(project_id) => {
+                    let project = books.project(project_id).ok_or_else(|| {
+                        RealEstateError::UnknownProject {
+                            project: project_id.clone(),
+                        }
+                    })?;
+                    project.capitalizable_days(state.last_accrual_date(), through, min_days)?
+                }
+                None => 0,
+            };
+            let exp_days = days - cap_days;
+            let (capitalized_amount, carried_cap) = if cap_days > 0 {
+                accrue_act_365f(
+                    state.outstanding(),
+                    state.annual_rate_bp(),
+                    cap_days,
+                    state.carried_cap(),
+                )?
+            } else {
+                (AccountingAmount::ZERO, state.carried_cap())
+            };
+            let (expensed_amount, carried_exp) = if exp_days > 0 {
+                accrue_act_365f(
+                    state.outstanding(),
+                    state.annual_rate_bp(),
+                    exp_days,
+                    state.carried_exp(),
+                )?
+            } else {
+                (AccountingAmount::ZERO, state.carried_exp())
+            };
+            let item = InterestSplitItem {
+                contract: contract_id.clone(),
+                days,
+                capitalized_days: cap_days,
+                expensed_days: exp_days,
+                capitalized_amount,
+                expensed_amount,
+                carried_cap,
+                carried_exp,
+            };
+            plan.build_accrual_entries(&item);
+            plan.items.push(item);
+        }
+        Ok(plan)
+    }
+
+    /// 每笔先资本化、后费用化；零金额链保留 split 而不占事件槽。
+    fn build_accrual_entries(&mut self, item: &InterestSplitItem) {
+        if item.capitalized_amount.is_positive() {
+            self.entries.push(JournalEntry {
+                source: BusinessEventId::new(self.base + self.entries.len() as u64),
+                date: self.through,
+                kind: BusinessKind::BorrowingCostCapitalized,
+                cash_flow: CashFlowClass::NonCash,
+                lines: vec![
+                    super::line(
+                        chart::acct::DEV_INVENTORY,
+                        PostingSide::Debit,
+                        item.capitalized_amount,
+                    ),
+                    super::line(
+                        chart::acct::INT_PAYABLE,
+                        PostingSide::Credit,
+                        item.capitalized_amount,
+                    ),
+                ],
+            });
+        }
+        if item.expensed_amount.is_positive() {
+            self.entries.push(JournalEntry {
+                source: BusinessEventId::new(self.base + self.entries.len() as u64),
+                date: self.through,
+                kind: BusinessKind::InterestAccrual,
+                cash_flow: CashFlowClass::NonCash,
+                lines: vec![
+                    super::line(
+                        chart::acct::FIN_EXP,
+                        PostingSide::Debit,
+                        item.expensed_amount,
+                    ),
+                    super::line(
+                        chart::acct::INT_PAYABLE,
+                        PostingSide::Credit,
+                        item.expensed_amount,
+                    ),
+                ],
+            });
+        }
+    }
+
+    fn take_entries(&mut self) -> (u64, Vec<JournalEntry>) {
+        let next_event_id = self.base + self.entries.len() as u64;
+        (next_event_id, std::mem::take(&mut self.entries))
+    }
+
+    /// 保留 post → loan apply → checked project 汇总的顺序与失败面。
+    fn aggregate_capitalized_by_project(
+        &mut self,
+        loans: &BTreeMap<ContractId, ProjectLoanState>,
+    ) -> Result<(), RealEstateError> {
+        for item in &self.items {
+            if !item.capitalized_amount.is_positive() {
+                continue;
+            }
+            if let Some(state) = loans.get(&item.contract) {
+                if let Some(project_id) = state.project() {
+                    let total = self
+                        .capital_by_project
+                        .entry(project_id.clone())
+                        .or_insert(AccountingAmount::ZERO);
+                    *total = total.add(item.capitalized_amount)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 impl RealEstateBooks {
     /// 项目借款：校验（对手方已登记、合同条款 + id 唯一、指定项目存在、
@@ -121,131 +279,21 @@ impl RealEstateBooks {
         &mut self,
         through: CivilDate,
     ) -> Result<Vec<InterestSplitItem>, RealEstateError> {
-        let base = self.next_event_id;
-        let min_days = self.capitalization_policy().suspension_min_days;
-        let loans: Vec<(ContractId, ProjectLoanState)> = self
-            .loans_map()
-            .iter()
-            .map(|(id, state)| (id.clone(), state.clone()))
-            .collect();
-        let mut items = Vec::new();
-        let mut entries = Vec::new();
-        for (contract_id, state) in loans {
-            if through < state.last_accrual_date() {
-                return Err(RealEstateError::AccrualNotForward {
-                    contract: contract_id,
-                    through,
-                    last_accrual: state.last_accrual_date(),
-                });
-            }
-            let days = through.days_since(state.last_accrual_date());
-            if days == 0 {
-                continue;
-            }
-            let cap_days = match state.project() {
-                Some(project_id) => {
-                    let project = self.project(project_id).ok_or_else(|| {
-                        RealEstateError::UnknownProject {
-                            project: project_id.clone(),
-                        }
-                    })?;
-                    project.capitalizable_days(state.last_accrual_date(), through, min_days)?
-                }
-                None => 0,
-            };
-            let exp_days = days - cap_days;
-            let (capitalized_amount, carried_cap) = if cap_days > 0 {
-                accrue_act_365f(
-                    state.outstanding(),
-                    state.annual_rate_bp(),
-                    cap_days,
-                    state.carried_cap(),
-                )?
-            } else {
-                (AccountingAmount::ZERO, state.carried_cap())
-            };
-            let (expensed_amount, carried_exp) = if exp_days > 0 {
-                accrue_act_365f(
-                    state.outstanding(),
-                    state.annual_rate_bp(),
-                    exp_days,
-                    state.carried_exp(),
-                )?
-            } else {
-                (AccountingAmount::ZERO, state.carried_exp())
-            };
-            let item = InterestSplitItem {
-                contract: contract_id.clone(),
-                days,
-                capitalized_days: cap_days,
-                expensed_days: exp_days,
-                capitalized_amount,
-                expensed_amount,
-                carried_cap,
-                carried_exp,
-            };
-            if capitalized_amount.is_positive() {
-                entries.push(JournalEntry {
-                    source: BusinessEventId::new(base + entries.len() as u64),
-                    date: through,
-                    kind: BusinessKind::BorrowingCostCapitalized,
-                    cash_flow: CashFlowClass::NonCash,
-                    lines: vec![
-                        super::line(
-                            chart::acct::DEV_INVENTORY,
-                            PostingSide::Debit,
-                            capitalized_amount,
-                        ),
-                        super::line(
-                            chart::acct::INT_PAYABLE,
-                            PostingSide::Credit,
-                            capitalized_amount,
-                        ),
-                    ],
-                });
-            }
-            if expensed_amount.is_positive() {
-                entries.push(JournalEntry {
-                    source: BusinessEventId::new(base + entries.len() as u64),
-                    date: through,
-                    kind: BusinessKind::InterestAccrual,
-                    cash_flow: CashFlowClass::NonCash,
-                    lines: vec![
-                        super::line(chart::acct::FIN_EXP, PostingSide::Debit, expensed_amount),
-                        super::line(
-                            chart::acct::INT_PAYABLE,
-                            PostingSide::Credit,
-                            expensed_amount,
-                        ),
-                    ],
-                });
-            }
-            items.push(item);
-        }
-        self.post_with_commit(base + entries.len() as u64, entries)?;
-        for item in &items {
-            apply_split(self.loans_map_mut(), item, through)?;
-        }
-        let mut capital_by_project: BTreeMap<ProjectId, AccountingAmount> = BTreeMap::new();
-        for item in &items {
-            if !item.capitalized_amount.is_positive() {
-                continue;
-            }
-            if let Some(state) = self.loans_map().get(&item.contract) {
-                if let Some(project_id) = state.project() {
-                    let total = capital_by_project
-                        .entry(project_id.clone())
-                        .or_insert(AccountingAmount::ZERO);
-                    *total = total.add(item.capitalized_amount)?;
-                }
+        let mut plan = BorrowingCostAccrualPlan::plan_accrual(self, through)?;
+        let (next_event_id, entries) = plan.take_entries();
+        self.post_with_commit(next_event_id, entries)?;
+        for item in &plan.items {
+            if let Some(state) = self.loans_map_mut().get_mut(&item.contract) {
+                state.apply_split(item, through)?;
             }
         }
-        for (project_id, total) in capital_by_project {
+        plan.aggregate_capitalized_by_project(self.loans_map())?;
+        for (project_id, total) in plan.capital_by_project {
             self.projects_mut()
                 .get_mut(&project_id)
                 .expect("validated at borrow")
                 .add_capitalized_interest(total);
         }
-        Ok(items)
+        Ok(plan.items)
     }
 }

@@ -71,14 +71,7 @@ pub(super) fn assemble_companies(
         // 默认表命中条件 = 精确发行人匹配（代码 + 股本逐字相等）：股本不同的
         // setup 用表内开局数字会造成量纲错配（每股账面值失真数百倍），必须
         // 走通用推导。未命中 ⇒ 按总股本推导通用工商公司。
-        let figures = defaults
-            .iter()
-            .find(|config| {
-                config.spec.listed_stock.as_ref() == Some(&stock.code)
-                    && config.spec.issued_shares == stock.total_shares
-            })
-            .map(Figures::from_default_row)
-            .unwrap_or_else(|| Figures::from_total_shares(stock.total_shares));
+        let figures = OpeningFigures::for_stock(stock, &defaults);
         let listed = assemble_listed_company(stock, figures, as_of)?;
         registry_configs.push(listed.registry);
         operating_configs.push(listed.operating);
@@ -135,7 +128,7 @@ fn company_error(stage: &'static str) -> impl Fn(crate::company::CompanyError) -
 }
 
 /// 开局数字（元）：借 = 现金 + 应收 + 固定资产；贷 = 实收资本 + 短期借款。
-struct Figures {
+struct OpeningFigures {
     cash: i128,
     receivables: i128,
     fixed_assets: i128,
@@ -143,13 +136,25 @@ struct Figures {
     short_term_debt: i128,
 }
 
-impl Figures {
+impl OpeningFigures {
+    /// 精确命中默认发行人（代码 + 股本），其余开局事实由总股本推导。
+    fn for_stock(stock: &StockSpec, defaults: &[CompanyConfig]) -> Self {
+        defaults
+            .iter()
+            .find(|config| {
+                config.spec.listed_stock.as_ref() == Some(&stock.code)
+                    && config.spec.issued_shares == stock.total_shares
+            })
+            .map(Self::from_default_row)
+            .unwrap_or_else(|| Self::from_total_shares(stock.total_shares))
+    }
+
     /// 通用推导（游戏假设）：资本 = 面值 1 元 × 总股本；现金 30% + 固定资产
     /// 80% = 资本 + 短期借款 10%。各科目至少 1 元（极小股本取整归零会让开局
     /// 凭证出现非正行金额）。确定性纯算术，无随机。
     fn from_total_shares(total_shares: u64) -> Self {
         let capital = i128::from(total_shares).max(1);
-        Figures {
+        OpeningFigures {
             cash: (capital * 30 / 100).max(1),
             receivables: 0,
             fixed_assets: (capital * 80 / 100).max(1),
@@ -178,13 +183,53 @@ impl Figures {
                 _ => {}
             }
         }
-        Figures {
+        OpeningFigures {
             cash,
             receivables,
             fixed_assets,
             paid_in_capital,
             short_term_debt,
         }
+    }
+
+    /// 注册表域的 generic v1 投影；保留条件债务行与应收插入顺序。
+    fn registry_opening_lines(&self) -> Vec<OpeningLine> {
+        let mut lines = vec![
+            opening_line("1002", PostingSide::Debit, self.cash),
+            opening_line("1601", PostingSide::Debit, self.fixed_assets),
+            opening_line("4001", PostingSide::Credit, self.paid_in_capital),
+        ];
+        if self.receivables > 0 {
+            lines.insert(
+                1,
+                opening_line("1122", PostingSide::Debit, self.receivables),
+            );
+        }
+        if self.short_term_debt > 0 {
+            lines.push(opening_line(
+                "2001",
+                PostingSide::Credit,
+                self.short_term_debt,
+            ));
+        }
+        lines
+    }
+
+    /// 经营域的工业 v2 投影；债务行为无条件行，沿用开局账套守卫。
+    fn industrial_opening_lines(&self) -> Vec<JournalLine> {
+        let mut lines = vec![
+            journal_line("1002", PostingSide::Debit, self.cash),
+            journal_line("1601", PostingSide::Debit, self.fixed_assets),
+            journal_line("2001", PostingSide::Credit, self.short_term_debt),
+            journal_line("4001", PostingSide::Credit, self.paid_in_capital),
+        ];
+        if self.receivables > 0 {
+            lines.insert(
+                1,
+                journal_line("1122", PostingSide::Debit, self.receivables),
+            );
+        }
+        lines
     }
 }
 
@@ -285,7 +330,7 @@ fn counterparty(id: &str, kind: CounterpartyKind) -> ExternalCounterparty {
 
 fn assemble_listed_company(
     stock: &StockSpec,
-    figures: Figures,
+    figures: OpeningFigures,
     as_of: CivilDate,
 ) -> Result<ListedCompanyConfigs, SessionError> {
     let company_id = CompanyId(format!("C-{}", stock.code.0));
@@ -301,24 +346,7 @@ fn assemble_listed_company(
     spec.validate().map_err(company_error("company spec"))?;
     let lender_id = CounterpartyId(format!("EXT-LDR-{}", stock.code.0));
     // 注册表配置（任务 7 域：generic v1 科目表）。
-    let mut registry_lines = vec![
-        opening_line("1002", PostingSide::Debit, figures.cash),
-        opening_line("1601", PostingSide::Debit, figures.fixed_assets),
-        opening_line("4001", PostingSide::Credit, figures.paid_in_capital),
-    ];
-    if figures.receivables > 0 {
-        registry_lines.insert(
-            1,
-            opening_line("1122", PostingSide::Debit, figures.receivables),
-        );
-    }
-    if figures.short_term_debt > 0 {
-        registry_lines.push(opening_line(
-            "2001",
-            PostingSide::Credit,
-            figures.short_term_debt,
-        ));
-    }
+    let registry_lines = figures.registry_opening_lines();
     let registry_counterparties = vec![
         counterparty(
             &format!("EXT-CUST-{}", stock.code.0),
@@ -360,18 +388,7 @@ fn assemble_listed_company(
         annual_rate_bp: 365,
         maturity_date: debt_maturity,
     });
-    let mut industrial_lines = vec![
-        journal_line("1002", PostingSide::Debit, figures.cash),
-        journal_line("1601", PostingSide::Debit, figures.fixed_assets),
-        journal_line("2001", PostingSide::Credit, figures.short_term_debt),
-        journal_line("4001", PostingSide::Credit, figures.paid_in_capital),
-    ];
-    if figures.receivables > 0 {
-        industrial_lines.insert(
-            1,
-            journal_line("1122", PostingSide::Debit, figures.receivables),
-        );
-    }
+    let industrial_lines = figures.industrial_opening_lines();
     let industrial = IndustrialConfig {
         chart: industrial_chart_v2(),
         as_of,
@@ -417,4 +434,116 @@ fn assemble_listed_company(
         registry,
         operating,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_figures_preserve_both_account_orders_and_yuan_units() {
+        for (receivables, debt) in [(0, 0), (7, 0), (0, 11), (7, 11)] {
+            let figures = OpeningFigures {
+                cash: 30,
+                receivables,
+                fixed_assets: 80,
+                paid_in_capital: 100,
+                short_term_debt: debt,
+            };
+            let registry = figures.registry_opening_lines();
+            let industrial = figures.industrial_opening_lines();
+            let mut expected_registry = vec![
+                ("1002", PostingSide::Debit, 3_000),
+                ("1601", PostingSide::Debit, 8_000),
+                ("4001", PostingSide::Credit, 10_000),
+            ];
+            let mut expected_industrial = vec![
+                ("1002", PostingSide::Debit, 3_000),
+                ("1601", PostingSide::Debit, 8_000),
+                ("2001", PostingSide::Credit, debt * 100),
+                ("4001", PostingSide::Credit, 10_000),
+            ];
+            if receivables > 0 {
+                expected_registry.insert(1, ("1122", PostingSide::Debit, receivables * 100));
+                expected_industrial.insert(1, ("1122", PostingSide::Debit, receivables * 100));
+            }
+            if debt > 0 {
+                expected_registry.push(("2001", PostingSide::Credit, debt * 100));
+            }
+            assert_eq!(
+                registry
+                    .iter()
+                    .map(|line| (line.account.0.as_str(), line.side, line.amount.cents()))
+                    .collect::<Vec<_>>(),
+                expected_registry
+            );
+            assert_eq!(
+                industrial
+                    .iter()
+                    .map(|line| (line.account.0.as_str(), line.side, line.amount.cents()))
+                    .collect::<Vec<_>>(),
+                expected_industrial
+            );
+        }
+    }
+
+    #[test]
+    fn opening_figures_default_selection_requires_stock_code_and_share_count() {
+        let defaults = default_companies(CivilDate::from_ymd(2023, 12, 31).unwrap()).unwrap();
+        let row = defaults
+            .iter()
+            .find(|row| {
+                row.spec
+                    .listed_stock
+                    .as_ref()
+                    .is_some_and(|code| code.0 == "600101")
+            })
+            .unwrap();
+        let mut stock = super::super::npc_working_quote_tests::quote_setup(0)
+            .stocks
+            .remove(0);
+        stock.code = row.spec.listed_stock.clone().unwrap();
+        stock.total_shares = row.spec.issued_shares;
+        let exact = OpeningFigures::for_stock(&stock, &defaults);
+        assert_eq!(exact.cash, 6_000_000_000);
+        assert_eq!(exact.paid_in_capital, i128::from(row.spec.issued_shares));
+        stock.total_shares = 10_000_000;
+        let different_shares = OpeningFigures::for_stock(&stock, &defaults);
+        assert_eq!(different_shares.cash, 3_000_000);
+        stock.code = StockCode("600888".to_string());
+        stock.total_shares = row.spec.issued_shares;
+        let different_code = OpeningFigures::for_stock(&stock, &defaults);
+        assert_eq!(
+            different_code.cash,
+            i128::from(row.spec.issued_shares) * 30 / 100
+        );
+    }
+
+    #[test]
+    fn opening_figures_default_row_and_tiny_share_failure_remain_explicit() {
+        let as_of = CivilDate::from_ymd(2023, 12, 31).unwrap();
+        let defaults = default_companies(as_of).unwrap();
+        for row in defaults {
+            let projected = OpeningFigures::from_default_row(&row).registry_opening_lines();
+            assert_eq!(
+                projected
+                    .iter()
+                    .map(|line| (&line.account, line.side, line.amount.cents()))
+                    .collect::<Vec<_>>(),
+                row.opening
+                    .lines
+                    .iter()
+                    .map(|line| (&line.account, line.side, line.amount.cents()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut stock = super::super::npc_working_quote_tests::quote_setup(0)
+            .stocks
+            .remove(0);
+        stock.total_shares = 2;
+        let result = assemble_listed_company(&stock, OpeningFigures::from_total_shares(2), as_of);
+        assert!(
+            matches!(result, Err(SessionError::InvalidSetup(message)) if message.starts_with("industrial books failed:"))
+        );
+    }
 }

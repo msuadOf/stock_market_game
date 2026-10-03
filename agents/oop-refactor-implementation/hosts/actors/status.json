@@ -1,0 +1,4391 @@
+[
+  {
+    "action_id": "hosts-01-A01",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "桌面 SessionHandles 私有持有 cmd_tx；SessionActor 保持 ProtocolSession 唯一写者。",
+    "methods": [
+      "既有 SessionHandles 公开命令方法签名与行为保留；cmd_tx 改为私有；SessionCommand 保持 pub。"
+    ],
+    "callers": [
+      "apps/desktop/src-tauri/src/actor.rs::SessionManager::new_session",
+      "apps/desktop/src-tauri/src/lib.rs 的 Tauri 命令继续调用 SessionHandles 受控方法，无须 caller 修改。"
+    ],
+    "files": [
+      "apps/desktop/src-tauri/src/actor.rs"
+    ],
+    "test_filters_or_results": {
+      "checks": [
+        "所属文件 rustfmt 成功；不是类型检查。",
+        "所属文件 git diff --check 成功；不是行为验证。",
+        "本 worker 未运行 Cargo、完整回归、E2E 或性能任务。"
+      ],
+      "filters": [
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "lib_tests::desktop_speed_protocol_accepts_fixed_and_fastest_json",
+          "result": "本 worker 未执行；root 统一验证。"
+        }
+      ],
+      "doctests": "新增 cmd_tx 私有访问 compile_fail,E0616；未运行。"
+    },
+    "review": {
+      "status": "通过",
+      "findings": 0,
+      "record": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "scope": "未实施本批源码的 review_actors 完整 diff 静态独立复核；大 A 语义、必要性/最小范围、边界/跨层语义/复杂度三门均通过。该结论不替代 Rust 编译、doctest 或行为测试。"
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "将桌面 SessionHandles::cmd_tx 设为私有，阻断 actor 模块外直接提交 SessionCommand。",
+        "implemented_by": {
+          "owner": "SessionHandles 私有 cmd_tx",
+          "methods": [
+            "既有 SessionHandles 命令方法；无 raw sender 新访问器。"
+          ],
+          "callers": [
+            "SessionManager::new_session 在 actor 模块内部构造 handles",
+            "Tauri 命令从 lookup_handles 得到句柄并调用受控方法"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/lib.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "工作区正常 raw sender 检索只见 actor 内使用；新增 cmd_tx 私有访问 compile_fail,E0616 doctest。"
+        ],
+        "limit": "公开字段收窄有源码 API 兼容成本；root 待运行 doctest 与构建。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保持既有 SessionCommand 公开 enum，不在本动作撤回公开类型。",
+        "implemented_by": {
+          "owner": "actor 模块中的 pub SessionCommand",
+          "methods": [
+            "SessionActor::handle_command"
+          ],
+          "callers": [
+            "SessionHandles 各命令包装方法",
+            "fatal_tests 与 protocol_tests 构造命令"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/protocol_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "完整 diff 保留 pub enum；现有局部子测试仍按原 enum 构造命令。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留全部公开 SessionHandles 方法、通道发送顺序和桌面 set_speed 不等待回执的 mpsc 提交；外部 SpeedRequest 保留 Fixed 校验/Fastest 映射。",
+        "implemented_by": {
+          "owner": "SessionHandles 负责提交，SessionActor single-writer 负责处理；SpeedRequest 为 Tauri 输入边界。",
+          "methods": [
+            "SessionHandles::set_speed",
+            "SessionActor::run",
+            "SessionActor::handle_command"
+          ],
+          "callers": [
+            "Tauri set_speed 命令",
+            "SessionActor::run 的 biased command 分支"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/lib.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "未改变方法签名、send 顺序、SetSpeed 命令结构或 Tauri Fixed/Fastest 转换；既有 lib_tests::desktop_speed_protocol_accepts_fixed_and_fastest_json 保留。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "非法内部非正/非有限固定速度仍显式记录并忽略；保持 single-writer 循环与现有错误。",
+        "implemented_by": {
+          "owner": "DesktopPacing 拒绝非法状态迁移；SessionActor 记录带 session_id 的错误。",
+          "methods": [
+            "DesktopPacing::apply_speed",
+            "SessionActor::apply_speed",
+            "SessionActor::run"
+          ],
+          "callers": [
+            "SessionCommand::SetSpeed 处理分支"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "新增 actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state；日志位置/内容和忽略行为静态保持。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R229",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "passed": true,
+          "seconds": 0.0163,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R230",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "passed": true,
+          "seconds": 0.0169,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R231",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+          "passed": true,
+          "seconds": 0.0148,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "新增 API compile_fail/no_run doctest 未单独执行，不从 all-targets check 推断 doctest 运行通过。"
+    ],
+    "implementation_group": "actors",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/actors/status.md"
+  },
+  {
+    "action_id": "hosts-01-A02",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "server SessionHandles 私有持有 cmd_tx/event_tx；SessionActor 保留更新发布写权，外部仅得到 Receiver。",
+    "methods": [
+      "SessionHandles::subscribe_events(&self) -> broadcast::Receiver<EngineUpdate>",
+      "既有 SessionHandles 命令方法、set_speed 校验/oneshot 回执保持；SessionCommand 保持 pub。"
+    ],
+    "callers": [
+      "apps/server/src/routes.rs::run_ws 初次连接及 ClientCommand::Resync 先 subscribe_events 再 public_baseline，由 server worker 迁移。",
+      "apps/server/tests/actor.rs 和 apps/server/tests/protocol_updates.rs 外部订阅由父 agent 迁移。",
+      "apps/server/src/actor.rs::SessionManager::new_session 继续由模块内部组合 sender/receiver。"
+    ],
+    "files": [
+      "apps/server/src/actor.rs",
+      "apps/server/src/routes.rs",
+      "apps/server/tests/actor.rs",
+      "apps/server/tests/protocol_updates.rs"
+    ],
+    "test_filters_or_results": {
+      "checks": [
+        "所属文件 rustfmt 成功；不是类型检查。",
+        "所属文件 git diff --check 成功；不是行为验证。",
+        "本 worker 未运行 Cargo、完整回归、E2E 或性能任务。"
+      ],
+      "filters": [
+        {
+          "crate": "server",
+          "target": "lib",
+          "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+          "result": "本 worker 未执行；root 统一验证。"
+        }
+      ],
+      "doctests": "新增 cmd_tx/event_tx 私有访问 compile_fail,E0616 与 subscribe_events Receiver 正向 no_run；未运行。",
+      "existing_regressions": "server tests actor/protocol_updates、WebSocket baseline/Resync 与速度回执回归均待 root 统一执行。"
+    },
+    "review": {
+      "status": "通过",
+      "findings": 0,
+      "record": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "scope": "未实施本批源码的 review_actors 完整 diff 静态独立复核；大 A 语义、必要性/最小范围、边界/跨层语义/复杂度三门均通过。该结论不替代 Rust 编译、doctest 或行为测试。"
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "将 server cmd_tx 设私有，阻断外部绕过包装方法校验，同时保留公开 SessionCommand。",
+        "implemented_by": {
+          "owner": "SessionHandles 私有 cmd_tx；pub SessionCommand 保留。",
+          "methods": [
+            "既有 SessionHandles 命令方法",
+            "SessionActor::handle_command"
+          ],
+          "callers": [
+            "API routes 通过 authorized_session 获得句柄",
+            "actor/fatal_tests 的局部命令构造"
+          ],
+          "files": [
+            "apps/server/src/actor.rs",
+            "apps/server/src/actor/fatal_tests.rs",
+            "apps/server/src/routes.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "工作区正常 raw cmd_tx 使用仅在 actor 内；新增 cmd_tx compile_fail,E0616；enum 仍 pub。"
+        ],
+        "limit": "字段收窄是源码 API 变更；root 待验证反向 doctest、构建与既有调用。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R219",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+              "passed": true,
+              "seconds": 0.0091,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R220",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+              "passed": true,
+              "seconds": 0.0086,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R221",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+              "passed": true,
+              "seconds": 0.0071,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R222",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+              "passed": true,
+              "seconds": 0.0067,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R223",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+              "passed": true,
+              "seconds": 0.0054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R224",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+              "passed": true,
+              "seconds": 0.0061,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 SessionHandles 方法及有限正 Fixed 的 (0, MAX_SPEED_MULTIPLIER] 校验、InvalidSpeed、oneshot 确认、Fastest 正无穷哨兵与 mpsc 顺序。",
+        "implemented_by": {
+          "owner": "SessionHandles 负责外部受理校验；SessionActor 负责按序执行与回执。",
+          "methods": [
+            "SessionHandles::set_speed",
+            "SessionActor::handle_command",
+            "SessionActor::run"
+          ],
+          "callers": [
+            "routes::api_speed",
+            "routes 速度转换",
+            "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting"
+          ],
+          "files": [
+            "apps/server/src/actor.rs",
+            "apps/server/src/routes.rs",
+            "apps/server/src/actor/fatal_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "原校验与 oneshot send/receive 路径保持；原命令 burst 顺序断言完整保留，未增加新受理错误。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R219",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+              "passed": true,
+              "seconds": 0.0091,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R220",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+              "passed": true,
+              "seconds": 0.0086,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R221",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+              "passed": true,
+              "seconds": 0.0071,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R222",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+              "passed": true,
+              "seconds": 0.0067,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R223",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+              "passed": true,
+              "seconds": 0.0054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R224",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+              "passed": true,
+              "seconds": 0.0061,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保持 actor 内原有速度不变量行为，不把 apply_speed 加强校验混入可见性改动。",
+        "implemented_by": {
+          "owner": "ServerPacing 保存原内部不变量，SessionActor 仅调度。",
+          "methods": [
+            "ServerPacing::apply_speed",
+            "fixed_tick_duration",
+            "SessionActor::apply_speed"
+          ],
+          "callers": [
+            "SessionCommand::SetSpeed 分支"
+          ],
+          "files": [
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "debug_assert 有限正值/上限仍存在；Duration::from_secs_f64 与 1ms clamp 未变，没有增加非法内部值新的 Result/fallback。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R219",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+              "passed": true,
+              "seconds": 0.0091,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R220",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+              "passed": true,
+              "seconds": 0.0086,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R221",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+              "passed": true,
+              "seconds": 0.0071,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R222",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+              "passed": true,
+              "seconds": 0.0067,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R223",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+              "passed": true,
+              "seconds": 0.0054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R224",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+              "passed": true,
+              "seconds": 0.0061,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "event_tx 设为私有，新增只返回 Receiver 的 subscribe_events，不向外暴露或克隆 Sender；actor 内仍保留发布写权。",
+        "implemented_by": {
+          "owner": "SessionHandles 私有 event_tx 与 SessionActor 发布 sender。",
+          "methods": [
+            "SessionHandles::subscribe_events",
+            "SessionActor::broadcast_at",
+            "SessionActor::broadcast_failure",
+            "SessionActor::broadcast_timeline_reset"
+          ],
+          "callers": [
+            "ws 与外部集成测试订阅",
+            "SessionActor 发布 TickBatch/CivilUpdate/失败/重置"
+          ],
+          "files": [
+            "apps/server/src/actor.rs",
+            "apps/server/src/routes.rs",
+            "apps/server/tests/actor.rs",
+            "apps/server/tests/protocol_updates.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "subscribe_events 直接 self.event_tx.subscribe；新增 event_tx compile_fail,E0616 与 Receiver 正向 no_run doctest。"
+        ],
+        "limit": "root 待运行公共 API doctest 与行为回归。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R219",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+              "passed": true,
+              "seconds": 0.0091,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R220",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+              "passed": true,
+              "seconds": 0.0086,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R221",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+              "passed": true,
+              "seconds": 0.0071,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R222",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+              "passed": true,
+              "seconds": 0.0067,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R223",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+              "passed": true,
+              "seconds": 0.0054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R224",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+              "passed": true,
+              "seconds": 0.0061,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "ws_handler 不再把 Sender 传给 run_ws；初次与 Resync 均从 handles 订阅，再取 public_baseline，保留 baseline 覆盖帧的跳过规则；迁移全部外部订阅 caller。",
+        "implemented_by": {
+          "owner": "WebSocket 持有 SessionHandles 与 Receiver，SessionActor 唯一发布。",
+          "methods": [
+            "SessionHandles::subscribe_events",
+            "SessionHandles::public_baseline",
+            "routes::ws_handler",
+            "routes::run_ws"
+          ],
+          "callers": [
+            "run_ws 初次连接",
+            "ClientCommand::Resync",
+            "tests/actor.rs 与 tests/protocol_updates.rs"
+          ],
+          "files": [
+            "apps/server/src/routes.rs",
+            "apps/server/src/actor.rs",
+            "apps/server/tests/actor.rs",
+            "apps/server/tests/protocol_updates.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "父 agent/server worker 已迁移外部 caller；独立复核确认初次/Resync 先订阅再 baseline，工作区 raw sender 正常引用仅 actor 内。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R219",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+              "passed": true,
+              "seconds": 0.0091,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R220",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+              "passed": true,
+              "seconds": 0.0086,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R221",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+              "passed": true,
+              "seconds": 0.0071,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R222",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+              "passed": true,
+              "seconds": 0.0067,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R223",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+              "passed": true,
+              "seconds": 0.0054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R224",
+              "source": "apps/server/src/routes.rs",
+              "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+              "passed": true,
+              "seconds": 0.0061,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R215",
+          "source": "apps/server/src/actor.rs",
+          "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "passed": true,
+          "seconds": 0.0053,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R216",
+          "source": "apps/server/src/actor.rs",
+          "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "passed": true,
+          "seconds": 0.0064,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R219",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline",
+          "passed": true,
+          "seconds": 0.0091,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R220",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::publisher_connection_tests::failure_precedes_generation_and_resync_and_latches_after_delivery",
+          "passed": true,
+          "seconds": 0.0086,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R221",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::publisher_connection_tests::covered_updates_timeline_changes_and_lag_keep_frame_barrier",
+          "passed": true,
+          "seconds": 0.0071,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R222",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::publisher_connection_tests::resync_preparation_clears_buffer_without_mutating_failed_baseline_state",
+          "passed": true,
+          "seconds": 0.0067,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R223",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::publisher_connection_tests::flush_actions_leave_incoming_update_unaccepted_until_send_succeeds",
+          "passed": true,
+          "seconds": 0.0054,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R224",
+          "source": "apps/server/src/routes.rs",
+          "filter": "routes::publisher_connection_tests::pull_capacity_clears_backlog_and_get_frame_rejects_push_mode",
+          "passed": true,
+          "seconds": 0.0061,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "新增 API compile_fail/no_run doctest 未单独执行，不从 all-targets check 推断 doctest 运行通过。"
+    ],
+    "implementation_group": "actors",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/actors/status.md"
+  },
+  {
+    "action_id": "hosts-N01",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "SessionActor 按值独占 DesktopPacing/ServerPacing；Pacing 持有 running、fastest、requested_speed、tick_interval、base_ms 与 SpeedMeter；事务、generation、发布及 Tokio 调度资源仍由 actor 独占。",
+    "methods": [
+      "DesktopPacing/ServerPacing::new(base_ms, tick)",
+      "apply_speed(speed, tick)",
+      "set_running(running, tick)",
+      "reset_after_restore(tick)",
+      "refresh_metrics(tick)",
+      "is_running() / is_fastest() / tick_interval()",
+      "pause_at_civil_boundary(tick) 无条件暂停并 reset",
+      "stop_after_failure() 只停止，不额外 reset 采样",
+      "私有 reset_speed_meter(tick)"
+    ],
+    "callers": [
+      "两个 SessionManager::new_session 初始化",
+      "两个 SessionActor::run select guard 和 fresh_interval",
+      "SetSpeed/SetRunning/SpeedMetrics 命令",
+      "成功 restore 与 CivilUpdate 日界 pause",
+      "desktop actor/failure.rs::stop_after_host_failure",
+      "server SessionActor::stop_with_failure",
+      "自动 run_cycle/run_protocol_batch 后采样",
+      "server actor/fatal_tests 三处 SessionActor literal 与相关断言"
+    ],
+    "files": [
+      "apps/desktop/src-tauri/src/actor.rs",
+      "apps/desktop/src-tauri/src/actor/failure.rs",
+      "apps/server/src/actor.rs",
+      "apps/server/src/actor/fatal_tests.rs"
+    ],
+    "test_filters_or_results": {
+      "checks": [
+        "所属文件 rustfmt 成功；不是类型检查。",
+        "所属文件 git diff --check 成功；不是行为验证。",
+        "本 worker 未运行 Cargo、完整回归、E2E 或性能任务。"
+      ],
+      "filters": [
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "result": "新增，未执行。"
+        },
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "result": "新增，未执行。"
+        },
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+          "result": "新增，未执行。"
+        },
+        {
+          "crate": "server",
+          "target": "lib",
+          "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "result": "新增，未执行。"
+        },
+        {
+          "crate": "server",
+          "target": "lib",
+          "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "result": "新增，未执行。"
+        }
+      ],
+      "coverage": "Fixed→Fastest→Fixed、固定 interval 保留、重复 running 不 reset、采样/暂停/恢复、fatal 保留采样、restore reset、桌面非法值忽略与 1µs/server 1ms 下限。测试先于实施编写但未运行，不声称确认红灯或绿灯。"
+    },
+    "review": {
+      "status": "通过",
+      "findings": 0,
+      "record": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "scope": "未实施本批源码的 review_actors 完整 diff 静态独立复核；大 A 语义、必要性/最小范围、边界/跨层语义/复杂度三门均通过。该结论不替代 Rust 编译、doctest 或行为测试。"
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "分别组合私有 DesktopPacing/ServerPacing，迁入 running、fastest、requested_speed、tick_interval、base_ms 与 SpeedMeter；actor 独占按值实例，不引入共享锁或跨宿主基类。",
+        "implemented_by": {
+          "owner": "两个 SessionActor 的 pacing 字段分别独占宿主 Pacing；SpeedMeter 为其子对象。",
+          "methods": [
+            "DesktopPacing::new",
+            "ServerPacing::new"
+          ],
+          "callers": [
+            "两个 SessionManager::new_session",
+            "桌面 ActorHarness 和 server 局部测试构造"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs",
+            "apps/server/src/actor/fatal_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "生产 SessionActor 不再重复持有六项会话节奏字段；manager base_ms 仅为新会话配置，不是重复会话 owner。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "apply_speed(speed,tick) 同步维护 fastest/requested_speed/采样/固定周期，保留 Fixed→Fastest→Fixed 的状态与原周期。",
+        "implemented_by": {
+          "owner": "DesktopPacing/ServerPacing 独占速度状态。",
+          "methods": [
+            "DesktopPacing::apply_speed",
+            "ServerPacing::apply_speed",
+            "reset_speed_meter",
+            "SessionActor::apply_speed"
+          ],
+          "callers": [
+            "两个 SessionCommand::SetSpeed 分支"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "两个 pacing_keeps_speed_mode_interval_and_pause_metrics_consistent 覆盖模式转换与 Fastest 保留原固定 interval；采样 reset 仍在固定周期重算之前。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留两宿主速度差异：Desktop 最小固定周期 1µs、内部非法值记录忽略且无 SetSpeed oneshot；Server 最小 1ms、句柄固定上限及 oneshot、内部原 debug 不变量。",
+        "implemented_by": {
+          "owner": "各自 Pacing 与各自 SessionHandles/SessionActor 外部边界。",
+          "methods": [
+            "DesktopPacing::apply_speed",
+            "fixed_tick_interval",
+            "ServerPacing::apply_speed",
+            "fixed_tick_duration",
+            "SessionHandles::set_speed",
+            "SessionActor::apply_speed"
+          ],
+          "callers": [
+            "Tauri SpeedRequest→desktop set_speed",
+            "routes::api_speed→server set_speed",
+            "各 actor SetSpeed"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs",
+            "apps/desktop/src-tauri/src/lib.rs",
+            "apps/server/src/routes.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "Desktop 非法输入/1µs 新用例及 Server Pacing 下限新断言；既有外部速度协议和句柄校验保持。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "set_running(running,tick) 仅在 running 变化时 reset；重复运行/暂停请求不重置已有采样。",
+        "implemented_by": {
+          "owner": "各自 Pacing 的 running 与 SpeedMeter。",
+          "methods": [
+            "DesktopPacing::set_running",
+            "ServerPacing::set_running",
+            "reset_speed_meter"
+          ],
+          "callers": [
+            "两个 SetRunning 命令处理分支"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "新增两宿主状态转换用例验证重复 running=true 保持采样，启动为 None、暂停为 Some(0.0)。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "成功 restore 后才 reset_after_restore(new_tick)，按 running 选择 reset/mark_paused；失败 restore 不修改采样，保留原恢复顺序和错误。",
+        "implemented_by": {
+          "owner": "SessionActor 拥有恢复事务，Pacing 仅重置测量。",
+          "methods": [
+            "DesktopPacing::reset_after_restore",
+            "ServerPacing::reset_after_restore",
+            "reset_speed_meter",
+            "desktop SessionActor::restore"
+          ],
+          "callers": [
+            "desktop 成功替换 ProtocolSession 并更新 timeline/generation 后",
+            "server Restore 成功替换 ProtocolSession 并更新 generation/revision 后、broadcast_timeline_reset 前"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "两个 pacing_restore_resets_sampling_but_fatal_stop_preserves_it 覆盖新 tick、running/paused reset；静态 diff 确认失败分支未调用 reset。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "refresh_metrics(tick) 负责采样与 SpeedMetrics 构造，读访问 is_running/is_fastest/tick_interval 取代 actor 直接字段访问。",
+        "implemented_by": {
+          "owner": "Pacing 及其 SpeedMeter 子对象。",
+          "methods": [
+            "DesktopPacing::refresh_metrics",
+            "ServerPacing::refresh_metrics",
+            "is_running",
+            "is_fastest",
+            "tick_interval"
+          ],
+          "callers": [
+            "两个 actor run select guard/fresh_interval",
+            "两个 SpeedMetrics 命令分支",
+            "desktop run_cycle/server run_protocol_batch 成功后采样"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "SpeedMetrics 字段与输出类型不变；真实 actor caller 全迁移到对象方法，新增采样状态用例。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "CivilUpdate 保留先发布再按 pause preference 停止；日界 pause 无条件 reset，不能用普通 set_running 去改变已暂停时的 reset 行为。",
+        "implemented_by": {
+          "owner": "SessionActor 决定日界暂停与发布，Pacing 保存停止/采样状态。",
+          "methods": [
+            "DesktopPacing::pause_at_civil_boundary",
+            "ServerPacing::pause_at_civil_boundary",
+            "reset_speed_meter",
+            "desktop SessionActor::publish_protocol_cycle",
+            "server SessionActor::run_protocol_batch"
+          ],
+          "callers": [
+            "自动 CivilUpdate 发布分支",
+            "两个 host-parity AdvanceCivilDay 命令分支"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "独立复核确认 emit/broadcast 在 pause_at_civil_boundary 之前，桌面 protocol 先发布再暂停/恢复一次断言保留。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "fatal 停止仍由 actor 决定，仅委托写 running=false，不添加当前不存在的采样 reset。",
+        "implemented_by": {
+          "owner": "SessionActor 拥有失败与 rollback；Pacing::stop_after_failure 仅停止。",
+          "methods": [
+            "DesktopPacing::stop_after_failure",
+            "ServerPacing::stop_after_failure",
+            "desktop SessionActor::stop_after_host_failure",
+            "server SessionActor::stop_with_failure"
+          ],
+          "callers": [
+            "desktop actor/failure.rs 的失败处理",
+            "server 失败 latch/广播处理"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/actor/failure.rs",
+            "apps/server/src/actor.rs",
+            "apps/server/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "新增两宿主 fatal 保留采样用例；原 fatal 回滚、save/hash、sender close/后续拒绝与只发一次错误断言保留。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "run_cycle/run_protocol_batch、checkpoint/rollback、事件提交/generation 仍归 actor；14ms/步数预算与 server worker semaphore 不移入无调度资源的 Pacing；不删除桌面 pending_fixed_events/last_fixed_publish 或借机实现 16ms 聚合。",
+        "implemented_by": {
+          "owner": "SessionActor 仍拥有 ProtocolSession、生命周期、事件出口与宿主调度资源。",
+          "methods": [
+            "SessionActor::run",
+            "desktop SessionActor::run_cycle",
+            "server SessionActor::run_protocol_batch",
+            "SessionActor::run_fastest_batch",
+            "desktop SessionActor::flush_fixed_events",
+            "SessionActor::apply_speed"
+          ],
+          "callers": [
+            "原自动步进/command 分支",
+            "server Fastest permit 分支",
+            "desktop 固定事件 flush 与速度变更"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/server/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "完整 diff 保留预算/semaphore/checkpoint/rollback/事务、pending_fixed_events/last_fixed_publish；Pacing 无 ProtocolSession 或 Tokio 资源。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R215",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0053,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R216",
+              "source": "apps/server/src/actor.rs",
+              "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0064,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R217",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+              "passed": true,
+              "seconds": 0.6054,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R218",
+              "source": "apps/server/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+              "passed": true,
+              "seconds": 0.1574,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R215",
+          "source": "apps/server/src/actor.rs",
+          "filter": "actor::interval_tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "passed": true,
+          "seconds": 0.0053,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R216",
+          "source": "apps/server/src/actor.rs",
+          "filter": "actor::interval_tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "passed": true,
+          "seconds": 0.0064,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R217",
+          "source": "apps/server/src/actor/fatal_tests.rs",
+          "filter": "actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle",
+          "passed": true,
+          "seconds": 0.6054,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R218",
+          "source": "apps/server/src/actor/fatal_tests.rs",
+          "filter": "actor::fatal_tests::command_burst_keeps_submission_order_after_callers_stop_waiting",
+          "passed": true,
+          "seconds": 0.1574,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R229",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "passed": true,
+          "seconds": 0.0163,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R230",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "passed": true,
+          "seconds": 0.0169,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R231",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+          "passed": true,
+          "seconds": 0.0148,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "新增 API compile_fail/no_run doctest 未单独执行，不从 all-targets check 推断 doctest 运行通过。"
+    ],
+    "implementation_group": "actors",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/actors/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N13",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "cfg(test) ActorHarness 持有 mock App、SessionActor、命令 sender 和按需 engine-event/engine-failure receivers；没有生产消费者或替代业务状态。",
+    "methods": [
+      "ActorHarness::new_protocol_actor(game, fastest, pause_preferences, session_id, timeline_id)",
+      "ActorHarness::subscribe_engine_events()",
+      "ActorHarness::subscribe_failures()",
+      "内部 subscribe(event_name) 建立 mock listener 与 channel"
+    ],
+    "callers": [
+      "apps/desktop/src-tauri/src/actor/fatal_tests.rs::assert_auto_step_fatal",
+      "apps/desktop/src-tauri/src/actor/protocol_tests.rs::capture"
+    ],
+    "files": [
+      "apps/desktop/src-tauri/src/actor.rs",
+      "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+      "apps/desktop/src-tauri/src/actor/protocol_tests.rs"
+    ],
+    "test_filters_or_results": {
+      "checks": [
+        "所属文件 rustfmt 成功；不是类型检查。",
+        "所属文件 git diff --check 成功；不是行为验证。",
+        "本 worker 未运行 Cargo、完整回归、E2E 或性能任务。"
+      ],
+      "filters": [
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "actor::fatal_tests",
+          "result": "现有三个自动故障用例及原错误 payload/hash/save/close/无重复事件断言保留；未执行。"
+        },
+        {
+          "crate": "stock-market-game",
+          "target": "lib",
+          "filter": "actor::protocol_tests",
+          "result": "现有四个帧/日界暂停恢复用例与原业务断言保留；未执行。"
+        }
+      ],
+      "new_tests": "未为 fixture 编写镜像实现测试。"
+    },
+    "review": {
+      "status": "通过",
+      "findings": 0,
+      "record": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "scope": "未实施本批源码的 review_actors 完整 diff 静态独立复核；大 A 语义、必要性/最小范围、边界/跨层语义/复杂度三门均通过。该结论不替代 Rust 编译、doctest 或行为测试。"
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "集中重复 SessionActor literal 到内部 test-support ActorHarness，fixture 持有 mock app、actor 与命令通道生命周期；fastest 与 PausePreferences 构造参数显式。",
+        "implemented_by": {
+          "owner": "cfg(test) ActorHarness。",
+          "methods": [
+            "ActorHarness::new_protocol_actor(game, fastest, pause_preferences, session_id, timeline_id)"
+          ],
+          "callers": [
+            "fatal_tests::assert_auto_step_fatal",
+            "protocol_tests::capture"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/protocol_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "两处测试初始化共用 constructor；场景仍传入原 game 与标识，生产 manager/SessionActor 构造归属保持。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R232",
+              "source": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops",
+              "passed": true,
+              "seconds": 0.2783,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "fixture 拥有 engine-event/engine-failure Receiver；只有需要的场景建立 failure 订阅，避免空占位通道。",
+        "implemented_by": {
+          "owner": "ActorHarness 的 events_rx/failures_rx Option；mock App 保持 listener/sender 存活。",
+          "methods": [
+            "ActorHarness::subscribe_engine_events",
+            "ActorHarness::subscribe_failures",
+            "ActorHarness::subscribe"
+          ],
+          "callers": [
+            "fatal 场景按需订阅两个流",
+            "protocol 场景仅订阅 engine-event"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/protocol_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "constructor 两个 receiver 初值为 None，subscribe 建立并保存在 harness；仅 fatal 调用 subscribe_failures。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R232",
+              "source": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops",
+              "passed": true,
+              "seconds": 0.2783,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "迁移保留每个场景的 ReplayGuard、ticks、故障注入、业务 hash/save 与日界断言；不新建替代业务状态或为 fixture 加镜像实现测试。",
+        "implemented_by": {
+          "owner": "ActorHarness 管理接线；原测试函数保留业务观测与断言。",
+          "methods": [
+            "ActorHarness::new_protocol_actor",
+            "SessionActor::run_fastest_batch",
+            "SessionActor::tick_and_emit",
+            "SessionActor::handle_command"
+          ],
+          "callers": [
+            "三个原自动 fatal 用例",
+            "四个原 protocol 用例"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/protocol_tests.rs",
+            "apps/desktop/src-tauri/src/actor.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "完整 diff 保留所有业务断言、seed/setup、已有请求与 retained frame；未增加 fixture 镜像测试。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R232",
+              "source": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops",
+              "passed": true,
+              "seconds": 0.2783,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 mock App 生命周期、订阅收取顺序和 actor 停止语义，close 检查必须针对原 command channel；fixture 只在测试内，无生产 caller。",
+        "implemented_by": {
+          "owner": "ActorHarness 持 App/actor/cmd_tx/receivers 直到场景结束。",
+          "methods": [
+            "ActorHarness::subscribe_engine_events",
+            "ActorHarness::subscribe_failures",
+            "SessionActor::run"
+          ],
+          "callers": [
+            "fatal close 与无重复 error/events 检查",
+            "protocol 发布/暂停/恢复一次检查"
+          ],
+          "files": [
+            "apps/desktop/src-tauri/src/actor.rs",
+            "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+            "apps/desktop/src-tauri/src/actor/protocol_tests.rs"
+          ]
+        },
+        "validation": [
+          "agents/oop-refactor-implementation/hosts/review-actors.md：独立静态三门复核通过，0 发现。",
+          "订阅均在运行 actor 前建立；fatal 检查 harness.cmd_tx.is_closed 与原命令通道一致；App 和 receiver 生命周期绑定 harness。"
+        ],
+        "limit": "本 worker 未运行 Rust 构建或测试；root 统一编译/行为验证仍需执行，静态复核不替代运行证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R229",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+              "passed": true,
+              "seconds": 0.0163,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R230",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+              "passed": true,
+              "seconds": 0.0169,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R231",
+              "source": "apps/desktop/src-tauri/src/actor.rs",
+              "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+              "passed": true,
+              "seconds": 0.0148,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+              "id": "R232",
+              "source": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+              "filter": "actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops",
+              "passed": true,
+              "seconds": 0.2783,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R229",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_keeps_speed_mode_interval_and_pause_metrics_consistent",
+          "passed": true,
+          "seconds": 0.0163,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R230",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::pacing_restore_resets_sampling_but_fatal_stop_preserves_it",
+          "passed": true,
+          "seconds": 0.0169,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R231",
+          "source": "apps/desktop/src-tauri/src/actor.rs",
+          "filter": "actor::tests::desktop_pacing_rejects_invalid_internal_speed_without_changing_state",
+          "passed": true,
+          "seconds": 0.0148,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "id": "R232",
+          "source": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+          "filter": "actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops",
+          "passed": true,
+          "seconds": 0.2783,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "新增 API compile_fail/no_run doctest 未单独执行，不从 all-targets check 推断 doctest 运行通过。"
+    ],
+    "implementation_group": "actors",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/actors/status.md"
+  }
+]

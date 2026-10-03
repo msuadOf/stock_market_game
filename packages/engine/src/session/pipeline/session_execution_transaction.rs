@@ -43,28 +43,31 @@ pub(super) fn apply_session_execution_transaction(
 ) -> Result<SessionExecutionTransactionOutput, SessionExecutionTransactionError> {
     validate_receipt_cursor(session)?;
     let transaction = apply_stock_execution_transaction_with_beliefs(
-        &session.envelope_ledger,
-        &session.accounts,
-        &session.retail_experience,
-        &session.belief_books,
-        &session.retail_projection_seen,
+        &session.state.envelope_ledger,
+        &session.state.accounts,
+        &session.state.retail_experience,
+        &session.state.belief_participants,
+        &session.state.retail_projection_seen,
         workers,
         super::stock_execution_transaction::SettlementApplicationContext::new(
             crate::experience::ExperienceMoment {
                 civil_date: session.civil_date(),
                 market_minute: session.current_market_minute(),
-                trading_day: u64::from(session.day),
+                trading_day: u64::from(session.state.day),
             },
             &[],
-            session.setup.t1_enabled,
+            session.state.setup.t1_enabled,
         ),
     )
     .map_err(SessionExecutionTransactionError::StockExecution)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     validate_stock_ownership(session, &transaction)?;
-    let collected =
-        collect_continuous_transaction_events(&transaction.stocks, session.seq, preceding_facts)
-            .map_err(SessionExecutionTransactionError::Projection)?;
+    let collected = collect_continuous_transaction_events(
+        &transaction.stocks,
+        session.state.seq,
+        preceding_facts,
+    )
+    .map_err(SessionExecutionTransactionError::Projection)?;
 
     let StockExecutionTransactionOutput {
         ledger,
@@ -78,15 +81,23 @@ pub(super) fn apply_session_execution_transaction(
     } = transaction;
     let next_receipt_base = ledger.next_receipt_index();
     for (code, stock) in stocks {
-        session.markets.insert(code, stock.market);
+        session.state.markets.insert(code, stock.market);
     }
-    session.envelope_ledger = ledger;
-    session.next_receipt_base = next_receipt_base;
-    session.accounts.extend(account_patch);
-    session.retail_experience.extend(retail_patch);
-    session.belief_books.extend(belief_patch);
-    session.retail_projection_seen = seen;
-    session.seq = collected.next_seq;
+    session.state.envelope_ledger = ledger;
+    session.state.next_receipt_base = next_receipt_base;
+    session.state.accounts.extend(account_patch);
+    session.state.retail_experience.extend(retail_patch);
+    for (id, book) in belief_patch {
+        let mut participant = session
+            .state
+            .belief_participants
+            .remove(&id)
+            .expect("settlement belief patch must belong to a validated participant");
+        *participant.belief_mut() = book;
+        session.state.belief_participants.insert(id, participant);
+    }
+    session.state.retail_projection_seen = seen;
+    session.state.seq = collected.next_seq;
 
     Ok(SessionExecutionTransactionOutput {
         events: collected.events,
@@ -114,12 +125,12 @@ pub(super) fn apply_incremental_session_execution_transaction(
 }
 
 fn validate_receipt_cursor(session: &GameSession) -> Result<(), SessionExecutionTransactionError> {
-    let ledger_cursor = session.envelope_ledger.next_receipt_index();
-    if session.next_receipt_base != ledger_cursor {
+    let ledger_cursor = session.state.envelope_ledger.next_receipt_index();
+    if session.state.next_receipt_base != ledger_cursor {
         return Err(SessionExecutionTransactionError::Precondition(invariant(
             format!(
                 "session receipt cursor {} does not match envelope ledger cursor {ledger_cursor}",
-                session.next_receipt_base
+                session.state.next_receipt_base
             ),
         )));
     }
@@ -133,7 +144,7 @@ fn validate_stock_ownership(
     if let Some(code) = transaction
         .stocks
         .keys()
-        .find(|code| !session.markets.contains_key(*code))
+        .find(|code| !session.state.markets.contains_key(*code))
     {
         return Err(SessionExecutionTransactionError::Precondition(invariant(
             format!("continuous worker returned unknown session stock {code:?}"),

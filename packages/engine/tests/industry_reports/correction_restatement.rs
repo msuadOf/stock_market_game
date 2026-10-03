@@ -10,7 +10,7 @@
 //! FY2031 年报净利 0、上年同期（重述）5,595。
 
 use crate::fixture::{entry, yuan};
-use engine::accounting::closing::{ClosingEngine, CorrectionRequest};
+use engine::accounting::closing::{ClosingEngine, ClosingError, CorrectionRequest, ReportHandle};
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{Comparative, IndustryPresentation, ReportKind};
 use engine::accounting::{AccountingPeriod, Books, BusinessKind, CashFlowClass, PostingSide};
@@ -25,88 +25,120 @@ fn member() -> MemberId {
 
 /// 推进到「FY2030 已年结 + 2031-01 更正年报（遗漏收入 +300）」的状态，
 /// 并返回更正前的 v1 年报 serde 字节（供事后逐字节比对）。
-fn books_through_correction() -> (Books, ClosingEngine, MemberId, String) {
-    let mut books = Books::new(engine::company::industrial::industrial_chart_v2());
-    let mut closing = ClosingEngine::new();
-    let industry = IndustryPresentation::Industrial;
-    let id = member();
-    let scope = ScopeId::Standalone(id.clone());
-    books
-        .post_batch(vec![
-            entry(
-                1,
-                "2029-12-31",
-                BusinessKind::OpeningBalance,
-                CashFlowClass::Financing,
-                &[
-                    ("1002", PostingSide::Debit, 90_000),
-                    ("1601", PostingSide::Debit, 10_000),
-                    ("4001", PostingSide::Credit, 100_000),
-                ],
-            ),
-            entry(
-                2,
-                "2030-01-15",
-                BusinessKind::CashRevenue,
-                CashFlowClass::Operating,
-                &[
-                    ("1002", PostingSide::Debit, 5_295),
-                    ("6001", PostingSide::Credit, 5_295),
-                ],
-            ),
-        ])
-        .expect("2030 postings");
-    for m in 1..=11u8 {
-        closing
-            .close_month(
-                &mut books,
-                &id,
-                industry,
-                AccountingPeriod::from_ymd(2030, m).expect("month"),
-            )
-            .expect("2030 month close");
-    }
-    closing
-        .close_year(&mut books, &id, industry, 2030)
-        .expect("2030 year close");
-    let original_report_json = serde_json::to_string(
-        closing
-            .version(&scope, period("2030-12"), ReportKind::Annual, 1)
-            .expect("annual v1 stored"),
-    )
-    .expect("v1 serializes");
-    closing
-        .correct(
-            &mut books,
-            &id,
-            industry,
-            (period("2030-12"), ReportKind::Annual),
-            CorrectionRequest {
-                entries: vec![entry(
-                    3,
-                    "2031-01-15",
+struct CorrectionScenario {
+    books: Books,
+    closing: ClosingEngine,
+    member: MemberId,
+    original_report_json: String,
+}
+
+impl CorrectionScenario {
+    fn through_correction() -> Self {
+        let mut books = Books::new(engine::company::industrial::industrial_chart_v2());
+        let mut closing = ClosingEngine::new();
+        let industry = IndustryPresentation::Industrial;
+        let id = member();
+        let scope = ScopeId::Standalone(id.clone());
+        books
+            .post_batch(vec![
+                entry(
+                    1,
+                    "2029-12-31",
+                    BusinessKind::OpeningBalance,
+                    CashFlowClass::Financing,
+                    &[
+                        ("1002", PostingSide::Debit, 90_000),
+                        ("1601", PostingSide::Debit, 10_000),
+                        ("4001", PostingSide::Credit, 100_000),
+                    ],
+                ),
+                entry(
+                    2,
+                    "2030-01-15",
                     BusinessKind::CashRevenue,
                     CashFlowClass::Operating,
                     &[
-                        ("1002", PostingSide::Debit, 300),
-                        ("6001", PostingSide::Credit, 300),
+                        ("1002", PostingSide::Debit, 5_295),
+                        ("6001", PostingSide::Credit, 5_295),
                     ],
-                )],
-                reason: "遗漏现金收入更正".to_string(),
-            },
+                ),
+            ])
+            .expect("2030 postings");
+        for m in 1..=11u8 {
+            closing
+                .close_month(
+                    &mut books,
+                    &id,
+                    industry,
+                    AccountingPeriod::from_ymd(2030, m).expect("month"),
+                )
+                .expect("2030 month close");
+        }
+        closing
+            .close_year(&mut books, &id, industry, 2030)
+            .expect("2030 year close");
+        let original_report_json = serde_json::to_string(
+            closing
+                .version(&scope, period("2030-12"), ReportKind::Annual, 1)
+                .expect("annual v1 stored"),
         )
-        .expect("correction");
-    (books, closing, id, original_report_json)
+        .expect("v1 serializes");
+        closing
+            .correct(
+                &mut books,
+                &id,
+                industry,
+                (period("2030-12"), ReportKind::Annual),
+                CorrectionRequest {
+                    entries: vec![entry(
+                        3,
+                        "2031-01-15",
+                        BusinessKind::CashRevenue,
+                        CashFlowClass::Operating,
+                        &[
+                            ("1002", PostingSide::Debit, 300),
+                            ("6001", PostingSide::Credit, 300),
+                        ],
+                    )],
+                    reason: "遗漏现金收入更正".to_string(),
+                },
+            )
+            .expect("correction");
+        Self {
+            books,
+            closing,
+            member: id,
+            original_report_json,
+        }
+    }
+
+    fn close_month(&mut self, period: AccountingPeriod) -> Result<ReportHandle, ClosingError> {
+        self.closing.close_month(
+            &mut self.books,
+            &self.member,
+            IndustryPresentation::Industrial,
+            period,
+        )
+    }
+
+    fn close_year(&mut self, year: i32) -> Result<(ReportHandle, ReportHandle), ClosingError> {
+        self.closing.close_year(
+            &mut self.books,
+            &self.member,
+            IndustryPresentation::Industrial,
+            year,
+        )
+    }
 }
 
 #[test]
 fn correction_does_not_leak_into_later_periods() {
-    let (mut books, mut closing, id, original_report_json) = books_through_correction();
-    let industry = IndustryPresentation::Industrial;
-    let scope = ScopeId::Standalone(id.clone());
+    let mut scenario = CorrectionScenario::through_correction();
+    let scope = ScopeId::Standalone(scenario.member.clone());
 
     // (a) 重述版本：更正归入目标历史期间的损益与权益运动。
-    let corrected_report = closing
+    let corrected_report = scenario
+        .closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 2)
         .expect("restated annual v2")
         .clone();
@@ -121,21 +153,23 @@ fn correction_does_not_leak_into_later_periods() {
     );
 
     // (e) 原公布 v1 逐字节不变。
-    let original_report = closing
+    let original_report = scenario
+        .closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 1)
         .expect("original annual v1");
     assert_eq!(original_report.income.cumulative.net_income, yuan(5_295));
     assert_eq!(
         serde_json::to_string(original_report).unwrap(),
-        original_report_json
+        scenario.original_report_json
     );
 
     // (b) 2031-01 月报：更正对后续期间损益贡献为零；期初留存吸收更正；
     //     现金按实际期间恰一次。
-    let jan31 = closing
-        .close_month(&mut books, &id, industry, period("2031-01"))
+    let jan31 = scenario
+        .close_month(period("2031-01"))
         .expect("2031-01 close");
-    let jan31_set = closing
+    let jan31_set = scenario
+        .closing
         .version(
             &scope,
             period("2031-01"),
@@ -164,19 +198,13 @@ fn correction_does_not_leak_into_later_periods() {
 
     // (c)/(d) FY2031 年报：累计净利 0；上年同期 = 重述后 5,595（非原报）。
     for m in 2..=11u8 {
-        closing
-            .close_month(
-                &mut books,
-                &id,
-                industry,
-                AccountingPeriod::from_ymd(2031, m).expect("month"),
-            )
+        scenario
+            .close_month(AccountingPeriod::from_ymd(2031, m).expect("month"))
             .expect("2031 month close");
     }
-    let (_, annual31) = closing
-        .close_year(&mut books, &id, industry, 2031)
-        .expect("2031 year close");
-    let fy31 = closing
+    let (_, annual31) = scenario.close_year(2031).expect("2031 year close");
+    let fy31 = scenario
+        .closing
         .version(
             &scope,
             period("2031-12"),
@@ -207,7 +235,12 @@ fn correction_does_not_leak_into_later_periods() {
 /// 与不落盘路径逐字节一致（底稿经存档恢复后仍生效）。
 #[test]
 fn restatement_worksheet_survives_serde_round_trip() {
-    let (books, closing, id, _original_report_json) = books_through_correction();
+    let CorrectionScenario {
+        books,
+        closing,
+        member: id,
+        ..
+    } = CorrectionScenario::through_correction();
     let industry = IndustryPresentation::Industrial;
     let scope = ScopeId::Standalone(id.clone());
     let saved_engine = serde_json::to_string(&closing).expect("engine serializes");

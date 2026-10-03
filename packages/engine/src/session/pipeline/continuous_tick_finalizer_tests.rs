@@ -18,15 +18,18 @@ fn empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
         assert_eq!(game.tick(), tick);
         assert_eq!(result.commit.tick.events, result.output.events);
         assert_eq!(result.output.events.len(), 2);
-        for (index, (code, market)) in game.markets.iter().enumerate() {
+        for (index, (code, market)) in game.state.markets.iter().enumerate() {
             assert!(matches!(&result.output.events[index], Event::PriceTick {
                 seq, tick: event_tick, code: event_code, last_price, daily_candle, bids, asks,
             } if *seq == (tick - 1) * 2 + index as u64 + 1
                 && *event_tick == tick && event_code == code && *last_price == market.last_price()
-                && daily_candle == &game.active_daily_candles[code]
+                && daily_candle == &game.state.candle_book.active()[code]
                 && bids.is_empty() && asks.is_empty()));
-            assert_eq!(game.price_history[code].len(), tick.min(2) as usize);
-            assert_eq!(game.market_minute_closes[code].len(), (tick / 2) as usize);
+            assert_eq!(game.state.price_history[code].len(), tick.min(2) as usize);
+            assert_eq!(
+                game.state.market_minute_closes[code].len(),
+                (tick / 2) as usize
+            );
         }
         let saved = game.save().unwrap();
         let restored = GameSession::restore(&saved).unwrap();
@@ -47,6 +50,7 @@ fn last_continuous_tick_keeps_its_price_point_before_closing_auction() {
     assert_eq!(game.day(), 0);
     assert_eq!(game.phase(), TradingPhase::ClosingAuction);
     assert!(game
+        .state
         .market_minute_closes
         .values()
         .all(|history| history.len() == 240));
@@ -56,7 +60,7 @@ fn last_continuous_tick_keeps_its_price_point_before_closing_auction() {
 #[test]
 fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
     let mut game = session(1, 0);
-    let code = game.markets.keys().next().unwrap().clone();
+    let code = game.state.markets.keys().next().unwrap().clone();
     game.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {
@@ -90,13 +94,14 @@ fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
             .count(),
         1
     );
-    assert!(game.active_daily_candles.is_empty());
-    assert!(game.market_minute_closes.values().all(Vec::is_empty));
+    assert!(game.state.candle_book.active().is_empty());
+    assert!(game.state.market_minute_closes.values().all(Vec::is_empty));
     assert!(game
+        .state
         .markets
         .values()
         .all(|market| market.resting_orders().is_empty()));
-    assert_eq!(game.envelope_ledger.iter().count(), 0);
+    assert_eq!(game.state.envelope_ledger.iter().count(), 0);
     let saved = game.save().unwrap();
     assert_eq!(
         serde_json::to_value(GameSession::restore(&saved).unwrap().save().unwrap()).unwrap(),
@@ -111,10 +116,10 @@ fn day_end_release_terminates_the_causal_lifecycle() {
 
     let mut game = session(1, 0);
     let account = AccountId(0);
-    let code = game.markets.keys().next().unwrap().clone();
+    let code = game.state.markets.keys().next().unwrap().clone();
     let order_ids = [
-        crate::OrderId(game.next_order_id),
-        crate::OrderId(game.next_order_id + 1),
+        crate::OrderId(game.state.next_order_id),
+        crate::OrderId(game.state.next_order_id + 1),
     ];
     for price in [990, 980] {
         game.enqueue_player_intent(
@@ -189,16 +194,16 @@ fn day_end_causal_facts_keep_the_completed_continuous_phase() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut game = session(2, 0);
-    game.setup.auction_ticks = 1;
-    game.tick = 1;
-    game.pending_npc = Some(crate::session::PendingNpcBatch {
+    game.state.setup.auction_ticks = 1;
+    game.state.tick = 1;
+    game.state.pending_npc = Some(crate::session::PendingNpcBatch {
         dependencies: Vec::new(),
-        observed_tick: game.tick,
+        observed_tick: game.state.tick,
         observed_accounts: Vec::new(),
         intents: Vec::new(),
     });
-    let code = game.markets.keys().next().unwrap().clone();
-    let order_id = crate::OrderId(game.next_order_id);
+    let code = game.state.markets.keys().next().unwrap().clone();
+    let order_id = crate::OrderId(game.state.next_order_id);
     let expected_civil = crate::CivilInstant::from_hms(game.civil_date(), 15, 0, 0).unwrap();
     game.enqueue_player_intent(
         AccountId(0),
@@ -254,7 +259,7 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     third.code = crate::StockCode("600890".to_owned());
     setup.stocks.push(third);
     let mut game = GameSession::new(setup, 42).unwrap();
-    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     for code in &codes[..2] {
         game.enqueue_player_intent(
             AccountId(0),
@@ -296,9 +301,10 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
 
 fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
     let mut game = session(ticks_per_day, 0);
-    let code = game.markets.keys().next().unwrap().clone();
+    let code = game.state.markets.keys().next().unwrap().clone();
     // Existing player inventory avoids adding an account absent from the save setup.
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 400, Money::from_cents(1_000))
@@ -325,7 +331,7 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
     let (mut game, code) = trade_session(4);
     game.update_active_daily_candle(&code, Money::from_cents(1_000), 0);
     let result = prepare_continuous_tick(&mut game).unwrap().commit();
-    let candle = &game.active_daily_candles[&code];
+    let candle = &game.state.candle_book.active()[&code];
     assert_eq!(
         (candle.open, candle.low),
         (Money::from_cents(1_010), Money::from_cents(1_010))
@@ -338,13 +344,16 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
     let stats = candle.trade_stats.as_ref().unwrap();
     assert_eq!(stats.trade_count, 2);
     assert_eq!(stats.turnover_cents, 203_000);
-    assert_eq!(game.accounts[&AccountId(0)].positions[&code].t1_locked, 200);
+    assert_eq!(
+        game.state.accounts[&AccountId(0)].positions()[&code].t1_locked(),
+        200
+    );
     assert!(result.output.events.iter().any(|event| matches!(event,
         Event::PriceTick { code: actual, last_price, bids, asks, daily_candle, .. }
         if actual == &code && *last_price == Money::from_cents(1_020)
             && bids.is_empty() && asks.is_empty() && daily_candle == candle)));
-    assert_eq!(game.market_minute_closes[&code].len(), 60);
-    assert!(game.market_minute_closes[&code]
+    assert_eq!(game.state.market_minute_closes[&code].len(), 60);
+    assert!(game.state.market_minute_closes[&code]
         .iter()
         .enumerate()
         .all(
@@ -367,11 +376,17 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
 fn final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
     let (mut game, code) = trade_session(1);
     let result = prepare_continuous_tick(&mut game).unwrap().commit();
-    assert_eq!(game.accounts[&AccountId(0)].positions[&code].t1_locked, 0);
-    assert_eq!(game.accounts[&AccountId(0)].sellable_qty(&code), 400);
-    let candle = game.daily_candles[&code].last().unwrap();
+    assert_eq!(
+        game.state.accounts[&AccountId(0)].positions()[&code].t1_locked(),
+        0
+    );
+    assert_eq!(game.state.accounts[&AccountId(0)].sellable_qty(&code), 400);
+    let candle = game.state.candle_book.histories()[&code].last().unwrap();
     assert_eq!(candle.volume, 200);
-    assert_eq!(game.markets[&code].last_close(), Money::from_cents(1_020));
+    assert_eq!(
+        game.state.markets[&code].last_close(),
+        Money::from_cents(1_020)
+    );
     assert_eq!(result.output.events.iter().filter(|event| matches!(event,
         Event::PriceTick { code: actual, daily_candle, .. } if actual == &code && daily_candle == candle)).count(), 1);
     assert!(result.output.events.iter().any(|event| matches!(event,
@@ -382,7 +397,7 @@ fn final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
 #[test]
 fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
     let (mut game, _) = trade_session(1);
-    game.seq = u64::MAX - 1;
+    game.state.seq = u64::MAX - 1;
     let authority_before = (
         game.business_state_hash().unwrap(),
         game.session_state_hash().unwrap(),
@@ -414,15 +429,15 @@ fn tick_and_day_overflow_are_typed_and_atomic() {
     for overflow_tick in [true, false] {
         let mut game = session(1, 0);
         if overflow_tick {
-            game.tick = u64::MAX;
-            game.pending_npc = Some(crate::session::PendingNpcBatch {
+            game.state.tick = u64::MAX;
+            game.state.pending_npc = Some(crate::session::PendingNpcBatch {
                 dependencies: Vec::new(),
-                observed_tick: game.tick,
+                observed_tick: game.state.tick,
                 observed_accounts: Vec::new(),
                 intents: Vec::new(),
             });
         } else {
-            game.day = u32::MAX;
+            game.state.day = u32::MAX;
         }
         let before = if overflow_tick {
             None // u64::MAX is outside the save/hash JavaScript integer domain.
@@ -465,13 +480,14 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
         // the save protocol's JS-safe range; the authority must remain healthy on failure.
         plan.state
             .execute(|candidate| {
-                let candle = candidate.active_daily_candles.get_mut(&code).unwrap();
+                let mut candle = candidate.state.candle_book.active()[&code].clone();
                 match counter {
                     "volume" => candle.volume = u64::MAX,
                     "turnover" => candle.trade_stats.as_mut().unwrap().turnover_cents = u64::MAX,
                     "count" => candle.trade_stats.as_mut().unwrap().trade_count = u64::MAX,
                     _ => unreachable!(),
                 }
+                candidate.state.candle_book.set_active(code.clone(), candle);
                 Ok(())
             })
             .unwrap();
@@ -507,8 +523,9 @@ fn partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quanti
 
 fn partial_fill_then_day_end(maker: Side, taker: Side) {
     let mut game = session(2, 0);
-    let code = game.markets.keys().next().unwrap().clone();
-    game.accounts
+    let code = game.state.markets.keys().next().unwrap().clone();
+    game.state
+        .accounts
         .get_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
@@ -573,10 +590,19 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
         if actual == &code
             && (if maker == Side::Sell { asks } else { bids }) == &vec![(Money::from_cents(1_000), 100)])));
     assert_eq!(game.day(), 1);
-    assert_eq!(game.envelope_ledger.iter().count(), 0);
-    assert!(game.markets[&code].resting_orders().is_empty());
-    assert_eq!(game.accounts[&AccountId(0)].positions[&code].t1_locked, 0);
-    assert_eq!(game.daily_candles[&code].last().unwrap().volume, 100);
+    assert_eq!(game.state.envelope_ledger.iter().count(), 0);
+    assert!(game.state.markets[&code].resting_orders().is_empty());
+    assert_eq!(
+        game.state.accounts[&AccountId(0)].positions()[&code].t1_locked(),
+        0
+    );
+    assert_eq!(
+        game.state.candle_book.histories()[&code]
+            .last()
+            .unwrap()
+            .volume,
+        100
+    );
     assert_eq!(
         serde_json::to_value(game.save().unwrap()).unwrap(),
         serde_json::to_value(restored.save().unwrap()).unwrap()

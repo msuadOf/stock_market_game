@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use crate::accounting::{AccountingAmount, AccountingError, BusinessEventId, FractionUnits};
 use crate::calendar::CivilDate;
-use crate::company::contracts::ContractId;
-use crate::company::industrial::chart;
+use crate::company::contracts::{ContractBook, ContractId};
+use crate::company::industrial::{chart, IndustrialError};
 
 /// 开局借款隐式合同 id（与 2001 开局余额一一对应；task-7 review O2 治理决策）。
 pub const OPENING_DEBT_CONTRACT_ID: &str = "OPENING-DEBT";
@@ -79,16 +79,128 @@ impl LoanState {
     }
 }
 
-/// 借款表落地的通用入口（无该合同则 no-op——仅由过账成功路径调用）。
-pub(super) fn apply_accrual(
-    loans: &mut BTreeMap<ContractId, LoanState>,
-    item: &InterestAccrualItem,
-    through: CivilDate,
-) -> Result<(), AccountingError> {
-    if let Some(state) = loans.get_mut(&item.contract) {
-        state.apply_accrual_item(item, through)?;
+/// 贷款状态的唯一 owner；合同主数据由 ContractBook 借入，不复制合同事实。
+/// transparent 保持存档中的 loans 为原合同 id → LoanState map。
+#[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(super) struct LoanPortfolio {
+    loans: BTreeMap<ContractId, LoanState>,
+}
+
+impl LoanPortfolio {
+    pub(super) fn get(&self, contract: &ContractId) -> Option<&LoanState> {
+        self.loans.get(contract)
     }
-    Ok(())
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&ContractId, &LoanState)> {
+        self.loans.iter()
+    }
+
+    pub(super) fn outstanding_total(&self) -> Result<AccountingAmount, AccountingError> {
+        let mut total = AccountingAmount::ZERO;
+        for loan in self.loans.values() {
+            total = total.add(loan.outstanding())?;
+        }
+        Ok(total)
+    }
+
+    /// 仅在原登记成功点建立状态；不提前改变过账与合同登记的先后顺序。
+    pub(super) fn insert_registered_loan(
+        &mut self,
+        contract: ContractId,
+        principal: AccountingAmount,
+        start: CivilDate,
+    ) {
+        self.loans
+            .insert(contract, LoanState::new(principal, start));
+    }
+
+    /// 按合同 id 稳定预览，任何首错都发生在过账与状态变更之前。
+    pub(super) fn preview_accruals<'a>(
+        &'a self,
+        contracts: &'a ContractBook,
+        through: CivilDate,
+    ) -> impl Iterator<Item = Result<InterestAccrualItem, IndustrialError>> + 'a {
+        // 逐项预览让 caller 保留“本项计提→event id→下一合同”的错误顺序。
+        self.loans.iter().filter_map(move |(contract, state)| {
+            Self::preview_accrual(contracts, contract, state, through).transpose()
+        })
+    }
+
+    /// 还本前的单合同预览；调用方已按原次序验证存在、金额和未偿本金。
+    pub(super) fn preview_repayment_accrual(
+        &self,
+        contracts: &ContractBook,
+        contract: &ContractId,
+        through: CivilDate,
+    ) -> Result<Option<InterestAccrualItem>, IndustrialError> {
+        let state = self
+            .get(contract)
+            .expect("repayment validated loan existence");
+        Self::preview_accrual(contracts, contract, state, through)
+    }
+
+    fn preview_accrual(
+        contracts: &ContractBook,
+        contract: &ContractId,
+        state: &LoanState,
+        through: CivilDate,
+    ) -> Result<Option<InterestAccrualItem>, IndustrialError> {
+        let days = through.days_since(state.last_accrual_date());
+        if days < 0 {
+            return Err(IndustrialError::AccrualNotForward {
+                contract: contract.clone(),
+                through,
+                last_accrual: state.last_accrual_date(),
+            });
+        }
+        if days == 0 {
+            return Ok(None);
+        }
+        let rate_bp = contracts
+            .get(contract)
+            .map(|c| c.annual_rate_bp)
+            .expect("loan state implies registered contract");
+        let (amount, remaining_carried) =
+            accrue_act_365f(state.outstanding(), rate_bp, days, state.carried())?;
+        Ok(Some(InterestAccrualItem {
+            contract: contract.clone(),
+            days,
+            amount,
+            remaining_carried,
+        }))
+    }
+
+    /// 仅在成功过账后落地；保留原 map 缺项时的 no-op 接受行为。
+    pub(super) fn apply_posted_accruals(
+        &mut self,
+        items: &[InterestAccrualItem],
+        through: CivilDate,
+    ) -> Result<(), AccountingError> {
+        for item in items {
+            if let Some(state) = self.loans.get_mut(&item.contract) {
+                state.apply_accrual_item(item, through)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn settle_posted_interest(&mut self, contract: &ContractId) {
+        if let Some(state) = self.loans.get_mut(contract) {
+            state.settle_accrued();
+        }
+    }
+
+    pub(super) fn repay_posted_principal(
+        &mut self,
+        contract: &ContractId,
+        amount: AccountingAmount,
+    ) -> Result<(), AccountingError> {
+        if let Some(state) = self.loans.get_mut(contract) {
+            state.repay(amount)?;
+        }
+        Ok(())
+    }
 }
 
 /// 单合同计提结果。

@@ -7,7 +7,7 @@ use crate::accounting::{AccountingAmount, Books};
 use crate::calendar::CivilDate;
 use crate::company::events::{ShockKind, ShockParams};
 use crate::company::operations::config::{
-    CompanyOperationsConfig, FlowParams, IndustryBooks, OperatingCompanyConfig,
+    CompanyOperationsConfig, FlowParams, IndustryBooks, IndustryPairView, OperatingCompanyConfig,
 };
 use crate::company::operations::error::OperationsError;
 use crate::company::operations::history::HistoryMeta;
@@ -181,24 +181,15 @@ impl CompanyOperations {
         };
         let mut companies = BTreeMap::new();
         let mut industry_rngs = BTreeMap::new();
-        for OperatingCompanyConfig { spec, books, flow } in company_configs {
+        for OperatingCompanyConfig {
+            spec,
+            mut books,
+            flow,
+        } in company_configs
+        {
             spec.validate()?;
             flow.validate_durations(&spec)?;
-            let consistent = spec.kind == books.kind()
-                && matches!(
-                    (&books, &flow),
-                    (IndustryBooks::Industrial(_), FlowParams::Industrial(_))
-                        | (IndustryBooks::Bank(_), FlowParams::Bank(_))
-                        | (IndustryBooks::Insurance(_), FlowParams::Insurance(_))
-                        | (IndustryBooks::RealEstate(_), FlowParams::RealEstate(_))
-                );
-            if !consistent {
-                return Err(OperationsError::KindFlowMismatch {
-                    company: spec.id.clone(),
-                    kind: spec.kind,
-                    flow: flow.variant_name(),
-                });
-            }
+            IndustryPairView::at_build_guard(&mut books, &flow, &spec)?;
             industry_rngs
                 .entry(spec.industry.clone())
                 .or_insert_with(|| stream(RngStream::IndustryShock, &spec.industry.0));

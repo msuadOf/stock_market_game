@@ -904,20 +904,16 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
     coordinator.stocks.get_mut(&second_code).unwrap().ledger =
         EnvelopeLedger::new(0, Vec::<Envelope>::new()).unwrap();
 
-    let first_error = apply_stock_round(
-        first_code.clone(),
-        coordinator.stocks[&first_code].clone(),
-        vec![operations[0].clone()],
-    )
-    .err()
-    .expect("first stock must fail after trade index overflow");
-    let second_error = apply_stock_round(
-        second_code.clone(),
-        coordinator.stocks[&second_code].clone(),
-        vec![operations[1].clone()],
-    )
-    .err()
-    .expect("second stock must fail with a missing envelope");
+    let first_error = coordinator.stocks[&first_code]
+        .clone()
+        .apply_round(first_code.clone(), vec![operations[0].clone()])
+        .err()
+        .expect("first stock must fail after trade index overflow");
+    let second_error = coordinator.stocks[&second_code]
+        .clone()
+        .apply_round(second_code.clone(), vec![operations[1].clone()])
+        .err()
+        .expect("second stock must fail with a missing envelope");
     assert_ne!(first_error, second_error);
 
     let perturbation = ExecutorPerturbation {
@@ -948,18 +944,19 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     setup.npcs.retail_count = 1;
     setup.npcs.inst_count = 0;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     let account = AccountId(1);
     let mut makers = Vec::new();
     for (index, code) in codes.iter().enumerate() {
-        game.accounts
+        game.state
+            .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, Money::from_cents(1_000))
             .unwrap();
         let order_id = OrderId(10_000 + u64::try_from(index).unwrap());
         makers.push(add_resting(
-            game.markets.get_mut(code).unwrap(),
+            game.state.markets.get_mut(code).unwrap(),
             code,
             account,
             order_id,
@@ -967,9 +964,9 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             100,
         ));
     }
-    game.envelope_ledger =
+    game.state.envelope_ledger =
         EnvelopeLedger::new(0, makers.iter().map(|maker| maker.envelope.clone())).unwrap();
-    game.next_receipt_base = 0;
+    game.state.next_receipt_base = 0;
     let operations = validated_operations_in_session(
         &game,
         account,
@@ -1016,9 +1013,9 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         }])
         .unwrap();
     let finish = coordinator.finish().unwrap();
-    let cash_before = game.accounts[&account].cash;
-    let experience_before = game.retail_experience[&account].clone();
-    let seq_before = game.seq;
+    let cash_before = game.state.accounts[&account].cash();
+    let experience_before = game.state.retail_experience[&account].clone();
+    let seq_before = game.state.seq;
 
     let output = crate::session::pipeline::session_execution_transaction::apply_incremental_session_execution_transaction(
         &mut game,
@@ -1041,12 +1038,12 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         .all(|receipt| receipt.kind == ReceiptKind::Fill));
     assert_eq!(output.settlement.settlement.applied_receipts, 4);
     assert_eq!(output.settlement.settlement.applied_groups, 4);
-    assert_eq!(game.envelope_ledger.iter().count(), 0);
-    assert_eq!(game.envelope_ledger.terminal_count(), 4);
-    assert_eq!(game.next_receipt_base, 4);
+    assert_eq!(game.state.envelope_ledger.iter().count(), 0);
+    assert_eq!(game.state.envelope_ledger.terminal_count(), 4);
+    assert_eq!(game.state.next_receipt_base, 4);
     assert!(codes
         .iter()
-        .all(|code| game.markets[code].resting_order_count() == 0));
+        .all(|code| game.state.markets[code].resting_order_count() == 0));
 
     let total_fees = output
         .receipts
@@ -1054,15 +1051,15 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         .map(|receipt| receipt.charged.total().unwrap())
         .fold(Money::ZERO, |sum, fee| sum.add(fee).unwrap());
     assert_eq!(
-        game.accounts[&account].cash,
+        game.state.accounts[&account].cash(),
         cash_before.sub(total_fees).unwrap()
     );
     for code in &codes {
-        let position = &game.accounts[&account].positions[code];
-        assert_eq!(position.qty, 100);
-        assert_eq!(position.t1_locked, 100);
+        let position = &game.state.accounts[&account].positions()[code];
+        assert_eq!(position.qty(), 100);
+        assert_eq!(position.t1_locked(), 100);
     }
-    let experience = &game.retail_experience[&account];
+    let experience = &game.state.retail_experience[&account];
     assert_ne!(experience, &experience_before);
     for (index, code) in codes.iter().enumerate() {
         assert_eq!(
@@ -1098,7 +1095,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             .count(),
         2
     );
-    assert_eq!(game.seq, seq_before + 3);
+    assert_eq!(game.state.seq, seq_before + 3);
 }
 
 fn validated_operations(
@@ -1109,8 +1106,8 @@ fn validated_operations(
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let first_order_id = OrderId(game.next_order_id);
-    let candidates = build(game.next_order_id)
+    let first_order_id = OrderId(game.state.next_order_id);
+    let candidates = build(game.state.next_order_id)
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
@@ -1131,12 +1128,12 @@ fn validated_operations(
         ),
     )])
     .unwrap();
-    let config = game.setup.config.clone();
+    let config = game.state.setup.config.clone();
     let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
+        game.state.next_order_id,
         config.clone(),
         context,
     )
@@ -1178,12 +1175,12 @@ fn validated_operations_for_stocks(
         )
     }))
     .unwrap();
-    let config = game.setup.config.clone();
+    let config = game.state.setup.config.clone();
     let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
+        game.state.next_order_id,
         config.clone(),
         context,
     )
@@ -1198,12 +1195,13 @@ fn validated_sell_operations(code: &StockCode) -> (Vec<ValidatedOperation>, Game
     let account = AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
         .unwrap();
-    let config = game.setup.config.clone();
+    let config = game.state.setup.config.clone();
     let operations = validated_operations_in_session(
         &game,
         account,
@@ -1245,8 +1243,8 @@ fn validated_operations_in_session(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         crate::session::pipeline::account_validation_context::build_account_validation_context(
             game,
         )
@@ -1356,4 +1354,42 @@ fn empty_market(code: &StockCode) -> Market {
 
 fn stock(value: &str) -> StockCode {
     StockCode(value.to_owned())
+}
+
+#[test]
+fn consuming_stock_finish_freezes_depth_before_day_end_and_emits_one_release() {
+    let code = stock("600888");
+    let mut market = empty_market(&code);
+    let maker = add_resting(
+        &mut market,
+        &code,
+        AccountId(11),
+        OrderId(100),
+        Side::Sell,
+        100,
+    );
+    let coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+        market,
+        vec![maker],
+        GameConfig::proposed_defaults(),
+    )])
+    .unwrap();
+    let finish = coordinator.finish_for_tick(true).unwrap();
+    assert_eq!(finish.prices[&code].last, Money::from_cents(1_000));
+    assert_eq!(
+        finish.prices[&code].asks,
+        vec![(Money::from_cents(1_000), 100)]
+    );
+    let worker = &finish.workers[0];
+    assert_eq!(worker.market.resting_order_count(), 0);
+    assert_eq!(worker.receipts.len(), 1);
+    assert_eq!(worker.terminal_keys.len(), 1);
+    assert_eq!(worker.receipts[0].envelope, worker.terminal_keys[0]);
+    assert_eq!(worker.receipts[0].kind, ReceiptKind::Release);
+    assert_eq!(worker.receipts[0].delta.live_after, ResVec::ZERO);
+    assert!(matches!(
+        worker.receipts[0].local_key.source(),
+        crate::session::pipeline::ReceiptSource::DayEnd(0)
+    ));
+    assert!(finish.execution_facts.is_empty());
 }

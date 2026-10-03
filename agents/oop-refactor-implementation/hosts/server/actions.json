@@ -1,0 +1,358 @@
+[
+  {
+    "id": "hosts-03-A01",
+    "title": "SessionRegistry（私有、WASM worker 局部 owner）",
+    "group": "hosts",
+    "origin": "baseline",
+    "files": [
+      "apps/web-wasm/src/lib.rs"
+    ],
+    "details": {
+      "id": "hosts-03-A01",
+      "target": "SessionRegistry（私有、WASM worker 局部 owner）",
+      "status": "proposed",
+      "owned_state": [
+        "HashMap<u32, ProtocolSession> 中的句柄与会话",
+        "既有 NEXT 句柄来源的分配/注册生命周期；本对象封装保持当前分配语义，耗尽修复独立登记。",
+        "生命周期不变量：ProtocolSession 构造/恢复成功后才插入句柄；删除只移除该句柄。",
+        "single-writer 修改仍限于既有 thread-local worker 上下文。"
+      ],
+      "moves": [
+        {
+          "from": "REGISTRY thread_local RefCell<HashMap<u32, ProtocolSession>>",
+          "to": "thread_local RefCell<SessionRegistry>",
+          "reason": "映射及插入/查询/移除生命周期构成 adapter 唯一持久可变资源，可命名封装而不迁移引擎权威。"
+        },
+        {
+          "from": "create_session：ProtocolSession::new、NEXT.fetch_add、REGISTRY 插入",
+          "to": "SessionRegistry::create(setup, seed)",
+          "reason": "构造与注册归同一生命周期；耗尽保护是独立缺陷修复，不作为本封装步骤。"
+        },
+        {
+          "from": "restore 和 restore_json：ProtocolSession::restore 加 NEXT/REGISTRY 插入",
+          "to": "SessionRegistry::restore(slot) / SessionRegistry::restore_json(json)",
+          "reason": "两条恢复入口应共享构造与注册，保留当前 serde-wasm-bindgen 与 JSON 输入错误差异。"
+        },
+        {
+          "from": "step_update registry 查找及 ProtocolSession 修改",
+          "to": "SessionRegistry::step_update(handle)",
+          "reason": "single-writer owner 应提供受检访问，保留后续步进前的 CivilUpdate barrier。"
+        },
+        {
+          "from": "with_session registry.get_mut",
+          "to": "SessionRegistry::with_session(handle, closure)",
+          "reason": "查询和命令需要相同显式无效句柄行为，保留窄 closure 访问，不暴露映射。"
+        },
+        {
+          "from": "drop_session registry.remove",
+          "to": "SessionRegistry::drop(handle)",
+          "reason": "将句柄释放作为 owner 显式生命周期操作。"
+        }
+      ],
+      "api_boundary": "保持全部 wasm_bindgen 名称、参数/返回传输形状、AccountId(0) 玩家政策及 JS 错误行为稳定。registry 仅暴露受检创建/恢复、closure 范围可变访问、步进及移除；不向 JS 返回 ProtocolSession，也不跨 worker 共享。分配/插入句柄前先构造 ProtocolSession，使配置/恢复失败不遗留部分注册状态。普通非法输入/操作错误与致命结构化 HostFailure 保持区分。Snapshot/Event/Intent/SessionSetup/SaveSlot 及报告 DTO 仍可序列化 且留在边界，不让类实例跨越 serde。保持当前句柄分配行为，NEXT 耗尽保护仅在独立 defect_lead 处理。",
+      "composition": "私有结构及 impl 方法组合 HashMap，不用继承或 trait object。保持 thread_local RefCell single-writer 模型及既有 AtomicU32 句柄来源。不增加锁、通道、常驻 actor 线程或共享可变引擎状态；只是为既有资源所有权命名，不建立新宿主架构。",
+      "callers_and_contracts": [
+        "apps/web/src/host/wasm-worker.ts：创建/恢复会话，在 worker 任务中同步调用 wasm.step(handle)；snapshot、存档候选及句柄替换/删除留在此适配边界，完整协议更新仍为 EngineUpdate。",
+        "apps/web/src/types/engine.ts 和 apps/web/src/wasm-pkg.d.ts：面向生成代码的函数名及标量/DTO 签名保持稳定。",
+        "ProtocolSession::step_frame/tick_batch/end_civil_day_update：CivilUpdate barrier 顺序及按序帧/批次调用；adapter 不提供跨 step_frame/tick_batch 事务。ProtocolSession::step_frame 回滚自己的帧失败；tick_batch 仅成功时更新已发布 baseline，不回滚先前成功的 step_frame。",
+        "ADR-0010：共享 HostUpdate/HostFailure 宿主语义，worker 传输细节留在 adapter。",
+        "ADR-0017 和 docs/trading-rules.md：引擎仍为步进、委托、现金/股份及 T+1 语义权威，adapter 不增加交易行为。"
+      ],
+      "steps": [
+        "引入私有 SessionRegistry，保留既有映射及创建、恢复、closure 范围会话访问、步进和删除方法；thread-local 所有权及句柄类型不变。",
+        "所有接受句柄的导出函数均经 registry 访问方法；输入专属错误语义不同时，serde 转换留在各 JS 边界。",
+        "将自然日 barrier/步进顺序移入 SessionRegistry::step_update，同样以会话步进/序号/日期补充致命上下文；仅承诺顺序，不保证 step_frame 后接 tick_batch 的组合原子性。",
+        "有类型 SaveSlot 与 JSON 恢复仅在解码为 SaveSlot 后统一；保留现有解析错误，恢复不得修改既有句柄。",
+        "公开 wasm_bindgen 导出保留薄 adapter，纯指标计算与 serialization helper 留在 owner 之外。",
+        "协议测试改用 SessionRegistry 方法，补充创建/恢复失败不注册句柄、独立句柄、未知句柄删除/步进/查询及恢复后自然日/步进更新顺序。"
+      ],
+      "validation": [
+        "现有 apps/web-wasm/src/protocol_tests.rs：registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit",
+        "现有 apps/web-wasm/src/protocol_tests.rs：registry_retains_complete_closing_history",
+        "现有 producer_failure_* 测试覆盖结构化脱敏及源链行为。",
+        "现有内联 error_layout_tests::step_update_error_keeps_fatal_payload_indirect",
+        "补充/保留失败注册及句柄生命周期针对性单测；此审计未运行测试。"
+      ],
+      "dependencies": [
+        "ProtocolSession（引擎协议 owner，保持权威）",
+        "HostFailure/StepUpdateError 错误映射（保持分离，由边界 adapter 使用）",
+        "apps/web/src/host/wasm-worker.ts 调用方契约",
+        "生成的 TypeScript WASM 声明及引擎 DTO"
+      ]
+    },
+    "batch": "hosts-03",
+    "extensions": []
+  },
+  {
+    "id": "hosts-N02",
+    "title": "WebState 组合已校验的 StaticAssetRoot 值对象",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/server/src/web_ui.rs",
+      "apps/server/src/deployment.rs",
+      "apps/server/tests/deployment_routes.rs"
+    ],
+    "objects": [
+      "StaticAssetRoot",
+      "WebState"
+    ],
+    "report_anchor": "hosts-n02",
+    "group": "hosts",
+    "details_markdown": "`WebState` 目前只保存 canonical `PathBuf`；`static_router` 校验部署根/index/assets，`serve_file` 再根据同一 root canonicalize 请求、检查 root containment/隐藏组件及 regular file。可由私有 `StaticAssetRoot` 保存已校验的根，并把围绕根的这些方法集中；它是路径约束的 value object，即使没有可变状态，也有比裸 `PathBuf` 更明确的含义。`WebState` 组合该值，不另造全能 HTTP service。\n\n- **字段/方法：** 私有 canonical root；`validate_package(root)` 原样执行启动检查；async `resolve_resource(path)` 原样完成请求路径与 canonical/metadata 校验，返回具体文件路径或类型化访问结果。`startup_error`/`file_error` 继续在 adapter 映射成现有启动错误/HTTP 响应。\n- **调用方/归属：** `deployment::deployment_router` 调 `static_router`；`index_file`/`static_file` 通过 `WebState` 调路径对象。Router clone 共享不变根；请求不缓存 canonical 文件，也不保存 `Request`。\n- **迁移：** 固定现有启动错误与 HTTP 行为；原样迁启动 validation，再迁 request resolution；handlers 保留路由保留字、GET/HEAD、405 Allow header、ServeFile 和 COOP/COEP/nosniff。\n- **测试位置/边界：** `apps/server/tests/deployment_routes.rs` 的启动缺 root/index/assets、MIME/header、HEAD、保留 API namespace、缺失文件、权限失败及 traversal/symlink 用例。保留 canonicalize/metadata 在每次请求的实际时点、既有 TOCTOU 行为与错误优先顺序，不暗中新增安全机制或改变 symlink 接受政策。该对象只管理静态资源，不触及撮合、账户、存档与 A 股规则。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "hosts-N06",
+    "title": "CLI 拒绝测试的 child/deadline 生命周期对象",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/server/tests/deployment_cli.rs"
+    ],
+    "objects": [
+      "RejectedCommandFixture"
+    ],
+    "report_anchor": "hosts-n06",
+    "group": "hosts",
+    "details_markdown": "`apps/server/tests/deployment_cli.rs::rejected` 同时拥有 `Child`、500ms deadline、5ms poll、piped stderr 和成功/超时的 wait/kill 分支，五类拒绝测试复用这一真实进程生命周期。可以用测试私有 `RejectedCommandFixture` 明确拥有这些资源；纯 OOP 动作只迁现有流程。\n\n- **字段/方法：** `child: Option<Child>`（取出 wait_with_output 时所有权消耗）、deadline；`spawn(arguments)`、`wait_rejected()`、`kill_and_wait()`。500ms 与5ms常量保持；现有成功失败断言及 String::from_utf8 保留显式异常。\n- **调用方/迁移：** unknown_cli_argument、invalid_services、missing_option_value、web_root_cannot_hide_an_unknown_option、无 web-ui feature 的 server_only_build 用例。先固定现有拒绝行为，移 spawn/poll/output/timeout 分支，再保持 `rejected` 作薄 bridge。测试继续使用真正的 `CARGO_BIN_EXE_server`，不 mock 路由。\n- **独立行为问题：** 当前 try_wait/其他 unwrap panic 可能留下 child；新增 Drop/unwind 自动终止回收是行为修复，不能把它记作等价抽类必然收益。若另批修复，应测可注入 wait 错误/panic、已退出 child、kill/wait 失败与有界清理，并防止 Drop 中第二次 panic。当前 CLI 普通错误目标本来不应 spawn 后代；不凭空承诺标准 Child::kill 覆盖进程树。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "local_id": "hosts35-ws-connection",
+    "title": "封装 WebSocket publisher 连接的协议生命周期",
+    "priority": "建议",
+    "files": [
+      "apps/server/src/routes.rs"
+    ],
+    "source_symbols": [
+      "run_ws",
+      "ClientCommand",
+      "ClientFrameBuffer",
+      "baseline_wire_messages",
+      "send_publisher_frame",
+      "send_resync_required"
+    ],
+    "evidence": [
+      "1098-1105: 连接循环分散保存 baseline_seq、baseline_tick、timeline_generation 与 initial_failure。",
+      "1128-1139: ClientFrameBuffer、push interval、awaiting_resync 与 delivered_failure 构成每连接生命周期状态。",
+      "1142-1222: 每个事件分支根据故障、时间线、覆盖区间、metadata transition、capacity 及 seq 错误更新缓冲或 resync。",
+      "1224-1236: broadcast lag 会清缓冲并转换到 awaiting_resync。",
+      "1250-1318: Resync 更新基线与 timeline，并复位 latch；GetFrame 受 delivery/resync 状态制约；SubmitIntent 独立继续入队。",
+      "1365-1397: wire baseline 与 publisher frame 的发送拆成若干独立函数，但状态转移仍集中在大循环。"
+    ],
+    "fields": [
+      "delivery: DeliveryMode",
+      "baseline_seq 与 baseline_tick",
+      "timeline_generation",
+      "ClientFrameBuffer",
+      "awaiting_resync",
+      "delivered_failure: Option<HostFailure>"
+    ],
+    "methods": [
+      "初始化现有buffer与baseline字段；不产生新protocol默认值",
+      "ingest(update)严格按failure→generation→awaiting_resync→covered→buffer.push现有顺序决策",
+      "MetadataTransition/Push capacity返回待flush动作及未接受update；run_ws完成异步flush成功后才重试push",
+      "Resync依旧由run_ws重新subscribe、清buffer、请求public_baseline；成功快照更新seq/tick/generation并发送baseline，成功发送后更新awaiting_resync/delivered_failure",
+      "takeFrame()按现有Push/Pull和barrier产出frame或FrameEmpty；SubmitIntent独立由handles入队"
+    ],
+    "production_callers": [
+      "ws_handler (1057-1074) 的每条 WebSocket 升级连接创建并运行一个连接协调器；当前 run_ws 是唯一生产调用点。"
+    ],
+    "data_owner": "每个 WebSocket 连接独占该对象；run_ws 的异步 select 驱动 I/O。SessionManager/actor 继续拥有游戏会话及 event broadcast，协调器不拥有引擎状态。",
+    "composition": "run_ws 保留 socket split、tokio::select!、收发错误与关闭处理；将连接状态和 publisher 协议决策委托给私有 WsPublisherConnection。继续组合现有 ClientFrameBuffer 与 wire 序列化函数，不搬移 actor 或 engine 所有权。",
+    "migration_steps": [
+      "先定义私有状态对象及状态转移结果枚举，覆盖初始 baseline、收到更新、lagged、resync、取帧等边界。",
+      "把连接状态初始化及纯转移从 run_ws 移入对象，异步发送仍留在 run_ws。",
+      "逐分支迁移 publisher 错误策略，明确 Push 满载 flush 保完整 update、Pull 满载要求 resync 的差异。",
+      "为错误响应或待发帧返回显式 action，由 run_ws 负责 socket I/O，避免对象暗藏网络副作用。"
+    ],
+    "existing_tests": [
+      "routes.rs:159-170 的 speed_value_tests 只验证 Fastest 解析，与该候选无关。",
+      "routes.rs:1400-1435 的 baseline_failure_tests 验证 baseline 与 HostFailure 两条 wire 消息。",
+      "routes/auth_tests.rs 已由reader36全文覆盖；它验证鉴权边界，不据此声称覆盖完整连接状态转移。",
+      "apps/server/tests/ws.rs 与 publisher.rs 集成测试分别验证真实WS初始baseline、pull取帧、CommandQueued以及ClientFrameBuffer；不是完整连接纯转换测试。"
+    ],
+    "missing_tests": [
+      "failure优先级测试：即使update携旧generation或已有resync barrier，也按当前failure分支发一次HostFailure并latch；不新增静默drop。",
+      "generation变化、covered update、broadcast lag与GetFrame的barrier边界，SubmitIntent仍可以入队。",
+      "Push capacity和MetadataTransition的flush发送成功后才再次push；发送失败立即关闭，owner不得预先接受新帧。",
+      "Resync保持subscribe→clear→public_baseline；public_baseline失败后已清buffer而seq/tick/generation/awaiting_resync/delivered_failure不改，GatewayError仍发送；baseline发送失败关闭连接。",
+      "Pull capacity仍清buffer并要求resync；不以对象化新增压缩、容量或重试策略。"
+    ],
+    "semantic_boundaries": "只封装 server 传输协议状态，不改变 engine seq/tick 含义、baseline 语义、push/pull 能力、publisher 覆盖规则、CommandQueued 含义或 A 股交易规则。保持连接级缓冲与 session actor 分离；不可把慢客户端丢更新策略改成静默覆盖。 分支顺序必须保持failure优先于generation/awaiting_resync/covered。MetadataTransition与Push capacity仅返回待发送动作，flush成功后run_ws才重push；失败立即关闭，不预先接受帧。public_baseline失败后已发生的重新subscribe/clear保留，其余baseline与latch字段保持原值；不得新增旧timeline静默drop。 SubmitIntent 当前不受 awaiting_resync 禁止，必须继续保持已入队请求与 CommandQueued 语义。Resync 的重新订阅/清缓冲先于 public_baseline，快照失败边界与发送失败关闭按现状保留，不凭“原子方法”顺带改变。JS RemotePublisherState 是接收端连接/等待baseline owner，本Rust对象持wire timeline与发送端buffer，两者只共享协议契约，不合并owner。",
+    "why_oop": "该对象有明确的连接级身份和生命周期，持有多项共同变化的协议状态，并负责保持它们之间的不变量：timeline 或故障要求 resync 时不得再交付帧；PublisherFrame 只从当前基线之后的 update 构造；Push 与 Pull 容量策略不同。现在这些状态在大型 run_ws 循环的多个分支共同变更，组合对象可把状态转移边界变成可独立验证的协议单元。只将纯决策对象化，socket async I/O 仍留在宿主适配层，避免 Utility 类。",
+    "reader_job": "35",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/35-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "ClientFrameBuffer 只拥有 pending/units/cursor；run_ws 在其外另维护 baseline、generation、resync barrier、delivered_failure，这些多分支转换是尚未覆盖的连接协议 owner。",
+    "id": "hosts-R2-N14",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n14",
+    "action_id": "hosts-R2-N14",
+    "group": "hosts",
+    "details_markdown": "优先级：建议；处置：new。\n\nClientFrameBuffer 只拥有 pending/units/cursor；run_ws 在其外另维护 baseline、generation、resync barrier、delivered_failure，这些多分支转换是尚未覆盖的连接协议 owner。\n\n范围：`apps/server/src/routes.rs`。\n\n**字段**\n\n- delivery: DeliveryMode\n- baseline_seq 与 baseline_tick\n- timeline_generation\n- ClientFrameBuffer\n- awaiting_resync\n- delivered_failure: Option<HostFailure>\n\n**方法**\n\n- 初始化现有buffer与baseline字段；不产生新protocol默认值\n- ingest(update)严格按failure→generation→awaiting_resync→covered→buffer.push现有顺序决策\n- MetadataTransition/Push capacity返回待flush动作及未接受update；run_ws完成异步flush成功后才重试push\n- Resync依旧由run_ws重新subscribe、清buffer、请求public_baseline；成功快照更新seq/tick/generation并发送baseline，成功发送后更新awaiting_resync/delivered_failure\n- takeFrame()按现有Push/Pull和barrier产出frame或FrameEmpty；SubmitIntent独立由handles入队\n\n**真实调用方**\n\n- ws_handler (1057-1074) 的每条 WebSocket 升级连接创建并运行一个连接协调器；当前 run_ws 是唯一生产调用点。\n\n**数据所有者**\n\n每个 WebSocket 连接独占该对象；run_ws 的异步 select 驱动 I/O。SessionManager/actor 继续拥有游戏会话及 event broadcast，协调器不拥有引擎状态。\n\n**组合方式**\n\nrun_ws 保留 socket split、tokio::select!、收发错误与关闭处理；将连接状态和 publisher 协议决策委托给私有 WsPublisherConnection。继续组合现有 ClientFrameBuffer 与 wire 序列化函数，不搬移 actor 或 engine 所有权。\n\n**迁移步骤**\n\n- 先定义私有状态对象及状态转移结果枚举，覆盖初始 baseline、收到更新、lagged、resync、取帧等边界。\n- 把连接状态初始化及纯转移从 run_ws 移入对象，异步发送仍留在 run_ws。\n- 逐分支迁移 publisher 错误策略，明确 Push 满载 flush 保完整 update、Pull 满载要求 resync 的差异。\n- 为错误响应或待发帧返回显式 action，由 run_ws 负责 socket I/O，避免对象暗藏网络副作用。\n\n**现有测试（未执行）**\n\n- routes.rs:159-170 的 speed_value_tests 只验证 Fastest 解析，与该候选无关。\n- routes.rs:1400-1435 的 baseline_failure_tests 验证 baseline 与 HostFailure 两条 wire 消息。\n- routes/auth_tests.rs 已由reader36全文覆盖；它验证鉴权边界，不据此声称覆盖完整连接状态转移。\n- apps/server/tests/ws.rs 与 publisher.rs 集成测试分别验证真实WS初始baseline、pull取帧、CommandQueued以及ClientFrameBuffer；不是完整连接纯转换测试。\n\n**待补测试**\n\n- failure优先级测试：即使update携旧generation或已有resync barrier，也按当前failure分支发一次HostFailure并latch；不新增静默drop。\n- generation变化、covered update、broadcast lag与GetFrame的barrier边界，SubmitIntent仍可以入队。\n- Push capacity和MetadataTransition的flush发送成功后才再次push；发送失败立即关闭，owner不得预先接受新帧。\n- Resync保持subscribe→clear→public_baseline；public_baseline失败后已清buffer而seq/tick/generation/awaiting_resync/delivered_failure不改，GatewayError仍发送；baseline发送失败关闭连接。\n- Pull capacity仍清buffer并要求resync；不以对象化新增压缩、容量或重试策略。\n\n**语义边界**\n\n只封装 server 传输协议状态，不改变 engine seq/tick 含义、baseline 语义、push/pull 能力、publisher 覆盖规则、CommandQueued 含义或 A 股交易规则。保持连接级缓冲与 session actor 分离；不可把慢客户端丢更新策略改成静默覆盖。 分支顺序必须保持failure优先于generation/awaiting_resync/covered。MetadataTransition与Push capacity仅返回待发送动作，flush成功后run_ws才重push；失败立即关闭，不预先接受帧。public_baseline失败后已发生的重新subscribe/clear保留，其余baseline与latch字段保持原值；不得新增旧timeline静默drop。 SubmitIntent 当前不受 awaiting_resync 禁止，必须继续保持已入队请求与 CommandQueued 语义。Resync 的重新订阅/清缓冲先于 public_baseline，快照失败边界与发送失败关闭按现状保留，不凭“原子方法”顺带改变。JS RemotePublisherState 是接收端连接/等待baseline owner，本Rust对象持wire timeline与发送端buffer，两者只共享协议契约，不合并owner。\n\n**对象化依据**\n\n该对象有明确的连接级身份和生命周期，持有多项共同变化的协议状态，并负责保持它们之间的不变量：timeline 或故障要求 resync 时不得再交付帧；PublisherFrame 只从当前基线之后的 update 构造；Push 与 Pull 容量策略不同。现在这些状态在大型 run_ws 循环的多个分支共同变更，组合对象可把状态转移边界变成可独立验证的协议单元。只将纯决策对象化，socket async I/O 仍留在宿主适配层，避免 Utility 类。\n\n**源码证据**\n\n- 1098-1105: 连接循环分散保存 baseline_seq、baseline_tick、timeline_generation 与 initial_failure。\n- 1128-1139: ClientFrameBuffer、push interval、awaiting_resync 与 delivered_failure 构成每连接生命周期状态。\n- 1142-1222: 每个事件分支根据故障、时间线、覆盖区间、metadata transition、capacity 及 seq 错误更新缓冲或 resync。\n- 1224-1236: broadcast lag 会清缓冲并转换到 awaiting_resync。\n- 1250-1318: Resync 更新基线与 timeline，并复位 latch；GetFrame 受 delivery/resync 状态制约；SubmitIntent 独立继续入队。\n- 1365-1397: wire baseline 与 publisher frame 的发送拆成若干独立函数，但状态转移仍集中在大循环。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "37-api-test-session",
+    "title": "把 settled API 测试会话的关联 fixture 状态收进测试对象",
+    "priority": "低优先级可选",
+    "files": [
+      "apps/server/tests/api_contract.rs"
+    ],
+    "source_symbols": [
+      "new_settled_session",
+      "closed_day_setup_json",
+      "closed_day_save",
+      "SessionManager",
+      "SessionHandles"
+    ],
+    "evidence": [
+      {
+        "lines": "101-117",
+        "detail": "以周六 start_date 创建 ProtocolSession，执行 end_civil_day_update 再 save，形成日终而非日内 checkpoint 的 fixture 生命周期。"
+      },
+      {
+        "lines": "179-212",
+        "detail": "new_settled_session 同时创建 JSON SessionSetup、通过 POST /api/new 注册 actor、从 manager 查 handles、restore 匹配的 closed-day SaveSlot，再返回 id/token tuple。"
+      },
+      {
+        "lines": "121-176",
+        "detail": "调用者额外自行保留 manager、app、tuple id/token，再 lookup handles；这些值必须来自同一 fixture session 才能进行 generation/save 断言。"
+      },
+      {
+        "lines": "365-413, 759-841",
+        "detail": "历史窗口 save/load 与两类拒绝 load 测试都复用同一 settled 场景，重复 manager/router/session tuple/handles 的编排。"
+      },
+      {
+        "lines": "1088-1150",
+        "detail": "待处理队列拒绝测试自己执行相同 closed-day restore 生命周期，但从 manager.new_session 直接建局，并另行持有 token/handles。"
+      }
+    ],
+    "fields": [
+      "axum::Router",
+      "server::SessionManager",
+      "session_id",
+      "session_token",
+      "SessionHandles",
+      "fixture 的 settled SaveSlot 或其构造输入"
+    ],
+    "methods": [
+      "async new_settled(app, setup_json, seed) -> ApiTestSession",
+      "async authorized_request(method, uri, body) -> Response（可选；仅封装 token 与请求，不隐藏断言）",
+      "async save(generation, candidate)（可选；若此方法引入过多 endpoint 专属封装则不加）"
+    ],
+    "production_callers": "无。唯一消费者是 apps/server/tests/api_contract.rs 中的集成测试 helper 和 test；不得描述为产品消费者。",
+    "data_owner": "ApiTestSession（仅测试生命周期）拥有 manager、router 与由它创建的 session 身份/handles，保证查找和授权令牌配对。engine 的 ProtocolSession/SaveSlot 仍是领域状态权威；测试对象只拥有 fixture 引用或构造临时输入，不拥有生产游戏状态，也不替代 server SessionManager/actor。",
+    "composition": "组合而非继承：ApiTestSession 持有 axum::Router、SessionManager 与 id/token/handles。调用 closed_day_save 等纯 fixture 函数创建 engine SaveSlot，再通过 handles.restore 安装。通用 new_session/response_json 继续为无认证、无效请求测试提供直接路径。",
+    "migration_steps": [
+      "新增仅限 integration test crate 的 ApiTestSession 测试辅助类型和 async 构造方法，构造时明确检查 create/lookup/restore 失败。",
+      "迁移 new_settled_session 调用者，消除每个调用点重新 manager.lookup 及 id/token tuple 解构；逐个保留各测试当前 setup 和 generation 输入。",
+      "视重复程度迁移 public_load_rejects_pending_player_queue 的手工 setup/restore 序列；不要为了统一而改变该测试需要直接改造 SaveSlot 的步骤。",
+      "保持 app_router() 独立请求测试、非授权请求及坏 JSON/坏存档场景不依赖该 fixture 对象。"
+    ],
+    "existing_tests": [
+      "save_generation_rejects_same_date_seq_edited_assets_after_restore",
+      "legal_history_window_can_be_created_saved_and_restored",
+      "load_rejects_corrupt_body_before_actor_replacement",
+      "load_rejects_excessive_nesting_before_actor_replacement",
+      "public_load_rejects_pending_player_queue_without_replacing_actor",
+      "large_pending_player_queue_survives_engine_save_restore_exactly"
+    ],
+    "missing_tests": [
+      "如引入构造器，验证创建失败、manager 中找不到 session 或 restore 失败时返回可诊断错误，不留下默默不一致的 fixture。",
+      "不建议为单纯字段转存额外写测试；迁移后现有 route contract tests 已覆盖 fixture 的产品契约。"
+    ],
+    "semantic_boundaries": [
+      "closed_day_save 先执行 CivilUpdate 日结后生成 SaveSlot；不可简化成任意 snapshot 或 market tick。",
+      "seed 在 POST JSON 中是十进制字符串；engine fixture 构造接受 u64，不能混淆协议编码。",
+      "router 与 manager 必须共享同一个 SessionManager；不能因为封装错误使用 app_router() 默认 manager 后再从另一个 manager 查询。",
+      "Session token 仅测试认证凭据；测试 helper 不得把 token 暴露到生产类型/API。",
+      "SaveSlot 中修改 cash、pending_player 和 generation 候选属于被测边界；对象封装不得抹去每个测试显式控制这些变量的能力。"
+    ],
+    "why_oop": "fixture 有可识别的生命周期与共同不变量：同一 Router/SessionManager 注册表、session_id、session_token、handles，以及可选的 settled actor 状态需要始终配对。现有 helper 已承担初始化编排但只返回两个字符串，调用者因此再次按 id 查找并持有关联对象。对象可把测试会话身份与所有权边界表达清楚，减少误配。范围仅为少数 settled-route 测试且收益适中，所以是可选而非必要；不能据此把 JSON fixture、响应解码、每项断言都对象化。",
+    "reader_job": "37",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/37-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "注册表、Router、会话凭据和对应 handles 在 settled API 测试中必须配对，test fixture 可表达身份与显式关闭。",
+    "id": "hosts-R2-N15",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n15",
+    "action_id": "hosts-R2-N15",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n注册表、Router、会话凭据和对应 handles 在 settled API 测试中必须配对，test fixture 可表达身份与显式关闭。\n\n范围：`apps/server/tests/api_contract.rs`。\n\n**字段**\n\n- axum::Router\n- server::SessionManager\n- session_id\n- session_token\n- SessionHandles\n- fixture 的 settled SaveSlot 或其构造输入\n\n**方法**\n\n- async new_settled(app, setup_json, seed) -> ApiTestSession\n- async authorized_request(method, uri, body) -> Response（可选；仅封装 token 与请求，不隐藏断言）\n- async save(generation, candidate)（可选；若此方法引入过多 endpoint 专属封装则不加）\n\n**真实调用方**\n\n无。唯一消费者是 apps/server/tests/api_contract.rs 中的集成测试 helper 和 test；不得描述为产品消费者。\n\n**数据所有者**\n\nApiTestSession（仅测试生命周期）拥有 manager、router 与由它创建的 session 身份/handles，保证查找和授权令牌配对。engine 的 ProtocolSession/SaveSlot 仍是领域状态权威；测试对象只拥有 fixture 引用或构造临时输入，不拥有生产游戏状态，也不替代 server SessionManager/actor。\n\n**组合方式**\n\n组合而非继承：ApiTestSession 持有 axum::Router、SessionManager 与 id/token/handles。调用 closed_day_save 等纯 fixture 函数创建 engine SaveSlot，再通过 handles.restore 安装。通用 new_session/response_json 继续为无认证、无效请求测试提供直接路径。\n\n**迁移步骤**\n\n- 新增仅限 integration test crate 的 ApiTestSession 测试辅助类型和 async 构造方法，构造时明确检查 create/lookup/restore 失败。\n- 迁移 new_settled_session 调用者，消除每个调用点重新 manager.lookup 及 id/token tuple 解构；逐个保留各测试当前 setup 和 generation 输入。\n- 视重复程度迁移 public_load_rejects_pending_player_queue 的手工 setup/restore 序列；不要为了统一而改变该测试需要直接改造 SaveSlot 的步骤。\n- 保持 app_router() 独立请求测试、非授权请求及坏 JSON/坏存档场景不依赖该 fixture 对象。\n\n**现有测试（未执行）**\n\n- save_generation_rejects_same_date_seq_edited_assets_after_restore\n- legal_history_window_can_be_created_saved_and_restored\n- load_rejects_corrupt_body_before_actor_replacement\n- load_rejects_excessive_nesting_before_actor_replacement\n- public_load_rejects_pending_player_queue_without_replacing_actor\n- large_pending_player_queue_survives_engine_save_restore_exactly\n\n**待补测试**\n\n- 如引入构造器，验证创建失败、manager 中找不到 session 或 restore 失败时返回可诊断错误，不留下默默不一致的 fixture。\n- 不建议为单纯字段转存额外写测试；迁移后现有 route contract tests 已覆盖 fixture 的产品契约。\n\n**语义边界**\n\n- closed_day_save 先执行 CivilUpdate 日结后生成 SaveSlot；不可简化成任意 snapshot 或 market tick。\n- seed 在 POST JSON 中是十进制字符串；engine fixture 构造接受 u64，不能混淆协议编码。\n- router 与 manager 必须共享同一个 SessionManager；不能因为封装错误使用 app_router() 默认 manager 后再从另一个 manager 查询。\n- Session token 仅测试认证凭据；测试 helper 不得把 token 暴露到生产类型/API。\n- SaveSlot 中修改 cash、pending_player 和 generation 候选属于被测边界；对象封装不得抹去每个测试显式控制这些变量的能力。\n\n**对象化依据**\n\nfixture 有可识别的生命周期与共同不变量：同一 Router/SessionManager 注册表、session_id、session_token、handles，以及可选的 settled actor 状态需要始终配对。现有 helper 已承担初始化编排但只返回两个字符串，调用者因此再次按 id 查找并持有关联对象。对象可把测试会话身份与所有权边界表达清楚，减少误配。范围仅为少数 settled-route 测试且收益适中，所以是可选而非必要；不能据此把 JSON fixture、响应解码、每项断言都对象化。\n\n**源码证据**\n\n- {\"lines\": \"101-117\", \"detail\": \"以周六 start_date 创建 ProtocolSession，执行 end_civil_day_update 再 save，形成日终而非日内 checkpoint 的 fixture 生命周期。\"}\n- {\"lines\": \"179-212\", \"detail\": \"new_settled_session 同时创建 JSON SessionSetup、通过 POST /api/new 注册 actor、从 manager 查 handles、restore 匹配的 closed-day SaveSlot，再返回 id/token tuple。\"}\n- {\"lines\": \"121-176\", \"detail\": \"调用者额外自行保留 manager、app、tuple id/token，再 lookup handles；这些值必须来自同一 fixture session 才能进行 generation/save 断言。\"}\n- {\"lines\": \"365-413, 759-841\", \"detail\": \"历史窗口 save/load 与两类拒绝 load 测试都复用同一 settled 场景，重复 manager/router/session tuple/handles 的编排。\"}\n- {\"lines\": \"1088-1150\", \"detail\": \"待处理队列拒绝测试自己执行相同 closed-day restore 生命周期，但从 manager.new_session 直接建局，并另行持有 token/handles。\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "C38-1",
+    "title": "用 ServerFixture 拥有 WS 集成测试服务器生命周期",
+    "priority": "低优先级可选",
+    "files": [
+      "apps/server/tests/ws.rs"
+    ],
+    "source_symbols": [
+      "spawn_server",
+      "create_session",
+      "sample_setup_json"
+    ],
+    "evidence": [
+      "第50-62行 spawn_server 创建 SessionManager、Router、临时端口 listener 与 tokio::spawn 任务，仅返回 (String, SessionManager)，JoinHandle 被丢弃。",
+      "第74-76、183-185、232-234、289-290、310-312、354-360、403-412行等多处重复解包 base_url/manager，并从 manager.lookup 获取 handles/token。",
+      "第65-69行 create_session 的 base_url 参数标为 _base_url，说明 server fixture 与 session 创建接口未形成同一所有权对象。"
+    ],
+    "fields": [
+      "base_url: String",
+      "manager: SessionManager",
+      "server_task: JoinHandle<()>（或保留可触发优雅关闭的控制句柄）"
+    ],
+    "methods": [
+      "async fn start(base_ms: u64) -> Result<Self, ...>：绑定临时端口并启动 app_router_with_manager",
+      "fn session(seed: u64) -> Result<(String, SessionHandles), ...> 或返回显式 session handle",
+      "fn ws_url(&self, path/query...)：统一构造当前测试所需 ws URL",
+      "async fn shutdown(self)：停止并等待 server task，清理创建的 sessions"
+    ],
+    "production_callers": "无；纯 test helper，不能视为产品消费者。",
+    "data_owner": "ServerFixture 拥有 SessionManager clone、base_url 和 server task；每次创建的 session 仍归 manager 管理，由 fixture shutdown 时统一移除/关闭或显式由测试关闭。",
+    "composition": "仅放在 apps/server/tests/ws.rs 的测试模块中，不跨 integration-test crate 暴露；依赖生产 SessionManager 与 axum router，不进入 server 生产代码。",
+    "migration_steps": [
+      "把 spawn_server 的 tuple 改为 ServerFixture，保存 tokio::spawn 返回的 JoinHandle。",
+      "将各测试解包改为 fixture.manager/base_url，create_session 删除无用的 base_url 参数并可接收 fixture。",
+      "将重复的 session/token 获取收敛为返回明确 handles 的 helper；逐测试保留不同 seed、base_ms 和 WS 查询参数。",
+      "提供显式异步 shutdown，确保 server task 与 sessions 的清理顺序可见；不要依赖 Drop 做异步清理。"
+    ],
+    "existing_tests": [
+      "apps/server/tests/ws.rs 中 baseline/event、pull、错误队列、未知 session、凭据拒绝、性能探针、restore/resync 测试均使用 spawn_server；可直接作为迁移后的生命周期覆盖。"
+    ],
+    "missing_tests": [
+      "测试 fixture 的 shutdown 是否停止 listener task 并清理 session；异常断言路径也须保证资源收束。"
+    ],
+    "semantic_boundaries": [
+      "只改变测试资源生命周期封装；不能更改 WS baseline、PublisherFrame、ResyncRequired、授权 token、pull/push 或 seq/timeline 断言。",
+      "服务启动与测试的交易 setup 保持既有 Engine SessionSetup / A 股语义，不在 fixture 中悄悄改写规则。"
+    ],
+    "why_oop": "server task、manager、base URL 来自同一次启动并共同经历 setup/cleanup；当前 tuple 丢弃 task 句柄，多个调用处重复组合上下文。以对象拥有清晰生命周期与资源清理职责，比增加通用测试工具类更合适。",
+    "reader_job": "38",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/38-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "spawn_server 返回 URL/manager 却丢弃 server task，fixture 持有真实外部资源及关闭协议；仅测试生命周期，不改变服务产品。",
+    "id": "hosts-R2-N16",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n16",
+    "action_id": "hosts-R2-N16",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nspawn_server 返回 URL/manager 却丢弃 server task，fixture 持有真实外部资源及关闭协议；仅测试生命周期，不改变服务产品。\n\n范围：`apps/server/tests/ws.rs`。\n\n**字段**\n\n- base_url: String\n- manager: SessionManager\n- server_task: JoinHandle<()>（或保留可触发优雅关闭的控制句柄）\n\n**方法**\n\n- async fn start(base_ms: u64) -> Result<Self, ...>：绑定临时端口并启动 app_router_with_manager\n- fn session(seed: u64) -> Result<(String, SessionHandles), ...> 或返回显式 session handle\n- fn ws_url(&self, path/query...)：统一构造当前测试所需 ws URL\n- async fn shutdown(self)：停止并等待 server task，清理创建的 sessions\n\n**真实调用方**\n\n无；纯 test helper，不能视为产品消费者。\n\n**数据所有者**\n\nServerFixture 拥有 SessionManager clone、base_url 和 server task；每次创建的 session 仍归 manager 管理，由 fixture shutdown 时统一移除/关闭或显式由测试关闭。\n\n**组合方式**\n\n仅放在 apps/server/tests/ws.rs 的测试模块中，不跨 integration-test crate 暴露；依赖生产 SessionManager 与 axum router，不进入 server 生产代码。\n\n**迁移步骤**\n\n- 把 spawn_server 的 tuple 改为 ServerFixture，保存 tokio::spawn 返回的 JoinHandle。\n- 将各测试解包改为 fixture.manager/base_url，create_session 删除无用的 base_url 参数并可接收 fixture。\n- 将重复的 session/token 获取收敛为返回明确 handles 的 helper；逐测试保留不同 seed、base_ms 和 WS 查询参数。\n- 提供显式异步 shutdown，确保 server task 与 sessions 的清理顺序可见；不要依赖 Drop 做异步清理。\n\n**现有测试（未执行）**\n\n- apps/server/tests/ws.rs 中 baseline/event、pull、错误队列、未知 session、凭据拒绝、性能探针、restore/resync 测试均使用 spawn_server；可直接作为迁移后的生命周期覆盖。\n\n**待补测试**\n\n- 测试 fixture 的 shutdown 是否停止 listener task 并清理 session；异常断言路径也须保证资源收束。\n\n**语义边界**\n\n- 只改变测试资源生命周期封装；不能更改 WS baseline、PublisherFrame、ResyncRequired、授权 token、pull/push 或 seq/timeline 断言。\n- 服务启动与测试的交易 setup 保持既有 Engine SessionSetup / A 股语义，不在 fixture 中悄悄改写规则。\n\n**对象化依据**\n\nserver task、manager、base URL 来自同一次启动并共同经历 setup/cleanup；当前 tuple 丢弃 task 句柄，多个调用处重复组合上下文。以对象拥有清晰生命周期与资源清理职责，比增加通用测试工具类更合适。\n\n**源码证据**\n\n- 第50-62行 spawn_server 创建 SessionManager、Router、临时端口 listener 与 tokio::spawn 任务，仅返回 (String, SessionManager)，JoinHandle 被丢弃。\n- 第74-76、183-185、232-234、289-290、310-312、354-360、403-412行等多处重复解包 base_url/manager，并从 manager.lookup 获取 handles/token。\n- 第65-69行 create_session 的 base_url 参数标为 _base_url，说明 server fixture 与 session 创建接口未形成同一所有权对象。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

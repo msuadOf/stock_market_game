@@ -164,9 +164,81 @@ async function sealTestArtifacts(artifacts, workspacePaths) {
   return sealed;
 }
 
-function inventoryDigest(inventory) {
-  const { identity_digest: ignored, ...state } = inventory;
-  return sha256(JSON.stringify(state));
+function freezeInventoryRecord(value) {
+  const pending = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current !== null && typeof current === "object") {
+      for (const child of Object.values(current)) pending.push(child);
+      Object.freeze(current);
+    }
+  }
+  return value;
+}
+
+export class ArtifactInventory {
+  #record;
+
+  constructor(record) {
+    // 延用 inventory 的 JSON 接受边界，避免 structuredClone 限制合法深层 extra。
+    this.#record = freezeInventoryRecord(JSON.parse(JSON.stringify(record)));
+  }
+
+  static #computeIdentityDigest(record) {
+    const { identity_digest: ignored, ...state } = record;
+    return sha256(JSON.stringify(state));
+  }
+
+  static fromBuild(record) {
+    return new ArtifactInventory({ ...record, identity_digest: this.#computeIdentityDigest(record) });
+  }
+
+  static fromDecodedInventory(decoded, { sourceRoot, workspacePaths, fingerprint }) {
+    if (decoded === null || typeof decoded !== "object"
+      || decoded.identity_digest !== this.#computeIdentityDigest(decoded)
+      || decoded.schema !== FULL_REGRESSION_INVENTORY_SCHEMA
+      || decoded.source_root !== sourceRoot
+      || decoded.workspace_root !== workspacePaths.workspaceRoot
+      || decoded.cargo_target_dir !== workspacePaths.cargoTargetDir
+      || decoded.process_tmp_dir !== workspacePaths.processTmpDir
+      || decoded.source_fingerprint?.digest !== fingerprint.digest
+      || !Array.isArray(decoded.artifacts)
+      || decoded.artifacts.length === 0) {
+      throw new Error("full regression artifact inventory is malformed, stale, or bound to another source/workspace");
+    }
+    return new ArtifactInventory(decoded);
+  }
+
+  toJson() {
+    return JSON.parse(JSON.stringify(this.#record));
+  }
+
+  artifactDescriptors() {
+    return this.#record.artifacts;
+  }
+
+  validateArtifactDescriptor(index) {
+    const entry = this.#record.artifacts[index];
+    if (typeof entry?.label !== "string" || entry.label.length === 0
+      || typeof entry?.executable_relative_path !== "string" || entry.executable_relative_path.length === 0
+      || path.isAbsolute(entry.executable_relative_path)
+      || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
+      || typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+      throw new Error("full regression artifact inventory contains an invalid artifact entry");
+    }
+  }
+
+  validateArtifactMetadata(index, { executable, isFile, isSymbolicLink, bytes }) {
+    const entry = this.#record.artifacts[index];
+    if (!isFile || isSymbolicLink || bytes !== entry.bytes) {
+      throw new Error(`full regression artifact does not match its sealed inventory: ${executable}`);
+    }
+  }
+
+  validateArtifactDigest(index, { executable, digest }) {
+    const entry = this.#record.artifacts[index];
+    if (digest !== entry.sha256) throw new Error(`full regression artifact SHA-256 mismatch: ${executable}`);
+  }
 }
 
 async function writeJsonAtomically(filePath, value) {
@@ -197,26 +269,11 @@ async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePath
   } catch (error) {
     throw new Error(`full regression artifact inventory is not valid JSON at ${inventoryPath}: ${error.message}`, { cause: error });
   }
-  if (inventory?.schema !== FULL_REGRESSION_INVENTORY_SCHEMA
-    || inventory.source_root !== sourceRoot
-    || inventory.workspace_root !== workspacePaths.workspaceRoot
-    || inventory.cargo_target_dir !== workspacePaths.cargoTargetDir
-    || inventory.process_tmp_dir !== workspacePaths.processTmpDir
-    || inventory.source_fingerprint?.digest !== fingerprint.digest
-    || inventory.identity_digest !== inventoryDigest(inventory)
-    || !Array.isArray(inventory.artifacts)
-    || inventory.artifacts.length === 0) {
-    throw new Error("full regression artifact inventory is malformed, stale, or bound to another source/workspace");
-  }
+  const sealedInventory = ArtifactInventory.fromDecodedInventory(inventory, { sourceRoot, workspacePaths, fingerprint });
   const artifacts = [];
-  for (const entry of inventory.artifacts) {
-    if (typeof entry?.label !== "string" || entry.label.length === 0
-      || typeof entry?.executable_relative_path !== "string" || entry.executable_relative_path.length === 0
-      || path.isAbsolute(entry.executable_relative_path)
-      || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
-      || typeof entry.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
-      throw new Error("full regression artifact inventory contains an invalid artifact entry");
-    }
+  for (const [index, entry] of sealedInventory.artifactDescriptors().entries()) {
+    // 逐条验证 descriptor，保留前一条 filesystem 失败的优先级。
+    sealedInventory.validateArtifactDescriptor(index);
     const lexicalExecutable = path.resolve(workspacePaths.workspaceRoot, ...entry.executable_relative_path.split("/"));
     const lexicalRelativeToTarget = path.relative(workspacePaths.cargoTargetDir, lexicalExecutable);
     if (!lexicalRelativeToTarget || lexicalRelativeToTarget.startsWith("..") || path.isAbsolute(lexicalRelativeToTarget)) {
@@ -230,14 +287,14 @@ async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePath
       throw new Error(`full regression artifact inventory executable escaped the Cargo target: ${executable}`);
     }
     const stat = await fsp.lstat(executable);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== entry.bytes) {
-      throw new Error(`full regression artifact does not match its sealed inventory: ${executable}`);
-    }
+    sealedInventory.validateArtifactMetadata(index, {
+      executable, isFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), bytes: stat.size,
+    });
     const digest = sha256(await fsp.readFile(executable));
-    if (digest !== entry.sha256) throw new Error(`full regression artifact SHA-256 mismatch: ${executable}`);
+    sealedInventory.validateArtifactDigest(index, { executable, digest });
     artifacts.push({ executable, label: entry.label });
   }
-  return { inventory, artifacts };
+  return { inventory: sealedInventory, artifacts };
 }
 
 export function buildRustTestExecutionPolicy(availableCpuCount, binaryCount) {
@@ -447,7 +504,7 @@ export async function buildFullRegressionArtifacts({
   phaseRemainingMs(startedAt, now, "artifact sealing");
   progress.snapshot("started", { stage: "artifact_sealing", artifact_count: artifacts.length });
   const sealedArtifacts = await sealTestArtifacts(artifacts, workspacePaths);
-  const inventory = {
+  const inventory = ArtifactInventory.fromBuild({
     schema: FULL_REGRESSION_INVENTORY_SCHEMA,
     source_root: sourceRoot,
     workspace_root: workspacePaths.workspaceRoot,
@@ -460,8 +517,7 @@ export async function buildFullRegressionArtifacts({
       wall_ms: now() - startedAt,
     },
     artifacts: sealedArtifacts,
-  };
-  inventory.identity_digest = inventoryDigest(inventory);
+  }).toJson();
   phaseRemainingMs(startedAt, now, "atomic artifact inventory publication");
   progress.snapshot("started", { stage: "inventory_publication", artifact_count: artifacts.length });
   await writeJsonAtomically(resolvedInventoryPath, inventory);

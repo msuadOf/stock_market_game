@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use crate::accounting::amount::AccountingAmount;
+use crate::accounting::consolidation::WorksheetEntry;
 use crate::accounting::error::AccountingError;
 use crate::accounting::journal::{BusinessEventId, CashFlowClass, JournalEntry, PostingSide};
 use crate::accounting::ledger::{AccountDef, LedgerAccountId};
@@ -252,8 +253,25 @@ impl Accumulator {
         Ok(())
     }
 
+    /// 当前申报工作底稿折入有效期间四桶，保持现金与历史桶不变。
+    pub(crate) fn add_current_worksheet(
+        &mut self,
+        worksheet: &[WorksheetEntry],
+    ) -> Result<(), AccountingError> {
+        for entry in worksheet {
+            for line in &entry.lines {
+                let delta = match line.side {
+                    PostingSide::Debit => line.amount,
+                    PostingSide::Credit => line.amount.neg()?,
+                };
+                self.bucket_all(&line.account, delta)?;
+            }
+        }
+        Ok(())
+    }
+
     /// 工作底稿行折入有效期间各桶（closing/movement/quarter/ytd；无现金）。
-    pub(crate) fn bucket_all(
+    fn bucket_all(
         &mut self,
         account: &LedgerAccountId,
         delta: AccountingAmount,
@@ -296,5 +314,70 @@ impl Accumulator {
             restated_cash_correction: self.restated_cash_correction,
             consolidation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounting::consolidation::{MemberId, WorksheetLine, WorksheetReason};
+
+    fn accumulator() -> Accumulator {
+        let current = AccountingPeriod::from_ymd(2030, 2).unwrap();
+        let prior = AccountingPeriod::from_ymd(2029, 2).unwrap();
+        Accumulator::new((current, current), (prior, prior)).unwrap()
+    }
+
+    fn worksheet(side: PostingSide, cents: i128) -> Vec<WorksheetEntry> {
+        vec![WorksheetEntry {
+            reason: WorksheetReason::IntercompanySale,
+            lines: vec![WorksheetLine {
+                member: MemberId("m".into()),
+                account: LedgerAccountId("1405".into()),
+                side,
+                amount: AccountingAmount::from_cents(cents),
+            }],
+        }]
+    }
+
+    #[test]
+    fn current_worksheet_keeps_cash_and_prior_buckets_untouched() {
+        let mut acc = accumulator();
+        acc.add_current_worksheet(&[]).unwrap();
+        acc.add_current_worksheet(&worksheet(PostingSide::Debit, 3))
+            .unwrap();
+        acc.add_current_worksheet(&worksheet(PostingSide::Credit, 1))
+            .unwrap();
+        let code = LedgerAccountId("1405".into());
+        for map in [&acc.closing, &acc.movement, &acc.quarter, &acc.ytd] {
+            assert_eq!(map[&code].cents(), 2);
+        }
+        assert!(acc.prior_year.is_empty());
+        assert!(acc.prior_year_end.is_empty());
+        assert_eq!(acc.cash.operating, AccountingAmount::ZERO);
+        assert_eq!(acc.cash.investing, AccountingAmount::ZERO);
+        assert_eq!(acc.cash.financing, AccountingAmount::ZERO);
+        assert_eq!(acc.cash_closing_actual, AccountingAmount::ZERO);
+        assert_eq!(acc.restated_cash_correction, AccountingAmount::ZERO);
+    }
+
+    #[test]
+    fn worksheet_overflow_keeps_negation_and_bucket_error_order() {
+        let mut acc = accumulator();
+        assert!(matches!(
+            acc.add_current_worksheet(&worksheet(PostingSide::Credit, i128::MIN)),
+            Err(AccountingError::AmountOverflow { op: "neg", .. })
+        ));
+        assert!(acc.closing.is_empty());
+        let code = LedgerAccountId("1405".into());
+        acc.movement.insert(code.clone(), AccountingAmount::MAX);
+        assert!(matches!(
+            acc.add_current_worksheet(&worksheet(PostingSide::Debit, 1)),
+            Err(AccountingError::AmountOverflow { op: "add", .. })
+        ));
+        assert_eq!(acc.closing[&code].cents(), 1);
+        assert_eq!(acc.movement[&code], AccountingAmount::MAX);
+        assert!(acc.quarter.is_empty());
+        assert!(acc.ytd.is_empty());
     }
 }

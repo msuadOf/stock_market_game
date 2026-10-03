@@ -247,3 +247,97 @@ fn empty_and_nonempty_ingress_both_record_account_validation() {
         );
     }
 }
+
+#[test]
+fn phase_timing_identity_keeps_rank_index_names_and_tick_mapping() {
+    let tick_phases = [
+        TickPhase::ExpiryShadow,
+        TickPhase::SealAllocationSnapshot,
+        TickPhase::DecisionShadow,
+        TickPhase::AccountValidation,
+        TickPhase::StockProcessing,
+        TickPhase::ReceiptAggregation,
+        TickPhase::SettlementShadow,
+        TickPhase::DerivationAudit,
+        TickPhase::PreCommitValidation,
+        TickPhase::CommitTick,
+    ];
+    let names = [
+        "expiry_shadow",
+        "seal_allocation_snapshot",
+        "decision_and_coordinator_work",
+        "account_validation",
+        "stock_processing",
+        "receipt_aggregation",
+        "settlement_shadow",
+        "derivation_audit",
+        "pre_commit_validation",
+        "commit_tick",
+    ];
+    for (index, phase) in PhaseTimingPhase::ALL.into_iter().enumerate() {
+        assert_eq!(phase.rank() as usize, index);
+        assert_eq!(phase.index(), index);
+        assert_eq!(phase.name(), names[index]);
+        assert_eq!(PhaseTimingPhase::from(tick_phases[index]), phase);
+    }
+}
+
+#[test]
+fn phase_timing_sample_overflow_keeps_previous_bounds() {
+    let mut accumulator = Accumulator {
+        sample_count: u64::MAX,
+        runnable_minimum: 2,
+        runnable_maximum: 3,
+        ..Accumulator::EMPTY
+    };
+    assert_eq!(accumulator.sample(1), Err("runnable_thread_sample_count"));
+    assert_eq!(
+        (
+            accumulator.sample_count,
+            accumulator.runnable_minimum,
+            accumulator.runnable_maximum
+        ),
+        (u64::MAX, 2, 3)
+    );
+}
+
+#[test]
+fn phase_timing_ledger_preserves_overflow_order_and_partial_samples() {
+    let phase = PhaseTimingPhase::ExpiryShadow;
+    let mut ledger = PhaseTimingLedger::new();
+    *ledger.accumulator_mut(phase) = Accumulator {
+        wall_time_ns: u128::MAX,
+        span_count: u64::MAX,
+        ..Accumulator::EMPTY
+    };
+    assert_eq!(ledger.record_span(phase, 1), Some("span_count"));
+    let value = ledger.accumulator(phase);
+    assert_eq!(
+        (value.wall_time_ns, value.span_count, value.sample_count),
+        (u128::MAX, u64::MAX, 1)
+    );
+    ledger.accumulator_mut(phase).sample_count = u64::MAX;
+    assert_eq!(
+        ledger.record_span(phase, 1),
+        Some("runnable_thread_sample_count")
+    );
+    assert_eq!(
+        ledger.missing_precommit_phase(),
+        Some(PhaseTimingPhase::SealAllocationSnapshot)
+    );
+}
+
+#[test]
+fn phase_timing_ledger_records_reject_missing_sample_after_precommit_spans() {
+    let mut ledger = PhaseTimingLedger::new();
+    for phase in PhaseTimingPhase::ALL.into_iter().take(9) {
+        ledger.accumulator_mut(phase).span_count = 1;
+    }
+    assert_eq!(ledger.missing_precommit_phase(), None);
+    assert_eq!(
+        ledger.records().unwrap_err(),
+        PhaseTimingCaptureError::IncompletePhase {
+            phase: "expiry_shadow"
+        }
+    );
+}

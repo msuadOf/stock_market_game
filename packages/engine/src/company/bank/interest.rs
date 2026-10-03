@@ -13,8 +13,7 @@ use crate::accounting::{
 };
 use crate::calendar::CivilDate;
 use crate::company::bank::deposits::{DepositAccrualItem, DepositState};
-use crate::company::bank::ecl::EclStage;
-use crate::company::bank::loans::{accrue_act_365f, BankLoanState};
+use crate::company::bank::loans::BankLoanState;
 use crate::company::bank::{chart, BankBooks, BankError};
 use crate::company::contracts::ContractId;
 use crate::company::counterparty::FlowDirection;
@@ -46,42 +45,27 @@ impl BankBooks {
             .map(|(id, state)| (id.clone(), state.clone()))
             .collect();
         for (loan_id, state) in states {
-            let days = through.days_since(state.last_accrual_date());
-            if days < 0 {
-                return Err(BankError::AccrualNotForward {
-                    contract: loan_id,
-                    through,
-                    last_accrual: state.last_accrual_date(),
-                });
-            }
-            if days == 0 {
+            let Some(item) = state.preview_accrual(through, &loan_id)? else {
                 continue;
-            }
-            let base_amount = match state.stage() {
-                EclStage::Stage1 | EclStage::Stage2 => state.principal(),
-                EclStage::Stage3 => state.net_accrual_base(),
             };
-            let (amount, remaining) =
-                accrue_act_365f(base_amount, state.rate_bp, days, state.carried())?;
             let event = BusinessEventId::new(base + items.len() as u64);
-            if amount.is_positive() {
+            if item.amount.is_positive() {
                 entries.push(JournalEntry {
                     source: event,
                     date: through,
                     kind: BusinessKind::LoanInterestAccrued,
                     cash_flow: CashFlowClass::NonCash,
                     lines: vec![
-                        super::line(chart::acct::LOAN_INT_RCV, PostingSide::Debit, amount),
-                        super::line(chart::acct::INTEREST_INCOME, PostingSide::Credit, amount),
+                        super::line(chart::acct::LOAN_INT_RCV, PostingSide::Debit, item.amount),
+                        super::line(
+                            chart::acct::INTEREST_INCOME,
+                            PostingSide::Credit,
+                            item.amount,
+                        ),
                     ],
                 });
             }
-            items.push(LoanAccrualItem {
-                loan: loan_id,
-                days,
-                amount,
-                remaining_carried: remaining,
-            });
+            items.push(item);
         }
         self.post_with_commit(base + items.len() as u64, entries)?;
         for item in &items {
@@ -103,24 +87,7 @@ impl BankBooks {
         let state = self.loan(loan).ok_or(BankError::UnknownLoan {
             contract: loan.clone(),
         })?;
-        if state.is_written_off() {
-            return Err(BankError::LoanAlreadyWrittenOff {
-                contract: loan.clone(),
-            });
-        }
-        if !amount.is_positive() {
-            return Err(BankError::NonPositiveAmount {
-                what: "interest collection",
-                amount,
-            });
-        }
-        if amount > state.accrued_receivable() {
-            return Err(BankError::InterestBeyondAccrued {
-                contract: loan.clone(),
-                requested: amount,
-                accrued: state.accrued_receivable(),
-            });
-        }
+        state.validate_interest_collection(amount, loan)?;
         let event = BusinessEventId::new(self.next_event_id);
         self.post_with_commit(
             self.next_event_id + 1,
@@ -166,45 +133,31 @@ impl BankBooks {
             .map(|(id, state)| (id.clone(), state.clone()))
             .collect();
         for (deposit_id, state) in states {
-            // 到期停息：有效计提截止 = min(through, maturity)。
-            let effective = if through > state.maturity_date() {
-                state.maturity_date()
-            } else {
-                through
-            };
-            let days = effective.days_since(state.last_accrual_date());
-            if days < 0 {
-                return Err(BankError::AccrualNotForward {
-                    contract: deposit_id,
-                    through,
-                    last_accrual: state.last_accrual_date(),
-                });
-            }
-            if days == 0 {
+            let Some(item) = state.preview_accrual(through, &deposit_id)? else {
                 continue;
-            }
-            let (amount, remaining) =
-                accrue_act_365f(state.principal(), state.rate_bp(), days, state.carried())?;
+            };
             let event = BusinessEventId::new(base + items.len() as u64);
-            if amount.is_positive() {
+            if item.amount.is_positive() {
                 entries.push(JournalEntry {
                     source: event,
                     date: through,
                     kind: BusinessKind::DepositInterestAccrued,
                     cash_flow: CashFlowClass::NonCash,
                     lines: vec![
-                        super::line(chart::acct::INTEREST_EXPENSE, PostingSide::Debit, amount),
-                        super::line(chart::acct::DEP_INT_PAYABLE, PostingSide::Credit, amount),
+                        super::line(
+                            chart::acct::INTEREST_EXPENSE,
+                            PostingSide::Debit,
+                            item.amount,
+                        ),
+                        super::line(
+                            chart::acct::DEP_INT_PAYABLE,
+                            PostingSide::Credit,
+                            item.amount,
+                        ),
                     ],
                 });
             }
-            items.push(DepositAccrualItem {
-                deposit: deposit_id,
-                days,
-                amount,
-                remaining_carried: remaining,
-                accrued_through: effective,
-            });
+            items.push(item);
         }
         self.post_with_commit(base + items.len() as u64, entries)?;
         for item in &items {

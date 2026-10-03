@@ -478,15 +478,14 @@ impl AccountValidationState {
                         self.budgets
                             .entry(account)
                             .or_insert_with(|| budget.clone())
-                            .cash = budget.cash;
+                            .adopt_cash_lane(budget);
                     }
                     AccountResourceLane::Shares(_, code) => {
                         if let Some(shares) = budget.sellable.get(&code) {
                             self.budgets
                                 .entry(account)
                                 .or_insert_with(|| budget.clone())
-                                .sellable
-                                .insert(code, *shares);
+                                .adopt_shares_lane(code, *shares);
                         }
                     }
                     AccountResourceLane::Cancel(_, _, _) => {}
@@ -685,10 +684,7 @@ impl AccountValidationState {
         if !self.budgets.contains_key(&account) {
             self.budgets.insert(
                 account,
-                AccountBudget {
-                    cash: self.resources.available_cash(account)?,
-                    sellable: BTreeMap::new(),
-                },
+                AccountBudget::ensure_from_snapshot(account, &self.resources)?,
             );
         }
         Ok(())
@@ -703,11 +699,7 @@ impl AccountValidationState {
             .budgets
             .get_mut(&account)
             .ok_or_else(|| invariant("P3 validation context is missing an account budget"))?;
-        if !budget.sellable.contains_key(code) {
-            let available = self.resources.available_sell_qty(account, code)?;
-            budget.sellable.insert(code.clone(), available);
-        }
-        Ok(())
+        budget.ensure_sellable_from_snapshot(account, code, &self.resources)
     }
 
     fn validate_place(
@@ -780,14 +772,7 @@ impl AccountValidationState {
             .budgets
             .get_mut(&account)
             .expect("P3 context budgets were exhaustively initialized");
-        match update {
-            BudgetUpdate::Cash { cash_after } => {
-                budget.cash = cash_after;
-            }
-            BudgetUpdate::Shares { code, shares_after } => {
-                budget.sellable.insert(code, shares_after);
-            }
-        }
+        budget.apply_update(update);
     }
 
     fn commit_step(&mut self, step: ValidatedStep) {
@@ -1125,6 +1110,48 @@ impl UnkeyedEnvelopeDraft {
 struct AccountBudget {
     cash: Money,
     sellable: BTreeMap<StockCode, u32>,
+}
+
+impl AccountBudget {
+    fn ensure_from_snapshot(
+        account: AccountId,
+        resources: &DecisionResourceSnapshot,
+    ) -> Result<Self, StepFatal> {
+        Ok(Self {
+            cash: resources.available_cash(account)?,
+            sellable: BTreeMap::new(),
+        })
+    }
+
+    fn ensure_sellable_from_snapshot(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        resources: &DecisionResourceSnapshot,
+    ) -> Result<(), StepFatal> {
+        if !self.sellable.contains_key(code) {
+            let available = resources.available_sell_qty(account, code)?;
+            self.sellable.insert(code.clone(), available);
+        }
+        Ok(())
+    }
+
+    fn apply_update(&mut self, update: BudgetUpdate) {
+        match update {
+            BudgetUpdate::Cash { cash_after } => self.cash = cash_after,
+            BudgetUpdate::Shares { code, shares_after } => {
+                self.sellable.insert(code, shares_after);
+            }
+        }
+    }
+
+    fn adopt_cash_lane(&mut self, lane: &Self) {
+        self.cash = lane.cash;
+    }
+
+    fn adopt_shares_lane(&mut self, code: StockCode, shares: u32) {
+        self.sellable.insert(code, shares);
+    }
 }
 
 struct PreparedReservation {

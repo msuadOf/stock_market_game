@@ -8,7 +8,7 @@
 //! 注：`AcquisitionError` 透传的 `InformationError` 无 PartialEq（money 链
 //! 既有约束，task-19 先例）——断言用 `matches!` 字段绑定，语义等价精确。
 
-use crate::fixture::{hour_after, minute_before, npc_a, npc_b, publish_correction, scenario};
+use crate::fixture::{hour_after, minute_before, npc_a, npc_b, Scenario};
 use engine::information::{
     AcquiredKind, AcquisitionError, AcquisitionRecord, NpcInformationState,
     NpcInformationStateSave, NpcObservationContext,
@@ -18,7 +18,7 @@ use engine::information::{
 /// 透传（携带公布时点与获知时点的完整上下文）。
 #[test]
 fn future_report_publication_rejected() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let early = minute_before(sc.annual_instant);
@@ -42,7 +42,7 @@ fn future_report_publication_rejected() {
 /// 未来 publication（公告面）：同守卫对临时公告同样生效。
 #[test]
 fn future_announcement_publication_rejected() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let early = minute_before(sc.announcement_instant);
@@ -62,7 +62,7 @@ fn future_announcement_publication_rejected() {
 /// 未知 report ID：库中不存在（既非报告也非公告）⇒ UnknownPublication 透传。
 #[test]
 fn unknown_publication_rejected() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let unknown = engine::information::PublicationId::new(9_999);
@@ -81,7 +81,7 @@ fn unknown_publication_rejected() {
 /// 上下文构造面同一守卫；不存在跨 NPC 合并/注入 API）。
 #[test]
 fn cross_npc_injection_rejected() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let (a, b) = (npc_a(), npc_b());
     let mut state_a = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();
@@ -130,11 +130,11 @@ fn cross_npc_injection_rejected() {
 /// 索引/公开 ≠ 本人已读）。
 #[test]
 fn unacquired_read_rejected() {
-    let mut sc = scenario();
+    let mut sc = Scenario::new();
     let a = npc_a();
     let state = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();
-    let v2_id = publish_correction(&mut sc);
+    let v2_id = sc.publish_correction();
 
     let ctx = NpcObservationContext::new(a, &state, &sc.library, &market)
         .expect("owner-consistent context");
@@ -151,7 +151,7 @@ fn unacquired_read_rejected() {
 /// （严格递增是二分查找正确性的前提，恢复边界必须显式拒绝，绝不静默）。
 #[test]
 fn tampered_restore_rejected() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let t = hour_after(sc.annual_instant);
     let record = || AcquisitionRecord {
@@ -240,7 +240,7 @@ fn tampered_restore_rejected() {
 /// 属主 + 获知状态 + 公开库 + 行情快照四样，见 npc_view 模块文档）。
 #[test]
 fn context_surface_only_consumes_information_state_and_library() {
-    let sc = scenario();
+    let sc = Scenario::new();
     let a = npc_a();
     let state = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();

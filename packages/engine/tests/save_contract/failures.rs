@@ -1,7 +1,7 @@
 //! Failure path：伪造引用/未来观察/丢失个人状态/错误日历 digest/篡改账本/
 //! 资源超限/未知与缺失字段全部类型化拒绝，且拒绝不动原会话与源字节。
 
-use super::{seasoned_json, seasoned_session};
+use super::seasoned_fixture;
 use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits, SessionError};
 use serde_json::Value;
 
@@ -49,7 +49,7 @@ fn personal_entry_key(
 }
 
 fn assert_missing_field_is_rejected(field: &str) {
-    let mut missing = seasoned_json();
+    let mut missing = seasoned_fixture().clone_save_value();
     missing
         .as_object_mut()
         .unwrap()
@@ -95,7 +95,7 @@ missing_field_tests! {
 #[test]
 fn missing_calendar_policy_is_rejected() {
     // 冻结日历政策本体缺失 = 当前 schema 不合法。
-    let mut no_policy = seasoned_json();
+    let mut no_policy = seasoned_fixture().clone_save_value();
     no_policy["civil_clock"]
         .as_object_mut()
         .unwrap()
@@ -107,7 +107,7 @@ fn missing_calendar_policy_is_rejected() {
 #[test]
 fn legacy_schema_is_rejected_before_full_decoding() {
     // 旧版与未来版本都在完整反序列化前由 schema header 显式拒绝。
-    let mut legacy = seasoned_json();
+    let mut legacy = seasoned_fixture().clone_save_value();
     legacy["schema_version"] = Value::from(1);
     let error = expect_rejection(&legacy);
     assert!(
@@ -118,7 +118,7 @@ fn legacy_schema_is_rejected_before_full_decoding() {
 
 #[test]
 fn future_schema_is_rejected_before_full_decoding() {
-    let mut future = seasoned_json();
+    let mut future = seasoned_fixture().clone_save_value();
     future["schema_version"] = Value::from(3);
     let error = expect_rejection(&future);
     assert!(
@@ -129,7 +129,7 @@ fn future_schema_is_rejected_before_full_decoding() {
 
 #[test]
 fn fake_publication_reference_is_rejected() {
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     let states = &mut tampered["information_states"];
     let (account, company) = personal_entry_key(states, "companies", |records| {
         !records.as_array().expect("records array").is_empty()
@@ -145,7 +145,7 @@ fn fake_publication_reference_is_rejected() {
 
 #[test]
 fn unacquired_belief_report_is_rejected() {
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     let books = &mut tampered["belief_books"];
     let (account, code) = personal_entry_key(books, "entries", |entry| {
         !entry["used_report_ids"]
@@ -169,7 +169,7 @@ fn unacquired_belief_report_is_rejected() {
 
 #[test]
 fn future_observation_is_rejected() {
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     let states = &mut tampered["information_states"];
     let (account, company) = personal_entry_key(states, "companies", |records| {
         !records.as_array().expect("records array").is_empty()
@@ -185,7 +185,7 @@ fn future_observation_is_rejected() {
 #[test]
 fn missing_personal_state_is_rejected() {
     // 丢一本信念簿：三图键集失配。
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     let books = &mut tampered["belief_books"];
     let account = first_key(books);
     books.as_object_mut().unwrap().remove(&account).unwrap();
@@ -193,7 +193,7 @@ fn missing_personal_state_is_rejected() {
     assert!(matches!(error, SessionError::InvalidSave(_)), "{error:?}");
 
     // 整个信息集表被删空档位（缺字段）同理拒绝。
-    let mut missing_map = seasoned_json();
+    let mut missing_map = seasoned_fixture().clone_save_value();
     missing_map
         .as_object_mut()
         .unwrap()
@@ -204,7 +204,7 @@ fn missing_personal_state_is_rejected() {
 
 #[test]
 fn malformed_price_memory_is_rejected() {
-    let mut missing = seasoned_json();
+    let mut missing = seasoned_fixture().clone_save_value();
     let memories = &mut missing["price_memories"];
     let account = first_key(memories);
     memories.as_object_mut().unwrap().remove(&account).unwrap();
@@ -213,7 +213,7 @@ fn malformed_price_memory_is_rejected() {
         SessionError::InvalidSave(_)
     ));
 
-    let mut future = seasoned_json();
+    let mut future = seasoned_fixture().clone_save_value();
     let memories = &mut future["price_memories"];
     let (account, code) = personal_entry_key(memories, "stocks", |memory| {
         memory["last_observed_minute"].is_string()
@@ -225,7 +225,7 @@ fn malformed_price_memory_is_rejected() {
         SessionError::InvalidSave(_)
     ));
 
-    let mut count_without_timestamp = seasoned_json();
+    let mut count_without_timestamp = seasoned_fixture().clone_save_value();
     let memories = &mut count_without_timestamp["price_memories"];
     let (account, code) = personal_entry_key(memories, "stocks", |memory| {
         memory["last_observed_minute"].is_string()
@@ -238,7 +238,7 @@ fn malformed_price_memory_is_rejected() {
         SessionError::InvalidSave(_)
     ));
 
-    let mut timestamp_without_count = seasoned_json();
+    let mut timestamp_without_count = seasoned_fixture().clone_save_value();
     let memories = &mut timestamp_without_count["price_memories"];
     let (account, code) = personal_entry_key(memories, "stocks", |memory| {
         memory["last_observed_minute"].is_string()
@@ -255,7 +255,7 @@ fn malformed_price_memory_is_rejected() {
 
 #[test]
 fn tampered_calendar_policy_is_rejected() {
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     tampered["civil_clock"]["policy"]["simulated_fallback"]["digest"] =
         Value::from("0000000000000000");
 
@@ -288,7 +288,7 @@ fn find_journal_mut(value: &mut Value) -> Option<&mut Value> {
 
 #[test]
 fn tampered_company_books_are_rejected() {
-    let mut tampered = seasoned_json();
+    let mut tampered = seasoned_fixture().clone_save_value();
     let journal =
         find_journal_mut(&mut tampered).expect("the fixture must carry posted company journals");
     // 翻转第一条分录行的借贷方向：复式平衡被破坏，恢复重放必须显式失败。
@@ -306,7 +306,7 @@ fn tampered_company_books_are_rejected() {
 
 #[test]
 fn oversized_payloads_are_typed_resource_rejections() {
-    let bytes = serde_json::to_vec(&seasoned_json()).unwrap();
+    let bytes = serde_json::to_vec(&seasoned_fixture().clone_save_value()).unwrap();
     let tiny_bytes = SaveDecodeLimits { max_total_bytes: 8 };
     let error = match decode_save_slot(&bytes, &tiny_bytes) {
         Ok(_) => panic!("an oversized payload must be rejected before decoding"),
@@ -317,7 +317,7 @@ fn oversized_payloads_are_typed_resource_rejections() {
 
 #[test]
 fn rejections_leave_the_running_session_untouched() {
-    let session = seasoned_session();
+    let session = seasoned_fixture().build_session();
     let before = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
 
     let mut base = serde_json::to_value(session.save().expect("healthy save")).unwrap();

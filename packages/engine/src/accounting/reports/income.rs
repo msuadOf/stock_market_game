@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::ledger::LedgerAccountId;
 
-use super::notes::NoteTarget;
+use super::notes::{NoteTarget, ReportClassification};
 use super::window::StatementWindows;
 use super::{Comparative, ReportError, UnavailableReason};
 
@@ -135,21 +135,19 @@ pub struct IncomeColumns {
     pub net_income: AccountingAmount,
 }
 
-type Classification = BTreeMap<LedgerAccountId, NoteTarget>;
-
-fn has_line(classification: &Classification, line: IncomeLine) -> bool {
+fn has_line(classification: &ReportClassification, line: IncomeLine) -> bool {
     classification
-        .values()
-        .any(|target| matches!(target, NoteTarget::Income(l) if *l == line))
+        .iter()
+        .any(|(_, target)| matches!(target, NoteTarget::Income(l) if *l == line))
 }
 
 fn line_value(
     map: &BTreeMap<LedgerAccountId, AccountingAmount>,
-    classification: &Classification,
+    classification: &ReportClassification,
     line: IncomeLine,
 ) -> Result<AccountingAmount, ReportError> {
     let mut total = AccountingAmount::ZERO;
-    for (code, target) in classification {
+    for (code, target) in classification.iter() {
         if matches!(target, NoteTarget::Income(l) if *l == line) {
             let value = map.get(code).copied().unwrap_or(AccountingAmount::ZERO);
             let signed = if line.credit_positive() {
@@ -165,7 +163,7 @@ fn line_value(
 
 fn columns(
     map: &BTreeMap<LedgerAccountId, AccountingAmount>,
-    classification: &Classification,
+    classification: &ReportClassification,
 ) -> Result<IncomeColumns, ReportError> {
     let mut columns = IncomeColumns::default();
     let mut values: BTreeMap<IncomeLine, AccountingAmount> = BTreeMap::new();
@@ -267,7 +265,7 @@ impl IncomeColumns {
 /// 生成利润表。
 pub(crate) fn generate(
     windows: &StatementWindows,
-    classification: &Classification,
+    classification: &ReportClassification,
 ) -> Result<IncomeStatement, ReportError> {
     let facts = windows.consolidation.as_ref();
     let quarter = columns(&windows.quarter, classification)?;

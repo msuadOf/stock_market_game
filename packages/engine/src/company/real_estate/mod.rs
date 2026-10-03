@@ -35,6 +35,9 @@ mod loans;
 mod presales;
 mod projects;
 
+#[cfg(test)]
+mod ownership_tests;
+
 pub use chart::real_estate_chart_v5;
 pub use config::{CapitalizationPolicy, RealEstateConfig};
 pub use delivery::DeliveryOutcome;
@@ -83,7 +86,7 @@ impl RealEstateBooks {
                 detail: format!("max_projects must be >= 1, got {}", config.max_projects),
             });
         }
-        config::check_opening_lines(&config.opening_lines)?;
+        config.check_opening_lines()?;
         let mut books = Books::new(config.chart);
         books.post_batch(vec![crate::accounting::JournalEntry {
             source: opening_event_id(),

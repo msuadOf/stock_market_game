@@ -1,0 +1,47 @@
+{
+  "target": "engine --lib",
+  "features": [
+    "simulation-diagnostics",
+    "verification-harness"
+  ],
+  "timeout_ms": 10000,
+  "filters": [
+    "accounting::",
+    "behavior::heuristics::position_context_tests",
+    "boundary_ids_remove_missing_and_duplicate_keep_original_root",
+    "clone_and_duplicate_preserve_filled_identity_snapshot",
+    "company::bank::behavior_tests",
+    "company::industrial::ownership_tests",
+    "company::insurance::behavior_tests",
+    "company::operations::day::tests",
+    "company::real_estate::ownership_tests",
+    "diagnostics::causal::aggregate::tests::report_builder_",
+    "diagnostics::causal::microstructure::tests::",
+    "diagnostics::causal::tests::collector_",
+    "diagnostics::tests::participant_execution_reconciliation_",
+    "diagnostics::tests::retail_ledger_",
+    "diagnostics::tests::seed_projection_",
+    "experience::feedback::lifecycle::institutional_transition_tests",
+    "experience::price_memory::protection_tests",
+    "experience::retention::tests",
+    "experience::watchlist::protection_tests",
+    "failed_settlement_does_not_copy_or_mutate_shared_account",
+    "indicators::tests::recurrence_protection_spans_ema_period_and_kdj_window_rollover",
+    "market::price_limit_state_tests",
+    "partial_maker_qty_write_precedes_progress_overflow_on_both_sides",
+    "restored_balances_and_t1_unlock_leave_shared_authority_unchanged",
+    "state_contract_tests",
+    "verification_evidence::phase_timing::tests::phase_timing_"
+  ],
+  "test_status": "passed_selected_short_tests",
+  "notes": [
+    "构建与测试耗时分开",
+    "各filter显式多核test-threads且整命令进程树deadline10000ms",
+    "不得以未运行静态审查冒充测试通过",
+    "N07增强源码变化后以最终冻结再构建测试"
+  ],
+  "result_files": [
+    "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+    "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json"
+  ]
+}

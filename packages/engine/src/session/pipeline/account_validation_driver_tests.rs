@@ -9,13 +9,15 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
     )
     .unwrap();
     let codes = game
+        .state
         .setup
         .stocks
         .iter()
         .map(|stock| stock.code.clone())
         .collect::<Vec<_>>();
     for code in &codes {
-        game.accounts
+        game.state
+            .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
@@ -33,8 +35,8 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
     let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap();
@@ -70,7 +72,7 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
         ),
     )])
     .unwrap();
-    let mut driver = driver(&game, context, game.next_order_id);
+    let mut driver = driver(&game, context, game.state.next_order_id);
     let results = driver
         .consume_round([
             IntentCandidate::new(
@@ -109,13 +111,17 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
     )
     .unwrap();
     let reservation = crate::session::buy_order_reservation(
-        &game.setup.config,
+        &game.state.setup.config,
         crate::Money::from_cents(900),
         100,
         crate::Money::ZERO,
     )
     .unwrap();
-    game.accounts.get_mut(&account).unwrap().cash = reservation;
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(reservation);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
@@ -128,8 +134,8 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
     let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap();
@@ -145,7 +151,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
     assert!(matches!(
         first_outcome.operation(),
         Some(ValidatedOperation::Place(draft))
-            if draft.order_id() == crate::OrderId(game.next_order_id)
+            if draft.order_id() == crate::OrderId(game.state.next_order_id)
     ));
     assert_eq!(rejected.sealed_index(), 1);
     assert!(matches!(
@@ -156,7 +162,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
         }
     ));
     assert_eq!(rejected.operation(), None);
-    assert_eq!(rejected.next_order_id_after(), game.next_order_id + 1);
+    assert_eq!(rejected.next_order_id_after(), game.state.next_order_id + 1);
     assert_eq!(
         driver.checkpoint().remaining_cash(account),
         Some(crate::Money::ZERO)
@@ -169,7 +175,8 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
     let code = crate::StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
@@ -183,7 +190,7 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
         ),
     )])
     .unwrap();
-    let mut driver = driver(&game, context, game.next_order_id);
+    let mut driver = driver(&game, context, game.state.next_order_id);
 
     let invalid = driver
         .consume(limit_candidate(
@@ -232,13 +239,13 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
     assert!(matches!(
         board_lot.operation(),
         Some(ValidatedOperation::Place(draft))
-            if draft.order_id() == crate::OrderId(game.next_order_id)
+            if draft.order_id() == crate::OrderId(game.state.next_order_id)
                 && draft.required() == ResVec::new(crate::Money::ZERO, 100)
     ));
     assert!(matches!(
         odd_lot.operation(),
         Some(ValidatedOperation::Place(draft))
-            if draft.order_id() == crate::OrderId(game.next_order_id + 1)
+            if draft.order_id() == crate::OrderId(game.state.next_order_id + 1)
                 && draft.required() == ResVec::new(crate::Money::ZERO, 50)
     ));
     assert!(matches!(
@@ -255,7 +262,7 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
     assert_eq!(driver.checkpoint().sealed_count(), 4);
     assert_eq!(
         driver.checkpoint().next_order_id_after(),
-        game.next_order_id + 2
+        game.state.next_order_id + 2
     );
 }
 
@@ -332,7 +339,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
         ),
     )])
     .unwrap();
-    let mut driver = driver(&game, context, game.next_order_id);
+    let mut driver = driver(&game, context, game.state.next_order_id);
     driver
         .consume(IntentCandidate::new(
             IntentCandidateKey::plan_chain(1),
@@ -422,8 +429,8 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
         IntentCandidateBatch::new(candidates.clone()).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context.clone(),
     )
     .unwrap()
@@ -432,8 +439,8 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
     let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap();
@@ -460,7 +467,7 @@ fn account_validation_driver_round_uses_two_pass_identity_allocation() {
         crate::Money::from_cents(900),
     );
     let context = AccountValidationContext::new([(known.clone(), validation)]).unwrap();
-    let start = game.next_order_id;
+    let start = game.state.next_order_id;
     let mut driver = driver(&game, context, start);
 
     let outcomes = driver
@@ -602,9 +609,9 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
     let mut driver = AccountValidatorDriver::new_with_cursors(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
+        game.state.next_order_id,
         u64::MAX - 1,
-        game.setup.config.clone(),
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap();
@@ -653,7 +660,7 @@ fn driver(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         next_order_id,
-        game.setup.config.clone(),
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap()

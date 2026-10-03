@@ -179,7 +179,7 @@ impl GameSession {
                 .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
             let expected_start = self
                 .tick()
-                .checked_sub(self.setup.ticks_per_day)
+                .checked_sub(self.state.setup.ticks_per_day)
                 .and_then(|tick| tick.checked_add(1));
             if intraday.first().map(|frame| frame.tick) != expected_start
                 || intraday.last().map(|frame| (frame.tick, frame.seq_to))
@@ -218,11 +218,12 @@ impl GameSession {
             seq_from,
             seq_to: self.seq(),
             refresh: CivilRefresh {
-                ticks_per_day: self.setup.ticks_per_day,
+                ticks_per_day: self.state.setup.ticks_per_day,
                 snapshot: self.snapshot(),
-                securities: self.setup.stocks.clone(),
+                securities: self.state.setup.stocks.clone(),
                 intraday: intraday.to_vec(),
                 public_publication_ids: self
+                    .state
                     .library
                     .all_publication_ids()
                     .map_err(|error| SessionError::InvalidSave(error.to_string()))?

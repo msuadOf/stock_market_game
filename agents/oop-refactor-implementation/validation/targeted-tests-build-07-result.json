@@ -1,0 +1,95 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "-p",
+    "server",
+    "--lib",
+    "--test",
+    "account",
+    "--test",
+    "strategy_state",
+    "--test",
+    "information_acquisition",
+    "--test",
+    "attention_discovery",
+    "--test",
+    "auction",
+    "--test",
+    "behavior",
+    "--test",
+    "fundamental_beliefs",
+    "--test",
+    "industry_reports",
+    "--test",
+    "plans",
+    "--test",
+    "publications",
+    "--test",
+    "session",
+    "--test",
+    "save_contract",
+    "--test",
+    "deployment_cli",
+    "--test",
+    "deployment_routes",
+    "--test",
+    "api_contract",
+    "--test",
+    "ws",
+    "--features",
+    "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+    "--no-run",
+    "--message-format=json",
+    "-j",
+    "16"
+  ],
+  "environment": {
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0"
+  },
+  "exit_code": 0,
+  "timed_out": false,
+  "seconds": 57.556,
+  "samples": [
+    {
+      "seconds": 0.0,
+      "processes": 1,
+      "threads": 1,
+      "cpu": 0.0
+    },
+    {
+      "seconds": 10.01,
+      "processes": 2,
+      "threads": 7,
+      "cpu": 106.1
+    },
+    {
+      "seconds": 20.02,
+      "processes": 2,
+      "threads": 7,
+      "cpu": 102.9
+    },
+    {
+      "seconds": 30.03,
+      "processes": 3,
+      "threads": 12,
+      "cpu": 198.9
+    },
+    {
+      "seconds": 40.04,
+      "processes": 3,
+      "threads": 12,
+      "cpu": 195.7
+    },
+    {
+      "seconds": 50.05,
+      "processes": 11,
+      "threads": 64,
+      "cpu": 1140.6
+    }
+  ],
+  "meaning": "仅编译或类型检查，不运行测试"
+}

@@ -1,0 +1,28 @@
+# 中间态独立复核记录 01
+
+尚未取得 final 冻结和集中测试结论，不批准128项完成。
+
+## 亲读结论
+
+1. Account 与 AccountBook：完整 Account diff、AccountBook 生产实现与完整 diff、npc_state_projection Replace 接缝、GameSession restore 和 runtime_v2 局部路径已读。Account.state 仍 Arc COW，Position不交出可变引用；AccountBook get_mut/values_mut/insert 仍 invalidate 页面校验，Replace先经get_mut再restore_strategy。恢复仍在validate_save_slot之后，getter/restore没有新增输入拒绝。
+2. BeliefParticipantState：personal_state.rs当前全文、四map save/restore/hash片段和personal_states同键guard已读。运行时只有一份participant；SaveSlot四字段分别BTree投影，guard在join前拒绝不同键集，hash保持原四字段顺序。重复install先写attention，watchlist重复时仅新watchlist写入并panic，其他三项保留旧值，已有短测试明确此失败面。take对无法表达的旧断裂四map状态不再单独报price/information/belief缺失，属于内部表示改变；公共读取接受集仍由原四mapguard限定。
+3. N32 microstructure：当前与baseline全文均已读。两个补齐的accumulator各拥有真实累积状态，analyze逐fact先direction后quote；后续quote扫描仍index+1，恢复仍index起，side=None和浮点算式原样保留。它们不是只改static函数名称的wrapper。本记录未亲读N32其他两个长实现的完整diff，不作整动作签署。
+
+4. Pipeline资源接缝：AccountBudget、SellerChargeAllocation、ReceiptSettlementPlan三个生产完整diff已读。AccountBudget快照加载/逐stock预算/updates/lane采纳均有receiver，生产写口已替换；SellerChargeAllocation原checked次序及佣金→印花税→过户费保持、ledger独立复算未合并；ReceiptSettlementPlan拥有实际totals/application，真实事务caller已迁，qty=0跳过和Buy-before-Sell、账户并行准备与最终整体patch边界保持。未亲读所有相关test全文，运行结果仍待集中runner。
+
+## 组级证据承接与局限
+
+已亲读orderbook-review全文、accounting-review主体全文、experience-result/orderbook-result/bank-result/insurance-result/industrial-result全文；frontend阶段review全文已取得（包含首轮FR01待修）。experience-review与diagnostics-result长输出有部分截断，仍待补读，不记EOF。组级报告的语义结论不替代最终源码版本绑定与集中短测。
+
+review-evidence-inventory.json只是当前报告SHA与identity机械清单，action-ledger已追加完整正文段落SHA和含optional的原文段落。正文中实现备选不要求同时实现互斥方案，但具体有收益的optional子owner与增强不得因主标题已有对象而略过；已拒绝候选不回流实施。
+
+## 发现
+
+- FR-01：accounting-review首段未具名。已通知Domain；原reviewer /root/implement_domain/review_accounting回传补canonical身份、13文件SHA/blob及完整diff SHA。记录修复已收到，待最终版本查验。
+- FR-02：domain-N07本轮R2-E03的内部dated组合未实施。experience-result/review明确未引入PositionExperienceTransition、原dated writers未改；权威正文列出内部六writer及迁移步骤。旧正文也允许无收益不实施，但用户本轮授权全部optional及增强，因此已请Domain确认等价组合或补齐并复审；root同步知悉。当前按目标待核记录，不冒充算法缺陷。
+
+## 中文与保护边界
+
+机械扫描只找新增/改写且无中文的注释候选，未自动判断违规。当前剩余真实英文自然语言候选在新roots/lifecycle文件；已对照baseline decision_chain全文，确认是原英文注释原样搬移，按root指令不扩大历史翻译范围。其余为doctest代码、attribute、eslint指令或字段/参数示例，未见新增英文说明的有效发现。最终源码和本轮全部新增工作文档仍需冻结后再次核查。
+
+protected-baseline的三关键文件最终SHA对照、全部必要untracked源码覆盖、128完整正文子目标核销、各组具名完整diff与修复后复核、集中编译/短测均待收口。本reviewer未运行测试、Cargo、生成器、formatter或Git写。

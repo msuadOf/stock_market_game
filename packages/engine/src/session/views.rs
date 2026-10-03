@@ -9,20 +9,23 @@ impl GameSession {
     /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把 tick 级 `price_history`
     /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
-    /// 随后安全地 `self.accounts.get_mut`。
+    /// 随后安全地 `self.state.accounts.get_mut`。
     pub(super) fn build_market_view(&self) -> MarketView {
         let apply_price_cage =
-            self.phase() == TradingPhase::Continuous && self.setup.config.price_cage_enabled;
+            self.phase() == TradingPhase::Continuous && self.state.setup.config.price_cage_enabled;
         let stocks = self
+            .state
             .markets
             .par_iter()
             .map(|(code, m)| {
                 let hist: Vec<Money> = self
+                    .state
                     .price_history
                     .get(code)
                     .map(|d| d.iter().copied().collect())
                     .expect("every market must have a price-history queue");
                 let completed_minute_prices: Vec<Money> = self
+                    .state
                     .market_minute_closes
                     .get(code)
                     .expect("every market must have canonical minute history")
@@ -30,7 +33,9 @@ impl GameSession {
                     .map(|sample| sample.close)
                     .collect();
                 let historical = self
-                    .daily_candles
+                    .state
+                    .candle_book
+                    .histories()
                     .get(code)
                     .expect("every market must have authoritative daily candles");
                 let sample_count = historical.len().min(20);
@@ -45,13 +50,15 @@ impl GameSession {
                         / sample_count as f64
                 };
                 let current_volume = self
-                    .active_daily_candles
+                    .state
+                    .candle_book
+                    .active()
                     .get(code)
                     .map_or(0, |candle| candle.volume) as f64;
                 let elapsed_fraction = intraday_expected_volume_fraction(
-                    self.tick % self.setup.ticks_per_day + 1,
-                    self.setup.ticks_per_day,
-                    self.setup.auction_ticks,
+                    self.state.tick % self.state.setup.ticks_per_day + 1,
+                    self.state.setup.ticks_per_day,
+                    self.state.setup.auction_ticks,
                 );
                 let expected_volume = average_daily_volume * elapsed_fraction;
                 let relative_volume = if expected_volume > 0.0 {
@@ -109,7 +116,7 @@ impl GameSession {
             .collect();
         MarketView {
             stocks,
-            tick: self.tick,
+            tick: self.state.tick,
             market_minute: self.current_market_minute(),
         }
     }
@@ -120,24 +127,29 @@ impl GameSession {
     pub fn market_price_path_observations(
         &self,
     ) -> Result<BTreeMap<StockCode, PricePathObservation>, ObservationError> {
-        let codes = self.markets.keys().collect::<Vec<_>>();
+        let codes = self.state.markets.keys().collect::<Vec<_>>();
         let results = codes
             .par_iter()
             .map(|code| {
                 let code = *code;
                 let minutes = self
+                    .state
                     .market_minute_closes
                     .get(code)
                     .expect("every market must have canonical minute history");
                 let retained_daily = self
-                    .daily_candles
+                    .state
+                    .candle_book
+                    .histories()
                     .get(code)
                     .expect("every market must have authoritative daily candles");
                 // 行为窗口最长 250 个已完成交易日；长局不能在每个观察 tick
                 // 重复制和重校验数千日历史。绝对交易日序号仍被保留。
                 let daily = retained_behavior_daily_closes_history(retained_daily);
                 let current_day_open = self
-                    .active_daily_candles
+                    .state
+                    .candle_book
+                    .active()
                     .get(code)
                     .filter(|candle| candle.volume > 0)
                     .map(|candle| candle.open);
@@ -173,17 +185,19 @@ impl GameSession {
         ids.iter()
             .filter_map(|id| {
                 let account = self
+                    .state
                     .accounts
                     .get(id)
                     .expect("risk observations may only be built for existing accounts");
-                if account.kind != AccountKind::Retail {
+                if account.kind() != AccountKind::Retail {
                     return None;
                 }
                 let positions = account
-                    .positions
+                    .positions()
                     .iter()
                     .map(|(code, position)| {
                         let last_price = self
+                            .state
                             .markets
                             .get(code)
                             .unwrap_or_else(|| {
@@ -193,12 +207,13 @@ impl GameSession {
                         (
                             code.clone(),
                             RiskPositionInput {
-                                qty: position.qty,
+                                qty: position.qty(),
                                 // 已实现盈利可能使剩余持仓的净成本降到零或以下；此时成本
                                 // 收益率没有合法正分母，按 ADR-0011 显式记为不可用。
                                 cost_price: position.cost_price().filter(|price| price.cents() > 0),
                                 last_price,
                                 peak_price_since_entry: self
+                                    .state
                                     .retail_experience
                                     .get(id)
                                     .and_then(|experience| experience.stocks.get(code))
@@ -207,11 +222,11 @@ impl GameSession {
                         )
                     })
                     .collect();
-                let experience = self.retail_experience.get(id).unwrap_or_else(|| {
+                let experience = self.state.retail_experience.get(id).unwrap_or_else(|| {
                     panic!("retail account {} is missing experience state", id.0)
                 });
                 let risk = build_account_risk_observation(
-                    account.cash,
+                    account.cash(),
                     &positions,
                     experience.reference_equity,
                     experience.peak_equity,
@@ -277,9 +292,9 @@ mod tests {
             42,
         )
         .unwrap();
-        let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+        let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
         assert_eq!(codes.len(), 2);
-        session.market_minute_closes.insert(
+        session.state.market_minute_closes.insert(
             codes[0].clone(),
             vec![
                 MarketMinuteClose {
@@ -292,7 +307,7 @@ mod tests {
                 },
             ],
         );
-        session.market_minute_closes.insert(
+        session.state.market_minute_closes.insert(
             codes[1].clone(),
             vec![MarketMinuteClose {
                 absolute_trading_minute: 0,

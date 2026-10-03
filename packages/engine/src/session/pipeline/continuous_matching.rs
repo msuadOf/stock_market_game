@@ -121,11 +121,8 @@ pub(super) enum ContinuousPlaceFact {
     },
 }
 
-/// The one typed P4 result associated with one P3-accepted operation.
-///
-/// This is the continuation-facing identity. Consumers must not reconstruct it from Projection events:
-/// an immediately filled order deliberately has no `OrderAccepted` event, while a P4-rejected
-/// place still owns its preallocated order ID.
+/// 每个 P3 Accepted 操作对应唯一 typed P4 结果，供 continuation 按身份关联。
+/// 不得从 Projection 事件重建：即时全成没有 `OrderAccepted`，P4 Rejected Place 仍拥有预分配 OrderId。
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContinuousExecutionFact {
     pub(super) candidate_key: super::IntentCandidateKey,
@@ -173,9 +170,8 @@ pub(super) struct ContinuousTradeFact {
 #[derive(Debug)]
 pub(super) struct ContinuousStockOutput {
     pub(super) market: Market,
-    // Complete P3 allocation journal for this worker: every place draft is present even when P4
-    // rejects or terminates it. Downstream must create all of these ledger rows, apply `receipts`,
-    // and only then remove `terminal_keys`; filtering terminal drafts here would break conservation.
+    // 保留全部 P3 Place draft，即使 P4 拒绝或终结；下游先创建账本行、应用 receipts，
+    // 再移除 terminal_keys。提前过滤终结 draft 会破坏资源守恒。
     pub(super) created_envelopes: Vec<Envelope>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     pub(super) terminal_keys: Vec<EnvelopeKey>,
@@ -196,8 +192,7 @@ pub(super) struct ContinuousStockStepOutput {
     pub(super) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
-/// The exact post-operation market observed when this limit order became resting. Later
-/// operations in the same stock batch may change the quote or fill the order completely.
+/// 限价单成为 resting 时的精确操作后行情；同股后续操作仍可能改变报价或令其全成。
 #[derive(Clone, Debug)]
 pub(super) struct ContinuousAcceptanceQuote {
     pub(super) order: crate::Order,
@@ -206,12 +201,9 @@ pub(super) struct ContinuousAcceptanceQuote {
     pub(super) best_ask: Option<Money>,
 }
 
-/// Exact order-book observations around one allocated-ID P4 place or successful cancellation.
-///
-/// This is carried separately from `ContinuousAcceptanceQuote`: the latter is the post-only
-/// working-order snapshot used by NPC lifecycle reconciliation, while diagnostics require both
-/// sides of every successful place/cancel operation, including immediately filled market orders.
-/// A worker-rejected place has identical before/after snapshots because it never mutates the book.
+/// 已分配 OrderId 的 P4 Place 或成功撤单前后的精确订单簿观察。
+/// `ContinuousAcceptanceQuote` 仅用于 NPC 工作单的操作后核对；诊断还需操作前快照，
+/// 包括即时全成的市价单。worker 拒单未修改订单簿，因此 before/after 相同。
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg(feature = "simulation-diagnostics")]
 pub(super) struct ContinuousQuoteSnapshot {
@@ -255,366 +247,388 @@ fn process_continuous_stock_step_inner(
     next_trade_event_index: u64,
     prior_ledger: Option<EnvelopeLedger>,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
-    let private_round = prior_ledger.is_some();
-    let before_last_price = input.market.last_price();
-    let before_last_close = input.market.last_close();
-    let before_next_seq = input.market.book_next_sequence();
-    let mut original_orders = BTreeMap::<OrderId, Option<crate::Order>>::new();
-    validate_operation_identities(&input.operations)?;
-    if prior_ledger.is_some() {
-        if !input.envelopes.is_empty() {
-            return Err(invariant(
-                "private stock round must use its owned ledger instead of supplied snapshots",
-            ));
-        }
-    } else {
-        validate_initial_snapshots(&input.market, &input.envelopes)?;
-    }
+    ContinuousStockRoundProcessor::new(input, next_trade_event_index, prior_ledger)?.run()
+}
 
-    let created_envelopes: Vec<_> = input
-        .operations
-        .iter()
-        .filter_map(|operation| match operation {
-            ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
-            ValidatedOperation::Cancel { .. } => None,
-        })
-        .collect();
-    for envelope in &created_envelopes {
-        envelope.validate()?;
-    }
-    let mut ledger = if let Some(mut ledger) = prior_ledger {
-        ledger.insert_created_for_stock_round(created_envelopes.iter().cloned())?;
-        ledger
-    } else {
-        let ledger_envelopes = input
-            .envelopes
-            .iter()
-            .map(|snapshot| snapshot.envelope.clone())
-            .chain(created_envelopes.iter().cloned());
-        EnvelopeLedger::new(0, ledger_envelopes)?
-    };
-    let mut output = ContinuousStockOutput {
-        market: input.market,
-        created_envelopes,
-        receipts: Vec::new(),
-        terminal_keys: Vec::new(),
-        trades: Vec::new(),
-        place_facts: Vec::new(),
-        cancel_facts: Vec::new(),
-    };
-    let mut execution_facts = Vec::new();
-    let mut acceptance_quotes = BTreeMap::new();
+/// 单股票单轮的可丢弃候选状态；跨轮最终校验仍由 consuming finish 负责。
+struct ContinuousStockRoundProcessor {
+    phase: TradingPhase,
+    config: GameConfig,
+    operations: Vec<ValidatedOperation>,
+    private_round: bool,
+    before_last_price: Money,
+    before_last_close: Money,
+    before_next_seq: u64,
+    original_orders: BTreeMap<OrderId, Option<crate::Order>>,
+    output: ContinuousStockOutput,
+    ledger: EnvelopeLedger,
+    execution_facts: Vec<ContinuousExecutionFact>,
+    acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+    next_trade_event_index: u64,
     #[cfg(feature = "simulation-diagnostics")]
-    let mut operation_quotes = BTreeMap::new();
-    let mut next_trade_event_index = next_trade_event_index;
+    operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
+}
 
-    for operation in input.operations {
-        #[cfg(feature = "simulation-diagnostics")]
-        let quote_before = quote_snapshot(&output.market)?;
-        match operation {
-            ValidatedOperation::Cancel {
-                candidate_key,
-                sealed_index,
-                account,
-                code,
-                order_id,
-            } => {
-                if input.phase == TradingPhase::PreOpen {
-                    let fact = ContinuousCancelFact::Rejected {
-                        sealed_index,
-                        account,
-                        code,
-                        order_id,
-                        reason: ContinuousCancelRejection::AuctionOrderNotCancelable,
-                    };
-                    output.cancel_facts.push(fact.clone());
-                    execution_facts.push(ContinuousExecutionFact {
+impl ContinuousStockRoundProcessor {
+    fn new(
+        input: ContinuousStockInput,
+        next_trade_event_index: u64,
+        prior_ledger: Option<EnvelopeLedger>,
+    ) -> Result<Self, StepFatal> {
+        let private_round = prior_ledger.is_some();
+        let before_last_price = input.market.last_price();
+        let before_last_close = input.market.last_close();
+        let before_next_seq = input.market.book_next_sequence();
+        validate_operation_identities(&input.operations)?;
+        if prior_ledger.is_some() {
+            if !input.envelopes.is_empty() {
+                return Err(invariant(
+                    "private stock round must use its owned ledger instead of supplied snapshots",
+                ));
+            }
+        } else {
+            validate_initial_snapshots(&input.market, &input.envelopes)?;
+        }
+
+        let created_envelopes: Vec<_> = input
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
+                ValidatedOperation::Cancel { .. } => None,
+            })
+            .collect();
+        for envelope in &created_envelopes {
+            envelope.validate()?;
+        }
+        let ledger = if let Some(mut ledger) = prior_ledger {
+            ledger.insert_created_for_stock_round(created_envelopes.iter().cloned())?;
+            ledger
+        } else {
+            let ledger_envelopes = input
+                .envelopes
+                .iter()
+                .map(|snapshot| snapshot.envelope.clone())
+                .chain(created_envelopes.iter().cloned());
+            EnvelopeLedger::new(0, ledger_envelopes)?
+        };
+        let output = ContinuousStockOutput {
+            market: input.market,
+            created_envelopes,
+            receipts: Vec::new(),
+            terminal_keys: Vec::new(),
+            trades: Vec::new(),
+            place_facts: Vec::new(),
+            cancel_facts: Vec::new(),
+        };
+
+        Ok(Self {
+            phase: input.phase,
+            config: input.config,
+            operations: input.operations,
+            private_round,
+            before_last_price,
+            before_last_close,
+            before_next_seq,
+            original_orders: BTreeMap::new(),
+            output,
+            ledger,
+            execution_facts: Vec::new(),
+            acceptance_quotes: BTreeMap::new(),
+            next_trade_event_index,
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes: BTreeMap::new(),
+        })
+    }
+
+    fn run(mut self) -> Result<ContinuousStockStepOutput, StepFatal> {
+        for operation in std::mem::take(&mut self.operations) {
+            #[cfg(feature = "simulation-diagnostics")]
+            let quote_before = quote_snapshot(&self.output.market)?;
+            match operation {
+                ValidatedOperation::Cancel {
+                    candidate_key,
+                    sealed_index,
+                    account,
+                    code,
+                    order_id,
+                } => {
+                    if self.phase == TradingPhase::PreOpen {
+                        let fact = ContinuousCancelFact::Rejected {
+                            sealed_index,
+                            account,
+                            code,
+                            order_id,
+                            reason: ContinuousCancelRejection::AuctionOrderNotCancelable,
+                        };
+                        self.output.cancel_facts.push(fact.clone());
+                        self.execution_facts.push(ContinuousExecutionFact {
+                            candidate_key,
+                            sealed_index,
+                            allocated_order_id: None,
+                            outcome: ContinuousExecutionOutcome::Cancel(fact),
+                        });
+                        continue;
+                    }
+                    if self.phase != TradingPhase::Continuous {
+                        return Err(invariant(
+                            "continuous cancellation was routed outside continuous trading",
+                        ));
+                    }
+                    let prior_order = self.output.market.resting_order_by_id(order_id).cloned();
+                    let cancel = cancel_continuous_order_from_private_ledger(
+                        &mut self.output.market,
+                        &self.ledger,
+                        ContinuousCancelOperation {
+                            sealed_index,
+                            account,
+                            code,
+                            order_id,
+                        },
+                    )?;
+                    if let Some(receipt) = cancel.receipt {
+                        let terminal = cancel.terminal_key.ok_or_else(|| {
+                            invariant("cancel receipt has no terminal envelope key")
+                        })?;
+                        self.apply_receipts(
+                            std::slice::from_ref(&receipt),
+                            std::slice::from_ref(&terminal),
+                        )?;
+                        self.output.receipts.push(receipt);
+                        self.output.terminal_keys.push(terminal);
+                    } else if cancel.terminal_key.is_some() {
+                        return Err(invariant("rejected cancellation exposes a terminal key"));
+                    }
+                    let fact = cancel.fact;
+                    if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
+                        let prior_order = prior_order.ok_or_else(|| {
+                            invariant("successful cancellation had no prior resting order")
+                        })?;
+                        self.original_orders
+                            .entry(order_id)
+                            .or_insert(Some(prior_order));
+                    }
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
+                        insert_operation_quotes(
+                            &mut self.operation_quotes,
+                            sealed_index,
+                            quote_before,
+                            quote_snapshot(&self.output.market)?,
+                        )?;
+                    }
+                    self.output.cancel_facts.push(fact.clone());
+                    self.execution_facts.push(ContinuousExecutionFact {
                         candidate_key,
                         sealed_index,
                         allocated_order_id: None,
                         outcome: ContinuousExecutionOutcome::Cancel(fact),
                     });
-                    continue;
                 }
-                if input.phase != TradingPhase::Continuous {
-                    return Err(invariant(
-                        "continuous cancellation was routed outside continuous trading",
-                    ));
-                }
-                let prior_order = output.market.resting_order_by_id(order_id).cloned();
-                let cancel = cancel_continuous_order_from_private_ledger(
-                    &mut output.market,
-                    &ledger,
-                    ContinuousCancelOperation {
-                        sealed_index,
-                        account,
-                        code,
-                        order_id,
-                    },
-                )?;
-                if let Some(receipt) = cancel.receipt {
-                    let terminal = cancel
-                        .terminal_key
-                        .ok_or_else(|| invariant("cancel receipt has no terminal envelope key"))?;
-                    validate_and_apply(
-                        &mut ledger,
-                        std::slice::from_ref(&receipt),
-                        std::slice::from_ref(&terminal),
-                    )?;
-                    output.receipts.push(receipt);
-                    output.terminal_keys.push(terminal);
-                } else if cancel.terminal_key.is_some() {
-                    return Err(invariant("rejected cancellation exposes a terminal key"));
-                }
-                let fact = cancel.fact;
-                if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
-                    let prior_order = prior_order.ok_or_else(|| {
-                        invariant("successful cancellation had no prior resting order")
-                    })?;
-                    original_orders.entry(order_id).or_insert(Some(prior_order));
-                }
-                #[cfg(feature = "simulation-diagnostics")]
-                if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
-                    insert_operation_quotes(
-                        &mut operation_quotes,
-                        sealed_index,
-                        quote_before,
-                        quote_snapshot(&output.market)?,
-                    )?;
-                }
-                output.cancel_facts.push(fact.clone());
-                execution_facts.push(ContinuousExecutionFact {
-                    candidate_key,
-                    sealed_index,
-                    allocated_order_id: None,
-                    outcome: ContinuousExecutionOutcome::Cancel(fact),
-                });
-            }
-            ValidatedOperation::Place(draft) => {
-                if let Some(reason) = place_phase_rejection(input.phase, draft.kind())? {
-                    reject_place(
-                        &draft,
-                        reason,
-                        &mut ledger,
-                        &mut output,
-                        &mut execution_facts,
-                    )?;
-                    #[cfg(feature = "simulation-diagnostics")]
-                    insert_unchanged_operation_quote(
-                        &mut operation_quotes,
-                        draft.sealed_index(),
-                        quote_before,
-                    )?;
-                    continue;
-                }
-                if draft.code() != output.market.code() {
-                    reject_place(
-                        &draft,
-                        RejectionReason::UnknownStock,
-                        &mut ledger,
-                        &mut output,
-                        &mut execution_facts,
-                    )?;
-                    #[cfg(feature = "simulation-diagnostics")]
-                    insert_unchanged_operation_quote(
-                        &mut operation_quotes,
-                        draft.sealed_index(),
-                        quote_before,
-                    )?;
-                    continue;
-                }
-                let (price, resolution) = super::price_resolution::resolve_draft(
-                    &draft,
-                    ledger.get(draft.key())?,
-                    &output.market,
-                    &input.config,
-                    input.phase == TradingPhase::Continuous && input.config.price_cage_enabled,
-                )?;
-                if input.config.price_cage_enabled && draft.kind() == PlaceKind::Limit {
-                    let bound = output
-                        .market
-                        .continuous_limit_bound(draft.side())
-                        .map_err(|error| invariant(&error.to_string()))?;
-                    let outside = match draft.side() {
-                        Side::Buy => price > bound,
-                        Side::Sell => price < bound,
-                    };
-                    if outside {
-                        reject_place(
-                            &draft,
-                            RejectionReason::PriceCageExceeded,
-                            &mut ledger,
-                            &mut output,
-                            &mut execution_facts,
-                        )?;
+                ValidatedOperation::Place(draft) => {
+                    if let Some(reason) = place_phase_rejection(self.phase, draft.kind())? {
+                        self.reject_place(&draft, reason)?;
                         #[cfg(feature = "simulation-diagnostics")]
                         insert_unchanged_operation_quote(
-                            &mut operation_quotes,
+                            &mut self.operation_quotes,
                             draft.sealed_index(),
                             quote_before,
                         )?;
                         continue;
                     }
-                }
-
-                // LimitExceeded is checked before the book changes. Any other
-                // error aborts the private tick candidate, so copying a growing
-                // book for every incoming order provides no rollback benefit.
-                let result = match output.market.place_recording(crate::Order {
-                    id: draft.order_id(),
-                    side: draft.side(),
-                    price,
-                    qty: draft.qty(),
-                    original_qty: draft.qty(),
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                    owner: draft.owner(),
-                    seq: 0,
-                }) {
-                    Ok(result) => result,
-                    Err(MarketError::LimitExceeded { .. }) => {
-                        reject_place(
-                            &draft,
-                            RejectionReason::LimitExceeded,
-                            &mut ledger,
-                            &mut output,
-                            &mut execution_facts,
-                        )?;
+                    if draft.code() != self.output.market.code() {
+                        self.reject_place(&draft, RejectionReason::UnknownStock)?;
                         #[cfg(feature = "simulation-diagnostics")]
                         insert_unchanged_operation_quote(
-                            &mut operation_quotes,
+                            &mut self.operation_quotes,
                             draft.sealed_index(),
                             quote_before,
                         )?;
                         continue;
                     }
-                    Err(error) => return Err(invariant(&error.to_string())),
-                };
-                for maker in result.maker_before {
-                    original_orders.entry(maker.id).or_insert(Some(maker));
-                }
-                original_orders.entry(draft.order_id()).or_insert(None);
-                let trades = result.trades;
-                let resting = result.resting;
-                if draft.kind() == PlaceKind::Market && resting.is_some() {
-                    output
-                        .market
-                        .cancel(draft.order_id())
-                        .map_err(|error| invariant(&error.to_string()))?;
-                }
-
-                let (mut receipts, states, mut ordinals) =
-                    fill_receipts(&draft, &trades, &ledger, &input.config, resolution.as_ref())?;
-                if let Some(receipt) = resolution {
-                    receipts.insert(0, receipt);
-                }
-                let mut terminals = terminal_fill_keys(&receipts);
-                if draft.kind() == PlaceKind::Market {
-                    let incoming = states
-                        .get(draft.key())
-                        .ok_or_else(|| invariant("market order has no post-fill envelope"))?;
-                    if incoming.live() != ResVec::ZERO {
-                        let ordinal = take_ordinal(&mut ordinals, draft.key())?;
-                        receipts.push(terminal_receipt(
-                            draft.sealed_index(),
-                            incoming,
-                            ReceiptKind::Release,
-                            ordinal,
-                        )?);
-                    }
-                    terminals.insert(draft.key().clone());
-                }
-                let terminal_keys: Vec<_> = terminals.into_iter().collect();
-                validate_and_apply(&mut ledger, &receipts, &terminal_keys)?;
-                output.receipts.extend(receipts);
-                output.terminal_keys.extend(terminal_keys);
-                append_trade_facts(
-                    draft.code(),
-                    draft.sealed_index(),
-                    &trades,
-                    &mut next_trade_event_index,
-                    &mut output.trades,
-                )?;
-                #[cfg(feature = "simulation-diagnostics")]
-                insert_operation_quotes(
-                    &mut operation_quotes,
-                    draft.sealed_index(),
-                    quote_before,
-                    quote_snapshot(&output.market)?,
-                )?;
-
-                if draft.kind() == PlaceKind::Limit {
-                    if let Some(resting) = resting {
-                        let quote = ContinuousAcceptanceQuote {
-                            order: resting.clone(),
-                            last_price: output.market.last_price(),
-                            best_bid: output.market.best_bid(),
-                            best_ask: output.market.best_ask(),
+                    let (price, resolution) = super::price_resolution::resolve_draft(
+                        &draft,
+                        self.ledger.get(draft.key())?,
+                        &self.output.market,
+                        &self.config,
+                        self.phase == TradingPhase::Continuous && self.config.price_cage_enabled,
+                    )?;
+                    if self.config.price_cage_enabled && draft.kind() == PlaceKind::Limit {
+                        let bound = self
+                            .output
+                            .market
+                            .continuous_limit_bound(draft.side())
+                            .map_err(|error| invariant(&error.to_string()))?;
+                        let outside = match draft.side() {
+                            Side::Buy => price > bound,
+                            Side::Sell => price < bound,
                         };
-                        if acceptance_quotes
-                            .insert(draft.sealed_index(), quote)
-                            .is_some()
-                        {
-                            return Err(invariant("duplicate sealed acceptance quote"));
+                        if outside {
+                            self.reject_place(&draft, RejectionReason::PriceCageExceeded)?;
+                            #[cfg(feature = "simulation-diagnostics")]
+                            insert_unchanged_operation_quote(
+                                &mut self.operation_quotes,
+                                draft.sealed_index(),
+                                quote_before,
+                            )?;
+                            continue;
                         }
-                        output.place_facts.push(ContinuousPlaceFact::Resting {
-                            sealed_index: draft.sealed_index(),
-                            account: draft.owner(),
-                            code: draft.code().clone(),
-                            order_id: draft.order_id(),
-                            side: draft.side(),
-                            price,
-                            remaining_qty: resting.qty,
-                        });
-                        push_place_execution_fact(&draft, &output, &mut execution_facts)?;
-                        continue;
                     }
+
+                    // LimitExceeded 在修改订单簿前检查；其他错误丢弃整个 private tick candidate，
+                    // 因此无须为每张 incoming 委托复制不断增长的订单簿。
+                    let result = match self.output.market.place_recording(crate::Order {
+                        id: draft.order_id(),
+                        side: draft.side(),
+                        price,
+                        qty: draft.qty(),
+                        original_qty: draft.qty(),
+                        filled_qty: 0,
+                        filled_value: Money::ZERO,
+                        owner: draft.owner(),
+                        seq: 0,
+                    }) {
+                        Ok(result) => result,
+                        Err(MarketError::LimitExceeded { .. }) => {
+                            self.reject_place(&draft, RejectionReason::LimitExceeded)?;
+                            #[cfg(feature = "simulation-diagnostics")]
+                            insert_unchanged_operation_quote(
+                                &mut self.operation_quotes,
+                                draft.sealed_index(),
+                                quote_before,
+                            )?;
+                            continue;
+                        }
+                        Err(error) => return Err(invariant(&error.to_string())),
+                    };
+                    for maker in result.maker_before {
+                        self.original_orders.entry(maker.id).or_insert(Some(maker));
+                    }
+                    self.original_orders.entry(draft.order_id()).or_insert(None);
+                    let trades = result.trades;
+                    let resting = result.resting;
+                    if draft.kind() == PlaceKind::Market && resting.is_some() {
+                        self.output
+                            .market
+                            .cancel(draft.order_id())
+                            .map_err(|error| invariant(&error.to_string()))?;
+                    }
+
+                    let (mut receipts, states, mut ordinals) =
+                        self.fill_receipts(&draft, &trades, resolution.as_ref())?;
+                    if let Some(receipt) = resolution {
+                        receipts.insert(0, receipt);
+                    }
+                    let mut terminals = terminal_fill_keys(&receipts);
+                    if draft.kind() == PlaceKind::Market {
+                        let incoming = states
+                            .get(draft.key())
+                            .ok_or_else(|| invariant("market order has no post-fill envelope"))?;
+                        if incoming.live() != ResVec::ZERO {
+                            let ordinal = take_ordinal(&mut ordinals, draft.key())?;
+                            receipts.push(terminal_receipt(
+                                draft.sealed_index(),
+                                incoming,
+                                ReceiptKind::Release,
+                                ordinal,
+                            )?);
+                        }
+                        terminals.insert(draft.key().clone());
+                    }
+                    let terminal_keys: Vec<_> = terminals.into_iter().collect();
+                    self.apply_receipts(&receipts, &terminal_keys)?;
+                    self.output.receipts.extend(receipts);
+                    self.output.terminal_keys.extend(terminal_keys);
+                    append_trade_facts(
+                        draft.code(),
+                        draft.sealed_index(),
+                        &trades,
+                        &mut self.next_trade_event_index,
+                        &mut self.output.trades,
+                    )?;
+                    #[cfg(feature = "simulation-diagnostics")]
+                    insert_operation_quotes(
+                        &mut self.operation_quotes,
+                        draft.sealed_index(),
+                        quote_before,
+                        quote_snapshot(&self.output.market)?,
+                    )?;
+
+                    if draft.kind() == PlaceKind::Limit {
+                        if let Some(resting) = resting {
+                            let quote = ContinuousAcceptanceQuote {
+                                order: resting.clone(),
+                                last_price: self.output.market.last_price(),
+                                best_bid: self.output.market.best_bid(),
+                                best_ask: self.output.market.best_ask(),
+                            };
+                            if self
+                                .acceptance_quotes
+                                .insert(draft.sealed_index(), quote)
+                                .is_some()
+                            {
+                                return Err(invariant("duplicate sealed acceptance quote"));
+                            }
+                            self.output.place_facts.push(ContinuousPlaceFact::Resting {
+                                sealed_index: draft.sealed_index(),
+                                account: draft.owner(),
+                                code: draft.code().clone(),
+                                order_id: draft.order_id(),
+                                side: draft.side(),
+                                price,
+                                remaining_qty: resting.qty,
+                            });
+                            self.record_place_fact(&draft)?;
+                            continue;
+                        }
+                    }
+                    let filled_qty = trades.iter().try_fold(0_u32, |total, trade| {
+                        total
+                            .checked_add(trade.qty)
+                            .ok_or_else(|| invariant("incoming filled quantity overflow"))
+                    })?;
+                    self.output.place_facts.push(ContinuousPlaceFact::Filled {
+                        sealed_index: draft.sealed_index(),
+                        account: draft.owner(),
+                        code: draft.code().clone(),
+                        order_id: draft.order_id(),
+                        side: draft.side(),
+                        filled_qty,
+                    });
+                    self.record_place_fact(&draft)?;
                 }
-                let filled_qty = trades.iter().try_fold(0_u32, |total, trade| {
-                    total
-                        .checked_add(trade.qty)
-                        .ok_or_else(|| invariant("incoming filled quantity overflow"))
-                })?;
-                output.place_facts.push(ContinuousPlaceFact::Filled {
-                    sealed_index: draft.sealed_index(),
-                    account: draft.owner(),
-                    code: draft.code().clone(),
-                    order_id: draft.order_id(),
-                    side: draft.side(),
-                    filled_qty,
-                });
-                push_place_execution_fact(&draft, &output, &mut execution_facts)?;
             }
         }
+        validate_account_fact_identities(&self.output.place_facts, &self.output.cancel_facts)?;
+        validate_execution_facts(&self.execution_facts)?;
+        if !self.private_round {
+            // 初始 shadow 与独立 worker 在这里拒绝错误来源证据；后续轮次校验每次转换，
+            // 全部轮次完成后再统一核对订单簿与 ledger。
+            self.ledger.validate_complete_evidence()?;
+            validate_private_market_ledger(&self.output.market, &self.ledger, &self.config)?;
+        }
+        let market_delta = self
+            .output
+            .market
+            .changed_orders_since(
+                self.before_last_price,
+                self.before_last_close,
+                self.before_next_seq,
+                self.original_orders,
+            )
+            .map_err(|error| invariant(&error.to_string()))?;
+
+        Ok(ContinuousStockStepOutput {
+            output: self.output,
+            execution_facts: self.execution_facts,
+            next_trade_event_index: self.next_trade_event_index,
+            ledger: self.ledger,
+            acceptance_quotes: self.acceptance_quotes,
+            market_delta,
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes: self.operation_quotes,
+        })
     }
-    validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
-    validate_execution_facts(&execution_facts)?;
-    if !private_round {
-        // The initial stock shadow and the standalone worker must reject bad
-        // source evidence here. Later rounds validate every touched transition
-        // and audit book/ledger agreement once, when this stock is finished.
-        ledger.validate_complete_evidence()?;
-        validate_private_market_ledger(&output.market, &ledger, &input.config)?;
-    }
-    let market_delta = output
-        .market
-        .changed_orders_since(
-            before_last_price,
-            before_last_close,
-            before_next_seq,
-            original_orders,
-        )
-        .map_err(|error| invariant(&error.to_string()))?;
-    Ok(ContinuousStockStepOutput {
-        output,
-        execution_facts,
-        next_trade_event_index,
-        ledger,
-        acceptance_quotes,
-        market_delta,
-        #[cfg(feature = "simulation-diagnostics")]
-        operation_quotes,
-    })
 }
 
 #[cfg(feature = "simulation-diagnostics")]
@@ -931,61 +945,77 @@ fn place_phase_rejection(
     }
 }
 
-fn reject_place(
-    draft: &super::EnvelopeDraft,
-    reason: RejectionReason,
-    ledger: &mut EnvelopeLedger,
-    output: &mut ContinuousStockOutput,
-    execution_facts: &mut Vec<ContinuousExecutionFact>,
-) -> Result<(), StepFatal> {
-    let envelope = ledger.get(draft.key())?.clone();
-    let ordinal =
-        u64::from(draft.requested_price().is_some() && envelope.pending_price().is_none());
-    let receipt = terminal_receipt(
-        draft.sealed_index(),
-        &envelope,
-        ReceiptKind::Reject,
-        ordinal,
-    )?;
-    let terminal = draft.key().clone();
-    validate_and_apply(
-        ledger,
-        std::slice::from_ref(&receipt),
-        std::slice::from_ref(&terminal),
-    )?;
-    output.receipts.push(receipt);
-    output.terminal_keys.push(terminal);
-    output.place_facts.push(ContinuousPlaceFact::Rejected {
-        sealed_index: draft.sealed_index(),
-        account: draft.owner(),
-        code: draft.code().clone(),
-        order_id: draft.order_id(),
-        reason,
-    });
-    push_place_execution_fact(draft, output, execution_facts)?;
-    Ok(())
-}
+impl ContinuousStockRoundProcessor {
+    fn reject_place(
+        &mut self,
+        draft: &super::EnvelopeDraft,
+        reason: RejectionReason,
+    ) -> Result<(), StepFatal> {
+        let envelope = self.ledger.get(draft.key())?.clone();
+        let ordinal =
+            u64::from(draft.requested_price().is_some() && envelope.pending_price().is_none());
+        let receipt = terminal_receipt(
+            draft.sealed_index(),
+            &envelope,
+            ReceiptKind::Reject,
+            ordinal,
+        )?;
+        let terminal = draft.key().clone();
+        self.apply_receipts(
+            std::slice::from_ref(&receipt),
+            std::slice::from_ref(&terminal),
+        )?;
+        self.output.receipts.push(receipt);
+        self.output.terminal_keys.push(terminal);
+        self.output.place_facts.push(ContinuousPlaceFact::Rejected {
+            sealed_index: draft.sealed_index(),
+            account: draft.owner(),
+            code: draft.code().clone(),
+            order_id: draft.order_id(),
+            reason,
+        });
+        self.record_place_fact(draft)?;
+        Ok(())
+    }
 
-fn push_place_execution_fact(
-    draft: &super::EnvelopeDraft,
-    output: &ContinuousStockOutput,
-    execution_facts: &mut Vec<ContinuousExecutionFact>,
-) -> Result<(), StepFatal> {
-    let fact = output
-        .place_facts
-        .last()
-        .ok_or_else(|| invariant("place operation produced no typed place fact"))?
-        .clone();
-    execution_facts.push(ContinuousExecutionFact {
-        candidate_key: draft.candidate_key().clone(),
-        sealed_index: draft.sealed_index(),
-        allocated_order_id: Some(draft.order_id()),
-        outcome: ContinuousExecutionOutcome::Place {
-            fact,
-            original_qty: draft.qty(),
-        },
-    });
-    Ok(())
+    fn record_place_fact(&mut self, draft: &super::EnvelopeDraft) -> Result<(), StepFatal> {
+        let fact = self
+            .output
+            .place_facts
+            .last()
+            .ok_or_else(|| invariant("place operation produced no typed place fact"))?
+            .clone();
+        self.execution_facts.push(ContinuousExecutionFact {
+            candidate_key: draft.candidate_key().clone(),
+            sealed_index: draft.sealed_index(),
+            allocated_order_id: Some(draft.order_id()),
+            outcome: ContinuousExecutionOutcome::Place {
+                fact,
+                original_qty: draft.qty(),
+            },
+        });
+        Ok(())
+    }
+
+    fn apply_receipts(
+        &mut self,
+        receipts: &[EnvelopeReceipt],
+        terminal_keys: &[EnvelopeKey],
+    ) -> Result<(), StepFatal> {
+        let mut validation = receipts.to_vec();
+        self.ledger
+            .apply_private_for_stock_round(&mut validation, terminal_keys)
+    }
+
+    fn fill_receipts(
+        &self,
+        draft: &super::EnvelopeDraft,
+        trades: &[Trade],
+        resolution: Option<&EnvelopeReceipt>,
+    ) -> Result<FillReceiptProjection, StepFatal> {
+        ContinuousFillReceiptProjection::capture(draft, &self.ledger, &self.config, resolution)?
+            .run(trades)
+    }
 }
 
 type FillReceiptProjection = (
@@ -994,6 +1024,7 @@ type FillReceiptProjection = (
     BTreeMap<EnvelopeKey, u64>,
 );
 
+#[cfg(test)]
 pub(super) fn fill_receipts(
     draft: &super::EnvelopeDraft,
     trades: &[Trade],
@@ -1001,169 +1032,180 @@ pub(super) fn fill_receipts(
     config: &GameConfig,
     resolution: Option<&EnvelopeReceipt>,
 ) -> Result<FillReceiptProjection, StepFatal> {
-    // The incoming order also needs its post-fill state when a market order
-    // releases its unfilled balance. Every maker is loaded only if it trades;
-    // unrelated resting orders never participate in this receipt projection.
-    let mut incoming = ledger.get(draft.key())?.clone();
-    if let Some(receipt) = resolution {
-        let audit_after = super::ledger_validation::next_audit(receipt, incoming.audit())?;
-        incoming.apply(receipt.delta, audit_after, true)?;
-    }
-    let mut states = BTreeMap::from([(draft.key().clone(), incoming)]);
-    let mut ordinals = BTreeMap::new();
-    if draft.requested_price().is_some() {
-        ordinals.insert(draft.key().clone(), 1);
-    }
-    let mut receipts = Vec::with_capacity(trades.len().saturating_mul(2));
-    for trade in trades {
-        let gross = trade
-            .price
-            .mul_shares(trade.qty)
-            .map_err(|error| invariant(&error.to_string()))?;
-        let (buyer, buyer_before, seller, seller_before) = match draft.side() {
-            Side::Buy => (
-                draft.key().clone(),
-                trade.taker_filled_value_before,
-                EnvelopeKey {
-                    account: trade.maker,
-                    stock: draft.code().clone(),
-                    order: trade.maker_order_id,
-                    side: Side::Sell,
-                },
-                trade.maker_filled_value_before,
-            ),
-            Side::Sell => (
-                EnvelopeKey {
-                    account: trade.maker,
-                    stock: draft.code().clone(),
-                    order: trade.maker_order_id,
-                    side: Side::Buy,
-                },
-                trade.maker_filled_value_before,
-                draft.key().clone(),
-                trade.taker_filled_value_before,
-            ),
-        };
-        receipts.push(fill_receipt(
-            draft.sealed_index(),
-            buyer,
-            buyer_before,
-            trade.qty,
-            gross,
-            ledger,
-            &mut states,
-            &mut ordinals,
-            config,
-        )?);
-        receipts.push(fill_receipt(
-            draft.sealed_index(),
-            seller,
-            seller_before,
-            trade.qty,
-            gross,
-            ledger,
-            &mut states,
-            &mut ordinals,
-            config,
-        )?);
-    }
-    Ok((receipts, states, ordinals))
+    ContinuousFillReceiptProjection::capture(draft, ledger, config, resolution)?.run(trades)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn fill_receipt(
-    sealed_index: u64,
-    key: EnvelopeKey,
-    filled_value_before: Money,
-    fill_qty: u32,
-    gross: Money,
-    ledger: &EnvelopeLedger,
-    states: &mut BTreeMap<EnvelopeKey, Envelope>,
-    ordinals: &mut BTreeMap<EnvelopeKey, u64>,
-    config: &GameConfig,
-) -> Result<EnvelopeReceipt, StepFatal> {
-    if !states.contains_key(&key) {
-        states.insert(key.clone(), ledger.get(&key)?.clone());
-    }
-    let envelope = states
-        .get_mut(&key)
-        .ok_or_else(|| invariant("trade participant has no live envelope"))?;
-    let audit = envelope.audit();
-    if audit.filled_value != filled_value_before {
-        return Err(invariant(
-            "trade filled-value history disagrees with envelope audit",
-        ));
-    }
-    let remaining_qty_after = audit
-        .remaining_qty
-        .checked_sub(fill_qty)
-        .ok_or_else(|| invariant("trade fill exceeds envelope remaining quantity"))?;
-    let value_after = audit
-        .filled_value
-        .add(gross)
-        .map_err(|error| invariant(&error.to_string()))?;
-    let transition = match key.side {
-        Side::Buy => FillTransition::buy(BuyFillInput {
+/// 单 Place 的收据和审计副本；成功后仍交由 round ledger 校验与采纳。
+struct ContinuousFillReceiptProjection<'a> {
+    draft: &'a super::EnvelopeDraft,
+    ledger: &'a EnvelopeLedger,
+    config: &'a GameConfig,
+    states: BTreeMap<EnvelopeKey, Envelope>,
+    ordinals: BTreeMap<EnvelopeKey, u64>,
+    receipts: Vec<EnvelopeReceipt>,
+}
+
+impl<'a> ContinuousFillReceiptProjection<'a> {
+    fn capture(
+        draft: &'a super::EnvelopeDraft,
+        ledger: &'a EnvelopeLedger,
+        config: &'a GameConfig,
+        resolution: Option<&EnvelopeReceipt>,
+    ) -> Result<Self, StepFatal> {
+        // 市价单释放余量需要 incoming 的成交后状态；仅加载实际成交的 maker。
+        let mut incoming = ledger.get(draft.key())?.clone();
+        if let Some(receipt) = resolution {
+            let audit_after = super::ledger_validation::next_audit(receipt, incoming.audit())?;
+            incoming.apply(receipt.delta, audit_after, true)?;
+        }
+        let states = BTreeMap::from([(draft.key().clone(), incoming)]);
+        let mut ordinals = BTreeMap::new();
+        if draft.requested_price().is_some() {
+            ordinals.insert(draft.key().clone(), 1);
+        }
+
+        Ok(Self {
+            draft,
+            ledger,
             config,
-            limit: audit.limit,
-            fill_qty,
-            remaining_qty_after,
-            filled_value_before: audit.filled_value,
-            gross_delta: gross,
-            live_before: envelope.live(),
-        })?,
-        Side::Sell => FillTransition::sell(SellFillInput {
-            config,
-            fill_qty,
-            remaining_qty_after,
-            filled_value_before: audit.filled_value,
-            gross_delta: gross,
-            nominal_before: audit.nominal,
+            states,
+            ordinals,
+            receipts: Vec::new(),
+        })
+    }
+
+    fn run(mut self, trades: &[Trade]) -> Result<FillReceiptProjection, StepFatal> {
+        self.receipts.reserve(trades.len().saturating_mul(2));
+        for trade in trades {
+            let gross = trade
+                .price
+                .mul_shares(trade.qty)
+                .map_err(|error| invariant(&error.to_string()))?;
+            let (buyer, buyer_before, seller, seller_before) = match self.draft.side() {
+                Side::Buy => (
+                    self.draft.key().clone(),
+                    trade.taker_filled_value_before,
+                    EnvelopeKey {
+                        account: trade.maker,
+                        stock: self.draft.code().clone(),
+                        order: trade.maker_order_id,
+                        side: Side::Sell,
+                    },
+                    trade.maker_filled_value_before,
+                ),
+                Side::Sell => (
+                    EnvelopeKey {
+                        account: trade.maker,
+                        stock: self.draft.code().clone(),
+                        order: trade.maker_order_id,
+                        side: Side::Buy,
+                    },
+                    trade.maker_filled_value_before,
+                    self.draft.key().clone(),
+                    trade.taker_filled_value_before,
+                ),
+            };
+            let receipt = self.record_fill(buyer, buyer_before, trade.qty, gross)?;
+            self.receipts.push(receipt);
+            let receipt = self.record_fill(seller, seller_before, trade.qty, gross)?;
+            self.receipts.push(receipt);
+        }
+
+        Ok((self.receipts, self.states, self.ordinals))
+    }
+
+    fn record_fill(
+        &mut self,
+        key: EnvelopeKey,
+        filled_value_before: Money,
+        fill_qty: u32,
+        gross: Money,
+    ) -> Result<EnvelopeReceipt, StepFatal> {
+        if !self.states.contains_key(&key) {
+            self.states
+                .insert(key.clone(), self.ledger.get(&key)?.clone());
+        }
+        let envelope = self
+            .states
+            .get_mut(&key)
+            .ok_or_else(|| invariant("trade participant has no live envelope"))?;
+        let audit = envelope.audit();
+        if audit.filled_value != filled_value_before {
+            return Err(invariant(
+                "trade filled-value history disagrees with envelope audit",
+            ));
+        }
+        let remaining_qty_after = audit
+            .remaining_qty
+            .checked_sub(fill_qty)
+            .ok_or_else(|| invariant("trade fill exceeds envelope remaining quantity"))?;
+        let value_after = audit
+            .filled_value
+            .add(gross)
+            .map_err(|error| invariant(&error.to_string()))?;
+        let transition = match key.side {
+            Side::Buy => FillTransition::buy(BuyFillInput {
+                config: self.config,
+                limit: audit.limit,
+                fill_qty,
+                remaining_qty_after,
+                filled_value_before: audit.filled_value,
+                gross_delta: gross,
+                live_before: envelope.live(),
+            })?,
+            Side::Sell => FillTransition::sell(SellFillInput {
+                config: self.config,
+                fill_qty,
+                remaining_qty_after,
+                filled_value_before: audit.filled_value,
+                gross_delta: gross,
+                nominal_before: audit.nominal,
+                charged_before: audit.charged,
+            })?,
+        };
+        let ordinal = take_ordinal(&mut self.ordinals, &key)?;
+        let receipt = EnvelopeReceipt {
+            index: 0,
+            local_key: ReceiptLocalKey::new(
+                JournalRank::SealedBatch,
+                ReceiptSource::SealedIntent(self.draft.sealed_index()),
+                ReceiptTransition {
+                    envelope: key.clone(),
+                    ordinal,
+                },
+            )?,
+            envelope: key,
+            kind: ReceiptKind::Fill,
+            qty_before: audit.remaining_qty,
+            qty_after: remaining_qty_after,
+            value_before: audit.filled_value,
+            value_after,
+            delta: transition.delta,
+            nominal: transition.nominal,
+            charged: transition.charged,
             charged_before: audit.charged,
-        })?,
-    };
-    let ordinal = take_ordinal(ordinals, &key)?;
-    let receipt = EnvelopeReceipt {
-        index: 0,
-        local_key: ReceiptLocalKey::new(
-            JournalRank::SealedBatch,
-            ReceiptSource::SealedIntent(sealed_index),
-            ReceiptTransition {
-                envelope: key.clone(),
-                ordinal,
+            charged_after: transition.charged_after,
+            deliver_qty: transition.deliver_qty,
+            deliver_cash: transition.deliver_cash,
+        };
+        let filled_qty = audit
+            .filled_qty
+            .checked_add(fill_qty)
+            .ok_or_else(|| invariant("envelope cumulative filled quantity overflow"))?;
+        envelope.apply(
+            transition.delta,
+            EnvelopeAudit {
+                limit: audit.limit,
+                remaining_qty: remaining_qty_after,
+                filled_qty,
+                filled_value: value_after,
+                nominal: transition.nominal_after,
+                charged: transition.charged_after,
             },
-        )?,
-        envelope: key,
-        kind: ReceiptKind::Fill,
-        qty_before: audit.remaining_qty,
-        qty_after: remaining_qty_after,
-        value_before: audit.filled_value,
-        value_after,
-        delta: transition.delta,
-        nominal: transition.nominal,
-        charged: transition.charged,
-        charged_before: audit.charged,
-        charged_after: transition.charged_after,
-        deliver_qty: transition.deliver_qty,
-        deliver_cash: transition.deliver_cash,
-    };
-    let filled_qty = audit
-        .filled_qty
-        .checked_add(fill_qty)
-        .ok_or_else(|| invariant("envelope cumulative filled quantity overflow"))?;
-    envelope.apply(
-        transition.delta,
-        EnvelopeAudit {
-            limit: audit.limit,
-            remaining_qty: remaining_qty_after,
-            filled_qty,
-            filled_value: value_after,
-            nominal: transition.nominal_after,
-            charged: transition.charged_after,
-        },
-        false,
-    )?;
-    Ok(receipt)
+            false,
+        )?;
+        Ok(receipt)
+    }
 }
 
 fn take_ordinal(
@@ -1217,15 +1259,6 @@ fn terminal_receipt(
         deliver_qty: 0,
         deliver_cash: Money::ZERO,
     })
-}
-
-fn validate_and_apply(
-    ledger: &mut EnvelopeLedger,
-    receipts: &[EnvelopeReceipt],
-    terminal_keys: &[EnvelopeKey],
-) -> Result<(), StepFatal> {
-    let mut validation = receipts.to_vec();
-    ledger.apply_private_for_stock_round(&mut validation, terminal_keys)
 }
 
 #[cfg(test)]

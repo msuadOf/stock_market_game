@@ -61,8 +61,8 @@ fn prepared_commit_preserves_actual_receipt_chains_before_commit_rebase() {
 
     let committed = prepared.commit();
 
-    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
-    assert!(authority.envelope_ledger.iter().next().is_none());
+    assert_eq!(authority.state.envelope_ledger.terminal_count(), 0);
+    assert!(authority.state.envelope_ledger.iter().next().is_none());
     assert_eq!(
         committed.commit.evidence.as_ref().unwrap().receipts().len(),
         2
@@ -92,7 +92,7 @@ fn prepared_commit_preserves_actual_receipt_chains_before_commit_rebase() {
 #[test]
 fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructing_it() {
     let (mut authority, code, account, order_id) = expiring_buy_session();
-    let cash_before = authority.accounts[&account].cash;
+    let cash_before = authority.state.accounts[&account].cash();
 
     let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
     let evidence = committed.commit.evidence.as_ref().unwrap();
@@ -118,11 +118,14 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
     assert_eq!(chain.receipts().len(), 1);
     assert_eq!(chain.receipts()[0].index, receipt.index);
     assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
-    assert_eq!(authority.accounts[&account].cash, cash_before);
-    assert_eq!(authority.next_receipt_base, 1);
-    assert_eq!(authority.envelope_ledger.next_receipt_index(), 1);
+    assert_eq!(authority.state.accounts[&account].cash(), cash_before);
+    assert_eq!(authority.state.next_receipt_base, 1);
+    assert_eq!(authority.state.envelope_ledger.next_receipt_index(), 1);
     assert_eq!(
-        authority.retail_projection_seen.authoritative_identities(),
+        authority
+            .state
+            .retail_projection_seen
+            .authoritative_identities(),
         vec![(0, receipt.local_key.clone())]
     );
     authority
@@ -212,10 +215,10 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
     setup.npcs.inst_count = 0;
     setup.closing_auction_ticks = 10;
     let mut authority = GameSession::new(setup, 73).unwrap();
-    authority.tick = 99;
-    authority.pending_npc = Some(crate::session::PendingNpcBatch {
+    authority.state.tick = 99;
+    authority.state.pending_npc = Some(crate::session::PendingNpcBatch {
         dependencies: Vec::new(),
-        observed_tick: authority.tick,
+        observed_tick: authority.state.tick,
         observed_accounts: Vec::new(),
         intents: Vec::new(),
     });
@@ -276,9 +279,10 @@ fn prepared_commit_keeps_quote_expiry_and_sealed_receipts_in_one_global_chain() 
     );
     assert_eq!(evidence.next_receipt_index(), 3);
     assert_eq!(committed.output.settlement.settlement.applied_receipts, 2);
-    assert_eq!(authority.next_receipt_base, 3);
+    assert_eq!(authority.state.next_receipt_base, 3);
     assert_eq!(
         authority
+            .state
             .retail_projection_seen
             .authoritative_identities()
             .iter()
@@ -295,13 +299,14 @@ fn continuous_trade_session() -> (GameSession, StockCode) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
     let mut session = GameSession::new(setup, 42).unwrap();
-    let code = session.markets.keys().next().unwrap().clone();
+    let code = session.state.markets.keys().next().unwrap().clone();
     let mut seller = Account::new(SELLER, AccountKind::Player, Money::ZERO);
     seller
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
-    assert!(session.accounts.insert(SELLER, seller).is_none());
+    assert!(session.state.accounts.insert(SELLER, seller).is_none());
     let placed = session
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -319,7 +324,7 @@ fn continuous_trade_session() -> (GameSession, StockCode) {
         .unwrap();
     assert!(placed.trades.is_empty());
     assert!(placed.resting.is_some());
-    session.next_order_id = CROSSING_BUY.0;
+    session.state.next_order_id = CROSSING_BUY.0;
     session.hydrate_or_validate_envelope_ledger().unwrap();
     session
         .enqueue_player_intent(
@@ -340,7 +345,12 @@ fn expiring_buy_session() -> (GameSession, StockCode, AccountId, OrderId) {
     let account = AccountId(1);
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();
-    session.accounts.get_mut(&account).unwrap().strategy = None;
+    session
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
     let mut events = Vec::new();
     session.seed_order_for_test(
         account,
@@ -359,21 +369,22 @@ fn expiring_buy_session() -> (GameSession, StockCode, AccountId, OrderId) {
             _ => None,
         })
         .unwrap();
-    session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
+    session.state.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
     (session, code, account, order_id)
 }
 
 fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
     let (mut session, code, seller, _) = expiring_buy_session();
-    let mut strategy_source =
+    let strategy_source =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();
-    session.accounts.get_mut(&seller).unwrap().strategy = strategy_source
+    session
+        .state
         .accounts
         .get_mut(&seller)
         .unwrap()
-        .strategy
-        .take();
+        .fixture_set_strategy(strategy_source.state.accounts[&seller].strategy().cloned());
     session
+        .state
         .accounts
         .get_mut(&seller)
         .unwrap()

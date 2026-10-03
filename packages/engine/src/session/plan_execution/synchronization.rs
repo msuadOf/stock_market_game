@@ -11,7 +11,7 @@ impl GameSession {
         &mut self,
         plans: &mut PlanBook,
     ) -> Result<(), PlanExecutionError> {
-        let pending = &self.pending_plan_events;
+        let pending = &self.state.pending_plan_events;
         let mut events = Vec::with_capacity(pending.len());
         for event in pending {
             let (plan_id, plan_event) = match *event {
@@ -66,7 +66,7 @@ impl GameSession {
         // A day-end fact after a completing fill in this sealed batch has no
         // further plan transition. Consume it now: saved pending facts may only
         // target live plans, and replaying it every tick would grow without bound.
-        self.pending_plan_events.clear();
+        self.state.pending_plan_events.clear();
         for plan_id in completed_fills {
             if plans
                 .plan(plan_id)

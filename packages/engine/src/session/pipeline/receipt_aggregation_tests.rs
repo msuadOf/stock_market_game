@@ -10,8 +10,8 @@ fn game_with_ledger(ledger: EnvelopeLedger) -> GameSession {
     let cursor = ledger.next_receipt_index();
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.envelope_ledger = ledger;
-    game.next_receipt_base = cursor;
+    game.state.envelope_ledger = ledger;
+    game.state.next_receipt_base = cursor;
     game
 }
 
@@ -29,15 +29,15 @@ fn session_transaction_advances_ledger_and_authoritative_cursor_together() {
     .unwrap();
 
     assert_eq!(receipts[0].index, 7);
-    assert_eq!(game.envelope_ledger.next_receipt_index(), 8);
-    assert_eq!(game.next_receipt_base, 8);
+    assert_eq!(game.state.envelope_ledger.next_receipt_index(), 8);
+    assert_eq!(game.state.next_receipt_base, 8);
 }
 
 #[test]
 fn session_transaction_rejects_split_cursor_without_mutation() {
     let mut game = game_with_ledger(created_ledger());
-    game.next_receipt_base = 6;
-    let ledger_before = game.envelope_ledger.clone();
+    game.state.next_receipt_base = 6;
+    let ledger_before = game.state.envelope_ledger.clone();
 
     let error = apply_session_receipt_transaction(
         &mut game,
@@ -57,14 +57,14 @@ fn session_transaction_rejects_split_cursor_without_mutation() {
             && location == "pipeline::receipt_aggregation::apply_session_receipt_transaction"
     ));
 
-    assert_eq!(game.envelope_ledger, ledger_before);
-    assert_eq!(game.next_receipt_base, 6);
+    assert_eq!(game.state.envelope_ledger, ledger_before);
+    assert_eq!(game.state.next_receipt_base, 6);
 }
 
 #[test]
 fn failed_session_transaction_rolls_back_ledger_and_authoritative_cursor() {
     let mut game = game_with_ledger(created_ledger());
-    let ledger_before = game.envelope_ledger.clone();
+    let ledger_before = game.state.envelope_ledger.clone();
 
     assert!(apply_session_receipt_transaction(
         &mut game,
@@ -74,8 +74,8 @@ fn failed_session_transaction_rolls_back_ledger_and_authoritative_cursor() {
     )
     .is_err());
 
-    assert_eq!(game.envelope_ledger, ledger_before);
-    assert_eq!(game.next_receipt_base, 7);
+    assert_eq!(game.state.envelope_ledger, ledger_before);
+    assert_eq!(game.state.next_receipt_base, 7);
 }
 
 #[test]

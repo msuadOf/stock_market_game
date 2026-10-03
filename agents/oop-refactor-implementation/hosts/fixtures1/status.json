@@ -1,0 +1,4282 @@
+[
+  {
+    "action_id": "hosts-N03",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "Scenario；拥有 company/member、Books、ClosingEngine、PublicLibrary、披露时点与 PublicationId，不新增状态。",
+    "methods": [
+      "Scenario::new()",
+      "Scenario::post_undisclosed_fact(&mut self)",
+      "Scenario::publish_correction(&mut self) -> PublicationId"
+    ],
+    "callers": [
+      "information_acquisition/acquisition_gold.rs 全部 Scenario 消费者",
+      "information_acquisition/failures.rs 全部 Scenario 消费者",
+      "information_acquisition/view_gold.rs 全部 Scenario 消费者"
+    ],
+    "files": [
+      "packages/engine/tests/information_acquisition/fixture.rs",
+      "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+      "packages/engine/tests/information_acquisition/failures.rs",
+      "packages/engine/tests/information_acquisition/view_gold.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test information_acquisition unread_publication_never_enters_unread_npc_inputs",
+        "--test information_acquisition acquired_version_pinned_across_later_correction"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "不添字段；把 scenario 构造及两个跨 owned 状态的 mutator 归属既有 Scenario；publish_correction 仍返回新 PublicationId。",
+        "implemented_by": {
+          "owner": "Scenario；拥有 company/member、Books、ClosingEngine、PublicLibrary、披露时点与 PublicationId，不新增状态。",
+          "methods": [
+            "Scenario::new()",
+            "Scenario::post_undisclosed_fact(&mut self)",
+            "Scenario::publish_correction(&mut self) -> PublicationId"
+          ],
+          "callers": [
+            "unread_publication_never_enters_unread_npc_inputs",
+            "unacquired_read_rejected",
+            "acquired_version_pinned_across_later_correction"
+          ],
+          "files": [
+            "packages/engine/tests/information_acquisition/fixture.rs",
+            "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+            "packages/engine/tests/information_acquisition/failures.rs",
+            "packages/engine/tests/information_acquisition/view_gold.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "原 OPS_SEED=11、company/member、分录金额/日期、报告/公告时点与 id 配置原样搬迁。",
+            "更正方法直接变更 self.books、self.closing、self.library，原 sequence=2 断言保留。"
+          ],
+          "short_test_filters": [
+            "--test information_acquisition unread_publication_never_enters_unread_npc_inputs",
+            "--test information_acquisition acquired_version_pinned_across_later_correction"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R238",
+              "source": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+              "filter": "acquisition_gold::unread_publication_never_enters_unread_npc_inputs",
+              "passed": true,
+              "seconds": 0.0098,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R239",
+              "source": "packages/engine/tests/information_acquisition/view_gold.rs",
+              "filter": "view_gold::acquired_version_pinned_across_later_correction",
+              "passed": true,
+              "seconds": 0.011,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "hour_after、minute_before、d、yuan、entry、cash_rev、two_line、npc_a/b 继续作为确定性 helper；FixtureMarket::quiet 保持原对象方法。",
+        "implemented_by": {
+          "owner": "Scenario；拥有 company/member、Books、ClosingEngine、PublicLibrary、披露时点与 PublicationId，不新增状态。",
+          "methods": [
+            "Scenario::new()",
+            "FixtureMarket::quiet()"
+          ],
+          "callers": [
+            "information_acquisition 三个测试消费者模块"
+          ],
+          "files": [
+            "packages/engine/tests/information_acquisition/fixture.rs",
+            "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+            "packages/engine/tests/information_acquisition/failures.rs",
+            "packages/engine/tests/information_acquisition/view_gold.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "仅移动 Scenario 构造及 mutator；上述小型输入 helper 和行情 API 不变。"
+          ],
+          "short_test_filters": [
+            "--test information_acquisition unread_publication_never_enters_unread_npc_inputs",
+            "--test information_acquisition acquired_version_pinned_across_later_correction"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R238",
+              "source": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+              "filter": "acquisition_gold::unread_publication_never_enters_unread_npc_inputs",
+              "passed": true,
+              "seconds": 0.0098,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R239",
+              "source": "packages/engine/tests/information_acquisition/view_gold.rs",
+              "filter": "view_gold::acquired_version_pinned_across_later_correction",
+              "passed": true,
+              "seconds": 0.011,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "更新 acquisition_gold、failures、view_gold 的 imports 与真实 caller；每个测试持有独立 Scenario，个人信息状态/行情不并入场景。",
+        "implemented_by": {
+          "owner": "Scenario；拥有 company/member、Books、ClosingEngine、PublicLibrary、披露时点与 PublicationId，不新增状态。",
+          "methods": [
+            "Scenario::new()",
+            "Scenario::post_undisclosed_fact(&mut self)",
+            "Scenario::publish_correction(&mut self)"
+          ],
+          "callers": [
+            "unread_publication_never_enters_unread_npc_inputs",
+            "unacquired_read_rejected",
+            "acquired_version_pinned_across_later_correction",
+            "dev_reads_leave_every_npc_state_unchanged",
+            "discovery_candidates_index_publications_without_reading"
+          ],
+          "files": [
+            "packages/engine/tests/information_acquisition/fixture.rs",
+            "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+            "packages/engine/tests/information_acquisition/failures.rs",
+            "packages/engine/tests/information_acquisition/view_gold.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "三个模块的旧 free function 调用和 imports 均删除并替换。",
+            "各测试继续直接构造 NpcInformationState 和 FixtureMarket；没有跨测试可变状态。"
+          ],
+          "short_test_filters": [
+            "--test information_acquisition unread_publication_never_enters_unread_npc_inputs",
+            "--test information_acquisition acquired_version_pinned_across_later_correction"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R238",
+              "source": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+              "filter": "acquisition_gold::unread_publication_never_enters_unread_npc_inputs",
+              "passed": true,
+              "seconds": 0.0098,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R239",
+              "source": "packages/engine/tests/information_acquisition/view_gold.rs",
+              "filter": "view_gold::acquired_version_pinned_across_later_correction",
+              "passed": true,
+              "seconds": 0.011,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "不隐藏 record_acquisition 或 dev query；保留 v1 不可变、v2 supersedes、首次获知、未读隔离、dev 只读、未来拒绝及 serde 往返。",
+        "implemented_by": {
+          "owner": "Scenario；拥有 company/member、Books、ClosingEngine、PublicLibrary、披露时点与 PublicationId，不新增状态。",
+          "methods": [
+            "Scenario::publish_correction(&mut self)"
+          ],
+          "callers": [
+            "unread_publication_never_enters_unread_npc_inputs",
+            "repeat_acquisition_is_recorded_once",
+            "state_serde_round_trip_preserves_acquisitions",
+            "future_report_publication_rejected",
+            "future_announcement_publication_rejected",
+            "acquired_version_pinned_across_later_correction",
+            "dev_reads_leave_every_npc_state_unchanged"
+          ],
+          "files": [
+            "packages/engine/tests/information_acquisition/fixture.rs",
+            "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+            "packages/engine/tests/information_acquisition/failures.rs",
+            "packages/engine/tests/information_acquisition/view_gold.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "三个消费者原断言分别 21、16、13 处保持；fixture sequence=1/2 两处断言保持。",
+            "公布、更正本身仍不会替 NPC 登记获知；旧获知和库查询显式留在测试。"
+          ],
+          "short_test_filters": [
+            "--test information_acquisition unread_publication_never_enters_unread_npc_inputs",
+            "--test information_acquisition acquired_version_pinned_across_later_correction"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R238",
+              "source": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+              "filter": "acquisition_gold::unread_publication_never_enters_unread_npc_inputs",
+              "passed": true,
+              "seconds": 0.0098,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R239",
+              "source": "packages/engine/tests/information_acquisition/view_gold.rs",
+              "filter": "view_gold::acquired_version_pinned_across_later_correction",
+              "passed": true,
+              "seconds": 0.011,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R238",
+          "source": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+          "filter": "acquisition_gold::unread_publication_never_enters_unread_npc_inputs",
+          "passed": true,
+          "seconds": 0.0098,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R239",
+          "source": "packages/engine/tests/information_acquisition/view_gold.rs",
+          "filter": "view_gold::acquired_version_pinned_across_later_correction",
+          "passed": true,
+          "seconds": 0.011,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  },
+  {
+    "action_id": "hosts-N04",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "WeekendScenario；拥有 year、SeededPrehistory、GameSession、DisclosureDispatch，各测试独立创建。",
+    "methods": [
+      "WeekendScenario::new(offset)",
+      "WeekendScenario::install_dispatch()",
+      "WeekendScenario::step_friday()",
+      "WeekendScenario::settle_and_dispatch() -> (CivilDayEndReport, DayEndDisclosures)"
+    ],
+    "callers": [
+      "weekend_report_publishes_without_trade",
+      "interim_announcement_publishes_at_next_disclosure_phase"
+    ],
+    "files": [
+      "packages/engine/tests/publications/weekend_publish.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test publications weekend_report_publishes_without_trade",
+        "--test publications interim_announcement_publishes_at_next_disclosure_phase"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "用 WeekendScenario 拥有原 year、seeded、session、dispatch 四元组；构造器保留确定性 Saturday search。",
+        "implemented_by": {
+          "owner": "WeekendScenario；拥有 year、SeededPrehistory、GameSession、DisclosureDispatch，各测试独立创建。",
+          "methods": [
+            "WeekendScenario::new(offset)"
+          ],
+          "callers": [
+            "weekend_report_publishes_without_trade",
+            "interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "files": [
+            "packages/engine/tests/publications/weekend_publish.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "saturday_q1_year 的 2030..=2096 搜索、TradingCalendar 判定、原 prehistory 和 OPS_SEED 均保留。",
+            "两个用例各自 new 独立场景。"
+          ],
+          "short_test_filters": [
+            "--test publications weekend_report_publishes_without_trade",
+            "--test publications interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "提供 install_dispatch、显式 step_friday，以及原样收拢 Session 日结→公司经营 finalize→disclosure 链的 settle_and_dispatch；交回真实 report/out。",
+        "implemented_by": {
+          "owner": "WeekendScenario；拥有 year、SeededPrehistory、GameSession、DisclosureDispatch，各测试独立创建。",
+          "methods": [
+            "WeekendScenario::install_dispatch()",
+            "WeekendScenario::step_friday()",
+            "WeekendScenario::settle_and_dispatch() -> (CivilDayEndReport, DayEndDisclosures)"
+          ],
+          "callers": [
+            "weekend_report_publishes_without_trade",
+            "interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "files": [
+            "packages/engine/tests/publications/weekend_publish.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "step_friday 只循环原 TICKS_PER_DAY；settle_and_dispatch 不调用 step。",
+            "两个用例周五和周六均消费方法返回值；没有把公布断言隐藏到方法。"
+          ],
+          "short_test_filters": [
+            "--test publications weekend_report_publishes_without_trade",
+            "--test publications interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "周六不自动推进市场；shock 注入、before snapshot、重复派发及信息可见性断言由测试显式执行。",
+        "implemented_by": {
+          "owner": "WeekendScenario；拥有 year、SeededPrehistory、GameSession、DisclosureDispatch，各测试独立创建。",
+          "methods": [
+            "WeekendScenario::step_friday()",
+            "WeekendScenario::settle_and_dispatch()"
+          ],
+          "callers": [
+            "weekend_report_publishes_without_trade",
+            "interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "files": [
+            "packages/engine/tests/publications/weekend_publish.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "周六调用 settle_and_dispatch，调用点没有 step_friday；seq/day/tick/snapshot 对比仍显式。",
+            "apply_company_shock 与再次 dispatch.run_day_end 保留在测试体。"
+          ],
+          "short_test_filters": [
+            "--test publications weekend_report_publishes_without_trade",
+            "--test publications interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "分别验证原两用例：周末零市场副作用、civil seq 增一、周五不提前 Q1、18:00 相位、早读拒绝、重复派发幂等。",
+        "implemented_by": {
+          "owner": "WeekendScenario；拥有 year、SeededPrehistory、GameSession、DisclosureDispatch，各测试独立创建。",
+          "methods": [
+            "WeekendScenario::settle_and_dispatch()"
+          ],
+          "callers": [
+            "weekend_report_publishes_without_trade",
+            "interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "files": [
+            "packages/engine/tests/publications/weekend_publish.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "两测试原 24 处断言静态核对一致；filters 指向原两个用例。"
+          ],
+          "short_test_filters": [
+            "--test publications weekend_report_publishes_without_trade",
+            "--test publications interim_announcement_publishes_at_next_disclosure_phase"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "两个运行用例待 root；Q1 排期仅原合成游戏场景，未新增或重新取证法定披露期限。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  },
+  {
+    "action_id": "hosts-N05",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+    "methods": [
+      "SeasonedSaveFixture::new()",
+      "SeasonedSaveFixture::build_session(&self) -> GameSession",
+      "SeasonedSaveFixture::clone_save_value(&self) -> serde_json::Value"
+    ],
+    "callers": [
+      "save_contract/main.rs roundtrip 与 invariant 鲜建消费者",
+      "save_contract/failures.rs 所有篡改 JSON 和原会话不变消费者"
+    ],
+    "files": [
+      "packages/engine/tests/save_contract/main.rs",
+      "packages/engine/tests/save_contract/failures.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test save_contract cached_baseline_clones_do_not_share_tampering",
+        "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "可选对象化表达固定两日场景与不可变 baseline；不把原 OnceLock 称为生命周期缺陷。",
+        "implemented_by": {
+          "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+          "methods": [
+            "SeasonedSaveFixture::new()"
+          ],
+          "callers": [
+            "save_contract/main.rs",
+            "save_contract/failures.rs"
+          ],
+          "files": [
+            "packages/engine/tests/save_contract/main.rs",
+            "packages/engine/tests/save_contract/failures.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "具名 fixture 拥有原 contract_setup、SEED 与 baseline_json OnceLock；外层 OnceLock<SeasonedSaveFixture> 唯一缓存 fixture。"
+          ],
+          "short_test_filters": [
+            "--test save_contract cached_baseline_clones_do_not_share_tampering",
+            "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "此为已授权可选可读性迁移，无生产状态或生命周期缺陷修复承诺。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R273",
+              "source": "packages/engine/tests/save_contract/main.rs",
+              "filter": "cached_baseline_clones_do_not_share_tampering",
+              "passed": true,
+              "seconds": 0.9449,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "build_session 按原 factory 鲜建并推进两日；不共享可变 GameSession、不恢复缓存档替代真实运行。",
+        "implemented_by": {
+          "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+          "methods": [
+            "SeasonedSaveFixture::build_session(&self) -> GameSession"
+          ],
+          "callers": [
+            "new_format_roundtrip_restores_authoritative_state_byte_identically",
+            "frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves",
+            "rejections_leave_the_running_session_untouched"
+          ],
+          "files": [
+            "packages/engine/tests/save_contract/main.rs",
+            "packages/engine/tests/save_contract/failures.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "每次调用 GameSession::new(self.setup.clone(), self.seed)，再执行两次原 run_full_day。",
+            "fixture 只缓存配置/seed/JSON，不保存 GameSession。"
+          ],
+          "short_test_filters": [
+            "--test save_contract cached_baseline_clones_do_not_share_tampering",
+            "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R273",
+              "source": "packages/engine/tests/save_contract/main.rs",
+              "filter": "cached_baseline_clones_do_not_share_tampering",
+              "passed": true,
+              "seconds": 0.9449,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "clone_save_value 返回独立 Value clone；只读缓存不受某个篡改用例污染。",
+        "implemented_by": {
+          "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+          "methods": [
+            "SeasonedSaveFixture::clone_save_value(&self) -> serde_json::Value"
+          ],
+          "callers": [
+            "cached_baseline_clones_do_not_share_tampering",
+            "assert_missing_field_is_rejected",
+            "legacy_schema_is_rejected_before_full_decoding",
+            "fake_publication_reference_is_rejected",
+            "tampered_company_books_are_rejected"
+          ],
+          "files": [
+            "packages/engine/tests/save_contract/main.rs",
+            "packages/engine/tests/save_contract/failures.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "新测试先 assert_ne(tampered, baseline)，再 assert_eq(后续 clone, baseline)；顶层 schema 篡改具有区分力。",
+            "OnceLock get_or_init 只生成一次，clone 返回 owned Value，无可变 baseline 写入口。"
+          ],
+          "short_test_filters": [
+            "--test save_contract cached_baseline_clones_do_not_share_tampering",
+            "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "实际新增检查仅篡改顶层 schema 字段；不声称执行并发调度或所有深层篡改组合，运行待 root。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R273",
+              "source": "packages/engine/tests/save_contract/main.rs",
+              "filter": "cached_baseline_clones_do_not_share_tampering",
+              "passed": true,
+              "seconds": 0.9449,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "原 seasoned_session/seasoned_json 消费者迁移；保留简单 stock/setup/date/定位/断言 helper，不合并 continuity 与 quiet-point setup。",
+        "implemented_by": {
+          "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+          "methods": [
+            "SeasonedSaveFixture::build_session(&self)",
+            "SeasonedSaveFixture::clone_save_value(&self)"
+          ],
+          "callers": [
+            "save_contract/failures.rs 全部缺字段及个人状态/引用/日历/账本消费者",
+            "rejections_leave_the_running_session_untouched",
+            "new_format_roundtrip_restores_authoritative_state_byte_identically",
+            "frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves"
+          ],
+          "files": [
+            "packages/engine/tests/save_contract/main.rs",
+            "packages/engine/tests/save_contract/failures.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "移除旧两个访问 helper，caller 直接调用 fixture 方法；seasoned_fixture 只提供唯一只读 owner。",
+            "contract_setup、continuity_setup、quiet-point 自定义 setup、run_full_day、定位与拒绝 helper 继续独立。"
+          ],
+          "short_test_filters": [
+            "--test save_contract cached_baseline_clones_do_not_share_tampering",
+            "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R273",
+              "source": "packages/engine/tests/save_contract/main.rs",
+              "filter": "cached_baseline_clones_do_not_share_tampering",
+              "passed": true,
+              "seconds": 0.9449,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "保持两日 JSON 字节语义、交易/经营/披露顺序、固定 seed、schema v2、非法档拒绝及源会话不变。",
+        "implemented_by": {
+          "owner": "SeasonedSaveFixture；拥有固定 SessionSetup、seed 与 OnceLock 缓存的只读 baseline JSON；不共享可变 GameSession。",
+          "methods": [
+            "SeasonedSaveFixture::build_session(&self)",
+            "SeasonedSaveFixture::clone_save_value(&self)"
+          ],
+          "callers": [
+            "new_format_roundtrip_restores_authoritative_state_byte_identically",
+            "rejections_leave_the_running_session_untouched",
+            "restore_tampered",
+            "missing_field_tests 宏生成 14 个缺字段用例"
+          ],
+          "files": [
+            "packages/engine/tests/save_contract/main.rs",
+            "packages/engine/tests/save_contract/failures.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "原主模块 22、failures 20 处断言及 14 个宏生成用例保留；SEED=0x27_C0FFEE 与两次 run_full_day 不变。",
+            "restore_tampered 仍直接 serde→decode_save_slot→GameSession::restore，无篡改后修补。"
+          ],
+          "short_test_filters": [
+            "--test save_contract cached_baseline_clones_do_not_share_tampering",
+            "--test save_contract new_format_roundtrip_restores_authoritative_state_byte_identically"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "旧/新两日 JSON 的运行字节比较未由本 agent 执行；原 byte-identical roundtrip 与 clone 隔离测试待 root，静态同配置证据不能冒充运行字节结果。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R273",
+              "source": "packages/engine/tests/save_contract/main.rs",
+              "filter": "cached_baseline_clones_do_not_share_tampering",
+              "passed": true,
+              "seconds": 0.9449,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R273",
+          "source": "packages/engine/tests/save_contract/main.rs",
+          "filter": "cached_baseline_clones_do_not_share_tampering",
+          "passed": true,
+          "seconds": 0.9449,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N01",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "AnnouncementExposureFixture；拥有 PublicLibrary、published、codes 与同代码集合派生的 MarketView；Books 和个人状态保持独立。",
+    "methods": [
+      "AnnouncementExposureFixture::new()",
+      "AnnouncementExposureFixture::exposed_at(as_of) -> BTreeSet<StockCode>",
+      "AnnouncementExposureFixture::market() -> &MarketView",
+      "AnnouncementExposureFixture::codes() -> &[StockCode]"
+    ],
+    "callers": [
+      "attention_discovery/exposure.rs 两个公告曝光金样",
+      "attention_discovery/failures/discovery.rs 两个发现负向测试"
+    ],
+    "files": [
+      "packages/engine/tests/attention_discovery/exposure.rs",
+      "packages/engine/tests/attention_discovery/failures/discovery.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test attention_discovery announcement_exposure_enters_weights_only_through_the_public_surface",
+        "--test attention_discovery discovery_sampling_never_writes_into_information_state"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json 实施条件及 migration_steps[0]",
+        "requirement": "只有成套公告/市场/代码输入与按时点查询关系成立才实施；命名 library/published/market/codes 场景并保持原生成值。",
+        "implemented_by": {
+          "owner": "AnnouncementExposureFixture；拥有 PublicLibrary、published、codes 与同代码集合派生的 MarketView；Books 和个人状态保持独立。",
+          "methods": [
+            "AnnouncementExposureFixture::new()"
+          ],
+          "callers": [
+            "announcement_exposure_enters_weights_only_through_the_public_surface",
+            "one_public_announcement_never_synchronizes_all_npc_candidates",
+            "mutating_only_private_operating_facts_changes_no_candidate_and_no_order",
+            "discovery_sampling_never_writes_into_information_state"
+          ],
+          "files": [
+            "packages/engine/tests/attention_discovery/exposure.rs",
+            "packages/engine/tests/attention_discovery/failures/discovery.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "四个消费者的原成套输入归同一具名 owner；公告公司、2030-06-11 18:00、冲击参数和两只股票行情原值保留。",
+            "MarketView 从 fixture codes 同一集合派生，减少重复输入而未成为生产领域对象。"
+          ],
+          "short_test_filters": [
+            "--test attention_discovery announcement_exposure_enters_weights_only_through_the_public_surface",
+            "--test attention_discovery discovery_sampling_never_writes_into_information_state"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R240",
+              "source": "packages/engine/tests/attention_discovery/exposure.rs",
+              "filter": "exposure::announcement_exposure_enters_weights_only_through_the_public_surface",
+              "passed": true,
+              "seconds": 0.0093,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R241",
+              "source": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+              "filter": "failures::discovery::discovery_sampling_never_writes_into_information_state",
+              "passed": true,
+              "seconds": 0.0077,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[1]",
+        "requirement": "把 exposed_codes 查询归 exposed_at(as_of)，不新增或缓存派生 exposed 字段。",
+        "implemented_by": {
+          "owner": "AnnouncementExposureFixture；拥有 PublicLibrary、published、codes 与同代码集合派生的 MarketView；Books 和个人状态保持独立。",
+          "methods": [
+            "AnnouncementExposureFixture::exposed_at(as_of) -> BTreeSet<StockCode>"
+          ],
+          "callers": [
+            "announcement_exposure_enters_weights_only_through_the_public_surface",
+            "one_public_announcement_never_synchronizes_all_npc_candidates",
+            "mutating_only_private_operating_facts_changes_no_candidate_and_no_order",
+            "discovery_sampling_never_writes_into_information_state"
+          ],
+          "files": [
+            "packages/engine/tests/attention_discovery/exposure.rs",
+            "packages/engine/tests/attention_discovery/failures/discovery.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "方法每次遍历 owned codes 并调用 discovery_candidates(library, company_of(code), as_of)。",
+            "struct 只有 library/published/codes/market；没有 exposed 缓存。"
+          ],
+          "short_test_filters": [
+            "--test attention_discovery announcement_exposure_enters_weights_only_through_the_public_surface",
+            "--test attention_discovery discovery_sampling_never_writes_into_information_state"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R240",
+              "source": "packages/engine/tests/attention_discovery/exposure.rs",
+              "filter": "exposure::announcement_exposure_enters_weights_only_through_the_public_surface",
+              "passed": true,
+              "seconds": 0.0093,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R241",
+              "source": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+              "filter": "failures::discovery::discovery_sampling_never_writes_into_information_state",
+              "passed": true,
+              "seconds": 0.0077,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "提供实际需要的只读借用；private Books、RNG、PersonalWatchlist、个人信息状态与真实 Session 由各测试独立持有。",
+        "implemented_by": {
+          "owner": "AnnouncementExposureFixture；拥有 PublicLibrary、published、codes 与同代码集合派生的 MarketView；Books 和个人状态保持独立。",
+          "methods": [
+            "AnnouncementExposureFixture::market() -> &MarketView",
+            "AnnouncementExposureFixture::codes() -> &[StockCode]"
+          ],
+          "callers": [
+            "四个曝光/发现测试",
+            "session_bytes"
+          ],
+          "files": [
+            "packages/engine/tests/attention_discovery/exposure.rs",
+            "packages/engine/tests/attention_discovery/failures/discovery.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "market 借用供所有权重/抽样调用；codes 借用供 discovery_sampling_never_writes_into_information_state 候选边界断言。",
+            "private_books 与 post_undisclosed_fact 仍为独立私有经营 helper，session_bytes 独占自己的 GameSession。"
+          ],
+          "short_test_filters": [
+            "--test attention_discovery announcement_exposure_enters_weights_only_through_the_public_surface",
+            "--test attention_discovery discovery_sampling_never_writes_into_information_state"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "动作提议 library() 只读 getter 未添加：没有真实 caller，需要公开库的查询仅在 exposed_at 内；独立审查接受这一最小范围选择，未冒充 getter 已实现。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R240",
+              "source": "packages/engine/tests/attention_discovery/exposure.rs",
+              "filter": "exposure::announcement_exposure_enters_weights_only_through_the_public_surface",
+              "passed": true,
+              "seconds": 0.0093,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R241",
+              "source": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+              "filter": "failures::discovery::discovery_sampling_never_writes_into_information_state",
+              "passed": true,
+              "seconds": 0.0077,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[2] 与 missing_tests[0]",
+        "requirement": "caller 显式输入 as_of/RNG/watchlist；保留公布前后、私有事实不泄漏、曝光不是本人获知的直接断言。",
+        "implemented_by": {
+          "owner": "AnnouncementExposureFixture；拥有 PublicLibrary、published、codes 与同代码集合派生的 MarketView；Books 和个人状态保持独立。",
+          "methods": [
+            "AnnouncementExposureFixture::exposed_at(as_of)",
+            "AnnouncementExposureFixture::market()",
+            "AnnouncementExposureFixture::codes()"
+          ],
+          "callers": [
+            "announcement_exposure_enters_weights_only_through_the_public_surface",
+            "one_public_announcement_never_synchronizes_all_npc_candidates",
+            "mutating_only_private_operating_facts_changes_no_candidate_and_no_order",
+            "discovery_sampling_never_writes_into_information_state"
+          ],
+          "files": [
+            "packages/engine/tests/attention_discovery/exposure.rs",
+            "packages/engine/tests/attention_discovery/failures/discovery.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "原 exposure 9、discovery failures 8 处断言保持；公布前空集与公布后仅 600101 由原测试直接检查。",
+            "NpcInformationState 字节与 acquired_count=0 断言保留；无需额外重复新测试。"
+          ],
+          "short_test_filters": [
+            "--test attention_discovery announcement_exposure_enters_weights_only_through_the_public_surface",
+            "--test attention_discovery discovery_sampling_never_writes_into_information_state"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R240",
+              "source": "packages/engine/tests/attention_discovery/exposure.rs",
+              "filter": "exposure::announcement_exposure_enters_weights_only_through_the_public_surface",
+              "passed": true,
+              "seconds": 0.0093,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R241",
+              "source": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+              "filter": "failures::discovery::discovery_sampling_never_writes_into_information_state",
+              "passed": true,
+              "seconds": 0.0077,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R240",
+          "source": "packages/engine/tests/attention_discovery/exposure.rs",
+          "filter": "exposure::announcement_exposure_enters_weights_only_through_the_public_surface",
+          "passed": true,
+          "seconds": 0.0093,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R241",
+          "source": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+          "filter": "failures::discovery::discovery_sampling_never_writes_into_information_state",
+          "passed": true,
+          "seconds": 0.0077,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N02",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+    "methods": [
+      "AuctionFixture::quiet(auction_ticks, seed)",
+      "AuctionFixture::representative(seed)",
+      "AuctionFixture::quiet_on_exchange(auction_ticks, seed, exchange)",
+      "AuctionFixture::retain_stock(code)",
+      "AuctionFixture::start_session() -> GameSession",
+      "AuctionFixture::save_with_orders(orders, previous_close) -> SaveSlot",
+      "AuctionFixture::restore_with_orders(orders, previous_close) -> GameSession"
+    ],
+    "callers": [
+      "auction.rs 全部原 26 个竞价测试，包括单股/多股 NPC 与多股 pre-open 恢复",
+      "auction_fixture_preserves_exchange_identity_and_order_envelope_keys"
+    ],
+    "files": [
+      "packages/engine/tests/auction.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+        "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json migration_steps[0]",
+        "requirement": "新增仅 auction integration test 内可见 AuctionFixture；以恢复型 caller 承接 restored_with_previous_close，fixture 独占 setup/seed。",
+        "implemented_by": {
+          "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+          "methods": [
+            "AuctionFixture::quiet(auction_ticks, seed)",
+            "AuctionFixture::start_session()",
+            "AuctionFixture::restore_with_orders(orders, previous_close)"
+          ],
+          "callers": [
+            "shanghai_clearing_price_prioritizes_volume_then_unmatched_quantity"
+          ],
+          "files": [
+            "packages/engine/tests/auction.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "struct 在 auction.rs 私有，不进入 production crate；旧 orders、auction_ticks=2、previous_close=10100、seed=99 显式迁移。"
+          ],
+          "short_test_filters": [
+            "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R242",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+              "passed": true,
+              "seconds": 0.1367,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R243",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+              "passed": true,
+              "seconds": 0.5503,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[1] 及字段/方法/组合方式",
+        "requirement": "迁移 restored_on_exchange/restored_with_orders；exchange/code、previous_close、订单输入保持明确，且同步 SaveSlot 价格/订单/ID/envelope。",
+        "implemented_by": {
+          "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+          "methods": [
+            "AuctionFixture::quiet_on_exchange(auction_ticks, seed, exchange)",
+            "AuctionFixture::save_with_orders(orders, previous_close)",
+            "AuctionFixture::restore_with_orders(orders, previous_close)"
+          ],
+          "callers": [
+            "shanghai_midpoint_is_rounded_half_up_to_the_price_tick",
+            "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+            "shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close",
+            "no_crossing_orders_publish_no_fake_indicative_price",
+            "preopen_save_requires_every_market_candle_after_auction_completion"
+          ],
+          "files": [
+            "packages/engine/tests/auction.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "Shanghai=600000、Shenzhen=000001 保持；previous_close 与 orders 仍显式方法实参。",
+            "save_with_orders 直接设置 last_close/last_price、auction_orders、next_order_id=100，按真实 owner/stock/order_id/side 生成并排序 live_envelopes。"
+          ],
+          "short_test_filters": [
+            "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "exchange/code 存于 owned setup；previous_close/orders 是明确输入，不作为跨调用可变字段；此采用动作组合方式允许的窄场景方法。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R242",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+              "passed": true,
+              "seconds": 0.1367,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R243",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+              "passed": true,
+              "seconds": 0.5503,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[2]",
+        "requirement": "迁移静默单股与代表 NPC setup 以及单股过滤；所有测试函数、seed、交易断言保持。",
+        "implemented_by": {
+          "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+          "methods": [
+            "AuctionFixture::quiet(auction_ticks, seed)",
+            "AuctionFixture::representative(seed)",
+            "AuctionFixture::retain_stock(code)",
+            "AuctionFixture::start_session()"
+          ],
+          "callers": [
+            "single_stock_npc_population_keeps_real_auction_activity_across_days",
+            "multi_stock_npc_auctions_report_only_real_trades_across_days",
+            "auction.rs 其余原 26 个测试"
+          ],
+          "files": [
+            "packages/engine/tests/auction.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "两类 setup 的股票/类别/涨跌幅/tick/日期/策略字段原值保留，NPC 两场景 seed=42。",
+            "原 26 个测试与 104 处断言保留，Session/临时档/运行断言仍归各测试。"
+          ],
+          "short_test_filters": [
+            "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R242",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+              "passed": true,
+              "seconds": 0.1367,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R243",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+              "passed": true,
+              "seconds": 0.5503,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json missing_tests[0..1] 与 semantic_boundaries",
+        "requirement": "补 fixture 检查两市证券身份与注入订单 envelope account/stock/order/side 对应；不新增交易规则或隐藏交易断言。",
+        "implemented_by": {
+          "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+          "methods": [
+            "AuctionFixture::quiet_on_exchange(...)",
+            "AuctionFixture::save_with_orders(...)"
+          ],
+          "callers": [
+            "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "files": [
+            "packages/engine/tests/auction.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "新增测试断言两市 code/exchange 配对，以倒序订单检查排序后的两个完整 EnvelopeKeyV2，以及 last_close/next_order_id。",
+            "原真实撮合、量、撤单、冻结、T+1、PreOpen、收盘日界断言继续显式。"
+          ],
+          "short_test_filters": [
+            "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "新增 fixture 检查只检查 SaveSlot 构造，不声称单独运行 restore/真实撮合或覆盖全部冻结组合；原恢复/撮合用例承担这些运行验证。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R242",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+              "passed": true,
+              "seconds": 0.1367,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R243",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+              "passed": true,
+              "seconds": 0.5503,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json 正文",
+        "requirement": "restore fixture 只构造合法起始档；故意 invalid 分支直接送入原恢复 API，不为坏档同步/修补字段。",
+        "implemented_by": {
+          "owner": "AuctionFixture；拥有 SessionSetup 与 seed，订单/昨日收盘为显式方法输入，运行 Session 与临时 SaveSlot 仍归各测试。",
+          "methods": [
+            "AuctionFixture::save_with_orders(...)",
+            "AuctionFixture::restore_with_orders(...)"
+          ],
+          "callers": [
+            "preopen_save_requires_every_market_candle_after_auction_completion",
+            "restoring_mid_auction_preserves_deterministic_completion"
+          ],
+          "files": [
+            "packages/engine/tests/auction.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "多股 preopen 先从合法构造运行到完整档；删除 idle active_daily_candle 后直接 GameSession::restore(&incomplete) 要求 InvalidSave(active-candle)。",
+            "坏档不重新进入 save_with_orders，不补 candle、不重新同步 envelope。"
+          ],
+          "short_test_filters": [
+            "--test auction auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+            "--test auction shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R242",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+              "passed": true,
+              "seconds": 0.1367,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R243",
+              "source": "packages/engine/tests/auction.rs",
+              "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+              "passed": true,
+              "seconds": 0.5503,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R242",
+          "source": "packages/engine/tests/auction.rs",
+          "filter": "auction_fixture_preserves_exchange_identity_and_order_envelope_keys",
+          "passed": true,
+          "seconds": 0.1367,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R243",
+          "source": "packages/engine/tests/auction.rs",
+          "filter": "shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks",
+          "passed": true,
+          "seconds": 0.5503,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N04",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "BehaviorScenario；共同拥有 MarketView 和 BehaviorMarketObservation；StrategyData、SelfView、risk、RNG、经历由各测试独立持有。",
+    "methods": [
+      "BehaviorScenario::from_paths(paths, decline_fraction)",
+      "BehaviorScenario::set_market_breadth(total, observed, equal_weight_return)",
+      "BehaviorScenario::market() -> &MarketView",
+      "BehaviorScenario::observations() -> &BehaviorMarketObservation"
+    ],
+    "callers": [
+      "behavior.rs 全部原 39 个行为决策测试",
+      "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together"
+    ],
+    "files": [
+      "packages/engine/tests/behavior.rs"
+    ],
+    "test_filters_or_results": {
+      "filters": [
+        "--test behavior behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+        "--test behavior unrelated_market_stocks_do_not_change_a_retailers_target"
+      ],
+      "static_results": [
+        "定向 rustfmt 成功",
+        "定向 git diff --check 成功",
+        "所有原测试函数及断言保留；未运行 Cargo"
+      ],
+      "runtime_results": []
+    },
+    "review": {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "status": "独立静态复核通过",
+      "findings": 0
+    },
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement_source": "actions.json migration_steps[0]",
+        "requirement": "以测试专属 BehaviorScenario 替代成对 tuple；从同一 paths 键集共同拥有 market 与 observations。",
+        "implemented_by": {
+          "owner": "BehaviorScenario；共同拥有 MarketView 和 BehaviorMarketObservation；StrategyData、SelfView、risk、RNG、经历由各测试独立持有。",
+          "methods": [
+            "BehaviorScenario::from_paths(paths, decline_fraction)"
+          ],
+          "callers": [
+            "behavior.rs 原全部 39 个决策测试",
+            "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together"
+          ],
+          "files": [
+            "packages/engine/tests/behavior.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "stocks 与 price_paths 从同一输入 BTreeMap 派生；没有将 scenario 类型引入生产 API。",
+            "固定 1000 分 current、横盘 recent_prices、独立 thirty_minute_market 原语义保留。"
+          ],
+          "short_test_filters": [
+            "--test behavior behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+            "--test behavior unrelated_market_stocks_do_not_change_a_retailers_target"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R244",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+              "passed": true,
+              "seconds": 0.0044,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R245",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "unrelated_market_stocks_do_not_change_a_retailers_target",
+              "passed": true,
+              "seconds": 0.0048,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[1] 与方法条件",
+        "requirement": "两个宽度散改点改为具名 setter，一次修改 total/observed/return；维持构造时 decline/advance/unchanged 约束。",
+        "implemented_by": {
+          "owner": "BehaviorScenario；共同拥有 MarketView 和 BehaviorMarketObservation；StrategyData、SelfView、risk、RNG、经历由各测试独立持有。",
+          "methods": [
+            "BehaviorScenario::set_market_breadth(total, observed, equal_weight_return)"
+          ],
+          "callers": [
+            "a_retailer_can_add_to_an_eighty_percent_position",
+            "unrelated_market_stocks_do_not_change_a_retailers_target",
+            "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together"
+          ],
+          "files": [
+            "packages/engine/tests/behavior.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "原两 consumer 分别设置 5/5/Some(0.03) 与 stock_count/stock_count/Some(0.03)，构造 decline=0 因而比例 0/1/0 保留。",
+            "setter 同时修改三项并检查 observed<=total；涨跌比例沿用原构造值，没有独立 mutable observations getter。"
+          ],
+          "short_test_filters": [
+            "--test behavior behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+            "--test behavior unrelated_market_stocks_do_not_change_a_retailers_target"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "setter 返回 ()，现有 caller 不需要链式 &mut Self；零 observed 不重建 None，observed<=total guard 无负向测试。它是窄 synthetic fixture，当前正覆盖输入保持原义；未来零覆盖场景需显式完整合法 observation。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R244",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+              "passed": true,
+              "seconds": 0.0044,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R245",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "unrelated_market_stocks_do_not_change_a_retailers_target",
+              "passed": true,
+              "seconds": 0.0048,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json migration_steps[2] 与 composition",
+        "requirement": "决策消费处通过只读借用传入原 engine API；own/risk/strategy/RNG/experience 留在场景之外，保留大 A 行为断言。",
+        "implemented_by": {
+          "owner": "BehaviorScenario；共同拥有 MarketView 和 BehaviorMarketObservation；StrategyData、SelfView、risk、RNG、经历由各测试独立持有。",
+          "methods": [
+            "BehaviorScenario::market() -> &MarketView",
+            "BehaviorScenario::observations() -> &BehaviorMarketObservation"
+          ],
+          "callers": [
+            "decide_retail_position 的本文件消费者",
+            "decide_retail_position_with_experience 的本文件消费者",
+            "target_position_is_split_into_a_legal_child_sell_order",
+            "target_position_does_not_bypass_t1_when_forming_the_child_order",
+            "behavior_noise_buy_uses_the_observed_highest_legal_limit"
+          ],
+          "files": [
+            "packages/engine/tests/behavior.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "全部 tuple consumer 替换为 scenario 借用；calm_scenario/stress_scenario 各自拥有成对输入。",
+            "原 39 测试及 108 处断言保持，T+1、买入整手、零股余数、style 决策及窗口口径未改。"
+          ],
+          "short_test_filters": [
+            "--test behavior behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+            "--test behavior unrelated_market_stocks_do_not_change_a_retailers_target"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "Rust 编译及运行验证由 root 执行，本项静态复核通过不代表测试执行通过。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R244",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+              "passed": true,
+              "seconds": 0.0044,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R245",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "unrelated_market_stocks_do_not_change_a_retailers_target",
+              "passed": true,
+              "seconds": 0.0048,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement_source": "actions.json missing_tests 与 semantic_boundaries",
+        "requirement": "定向检查 stocks/price_paths 代码集合、三个比例和 setter 后的组合结果；无需新增 fixture 生命周期覆盖。",
+        "implemented_by": {
+          "owner": "BehaviorScenario；共同拥有 MarketView 和 BehaviorMarketObservation；StrategyData、SelfView、risk、RNG、经历由各测试独立持有。",
+          "methods": [
+            "BehaviorScenario::from_paths(...)",
+            "BehaviorScenario::set_market_breadth(...)",
+            "BehaviorScenario::market()",
+            "BehaviorScenario::observations()"
+          ],
+          "callers": [
+            "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together"
+          ],
+          "files": [
+            "packages/engine/tests/behavior.rs"
+          ]
+        },
+        "validation": {
+          "static_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md：独立静态复核通过，0 个发现。",
+          "evidence": [
+            "新测试对比两个 map 的 keys，断言构造 decline=0.3、advance=0.7、unchanged=0；setter 后检查 total=3、observed=2、return=Some(0.01) 与三个比例保持。"
+          ],
+          "short_test_filters": [
+            "--test behavior behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+            "--test behavior unrelated_market_stocks_do_not_change_a_retailers_target"
+          ],
+          "runtime_result": "待 root 统一验证；本 agent 未运行 Cargo。"
+        },
+        "limit": "新测试输入是独立 synthetic breadth，不是由两只 path 重算的真实等权统计；不声称全输入空间的 production 校验或新增交易行为覆盖。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+              "command": [
+                "cargo",
+                "test",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "--lib",
+                "--test",
+                "account",
+                "--test",
+                "strategy_state",
+                "--test",
+                "information_acquisition",
+                "--test",
+                "attention_discovery",
+                "--test",
+                "auction",
+                "--test",
+                "behavior",
+                "--test",
+                "fundamental_beliefs",
+                "--test",
+                "industry_reports",
+                "--test",
+                "plans",
+                "--test",
+                "publications",
+                "--test",
+                "session",
+                "--test",
+                "save_contract",
+                "--test",
+                "deployment_cli",
+                "--test",
+                "deployment_routes",
+                "--test",
+                "api_contract",
+                "--test",
+                "ws",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+                "--no-run",
+                "--message-format=json",
+                "-j",
+                "16"
+              ],
+              "exit_code": 0,
+              "seconds": 57.556,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+              "command": [
+                "cargo",
+                "check",
+                "-p",
+                "engine",
+                "-p",
+                "server",
+                "-p",
+                "web-wasm",
+                "-p",
+                "stock-market-game",
+                "--all-targets",
+                "--features",
+                "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+                "--message-format=json",
+                "-j",
+                "32"
+              ],
+              "exit_code": 0,
+              "seconds": 4.258,
+              "execution": "仅编译/类型检查，没有执行整套测试"
+            }
+          ],
+          "selected_rust_cases": [
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R244",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+              "passed": true,
+              "seconds": 0.0044,
+              "deadline_ms": 10000
+            },
+            {
+              "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+              "id": "R245",
+              "source": "packages/engine/tests/behavior.rs",
+              "filter": "unrelated_market_stocks_do_not_change_a_retailers_target",
+              "passed": true,
+              "seconds": 0.0048,
+              "deadline_ms": 10000
+            }
+          ],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "--lib",
+            "--test",
+            "account",
+            "--test",
+            "strategy_state",
+            "--test",
+            "information_acquisition",
+            "--test",
+            "attention_discovery",
+            "--test",
+            "auction",
+            "--test",
+            "behavior",
+            "--test",
+            "fundamental_beliefs",
+            "--test",
+            "industry_reports",
+            "--test",
+            "plans",
+            "--test",
+            "publications",
+            "--test",
+            "session",
+            "--test",
+            "save_contract",
+            "--test",
+            "deployment_cli",
+            "--test",
+            "deployment_routes",
+            "--test",
+            "api_contract",
+            "--test",
+            "ws",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "16"
+          ],
+          "exit_code": 0,
+          "seconds": 57.556,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "exit_code": 0,
+          "seconds": 4.258,
+          "execution": "仅编译/类型检查，没有执行整套测试"
+        }
+      ],
+      "selected_rust_cases": [
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R244",
+          "source": "packages/engine/tests/behavior.rs",
+          "filter": "behavior_scenario_keeps_stock_paths_and_breadth_inputs_together",
+          "passed": true,
+          "seconds": 0.0044,
+          "deadline_ms": 10000
+        },
+        {
+          "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "id": "R245",
+          "source": "packages/engine/tests/behavior.rs",
+          "filter": "unrelated_market_stocks_do_not_change_a_retailers_target",
+          "passed": true,
+          "seconds": 0.0048,
+          "deadline_ms": 10000
+        }
+      ],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "fixtures1",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/fixtures1/status.md"
+  }
+]

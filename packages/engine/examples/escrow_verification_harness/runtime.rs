@@ -132,12 +132,57 @@ pub struct CaptureReport {
     negative_control: Option<Value>,
 }
 
-pub struct CaptureBundle {
-    pub report: CaptureReport,
+struct CaptureArtifact {
+    name: &'static str,
+    file: &'static str,
+    bytes: Vec<u8>,
+    receipt: ArtifactReceipt,
+}
+
+impl CaptureArtifact {
+    fn from_bytes(name: &'static str, file: &'static str, bytes: Vec<u8>) -> Self {
+        let receipt = ArtifactReceipt::from_bytes(&bytes);
+        Self {
+            name,
+            file,
+            bytes,
+            receipt,
+        }
+    }
+
+    fn report_entry(&self) -> (&'static str, ArtifactFile) {
+        (
+            self.name,
+            ArtifactFile {
+                file: self.file,
+                receipt: self.receipt.clone(),
+            },
+        )
+    }
+}
+
+fn capture_artifacts(
     authoritative_state: Vec<u8>,
     event_stream: Vec<u8>,
     save_slot: Vec<u8>,
     receipts: Vec<u8>,
+) -> Vec<CaptureArtifact> {
+    // Writer 顺序沿用旧契约，报告仍投影到 BTreeMap 的规范键顺序。
+    vec![
+        CaptureArtifact::from_bytes(
+            "authoritative_state",
+            "authoritative-state.json",
+            authoritative_state,
+        ),
+        CaptureArtifact::from_bytes("event_stream", "event-stream.json", event_stream),
+        CaptureArtifact::from_bytes("save_slot", "save-slot.json", save_slot),
+        CaptureArtifact::from_bytes("receipts", "receipts.json", receipts),
+    ]
+}
+
+pub struct CaptureBundle {
+    pub report: CaptureReport,
+    artifacts: Vec<CaptureArtifact>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -195,36 +240,6 @@ fn assemble(
     let rows = collector_rows(&capture)?;
     let (precanonical, collector_bytes, disabled_changed) =
         collect_rows(rows, config.mode, config.disabled_merge)?;
-    let mut artifacts = BTreeMap::new();
-    artifacts.insert(
-        "authoritative_state",
-        ArtifactFile {
-            file: "authoritative-state.json",
-            receipt: ArtifactReceipt::from_bytes(&authoritative_state),
-        },
-    );
-    artifacts.insert(
-        "event_stream",
-        ArtifactFile {
-            file: "event-stream.json",
-            receipt: ArtifactReceipt::from_bytes(&event_stream),
-        },
-    );
-    artifacts.insert(
-        "save_slot",
-        ArtifactFile {
-            file: "save-slot.json",
-            receipt: ArtifactReceipt::from_bytes(&save_slot),
-        },
-    );
-    artifacts.insert(
-        "receipts",
-        ArtifactFile {
-            file: "receipts.json",
-            receipt: ArtifactReceipt::from_bytes(&receipts),
-        },
-    );
-
     let stock_codes = capture
         .final_save
         .setup
@@ -263,6 +278,7 @@ fn assemble(
         &receipts,
         &save_slot,
     )?;
+    let artifacts = capture_artifacts(authoritative_state, event_stream, save_slot, receipts);
     let report = CaptureReport {
         schema: CAPTURE_SCHEMA,
         status: CaptureStatus::Pass,
@@ -276,7 +292,7 @@ fn assemble(
             requested_scheduler_merge_disabled: config.disabled_merge,
         },
         authority_path: "ProtocolSession::step_frame_with_commit_evidence -> GameSession::step -> pipeline::execute_authoritative_tick",
-        artifacts,
+        artifacts: artifacts.iter().map(CaptureArtifact::report_entry).collect(),
         runtime_coverage: RuntimeCoverage {
             tick_from: capture.tick_from.to_string(),
             tick_to: capture.tick_to.to_string(),
@@ -320,13 +336,7 @@ fn assemble(
         scope: "runtime determinism capture only; historical corpus and performance require separate escrow verification acceptance",
         negative_control: None,
     };
-    Ok(CaptureBundle {
-        report,
-        authoritative_state,
-        event_stream,
-        save_slot,
-        receipts,
-    })
+    Ok(CaptureBundle { report, artifacts })
 }
 
 struct PrecanonicalIdentities {
@@ -574,33 +584,57 @@ fn stock(
     }
 }
 
+struct CaptureArtifactWriter {
+    output: PathBuf,
+}
+
+impl CaptureArtifactWriter {
+    fn create(output: &Path) -> Result<Self, String> {
+        fs::create_dir(output).map_err(|error| {
+            format!(
+                "output directory {} must be new and creatable: {error}",
+                output.display()
+            )
+        })?;
+        Ok(Self {
+            output: output.to_path_buf(),
+        })
+    }
+
+    // 顺序写入保持 artifact 字节契约；失败可能留下部分输出，不承诺原子发布。
+    fn write(&self, bundle: &CaptureBundle) -> Result<(), String> {
+        self.write_json("capture.json", &bundle.report)?;
+        let capture_bytes = fs::read(self.output.join("capture.json"))
+            .map_err(|error| format!("cannot read capture report for receipt: {error}"))?;
+        self.write_json(
+            "capture-receipt.json",
+            &serde_json::json!({
+                "schema": "escrow-capture-receipt-v1",
+                "file": "capture.json",
+                "sha256": digest_hex(&capture_bytes),
+                "byte_length": capture_bytes.len().to_string(),
+            }),
+        )?;
+        for artifact in &bundle.artifacts {
+            self.write_bytes(artifact.file, &artifact.bytes)?;
+        }
+        Ok(())
+    }
+
+    fn write_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(value)
+            .map_err(|error| format!("capture report serialization failed: {error}"))?;
+        self.write_bytes(name, &bytes)
+    }
+
+    fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let path = self.output.join(name);
+        fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    }
+}
+
 pub fn write_bundle(bundle: &CaptureBundle, output: &Path) -> Result<(), String> {
-    fs::create_dir(output).map_err(|error| {
-        format!(
-            "output directory {} must be new and creatable: {error}",
-            output.display()
-        )
-    })?;
-    write_json(output.join("capture.json"), &bundle.report)?;
-    let capture_bytes = fs::read(output.join("capture.json"))
-        .map_err(|error| format!("cannot read capture report for receipt: {error}"))?;
-    write_json(
-        output.join("capture-receipt.json"),
-        &serde_json::json!({
-            "schema": "escrow-capture-receipt-v1",
-            "file": "capture.json",
-            "sha256": digest_hex(&capture_bytes),
-            "byte_length": capture_bytes.len().to_string(),
-        }),
-    )?;
-    write_bytes(
-        output.join("authoritative-state.json"),
-        &bundle.authoritative_state,
-    )?;
-    write_bytes(output.join("event-stream.json"), &bundle.event_stream)?;
-    write_bytes(output.join("save-slot.json"), &bundle.save_slot)?;
-    write_bytes(output.join("receipts.json"), &bundle.receipts)?;
-    Ok(())
+    CaptureArtifactWriter::create(output)?.write(bundle)
 }
 
 impl CaptureBundle {
@@ -609,37 +643,57 @@ impl CaptureBundle {
     }
 }
 
-fn write_json(path: impl AsRef<Path>, value: &impl Serialize) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("capture report serialization failed: {error}"))?;
-    write_bytes(path, &bytes)
+struct WorkspacePathPolicy {
+    workspace: PathBuf,
+    temp_root: PathBuf,
+    output: PathBuf,
+    inputs: BTreeMap<String, PathBuf>,
 }
 
-fn write_bytes(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), String> {
-    fs::write(path.as_ref(), bytes)
-        .map_err(|error| format!("cannot write {}: {error}", path.as_ref().display()))
+impl WorkspacePathPolicy {
+    fn validate(config: &Config) -> Result<Self, String> {
+        let workspace = std::env::var("ESCROW_WORKSPACE_ROOT")
+            .map_err(|_| "ESCROW_WORKSPACE_ROOT must name the shared repository root".to_owned())?;
+        let workspace =
+            canonical_existing_directory("ESCROW_WORKSPACE_ROOT", Path::new(&workspace))?;
+        let temp_root = canonical_workspace_temp_root(&workspace)?;
+        let output = validate_new_output(&config.output, &temp_root)?;
+        let mut policy = Self {
+            workspace,
+            temp_root,
+            output,
+            inputs: BTreeMap::new(),
+        };
+        for name in ["CARGO_TARGET_DIR", "TMPDIR", "TMP", "TEMP"] {
+            let value = std::env::var(name).map_err(|_| format!("{name} must be set"))?;
+            let path = canonical_existing_directory(name, Path::new(&value))?;
+            policy.validate_input(name, &path)?;
+            policy.inputs.insert(name.to_owned(), path);
+        }
+        Ok(policy)
+    }
+
+    fn validate_input(&self, name: &str, path: &Path) -> Result<(), String> {
+        require_temp_descendant(name, path, &self.temp_root)?;
+        verify_writable_directory(name, path)
+    }
+
+    fn paths(self) -> BTreeMap<String, String> {
+        let mut paths = BTreeMap::new();
+        paths.insert(
+            "ESCROW_WORKSPACE_ROOT".to_owned(),
+            self.workspace.display().to_string(),
+        );
+        for (name, path) in self.inputs {
+            paths.insert(name, path.display().to_string());
+        }
+        paths.insert("OUTPUT".to_owned(), self.output.display().to_string());
+        paths
+    }
 }
 
 pub fn validate_workspace_paths(config: &Config) -> Result<BTreeMap<String, String>, String> {
-    let workspace = std::env::var("ESCROW_WORKSPACE_ROOT")
-        .map_err(|_| "ESCROW_WORKSPACE_ROOT must name the shared repository root".to_owned())?;
-    let workspace = canonical_existing_directory("ESCROW_WORKSPACE_ROOT", Path::new(&workspace))?;
-    let temp_root = canonical_workspace_temp_root(&workspace)?;
-    let output = validate_new_output(&config.output, &temp_root)?;
-    let mut paths = BTreeMap::new();
-    paths.insert(
-        "ESCROW_WORKSPACE_ROOT".to_owned(),
-        workspace.display().to_string(),
-    );
-    for name in ["CARGO_TARGET_DIR", "TMPDIR", "TMP", "TEMP"] {
-        let value = std::env::var(name).map_err(|_| format!("{name} must be set"))?;
-        let path = canonical_existing_directory(name, Path::new(&value))?;
-        require_temp_descendant(name, &path, &temp_root)?;
-        verify_writable_directory(name, &path)?;
-        paths.insert(name.to_owned(), path.display().to_string());
-    }
-    paths.insert("OUTPUT".to_owned(), output.display().to_string());
-    Ok(paths)
+    Ok(WorkspacePathPolicy::validate(config)?.paths())
 }
 
 fn canonical_existing_directory(name: &str, path: &Path) -> Result<PathBuf, String> {
@@ -748,10 +802,190 @@ mod tests {
         }
     }
 
+    fn assert_artifact_receipts(bundle: &CaptureBundle) {
+        assert_eq!(bundle.artifacts.len(), 4);
+        for artifact in &bundle.artifacts {
+            assert_eq!(
+                artifact.receipt.byte_length,
+                artifact.bytes.len().to_string()
+            );
+            assert_eq!(artifact.receipt.sha256, digest_hex(&artifact.bytes));
+            let report_entry = &bundle.report.artifacts[artifact.name];
+            assert_eq!(report_entry.file, artifact.file);
+            assert_eq!(
+                report_entry.receipt.byte_length,
+                artifact.receipt.byte_length
+            );
+            assert_eq!(report_entry.receipt.sha256, artifact.receipt.sha256);
+        }
+    }
+
+    #[test]
+    fn capture_artifact_receipts_bind_empty_and_large_bytes() {
+        for bytes in [Vec::new(), vec![0x5a; 131_072]] {
+            let artifact = CaptureArtifact::from_bytes("receipts", "receipts.json", bytes.clone());
+            assert_eq!(artifact.bytes, bytes);
+            assert_eq!(artifact.receipt.byte_length, bytes.len().to_string());
+            assert_eq!(artifact.receipt.sha256, digest_hex(&bytes));
+            let (name, entry) = artifact.report_entry();
+            assert_eq!(name, "receipts");
+            assert_eq!(entry.file, "receipts.json");
+            assert_eq!(entry.receipt.byte_length, artifact.receipt.byte_length);
+            assert_eq!(entry.receipt.sha256, artifact.receipt.sha256);
+        }
+    }
+
+    struct WriterTestDirectory(PathBuf);
+
+    impl WriterTestDirectory {
+        fn create(case: &str) -> Self {
+            let registered = std::env::var("TMPDIR")
+                .expect("Writer tests require registered workspace-local TMPDIR");
+            let parent = canonical_existing_directory("Writer test TMPDIR", Path::new(&registered))
+                .expect("Writer test TMPDIR must be an existing absolute directory");
+            assert!(parent
+                .ancestors()
+                .any(|path| path.file_name().is_some_and(|name| name == ".tmp")));
+            let root = parent.join(format!("capture-writer-{}-{case}", std::process::id()));
+            fs::create_dir(&root).expect("create fresh Writer test directory");
+            Self(root)
+        }
+    }
+
+    impl Drop for WriterTestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("clean Writer test directory");
+        }
+    }
+
+    fn writer_bundle() -> CaptureBundle {
+        // 仅验证 Writer I/O：固定短字节与 DTO，不执行市场，也不声称真实 runtime coverage。
+        let artifacts = capture_artifacts(
+            br#"{"state":"fixture"}"#.to_vec(),
+            b"[]".to_vec(),
+            br#"{"save":"fixture"}"#.to_vec(),
+            b"[]".to_vec(),
+        );
+        CaptureBundle {
+            report: CaptureReport {
+                schema: CAPTURE_SCHEMA,
+                status: CaptureStatus::Pass,
+                configuration: RuntimeConfiguration {
+                    scenario: "writer-io-fixture".to_owned(),
+                    seed: "0".to_owned(),
+                    budget: "1".to_owned(),
+                    actual_rayon_threads: "1".to_owned(),
+                    repeat: "0".to_owned(),
+                    mode: Mode::Canonical,
+                    requested_scheduler_merge_disabled: None,
+                },
+                authority_path: "Writer I/O fixture only",
+                artifacts: artifacts
+                    .iter()
+                    .map(CaptureArtifact::report_entry)
+                    .collect(),
+                runtime_coverage: RuntimeCoverage {
+                    tick_from: "0".to_owned(),
+                    tick_to: "0".to_owned(),
+                    tick_frames: "0".to_owned(),
+                    civil_updates: "0".to_owned(),
+                    auction_completed_events: "0".to_owned(),
+                    day_boundary_events: "0".to_owned(),
+                    stock_codes: Vec::new(),
+                    account_ids: Vec::new(),
+                    restore_slots: Vec::new(),
+                },
+                scheduler_precanonical_order: Value::Null,
+                public_payload_order_probe: PublicPayloadOrderProbe {
+                    scope: "Writer I/O fixture only",
+                    account_payload_order: Vec::new(),
+                    stock_payload_order: Vec::new(),
+                    event_payload_order: Vec::new(),
+                    canonicalized_bytes: ArtifactReceipt::from_bytes(&[]),
+                    probe_disabled_sort_changed_bytes: None,
+                },
+                producer_readiness: ProducerReadiness {
+                    update_projection_schema: "Writer I/O fixture only",
+                    update_projection_count: "0".to_owned(),
+                    full_update_stream_ordinal_scope: UnavailableCapture {
+                        available: false,
+                        reason: "Writer I/O fixture only",
+                    },
+                    determinism_observation: None,
+                    corpus_projection: None,
+                    conservation_snapshots: Vec::new(),
+                },
+                blockers: Vec::new(),
+                scope: "Writer I/O fixture only; no runtime acceptance claim",
+                negative_control: None,
+            },
+            artifacts,
+        }
+    }
+
+    #[test]
+    fn capture_writer_persists_exact_bytes_and_receipts_and_refuses_existing_output() {
+        let directory = WriterTestDirectory::create("complete");
+        let output = directory.0.join("output");
+        let bundle = writer_bundle();
+        write_bundle(&bundle, &output).unwrap();
+        let report_bytes = fs::read(output.join("capture.json")).unwrap();
+        assert_eq!(
+            report_bytes,
+            serde_json::to_vec_pretty(&bundle.report).unwrap()
+        );
+        let report: Value = serde_json::from_slice(&report_bytes).unwrap();
+        for artifact in &bundle.artifacts {
+            let persisted = fs::read(output.join(artifact.file)).unwrap();
+            assert_eq!(persisted, artifact.bytes);
+            assert_eq!(report["artifacts"][artifact.name]["file"], artifact.file);
+            assert_eq!(
+                report["artifacts"][artifact.name]["receipt"]["byte_length"],
+                persisted.len().to_string()
+            );
+            assert_eq!(
+                report["artifacts"][artifact.name]["receipt"]["sha256"],
+                digest_hex(&persisted)
+            );
+        }
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(output.join("capture-receipt.json")).unwrap())
+                .unwrap();
+        assert_eq!(receipt["file"], "capture.json");
+        assert_eq!(receipt["byte_length"], report_bytes.len().to_string());
+        assert_eq!(receipt["sha256"], digest_hex(&report_bytes));
+        assert!(write_bundle(&bundle, &output)
+            .unwrap_err()
+            .contains("must be new and creatable"));
+        assert_eq!(fs::read(output.join("capture.json")).unwrap(), report_bytes);
+    }
+
+    #[test]
+    fn capture_writer_keeps_prior_files_and_stops_later_files_on_partial_write_failure() {
+        let directory = WriterTestDirectory::create("partial");
+        let output = directory.0.join("output");
+        let writer = CaptureArtifactWriter::create(&output).unwrap();
+        let bundle = writer_bundle();
+        fs::create_dir(output.join("event-stream.json")).unwrap();
+        let error = writer.write(&bundle).unwrap_err();
+        assert!(error.contains("cannot write"));
+        assert!(error.contains("event-stream.json"));
+        assert!(output.join("capture.json").is_file());
+        assert!(output.join("capture-receipt.json").is_file());
+        assert_eq!(
+            fs::read(output.join("authoritative-state.json")).unwrap(),
+            bundle.artifacts[0].bytes
+        );
+        assert!(output.join("event-stream.json").is_dir());
+        assert!(!output.join("save-slot.json").exists());
+        assert!(!output.join("receipts.json").exists());
+    }
+
     #[test]
     fn real_protocol_capture_has_committed_evidence_without_claiming_full_acceptance() {
         let bundle = execute(&config(Mode::Canonical, None)).unwrap();
         assert!(bundle.passed());
+        assert_artifact_receipts(&bundle);
         assert!(bundle
             .report
             .scope
@@ -802,7 +1036,15 @@ mod tests {
             true
         );
         assert!(bundle.report.blockers.is_empty());
-        let receipts: Vec<Value> = serde_json::from_slice(&bundle.receipts).unwrap();
+        let receipts: Vec<Value> = serde_json::from_slice(
+            &bundle
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.name == "receipts")
+                .unwrap()
+                .bytes,
+        )
+        .unwrap();
         assert_eq!(receipts.len(), 13);
         assert!(receipts
             .iter()
@@ -833,6 +1075,7 @@ mod tests {
         for dimension in [MergeDimension::Completion] {
             let bundle = execute(&config(Mode::NegativeControl, Some(dimension))).unwrap();
             assert!(bundle.passed());
+            assert_artifact_receipts(&bundle);
             let witness = bundle.report.negative_control.as_ref().unwrap();
             assert_eq!(witness["detected"], true);
             assert_eq!(witness["kind"], "typed-rejection-with-rollback");

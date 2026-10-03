@@ -15,6 +15,7 @@
 use crate::accounting::{AccountingAmount, AccountingError, FractionUnits};
 use crate::calendar::CivilDate;
 use crate::company::bank::ecl::{EclStage, StageTransferRecord};
+use crate::company::bank::interest::LoanAccrualItem;
 use crate::company::bank::BankError;
 use crate::company::contracts::ContractId;
 use crate::company::counterparty::CounterpartyId;
@@ -30,15 +31,22 @@ pub struct BankLoanState {
     /// ACT/365F 计息余数（单位 1/3_650_000 分；随合同累计，落分守恒）。
     carried: FractionUnits,
     last_accrual_date: CivilDate,
-    pub(super) rate_bp: i32,
-    pub(super) counterparty: CounterpartyId,
+    rate_bp: i32,
+    counterparty: CounterpartyId,
     stage: EclStage,
     /// 该贷款的减值准备（子账事实；总账 1303 = Σ各贷款准备）。
-    pub(super) allowance: AccountingAmount,
+    allowance: AccountingAmount,
     written_off: bool,
     /// 已核销尚未回收的账面余额（回收上限）。
     recoverable: AccountingAmount,
     transfers: Vec<StageTransferRecord>,
+}
+
+/// 核销前的受检金额快照；只承载分录事实，不建立第二份贷款状态。
+pub(super) struct LoanWriteOffSnapshot {
+    pub(super) principal: AccountingAmount,
+    pub(super) accrued: AccountingAmount,
+    pub(super) gross: AccountingAmount,
 }
 
 impl BankLoanState {
@@ -47,6 +55,7 @@ impl BankLoanState {
         rate_bp: i32,
         counterparty: CounterpartyId,
         start: CivilDate,
+        day_one_allowance: AccountingAmount,
     ) -> Self {
         Self {
             principal,
@@ -56,7 +65,7 @@ impl BankLoanState {
             rate_bp,
             counterparty,
             stage: EclStage::Stage1,
-            allowance: AccountingAmount::ZERO,
+            allowance: day_one_allowance,
             written_off: false,
             recoverable: AccountingAmount::ZERO,
             transfers: Vec::new(),
@@ -97,6 +106,156 @@ impl BankLoanState {
 
     pub fn stage_transfers(&self) -> &[StageTransferRecord] {
         &self.transfers
+    }
+
+    pub(super) fn counterparty(&self) -> &CounterpartyId {
+        &self.counterparty
+    }
+
+    /// 以合同自身日期、阶段、余数预览计息；核销后仍沿用零分推进语义。
+    pub(super) fn preview_accrual(
+        &self,
+        through: CivilDate,
+        contract: &ContractId,
+    ) -> Result<Option<LoanAccrualItem>, BankError> {
+        let days = through.days_since(self.last_accrual_date);
+        if days < 0 {
+            return Err(BankError::AccrualNotForward {
+                contract: contract.clone(),
+                through,
+                last_accrual: self.last_accrual_date,
+            });
+        }
+        if days == 0 {
+            return Ok(None);
+        }
+        let base = match self.stage {
+            EclStage::Stage1 | EclStage::Stage2 => self.principal,
+            EclStage::Stage3 => self.net_accrual_base(),
+        };
+        let (amount, remaining_carried) = accrue_act_365f(base, self.rate_bp, days, self.carried)?;
+        Ok(Some(LoanAccrualItem {
+            loan: contract.clone(),
+            days,
+            amount,
+            remaining_carried,
+        }))
+    }
+
+    fn require_not_written_off(&self, contract: &ContractId) -> Result<(), BankError> {
+        if self.written_off {
+            return Err(BankError::LoanAlreadyWrittenOff {
+                contract: contract.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    /// 先核销态、再正额、再未偿本金；不在过账后的 apply 重复这些守卫。
+    pub(super) fn validate_principal_collection(
+        &self,
+        amount: AccountingAmount,
+        contract: &ContractId,
+    ) -> Result<(), BankError> {
+        self.require_not_written_off(contract)?;
+        if !amount.is_positive() {
+            return Err(BankError::NonPositiveAmount {
+                what: "principal collection",
+                amount,
+            });
+        }
+        if amount > self.principal {
+            return Err(BankError::PrincipalBeyondOutstanding {
+                contract: contract.clone(),
+                requested: amount,
+                outstanding: self.principal,
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_interest_collection(
+        &self,
+        amount: AccountingAmount,
+        contract: &ContractId,
+    ) -> Result<(), BankError> {
+        self.require_not_written_off(contract)?;
+        if !amount.is_positive() {
+            return Err(BankError::NonPositiveAmount {
+                what: "interest collection",
+                amount,
+            });
+        }
+        if amount > self.accrued_receivable {
+            return Err(BankError::InterestBeyondAccrued {
+                contract: contract.clone(),
+                requested: amount,
+                accrued: self.accrued_receivable,
+            });
+        }
+        Ok(())
+    }
+
+    /// 已核销合同允许同阶段重估，回收后的超额准备由该路径转回。
+    pub(super) fn validate_assessment(
+        &self,
+        stage: EclStage,
+        contract: &ContractId,
+    ) -> Result<(), BankError> {
+        if self.written_off && stage != self.stage {
+            return Err(BankError::StageTransferOnWrittenOff {
+                contract: contract.clone(),
+                to_stage: stage,
+            });
+        }
+        Ok(())
+    }
+
+    /// 准备足额后交回本金/利息/毛额，BankBooks 按快照生成核销分录。
+    pub(super) fn preview_write_off(
+        &self,
+        contract: &ContractId,
+    ) -> Result<LoanWriteOffSnapshot, BankError> {
+        self.require_not_written_off(contract)?;
+        let gross = self.gross_carrying();
+        if self.allowance < gross {
+            return Err(BankError::InsufficientAllowance {
+                contract: contract.clone(),
+                allowance: self.allowance,
+                gross,
+            });
+        }
+        Ok(LoanWriteOffSnapshot {
+            principal: self.principal,
+            accrued: self.accrued_receivable,
+            gross,
+        })
+    }
+
+    pub(super) fn validate_recovery(
+        &self,
+        amount: AccountingAmount,
+        contract: &ContractId,
+    ) -> Result<(), BankError> {
+        if !self.written_off {
+            return Err(BankError::LoanNotWrittenOff {
+                contract: contract.clone(),
+            });
+        }
+        if !amount.is_positive() {
+            return Err(BankError::NonPositiveAmount {
+                what: "recovery",
+                amount,
+            });
+        }
+        if amount > self.recoverable {
+            return Err(BankError::RecoveryBeyondRecoverable {
+                contract: contract.clone(),
+                requested: amount,
+                recoverable: self.recoverable,
+            });
+        }
+        Ok(())
     }
 
     /// 账面余额（毛额）= 本金 + 应计利息（EAD 与计息基数口径，CAS 22 §61）。

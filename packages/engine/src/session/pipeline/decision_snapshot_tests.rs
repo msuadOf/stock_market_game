@@ -292,3 +292,34 @@ fn decision_snapshot_rejects_player_duplicate_and_market_minute_drift() {
         Err(DecisionSnapshotError::MarketClockMismatch { .. })
     ));
 }
+
+#[test]
+fn decision_snapshot_accepts_non_retail_experience_without_retail_risk() {
+    let account = AccountId(1);
+    let input = DecisionAccountInput::new(
+        AccountKind::Inst,
+        SelfView {
+            cash: crate::Money::from_cents(10_000),
+            positions: BTreeMap::new(),
+        },
+        StrategyState::Momentum(MomentumStrategy::new(5, 0.02, 100).unwrap()),
+        None,
+        Some(crate::RetailExperienceState::without_equity_reference()),
+    );
+    let snapshot = DecisionSnapshot::new(
+        7,
+        42,
+        crate::TradingPhase::Continuous,
+        11,
+        market(7, 11),
+        None,
+        vec![account],
+        BTreeMap::from([(account, input)]),
+    )
+    .unwrap();
+
+    let input = snapshot.account(account).unwrap();
+    assert!(input.retail_experience().is_some());
+    assert!(input.account_risk().is_none());
+    assert!(snapshot.behavior_market().is_none());
+}

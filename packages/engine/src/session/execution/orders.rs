@@ -15,7 +15,7 @@ impl GameSession {
         market_minute: u64,
         working: WorkingOrderSlices<'_>,
     ) -> Vec<Intent> {
-        let lot_size = self.setup.config.lot_size;
+        let lot_size = self.state.setup.config.lot_size;
         let mut requested: BTreeMap<StockCode, (Side, Money, u32)> = BTreeMap::new();
         let mut dynamic_codes = BTreeSet::new();
         let mut passthrough = Vec::new();
@@ -48,6 +48,7 @@ impl GameSession {
         }
 
         let existing_codes: Vec<StockCode> = self
+            .state
             .parent_orders
             .get(&account)
             .map(|plans| plans.keys().cloned().collect())
@@ -65,6 +66,7 @@ impl GameSession {
             let mut remove = false;
             {
                 let plan = self
+                    .state
                     .parent_orders
                     .get_mut(&account)
                     .and_then(|plans| plans.get_mut(&code))
@@ -77,12 +79,13 @@ impl GameSession {
                         requested.insert(code.clone(), (side, price, _target_qty));
                     } else {
                         // 同向再判断只修订报价上限；原目标数量保持，避免随每次观察重置执行进度。
-                        plan.limit_price = price;
+                        plan.revise_same_side_limit(side, price);
                     }
                 }
             }
             if remove {
-                self.parent_orders
+                self.state
+                    .parent_orders
                     .get_mut(&account)
                     .expect("parent-order owner was collected from its map")
                     .remove(&code);
@@ -140,20 +143,19 @@ impl GameSession {
             let expires_market_minute = market_minute
                 .checked_add(PARENT_ORDER_HORIZON_MINUTES)
                 .expect("market minute plus fixed parent-order horizon fits u64");
-            self.parent_orders.entry(account).or_default().insert(
+            self.state.parent_orders.entry(account).or_default().insert(
                 code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
+                ParentOrderPlan::from_facts(
+                    code.clone(),
                     side,
                     target_qty,
-                    filled_qty: 0,
+                    0,
                     child_qty,
-                    active_child_order_id: active_child.map(|(id, _)| id),
-                    active_child_remaining_qty: active_child.map(|(_, qty)| qty),
-                    linked_plan_id: None,
-                    limit_price: price,
+                    active_child,
+                    None,
+                    price,
                     expires_market_minute,
-                },
+                ),
             );
             if let Some((order_id, _)) = active_child {
                 // 被母单认领的旧连续报价保留排队优先级，但从普通 NPC 撤单寿命中移出；
@@ -169,11 +171,12 @@ impl GameSession {
             );
         }
         if self
+            .state
             .parent_orders
             .get(&account)
             .is_some_and(BTreeMap::is_empty)
         {
-            self.parent_orders.remove(&account);
+            self.state.parent_orders.remove(&account);
         }
         desired
     }
@@ -187,53 +190,71 @@ impl GameSession {
         desired: &mut Vec<Intent>,
     ) {
         let plan = self
+            .state
             .parent_orders
             .get(&account)
             .and_then(|plans| plans.get(code))
             .expect("parent-order execution requires an active plan");
-        if plan.expires_market_minute <= market_minute || plan.filled_qty >= plan.target_qty {
-            return;
+        if let Some(intent) = plan.desired_child_intent(
+            market_minute,
+            self.phase(),
+            self.state.setup.config.lot_size,
+            working,
+        ) {
+            desired.push(intent);
+        }
+    }
+}
+
+impl ParentOrderPlan {
+    pub(in crate::session) fn desired_child_intent(
+        &self,
+        market_minute: u64,
+        phase: TradingPhase,
+        lot_size: u32,
+        working: WorkingOrderSlices<'_>,
+    ) -> Option<Intent> {
+        if self.expires_market_minute <= market_minute || self.filled_qty >= self.target_qty {
+            return None;
         }
         if let Some((_, order)) = working.continuous.iter().find(|(working_code, order)| {
-            working_code == code
-                && order.side == plan.side
-                && plan.active_child_order_id == Some(order.id)
-                && plan.active_child_remaining_qty == Some(order.qty)
+            working_code == &self.code
+                && order.side == self.side
+                && self.active_child_order_id == Some(order.id)
+                && self.active_child_remaining_qty == Some(order.qty)
         }) {
             // 收盘集合竞价期间，连续竞价簿里的旧单不能被复制为另一张竞价子单。
             // 它会在日终统一失效，母单仅保留未完成目标供下一交易日重新判断。
-            if self.phase() == TradingPhase::ClosingAuction {
-                return;
+            if phase == TradingPhase::ClosingAuction {
+                return None;
             }
-            desired.push(Intent::PlaceLimit {
-                code: code.clone(),
+            return Some(Intent::PlaceLimit {
+                code: self.code.clone(),
                 side: order.side,
-                price: LimitPrice::Fixed(plan.limit_price),
+                price: LimitPrice::Fixed(self.limit_price),
                 qty: order.qty,
             });
-            return;
         }
         if let Some((_, order)) = working.auction.iter().find(|(working_code, order)| {
-            working_code == code
-                && order.side == plan.side
-                && plan.active_child_order_id == Some(OrderId(order.order_id))
-                && plan.active_child_remaining_qty == Some(order.qty)
+            working_code == &self.code
+                && order.side == self.side
+                && self.active_child_order_id == Some(OrderId(order.order_id))
+                && self.active_child_remaining_qty == Some(order.qty)
         }) {
-            desired.push(Intent::PlaceLimit {
-                code: code.clone(),
+            return Some(Intent::PlaceLimit {
+                code: self.code.clone(),
                 side: order.side,
-                price: LimitPrice::Fixed(plan.limit_price),
+                price: LimitPrice::Fixed(self.limit_price),
                 qty: order.qty,
             });
-            return;
         }
-        let remaining = plan.remaining_qty();
+        let remaining = self.remaining_qty();
         // A 股买入申报必须整手。子单被零股卖单部分成交后，可能只剩不足一手的目标；
         // 该残余只能保留为未完成目标，不能为了“完成母单”伪造一张非法买单或超额买入。
-        if plan.side == Side::Buy && remaining < self.setup.config.lot_size {
-            return;
+        if self.side == Side::Buy && remaining < lot_size {
+            return None;
         }
-        let minutes_left = plan
+        let minutes_left = self
             .expires_market_minute
             .saturating_sub(market_minute)
             .max(1);
@@ -243,14 +264,13 @@ impl GameSession {
                 .min(u64::from(u32::MAX)),
         )
         .expect("clamped parent-order pace fits u32");
-        let lot_size = self.setup.config.lot_size;
         let paced_lot_qty = (pace / lot_size).max(1).saturating_mul(lot_size);
-        let qty = plan.child_qty.max(paced_lot_qty).min(remaining);
-        desired.push(Intent::PlaceLimit {
-            code: code.clone(),
-            side: plan.side,
-            price: LimitPrice::Fixed(plan.limit_price),
+        let qty = self.child_qty.max(paced_lot_qty).min(remaining);
+        Some(Intent::PlaceLimit {
+            code: self.code.clone(),
+            side: self.side,
+            price: LimitPrice::Fixed(self.limit_price),
             qty,
-        });
+        })
     }
 }

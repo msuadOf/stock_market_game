@@ -45,6 +45,6 @@ test("ChiNext quantity caps are explicit at the UI validation boundary", () => {
     /150000 股/,
   );
 
-  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../app/useTradingCommands.ts", import.meta.url), "utf8");
   assert.match(appSource, /maxAShareOrderQuantity\(stock\.category, orderKind === "market"\)/);
 });

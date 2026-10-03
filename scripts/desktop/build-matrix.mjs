@@ -68,60 +68,82 @@ function detectHost() {
   fail(`unsupported runtime host: ${currentPlatform}; supported hosts are linux, macos, windows.`);
 }
 
+const nativeChecks = Object.freeze(["frontend-wasm", "node-modules", "corepack", "cargo", "cargo-tauri"]);
+const crossChecks = Object.freeze([...nativeChecks, "cargo-xwin", "nsis", "msvc-target", "llvm-linker", "llvm-resource-compiler"]);
+const checkDescriptions = {
+  "frontend-wasm": "frontend/WASM artifacts",
+  "node-modules": "node_modules",
+  corepack: "Corepack-managed pnpm",
+  cargo: "cargo",
+  "cargo-tauri": "cargo-tauri",
+  "cargo-xwin": "cargo-xwin",
+  nsis: "NSIS",
+  "msvc-target": "MSVC target",
+  "llvm-linker": "the LLVM lld-link driver",
+  "llvm-resource-compiler": "LLVM resource compiler (llvm-rc)",
+};
+
+export function describeChecks(route) {
+  return route.preflightChecks.length === 0 ? "none." : `${route.preflightChecks.map((id) => checkDescriptions[id]).join("; ")}.`;
+}
+
+function route(preflightChecks, description) {
+  const { deferredRequirements, ...plan } = description;
+  const prerequisites = preflightChecks.length === 0
+    ? "No toolchain is checked because this route is intentionally not executed."
+    : `Preflight checks ${preflightChecks.map((id) => checkDescriptions[id]).join(", ")}. ${deferredRequirements}`;
+  return { ...plan, preflightChecks: preflightChecks, prerequisites };
+}
+
 export function planCell(host, target) {
   if (host === target) {
     if (target === "linux") {
-      return {
+      return route(nativeChecks, {
         status: "supported",
         restriction: "Native Linux bundles only: deb, rpm, appimage.",
-        prerequisites: "Preflight checks generated frontend/WASM artifacts, Node dependencies, Corepack-managed pnpm, cargo, and cargo-tauri availability. Linux GTK/WebKitGTK/pkg-config requirements and tool versions are deferred to the Tauri/Cargo build.",
+        deferredRequirements: "Linux GTK/WebKitGTK/pkg-config requirements and tool versions are deferred to the Tauri/Cargo build.",
         build: { command: "cargo", arguments: ["tauri", "build", "--bundles", "deb,rpm,appimage"] },
-      };
+      });
     }
     if (target === "macos") {
-      return {
+      return route(nativeChecks, {
         status: "supported",
         restriction: "Native macOS bundles only: app, dmg. Signing and notarization remain macOS credential workflows.",
-        prerequisites: "Preflight checks generated frontend/WASM artifacts, Node dependencies, Corepack-managed pnpm, cargo, and cargo-tauri availability. Xcode, signing, notarization, and tool versions are deferred to the Tauri/Cargo build.",
+        deferredRequirements: "Xcode, signing, notarization, and tool versions are deferred to the Tauri/Cargo build.",
         build: { command: "cargo", arguments: ["tauri", "build", "--bundles", "app,dmg"] },
-      };
+      });
     }
-    return {
+    return route(nativeChecks, {
       status: "supported",
       restriction: "Native Windows bundles only: msi, nsis. MSI remains Windows-native and requires WiX/VBScript.",
-      prerequisites: "Preflight checks generated frontend/WASM artifacts, Node dependencies, Corepack-managed pnpm, cargo, and cargo-tauri availability. Windows WiX/VBScript for MSI and tool versions are deferred to the Tauri/Cargo build.",
+      deferredRequirements: "Windows WiX/VBScript for MSI and tool versions are deferred to the Tauri/Cargo build.",
       build: { command: "cargo", arguments: ["tauri", "build", "--bundles", "msi,nsis"] },
-    };
+    });
   }
 
   if (target === "windows" && (host === "linux" || host === "macos")) {
-    return {
+    return route(crossChecks, {
       status: "constrained",
         restriction: "NSIS-only experimental cross-build. cargo-xwin compiles the Rust Windows target; it does not make MSI or Windows-native WiX available. The build may be unsigned; signed distribution requires an external bundle.windows.signCommand because Tauri's default Windows signer runs only on Windows.",
-        prerequisites: "Normal preflight checks generated frontend/WASM artifacts, Node dependencies, Corepack-managed pnpm, cargo, cargo-tauri, cargo-xwin, NSIS, the installed x86_64-pc-windows-msvc Rust target, the LLVM lld-link driver, and llvm-rc. LLVM/NSIS versions and external signing configuration are deferred to the Tauri/Cargo build.",
+        deferredRequirements: "LLVM/NSIS versions and external signing configuration are deferred to the Tauri/Cargo build.",
         build: { command: "cargo", arguments: ["tauri", "build", "--runner", "cargo-xwin", "--target", "x86_64-pc-windows-msvc", "--bundles", "nsis"] },
-    };
+    });
   }
 
   const reason = target === "macos"
     ? "macOS application bundles require a Mac computer; this is not an officially documented Tauri packaging path."
     : "This is not an officially documented Tauri v2 packaging path; do not confuse a Rust --target compile with a Tauri installer bundle.";
-  return {
+  return route(Object.freeze([]), {
     status: "unsupported",
     restriction: "No supported installer/bundle route.",
-    prerequisites: "No toolchain is checked because this route is intentionally not executed.",
     build: null,
     reason,
-  };
+  });
 }
 
 function printPlan(host, target, dryRun) {
   const plan = planCell(host, target);
-  const checks = plan.status === "constrained"
-    ? "frontend/WASM artifacts; node_modules; Corepack-managed pnpm; cargo; cargo-tauri; cargo-xwin; NSIS; MSVC target; LLVM linker; LLVM resource compiler."
-    : plan.status === "supported"
-      ? "frontend/WASM artifacts; node_modules; Corepack-managed pnpm; cargo; cargo-tauri."
-      : "none.";
+  const checks = describeChecks(plan);
   const performedChecks = dryRun ? `none (dry-run); normal mode checks: ${checks}` : checks;
   process.stdout.write(`Host: ${host}\nTarget: ${target}\nTauri package: stock-market-game\nStatus: ${plan.status}\nBundle restriction: ${plan.restriction}\nRoute requirements: ${plan.prerequisites}\nPreflight checks performed: ${performedChecks}\n`);
   if (plan.build !== null) process.stdout.write(`Generated command: (cd apps/desktop/src-tauri && ${[plan.build.command, ...plan.build.arguments].join(" ")})\n`);
@@ -195,24 +217,37 @@ function requireLlvmResourceCompiler() {
   requireAvailableCommand("llvm-rc", "install LLVM so `llvm-rc` is available to compile the Windows icon resource.");
 }
 
-function verifyPrerequisites(plan) {
-  requireFile("apps/web/wasm-pkg/web_wasm.js", "run scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows to generate non-empty frontend/WASM assets.");
-  requireFile("apps/web/wasm-pkg/web_wasm_bg.wasm", "run scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows to generate non-empty frontend/WASM assets.");
-  requireWasmThreadingContract();
-  requireDirectory("node_modules", "run corepack pnpm install --frozen-lockfile to install the repository-pinned pnpm dependencies.");
-  requireCorepack();
-  const cargo = requireVersionCommand("cargo", "install Rust from rust-toolchain.toml.");
-  const tauri = runCommand(cargo, ["tauri", "--version"]);
-  if (tauri.result.error !== undefined || tauri.result.status !== 0) {
-    fail("the cargo-tauri subcommand is required; install the Tauri CLI for this project. Do not assume a globally available `tauri` executable.");
-  }
-  if (plan.status === "constrained") {
-    requireVersionCommand("cargo-xwin", "install cargo-xwin, add x86_64-pc-windows-msvc, and install NSIS plus LLVM/lld per Tauri's Windows cross-build documentation.");
+const prerequisitePorts = {
+  "frontend-wasm"() {
+    requireFile("apps/web/wasm-pkg/web_wasm.js", "run scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows to generate non-empty frontend/WASM assets.");
+    requireFile("apps/web/wasm-pkg/web_wasm_bg.wasm", "run scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows to generate non-empty frontend/WASM assets.");
+    requireWasmThreadingContract();
+  },
+  "node-modules"() { requireDirectory("node_modules", "run corepack pnpm install --frozen-lockfile to install the repository-pinned pnpm dependencies."); },
+  corepack: requireCorepack,
+  cargo() { return requireVersionCommand("cargo", "install Rust from rust-toolchain.toml."); },
+  "cargo-tauri"(cargo) {
+    const tauri = runCommand(cargo, ["tauri", "--version"]);
+    if (tauri.result.error !== undefined || tauri.result.status !== 0) {
+      fail("the cargo-tauri subcommand is required; install the Tauri CLI for this project. Do not assume a globally available `tauri` executable.");
+    }
+  },
+  "cargo-xwin"() { requireVersionCommand("cargo-xwin", "install cargo-xwin, add x86_64-pc-windows-msvc, and install NSIS plus LLVM/lld per Tauri's Windows cross-build documentation."); },
+  nsis() {
     const nsis = runCommand("makensis", ["/CMDHELP"]);
     if (nsis.result.error !== undefined || nsis.result.status !== 0) fail("makensis is required; install NSIS before attempting the NSIS-only cross-build.");
-    requireRustTarget("x86_64-pc-windows-msvc");
-    requireAvailableCommand("lld-link", "install LLVM and LLD so `lld-link` is available for Tauri's Windows cross-build.");
-    requireLlvmResourceCompiler();
+  },
+  "msvc-target"() { requireRustTarget("x86_64-pc-windows-msvc"); },
+  "llvm-linker"() { requireAvailableCommand("lld-link", "install LLVM and LLD so `lld-link` is available for Tauri's Windows cross-build."); },
+  "llvm-resource-compiler": requireLlvmResourceCompiler,
+};
+
+export function verifyPrerequisites(plan, ports = prerequisitePorts) {
+  let cargo;
+  for (const id of plan.preflightChecks) {
+    if (typeof ports[id] !== "function") fail(`missing desktop preflight check: ${id}`);
+    const result = ports[id](cargo);
+    if (id === "cargo") cargo = result;
   }
   return cargo;
 }

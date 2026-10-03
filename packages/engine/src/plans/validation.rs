@@ -204,16 +204,16 @@ pub(crate) fn validate_open(open: &PlanOpen) -> Result<(), PlanError> {
 
 /// 真实成交不得使累计成交超过份额目标（比例目标无份额上限语义，由换算层负责）。
 pub(crate) fn validate_fill_qty(plan: &TradingPlan, qty: u32) -> Result<(), PlanError> {
-    if let PlanTarget::ShareCount(target_qty) = plan.target {
-        let Some(new_filled) = plan.filled_qty.checked_add(qty) else {
+    if let PlanTarget::ShareCount(target_qty) = plan.target() {
+        let Some(new_filled) = plan.filled_qty().checked_add(qty) else {
             return Err(PlanError::QuantityOverflow {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
             });
         };
         if new_filled > target_qty {
             return Err(PlanError::FillExceedsTarget {
-                plan_id: plan.plan_id,
-                filled_qty: plan.filled_qty,
+                plan_id: plan.plan_id(),
+                filled_qty: plan.filled_qty(),
                 fill_qty: qty,
                 target_qty,
             });
@@ -231,25 +231,25 @@ pub(crate) fn classify_revision(
     validate_target(revision.target)?;
     validate_confidence(revision.confidence_bp)?;
     validate_opinion(&revision.opinion)?;
-    let unchanged = plan.direction == revision.direction
-        && plan.target == revision.target
-        && plan.urgency == revision.urgency
-        && plan.confidence_bp == revision.confidence_bp
-        && plan.opinion == revision.opinion;
+    let unchanged = plan.direction() == revision.direction
+        && plan.target() == revision.target
+        && plan.urgency() == revision.urgency
+        && plan.confidence_bp() == revision.confidence_bp
+        && plan.opinion() == revision.opinion;
     if unchanged {
         return Err(PlanError::UnchangedRevision {
-            plan_id: plan.plan_id,
+            plan_id: plan.plan_id(),
         });
     }
-    if revision.direction != plan.direction {
+    if revision.direction != plan.direction() {
         if !reverse_crosses_threshold(
-            plan.direction,
+            plan.direction(),
             revision.direction,
             revision.opinion.signal_score_bp,
             policy.reverse_revision_threshold_bp,
         ) {
             return Err(PlanError::ReverseRevisionBelowThreshold {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 score_bp: revision.opinion.signal_score_bp,
                 required_threshold_bp: policy.reverse_revision_threshold_bp,
             });
@@ -257,19 +257,19 @@ pub(crate) fn classify_revision(
         return Ok(RevisionOutcome::ReverseRestart);
     }
     if let PlanTarget::ShareCount(new_target_qty) = revision.target {
-        if new_target_qty < plan.filled_qty {
+        if new_target_qty < plan.filled_qty() {
             return match revision.below_filled_rationale {
                 Some(reason) => Ok(RevisionOutcome::Terminate(reason)),
                 None => {
                     return Err(PlanError::RevisionBelowFilledRequiresRationale {
-                        plan_id: plan.plan_id,
-                        filled_qty: plan.filled_qty,
+                        plan_id: plan.plan_id(),
+                        filled_qty: plan.filled_qty(),
                         new_target_qty,
                     });
                 }
             };
         }
-        if new_target_qty == plan.filled_qty {
+        if new_target_qty == plan.filled_qty() {
             return Ok(RevisionOutcome::CompleteNow);
         }
     }

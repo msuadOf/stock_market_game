@@ -202,24 +202,19 @@ pub(super) fn decide_retail_position_inner(
             };
             (action, DecisionReason::TakeProfit)
         };
-        let decision = decision_for_action(
+        let context = RetailPositionDecisionContext::from_position_inputs(
             code,
-            action,
-            reason,
+            market,
+            account_risk,
             weight,
             position.qty,
             position.sellable_qty,
-            position_step_fraction,
-            market,
-            account_risk,
         );
-        return apply_experience_confidence(
+        let decision = context.target_for(action, reason, position_step_fraction);
+        return context.apply_experience_confidence(
             decision,
             experience,
-            current_position_inputs(code, own, account_risk),
             position_step_fraction,
-            market,
-            account_risk,
             rng,
         );
     }
@@ -291,16 +286,18 @@ pub(super) fn decide_retail_position_inner(
                     }
                 }
             };
-            return decision_for_action(
+            return RetailPositionDecisionContext::from_position_inputs(
                 code,
-                action,
-                DecisionReason::AccountDrawdown,
+                market,
+                account_risk,
                 weight,
                 position.qty,
                 position.sellable_qty,
+            )
+            .target_for(
+                action,
+                DecisionReason::AccountDrawdown,
                 position_step_fraction,
-                market,
-                account_risk,
             );
         }
     }
@@ -319,18 +316,20 @@ pub(super) fn decide_retail_position_inner(
             })
             .max_by_key(|(code, _, _)| *code);
         if let Some((code, position, weight)) = break_even {
-            return decision_for_action(
+            return RetailPositionDecisionContext::from_position_inputs(
                 code,
-                PositionAction::Reduce,
-                DecisionReason::BreakEvenRelief,
+                market,
+                account_risk,
                 weight.unwrap_or_else(|| {
                     panic!("held stock {} is missing its equity weight", code.0)
                 }),
                 position.qty,
                 position.sellable_qty,
+            )
+            .target_for(
+                PositionAction::Reduce,
+                DecisionReason::BreakEvenRelief,
                 position_step_fraction,
-                market,
-                account_risk,
             );
         }
     }
@@ -346,31 +345,16 @@ pub(super) fn decide_retail_position_inner(
         };
     };
     let position = own.positions.get(&code);
-    let current_fraction = if position.is_some() {
-        account_risk
-            .positions
-            .get(&code)
-            .unwrap_or_else(|| panic!("account-risk observation is missing held stock {}", code.0))
-            .equity_weight
-            .unwrap_or_else(|| panic!("held stock {} is missing its equity weight", code.0))
-    } else {
-        0.0
-    };
-    let current_qty = position.map_or(0, |value| value.qty);
-    let sellable_qty = position.map_or(0, |value| value.sellable_qty);
+    let context =
+        RetailPositionDecisionContext::from_observations(&code, own, market, account_risk);
+    let current_fraction = context.current_fraction;
     if position.is_none()
         && experience.is_some_and(|state| state.is_in_post_exit_cooldown(&code, market_minute))
     {
-        return decision_for_action(
-            &code,
+        return context.target_for(
             PositionAction::Watch,
             DecisionReason::PostExitCooldown,
-            0.0,
-            0,
-            0,
             position_step_fraction,
-            market,
-            account_risk,
         );
     }
     let Some(path) = observations.price_paths.get(&code) else {
@@ -391,51 +375,33 @@ pub(super) fn decide_retail_position_inner(
             } else {
                 PositionAction::Watch
             };
-            return decision_for_action(
-                &code,
+            return context.target_for(
                 action,
                 DecisionReason::InsufficientHistory,
-                current_fraction,
-                current_qty,
-                sellable_qty,
                 position_step_fraction,
-                market,
-                account_risk,
             );
         }
-        return decision_for_action(
-            &code,
+        return context.target_for(
             if position.is_some() {
                 PositionAction::Hold
             } else {
                 PositionAction::Watch
             },
             DecisionReason::InsufficientHistory,
-            current_fraction,
-            current_qty,
-            sellable_qty,
             position_step_fraction,
-            market,
-            account_risk,
         );
     };
 
     // 非风险行为仍保留到达概率；它不能再门控已经越线的止损/止盈检查。
     if rng.next_f64() >= strategy.arrival_rate {
-        return decision_for_action(
-            &code,
+        return context.target_for(
             if position.is_some() {
                 PositionAction::Hold
             } else {
                 PositionAction::Watch
             },
             DecisionReason::NoSignal,
-            current_fraction,
-            current_qty,
-            sellable_qty,
             position_step_fraction,
-            market,
-            account_risk,
         );
     }
 
@@ -595,24 +561,6 @@ pub(super) fn decide_retail_position_inner(
             }
         }
     };
-    let decision = decision_for_action(
-        &code,
-        action,
-        reason,
-        current_fraction,
-        current_qty,
-        sellable_qty,
-        position_step_fraction,
-        market,
-        account_risk,
-    );
-    apply_experience_confidence(
-        decision,
-        experience,
-        (current_fraction, current_qty, sellable_qty),
-        position_step_fraction,
-        market,
-        account_risk,
-        rng,
-    )
+    let decision = context.target_for(action, reason, position_step_fraction);
+    context.apply_experience_confidence(decision, experience, position_step_fraction, rng)
 }

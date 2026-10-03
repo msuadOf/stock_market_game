@@ -151,25 +151,8 @@ fn negative_control(
                     serde_json::to_vec(&capture.updates).map_err(|error| error.to_string())?;
                 let receipts =
                     serde_json::to_vec(&capture.receipts).map_err(|error| error.to_string())?;
-                let mut artifacts = BTreeMap::new();
-                for (name, file, bytes) in [
-                    (
-                        "authoritative_state",
-                        "authoritative-state.json",
-                        &authoritative_state,
-                    ),
-                    ("event_stream", "event-stream.json", &event_stream),
-                    ("receipts", "receipts.json", &receipts),
-                    ("save_slot", "save-slot.json", &after_bytes),
-                ] {
-                    artifacts.insert(
-                        name,
-                        ArtifactFile {
-                            file,
-                            receipt: ArtifactReceipt::from_bytes(bytes),
-                        },
-                    );
-                }
+                let after_receipt = ArtifactReceipt::from_bytes(&after_bytes);
+                let artifacts = capture_artifacts(authoritative_state, event_stream, after_bytes, receipts);
                 return Ok(CaptureBundle {
                     report: CaptureReport {
                         schema: CAPTURE_SCHEMA, status: CaptureStatus::Pass,
@@ -177,7 +160,7 @@ fn negative_control(
                             budget: config.budget.label().to_owned(), actual_rayon_threads: threads.to_string(), repeat: config.repeat.to_string(),
                             mode: config.mode, requested_scheduler_merge_disabled: config.disabled_merge },
                         authority_path: "ProtocolSession::step_frame_with_commit_evidence -> actual disabled canonical merge -> typed rejection and checkpoint rollback",
-                        artifacts,
+                        artifacts: artifacts.iter().map(CaptureArtifact::report_entry).collect(),
                         runtime_coverage: RuntimeCoverage { tick_from: capture.tick_from.unwrap_or(before.snapshot.tick).to_string(),
                             tick_to: capture.tick_to.to_string(), tick_frames: capture.tick_frames.to_string(), civil_updates: "0".to_owned(),
                             auction_completed_events: capture.auction_completed.to_string(), day_boundary_events: capture.day_boundaries.to_string(),
@@ -194,9 +177,9 @@ fn negative_control(
                         negative_control: Some(serde_json::json!({"detected": true, "kind": "typed-rejection-with-rollback",
                             "disabled_merge": config.disabled_merge, "error": error, "failed_tick": (before.snapshot.tick + 1).to_string(),
                             "enabled_merge_same_step_passed": true, "before_failed_step": ArtifactReceipt::from_bytes(&expected_bytes),
-                            "after_failed_step": ArtifactReceipt::from_bytes(&after_bytes),
+                            "after_failed_step": after_receipt,
                             "pre_script": ArtifactReceipt::from_bytes(&before_bytes), "failed_step_published_events": "0"})),
-                    }, authoritative_state, event_stream, receipts, save_slot: after_bytes,
+                    }, artifacts,
                 });
             }
         }

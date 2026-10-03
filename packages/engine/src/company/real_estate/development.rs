@@ -10,7 +10,7 @@ use crate::accounting::{
 };
 use crate::calendar::CivilDate;
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
-use crate::company::real_estate::projects::{Interruption, ProjectId};
+use crate::company::real_estate::projects::ProjectId;
 use crate::company::real_estate::{chart, RealEstateBooks, RealEstateError};
 
 impl RealEstateBooks {
@@ -29,22 +29,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownProject {
                 project: project.clone(),
             })?;
-        if state.completed_on().is_some() {
-            return Err(RealEstateError::DevelopmentAfterCompletion {
-                project: project.clone(),
-            });
-        }
-        if state.interrupted_on().is_some() {
-            return Err(RealEstateError::DevelopmentWhileSuspended {
-                project: project.clone(),
-            });
-        }
-        if !amount.is_positive() {
-            return Err(RealEstateError::NonPositiveAmount {
-                what: "development cost",
-                amount,
-            });
-        }
+        state.validate_development(project, amount)?;
 
         let base = self.next_event_id;
         let event = BusinessEventId::new(base);
@@ -86,21 +71,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownProject {
                 project: project.clone(),
             })?;
-        if state.dev_started_on().is_none() {
-            return Err(RealEstateError::SuspensionBeforeDevelopment {
-                project: project.clone(),
-            });
-        }
-        if state.completed_on().is_some() {
-            return Err(RealEstateError::SuspensionAfterCompletion {
-                project: project.clone(),
-            });
-        }
-        if state.interrupted_on().is_some() {
-            return Err(RealEstateError::AlreadySuspended {
-                project: project.clone(),
-            });
-        }
+        state.validate_suspend(project)?;
         self.projects_mut()
             .get_mut(project)
             .expect("validated above")
@@ -119,25 +90,11 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownProject {
                 project: project.clone(),
             })?;
-        let Some(suspended_on) = state.interrupted_on() else {
-            return Err(RealEstateError::NotSuspended {
-                project: project.clone(),
-            });
-        };
-        if date <= suspended_on {
-            return Err(RealEstateError::ResumeNotForward {
-                project: project.clone(),
-                suspended_on,
-                resume_on: date,
-            });
-        }
+        let gap = state.preview_resume(project, date)?;
         self.projects_mut()
             .get_mut(project)
             .expect("validated above")
-            .close_interruption(Interruption {
-                start: suspended_on,
-                end: date,
-            });
+            .close_interruption(gap);
         Ok(())
     }
 
@@ -152,21 +109,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownProject {
                 project: project.clone(),
             })?;
-        if state.dev_started_on().is_none() {
-            return Err(RealEstateError::CompleteBeforeDevelopment {
-                project: project.clone(),
-            });
-        }
-        if state.interrupted_on().is_some() {
-            return Err(RealEstateError::CompleteWhileSuspended {
-                project: project.clone(),
-            });
-        }
-        if state.completed_on().is_some() {
-            return Err(RealEstateError::AlreadyCompleted {
-                project: project.clone(),
-            });
-        }
+        state.validate_complete(project)?;
         self.projects_mut()
             .get_mut(project)
             .expect("validated above")

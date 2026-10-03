@@ -63,7 +63,7 @@ fn strategy_state_round_trip_preserves_concrete_parameters(
             engine::Money::ZERO,
         );
         account.set_strategy(strategy);
-        let stored = account.strategy.as_ref().ok_or("stored strategy missing")?;
+        let stored = account.strategy().ok_or("stored strategy missing")?;
         assert_eq!(stored.production_state()?, state);
         let strategy = state.clone().into_strategy()?;
         let encoded = serde_json::to_vec(&state)?;

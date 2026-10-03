@@ -1,0 +1,1044 @@
+[
+  {
+    "action_id": "hosts-N07",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "ProcessSampleRun",
+    "methods": [
+      "start",
+      "sampleTree",
+      "waitNextSample",
+      "stopSampling",
+      "collectResult"
+    ],
+    "callers": [
+      "runProcessSample async facade",
+      "runPerformanceHarness 默认 runSample"
+    ],
+    "files": [
+      "scripts/simulation/escrow-performance-harness.mjs",
+      "scripts/simulation/escrow-performance-harness.test.mjs"
+    ],
+    "test_filters_or_results": [
+      "初版 harness 15/15 PASS；与 contracts 12/12、UI 8/8 共35项通过",
+      "修后只重跑相关7 case，其中 runProcessSample 异步 facade 缺少/null options 为 rejected Promise；7/7 PASS，77.514484ms，case/process-tree deadline 10000ms，concurrency=3",
+      "最终独立复审：P2-01/P2-02/P3-01 均关闭，无未修复有效发现；reviewer 独立精准7/7 PASS，78.672502ms，所属六文件 diff --check 通过；不宣称终版整套重跑"
+    ],
+    "remaining": [],
+    "review": "agents/oop-refactor-implementation/hosts/review-performance.md",
+    "requirement_checks": [
+      {
+        "requirement": "私有 ProcessSampleRun 统一持有 child、stdout/stderr、spawnError、起止时间、RSS/thread samples、sampling、delay timer/release promise；对应 start/sample_tree/wait_next_sample/stop_sampling/collect_result 动作。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun",
+          "methods": [
+            "constructor",
+            "start",
+            "sampleTree",
+            "waitNextSample",
+            "stopSampling",
+            "collectResult"
+          ],
+          "callers": [
+            "runProcessSample 每次创建新实例并调用 start"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版 harness 15/15 PASS；正常采样、非零退出、spawn ENOENT、零 RSS fixture 保持。"
+        ],
+        "limit": "action 中 snake_case 方法在实现中对应 camelCase；endpoint 由 constructor 接收，start() 不再接收 endpoint；没有伪称方法名与原建议完全相同。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "child close 捕获 endedAt 并 stopSampling，清除 timer、释放等待 Promise，再等待 sampler 并构造结果；采样 sleep 不计入 wall。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun",
+          "methods": [
+            "start",
+            "stopSampling",
+            "waitNextSample",
+            "collectResult"
+          ],
+          "callers": [
+            "child close listener",
+            "runProcessSample"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "stops measured wall time at child close instead of charging the sampler sleep 初版通过；100ms child/500ms sample interval 的短 fixture 验证停表边界。"
+        ],
+        "limit": "只提供本批代表性短 fixture 与独立源码复审证据；未运行性能矩阵、浏览器 E2E、Cargo 或完整回归。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "公开 runProcessSample(endpoint, options) 保持薄 async facade、原 measurement JSON schema 与默认真实 Linux sampler。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun / runProcessSample",
+          "methods": [
+            "start",
+            "collectResult",
+            "runProcessSample"
+          ],
+          "callers": [
+            "runPerformanceHarness 默认 runSample",
+            "CLI main 经 runPerformanceHarness"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版测量 schema/数值边界通过；P3-01 修复后缺失/null options 返回 rejected Promise，新用例先红后绿；相关精准7/7 PASS，reviewer 复跑7/7 PASS。"
+        ],
+        "limit": "不添加 options 默认值；未将参数解构错误变成同步 throw，也未添加新 fallback。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 linuxProcessTreeSample、summarizeThreadStateSamples、validate* 和 aggregateSamples 的独立职责，不把 OS 采样搬进比较对象。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun + 独立 helper",
+          "methods": [
+            "sampleTree",
+            "collectResult",
+            "linuxProcessTreeSample",
+            "summarizeThreadStateSamples",
+            "validateMeasuredSample",
+            "aggregateSamples"
+          ],
+          "callers": [
+            "ProcessSampleRun 调用采样/统计 helper",
+            "PerformanceComparisonRun 调用 validator/aggregate"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版 thread-state/RSS/measurement validator 用例通过；完整六文件独立复审通过。"
+        ],
+        "limit": "linuxProcessTreeSample 仍是 OS I/O helper，并非纯数学函数；JSON validator/aggregate 仍独立。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 before/after 交替顺序与公共 workload/environment echo；不把 Linux R runnable thread 或 RSS 与 Rayon registry capacity 混为一谈，不用 CPU utilization 代替吞吐。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun / PerformanceComparisonRun",
+          "methods": [
+            "sampleTree",
+            "collectResult",
+            "measure",
+            "validateMeasuredSample",
+            "buildReport"
+          ],
+          "callers": [
+            "runPerformanceHarness"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "records actual paired samples and ratios without a preset speed threshold 初版与修后精准过滤通过；报告键仍明确 capacity_is_not_worker_activity、throughput_source、cpu_utilization_used_as_throughput。"
+        ],
+        "limit": "只提供本批代表性短 fixture 与独立源码复审证据；未运行性能矩阵、浏览器 E2E、Cargo 或完整回归。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "sampler rejection 的及时 child/tree 停止、shared deadline 与失败清理属于另批行为修复；不宣称抽对象已修复或将自由调度测量改成固定 seed 字节比较。",
+        "implemented_by": {
+          "owner": "ProcessSampleRun",
+          "methods": [
+            "start",
+            "sampleTree"
+          ],
+          "callers": [
+            "runProcessSample"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "独立复审确认仍保持先等 child close 再 await sampler 的原流程；status.md/remaining 明确登记限制。"
+        ],
+        "limit": "本项仅保持已声明边界；原有 sampler rejection 清理问题未修复，未增加等待/终止整树保证，也未新增固定 seed 字节比较。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "performance",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/performance/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N18",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "MarketUiReportRun",
+    "methods": [
+      "startServerIfNeeded",
+      "launchBrowser",
+      "connectPage",
+      "close"
+    ],
+    "callers": [
+      "market-ui-report main 在 finally 单次 close"
+    ],
+    "files": [
+      "scripts/performance/market-ui-report.mjs",
+      "scripts/performance/market-ui-report.test.mjs"
+    ],
+    "test_filters_or_results": [
+      "初版 UI 8/8 PASS；保留 client→browser→server→profile 清理顺序及每一步错误截断、部分初始化、远程URL与退出browser边界",
+      "修后未重跑未改动 UI 测试，初版整组35项通过不能冒称完整终版35项重跑",
+      "最终独立复审：P2-01/P2-02/P3-01 均关闭，无未修复有效发现；reviewer 独立精准7/7 PASS，78.672502ms，所属六文件 diff --check 通过；不宣称终版整套重跑"
+    ],
+    "remaining": [],
+    "review": "agents/oop-refactor-implementation/hosts/review-performance.md",
+    "requirement_checks": [
+      {
+        "requirement": "可选 owner 本批已选择实施；只迁移 main 的 config/server/browser/profile/client 资源会话，指标读取、截图、chart/game 数据与 report 构造仍由 main 和 helper 持有。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "constructor",
+            "startServerIfNeeded",
+            "launchBrowser",
+            "connectPage",
+            "close"
+          ],
+          "callers": [
+            "market-ui-report main"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版 UI 8/8 PASS；完整六文件独立复审通过。"
+        ],
+        "limit": "低优先级可选不意味着未实施；本批已实施。screenshots/metrics 不变为对象字段；没有扩大为整套性能框架。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "先用注入 fixture 固定正常与部分初始化失败的取得/释放配对。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "startServerIfNeeded",
+            "launchBrowser",
+            "connectPage",
+            "close"
+          ],
+          "callers": [
+            "main try/finally",
+            "market-ui-report.test.mjs 注入资源 fixture"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "正常会话测试先因 owner 缺失而失败，实施后通过；部分初始化只清理已取得 profile 与原有空 child 分支 初版通过。"
+        ],
+        "limit": "未启动真实 Chrome/Vite；fixture 用同步/异步错误代表初始化阶段。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "startServerIfNeeded 保持 endpointReady 后按需调用 startViteIfNeeded，以及页面等待失败时附带已取得 server recentOutput。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "startServerIfNeeded",
+            "startViteIfNeeded"
+          ],
+          "callers": [
+            "main 在 launchBrowser 前调用"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "远程 URL 不启动 Vite、已有可用页面不重复启动的短 fixture 初版通过；独立源码复审确认 server 输出拼接流程保持。"
+        ],
+        "limit": "startViteIfNeeded 仍只对 localhost/127.0.0.1 启动服务；未新跑真实 localhost Vite 或实际页面启动超时。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "launchBrowser 按原顺序申请端口、profile、browser并等待调试端口；connectPage取得 CdpClient 后连接，连接失败仍保留已取得 client 供 finally 清理。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "launchBrowser",
+            "connectPage"
+          ],
+          "callers": [
+            "main"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "连接失败保留已取得 client、Chrome 调试端口失败后的部分清理 fixture 初版通过。"
+        ],
+        "limit": "既有 CdpClient 自己拥有 WebSocket/pending map；未合并 CDP 协议状态或新增等待整树能力。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "close 只在 finally 单次调用，清理次序 client.close→stopProcess(browser)→stopProcess(server)→rm(profile)；部分取得保持原 null/未取得分支。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "close",
+            "stopProcess"
+          ],
+          "callers": [
+            "main finally"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "正常会话按 client、browser、server、profile 顺序单次清理 与 部分初始化只清理已取得 profile 与原有空 child 分支 初版通过。"
+        ],
+        "limit": "不承诺 close 幂等或重复调用安全；不新增重试、反序释放或错误聚合。profile rm 的既有 maxRetries/retryDelay 原样保持。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "每个清理步骤抛错必须按既有顺序传播并停止后续步骤，不能借资源对象增加更完整释放保证。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun",
+          "methods": [
+            "close"
+          ],
+          "callers": [
+            "main finally"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "fixture 分别令 client.close/browser.stop/server.stop/profile.rm 抛错，验证对应后续步骤截断；初版通过。"
+        ],
+        "limit": "不为继续清理吞错或聚合错误；本批没有重排异常优先级。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "stopProcess 已退出/null child 的返回边界保持；不扩大进程终止等待能力或改变 UI 性能诊断来源。",
+        "implemented_by": {
+          "owner": "MarketUiReportRun / 独立性能 helper",
+          "methods": [
+            "close",
+            "stopProcess",
+            "readMetrics",
+            "readIntraday",
+            "readKline",
+            "evaluate"
+          ],
+          "callers": [
+            "main 继续读取 Performance API/页面诊断并构造 report"
+          ],
+          "files": [
+            "scripts/performance/market-ui-report.mjs",
+            "scripts/performance/market-ui-report.test.mjs"
+          ]
+        },
+        "validation": [
+          "已退出 browser 的默认 stopProcess 分支短 fixture 初版通过；既有进度/异常格式/HTML生成4 case保持通过。"
+        ],
+        "limit": "对象化不改行情/撮合数据；未为缺失诊断新增默认值；未运行真实浏览器观测。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "performance",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/performance/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N21",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "PerformanceComparisonRun",
+    "methods": [
+      "私有 #measureSide",
+      "私有 #appendSample",
+      "measure",
+      "buildReport",
+      "matchesReusableReport"
+    ],
+    "callers": [
+      "runPerformanceHarness 创建单次run并measure/buildReport",
+      "main/loadReusableReport 用运行上下文比较复用报告"
+    ],
+    "files": [
+      "scripts/simulation/escrow-performance-harness.mjs",
+      "scripts/simulation/escrow-performance-harness.test.mjs"
+    ],
+    "test_filters_or_results": [
+      "初版 harness 15/15 PASS，整组初版35项通过",
+      "修后精准过滤 PerformanceComparisonRun|异步 facade|records actual paired|parses a config file once：7/7 PASS，77.514484ms；新3项先红后绿：禁止外部sample旁路、报告深快照隔离、async facade拒绝契约",
+      "git diff --check 对修后两个harness文件通过；未重跑无关测试",
+      "最终独立复审：P2-01/P2-02/P3-01 均关闭，无未修复有效发现；reviewer 独立精准7/7 PASS，78.672502ms，所属六文件 diff --check 通过；不宣称终版整套重跑"
+    ],
+    "remaining": [],
+    "review": "agents/oop-refactor-implementation/hosts/review-performance.md",
+    "requirement_checks": [
+      {
+        "requirement": "先抽出 config/workload/environment/endpoints、warmup/sample count/interval/fingerprint 的不可变运行上下文，并统一验证。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "constructor",
+            "freezeSnapshot",
+            "validatePerformanceConfig",
+            "validatePerformanceWorkload",
+            "validateEnvironmentContract"
+          ],
+          "callers": [
+            "runPerformanceHarness 创建 run",
+            "main 创建 reusable-report 比较 run"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "配置快照与不同 run 的样本独立、配置不合法边界初版通过；修后生命周期精准case再次通过。"
+        ],
+        "limit": "action 建议的 validate() 没有另设同名实例方法；constructor 调用既有纯 validator 验证 snapshot 后 freeze。这里列实际函数，不冒称存在 validate 方法。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "把两侧 measure 闭包/样本累积/report 构造迁到单次运行对象；ProcessSampleRun 继续只负责单个 child。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun / ProcessSampleRun",
+          "methods": [
+            "私有 #measureSide",
+            "私有 #appendSample",
+            "measure",
+            "buildReport",
+            "runProcessSample"
+          ],
+          "callers": [
+            "runPerformanceHarness"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版 paired report/ratio 测试通过；修后 records actual paired samples 精准case通过，sourceManifest/runSample 注入保持。"
+        ],
+        "limit": "runSample/sourceManifest 仍通过 measure 依赖传入，clock/environment 仍由 runPerformanceHarness 注入再给 buildReport；比较对象不接管 OS I/O。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "每次 #measureSide 前后检查 endpoint source fingerprint，再按同一 workload/environment 校验 measured sample，漂移必须失败关闭。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "私有 #measureSide",
+            "verifyEndpointSource",
+            "validateMeasuredSample"
+          ],
+          "callers": [
+            "measure 依次调用每个 side"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版 source mismatch/drift、workload drift、BLOCKED/FAIL、stdout/status/instrumentation 边界通过；修后失败 run 不可构造 PASS 生命周期测试通过。"
+        ],
+        "limit": "依赖注入仅是既有测试/运行 seam；没有真实执行性能矩阵或宣称比较证据已覆盖完整 workload。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "appendSample 成功追加必须归属测量 owner，外部不能输入任意数字制造宣称源码检查及交替顺序的 PASS。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "私有 #measureSide",
+            "私有 #appendSample",
+            "measure",
+            "buildReport"
+          ],
+          "callers": [
+            "measure 仅在 #measureSide 成功后调用 #appendSample"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "P2-01 外部 sample 不能绕过成功的配对测量生成 PASS 先红后绿；修后精准7/7与reviewer独立7/7 PASS。"
+        ],
+        "limit": "appendSample 不再是 public 方法；measureSide 同时收私有以防对内部测量策略的外部覆写；不扩大产品接口。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "报告与 sample 状态不能通过外部引用回写；buildReport 返回独立快照，同时保持 report JSON schema/键。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "私有 #appendSample",
+            "buildReport"
+          ],
+          "callers": [
+            "runPerformanceHarness 返回报告",
+            "main 序列化写报告"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "P2-02 消费者修改报告的 nested sample/histogram/数组/config/command/environment 不污染后续报告 先红后绿；精准7/7与reviewer独立7/7 PASS。"
+        ],
+        "limit": "#appendSample 克隆成功样本，buildReport 克隆完整报告；未新增schema字段、数值默认值或性能阈值。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "matchesReusableReport 对同一上下文比较每个关键 workload/environment/measurement condition/endpoint/sample count，复用统一而非继续散落比较。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "matchesReusableReport"
+          ],
+          "callers": [
+            "loadReusableReport",
+            "main"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "所有已有 comparison key、endpoint 和测量条件变化均拒绝复用 初版及修后精准case通过；main parse once/reuse 不重跑命令 初版及修后通过。"
+        ],
+        "limit": "方法保持原来的 mismatch 显式 throw；未改变历史复用接受集，也未新增未要求的 report 完整性策略。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 warmup 后 before/after 交替顺序、统计/RSS ratio/环境 echo、错误关闭与 idempotent 写入；config/measured 夹具继续对应现有契约。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun / 独立写入 helper",
+          "methods": [
+            "measure",
+            "buildReport",
+            "aggregateSamples",
+            "writeReportIdempotently",
+            "main"
+          ],
+          "callers": [
+            "runPerformanceHarness",
+            "main"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版15 harness case覆盖顺序、ratio、幂等write与report reuse；修后相关paired/reuse/lifecycle精确case通过。"
+        ],
+        "limit": "测试 config()/measured() 沿用原 fixture schema；只增加隔离、逐字段变异与owner边界用例，没有弱化既有断言；终版未整套重跑。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "不同 run 不共享样本，失败 run 不生成可复用 PASS 报告。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun",
+          "methods": [
+            "constructor",
+            "私有 #measureSide",
+            "measure",
+            "buildReport"
+          ],
+          "callers": [
+            "runPerformanceHarness 每次创建实例"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "配置快照与不同 run 的样本独立，失败不能形成 PASS 报告 先红后绿；修后精准case及独立复跑通过。"
+        ],
+        "limit": "#failed 只用于本run拒绝PASS，不把失败转为 fallback，不承诺失败run重试或复用。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "ticks/sec 来自 committed ticks / measured wall；RSS、Linux R threads 与 Rayon registry capacity 分开；保留 source前后检查、同条件、交替顺序和无预设阈值。",
+        "implemented_by": {
+          "owner": "PerformanceComparisonRun / 独立 validator",
+          "methods": [
+            "validateMeasuredSample",
+            "measure",
+            "buildReport"
+          ],
+          "callers": [
+            "runPerformanceHarness"
+          ],
+          "files": [
+            "scripts/simulation/escrow-performance-harness.mjs",
+            "scripts/simulation/escrow-performance-harness.test.mjs"
+          ]
+        },
+        "validation": [
+          "初版ticks count、phase P0..P9、registry capacity、数值上界与非有限测量测试通过；paired report contract修后精准case通过。"
+        ],
+        "limit": "这是工具链性能证据而非游戏资金/持仓权威；没有改 ACT/365 单位或把 CPU利用率当吞吐。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "performance",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/performance/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N22",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "Resource / EnvelopeConservation",
+    "methods": [
+      "Resource.fromJson",
+      "Resource.toJson",
+      "Resource.add",
+      "Resource.equals",
+      "Resource.assertEquals",
+      "EnvelopeConservation.applyReceipt",
+      "EnvelopeConservation.assertP1Boundary",
+      "EnvelopeConservation.assertCommitAndConservation"
+    ],
+    "callers": [
+      "verifyConservationSnapshot 为每行创建EnvelopeConservation并保持顶层global identity/account/T+1校验"
+    ],
+    "files": [
+      "scripts/simulation/escrow-verification-contracts.mjs",
+      "scripts/simulation/escrow-verification-contracts.test.mjs"
+    ],
+    "test_filters_or_results": [
+      "初版 contracts 12/12 PASS：大数>i64/u64、canonical decimal、无receipt/仅P0的P1边界、跨envelope顺序与local chain、现有多receipt跨journal",
+      "修后未重跑未改动contracts测试，初版整组35项通过不能冒称完整终版35项重跑",
+      "最终独立复审：P2-01/P2-02/P3-01 均关闭，无未修复有效发现；reviewer 独立精准7/7 PASS，78.672502ms，所属六文件 diff --check 通过；不宣称终版整套重跑"
+    ],
+    "remaining": [],
+    "review": "agents/oop-refactor-implementation/hosts/review-performance.md",
+    "requirement_checks": [
+      {
+        "requirement": "cash/shares 引入模块内不变 Resource，fromJson/toJson 保持 cash_cents/shares 字段和 decimal string 编码。",
+        "implemented_by": {
+          "owner": "Resource",
+          "methods": [
+            "constructor",
+            "fromJson",
+            "toJson"
+          ],
+          "callers": [
+            "EnvelopeConservation constructor/applyReceipt",
+            "verifyConservationSnapshot 账户aggregate读取"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "contracts 初版12/12 PASS；独立完整diff复审通过。"
+        ],
+        "limit": "Resource 不导出且不成为 engine 权威；toJson 方法已实现但当前生产验证路径没有序列化caller，不能冒称已被生产caller消费。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "add/equals/assertEquals 与 empty resource 迁到值对象，资源方程保持原求和顺序、错误上下文与 BigInt 精度。",
+        "implemented_by": {
+          "owner": "Resource",
+          "methods": [
+            "constructor",
+            "add",
+            "equals",
+            "assertEquals"
+          ],
+          "callers": [
+            "EnvelopeConservation.applyReceipt/assertCommitAndConservation",
+            "accumulateAccount",
+            "verifyConservationSnapshot"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "既有cash/shares分别守恒、零资源/跨资源泄漏、账户aggregate mismatch测试初版通过。"
+        ],
+        "limit": "empty resource 实际为 new Resource()；未增加通用数值框架，错误文本和字段单位保持。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "Resource codec 使用 exactKeys 后 canonical nonnegative decimal→BigInt，必须保持超过i64/u64的接受集，负数和非canonical拒绝。",
+        "implemented_by": {
+          "owner": "Resource",
+          "methods": [
+            "fromJson",
+            "decimal"
+          ],
+          "callers": [
+            "EnvelopeConservation",
+            "verifyConservationSnapshot"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "保持超过 i64/u64 的 Resource 精度及 canonical decimal 接受集：2^80 fixture通过，-1/01/1.0拒绝；初版通过。"
+        ],
+        "limit": "不调用signedDecimal/unsignedDecimal增加范围上界；验证器接受范围与生产Money/Qty政策不混同。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "单个 EnvelopeConservation 拥有 origin/basis/live、P1 allocation、PreSeal/SealedBatch sums 与是否跨过journal边界，并以 applyReceipt 执行收据链。",
+        "implemented_by": {
+          "owner": "EnvelopeConservation",
+          "methods": [
+            "constructor",
+            "applyReceipt"
+          ],
+          "callers": [
+            "verifyConservationSnapshot 每envelope创建实例并遍历receipt"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "既有多个receipt、existing Buy P0→SealedBatch、created Sell重复Fill、positive side resource、cross-resource zero规则初版通过。"
+        ],
+        "limit": "只维护证据验证器row状态，不成为engine订单/资金权威，也不改实际撮合逻辑。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "assertP1Boundary 在首次 SealedBatch 前或没有 SealedBatch 的行末检查post-P0 live；created没有existing P1基准，不能贡献PreSeal。",
+        "implemented_by": {
+          "owner": "EnvelopeConservation",
+          "methods": [
+            "constructor",
+            "assertP1Boundary",
+            "applyReceipt",
+            "assertCommitAndConservation"
+          ],
+          "callers": [
+            "verifyConservationSnapshot"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "无 receipt 与仅 P0 receipt 都检查 P1 截点 新fixture初版通过；created/quiet与journal/source错误既有fixture保持通过。"
+        ],
+        "limit": "P0Expiry只可PreSeal释放，SealedBatch在P1后；没有把P1或created basis默认化。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "assertCommitAndConservation 分别检查 commit live、preseal、sealed/created 与combined cash/shares方程。",
+        "implemented_by": {
+          "owner": "EnvelopeConservation / Resource",
+          "methods": [
+            "assertCommitAndConservation",
+            "Resource.add",
+            "Resource.assertEquals"
+          ],
+          "callers": [
+            "verifyConservationSnapshot 从返回left/right累加账户"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "checks PreSeal and SealedBatch equations separately for cash and shares，以及aggregate drift/cross-resource tests初版通过。"
+        ],
+        "limit": "金额分/数量股分别相加，不混为标量；不计算成交价、可用资金或实际账户余额。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "receipt全局index连续唯一、source-local identity/ordinal及账户aggregate/T+1校验保留在顶层，local live chain与global顺序语义分离。",
+        "implemented_by": {
+          "owner": "verifyConservationSnapshot / EnvelopeConservation",
+          "methods": [
+            "verifyConservationSnapshot",
+            "applyReceipt",
+            "accumulateAccount"
+          ],
+          "callers": [
+            "scripts 验证 runner 调用 verifyConservationSnapshot"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "global identity 可跨 envelope 重排，envelope 内 live chain 仍须衔接 新fixture初版通过；既有source order、duplicate identity/index、ordinal/index gap、T+1 overflow通过。"
+        ],
+        "limit": "不同envelope key不按global index排序决定交易优先；array重排不伪造成执行器扰动证据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "新增测试以envelope行为覆盖Resource大数/零资源与多receipt、无receipt、P1边界，不为每个值对象方法镜像造类测试。",
+        "implemented_by": {
+          "owner": "Resource / EnvelopeConservation",
+          "methods": [
+            "fromJson",
+            "add",
+            "assertEquals",
+            "applyReceipt",
+            "assertP1Boundary",
+            "assertCommitAndConservation"
+          ],
+          "callers": [
+            "escrow-verification-contracts.test.mjs 调用 verifyConservationSnapshot"
+          ],
+          "files": [
+            "scripts/simulation/escrow-verification-contracts.mjs",
+            "scripts/simulation/escrow-verification-contracts.test.mjs"
+          ]
+        },
+        "validation": [
+          "新增3个transition-focused characterization在实施前通过，迁移后contracts12/12通过；独立复审无该项有效发现。"
+        ],
+        "limit": "这是对现有行为的characterization，不冒称新增测试前已红；后续harness复核修正没有触及本文件，未重跑未改动contracts。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "performance",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/performance/status.md"
+  }
+]

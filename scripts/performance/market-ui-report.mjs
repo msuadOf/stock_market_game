@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { analyzeChartProgress, buildHtmlReport, formatBrowserException } from "./market-ui-report-lib.mjs";
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, "")), "..", "..");
@@ -230,6 +231,88 @@ async function stopProcess(child) {
   }
 }
 
+export class MarketUiReportRun {
+  #config;
+  #dependencies;
+  #server = null;
+  #browser = null;
+  #client = null;
+  #browserProfile = null;
+  #debugPort;
+
+  constructor(config, {
+    endpointReady: ready = endpointReady,
+    startViteIfNeeded: startServer = startViteIfNeeded,
+    waitFor: wait = waitFor,
+    freePort: port = freePort,
+    mkdtemp: profile = mkdtemp,
+    browserExecutable: executable = browserExecutable,
+    spawn: spawnBrowser = spawn,
+    fetch: fetchTarget = fetch,
+    createClient = (url) => new CdpClient(url),
+    stopProcess: stop = stopProcess,
+    rm: removeProfile = rm,
+  } = {}) {
+    this.#config = Object.freeze({ ...config });
+    this.#dependencies = { endpointReady: ready, startViteIfNeeded: startServer, waitFor: wait, freePort: port, mkdtemp: profile, browserExecutable: executable, spawn: spawnBrowser, fetch: fetchTarget, createClient, stopProcess: stop, rm: removeProfile };
+  }
+
+  async startServerIfNeeded() {
+    const config = this.#config;
+    const { endpointReady, startViteIfNeeded, waitFor } = this.#dependencies;
+    if (!(await endpointReady(config.url))) this.#server = startViteIfNeeded(config.url);
+    try {
+      await waitFor("Vite 页面启动", () => endpointReady(config.url), 30_000, 200);
+    } catch (error) {
+      const output = this.#server?.recentOutput?.();
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${output ? `\nVite 输出：\n${output}` : ""}`);
+    }
+  }
+
+  async launchBrowser() {
+    const config = this.#config;
+    const { freePort, mkdtemp, spawn, browserExecutable, waitFor, fetch } = this.#dependencies;
+    this.#debugPort = await freePort();
+    this.#browserProfile = await mkdtemp(resolve(tmpdir(), "market-ui-perf-"));
+    this.#browser = spawn(browserExecutable(config.browser), [
+      `--remote-debugging-port=${this.#debugPort}`,
+      `--user-data-dir=${this.#browserProfile}`,
+      "--headless=new",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "about:blank",
+    ], { windowsHide: true, stdio: "ignore" });
+
+    await waitFor("Chrome 调试端口", async () => {
+      const response = await fetch(`http://127.0.0.1:${this.#debugPort}/json/version`);
+      return response.ok;
+    });
+  }
+
+  async connectPage() {
+    const config = this.#config;
+    const { fetch, createClient } = this.#dependencies;
+    const targetResponse = await fetch(`http://127.0.0.1:${this.#debugPort}/json/new?${encodeURIComponent(config.url)}`, { method: "PUT" });
+    if (!targetResponse.ok) throw new Error(`创建 Chrome 页面失败：HTTP ${targetResponse.status}`);
+    const target = await targetResponse.json();
+    if (!target.webSocketDebuggerUrl) throw new Error("Chrome 未返回 webSocketDebuggerUrl");
+    this.#client = createClient(target.webSocketDebuggerUrl);
+    await this.#client.connect();
+    return this.#client;
+  }
+
+  async close() {
+    this.#client?.close();
+    await this.#dependencies.stopProcess(this.#browser);
+    await this.#dependencies.stopProcess(this.#server);
+    if (this.#browserProfile) {
+      await this.#dependencies.rm(this.#browserProfile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+    }
+  }
+}
+
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   if (config.help) {
@@ -240,42 +323,11 @@ async function main() {
   await mkdir(outputDir, { recursive: true });
   await rm(resolve(outputDir, "failure.txt"), { force: true });
   const screenshots = [];
-  let server = null;
-  let browser = null;
-  let client = null;
-  let browserProfile = null;
+  const run = new MarketUiReportRun(config);
   try {
-    if (!(await endpointReady(config.url))) server = startViteIfNeeded(config.url);
-    try {
-      await waitFor("Vite 页面启动", () => endpointReady(config.url), 30_000, 200);
-    } catch (error) {
-      const output = server?.recentOutput?.();
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${output ? `\nVite 输出：\n${output}` : ""}`);
-    }
-
-    const debugPort = await freePort();
-    browserProfile = await mkdtemp(resolve(tmpdir(), "market-ui-perf-"));
-    browser = spawn(browserExecutable(config.browser), [
-      `--remote-debugging-port=${debugPort}`,
-      `--user-data-dir=${browserProfile}`,
-      "--headless=new",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-timer-throttling",
-      "--disable-renderer-backgrounding",
-      "about:blank",
-    ], { windowsHide: true, stdio: "ignore" });
-
-    await waitFor("Chrome 调试端口", async () => {
-      const response = await fetch(`http://127.0.0.1:${debugPort}/json/version`);
-      return response.ok;
-    });
-    const targetResponse = await fetch(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent(config.url)}`, { method: "PUT" });
-    if (!targetResponse.ok) throw new Error(`创建 Chrome 页面失败：HTTP ${targetResponse.status}`);
-    const target = await targetResponse.json();
-    if (!target.webSocketDebuggerUrl) throw new Error("Chrome 未返回 webSocketDebuggerUrl");
-    client = new CdpClient(target.webSocketDebuggerUrl);
-    await client.connect();
+    await run.startServerIfNeeded();
+    await run.launchBrowser();
+    const client = await run.connectPage();
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Performance.enable");
@@ -358,16 +410,13 @@ async function main() {
     await writeFile(resolve(outputDir, "failure.txt"), message);
     throw error;
   } finally {
-    client?.close();
-    await stopProcess(browser);
-    await stopProcess(server);
-    if (browserProfile) {
-      await rm(browserProfile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
-    }
+    await run.close();
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

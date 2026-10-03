@@ -1,6 +1,5 @@
 use super::failure::{failure_cause, failure_description};
 use super::*;
-use tauri::Listener;
 
 #[test]
 fn producer_failure_contains_real_location_and_recovery_details() {
@@ -19,15 +18,6 @@ fn producer_failure_contains_real_location_and_recovery_details() {
 }
 
 async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
-    let app = tauri::test::mock_app();
-    let (notices_tx, mut notices_rx) = mpsc::unbounded_channel();
-    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-    app.listen("engine-failure", move |event| {
-        notices_tx.send(event.payload().to_owned()).unwrap();
-    });
-    app.listen(crate::ENGINE_EVENT_NAME, move |event| {
-        events_tx.send(event.payload().to_owned()).unwrap();
-    });
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     let mut game = ProtocolSession::new(setup, 7).unwrap();
@@ -50,25 +40,25 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         description: "desktop injected failure".to_owned(),
         location: "desktop.auto_step".to_owned(),
     };
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let mut actor = SessionActor {
-        injected_step_failure: Some((successful_steps, fatal.clone())),
-        speed_meter: SpeedMeter::new(tick),
+    let mut harness = ActorHarness::new_protocol_actor(
         game,
-        cmd_rx,
-        tick_interval: Duration::from_millis(1),
-        base_ms: 1,
-        session_id: "fatal-session".to_owned(),
-        app: app.handle().clone(),
-        running: true,
         fastest,
-        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-        pending_fixed_events: Vec::new(),
-        last_fixed_publish: Instant::now(),
-        timeline_id: "fatal-timeline".to_owned(),
-        generation: 1,
-        pause_preferences: PausePreferences::default(),
-    };
+        PausePreferences::default(),
+        "fatal-session",
+        "fatal-timeline",
+    );
+    harness.subscribe_failures();
+    harness.subscribe_engine_events();
+    let notices_rx = harness
+        .failures_rx
+        .as_mut()
+        .expect("fatal 场景须订阅失败事件");
+    let events_rx = harness
+        .events_rx
+        .as_mut()
+        .expect("fatal 场景须订阅引擎事件");
+    let actor = &mut harness.actor;
+    actor.injected_step_failure = Some((successful_steps, fatal.clone()));
 
     if fastest {
         actor.run_fastest_batch().await;
@@ -89,12 +79,12 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
             "recoveryActions": ["停止当前会话；重新打开上一份有效日终存档或新局", "复制脱敏错误详情反馈"],
         })
     );
-    assert!(!actor.running);
-    assert!(cmd_tx.is_closed());
+    assert!(!actor.pacing.is_running());
+    assert!(harness.cmd_tx.is_closed());
     actor
         .handle_command(SessionCommand::SetRunning { running: true })
         .await;
-    assert!(!actor.running);
+    assert!(!actor.pacing.is_running());
     assert_eq!(actor.game.tick(), tick);
     assert_eq!(actor.game.seq(), seq);
     assert_eq!(actor.game.business_state_hash().unwrap(), business);
@@ -117,7 +107,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         serde_json::to_value(&civil.refresh.intraday[0]).unwrap(),
         serde_json::to_value(retained).unwrap()
     );
-    tokio::time::timeout(Duration::from_secs(1), actor.run())
+    tokio::time::timeout(Duration::from_secs(1), harness.actor.run())
         .await
         .unwrap();
     assert!(notices_rx.try_recv().is_err());

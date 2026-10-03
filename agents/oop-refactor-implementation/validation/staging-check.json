@@ -1,0 +1,34 @@
+{
+  "meaning": "暂存检查仅将四份原始 unified diff 证据按档案格式处理；空白上下文行必须含前缀空格，不能删空白破坏原字节和签名。产品、测试、脚本和正文文档仍接受原 whitespace 检查。",
+  "full_cached_check_exit": 2,
+  "format_only_archives": [
+    "agents/oop-refactor-implementation/pipeline/review-resources-projections-final.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/final-full.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/initial-callers.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/s1-compile03-incremental.diff"
+  ],
+  "all_diff_archives": [
+    "agents/oop-refactor-implementation/pipeline/review-resources-projections-final.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/compile02-getters-incremental.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/final-full.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/initial-callers.diff",
+    "agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/s1-compile03-incremental.diff"
+  ],
+  "reported_outside_archives": [],
+  "source_and_documents_check": {
+    "command": [
+      "git",
+      "diff",
+      "--cached",
+      "--check",
+      "--",
+      ".",
+      ":(exclude)agents/oop-refactor-implementation/pipeline/review-resources-projections-final.diff",
+      ":(exclude)agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/final-full.diff",
+      ":(exclude)agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/initial-callers.diff",
+      ":(exclude)agents/oop-refactor-implementation/pipeline/review-stream-callers-evidence/s1-compile03-incremental.diff"
+    ],
+    "exit_code": 0
+  },
+  "unchanged_evidence": "diff 档案原字节及 reviewer 签名保持原样，没有修改代码或测试断言。"
+}

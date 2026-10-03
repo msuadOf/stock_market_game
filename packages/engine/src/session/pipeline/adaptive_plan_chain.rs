@@ -45,10 +45,110 @@ fn draft_price_matches(draft: &super::EnvelopeDraft, requested: LimitPrice) -> b
 
 #[derive(Default)]
 pub(super) struct PlanChainFactConsumption {
-    pub(super) operations: BTreeSet<(IntentCandidateKey, u64)>,
-    pub(super) receipts: BTreeSet<ReceiptLocalKey>,
+    operations: BTreeSet<(IntentCandidateKey, u64)>,
+    receipts: BTreeSet<ReceiptLocalKey>,
     candidate_keys: BTreeSet<IntentCandidateKey>,
     sealed_indices: BTreeSet<u64>,
+}
+
+impl PlanChainFactConsumption {
+    pub(super) fn contains_operation(&self, candidate: &IntentCandidateKey, sealed: u64) -> bool {
+        self.operations.contains(&(candidate.clone(), sealed))
+    }
+
+    pub(super) fn contains_receipt(&self, receipt: &ReceiptLocalKey) -> bool {
+        self.receipts.contains(receipt)
+    }
+
+    #[cfg(test)]
+    pub(super) fn operation_count(&self) -> usize {
+        self.operations.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn receipt_count(&self) -> usize {
+        self.receipts.len()
+    }
+
+    fn commit_round(&mut self, prepared: Self) {
+        self.operations.extend(prepared.operations);
+        self.receipts.extend(prepared.receipts);
+        self.candidate_keys.extend(prepared.candidate_keys);
+        self.sealed_indices.extend(prepared.sealed_indices);
+    }
+
+    fn prepare_auction_round(
+        &self,
+        round: &AuctionExecutionRound,
+    ) -> Result<PlanChainFactConsumption, StepFatal> {
+        let mut operation_ids = BTreeSet::new();
+        let mut receipt_ids = BTreeSet::new();
+        let mut sealed = BTreeSet::new();
+        let mut candidates = BTreeSet::new();
+        for fact in &round.facts {
+            if self.candidate_keys.contains(&fact.candidate_key)
+                || self.sealed_indices.contains(&fact.sealed_index)
+                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
+                || !sealed.insert(fact.sealed_index)
+                || !candidates.insert(fact.candidate_key.clone())
+            {
+                return Err(invariant(
+                    "duplicate candidate or sealed identity in auction plan projection",
+                ));
+            }
+            validate_auction_fact_identity(fact)?;
+        }
+        for receipt in &round.receipts {
+            if self.receipts.contains(&receipt.local_key)
+                || !receipt_ids.insert(receipt.local_key.clone())
+            {
+                return Err(invariant(
+                    "duplicate receipt identity in auction plan projection",
+                ));
+            }
+        }
+        Ok(Self {
+            operations: operation_ids,
+            receipts: receipt_ids,
+            candidate_keys: candidates,
+            sealed_indices: sealed,
+        })
+    }
+    fn prepare_continuous_round(
+        &self,
+        round: &ContinuousExecutionRound,
+    ) -> Result<PlanChainFactConsumption, StepFatal> {
+        let mut operation_ids = BTreeSet::new();
+        let mut receipt_ids = BTreeSet::new();
+        let mut sealed = BTreeSet::new();
+        let mut candidates = BTreeSet::new();
+        for fact in &round.facts {
+            if self.candidate_keys.contains(&fact.candidate_key)
+                || self.sealed_indices.contains(&fact.sealed_index)
+                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
+                || !sealed.insert(fact.sealed_index)
+                || !candidates.insert(fact.candidate_key.clone())
+            {
+                return Err(invariant(
+                    "duplicate candidate or sealed identity in plan projection",
+                ));
+            }
+            validate_fact_identity(fact)?;
+        }
+        for receipt in &round.receipts {
+            if self.receipts.contains(&receipt.local_key)
+                || !receipt_ids.insert(receipt.local_key.clone())
+            {
+                return Err(invariant("duplicate receipt identity in plan projection"));
+            }
+        }
+        Ok(Self {
+            operations: operation_ids,
+            receipts: receipt_ids,
+            candidate_keys: candidates,
+            sealed_indices: sealed,
+        })
+    }
 }
 
 pub(super) struct AdaptivePlanChainCompletion {
@@ -500,40 +600,16 @@ impl AdaptivePlanChainCoordinator {
         session: &mut GameSession,
         round: &AuctionExecutionRound,
     ) -> Result<(), StepFatal> {
-        let mut operation_ids = BTreeSet::new();
-        let mut receipt_ids = BTreeSet::new();
-        let mut sealed = BTreeSet::new();
-        let mut candidates = BTreeSet::new();
-        for fact in &round.facts {
-            if self.consumed.candidate_keys.contains(&fact.candidate_key)
-                || self.consumed.sealed_indices.contains(&fact.sealed_index)
-                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
-                || !sealed.insert(fact.sealed_index)
-                || !candidates.insert(fact.candidate_key.clone())
-            {
-                return Err(invariant(
-                    "duplicate candidate or sealed identity in auction plan projection",
-                ));
-            }
-            validate_auction_fact_identity(fact)?;
-        }
-        for receipt in &round.receipts {
-            if self.consumed.receipts.contains(&receipt.local_key)
-                || !receipt_ids.insert(receipt.local_key.clone())
-            {
-                return Err(invariant(
-                    "duplicate receipt identity in auction plan projection",
-                ));
-            }
-        }
+        let prepared = self.consumed.prepare_auction_round(round)?;
         for (code, projection) in &round.projections {
-            if !session.markets.contains_key(code) {
+            if !session.state.markets.contains_key(code) {
                 return Err(invariant("auction projection returned an unknown stock"));
             }
             if projection.orders.is_empty() {
-                session.auction_orders.remove(code);
+                session.state.auction_orders.remove(code);
             } else {
                 session
+                    .state
                     .auction_orders
                     .insert(code.clone(), projection.orders.clone());
             }
@@ -617,10 +693,7 @@ impl AdaptivePlanChainCoordinator {
         if round.facts.is_empty() {
             synchronize_projected_plans(session)?;
         }
-        self.consumed.operations.extend(operation_ids);
-        self.consumed.receipts.extend(receipt_ids);
-        self.consumed.candidate_keys.extend(candidates);
-        self.consumed.sealed_indices.extend(sealed);
+        self.consumed.commit_round(prepared);
         Ok(())
     }
 
@@ -629,32 +702,10 @@ impl AdaptivePlanChainCoordinator {
         session: &mut GameSession,
         round: &mut ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
-        let mut operation_ids = BTreeSet::new();
-        let mut receipt_ids = BTreeSet::new();
-        let mut sealed = BTreeSet::new();
-        let mut candidates = BTreeSet::new();
-        for fact in &round.facts {
-            if self.consumed.candidate_keys.contains(&fact.candidate_key)
-                || self.consumed.sealed_indices.contains(&fact.sealed_index)
-                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
-                || !sealed.insert(fact.sealed_index)
-                || !candidates.insert(fact.candidate_key.clone())
-            {
-                return Err(invariant(
-                    "duplicate candidate or sealed identity in plan projection",
-                ));
-            }
-            validate_fact_identity(fact)?;
-        }
-        for receipt in &round.receipts {
-            if self.consumed.receipts.contains(&receipt.local_key)
-                || !receipt_ids.insert(receipt.local_key.clone())
-            {
-                return Err(invariant("duplicate receipt identity in plan projection"));
-            }
-        }
+        let prepared = self.consumed.prepare_continuous_round(round)?;
         for (code, projection) in &mut round.projections {
             let market = session
+                .state
                 .markets
                 .get_mut(code)
                 .ok_or_else(|| invariant("plan projection returned an unknown stock"))?;
@@ -807,10 +858,7 @@ impl AdaptivePlanChainCoordinator {
         // Every order leaving the book has a terminal receipt. project_receipt
         // removes its lifecycle at the actual transition, including a new quote
         // filled later in this same round. No full-book scan is needed here.
-        self.consumed.operations.extend(operation_ids);
-        self.consumed.receipts.extend(receipt_ids);
-        self.consumed.candidate_keys.extend(candidates);
-        self.consumed.sealed_indices.extend(sealed);
+        self.consumed.commit_round(prepared);
         Ok(())
     }
 
@@ -1495,9 +1543,9 @@ fn route_outcome(outcome: &ContinuousExecutionOutcome) -> PlanRouteOutcome {
 }
 
 fn synchronize_projected_plans(session: &mut GameSession) -> Result<(), StepFatal> {
-    let mut plans = std::mem::take(&mut session.plans);
+    let mut plans = std::mem::take(&mut session.state.plans);
     let synchronized = session.synchronize_owned_plan_execution(&mut plans);
-    session.plans = plans;
+    session.state.plans = plans;
     synchronized.map_err(|error| invariant(&error.to_string()))
 }
 
@@ -1509,17 +1557,18 @@ fn validate_parent_acceptance(
     qty: u32,
 ) -> Result<(), StepFatal> {
     if let Some(parent) = session
+        .state
         .parent_orders
         .get(&account)
         .and_then(|parents| parents.get(code))
     {
-        if parent.side == side {
-            if parent.active_child_order_id.is_some() {
+        if parent.side() == side {
+            if parent.active_child_order_id().is_some() {
                 return Err(invariant(
                     "typed acceptance would install a second active parent child",
                 ));
             }
-            if qty == 0 || qty > parent.target_qty.saturating_sub(parent.filled_qty) {
+            if qty == 0 || qty > parent.target_qty().saturating_sub(parent.filled_qty()) {
                 return Err(invariant(
                     "typed acceptance exceeds parent remaining quantity",
                 ));
@@ -1550,19 +1599,20 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         .sub(receipt.value_before)
         .map_err(|error| invariant(&error.to_string()))?;
     if let Some(parent) = session
+        .state
         .parent_orders
         .get(&key.account)
         .and_then(|parents| parents.get(&key.stock))
     {
-        if parent.side == key.side
-            && parent.active_child_order_id == Some(key.order)
+        if parent.side() == key.side
+            && parent.active_child_order_id() == Some(key.order)
             && (parent
-                .active_child_remaining_qty
+                .active_child_remaining_qty()
                 .is_none_or(|remaining| qty > remaining)
                 || parent
-                    .filled_qty
+                    .filled_qty()
                     .checked_add(qty)
-                    .is_none_or(|filled| filled > parent.target_qty))
+                    .is_none_or(|filled| filled > parent.target_qty()))
         {
             return Err(invariant(
                 "typed fill exceeds parent child or target quantity",
@@ -1597,3 +1647,67 @@ fn invariant(description: &str) -> StepFatal {
 #[cfg(test)]
 #[path = "adaptive_plan_chain_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod consumption_tests {
+    use super::*;
+
+    fn cancel_round(
+        key: IntentCandidateKey,
+        sealed_index: u64,
+        inner_index: u64,
+    ) -> ContinuousExecutionRound {
+        ContinuousExecutionRound {
+            facts: vec![ContinuousExecutionFact {
+                candidate_key: key,
+                sealed_index,
+                allocated_order_id: None,
+                outcome: ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+                    sealed_index: inner_index,
+                    account: AccountId(1),
+                    code: StockCode("600888".to_owned()),
+                    order_id: OrderId(1),
+                    reason: ContinuousCancelRejection::OrderNotFound,
+                }),
+            }],
+            receipts: Vec::new(),
+            trades: Vec::new(),
+            projections: BTreeMap::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn consumption_preparation_is_discardable_and_duplicate_precedes_payload_error() {
+        let mut consumed = PlanChainFactConsumption::default();
+        let round = cancel_round(IntentCandidateKey::player(0), 3, 3);
+        let prepared = consumed.prepare_continuous_round(&round).unwrap();
+        assert!(!consumed.contains_operation(&IntentCandidateKey::player(0), 3));
+        drop(prepared);
+        let prepared = consumed.prepare_continuous_round(&round).unwrap();
+        consumed.commit_round(prepared);
+        assert!(consumed.contains_operation(&IntentCandidateKey::player(0), 3));
+        let duplicate = cancel_round(IntentCandidateKey::player(0), 4, 99);
+        let error = consumed.prepare_continuous_round(&duplicate).err().unwrap();
+        assert_eq!(
+            error,
+            invariant("duplicate candidate or sealed identity in plan projection")
+        );
+        assert_eq!(consumed.operation_count(), 1);
+        assert!(!consumed.contains_operation(&IntentCandidateKey::player(0), 4));
+    }
+
+    #[test]
+    fn consumption_payload_failure_precedes_a_later_duplicate_in_the_same_round() {
+        let consumed = PlanChainFactConsumption::default();
+        let mut round = cancel_round(IntentCandidateKey::player(0), 3, 99);
+        round.facts.push(round.facts[0].clone());
+        let error = consumed.prepare_continuous_round(&round).err().unwrap();
+        assert_eq!(
+            error,
+            invariant("P4 fact has inconsistent sealed/order identity")
+        );
+        assert_eq!(consumed.operation_count(), 0);
+    }
+}

@@ -10,7 +10,7 @@
 //! 赊购 = CreditSale/NonCash（非现金信用交易），应付结清 = CashExpense/Operating。
 
 use crate::accounting::{
-    split_input_vat, AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, InputVatSplit,
+    AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, InputVatSplit,
     InventoryItemCode, JournalEntry, LedgerAccountId, OpenItemId, PostingSide,
 };
 use crate::calendar::CivilDate;
@@ -73,7 +73,7 @@ impl IndustrialBooks {
             });
         }
         let goods = unit_price_excl_vat.mul_i128(quantity)?;
-        let split = split_input_vat(goods, &self.tax_policy().vat)?;
+        let split = self.tax_policy().vat.split_input_vat(goods)?;
         let vat_full = split.deductible.add(split.non_deductible)?;
         let total_payment = goods.add(vat_full)?;
         let inventory_cost = goods.add(split.non_deductible)?;

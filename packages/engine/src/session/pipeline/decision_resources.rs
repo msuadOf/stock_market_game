@@ -34,27 +34,27 @@ impl PartialEq for DecisionResourceSnapshot {
             && self.accounts.iter().zip(other.accounts.iter()).all(
                 |((left_id, left), (right_id, right))| {
                     left_id == right_id
-                        && left.cash == right.cash
+                        && left.cash() == right.cash()
                         && left
-                            .positions
+                            .positions()
                             .iter()
                             .filter(|(code, _)| self.configured_stocks.contains_key(*code))
                             .map(|(code, position)| {
                                 (
                                     code,
-                                    position.qty,
+                                    position.qty(),
                                     position.sellable(),
                                     position.cost_price(),
                                 )
                             })
                             .eq(right
-                                .positions
+                                .positions()
                                 .iter()
                                 .filter(|(code, _)| other.configured_stocks.contains_key(*code))
                                 .map(|(code, position)| {
                                     (
                                         code,
-                                        position.qty,
+                                        position.qty(),
                                         position.sellable(),
                                         position.cost_price(),
                                     )
@@ -92,11 +92,13 @@ pub(super) fn plan_allocation(shadow: &mut TickShadowPlan) -> Result<(), StepFat
 impl DecisionResourceSnapshot {
     pub(super) fn seal(session: &GameSession) -> Result<Self, StepFatal> {
         let configured_stocks = session
+            .state
             .setup
             .stocks
             .iter()
             .map(|stock| {
                 let price = session
+                    .state
                     .markets
                     .get(&stock.code)
                     .ok_or_else(|| invariant("configured stock has no market"))?
@@ -107,7 +109,7 @@ impl DecisionResourceSnapshot {
 
         let mut reserved_cash = BTreeMap::<AccountId, Money>::new();
         let mut reserved_sell = BTreeMap::<AccountId, BTreeMap<StockCode, u32>>::new();
-        for (key, envelope) in session.envelope_ledger.iter() {
+        for (key, envelope) in session.state.envelope_ledger.iter() {
             let live = envelope.live();
             let cash = reserved_cash.entry(key.account).or_insert(Money::ZERO);
             *cash = cash.add(live.cash).map_err(allocation_money)?;
@@ -122,6 +124,7 @@ impl DecisionResourceSnapshot {
         }
 
         session
+            .state
             .accounts
             .par_iter()
             .try_for_each(|(account_id, account)| {
@@ -130,20 +133,20 @@ impl DecisionResourceSnapshot {
                         .get(account_id)
                         .copied()
                         .unwrap_or(Money::ZERO);
-                    let available_cash = account.cash.sub(reserved).map_err(allocation_money)?;
+                    let available_cash = account.cash().sub(reserved).map_err(allocation_money)?;
                     if available_cash.cents() < 0 {
                         return Err(allocation_invariant(
                             "live buy reservation exceeds account cash",
                         ));
                     }
 
-                    let mut equity = account.cash;
+                    let mut equity = account.cash();
                     let reserved_for_account = reserved_sell.get(account_id);
-                    for (stock, position) in &account.positions {
+                    for (stock, position) in account.positions() {
                         let Some(price) = configured_stocks.get(stock) else {
                             continue;
                         };
-                        let total_qty = position.qty;
+                        let total_qty = position.qty();
                         let sellable_before_reservation = account.sellable_qty(stock);
                         let reserved_shares = reserved_for_account
                             .and_then(|shares| shares.get(stock))
@@ -166,7 +169,7 @@ impl DecisionResourceSnapshot {
                         shares.iter().any(|(stock, qty)| {
                             *qty > 0
                                 && configured_stocks.contains_key(stock)
-                                && !account.positions.contains_key(stock)
+                                && !account.positions().contains_key(stock)
                         })
                     }) {
                         return Err(allocation_invariant(
@@ -179,14 +182,14 @@ impl DecisionResourceSnapshot {
             })?;
         if reserved_cash
             .keys()
-            .any(|account| !session.accounts.contains_key(account))
+            .any(|account| !session.state.accounts.contains_key(account))
         {
             return Err(allocation_invariant(
                 "envelope ledger references an unknown account",
             ));
         }
         if reserved_sell.iter().any(|(account, stocks)| {
-            !session.accounts.contains_key(account)
+            !session.state.accounts.contains_key(account)
                 || stocks
                     .keys()
                     .any(|stock| !configured_stocks.contains_key(stock))
@@ -196,7 +199,7 @@ impl DecisionResourceSnapshot {
             ));
         }
         Ok(Self {
-            accounts: session.accounts.clone(),
+            accounts: session.state.accounts.clone(),
             configured_stocks,
             reserved_cash,
             reserved_sell,
@@ -204,12 +207,12 @@ impl DecisionResourceSnapshot {
     }
 
     pub fn raw_cash(&self, account: AccountId) -> Result<Money, StepFatal> {
-        Ok(self.account(account)?.cash)
+        Ok(self.account(account)?.cash())
     }
 
     pub fn available_cash(&self, account: AccountId) -> Result<Money, StepFatal> {
         self.account(account)?
-            .cash
+            .cash()
             .sub(*self.reserved_cash.get(&account).unwrap_or(&Money::ZERO))
             .map_err(allocation_money)
     }
@@ -223,14 +226,14 @@ impl DecisionResourceSnapshot {
     pub fn equity(&self, account: AccountId) -> Result<Money, StepFatal> {
         let account = self.account(account)?;
         account
-            .positions
+            .positions()
             .iter()
-            .try_fold(account.cash, |equity, (code, position)| {
+            .try_fold(account.cash(), |equity, (code, position)| {
                 let Some(price) = self.configured_stocks.get(code) else {
                     return Ok(equity);
                 };
                 equity
-                    .add(price.mul_shares(position.qty).map_err(money)?)
+                    .add(price.mul_shares(position.qty()).map_err(money)?)
                     .map_err(money)
             })
     }
@@ -288,7 +291,7 @@ impl DecisionResourceSnapshot {
         if !self.configured_stocks.contains_key(stock) {
             return Err(invariant("unknown decision resource stock"));
         }
-        let Some(position) = account.positions.get(stock) else {
+        let Some(position) = account.positions().get(stock) else {
             return Ok(EMPTY_POSITION);
         };
         let sellable_before_reservation = account.sellable_qty(stock);
@@ -302,7 +305,7 @@ impl DecisionResourceSnapshot {
             .checked_sub(reserved_shares)
             .ok_or_else(|| allocation_invariant("live sell reservation exceeds sellable shares"))?;
         Ok(DecisionPositionResources {
-            total_qty: position.qty,
+            total_qty: position.qty(),
             sellable_before_reservation,
             available_sell_qty,
             cost_price: account.cost_price(stock),

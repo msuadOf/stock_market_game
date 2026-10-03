@@ -16,18 +16,16 @@ pub(in crate::session) struct FrozenPlanChainObservation {
 
 impl FrozenPlanChainObservation {
     pub(in crate::session) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
-        let accounts =
-            session
-                .accounts
-                .clone_for_shadow()
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: error.to_string(),
-                    location: "FrozenPlanChainObservation::capture".to_owned(),
-                })?;
+        let accounts = session.state.accounts.clone_for_shadow().map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "FrozenPlanChainObservation::capture".to_owned(),
+            }
+        })?;
         Ok(Self {
             accounts,
-            markets: session.markets.clone(),
-            auction_orders: session.auction_orders.clone(),
+            markets: session.state.markets.clone(),
+            auction_orders: session.state.auction_orders.clone(),
         })
     }
 
@@ -38,13 +36,19 @@ impl FrozenPlanChainObservation {
     ) -> T {
         // This is not a new allocation snapshot. The same post-P0 containers are reused for
         // every root and quote. Restore them even when the action returns a typed failure.
-        std::mem::swap(&mut execution.accounts, &mut self.accounts);
-        std::mem::swap(&mut execution.markets, &mut self.markets);
-        std::mem::swap(&mut execution.auction_orders, &mut self.auction_orders);
+        std::mem::swap(&mut execution.state.accounts, &mut self.accounts);
+        std::mem::swap(&mut execution.state.markets, &mut self.markets);
+        std::mem::swap(
+            &mut execution.state.auction_orders,
+            &mut self.auction_orders,
+        );
         let result = action(execution);
-        std::mem::swap(&mut execution.auction_orders, &mut self.auction_orders);
-        std::mem::swap(&mut execution.markets, &mut self.markets);
-        std::mem::swap(&mut execution.accounts, &mut self.accounts);
+        std::mem::swap(
+            &mut execution.state.auction_orders,
+            &mut self.auction_orders,
+        );
+        std::mem::swap(&mut execution.state.markets, &mut self.markets);
+        std::mem::swap(&mut execution.state.accounts, &mut self.accounts);
         result
     }
 }
@@ -64,13 +68,7 @@ impl PlanChainOperationBatch {
         &self,
         generation_index: u64,
     ) -> Option<PlanCancelCause> {
-        self.pending_routes
-            .values()
-            .find(|(index, _)| *index == generation_index)
-            .and_then(|(_, route)| match route.command() {
-                PlanRouteCommand::Cancel { cause, .. } => Some(*cause),
-                PlanRouteCommand::SubmitLimit { .. } => None,
-            })
+        self.routes.pending_cancel_cause(generation_index)
     }
 
     /// Drains independent roots until each account/stock has at most one command
@@ -87,7 +85,7 @@ impl PlanChainOperationBatch {
         let mut deferred = VecDeque::new();
         loop {
             let Some(operation) = self.operations.pop_front() else {
-                if matches!(self.source, AccountSource::Empty) {
+                if self.roots.is_empty() {
                     break;
                 }
                 // Once a route is ready, collect any other roots already complete
@@ -109,12 +107,12 @@ impl PlanChainOperationBatch {
                 let candidate = self
                     .enumerate_candidate(route.command())
                     .map_err(execution)?;
-                self.pending_routes
-                    .insert(resource, (candidate.chain_generation_index, route));
+                self.routes
+                    .install_pending(resource, candidate.chain_generation_index, route);
                 ready.push(candidate);
                 continue;
             }
-            let mut plans = std::mem::take(&mut session.plans);
+            let mut plans = std::mem::take(&mut session.state.plans);
             let progress = match operation {
                 PlanChainOperation::QuotePlans(mut cursor) => {
                     session
@@ -127,13 +125,15 @@ impl PlanChainOperationBatch {
                         let plan = plans
                             .plan(request.plan_id)
                             .map_err(|error| invariant(&error.to_string()))?;
-                        if plan.active_child_order_id.is_some()
+                        if plan.active_child_order_id().is_some()
                             || !session
-                                .plan_working_orders(plan.account, &plan.code)
+                                .plan_working_orders(plan.account(), plan.code())
                                 .is_empty()
                         {
-                            self.retry_market
-                                .insert((plan.account, plan.code.clone()), cursor.market.clone());
+                            self.routes.remember_retry(
+                                (plan.account(), plan.code().clone()),
+                                cursor.market.clone(),
+                            );
                         }
                         self.operations
                             .push_front(PlanChainOperation::QuotePlans(cursor));
@@ -153,8 +153,9 @@ impl PlanChainOperationBatch {
                 } => {
                     let (ready, pending): (BTreeMap<_, _>, BTreeMap<_, _>) =
                         assessments.into_iter().partition(|(code, _)| {
-                            !self.pending_routes.contains_key(&(account, code.clone()))
-                                && !unfinished_routes.contains(&(account, code.clone()))
+                            !self
+                                .routes
+                                .is_blocked(&(account, code.clone()), unfinished_routes)
                         });
                     if !ready.is_empty() {
                         let mut generated = PlanChainOperationBatch::empty();
@@ -166,9 +167,10 @@ impl PlanChainOperationBatch {
                             | PlanLifecycleAction::Terminate { code, .. } = action
                             {
                                 if let Some(assessment) = ready.get(code) {
-                                    self.reconsideration.insert(
+                                    self.routes.remember_reconsideration(
                                         (account, code.clone()),
-                                        (assessment.clone(), market.clone()),
+                                        assessment.clone(),
+                                        market.clone(),
                                     );
                                 }
                             }
@@ -261,7 +263,7 @@ impl PlanChainOperationBatch {
                 .map(|progress| session.materialize_plan_progress(&mut plans, progress))
                 .transpose()
                 .map_err(execution)?;
-            session.plans = plans;
+            session.state.plans = plans;
             self.append_progress(progress);
         }
         self.operations = deferred;
@@ -274,11 +276,10 @@ impl PlanChainOperationBatch {
         session: &GameSession,
         unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
     ) -> Result<bool, StepFatal> {
-        let pending = &self.pending_routes;
         Ok(match operation {
             PlanChainOperation::ExecutionRoute(route) => {
                 let resource = route_resource(route.command());
-                pending.contains_key(&resource) || unfinished_routes.contains(&resource)
+                self.routes.is_blocked(&resource, unfinished_routes)
             }
             // The cursor owns grants already allocated across the account. Its next plan can
             // be quoted while another stock awaits P4; Execute checks the target stock below.
@@ -290,29 +291,31 @@ impl PlanChainOperationBatch {
             } => {
                 !assessments.is_empty()
                     && assessments.keys().all(|code| {
-                        pending.contains_key(&(*account, code.clone()))
-                            || unfinished_routes.contains(&(*account, code.clone()))
+                        self.routes
+                            .is_blocked(&(*account, code.clone()), unfinished_routes)
                     })
             }
             PlanChainOperation::Restructure { plan_id, .. }
             | PlanChainOperation::Execute(PlanExecutionRequest { plan_id, .. }) => {
                 let plan = session
+                    .state
                     .plans
                     .plan(*plan_id)
                     .map_err(|error| invariant(&error.to_string()))?;
-                pending.contains_key(&(plan.account, plan.code.clone()))
-                    || unfinished_routes.contains(&(plan.account, plan.code.clone()))
+                self.routes
+                    .is_blocked(&(plan.account(), plan.code().clone()), unfinished_routes)
             }
             // This operation computes shared account grants and discovers all active plans.
             // It must see prior lifecycle results before constructing the quote cursor.
             PlanChainOperation::AccountExecution { account, .. } => {
-                pending.keys().any(|(owner, _)| owner == account)
+                self.routes.pending_for_account(*account)
                     || session
+                        .state
                         .plans
                         .active_plan_ids_for_account(*account)
                         .into_iter()
-                        .filter_map(|plan_id| session.plans.plan(plan_id).ok())
-                        .any(|plan| unfinished_routes.contains(&(*account, plan.code.clone())))
+                        .filter_map(|plan_id| session.state.plans.plan(plan_id).ok())
+                        .any(|plan| unfinished_routes.contains(&(*account, plan.code().clone())))
             }
         })
     }
@@ -323,13 +326,9 @@ impl PlanChainOperationBatch {
         outcomes: &[(AccountId, StockCode, u64, PlanRouteOutcome)],
     ) -> Result<(), StepFatal> {
         for (account, code, generation_index, outcome) in outcomes {
-            let (pending_index, route) = self
-                .pending_routes
-                .get(&(*account, code.clone()))
-                .ok_or_else(|| invariant("typed plan outcome has no pending stock route"))?;
-            if pending_index != generation_index {
-                return Err(invariant("typed plan outcome names a different command"));
-            }
+            let route = self
+                .routes
+                .pending_for_outcome(&(*account, code.clone()), *generation_index)?;
             route
                 .install_accepted_submit_parent(session, outcome)
                 .map_err(execution)?;
@@ -344,18 +343,14 @@ impl PlanChainOperationBatch {
     ) -> Result<(), StepFatal> {
         let mut followups = Vec::new();
         for (account, code, generation_index, outcome) in outcomes {
-            let (pending_index, route) = self
-                .pending_routes
-                .remove(&(account, code.clone()))
-                .ok_or_else(|| invariant("typed plan outcome has no pending stock route"))?;
-            if pending_index != generation_index {
-                return Err(invariant("typed plan outcome names a different command"));
-            }
-            let mut plans = std::mem::take(&mut session.plans);
+            let route = self
+                .routes
+                .take_pending(&(account, code.clone()), generation_index)?;
+            let mut plans = std::mem::take(&mut session.state.plans);
             let progress = route
                 .resume(session, &mut plans, outcome)
                 .and_then(|progress| session.materialize_plan_progress(&mut plans, progress));
-            session.plans = plans;
+            session.state.plans = plans;
             match progress.map_err(execution)? {
                 PlanExecutionProgress::Complete(report) => {
                     let needs_reconsideration = matches!(
@@ -366,19 +361,11 @@ impl PlanChainOperationBatch {
                             reason: RejectionReason::OrderAlreadyFilled
                         }
                     );
-                    if needs_reconsideration && session.plans.active_plan(account, &code).is_some()
+                    if needs_reconsideration
+                        && session.state.plans.active_plan(account, &code).is_some()
                     {
-                        if let Some((assessment, market)) =
-                            self.reconsideration.remove(&(account, code.clone()))
-                        {
-                            followups.push(PlanChainOperation::Lifecycle {
-                                account,
-                                assessments: BTreeMap::from([(code, assessment)]),
-                                market,
-                            });
-                        } else if let Some(market) = self.retry_market.remove(&(account, code)) {
-                            followups
-                                .push(PlanChainOperation::AccountExecution { account, market });
+                        if let Some(followup) = self.routes.take_follow_up((account, code)) {
+                            followups.push(followup);
                         }
                     }
                     self.reports.push(report);
@@ -414,10 +401,7 @@ impl PlanChainOperationBatch {
     }
 
     pub(in crate::session) fn finish_adaptive(self) -> Result<Vec<PlanExecutionReport>, StepFatal> {
-        if !self.pending_routes.is_empty()
-            || !self.operations.is_empty()
-            || !matches!(self.source, AccountSource::Empty)
-        {
+        if self.routes.has_pending() || !self.operations.is_empty() || !self.roots.is_empty() {
             return Err(invariant(
                 "plan-chain roots or continuation remain undrained",
             ));

@@ -16,8 +16,8 @@ fn tick_shadow_shares_immutable_company_registry_without_changing_hashes() {
     let shadow = game.clone_for_tick_shadow().unwrap();
 
     assert!(std::sync::Arc::ptr_eq(
-        &game.company_registry,
-        &shadow.company_registry,
+        &game.state.company_registry,
+        &shadow.state.company_registry,
     ));
     assert_eq!(
         shadow.business_state_hash().unwrap(),
@@ -34,17 +34,27 @@ fn company_operations_shadow_shares_journals_until_an_actual_change() {
     let game = game();
     let business_before = game.business_state_hash().unwrap();
     let mut shadow = game.clone_for_tick_shadow().unwrap();
-    assert!(std::sync::Arc::ptr_eq(&game.operations, &shadow.operations));
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.operations,
+        &shadow.state.operations
+    ));
 
-    let company = shadow.operations.companies.keys().next().unwrap().clone();
-    std::sync::Arc::make_mut(&mut shadow.operations)
+    let company = shadow
+        .state
+        .operations
+        .companies
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    std::sync::Arc::make_mut(&mut shadow.state.operations)
         .company_mut(&company)
         .unwrap()
         .next_flow_seq += 1;
 
     assert!(!std::sync::Arc::ptr_eq(
-        &game.operations,
-        &shadow.operations
+        &game.state.operations,
+        &shadow.state.operations
     ));
     assert_eq!(game.business_state_hash().unwrap(), business_before);
     assert_ne!(shadow.business_state_hash().unwrap(), business_before);
@@ -74,7 +84,8 @@ fn diagnostic_cache_changes_session_hash_but_not_business_hash() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    game.last_retail_order_events
+    game.state
+        .last_retail_order_events
         .push(RetailOrderDiagnosticEvent::Rejected {
             account: AccountId(1),
             code: StockCode("600888".to_owned()),
@@ -91,7 +102,7 @@ fn authoritative_counter_changes_business_hash() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    game.next_order_id += 1;
+    game.state.next_order_id += 1;
 
     assert_ne!(game.business_state_hash().unwrap(), business_before);
     assert_ne!(game.session_state_hash().unwrap(), session_before);
@@ -102,9 +113,9 @@ fn company_operations_hash_cache_is_invalidated_by_authoritative_mutation() {
     let mut game = game();
     let business_before = game.business_state_hash().unwrap();
     assert_eq!(game.business_state_hash().unwrap(), business_before);
-    let current_date = game.civil_clock.current_date();
+    let current_date = game.state.civil_clock.current_date();
 
-    std::sync::Arc::make_mut(&mut game.operations)
+    std::sync::Arc::make_mut(&mut game.state.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -123,7 +134,7 @@ fn retail_projection_cursor_changes_business_hash() {
     let mut game = game();
     let business_before = game.business_state_hash().unwrap();
 
-    game.retail_projection_seen.insert_test_identity(
+    game.state.retail_projection_seen.insert_test_identity(
         7,
         pipeline::ReceiptLocalKey::new(
             pipeline::JournalRank::SealedBatch,
@@ -155,8 +166,8 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     assert_eq!(repeated, first);
     assert_eq!(shadow.business_state_hash().unwrap(), first);
 
-    let current_date = game.civil_clock.current_date();
-    std::sync::Arc::make_mut(&mut shadow.operations)
+    let current_date = game.state.civil_clock.current_date();
+    std::sync::Arc::make_mut(&mut shadow.state.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 200,
@@ -169,7 +180,7 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     // invalidate or replace the authority's cached projection.
     assert_eq!(game.business_state_hash().unwrap(), first);
 
-    std::sync::Arc::make_mut(&mut game.operations)
+    std::sync::Arc::make_mut(&mut game.state.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -196,12 +207,12 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
 #[test]
 fn company_operations_projection_survives_serde_round_trip_without_serializing_the_cache() {
     let game = game();
-    let expected = game.operations.hash_projection().unwrap();
-    let json = serde_json::to_vec(&game.operations).unwrap();
+    let expected = game.state.operations.hash_projection().unwrap();
+    let json = serde_json::to_vec(&game.state.operations).unwrap();
     let restored: crate::company::operations::CompanyOperations =
         serde_json::from_slice(&json).unwrap();
 
-    assert_eq!(restored, *game.operations);
+    assert_eq!(restored, *game.state.operations);
     assert_eq!(restored.hash_projection().unwrap(), expected);
 }
 
@@ -210,6 +221,7 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
     let mut game = game();
     let business_before = game.business_state_hash().unwrap();
     let report = game
+        .state
         .library
         .save()
         .reports
@@ -218,7 +230,7 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
         .reports
         .clone();
 
-    game.closing.record(report).unwrap();
+    game.state.closing.record(report).unwrap();
 
     let business_after = game.business_state_hash().unwrap();
     assert_ne!(business_after, business_before);
@@ -228,10 +240,10 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
 #[test]
 fn closing_projection_clone_mutations_are_isolated_and_serde_stable() {
     let game = game();
-    let mut authority = game.closing.clone();
+    let mut authority = game.state.closing.clone();
     let expected = authority.hash_projection().unwrap();
     let mut cloned = authority.clone();
-    let reports = game.library.save().reports;
+    let reports = game.state.library.save().reports;
     assert!(
         reports.len() >= 2,
         "fixture needs two published report sets"
@@ -265,7 +277,7 @@ fn closing_projection_clone_mutations_are_isolated_and_serde_stable() {
 #[test]
 fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
     let game = game();
-    let mut authority = game.library.clone();
+    let mut authority = game.state.library.clone();
     let warmed = authority.hash_projection();
     assert!(
         !authority.save().reports.is_empty(),
@@ -315,7 +327,7 @@ fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
 fn tick_shadow_commit_preserves_retail_projection_cursor() {
     let mut authority = game();
     let mut shadow = authority.clone_for_tick_shadow().unwrap();
-    shadow.retail_projection_seen.insert_test_identity(
+    shadow.state.retail_projection_seen.insert_test_identity(
         11,
         pipeline::ReceiptLocalKey::new(
             pipeline::JournalRank::SealedBatch,
@@ -332,9 +344,9 @@ fn tick_shadow_commit_preserves_retail_projection_cursor() {
         )
         .unwrap(),
     );
-    let expected = shadow.retail_projection_seen.clone();
+    let expected = shadow.state.retail_projection_seen.clone();
 
     authority.commit_tick_shadow(shadow);
 
-    assert_eq!(authority.retail_projection_seen, expected);
+    assert_eq!(authority.state.retail_projection_seen, expected);
 }

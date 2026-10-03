@@ -13,67 +13,49 @@ impl GameSession {
         for fill in fills {
             #[cfg(feature = "simulation-diagnostics")]
             {
-                let value_before = *self.causal.filled_values.entry(fill.order_id).or_insert(0);
-                self.causal_record(crate::diagnostics::causal::CausalFactKind::Filled {
-                    order: fill.order_id,
-                    account: fill.account,
-                    code: code.clone(),
-                    qty: fill.qty,
-                    value_before,
-                    gross: fill.gross.cents(),
-                });
-                if let Some(value) = value_before.checked_add(fill.gross.cents()) {
-                    self.causal.filled_values.insert(fill.order_id, value);
-                }
+                let time = self.causal_time();
+                self.state.causal.record_continuous_fill(
+                    time,
+                    fill.order_id,
+                    fill.account,
+                    code,
+                    fill.qty,
+                    fill.gross.cents(),
+                );
             }
             let Some(plan) = self
+                .state
                 .parent_orders
                 .get_mut(&fill.account)
                 .and_then(|plans| plans.get_mut(code))
             else {
                 continue;
             };
-            if plan.side != fill.side || plan.active_child_order_id != Some(fill.order_id) {
+            let Some(transition) =
+                plan.record_fill_after_settlement(fill.side, fill.order_id, fill.qty)
+            else {
                 continue;
-            }
-            let remaining_child_qty = plan
-                .active_child_remaining_qty
-                .expect("active parent-order id must carry its remaining quantity")
-                .checked_sub(fill.qty)
-                .expect("a parent-order fill cannot exceed its active child quantity");
-            let pending_event = plan.linked_plan_id.map(|plan_id| {
+            };
+            let pending_event = transition.linked_plan_id.map(|plan_id| {
                 crate::session::plan_execution::PendingPlanEvent::Filled {
                     plan_id,
                     order_id: fill.order_id,
                     qty: fill.qty,
-                    child_complete: remaining_child_qty == 0,
-                    trading_day: u64::from(self.day),
+                    child_complete: transition.child_complete,
+                    trading_day: u64::from(self.state.day),
                 }
             });
-            plan.filled_qty = plan
-                .filled_qty
-                .checked_add(fill.qty)
-                .expect("a parent-order child cannot fill beyond u32 capacity");
-            assert!(
-                plan.filled_qty <= plan.target_qty,
-                "a parent-order child filled beyond its target"
-            );
-            if remaining_child_qty == 0 {
-                plan.active_child_order_id = None;
-                plan.active_child_remaining_qty = None;
-            } else {
-                plan.active_child_remaining_qty = Some(remaining_child_qty);
-            }
-            if plan.filled_qty == plan.target_qty && plan.linked_plan_id.is_none() {
+            if transition.completed_unlinked {
                 completed.push((fill.account, code.clone()));
             }
             if let Some(event) = pending_event {
-                self.pending_plan_events.push(event);
+                self.state.pending_plan_events.push(event);
             }
         }
         for (account, code) in completed {
             let empty = {
                 let plans = self
+                    .state
                     .parent_orders
                     .get_mut(&account)
                     .expect("completed parent-order owner must exist");
@@ -81,7 +63,7 @@ impl GameSession {
                 plans.is_empty()
             };
             if empty {
-                self.parent_orders.remove(&account);
+                self.state.parent_orders.remove(&account);
             }
         }
     }
@@ -96,30 +78,25 @@ impl GameSession {
         qty: u32,
     ) {
         let Some(plan) = self
+            .state
             .parent_orders
             .get_mut(&account)
             .and_then(|plans| plans.get_mut(code))
         else {
             return;
         };
-        if plan.side != side {
+        if !plan.record_submission(side, order_id, qty) {
             return;
         }
-        assert!(
-            plan.active_child_order_id.is_none(),
-            "parent-order accepted a second active child before the first resolved"
-        );
-        plan.active_child_order_id = Some(order_id);
-        plan.active_child_remaining_qty = Some(qty);
         let pending_event = plan.linked_plan_id.map(|plan_id| {
             crate::session::plan_execution::PendingPlanEvent::Accepted {
                 plan_id,
                 order_id,
-                trading_day: u64::from(self.day),
+                trading_day: u64::from(self.state.day),
             }
         });
         if let Some(event) = pending_event {
-            self.pending_plan_events.push(event);
+            self.state.pending_plan_events.push(event);
         }
     }
 
@@ -130,14 +107,12 @@ impl GameSession {
         order_id: OrderId,
     ) {
         if let Some(plan) = self
+            .state
             .parent_orders
             .get_mut(&account)
             .and_then(|plans| plans.get_mut(code))
         {
-            if plan.active_child_order_id == Some(order_id) {
-                plan.active_child_order_id = None;
-                plan.active_child_remaining_qty = None;
-            }
+            plan.clear_matching_child(order_id);
         }
     }
 }

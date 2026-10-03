@@ -6,9 +6,9 @@ use crate::session::pipeline::{
 #[test]
 fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_ledger() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
+    let code = game.state.setup.stocks[0].code.clone();
     place(&mut game, &code, OrderId(41), 100);
-    game.auction_orders.insert(
+    game.state.auction_orders.insert(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(2),
@@ -47,8 +47,9 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
     );
     assert_eq!(game.business_state_hash().unwrap(), before);
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    let ledger = game.envelope_ledger.clone();
-    game.markets
+    let ledger = game.state.envelope_ledger.clone();
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .cancel(OrderId(41))
@@ -56,15 +57,16 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
     place(&mut game, &code, OrderId(41), 200);
 
     assert!(game.hydrate_or_validate_envelope_ledger().is_err());
-    assert_eq!(game.envelope_ledger, ledger);
-    assert_eq!(game.envelope_ledger.next_receipt_index(), 0);
+    assert_eq!(game.state.envelope_ledger, ledger);
+    assert_eq!(game.state.envelope_ledger.next_receipt_index(), 0);
 }
 
 #[test]
 fn hydration_rejects_nominal_fee_drift_without_mutating_the_ledger() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
-    game.markets
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(Order {
@@ -83,7 +85,7 @@ fn hydration_rejects_nominal_fee_drift_without_mutating_the_ledger() {
     let mut audit = projected.audit();
     audit.nominal.commission = audit.nominal.commission.add(Money::from_cents(1)).unwrap();
     audit.charged = audit.nominal;
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             projected.key().clone(),
@@ -93,17 +95,18 @@ fn hydration_rejects_nominal_fee_drift_without_mutating_the_ledger() {
         )],
     )
     .unwrap();
-    let before = game.envelope_ledger.clone();
+    let before = game.state.envelope_ledger.clone();
 
     assert!(game.hydrate_or_validate_envelope_ledger().is_err());
-    assert_eq!(game.envelope_ledger, before);
+    assert_eq!(game.state.envelope_ledger, before);
 }
 
 #[test]
 fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
-    game.markets
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(Order {
@@ -130,7 +133,7 @@ fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
     assert_eq!(valid.charged.commission, Money::from_cents(100));
     assert_eq!(valid.charged.stamp_tax, Money::ZERO);
     assert!(valid.charged.total().unwrap() < valid.nominal.total().unwrap());
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             projected.key().clone(),
@@ -143,7 +146,11 @@ fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
 
     game.hydrate_or_validate_envelope_ledger().unwrap();
     assert_eq!(
-        game.envelope_ledger.get(projected.key()).unwrap().audit(),
+        game.state
+            .envelope_ledger
+            .get(projected.key())
+            .unwrap()
+            .audit(),
         valid
     );
 
@@ -155,7 +162,7 @@ fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
         },
         ..valid
     };
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             projected.key().clone(),
@@ -165,10 +172,10 @@ fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
         )],
     )
     .unwrap();
-    let before = game.envelope_ledger.clone();
+    let before = game.state.envelope_ledger.clone();
 
     assert!(game.hydrate_or_validate_envelope_ledger().is_err());
-    assert_eq!(game.envelope_ledger, before);
+    assert_eq!(game.state.envelope_ledger, before);
 }
 
 #[test]
@@ -177,8 +184,9 @@ fn hydration_preserves_path_dependent_rounding_debt() {
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.commission_min = Money::ZERO;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.setup.stocks[0].code.clone();
-    game.markets
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(Order {
@@ -205,7 +213,7 @@ fn hydration_preserves_path_dependent_rounding_debt() {
     assert_eq!(path_dependent.nominal.commission, Money::from_cents(13));
     assert_eq!(path_dependent.nominal.stamp_tax, Money::from_cents(25));
     assert_eq!(path_dependent.nominal.transfer_fee, Money::from_cents(1));
-    game.envelope_ledger = EnvelopeLedger::new(
+    game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             projected.key().clone(),
@@ -218,7 +226,11 @@ fn hydration_preserves_path_dependent_rounding_debt() {
 
     game.hydrate_or_validate_envelope_ledger().unwrap();
     assert_eq!(
-        game.envelope_ledger.get(projected.key()).unwrap().audit(),
+        game.state
+            .envelope_ledger
+            .get(projected.key())
+            .unwrap()
+            .audit(),
         path_dependent
     );
 }
@@ -226,8 +238,9 @@ fn hydration_preserves_path_dependent_rounding_debt() {
 #[test]
 fn hydration_rejects_partial_seller_when_charged_history_is_missing() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
-    game.markets
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(Order {
@@ -242,11 +255,11 @@ fn hydration_rejects_partial_seller_when_charged_history_is_missing() {
             seq: 54,
         })
         .unwrap();
-    let before = game.envelope_ledger.clone();
+    let before = game.state.envelope_ledger.clone();
 
     let error = game.hydrate_or_validate_envelope_ledger().unwrap_err();
     assert!(error.to_string().contains("charged fee history"));
-    assert_eq!(game.envelope_ledger, before);
+    assert_eq!(game.state.envelope_ledger, before);
 }
 
 fn fixture() -> GameSession {
@@ -254,7 +267,8 @@ fn fixture() -> GameSession {
 }
 
 fn place(game: &mut GameSession, code: &StockCode, id: OrderId, qty: u32) {
-    game.markets
+    game.state
+        .markets
         .get_mut(code)
         .unwrap()
         .place(Order {

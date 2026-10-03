@@ -36,6 +36,7 @@ impl GameSession {
         #[cfg(not(feature = "simulation-diagnostics"))]
         let _ = cause;
         let market = self
+            .state
             .markets
             .get(&code)
             .ok_or(ContinuousCancellationError::UnknownStock)?;
@@ -60,7 +61,7 @@ impl GameSession {
 
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_terminated((account, order_id, order.qty), &code, cause.termination());
-        self.markets.insert(code.clone(), candidate_market);
+        self.state.markets.insert(code.clone(), candidate_market);
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_snapshot(&code);
         self.remove_npc_order_lifecycle(account, &code, order_id);

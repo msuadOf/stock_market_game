@@ -4,7 +4,7 @@ use crate::session::pipeline::ResVec;
 #[test]
 fn continuous_buy_and_sell_projection_carry_exact_resources_and_audit() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
+    let code = game.state.setup.stocks[0].code.clone();
     place(&mut game, &code, OrderFixture::partial_buy());
     place(&mut game, &code, OrderFixture::sell());
 
@@ -17,8 +17,8 @@ fn continuous_buy_and_sell_projection_carry_exact_resources_and_audit() {
 #[test]
 fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audit() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
-    game.auction_orders.insert(
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state.auction_orders.insert(
         code.clone(),
         vec![
             AuctionOrderSnap {
@@ -47,8 +47,8 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
 #[test]
 fn seller_projection_and_v2_reservation_both_exclude_cash_escrow() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
-    game.auction_orders.insert(
+    let code = game.state.setup.stocks[0].code.clone();
+    game.state.auction_orders.insert(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(1),
@@ -73,9 +73,9 @@ fn seller_projection_and_v2_reservation_both_exclude_cash_escrow() {
 #[test]
 fn live_envelope_projection_rejects_duplicate_continuous_and_auction_identity() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
+    let code = game.state.setup.stocks[0].code.clone();
     place(&mut game, &code, OrderFixture::buy(OrderId(99)));
-    game.auction_orders.insert(
+    game.state.auction_orders.insert(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(1),
@@ -85,31 +85,41 @@ fn live_envelope_projection_rejects_duplicate_continuous_and_auction_identity() 
             order_id: 99,
         }],
     );
-    let before = game.envelope_ledger.clone();
+    let before = game.state.envelope_ledger.clone();
     assert!(game.project_live_envelopes().is_err());
     assert!(game.hydrate_or_validate_envelope_ledger().is_err());
-    assert_eq!(game.envelope_ledger, before);
+    assert_eq!(game.state.envelope_ledger, before);
 }
 
 #[test]
 fn nonempty_hydration_is_idempotent_and_preserves_non_ledger_authority() {
     let mut game = fixture();
-    let code = game.setup.stocks[0].code.clone();
+    let code = game.state.setup.stocks[0].code.clone();
     place(&mut game, &code, OrderFixture::buy(OrderId(31)));
-    let orders = game.markets[&code].resting_orders();
-    let cash = game.accounts[&AccountId(1)].cash;
-    let counters = (game.tick, game.day, game.seq, game.next_receipt_base);
+    let orders = game.state.markets[&code].resting_orders();
+    let cash = game.state.accounts[&AccountId(1)].cash();
+    let counters = (
+        game.state.tick,
+        game.state.day,
+        game.state.seq,
+        game.state.next_receipt_base,
+    );
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    let ledger = game.envelope_ledger.clone();
+    let ledger = game.state.envelope_ledger.clone();
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    assert_eq!(game.envelope_ledger, ledger);
-    let current_orders = game.markets[&code].resting_orders();
+    assert_eq!(game.state.envelope_ledger, ledger);
+    let current_orders = game.state.markets[&code].resting_orders();
     assert_eq!(current_orders.len(), orders.len());
     assert_eq!(current_orders[0].id, orders[0].id);
     assert_eq!(current_orders[0].qty, orders[0].qty);
-    assert_eq!(game.accounts[&AccountId(1)].cash, cash);
+    assert_eq!(game.state.accounts[&AccountId(1)].cash(), cash);
     assert_eq!(
-        (game.tick, game.day, game.seq, game.next_receipt_base),
+        (
+            game.state.tick,
+            game.state.day,
+            game.state.seq,
+            game.state.next_receipt_base
+        ),
         counters
     );
 }
@@ -158,7 +168,8 @@ impl OrderFixture {
     }
 }
 fn place(game: &mut GameSession, code: &StockCode, fixture: OrderFixture) {
-    game.markets
+    game.state
+        .markets
         .get_mut(code)
         .unwrap()
         .place(Order {

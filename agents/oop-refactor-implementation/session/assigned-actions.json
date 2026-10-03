@@ -1,0 +1,1351 @@
+[
+  {
+    "id": "engine-session-01-A01",
+    "title": "替换 GameSession 可转移字段的私有 CommittableSessionState",
+    "group": "session",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session.rs"
+    ],
+    "details": {
+      "id": "engine-session-01-A01",
+      "target": "替换 GameSession 可转移字段的私有 CommittableSessionState",
+      "status": "proposed",
+      "owned_state": [
+        "setup",
+        "rng",
+        "seed",
+        "markets",
+        "accounts",
+        "price_history",
+        "market_minute_closes",
+        "daily_candles",
+        "active_daily_candles",
+        "auction_orders",
+        "pending_player",
+        "pending_npc",
+        "npc_attention",
+        "retail_experience",
+        "parent_orders",
+        "pending_plan_events",
+        "npc_order_lifecycles",
+        "last_retail_decisions",
+        "last_retail_order_events",
+        "npc_decision_traces（功能开关）",
+        "causal（功能开关）",
+        "attention_queue",
+        "company_registry",
+        "operations",
+        "closing",
+        "library",
+        "ops_wiring",
+        "disclosures",
+        "plans",
+        "urgency_policy",
+        "information",
+        "belief_books",
+        "watchlists",
+        "price_memories",
+        "envelope_ledger",
+        "retail_projection_seen",
+        "next_receipt_base",
+        "next_order_id",
+        "tick",
+        "day",
+        "seq",
+        "civil_clock"
+      ],
+      "moves": [
+        {
+          "from": "GameSession 可转移字段",
+          "to": "GameSession.state: CommittableSessionState（唯一实例）",
+          "reason": "同一组字段在 clone_for_tick_shadow 中手动解构并克隆，在 commit_tick_shadow 中逐项赋值；以一个生命周期 owner 取代这份重复，而非增加第二份副本。"
+        },
+        {
+          "from": "GameSession::clone_for_tick_shadow 字段构造",
+          "to": "CommittableSessionState::clone_for_shadow",
+          "reason": "把经过校验的 AccountBook 克隆和共享容器克隆放在准确的提交字段集合旁，由同一对象负责。"
+        },
+        {
+          "from": "GameSession::commit_tick_shadow 字段赋值",
+          "to": "CommittableSessionState::commit_from",
+          "reason": "集中安装过程，同时保留 accounts/npc_attention/retail_experience 的旧页面并行释放。"
+        }
+      ],
+      "api_boundary": "引擎内部的私有组合，不通过 Deref/DerefMut 泄露访问权，不新增公共 API 或存档 DTO。GameSession 保留 poison 和 cfg(test) injected_failure/post_shadow_failure。候选包装器按现行行为重置这些字段；权威对象提交时保留它们。转移的诊断仍为非权威信息，但须随候选移动以保持现有 rollback 对称性。所有写入，包括 tick 外的 pending_player 受理和 civil_clock_mut，都委托给唯一状态实例；不新增提交限制。GameSession 仍是会话 facade，TickShadow 仍持有 Option<GameSession>，TickShadowPlan 仍持有 outbox。",
+      "composition": "Rust 私有结构体及实现，以值形式组合在 GameSession 内；不使用共享可变指针、trait 层次或额外的 SessionState 权威副本。如采用 SessionCandleBook（ES02-A03），它将在此容器内替换原有两个 map，并保留对外投影。",
+      "callers_and_contracts": [
+        "session/pipeline/shadow.rs::TickShadow::capture 调用 GameSession::clone_for_tick_shadow；execute_typed/take_session/restore_success 仍传递 GameSession candidate。",
+        "session/pipeline/mod.rs 的 TickShadowPlan 与提交 phase 继续持有 candidate 及事件/键/回执输出；session.rs::commit_tick_shadow 仍是唯一的市场 candidate 适配器。",
+        "session.rs::new_with_company_event_multiplier/restore/save_snapshot_projection/save_projection 将直接字段访问迁移到 state，保留当前 SaveSlot/SaveRuntimeV2 结构。",
+        "session 子模块 pipeline/{continuous_tick_finalizer,auction_day_end,settlement,npc_state_projection}、persistence/v2、decision_chain、plan_execution、snapshot/views/hash/disclosures/company_operations 将私有 self.field/session.field 迁移为状态字段或借用子视图；不提供公共可变状态访问器。",
+        "clone_for_plan_roots 当前创建一个市场/历史/订单/个人映射为空的部分 GameSession。另行以 ES03-A01 的窄 root 输入替换；绝不能为每个账户 root 调用 clone_for_shadow。"
+      ],
+      "steps": [
+        "以代表性的 COW 和 phase 失败测试固定现行克隆/提交行为，包括功能开关控制的诊断以及权威对象的 poison 状态/测试钩子。",
+        "将列出的字段移入唯一私有值，同时迁移 GameSession 构造器、恢复、存档/哈希/访问器和子模块直接访问；转发方法维持公共 GameSession 契约。",
+        "实现 state.clone_for_shadow，先调用 AccountBook::clone_for_shadow，并显式映射带相同 context 的 StepFatal；其余状态沿用现有克隆，不进行随机数抽样。",
+        "实现 state.commit_from，保留 AccountBook 以及分页注意力/散户状态的 replace_and_drop_parallel；其余字段保留现行替换/释放行为。提交不得覆盖 poison 或测试失败钩子。",
+        "保留 TickShadow/TickShadowPlan 包装器与 outbox。随后采用 ES03 的窄计划 root 输入，独立移除部分会话构造器；完成迁移前，显式保留其现有空字段投影。",
+        "实施时检查所有原 GameSession 字段引用，包括 cfg(test)/simulation-diagnostics 及自然日/tick 外路径；不迁移序列化格式或更改事务政策。"
+      ],
+      "validation": [
+        "现有 session/hash_contract_tests.rs 的 COW/恢复/哈希测试，以及 account_book.rs 的 shadow_detaches_only_a_changed_group_and_account_page；现有流水线事务失败/提交测试仍是基准。为全部可转移字段、poison/测试钩子排除、诊断启用/关闭和页面释放调用补充字段对称性刻画测试。未运行测试。",
+        "验证已入队的玩家意图在 tick 失败后仍保留；独立的 end_civil_day checkpoint 仍覆盖完整可转移集合；完整 SaveSlot/runtime-v2 投影不变。"
+      ],
+      "dependencies": [
+        "AccountBook::clone_for_shadow/replace_and_drop_parallel",
+        "TickShadow/TickShadowPlan",
+        "ES03-A01 只读 root 输入",
+        "ES02-A03 可选的 SessionCandleBook"
+      ]
+    },
+    "batch": "engine-session-01",
+    "extensions": []
+  },
+  {
+    "id": "engine-session-02-A03",
+    "title": "DailyCandleHistory 加上负责活动/历史 maps 的窄职责 SessionCandleBook",
+    "group": "session",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/candles.rs"
+    ],
+    "details": {
+      "id": "engine-session-02-A03",
+      "target": "DailyCandleHistory 加上负责活动/历史 maps 的窄职责 SessionCandleBook",
+      "status": "proposed",
+      "owned_state": [
+        "完整日 K 历史",
+        "成交样本计数和 SMA_LONG_WINDOW 近期成交缓存",
+        "等待日终提交的每股活动 OHLC 数据"
+      ],
+      "moves": [
+        {
+          "from": "GameSession::active_daily_candles + update_active_daily_candle",
+          "to": "SessionCandleBook::record_trade_or_mark",
+          "reason": "将 OHLC 数据和零成交量占位替换保留在同一个 candle owner 中。"
+        },
+        {
+          "from": "GameSession::commit_active_daily_candles",
+          "to": "SessionCandleBook::commit_active",
+          "reason": "将活动 K 线转为已完成 K 线的追加 boundary 与历史一同归属。"
+        }
+      ],
+      "api_boundary": " engine 私有值对象；暴露只读迭代与窄职责记录/提交方法。保留带检查的成交量/统计运算和现有 candle 数组 serialization 形状。仅改变 engine 内部 owner：snapshot 与 SaveSlot 必须继续投影名为 daily_candles 和 active_daily_candles 的两个独立字段，保留其现有形状及恢复/哈希/校验接线；不需要也不建议存档迁移。 candidate clone 必须共享旧历史块。",
+      "composition": "在 GameSession 内组合；不要将纯 RNG /量化辅助函数改为对象。",
+      "callers_and_contracts": [
+        "pipeline::continuous_tick_finalizer 记录连续竞价成交",
+        "pipeline::auction_day_end 记录集合竞价成交/价格标记并提交已完成 candles ",
+        "session.rs 推导已完成交易日的行为收盘价",
+        "minimal_snapshot.rs 与 snapshot/SaveSlot 校验和恢复将 daily_candles 与 active_daily_candles 保留为独立字段",
+        "ADR-0011 确定市场分钟观察输入；ADR-0018 要求完整历史，不允许截断"
+      ],
+      "steps": [
+        "先提取活动 candle map，同时保留当前 session candidate/提交 boundary。",
+        "保留首笔真实集合竞价/连续竞价成交替换零成交量昨收占位的行为。",
+        "保留所有已完成日 K 的序列化；不要把 PRESET_HISTORY_DAYS=360 当作保留上限。",
+        "保持 snapshot/SaveSlot 投影、字段名称和独立形状、活动 candle 恢复、哈希与校验连接现有双字段存档契约；不迁移。"
+      ],
+      "validation": [
+        "保留现有 candles.rs 的 candidate_append_shares_old_days_and_preserves_full_json_history 及 session/pipeline 的 candle 用例；增加无成交日、首笔集合竞价成交、后续成交和溢出 boundary 覆盖。未运行。",
+        "验证 snapshot/SaveSlot 仍输出并恢复独立的 daily_candles 与 active_daily_candles 字段，且无需迁移。"
+      ],
+      "dependencies": [
+        "AppendOnlyHistory",
+        "DailyTradeStats",
+        "GameSession tick candidate 与日终提交",
+        "snapshot/SaveSlot 投影与恢复契约"
+      ]
+    },
+    "batch": "engine-session-02",
+    "extensions": []
+  },
+  {
+    "id": "engine-session-03-A01",
+    "title": "DecisionChainObservation + RootReadContext（不可变共享 root 输入）+ InstitutionDecisionRoot（单账户暂存工作）",
+    "group": "session",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/decision_chain.rs"
+    ],
+    "details": {
+      "id": "engine-session-03-A01",
+      "target": "DecisionChainObservation + RootReadContext（不可变共享 root 输入）+ InstitutionDecisionRoot（单账户暂存工作）",
+      "status": "proposed",
+      "owned_state": [
+        "DecisionChainObservation 持有已捕获的 MarketView、逐股票 PricePathObservation 和 TechnicalObservation map、CivilInstant 以及 P1 观察时刻的曝光股票集合；root 批次期间这些值不可变。",
+        "InstitutionDecisionRoot 仅在观察期间持有一个账户标识及从该账户取出的 PlanPersonalState，以及观察/决策 root（CandidateAssessment 值）和 root 局部诊断事实/报告/candidate。它只能追加既有 typed 的 Lifecycle 和 AccountExecution 操作增项；从不持有或输出 PlanLifecycleAction。安装时将个人状态及 typed operation additions 返回私有 tick candidate。",
+        "两个对象都不持有 GameSession 权威数据、订单标识、序号游标、资产余额或持久状态。不使用共享可变 root 集合，不序列化这些临时协调器。",
+        "RootReadContext 替换 clone_for_plan_roots 产生的部分 Arc<GameSession>：共享 COW AccountBook 输入、发行人注册表/经营/公开资料库/PlanBook、当前市场分钟/交易日/自然日时刻及不可变紧迫度/策略 lookup 值。排除市场/订单队列/历史/个人 map 和全部可写会话访问。"
+      ],
+      "moves": [
+        {
+          "from": "capture_decision_chain_roots_with_market / capture_decision_chain_roots / capture_ready_decision_chain_roots",
+          "to": "DecisionChainObservation::capture_for_roots 和 GameSession 边界适配器",
+          "reason": "一次性捕获并校验唯一不可变观察 context，同时将调度/资格筛选与权威数据访问保留在 GameSession 边界。"
+        },
+        {
+          "from": "build_chain_technical_observations / chain_observation_instant / chain_exposed_stocks",
+          "to": "DecisionChainObservation 构造器/辅助函数",
+          "reason": "这些方法共同构造各 root 使用的 context；按股票并行的技术计算仍是纯计算，并以 StockCode 为规范键。"
+        },
+        {
+          "from": "run_chain_for_account",
+          "to": "InstitutionDecisionRoot::observe",
+          "reason": "此操作使用一个账户的隔离可变个人状态及不可变捕获观察，产生逐账户观察/决策 root 和诊断，以及既有 typed operation additions；生命周期动作收集属于后续协调器阶段。"
+        },
+        {
+          "from": "PlanRootDiagnostics 字段和 record_plan_root_diagnostics",
+          "to": "InstitutionDecisionRoot 结果，随后由既有 GameSession 提交诊断",
+          "reason": "诊断随 root 工作生成，但权威诊断记录器修改仍在 candidate 成功安装后由协调器执行。"
+        },
+        {
+          "from": "GameSession::clone_for_plan_roots 和 run_chain_for_account 的自身读取依赖",
+          "to": "RootReadContext::capture + InstitutionDecisionRoot::observe 显式 RootReadContext",
+          "reason": "结构性窄输入移除未使用 map 被刻意设为空的部分 GameSession；root 仅持有隔离个人工作，并读取共享封存事实。"
+        }
+      ],
+      "api_boundary": "捕获时校验 P1 DecisionSnapshot/账户集合，并返回 root 工作使用的不可变 DecisionChainObservation context。InstitutionDecisionRoot::observe 接收不可变会话/公司/市场/计划视图及独占账户局部 PlanPersonalState；返回观察/决策 root（CandidateAssessment 值）、诊断，以及仅限既有 typed operation additions，例如 Lifecycle assessment 和 AccountExecution。不得生成、保留或决定 PlanLifecycleAction。adaptive coordinator 收到某账户/证券代码 continuation 所需的全部 typed route outcome 后，基于当前私有 candidate 的 PlanBook/账户/市场事实重新收集生命周期动作，并立即委托 GameSession candidate 适配器应用。root 不能调用 router、分配 OrderId、修改权威市场/账户/计划、发布事件或持久化。捕获错误保持显式；不变量违反不得转换为兜底观察。",
+      "composition": "Rust 结构体及实现配合借用/所有权；不使用继承或 trait 层次。DecisionChainObservation 是不可变共享输入；InstitutionDecisionRoot 生命周期短且仅属于单账户。仅按现行调用方调度，在独立股票观察和账户 root 外围保留 Rayon。复用 PlanPersonalState 与 PlanChainOperationBatch，不另造并行状态容器。",
+      "callers_and_contracts": [
+        "packages/engine/src/session/pipeline/adaptive_plan_chain.rs：通过 AdaptivePlanChain 协调器捕获 root；保留实际入口受理及账户局部冲突顺序。",
+        "packages/engine/src/session/pipeline/ready_ingress.rs：capture_ready_decision_chain_roots 使用实际观察/唤醒的账户和活动计划复核资格。",
+        "packages/engine/src/session/pipeline/npc_tick_preparation.rs：基于 DecisionSnapshot 捕获 root；保留 P0/P1 观察时钟检查及 P0 后资源执行截止边界，不改变当前代码选定的决策链观察契约。",
+        "packages/engine/src/session/plan_chain_candidates.rs：run_chain_for_account 结果暂存，个人状态重新安装到私有 candidate，然后自适应 root 向 P3/P4 交出执行权；观察时不得路由。",
+        "packages/engine/src/session/plan_chain_candidates/adaptive.rs：通过 apply_plan_lifecycle_actions 消费 PlanLifecycleAction，并且仅从 typed route outcome 恢复执行。保留依据实际已受理事实形成的依赖顺序、逐股票受理顺序及同账户资源串行化。",
+        "ADR-0017 和 ADR-0018：保留 P9 作为 tick 唯一权威提交点；失败时丢弃私有 shadow/outbox 及所有部分暂存的链变化。不得重新引入非玩家角色/玩家/计划来源等级作为优先级；不得排序生成受理次序。",
+        "ADR-0025：每日持久化 candidate 语义保持独立；此临时 root 绝不能成为存档快照或触发持久化。"
+      ],
+      "steps": [
+        "先围绕观察 context 冻结补充行为测试：tick/分钟/phase 不匹配为致命错误；即使股票任务完成次序不同，所有 root 也看到同一个不可变市场/路径/技术/曝光 context。",
+        "引入 DecisionChainObservation，作为当前捕获适配器一次性组装的独立不可变输入；初期保留旧 GameSession 方法作为转发包装器，以维持调用点。",
+        "按小型语义组将 run_chain_for_account 主体移至 InstitutionDecisionRoot::observe：私有权益/持仓观察、注意力/发现、信息获取、信念原因/经历反馈、candidate assessment/决策 root 生成、typed 的 Lifecycle/AccountExecution 操作增项、关注列表修剪。root 观察不得收集或返回 PlanLifecycleAction。",
+        "将 PlanPersonalState 安装、typed route outcome 接收、continuation 资格、从当前私有 candidate 重收集生命周期动作、动作应用、candidate 调度及诊断写入保留在现有协调器/适配器；验证失败仍原子丢弃 candidate。",
+        "调用点迁移后，只有不存在剩余调用点时才移除包装器；绝不能将生命周期动作收集、报价生成或路由处理合并进 root 观察，因为生命周期/报价依赖所需 typed 反馈及当前 candidate 计划/资源事实。",
+        "将 PlanChainOperationBatch 的 AccountSource::InFlight 快照和 worker run_chain_for_account 调用从 Arc<GameSession> 迁移至 Arc<RootReadContext>；冻结市场/路径/技术仍保留在 DecisionChainObservation。通过显式借用事实实现 assessment/紧迫度/profile 查询，生命周期/报价应用仍在当前 candidate 执行。root API 不得接收可变 GameSession。"
+      ],
+      "validation": [
+        "现有局部测试：plan_root_owns_its_personal_state_until_the_private_candidate_installs_it；live_plan_without_position_or_belief_still_enters_root_observation；decision_chain_generates_a_candidate_without_routing_it；generation_preserves_pending_plan_facts_when_a_child_fill_is_waiting。",
+        "现有时钟和有界工作检查：observation_clock_maps_session_boundaries_and_compressed_days；decision_observations_include_lunch_without_advancing_market_minutes；technical_observation_uses_bounded_recent_samples_with_full_valid_count。",
+        "现有事务集成证据：packages/engine/src/session/pipeline/* 自适应 root 测试及提交/P9 失败测试应继续断言成功提交前无权威状态修改、无部分事件泄漏、失败时无计数器/RNG 漂移。",
+        "增加 context 共享和 root 执行顺序扰动测试，仅比较相同已受理观察事实下的逐账户决策；不要对无关且并发完成的实体断言全局字节一致。本次审计未运行测试。",
+        "保留 generation_preserves_pending_plan_facts_when_a_child_fill_is_waiting 和 filled_child_cancel_failure_reconsiders_the_live_plan：只有所需 typed route outcome 使该账户/证券代码 continuation 就绪后，才可从当前私有 candidate 状态重新收集生命周期动作。",
+        "增加类型层面的禁止可变会话/root router 契约，以及针对全部原自身读取的代表性断言（自身持仓/现金、公司类别/股份、公开内容、交易时钟/profile）；保留 panic 与 typed 错误的区别。未运行测试。"
+      ],
+      "dependencies": [
+        "packages/engine/src/session/decision_chain/personal_state.rs 中的 PlanPersonalState 仍是账户局部可移动可变状态的唯一 owner。",
+        "packages/engine/src/session/plan_chain_candidates.rs 中的 PlanChainOperationBatch 和 FrozenPlanChainObservation 仍是协调器暂存操作/依赖边界；adaptive coordinator 负责路由 continuation 及生命周期重收集时序。",
+        "DecisionSnapshot 和 P0/P1 流水线捕获仍是上游前置条件；替换其调用形式前先完成这些工作。",
+        "公司/信息/观察类型仍是借用只读协作者；不更改 A 股规则或新增默认政策。"
+      ]
+    },
+    "batch": "engine-session-03",
+    "extensions": []
+  },
+  {
+    "id": "engine-strategy-01-A01",
+    "title": "TradingPlan 私有生命周期字段与 receiver transitions",
+    "group": "session",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/plans/state.rs"
+    ],
+    "details": {
+      "id": "engine-strategy-01-A01",
+      "target": "TradingPlan 私有生命周期字段与 receiver transitions",
+      "status": "proposed",
+      "owned_state": [
+        "plan_id",
+        "account",
+        "code",
+        "direction",
+        "target",
+        "filled_qty",
+        "opinion",
+        "confidence_bp",
+        "urgency",
+        "status",
+        "version",
+        "last_revision",
+        "last_resume",
+        "created_trading_day",
+        "horizon_trading_days",
+        "review",
+        "active_child_order_id",
+        "last_event_trading_day"
+      ],
+      "moves": [
+        {
+          "from": "TradingPlan 公有字段",
+          "to": "plans 所有权模块中的私有字段及只读 accessor",
+          "reason": "当前调用方可绕过 owner 直接修改标识、状态、成交与复核事实；私有化集中写权限且不复制数据。"
+        },
+        {
+          "from": "revision::{apply_revision,pause,resume,expire,end_of_trading_day}",
+          "to": "TradingPlan::{apply_revision,pause,resume,expire,end_of_trading_day}",
+          "reason": "全部方法仅使用显式事件与策略参数修改本计划；它们已与计划 receiver methods 共存于 revision.rs。"
+        },
+        {
+          "from": "PlanBook::record_resource_review 与 record_review 的字段赋值",
+          "to": "PlanBook 按 ID 查询后调用 TradingPlan::{record_resource_review,record_review}",
+          "reason": "PlanBook 持有集合标识和索引，单个计划持有复核事实；保留现有检查与赋值顺序。"
+        }
+      ],
+      "api_boundary": "Rust 字段可见性属于 source API 变化，须显式迁移仓内读取方、结构体字面量与测试；序列化的 TradingPlan/PlanBook 字段名及当前 Deserialize 接受范围保持不变。在 state/revision 兄弟模块间机械迁移时优先采用 pub(in crate::plans)，然后将对外字段保持私有，并提供范围有限的只读 getter。不提供 generic public setter 或可变复核借用。PlanOpen/PlanRevision/配置和持久化快照仍是公有数据输入。该封装不保证全部恢复不变量，不修复 D02 溢出，也不使当前单事件错误具有原子性。",
+      "composition": "使用现有 TradingPlan 结构体及实现，不新增 wrapper、继承或有状态服务。采用只读计划 getter或不可变诊断、复核投影；纯规则 classify_revision 继续独立。",
+      "callers_and_contracts": [
+        "plans/mod.rs::PlanBook::{from_parts,create,plan,active_plan,apply_to_plan,apply_active_events_atomically}：索引和不变量读取改用 getter，写入改用 receiver transitions；保留暂存与直接应用的行为差异。",
+        "plans/revision.rs 含现有 receiver methods 及待迁移的五个 free transition，保留修改与错误顺序。",
+        "session/decision_chain.rs 的生命周期收集当前克隆 reviewed_plan，随后仅为计算紧迫度写入 direction/confidence：替换为返回临时不可变值或副本的 TradingPlan::review_preview(direction,confidence)，或显式紧迫度输入结构体；不得更新存储的计划或静默创建修订事件。",
+        "session 的 decision_chain/quote/urgency/plan_execution/{actions,interpreter,routing,synchronization} 及持久化、hash、协议事实读取计划：迁移为 getter，保留 account/code/version/子单标识。",
+        "packages/engine/tests/plans.rs 在第 891 行直接修改克隆的终态计划 fixture；通过 serde 值 fixture 重建编辑后的保存输入，不开放生产 raw setter。decision_chain.rs 的 cfg(test) 内部母单修改指向 ParentOrderPlan，而非 TradingPlan。",
+        "使用 TradingPlan 结构体字面量或字段读取的公开 Rust 消费方须在实施时迁移；这是明确的源码不兼容变化，不是 wire 迁移。不声称已穷尽审计未知外部消费方。"
+      ],
+      "steps": [
+        "通过现有计划测试刻画当前 Serialize/Deserialize 与计划事件语义；通过 DTO 或 serde fixture 保留编辑非法存档的能力。",
+        "新增不可变 getter，保持字段类型与借用生命周期；将实际计划读取方及临时 reviewed_plan 克隆写入替换为保持取值的只读复核预览。",
+        "把五个修订 free function 和两处复核写入改为 receiver methods，保证 guard、写入顺序与错误行为一致；更新 PlanBook::apply_to_plan 与复核查询的委托。",
+        "全部调用方迁移后禁止外层访问字段；兄弟模块实现保留合适的模块内可见性，若需完全遵循 Rust 私有性则将具体表示移入 plans 父模块。不实现 DerefMut 或 generic setter。",
+        "保留派生实现和序列化名称、转移后的 PlanBook 活动索引更新与暂存批次提交。D02 和直接应用修订时的溢出行为作为独立任务；本次重构不修复受检算术。"
+      ],
+      "validation": [
+        "现有 plans/mod.rs::atomic_event_tests::invalid_later_plan_event_does_not_commit_an_earlier_plan_transition 与 active_index_ignores_terminal_history_and_survives_a_round_trip，以及 packages/engine/tests/plans.rs 事件或恢复 fixture 仍是验证锚点。酌情新增只读预览等价性、serde 往返行为不变及 compile-fail 或 public API 私有性检查。未运行测试。",
+        "实施时在所有功能开关和测试构建中检查源码调用方迁移，同时保证直接应用与原子批次在错误时仍有可观测的差异。"
+      ],
+      "dependencies": [
+        "PlanBook 集合 owner",
+        "plans/revision.rs/validation.rs",
+        "会话决策链的临时复核计算",
+        "保存与 Deserialize DTO 契约不变"
+      ]
+    },
+    "batch": "engine-strategy-01",
+    "extensions": []
+  },
+  {
+    "id": "engine-strategy-03-A01",
+    "title": "ZiNoiseStrategy",
+    "group": "session",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/strategy/zi_noise.rs"
+    ],
+    "details": {
+      "id": "engine-strategy-03-A01",
+      "target": "ZiNoiseStrategy",
+      "status": "proposed",
+      "owned_state": [
+        "所有既有策略参数与身份仍由这一个逐账户策略实例拥有；不引入共享群体、投资者身份、投资组合、现金或经历存储。",
+        "保持 serde 字段名与精确浮点表示、构造默认值、校验、StrategyState roundtrip 及策略族/档案行为。"
+      ],
+      "moves": [
+        {
+          "from": "Strategy::decide_with_behavior、Strategy::decide_with_experience 与 Strategy::decide 中三份重复的 StrategyData::retail(...) 及阈值/步幅/概率字段赋值",
+          "to": "ZiNoiseStrategy::strategy_data（返回 StrategyData 的私有方法）",
+          "reason": "转换只读取实例本人的参数，并在三个入口完全相同地重复；将投影作为 owner 的方法可消除漂移风险，同时不把纯 retail 算法变成有状态对象。"
+        }
+      ],
+      "api_boundary": "保持构造函数与 Strategy/ProductionStrategy 的公共或 trait 边界不变。helper 私有，仅返回临时 StrategyData 值；行情与自身视图保持不可变输入，调用方拥有的 RNG 继续注入，结果/错误保持现有行为。不单独持久化 StrategyData，也不通过共享档案暴露账户私有观察。",
+      "composition": "保留实现现有窄 Strategy trait 的具体 ZiNoiseStrategy 结构体，并与纯 StrategyData/retail 和行为计算 kernel 组合。Rust 结构体及 impl 已足够；没有理由增加继承、装箱共享可变状态或公共 NPC 对象。",
+      "callers_and_contracts": [
+        "StrategyFactory::build_for_market_day_with_ordinal 为每个 AccountKind::Retail 构造一个实例，并逐个采样其风格、阈值、订单数量和注意力概率（strategy/factory.rs）。",
+        "StrategyState::ZiNoise 保存/恢复具体可序列化实例（strategy/state.rs）；tests/strategy_state.rs 验证参数与 JSON 往返并拒绝非法恢复值。",
+        "strategy/data.rs::decide_data 与 strategy/retail.rs::decide_retail 是无状态决策 kernel；behavior::decide_retail_position(_with_experience) 从会话决策路径接收账户本人的观察。",
+        "A 股买入意图数量继续为整手；卖出使用本人 sellable_qty，并允许既有零股余额一次性卖出辅助逻辑；买入可负担数量包含配置费用并按申报限价计算。当日买入股份不得绕过 T+1。"
+      ],
+      "steps": [
+        "新增私有实例投影方法，从现有完整字段集合填充 StrategyData::retail，包括 position_step_bp 和 base_observation_probability。",
+        "将三份相同内联投影替换为调用 helper，保持决策函数选择及复核/仓位决策输出不变。",
+        "保留 retail_position_decision_to_intents 为纯自由函数，因为它转换输入决策与快照而不拥有生命周期；不把 decide_retail 移进策略对象。",
+        "复核序列化状态形状与调用方，确保没有删除、重命名、跨账户共享任何字段，也没有使其依赖其他 NPC 的信息。"
+      ],
+      "validation": [
+        "现有 packages/engine/tests/strategy.rs 用例：zi_noise_arrival_rate_zero_produces_nothing、zi_noise_arrival_rate_one_acts_on_some_stock、noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices、active_noise_buy_checks_cash_at_its_submitted_limit_including_fees、retail_does_not_emit_an_unfunded_buy_intent；保留当前 fixture 与断言。",
+        "现有 packages/engine/tests/strategy_state.rs：strategy_state_round_trip_preserves_concrete_parameters 与 edited_position_step_boundaries_are_validated_before_strategy_restore；保留持久化和编辑存档边界。",
+        "现有 packages/engine/tests/behavior.rs 覆盖个人经历/仓位决策；保留个人观察与策略参数的分离。",
+        "若引入 helper，新增/调整一个定向行为断言，验证两个行为入口及基础 decide 入口投影的 StrategyData 都携带每个阈值、步幅及观察概率。本次审计没有运行测试。"
+      ],
+      "dependencies": [
+        "strategy/data.rs 与 strategy/retail.rs 的 StrategyData 和 decide_retail 保持纯计算边界。",
+        "行为观察与 retail 经历状态继续归会话/账户范围；不改变会话决策链所有权。",
+        "strategy/state.rs 的 StrategyState 序列化契约必须保持当前存档格式的字节/字段兼容。"
+      ]
+    },
+    "batch": "engine-strategy-03",
+    "extensions": []
+  },
+  {
+    "id": "session-N01",
+    "title": "ParentOrderPlan 聚合真实 child 转换与续发判断",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/src/session/execution.rs",
+      "packages/engine/src/session/execution/orders.rs",
+      "packages/engine/src/session/execution/records.rs",
+      "packages/engine/src/session/plan_execution/routing.rs",
+      "packages/engine/src/session/plan_execution/actions.rs",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "packages/engine/src/session.rs",
+      "packages/engine/src/session/causal.rs",
+      "packages/engine/src/session/decision_chain.rs",
+      "packages/engine/src/session/decision_chain/quote.rs",
+      "packages/engine/src/session/hash.rs",
+      "packages/engine/src/session/persistence.rs",
+      "packages/engine/src/session/plan_execution.rs",
+      "packages/engine/src/session/pipeline/npc_state_projection.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs"
+    ],
+    "objects": [
+      "ParentOrderPlan"
+    ],
+    "report_anchor": "session-n01",
+    "group": "session",
+    "details_markdown": "**分类：新增。** 原 `engine-session-04` 对 execution.rs/orders.rs/records.rs 均记 retain，明确要求 DTO 保持纯数据，并把逐个母单字段写入留在 GameSession。其保留边界 A08/A09/A11 是文件编号，不是 actions 数组中的重构动作。原 TradingPlan 动作操作的是另一个 receiver；只把它私有化不能覆盖 ParentOrderPlan 的双 Option、成交进度和续发计算。\n\n当前对象是 `GameSession.parent_orders[account][code]` 内的 `ParentOrderPlan`；它已有 `remaining_qty`，但 target/fill、child identity/remaining、报价和期限的关联操作位于多个 GameSession 方法以及集合竞价私有投影中。以单个 ParentOrderPlan 为 receiver 增强组合，无须增加第二个 parent map 或“执行管理器”。\n\n**可聚合字段与方法。** 保留同一份 `code/side/target_qty/filled_qty/child_qty/active_child_order_id/active_child_remaining_qty/linked_plan_id/limit_price/expires_market_minute` 事实；把局部受理关联、匹配订单的取消清除、真实成交推进、同向 limit 修订与续发判断归入 `impl ParentOrderPlan`。child 的两字段应通过同一个受控写入口同时更新；可给读者提供窄 getter，收紧生产写口。不要为了字段私有化增加一份运行时 DTO 或改变 serde/ts-rs 形状。存档 `SaveParentOrderPlan` 仍保存既有最小事实，active child 剩余数量仍从真实 live order 重建。\n\n拟议方法包括 `record_submission`、`record_fill_after_settlement`、`clear_matching_child`、保留 checked 错误契约的竞价局部转换、`revise_same_side_limit`、`desired_child_intent(now, phase, lot_size, working)`；名称只是候选。checked 竞价转换与连续路径的 assert/expect 契约必须显式区分，不能用统一预校验悄悄改变拒绝集合、局部写入顺序或失败时点。\n\n**真实调用方及边界。**\n\n- `pipeline/npc_state_projection.rs::project_npc_state_in_place` 调用 `materialize_parent_order_intents`。该适配器保持 intent 分类、符号报价透传、同账户跨股票请求处理、parent map 插入/移除及 NPC lifecycle 认领；只有逐个 parent 的报价修订与续发计算迁给 receiver。\n- `pipeline/adaptive_plan_chain.rs::project_round/project_auction_round` 在 typed 受理之后调用 `record_parent_order_submission`，`project_receipt` 在真实 receipt 后调用 fill/cancel。保留现有验证与 consumed identity，不能在方法迁移中新增、重排或合并消费事实。\n- `plan_execution/routing.rs::install_plan_parent` 按已转换的 TradingPlan 和实际 child spec 构造同一个 ParentOrderPlan；`actions.rs::materialize_plan_progress` 在真实 adoption 校验后安装。PlanBook、TradingPlan 的跨日目标与生命周期继续由原 owner 持有。\n- `pipeline/auction_day_end.rs::apply_auction_lifecycle_projection` 直接写 accepted child（约 1845）、成交进度/child（约 1974）以及 `clear_parent_child`（约 2153）；这一条执行路径必须共同迁移。保留其临时 parent map 和 pending 集合全批成功后安装的顺序。\n- `continuous_cancellation.rs` 与 `pipeline/continuous_tick_finalizer.rs` 仍按真实取消/日终 release 调用 Session 适配器。Session 继续拥有 account+stock 索引、真实订单来源、日界批量清理和 pending plan facts。\n\n局部方法可以返回“linked plan 接受/成交、child 是否完成”等局部转移结果，由 Session 附加 trading_day 并入队 PendingPlanEvent；causal 诊断及其数值链继续在原适配器中。未关联母单完成后由外层移除，关联母单终态由 PlanBook 同步后清理，不能把 Completed 当成 DTO 内自行结束的统一事件。\n\n**迁移顺序。** 先以代表性短 fixture 固定单个母单转换的现状，再迁 records.rs 的局部写入；随后迁竞价 direct writes 与 checked 错误；再迁 orders.rs 的逐个 parent 修订/续发及两个构造入口；最后收窄字段写口并迁读取、存档投影与 fixture。保持 Session 适配器签名，逐个调用点替换；不混入资源账本、撮合或计划生命周期重构。\n\n**测试位置与边界。** 在 execution.rs 相邻局部测试覆盖错误 side/order id 不推进、accepted child 唯一性、部分/全部真实成交、清除只针对匹配 child、linked/unlinked 完成差异。竞价保留双 Option 不一致时的 typed error、取消余量不匹配错误与全批候选不安装；连续路径保持既有 assert/expect 的次序。现有回归锚点在 `plan_execution/continuation_tests.rs`、`pipeline/continuous_tick_transaction_tests.rs`（真实 partial fill、adoption、重复投影、50 股买入余量）、`pipeline/auction_day_end_tests.rs`（开盘受理/撤单和收盘 fill/day-end 顺序），以及 `persistence/v2_tests.rs`（重建 child 剩余数量、拒绝错误 live order、保留 fill/fee 历史）。补充同向目标只改 limit 不重置 target/fill、反向替换、固定/符号同股混合、收盘不复制连续 child 的直接矩阵。这里只登记测试位置和待固定行为，没有执行测试。\n\n金额仍为分，数量仍为股，买单一手及 T+1 等规则仍由交易层校验。方法迁移不得将不足一手的母单余量补足为额外买入，不按对象/账户排序赋予撮合优先级，不改变合法撤单时段或费用。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "session-N02",
+    "title": "ProtocolState 统一 Session 与 Checkpoint 配对状态",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/src/session/protocol/civil/session.rs"
+    ],
+    "objects": [
+      "ProtocolSession",
+      "ProtocolCheckpoint",
+      "ProtocolState"
+    ],
+    "report_anchor": "session-n02",
+    "group": "session",
+    "details_markdown": "**分类：新增到可实施动作清单。** 原 `engine-session-06` 记录 actions 为空，保留正文已经说过可以考虑私有 checkpoint 字段分组；本轮将该方向具体化。原保留 A20 不是已存在重构 action ID，故不伪造 extends。`GameSession` 的 A01 是 tick authority 的状态替换，不能替代协议发布层自己的 rollback 范围。\n\n**当前对象与可聚合字段。** `ProtocolSession` 和 `ProtocolCheckpoint` 重复定义 game、intraday、fact_tick、facts_at_tick、day_end_save、published_runtime、pending_save_candidates 七组状态（civil/session.rs:8–29），checkpoint 和 rollback 再分别列举一次（35–56）。它们共同描述一次未发布宿主批次的回滚点，不是另一个市场或存档 authority。\n\n用私有 `ProtocolState` 保存这七项，分别由 `ProtocolSession { state, 测试注入 flags }` 与 `ProtocolCheckpoint { state }` 组合。保留 live published_runtime/pending_save_candidates 的现有 RefCell 类型和 `tick_batch(&self)` 等签名；checkpoint 通过显式 `try_clone_for_checkpoint` 建立独立的同类型容器，GameSession 继续调用 `clone_for_tick_shadow`，历史/Arc 继续共享，RefCell 内容按原顺序借用后 clone。不要对 game 使用普通 derive Clone。rollback 通过一次 move 替换 state，避免两份字段定义及两张配对名单；测试注入 flags 继续留在 Session 外层，不进入回滚。\n\n**方法与真实调用方。** `checkpoint/rollback/from_game` 是状态组合的主要入口；帧发布、含 commit evidence 的发布、独立 `end_civil_day_update`、`tick_batch`、`save_candidate`、`prepare_public_baseline` 等仍由 ProtocolSession facade 编排。保持 game() 和 immutable Deref<GameSession>，不增加 DerefMut。server `apps/server/src/actor.rs` 与 desktop `apps/desktop/src-tauri/src/actor.rs` 的宿主批次通过公开 checkpoint/rollback；WASM `apps/web-wasm/src/lib.rs` 使用 ProtocolSession 的帧、日结和 baseline 接口，均不需要新的 protocol wire。\n\n**迁移顺序。** 先补齐 checkpoint 覆盖 baseline 与 pending candidate 的明确断言，再引入私有 state 并替换两处类型定义及 from_game；随后迁 clone/restore 配对及各 facade 的字段读取；最后迁测试内部访问。所有方法保持当前 Result、poison 检查、借用/clone 顺序、save candidate 精确 seq/date 选择和消费方式。step_frame 的事务仍只覆盖它自身；宿主多次调用的组合批次仍须外层 checkpoint，不能宣称这次结构整理增加了新的事务承诺。\n\n**测试位置与边界。** `civil/session.rs::rollback_tests` 的 malformed 普通/含证据帧、malformed civil、外层 close/weekend rollback、history chunk 共享、poison、public day-end restore、candidate 捕获与 published player delta 均为既有锚点。新增短测试应明确断言：checkpoint 后成功 tick_batch 再 rollback，恢复原 published_runtime；checkpoint 后完成两个日结再 rollback，恢复旧 candidate 键集合、day_end_save 及 seq/date 捕获，不允许后来 candidate 留存；共享完成帧保持指针共享，checkpoint 的 RefCell 内容不因 live mutation 改变。已有周末回滚测试没有直接断言全部两个发布缓存，不应冒称已经覆盖。\n\n本对象只组合已存在的发布状态；没有改动 market phase、交易日、自然日或 A 股股数/金额的定义。SaveSlot、TickFrame、CivilUpdate 等 wire 与日终才能公共存档的契约保持。",
+    "origin": "new",
+    "extensions": [
+      {
+        "id": "session-R2-E01",
+        "proposed_type": "PublicationFactCursor",
+        "fields": [
+          "tick: Option<u64>",
+          "facts: Vec<EventFact>"
+        ],
+        "methods": [
+          "begin_tick(tick): tick 变化时清除本 tick facts",
+          "append_committed_facts(facts): 累积已提交 frame facts",
+          "attach_after(events): 以当前 facts 为 preceding 调用 protocol::attach_facts_after 并返回延续 facts",
+          "checkpoint clone: 作为 ProtocolCheckpoint 的可克隆回滚状态"
+        ],
+        "production_callers": [
+          "packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::prepare_fact_tick",
+          "packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::step_frame",
+          "packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::step_frame_with_commit_evidence",
+          "packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::end_civil_day_update"
+        ],
+        "data_owner": "PublicationFactCursor 持有单 tick 事实续接窗口；ProtocolSession 仍持有其并协调 step/civil transaction，ProtocolCheckpoint 保存 cursor clone。",
+        "composition": "在 ProtocolSession 中以一个字段替代 fact_tick 与 facts_at_tick；ProtocolCheckpoint 同样保存 cursor。facts.rs 继续持有纯 EventStableKey 分域续号、canonical payload 及验证算法。",
+        "migration_steps": [
+          "新增私有 PublicationFactCursor，保留原子 clone/restore 语义。",
+          "将 prepare_fact_tick 改为 cursor.begin_tick。",
+          "两条 frame 路径将 frame.facts 累加到 cursor。",
+          "civil 更新通过 cursor.attach_after 获取后续 facts，校验成功后再提交累加；若后续任何操作失败，沿现有 ProtocolCheckpoint rollback 恢复整个 cursor。",
+          "调整 rollback/fact continuity tests 直接验证 cursor 生命周期，不改变 wire DTO 或 EventStableKey 格式。"
+        ],
+        "existing_tests": [
+          "packages/engine/src/session/protocol/facts.rs: attach_after_rejects_a_preceding_fact_with_tampered_payload",
+          "packages/engine/src/session/protocol/facts.rs: civil_facts_continue_sparse_producer_identity_without_rekeying_it",
+          "packages/engine/src/session/protocol/civil/session.rs: malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor",
+          "packages/engine/src/session/protocol/civil/session.rs: malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries",
+          "packages/engine/src/session/protocol/civil/session.rs: outer_rollback_across_close_and_weekend_restores_history_and_can_repeat",
+          "packages/engine/src/session/protocol/civil/session.rs: adjacent_civil_updates_continue_but_restore_starts_a_fresh_publication_stream"
+        ],
+        "missing_tests": [
+          "验证 cursor 在相同 tick 的多个提交追加之间续号、换 tick 时清空旧 preceding facts。",
+          "验证 civil attach 产生结果后，在外层失败 rollback 能还原 cursor 的 tick 和 facts，重试输出与未失败路径一致。"
+        ],
+        "semantic_boundaries": [
+          "只决定发布流内同 tick 的事件身份延续；不改变 Event::seq、StableKey 的 phase/entity/source/local-index 语义。",
+          "不涉及 A 股成交、报价或账户数据，不得更改 public event payload/canonical JSON 契约。",
+          "restore 后新 ProtocolSession 从空 cursor 开启新的 publication stream；不从日终存档恢复此前 transport facts。"
+        ],
+        "priority": "low_optional",
+        "evidence": [
+          "packages/engine/src/session/protocol/civil/session.rs:8-29 ProtocolSession 与 checkpoint 中成对的 fact_tick/facts_at_tick 字段",
+          "packages/engine/src/session/protocol/civil/session.rs:34-56 checkpoint/rollback 镜像 cursor 字段",
+          "packages/engine/src/session/protocol/civil/session.rs:196-245 两个逐 tick 路径都维护 facts",
+          "packages/engine/src/session/protocol/civil/session.rs:248-275 civil update 再次管理 tick 与 preceding facts",
+          "packages/engine/src/session/protocol/civil/session.rs:308-313 tick 变化时清空 facts",
+          "packages/engine/src/session/protocol/facts.rs:41-89 分域延续算法已有独立纯函数 owner"
+        ],
+        "kind": "extension",
+        "extends": "session-N02",
+        "title": "ProtocolState 内部 PublicationFactCursor 事实续接值",
+        "reader_candidate_id": "C14-1",
+        "files": [
+          "packages/engine/src/session/protocol/civil/session.rs",
+          "packages/engine/src/session/protocol/facts.rs"
+        ],
+        "report_anchor": "session-r2-e01",
+        "group": "session",
+        "details_markdown": "分类：增强 `session-N02`，不计为新动作。\n\n**拟议类型。** PublicationFactCursor\n\n**字段与共同不变量。**\n\n- tick: Option<u64>\n- facts: Vec<EventFact>\n\n**owner 方法。**\n\n- begin_tick(tick): tick 变化时清除本 tick facts\n- append_committed_facts(facts): 累积已提交 frame facts\n- attach_after(events): 以当前 facts 为 preceding 调用 protocol::attach_facts_after 并返回延续 facts\n- checkpoint clone: 作为 ProtocolCheckpoint 的可克隆回滚状态\n\n**实际生产 caller。**\n\n- packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::prepare_fact_tick\n- packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::step_frame\n- packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::step_frame_with_commit_evidence\n- packages/engine/src/session/protocol/civil/session.rs: ProtocolSession::end_civil_day_update\n\n**数据 owner。**\n\nPublicationFactCursor 持有单 tick 事实续接窗口；ProtocolSession 仍持有其并协调 step/civil transaction，ProtocolCheckpoint 保存 cursor clone。\n\n**组合边界。**\n\n在 ProtocolSession 中以一个字段替代 fact_tick 与 facts_at_tick；ProtocolCheckpoint 同样保存 cursor。facts.rs 继续持有纯 EventStableKey 分域续号、canonical payload 及验证算法。\n\n**迁移步骤。**\n\n- 新增私有 PublicationFactCursor，保留原子 clone/restore 语义。\n- 将 prepare_fact_tick 改为 cursor.begin_tick。\n- 两条 frame 路径将 frame.facts 累加到 cursor。\n- civil 更新通过 cursor.attach_after 获取后续 facts，校验成功后再提交累加；若后续任何操作失败，沿现有 ProtocolCheckpoint rollback 恢复整个 cursor。\n- 调整 rollback/fact continuity tests 直接验证 cursor 生命周期，不改变 wire DTO 或 EventStableKey 格式。\n\n**既有测试/守卫。**\n\n- packages/engine/src/session/protocol/facts.rs: attach_after_rejects_a_preceding_fact_with_tampered_payload\n- packages/engine/src/session/protocol/facts.rs: civil_facts_continue_sparse_producer_identity_without_rekeying_it\n- packages/engine/src/session/protocol/civil/session.rs: malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor\n- packages/engine/src/session/protocol/civil/session.rs: malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries\n- packages/engine/src/session/protocol/civil/session.rs: outer_rollback_across_close_and_weekend_restores_history_and_can_repeat\n- packages/engine/src/session/protocol/civil/session.rs: adjacent_civil_updates_continue_but_restore_starts_a_fresh_publication_stream\n\n**待补测试。**\n\n- 验证 cursor 在相同 tick 的多个提交追加之间续号、换 tick 时清空旧 preceding facts。\n- 验证 civil attach 产生结果后，在外层失败 rollback 能还原 cursor 的 tick 和 facts，重试输出与未失败路径一致。\n\n**语义边界。**\n\n- 只决定发布流内同 tick 的事件身份延续；不改变 Event::seq、StableKey 的 phase/entity/source/local-index 语义。\n- 不涉及 A 股成交、报价或账户数据，不得更改 public event payload/canonical JSON 契约。\n- restore 后新 ProtocolSession 从空 cursor 开启新的 publication stream；不从日终存档恢复此前 transport facts。\n\n**优先级。**\n\nlow_optional\n\n**源码证据。**\n\n- packages/engine/src/session/protocol/civil/session.rs:8-29 ProtocolSession 与 checkpoint 中成对的 fact_tick/facts_at_tick 字段\n- packages/engine/src/session/protocol/civil/session.rs:34-56 checkpoint/rollback 镜像 cursor 字段\n- packages/engine/src/session/protocol/civil/session.rs:196-245 两个逐 tick 路径都维护 facts\n- packages/engine/src/session/protocol/civil/session.rs:248-275 civil update 再次管理 tick 与 preceding facts\n- packages/engine/src/session/protocol/civil/session.rs:308-313 tick 变化时清空 facts\n- packages/engine/src/session/protocol/facts.rs:41-89 分域延续算法已有独立纯函数 owner"
+      }
+    ]
+  },
+  {
+    "id": "session-R2-N01",
+    "proposed_type": "NpcAttentionScheduler",
+    "fields": [
+      "BinaryHeap<Reverse<(u64, AccountId)>> candidates"
+    ],
+    "methods": [
+      "pop_due(tick, current_candidate_tick) -> (valid_account_ids, popped_entries)"
+    ],
+    "production_callers": [
+      {
+        "path": "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+        "symbol": "GameSession::pop_due_npc_ids 调用点"
+      },
+      {
+        "path": "packages/engine/src/session.rs",
+        "symbol": "GameSession.attention_queue 字段与初始化/候选排程调用点"
+      }
+    ],
+    "data_owner": "NpcAttentionScheduler 独占候选堆及过期项弹出规则；GameSession 继续持有 AccountId -> NpcAttentionState 权威个体状态，scheduler 不复制 RNG 或观察状态。",
+    "composition": "GameSession.attention_scheduler 取代 attention_queue；pop_due 接受按 AccountId 查询当前 next_attention_candidate_tick 的只读闭包，或由调用方提供候选有效性映射。",
+    "migration_steps": [
+      "新增私有 scheduler 容器并移动 BinaryHeap 与 pop_due_npc_ids 算法。",
+      "将所有 enqueue/clear/hash/clone 路径改为通过 scheduler API；保持候选 tick 相等校验、排序去重及返回 popped entries。",
+      "保留现有序列化/存档边界：若 queue 仅运行时状态，则确认 save 重建路径仍按原规则生成；hash 仍覆盖堆内容且排序确定。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+      "packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs",
+      "packages/engine/src/session/hash.rs 中 attention queue hash 覆盖"
+    ],
+    "missing_tests": [
+      "scheduler 独立测试覆盖同 AccountId 多个过期候选只接受匹配当前 tick 的一项。",
+      "相同候选集合不同插入顺序下输出顺序稳定，且 returned popped entries 完整用于失败恢复/重排。"
+    ],
+    "semantic_boundaries": [
+      "不能把候选到期等同实际观察；概率 thinning 仍由 NpcAttentionState.evaluate_candidate_with_signal 决定。",
+      "每 NPC rng_state 和发现抽样语义、候选绝对 tick、重复入队容忍、排序去重及失败回滚行为必须保持。",
+      "不改变市场信号、观察频率或 A 股交易规则。"
+    ],
+    "priority": "low-to-medium",
+    "evidence": [
+      {
+        "path": "packages/engine/src/session/attention.rs",
+        "line": 260,
+        "symbol": "GameSession::pop_due_npc_ids"
+      },
+      {
+        "path": "packages/engine/src/session/attention.rs",
+        "line": 273,
+        "symbol": "next_attention_candidate_tick 过滤"
+      },
+      {
+        "path": "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+        "line": 104,
+        "symbol": "pop_due_npc_ids production caller"
+      },
+      {
+        "path": "packages/engine/src/session.rs",
+        "line": 1140,
+        "symbol": "AccountPagedMap<NpcAttentionState>"
+      }
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "NpcAttentionScheduler 候选堆生命周期",
+    "reader_candidate_id": "02-A",
+    "files": [
+      "packages/engine/src/session/attention.rs",
+      "packages/engine/src/session.rs",
+      "packages/engine/src/session/hash.rs"
+    ],
+    "report_anchor": "session-r2-n01",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** NpcAttentionScheduler\n\n**字段与共同不变量。**\n\n- BinaryHeap<Reverse<(u64, AccountId)>> candidates\n\n**owner 方法。**\n\n- pop_due(tick, current_candidate_tick) -> (valid_account_ids, popped_entries)\n\n**实际生产 caller。**\n\n- {\"path\": \"packages/engine/src/session/pipeline/decision_snapshot_capture.rs\", \"symbol\": \"GameSession::pop_due_npc_ids 调用点\"}\n- {\"path\": \"packages/engine/src/session.rs\", \"symbol\": \"GameSession.attention_queue 字段与初始化/候选排程调用点\"}\n\n**数据 owner。**\n\nNpcAttentionScheduler 独占候选堆及过期项弹出规则；GameSession 继续持有 AccountId -> NpcAttentionState 权威个体状态，scheduler 不复制 RNG 或观察状态。\n\n**组合边界。**\n\nGameSession.attention_scheduler 取代 attention_queue；pop_due 接受按 AccountId 查询当前 next_attention_candidate_tick 的只读闭包，或由调用方提供候选有效性映射。\n\n**迁移步骤。**\n\n- 新增私有 scheduler 容器并移动 BinaryHeap 与 pop_due_npc_ids 算法。\n- 将所有 enqueue/clear/hash/clone 路径改为通过 scheduler API；保持候选 tick 相等校验、排序去重及返回 popped entries。\n- 保留现有序列化/存档边界：若 queue 仅运行时状态，则确认 save 重建路径仍按原规则生成；hash 仍覆盖堆内容且排序确定。\n\n**既有测试/守卫。**\n\n- packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs\n- packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs\n- packages/engine/src/session/hash.rs 中 attention queue hash 覆盖\n\n**待补测试。**\n\n- scheduler 独立测试覆盖同 AccountId 多个过期候选只接受匹配当前 tick 的一项。\n- 相同候选集合不同插入顺序下输出顺序稳定，且 returned popped entries 完整用于失败恢复/重排。\n\n**语义边界。**\n\n- 不能把候选到期等同实际观察；概率 thinning 仍由 NpcAttentionState.evaluate_candidate_with_signal 决定。\n- 每 NPC rng_state 和发现抽样语义、候选绝对 tick、重复入队容忍、排序去重及失败回滚行为必须保持。\n- 不改变市场信号、观察频率或 A 股交易规则。\n\n**优先级。**\n\nlow-to-medium\n\n**源码证据。**\n\n- {\"path\": \"packages/engine/src/session/attention.rs\", \"line\": 260, \"symbol\": \"GameSession::pop_due_npc_ids\"}\n- {\"path\": \"packages/engine/src/session/attention.rs\", \"line\": 273, \"symbol\": \"next_attention_candidate_tick 过滤\"}\n- {\"path\": \"packages/engine/src/session/pipeline/decision_snapshot_capture.rs\", \"line\": 104, \"symbol\": \"pop_due_npc_ids production caller\"}\n- {\"path\": \"packages/engine/src/session.rs\", \"line\": 1140, \"symbol\": \"AccountPagedMap<NpcAttentionState>\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N02",
+    "proposed_type": "OpeningFigures（或 OpeningBalance）",
+    "fields": [
+      "cash:i128（元）",
+      "receivables:i128（元）",
+      "fixed_assets:i128（元）",
+      "paid_in_capital:i128（元）",
+      "short_term_debt:i128（元）"
+    ],
+    "methods": [
+      "from_total_shares(total_shares)",
+      "from_default_row(config)",
+      "registry_opening_lines()",
+      "industrial_opening_lines()"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/company_assembly.rs::assemble_companies",
+      "packages/engine/src/session/company_assembly.rs::assemble_listed_company"
+    ],
+    "data_owner": "每家上市公司共同的开局经济事实；CompanyAssembly/CompanyConfig 与 OperatingCompanyConfig 分别消费其两种账套投影。",
+    "composition": "由 ListedCompanyConfigs 的装配过程临时拥有；返回的两套 config 各自保存构造完成的账套数据，不额外持有同一运行期对象。",
+    "migration_steps": [
+      "将 Figures 重命名为具有领域含义的 OpeningFigures，保留两种构造入口。",
+      "将 registry_opening_lines 与 industrial_opening_lines 移为 Figures/OpeningFigures 方法，逐字保持两种科目顺序、应收插入位置、registry 条件债务行与 industrial 无条件债务行；不能借方法搬迁统一两种投影条件。",
+      "assemble_listed_company 仅请求两种投影后继续组装；保持科目表、金额单位及默认公司选择逻辑不变。"
+    ],
+    "existing_tests": [
+      "packages/engine/tests/company_opening/isolation.rs：默认发行人/股本、company域和策略RNG隔离的既有场景；company_assembly.rs 本身没有 #[test]，原reader称相关单测待定位不作为已存在证据。",
+      "IndustrialBooks::new 的开局凭证校验仍为既有生产守卫；本轮未运行测试。"
+    ],
+    "missing_tests": [
+      "同一 Figures 对 registry 与 industrial 两种投影的金额/科目/顺序现状矩阵；应收为零时均省略应收、债务为零时保留两路径现有不同处理，不在重构中修正规则。",
+      "默认表命中条件必须同时匹配代码和股本，未命中走通用推导；元到分换算及极小股本现行失败结果保持。"
+    ],
+    "semantic_boundaries": "这是虚构上市公司开局财务装配规则，不是 A 股交易制度；不能借重构改变每股面值推导、元到分换算、默认发行人精确匹配、注册表/工业账套科目口径、OpeningDebtTerms 或存档事实。现行 A 股语义未触及。",
+    "priority": "低至中：两处映射确有共同不变量，但当前 assemble_listed_company 集中、范围小，缺陷风险主要在未来一侧漏改；应以减少重复并使共同事实可见为由评估，不应扩大到其他公司装配政策。",
+    "evidence": [
+      "packages/engine/src/session/company_assembly.rs:138-189 Figures 字段与构造逻辑",
+      "packages/engine/src/session/company_assembly.rs:304-320 registry opening_lines",
+      "packages/engine/src/session/company_assembly.rs:363-373 industrial_lines",
+      "packages/engine/src/session/company_assembly.rs:286-420 assemble_listed_company"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "OpeningFigures 的双账套投影",
+    "reader_candidate_id": "03-01",
+    "files": [
+      "packages/engine/src/session/company_assembly.rs"
+    ],
+    "report_anchor": "session-r2-n02",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** OpeningFigures（或 OpeningBalance）\n\n**字段与共同不变量。**\n\n- cash:i128（元）\n- receivables:i128（元）\n- fixed_assets:i128（元）\n- paid_in_capital:i128（元）\n- short_term_debt:i128（元）\n\n**owner 方法。**\n\n- from_total_shares(total_shares)\n- from_default_row(config)\n- registry_opening_lines()\n- industrial_opening_lines()\n\n**实际生产 caller。**\n\n- packages/engine/src/session/company_assembly.rs::assemble_companies\n- packages/engine/src/session/company_assembly.rs::assemble_listed_company\n\n**数据 owner。**\n\n每家上市公司共同的开局经济事实；CompanyAssembly/CompanyConfig 与 OperatingCompanyConfig 分别消费其两种账套投影。\n\n**组合边界。**\n\n由 ListedCompanyConfigs 的装配过程临时拥有；返回的两套 config 各自保存构造完成的账套数据，不额外持有同一运行期对象。\n\n**迁移步骤。**\n\n- 将 Figures 重命名为具有领域含义的 OpeningFigures，保留两种构造入口。\n- 将 registry_opening_lines 与 industrial_opening_lines 移为 Figures/OpeningFigures 方法，逐字保持两种科目顺序、应收插入位置、registry 条件债务行与 industrial 无条件债务行；不能借方法搬迁统一两种投影条件。\n- assemble_listed_company 仅请求两种投影后继续组装；保持科目表、金额单位及默认公司选择逻辑不变。\n\n**既有测试/守卫。**\n\n- packages/engine/tests/company_opening/isolation.rs：默认发行人/股本、company域和策略RNG隔离的既有场景；company_assembly.rs 本身没有 #[test]，原reader称相关单测待定位不作为已存在证据。\n- IndustrialBooks::new 的开局凭证校验仍为既有生产守卫；本轮未运行测试。\n\n**待补测试。**\n\n- 同一 Figures 对 registry 与 industrial 两种投影的金额/科目/顺序现状矩阵；应收为零时均省略应收、债务为零时保留两路径现有不同处理，不在重构中修正规则。\n- 默认表命中条件必须同时匹配代码和股本，未命中走通用推导；元到分换算及极小股本现行失败结果保持。\n\n**语义边界。**\n\n这是虚构上市公司开局财务装配规则，不是 A 股交易制度；不能借重构改变每股面值推导、元到分换算、默认发行人精确匹配、注册表/工业账套科目口径、OpeningDebtTerms 或存档事实。现行 A 股语义未触及。\n\n**优先级。**\n\n低至中：两处映射确有共同不变量，但当前 assemble_listed_company 集中、范围小，缺陷风险主要在未来一侧漏改；应以减少重复并使共同事实可见为由评估，不应扩大到其他公司装配政策。\n\n**源码证据。**\n\n- packages/engine/src/session/company_assembly.rs:138-189 Figures 字段与构造逻辑\n- packages/engine/src/session/company_assembly.rs:304-320 registry opening_lines\n- packages/engine/src/session/company_assembly.rs:363-373 industrial_lines\n- packages/engine/src/session/company_assembly.rs:286-420 assemble_listed_company",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N03",
+    "proposed_type": "PlanLifecycleReview",
+    "fields": [
+      "account: AccountId",
+      "trading_day/current_market_minute 与 moment 派生标量",
+      "本次 fixed MarketView 的只读输入",
+      "fixed post-P0 observation 的账户 equity/held_by_code 派生事实（通过 FrozenPlanChainObservation::observe 临时交换账户/市场读取）",
+      "BeliefBook/BeliefChainParams 的只读输入",
+      "当前 PlanBook 和 parent-order 的借用关系，禁止复制成长期权威"
+    ],
+    "methods": [
+      "assess_one(code, CandidateAssessment) -> Option<PlanLifecycleAction>",
+      "compute_target_delta(code, direction, score) -> 受 lot_size 约束的目标差量",
+      "resolve_pause_recovery_and_restructure(plan, assessment) -> 生命周期动作"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs::PlanChainOperationBatch::yield_adaptive_candidates_with_root_wait 的 Lifecycle 分支调用 GameSession::collect_plan_lifecycle_actions。"
+    ],
+    "data_owner": "只拥有本次单账户复核所捕获的派生事实快照；账户、believe experience、PlanBook、ParentOrder、市场与订单簿的权威写入所有权仍分别属于 GameSession 的对应字段/既有子类型。不得持有可变 PlanBook 并绕开 PlanLifecycleAction/apply_plan_lifecycle_actions。",
+    "composition": "equity/held_by_code/账户策略输入来自 fixed post-P0 observation；当前 private candidate 仅提供已续行后的 PlanBook/parent facts 与个人belief状态，不能把成交或释放后的账户资源挪入固定分配观察。仅由 adaptive coordinator 在所需 typed route outcome 已到齐后，基于当前私有 candidate 的 PlanBook/parent facts 和固定 observation 创建本次复核上下文。run_chain_for_account 只交出 assessments/Lifecycle typed operation，绝不提前收集 PlanLifecycleAction；quote preparation 是独立阶段，不共享冻结的旧计划事实。",
+    "migration_steps": [
+      "围绕 adaptive.rs Lifecycle 分支明确 collect_plan_lifecycle_actions 的两类输入：账户资源/行情来自 fixed observation，PlanBook/parent来自当前 candidate；该对象不挂在 InstitutionDecisionRoot，不从异步 root 保存旧 plan/parent 快照。",
+      "仅将 collect_plan_lifecycle_actions 的单账户上下文构造和读取搬入类型，先保持所有 PlanLifecycleAction 次序与 payload 不变。",
+      "逐股票迁移暂停/恢复/迟滞/目标调整决策，动作应用与 P3/P4 请求仍留在现有 coordinator。",
+      "如果 quote preparation 没有共享上下文的语义收益，则保持它独立，不扩大为统一账户交易管理器。"
+    ],
+    "existing_tests": [
+      "decision_chain.rs::institution_new_direction_requires_the_confirmed_signal_threshold",
+      "decision_chain.rs::institution_risk_pressure_cancels_buy_and_recovers_only_after_own_review",
+      "decision_chain.rs::institution_boundary_mixed_pause_latches_risk_pressure_until_recovery",
+      "decision_chain.rs::mid_day_reversal_cancels_the_in_flight_child_before_flipping",
+      "decision_chain.rs::filled_child_cancel_failure_reconsiders_the_live_plan",
+      "decision_chain.rs::buy_allocation_request_reserves_only_the_next_routable_child"
+    ],
+    "missing_tests": [
+      "验证 Lifecycle 复核仍使用 fixed post-P0 accounts/equity/held_by_code，即使当前candidate已发生成交或资源释放也不重封账户输入；PlanBook/parent则必须看到所需typed outcome完成后的当前事实，action应用保持原顺序。",
+      "验证 owner 在不可撤阶段保留旧 child/plan，不产生孤儿或相反方向子单。",
+      "验证 buy 整手向下取整、sell 整手部分减仓、全部可卖余额允许一次零股余量与 security max order qty 的组合边界。",
+      "验证账户风险暂停仅限制买入、卖出行为与其他账户保持隔离。"
+    ],
+    "semantic_boundaries": [
+      "不改变方向性新计划的 ±2000bp 迟滞、已暂停计划的个人观察与恢复阈值。",
+      "不改变 1bp=0.01%、Money 分、数量股等单位。",
+      "不改变 A 股 100 股整手买入及卖出全部可卖余额的零股余量边界；真实规则适用范围与交易所差异以 trading-rules.md/ADR-0021 为准。",
+      "该类型不创建订单、不修改成交进度、不释放冻结现金；真实成交/撤单仍由订单路由和反馈事件确认。",
+      "风险观察需在本人根观察时推进，不能因 plan quote 读取而偷偷更新个人风险状态。",
+      "固定账户资源观察与当前计划执行事实不得混为同一个current account snapshot；FrozenPlanChainObservation临时交换的容器保持恢复。"
+    ],
+    "priority": "P2 可选；需先做跨文件独立核验，若没有共享事实的第二消费者或可清晰隔离的状态机边界则不实施。",
+    "evidence": [
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 1,
+        "symbol": "模块头部决策链阶段说明：候选、本人信息、belief、K5a、plan、预算、报价、执行及 filled_qty 语义"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 720,
+        "symbol": "GameSession::run_chain_for_account：单账户 experience、发现、曝光、belief 与生命周期/执行操作编排"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 1220,
+        "symbol": "GameSession::collect_plan_lifecycle_actions：权益、持仓、belief 与逐计划状态机决策"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 1727,
+        "symbol": "GameSession::prepare_plan_quotes_for_account：账户 cash/frozen cash/sellable 与子单预算输入"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 236,
+        "symbol": "PlanLifecycleAction 与 apply_plan_lifecycle_actions：决策输出及现有写入边界"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "line": 2040,
+        "symbol": "next_routable_buy_qty/next_routable_sell_qty：订单数量边界"
+      }
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "PlanLifecycleReview 当前候选的单账户复核",
+    "reader_candidate_id": "04-1",
+    "files": [
+      "packages/engine/src/session/decision_chain.rs",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs"
+    ],
+    "report_anchor": "session-r2-n03",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** PlanLifecycleReview\n\n**字段与共同不变量。**\n\n- account: AccountId\n- trading_day/current_market_minute 与 moment 派生标量\n- 本次 fixed MarketView 的只读输入\n- fixed post-P0 observation 的账户 equity/held_by_code 派生事实（通过 FrozenPlanChainObservation::observe 临时交换账户/市场读取）\n- BeliefBook/BeliefChainParams 的只读输入\n- 当前 PlanBook 和 parent-order 的借用关系，禁止复制成长期权威\n\n**owner 方法。**\n\n- assess_one(code, CandidateAssessment) -> Option<PlanLifecycleAction>\n- compute_target_delta(code, direction, score) -> 受 lot_size 约束的目标差量\n- resolve_pause_recovery_and_restructure(plan, assessment) -> 生命周期动作\n\n**实际生产 caller。**\n\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs::PlanChainOperationBatch::yield_adaptive_candidates_with_root_wait 的 Lifecycle 分支调用 GameSession::collect_plan_lifecycle_actions。\n\n**数据 owner。**\n\n只拥有本次单账户复核所捕获的派生事实快照；账户、believe experience、PlanBook、ParentOrder、市场与订单簿的权威写入所有权仍分别属于 GameSession 的对应字段/既有子类型。不得持有可变 PlanBook 并绕开 PlanLifecycleAction/apply_plan_lifecycle_actions。\n\n**组合边界。**\n\nequity/held_by_code/账户策略输入来自 fixed post-P0 observation；当前 private candidate 仅提供已续行后的 PlanBook/parent facts 与个人belief状态，不能把成交或释放后的账户资源挪入固定分配观察。仅由 adaptive coordinator 在所需 typed route outcome 已到齐后，基于当前私有 candidate 的 PlanBook/parent facts 和固定 observation 创建本次复核上下文。run_chain_for_account 只交出 assessments/Lifecycle typed operation，绝不提前收集 PlanLifecycleAction；quote preparation 是独立阶段，不共享冻结的旧计划事实。\n\n**迁移步骤。**\n\n- 围绕 adaptive.rs Lifecycle 分支明确 collect_plan_lifecycle_actions 的两类输入：账户资源/行情来自 fixed observation，PlanBook/parent来自当前 candidate；该对象不挂在 InstitutionDecisionRoot，不从异步 root 保存旧 plan/parent 快照。\n- 仅将 collect_plan_lifecycle_actions 的单账户上下文构造和读取搬入类型，先保持所有 PlanLifecycleAction 次序与 payload 不变。\n- 逐股票迁移暂停/恢复/迟滞/目标调整决策，动作应用与 P3/P4 请求仍留在现有 coordinator。\n- 如果 quote preparation 没有共享上下文的语义收益，则保持它独立，不扩大为统一账户交易管理器。\n\n**既有测试/守卫。**\n\n- decision_chain.rs::institution_new_direction_requires_the_confirmed_signal_threshold\n- decision_chain.rs::institution_risk_pressure_cancels_buy_and_recovers_only_after_own_review\n- decision_chain.rs::institution_boundary_mixed_pause_latches_risk_pressure_until_recovery\n- decision_chain.rs::mid_day_reversal_cancels_the_in_flight_child_before_flipping\n- decision_chain.rs::filled_child_cancel_failure_reconsiders_the_live_plan\n- decision_chain.rs::buy_allocation_request_reserves_only_the_next_routable_child\n\n**待补测试。**\n\n- 验证 Lifecycle 复核仍使用 fixed post-P0 accounts/equity/held_by_code，即使当前candidate已发生成交或资源释放也不重封账户输入；PlanBook/parent则必须看到所需typed outcome完成后的当前事实，action应用保持原顺序。\n- 验证 owner 在不可撤阶段保留旧 child/plan，不产生孤儿或相反方向子单。\n- 验证 buy 整手向下取整、sell 整手部分减仓、全部可卖余额允许一次零股余量与 security max order qty 的组合边界。\n- 验证账户风险暂停仅限制买入、卖出行为与其他账户保持隔离。\n\n**语义边界。**\n\n- 不改变方向性新计划的 ±2000bp 迟滞、已暂停计划的个人观察与恢复阈值。\n- 不改变 1bp=0.01%、Money 分、数量股等单位。\n- 不改变 A 股 100 股整手买入及卖出全部可卖余额的零股余量边界；真实规则适用范围与交易所差异以 trading-rules.md/ADR-0021 为准。\n- 该类型不创建订单、不修改成交进度、不释放冻结现金；真实成交/撤单仍由订单路由和反馈事件确认。\n- 风险观察需在本人根观察时推进，不能因 plan quote 读取而偷偷更新个人风险状态。\n- 固定账户资源观察与当前计划执行事实不得混为同一个current account snapshot；FrozenPlanChainObservation临时交换的容器保持恢复。\n\n**优先级。**\n\nP2 可选；需先做跨文件独立核验，若没有共享事实的第二消费者或可清晰隔离的状态机边界则不实施。\n\n**源码证据。**\n\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 1, \"symbol\": \"模块头部决策链阶段说明：候选、本人信息、belief、K5a、plan、预算、报价、执行及 filled_qty 语义\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 720, \"symbol\": \"GameSession::run_chain_for_account：单账户 experience、发现、曝光、belief 与生命周期/执行操作编排\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 1220, \"symbol\": \"GameSession::collect_plan_lifecycle_actions：权益、持仓、belief 与逐计划状态机决策\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 1727, \"symbol\": \"GameSession::prepare_plan_quotes_for_account：账户 cash/frozen cash/sellable 与子单预算输入\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 236, \"symbol\": \"PlanLifecycleAction 与 apply_plan_lifecycle_actions：决策输出及现有写入边界\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"line\": 2040, \"symbol\": \"next_routable_buy_qty/next_routable_sell_qty：订单数量边界\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N04",
+    "proposed_type": "私有 BeliefParticipantState（四组个人状态；复用已有 PlanPersonalState 临时移动模型）",
+    "fields": [
+      "watchlist: PersonalWatchlist",
+      "price_memory: PersonalPriceMemory",
+      "information: NpcInformationState",
+      "belief: BeliefBook"
+    ],
+    "methods": [
+      "take/insert 对四组成员保持单条目转移；保持attention原独立转移顺序",
+      "访问 belief/information/watchlist/price_memory 的窄借用接口",
+      "按现有 SaveSlot 四张map展开/恢复的私有投影"
+    ],
+    "production_callers": [
+      "packages/engine/src/session.rs::build_npc_accounts 为基本面机构初始化四张同键map；restore重建/覆盖四张map。",
+      "packages/engine/src/session/decision_chain/personal_state.rs::PlanPersonalState::{take,install}",
+      "packages/engine/src/session/plan_chain_candidates.rs::PlanChainOperationBatch::{start_ready_accounts,prepare_ready_accounts} 调用 take/install。",
+      "packages/engine/src/session/persistence.rs::validate_personal_states 校验四张map键集合必须相等。"
+    ],
+    "data_owner": "GameSession 中按 AccountId 保存的基本面参与者个人状态；仅四组同键状态收拢。npc_attention 覆盖全体NPC而不是仅这些机构，仍为独立 AccountPagedMap，不能把注意力强塞为所有账户统一聚合。",
+    "composition": "GameSession 以一张 BTreeMap<AccountId, BeliefParticipantState> 替换四张同键map。已有 PlanPersonalState 从该条目与独立 npc_attention 分别取出，再按现有时机安装；不增加第二份权威索引。存档仍展开为现有四字段，hash沿现有字段投影顺序。",
+    "migration_steps": [
+      "固定四map同键域与npc_attention更广域的现状测试。",
+      "迁移四map唯一存储，构造/restore/hash/save分别适配既有边界。",
+      "PlanPersonalState继续保留短命五字段语义，其四成员由聚合条目拆装，attention仍单独读取；禁止共享跨账户状态。",
+      "逐迁decision_chain及个人信息调用，保留原error/panic/rollback顺序。"
+    ],
+    "existing_tests": [
+      "decision_chain.rs::plan_root_owns_its_personal_state_until_the_private_candidate_installs_it",
+      "persistence.rs::validate_personal_states 的相同键域守卫与现有save_contract故障场景；未运行。"
+    ],
+    "missing_tests": [
+      "普通散户/游资只有attention，无须或不能凭默认值补四种belief个人态；机构已有四成员逐次take/install保持账户隔离。",
+      "SaveSlot原四字段展开/恢复保持key相等、owner一致和格式拒绝边界；hash字段顺序不变。",
+      "失败仍丢弃私有candidate，不把panic伪装成可恢复并重装个人态。"
+    ],
+    "semantic_boundaries": "保持逐账户独立信息、估值、经历与策略参数；不扩大belief人口到散户/游资，不改变个体注意RNG。存档四map字段/必填拒绝和ADR-0025日终边界不变。",
+    "priority": "low / exploratory",
+    "evidence": [
+      "packages/engine/src/session/decision_chain/personal_state.rs:9 PlanPersonalState 五字段",
+      "packages/engine/src/session/decision_chain/personal_state.rs:18 take 对五个 AccountId map 逐一 remove 并 panic",
+      "packages/engine/src/session/decision_chain/personal_state.rs:43 install 对五个 map 逐一 insert 并 assert 无重复",
+      "packages/engine/src/session/plan_chain_candidates.rs:253 与 packages/engine/src/session/decision_chain.rs:2724、4085 为调用证据",
+      "docs/decisions/0026-individual-institution-experience.md：个体经验与账户风险记忆须保存且按本人观察更新"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "BeliefParticipantState 同账户四组个人状态",
+    "reader_candidate_id": "C01",
+    "files": [
+      "packages/engine/src/session/decision_chain/personal_state.rs",
+      "packages/engine/src/session.rs",
+      "packages/engine/src/session/persistence.rs"
+    ],
+    "report_anchor": "session-r2-n04",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** 私有 BeliefParticipantState（四组个人状态；复用已有 PlanPersonalState 临时移动模型）\n\n**字段与共同不变量。**\n\n- watchlist: PersonalWatchlist\n- price_memory: PersonalPriceMemory\n- information: NpcInformationState\n- belief: BeliefBook\n\n**owner 方法。**\n\n- take/insert 对四组成员保持单条目转移；保持attention原独立转移顺序\n- 访问 belief/information/watchlist/price_memory 的窄借用接口\n- 按现有 SaveSlot 四张map展开/恢复的私有投影\n\n**实际生产 caller。**\n\n- packages/engine/src/session.rs::build_npc_accounts 为基本面机构初始化四张同键map；restore重建/覆盖四张map。\n- packages/engine/src/session/decision_chain/personal_state.rs::PlanPersonalState::{take,install}\n- packages/engine/src/session/plan_chain_candidates.rs::PlanChainOperationBatch::{start_ready_accounts,prepare_ready_accounts} 调用 take/install。\n- packages/engine/src/session/persistence.rs::validate_personal_states 校验四张map键集合必须相等。\n\n**数据 owner。**\n\nGameSession 中按 AccountId 保存的基本面参与者个人状态；仅四组同键状态收拢。npc_attention 覆盖全体NPC而不是仅这些机构，仍为独立 AccountPagedMap，不能把注意力强塞为所有账户统一聚合。\n\n**组合边界。**\n\nGameSession 以一张 BTreeMap<AccountId, BeliefParticipantState> 替换四张同键map。已有 PlanPersonalState 从该条目与独立 npc_attention 分别取出，再按现有时机安装；不增加第二份权威索引。存档仍展开为现有四字段，hash沿现有字段投影顺序。\n\n**迁移步骤。**\n\n- 固定四map同键域与npc_attention更广域的现状测试。\n- 迁移四map唯一存储，构造/restore/hash/save分别适配既有边界。\n- PlanPersonalState继续保留短命五字段语义，其四成员由聚合条目拆装，attention仍单独读取；禁止共享跨账户状态。\n- 逐迁decision_chain及个人信息调用，保留原error/panic/rollback顺序。\n\n**既有测试/守卫。**\n\n- decision_chain.rs::plan_root_owns_its_personal_state_until_the_private_candidate_installs_it\n- persistence.rs::validate_personal_states 的相同键域守卫与现有save_contract故障场景；未运行。\n\n**待补测试。**\n\n- 普通散户/游资只有attention，无须或不能凭默认值补四种belief个人态；机构已有四成员逐次take/install保持账户隔离。\n- SaveSlot原四字段展开/恢复保持key相等、owner一致和格式拒绝边界；hash字段顺序不变。\n- 失败仍丢弃私有candidate，不把panic伪装成可恢复并重装个人态。\n\n**语义边界。**\n\n保持逐账户独立信息、估值、经历与策略参数；不扩大belief人口到散户/游资，不改变个体注意RNG。存档四map字段/必填拒绝和ADR-0025日终边界不变。\n\n**优先级。**\n\nlow / exploratory\n\n**源码证据。**\n\n- packages/engine/src/session/decision_chain/personal_state.rs:9 PlanPersonalState 五字段\n- packages/engine/src/session/decision_chain/personal_state.rs:18 take 对五个 AccountId map 逐一 remove 并 panic\n- packages/engine/src/session/decision_chain/personal_state.rs:43 install 对五个 map 逐一 insert 并 assert 无重复\n- packages/engine/src/session/plan_chain_candidates.rs:253 与 packages/engine/src/session/decision_chain.rs:2724、4085 为调用证据\n- docs/decisions/0026-individual-institution-experience.md：个体经验与账户风险记忆须保存且按本人观察更新",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N05",
+    "proposed_type": "既有 BeliefBook::observe_institution_account_risk（不新增 InstitutionExperience）",
+    "fields": [
+      "已有 institution_policy",
+      "已有 institution_account_risk_paused",
+      "已有 experience.peak_equity 与 feedback.failure_events 只读事实"
+    ],
+    "methods": [
+      "observe_institution_account_risk(equity,moment) -> Result<(),ExperienceError>",
+      "私有 assess_institution_account_risk，保持 Option<bool> 表示无peak时不修改latch"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/decision_chain.rs::GameSession::run_chain_for_account，在本人equity/逐股观察之后调用。",
+      "packages/engine/src/session/institutional_behavior.rs::observe_institution_account_risk 暂作兼容适配器。"
+    ],
+    "data_owner": "BeliefBook 原已独占 frozen policy、个人experience与账户pause latch；只把组合这些字段的账户评估/更新交回同一owner。",
+    "composition": "impl BeliefBook 可在 strategy 的专用子模块中实现；session仍装配 equity 与 ExperienceMoment，通用 RetailExperienceState 不依赖策略政策。逐股observe/holding reconciliation并入已有 domain-N07，不纳入本动作。 替补reader20的InstitutionRiskMemory(policy+paused)是此owner动作的内部组合备选，不增加独立对象动作；schema仍保持原flat字段，不新增非机构拒绝条件。",
+    "migration_steps": [
+      "先固定负equity/非正peak/时钟回拨错误和有无peak行为。",
+      "迁移 observe_institution_account_risk 与其纯assess内核至 BeliefBook 所有权模块；保持failure decay及阈值>=/>区别。",
+      "原session helper委托，再迁run_chain_for_account调用，保留按本人观察时机更新；存档形状不改。"
+    ],
+    "existing_tests": [
+      "institutional_behavior.rs::institution_cost_loss_response_is_individual_not_a_universal_stop_loss",
+      "institutional_behavior.rs::institution_risk_pressure_has_separate_trigger_and_recovery_thresholds",
+      "institutional_behavior.rs::institution_adverse_selection_requires_a_real_buy_identity",
+      "institutional_behavior.rs::institution_risk_counts_real_failures_and_decays_without_deleting_facts",
+      "institutional_behavior.rs::institution_position_observation_uses_individual_adverse_threshold_once",
+      "failure_tests.rs::typed_private_plan_failure_is_poisoned_without_mutating_authority"
+    ],
+    "missing_tests": [
+      "无peak且低failure影响时latch保持原值；有真实failure阈值时即使无peak仍暂停。",
+      "暂停触发边界使用>=，恢复分支使用>；各阈值两侧及等号case。",
+      "负equity/非正peak/反馈未来时刻失败前latch不变；序列化往返policy/pause不变。"
+    ],
+    "semantic_boundaries": [
+      "这是机构个人策略行为模型，不得改变沪深交易制度、T+1、撮合顺序、费用或挂单生命周期。",
+      "成本信号仅参与现有五路加权，不直接下单；risk pause 只暂停后续买入，不强制卖出。",
+      "恢复须遵守 ADR-0026 的观察确认、恢复阈值及信号门槛；不重新抽样个体参数。",
+      "失败事件必须来自该账户真实买入后的本人不利观察，开局持仓或未成交单不能生成失败。",
+      "不复制或重算已有净资产、订单收据、position 成本、收费事实；对象边界不能导致持久化契约静默迁移。"
+    ],
+    "priority": "medium",
+    "evidence": [
+      "packages/engine/src/session/institutional_behavior.rs:8-26 observe_institution_account_risk 读取policy/experience/pause并写回latch",
+      "同文件29-76 assess_institution_account_risk 处理failure_decay、peak、>=触发/>恢复边界",
+      "packages/engine/src/strategy/beliefs.rs:103-116 BeliefBook已有三个相关owner字段；:168-179 getter/setter",
+      "packages/engine/src/session/decision_chain.rs:771 仅在本人root observation调用；逐股转换仍交给domain-N07"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "BeliefBook 账户风险 latch 的 owner 行为",
+    "reader_candidate_id": "07-institution-experience-owner",
+    "files": [
+      "packages/engine/src/session/institutional_behavior.rs",
+      "packages/engine/src/strategy/beliefs.rs",
+      "packages/engine/src/session/decision_chain.rs"
+    ],
+    "report_anchor": "session-r2-n05",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** 既有 BeliefBook::observe_institution_account_risk（不新增 InstitutionExperience）\n\n**字段与共同不变量。**\n\n- 已有 institution_policy\n- 已有 institution_account_risk_paused\n- 已有 experience.peak_equity 与 feedback.failure_events 只读事实\n\n**owner 方法。**\n\n- observe_institution_account_risk(equity,moment) -> Result<(),ExperienceError>\n- 私有 assess_institution_account_risk，保持 Option<bool> 表示无peak时不修改latch\n\n**实际生产 caller。**\n\n- packages/engine/src/session/decision_chain.rs::GameSession::run_chain_for_account，在本人equity/逐股观察之后调用。\n- packages/engine/src/session/institutional_behavior.rs::observe_institution_account_risk 暂作兼容适配器。\n\n**数据 owner。**\n\nBeliefBook 原已独占 frozen policy、个人experience与账户pause latch；只把组合这些字段的账户评估/更新交回同一owner。\n\n**组合边界。**\n\nimpl BeliefBook 可在 strategy 的专用子模块中实现；session仍装配 equity 与 ExperienceMoment，通用 RetailExperienceState 不依赖策略政策。逐股observe/holding reconciliation并入已有 domain-N07，不纳入本动作。 替补reader20的InstitutionRiskMemory(policy+paused)是此owner动作的内部组合备选，不增加独立对象动作；schema仍保持原flat字段，不新增非机构拒绝条件。\n\n**迁移步骤。**\n\n- 先固定负equity/非正peak/时钟回拨错误和有无peak行为。\n- 迁移 observe_institution_account_risk 与其纯assess内核至 BeliefBook 所有权模块；保持failure decay及阈值>=/>区别。\n- 原session helper委托，再迁run_chain_for_account调用，保留按本人观察时机更新；存档形状不改。\n\n**既有测试/守卫。**\n\n- institutional_behavior.rs::institution_cost_loss_response_is_individual_not_a_universal_stop_loss\n- institutional_behavior.rs::institution_risk_pressure_has_separate_trigger_and_recovery_thresholds\n- institutional_behavior.rs::institution_adverse_selection_requires_a_real_buy_identity\n- institutional_behavior.rs::institution_risk_counts_real_failures_and_decays_without_deleting_facts\n- institutional_behavior.rs::institution_position_observation_uses_individual_adverse_threshold_once\n- failure_tests.rs::typed_private_plan_failure_is_poisoned_without_mutating_authority\n\n**待补测试。**\n\n- 无peak且低failure影响时latch保持原值；有真实failure阈值时即使无peak仍暂停。\n- 暂停触发边界使用>=，恢复分支使用>；各阈值两侧及等号case。\n- 负equity/非正peak/反馈未来时刻失败前latch不变；序列化往返policy/pause不变。\n\n**语义边界。**\n\n- 这是机构个人策略行为模型，不得改变沪深交易制度、T+1、撮合顺序、费用或挂单生命周期。\n- 成本信号仅参与现有五路加权，不直接下单；risk pause 只暂停后续买入，不强制卖出。\n- 恢复须遵守 ADR-0026 的观察确认、恢复阈值及信号门槛；不重新抽样个体参数。\n- 失败事件必须来自该账户真实买入后的本人不利观察，开局持仓或未成交单不能生成失败。\n- 不复制或重算已有净资产、订单收据、position 成本、收费事实；对象边界不能导致持久化契约静默迁移。\n\n**优先级。**\n\nmedium\n\n**源码证据。**\n\n- packages/engine/src/session/institutional_behavior.rs:8-26 observe_institution_account_risk 读取policy/experience/pause并写回latch\n- 同文件29-76 assess_institution_account_risk 处理failure_decay、peak、>=触发/>恢复边界\n- packages/engine/src/strategy/beliefs.rs:103-116 BeliefBook已有三个相关owner字段；:168-179 getter/setter\n- packages/engine/src/session/decision_chain.rs:771 仅在本人root observation调用；逐股转换仍交给domain-N07",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N06",
+    "proposed_type": "SaveValidationContext（仅校验生命周期内的借用上下文）",
+    "fields": [
+      "&SaveSlot 借用",
+      "已经通过setup.validate的配置引用",
+      "saved_day/current_market_minute 派生值",
+      "stock_codes/issuer_ids/npc_count 派生索引"
+    ],
+    "methods": [
+      "在现有setup/header守卫之后构造派生时钟/索引",
+      "向各专项validator提供明确只读事实；保持字段访问并按原次序触发专项错误"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/persistence.rs::validate_save_slot",
+      "同文件 validate_personal_states 与 validate_plan_contract；两者由 validate_save_slot 按既定次序调用。"
+    ],
+    "data_owner": "只拥有本次校验流程内的借用输入和派生索引，不拥有、修改或序列化任何游戏状态；原始事实仍归 SaveSlot/GameSession 所有。",
+    "composition": "仅 validate_save_slot 及 validate_personal_states/validate_plan_contract 共享一次已验证上下文。validate_saved_order_state 使用恢复后的GameSession，与前述边界阶段不同，保持独立上下文；不把 &GameSession optional 塞进万能validator。",
+    "migration_steps": [
+      "先以现有逻辑和边界行为为基准，新增覆盖上下文派生事实与 phase 边界的验证用例。",
+      "提取 saved_day、day_tick、phase、stock/account 集合和 market-minute 推导，保持错误种类及顺序稳定。",
+      "逐个让现有域 validator 接收上下文，只消除重复推导，不合并领域规则。",
+      "确认 GameSession 订单校验与 SaveSlot 校验是否同一恢复路径；若不是，保留独立上下文构造。"
+    ],
+    "existing_tests": [
+      "persistence.rs::institution_account_latch_save_is_required_strict_and_preserved_on_restore",
+      "persistence.rs::institution_boundary_restore_rejects_confidence_above_10000",
+      "persistence.rs::saved_filled_identity_cannot_also_be_an_active_order"
+    ],
+    "missing_tests": [
+      "跨 phase 验证 day_tick 与 TradingPhase 派生边界保持一致，尤其 call auction、continuous、closing auction 和日切边界。",
+      "一个恢复验证上下文被多个域校验器共享时，stock/account 集合及 market-minute 不发生重复计算语义漂移。",
+      "上下文提取前后错误类别、首个报告错误和 A 股 T+1/odd-lot/reservation 边界不变。"
+    ],
+    "semantic_boundaries": "不得让上下文推断或修补存档事实；TradingPhase 仅依 setup 的 ticks_per_day、auction_ticks、closing_auction_ticks 推导。不得将不同证券类别的数量规则归一化；SavedReservations 的 lot_size、odd-lot 卖出重构、现金 reservation 和 T+1 检查必须保留原有明确边界。该候选没有改变交易语义的授权或必要性。",
+    "priority": "low / optional",
+    "evidence": [
+      "packages/engine/src/session/persistence.rs:122 validate_save_slot 重复推导 saved_day/day_tick/saved_phase 与 expected_markets。",
+      "packages/engine/src/session/persistence.rs:301-307 npc_count/account count 推导；packages/engine/src/session/persistence.rs:346-353 current_market_minute/day_end_market_minute 推导。",
+      "packages/engine/src/session/persistence.rs:975 validate_personal_states 重算 saved_day、stock_codes、npc_count、current_market_minute。",
+      "packages/engine/src/session/persistence.rs:1303 validate_plan_contract 重算 saved_day、stock_codes、npc_count。",
+      "packages/engine/src/session/persistence.rs:1436 validate_saved_order_state 使用 GameSession 重建 markets/accounts/setup 校验上下文。"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "SaveValidationContext 共享恢复校验上下文",
+    "reader_candidate_id": "08-01",
+    "files": [
+      "packages/engine/src/session/persistence.rs"
+    ],
+    "report_anchor": "session-r2-n06",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** SaveValidationContext（仅校验生命周期内的借用上下文）\n\n**字段与共同不变量。**\n\n- &SaveSlot 借用\n- 已经通过setup.validate的配置引用\n- saved_day/current_market_minute 派生值\n- stock_codes/issuer_ids/npc_count 派生索引\n\n**owner 方法。**\n\n- 在现有setup/header守卫之后构造派生时钟/索引\n- 向各专项validator提供明确只读事实；保持字段访问并按原次序触发专项错误\n\n**实际生产 caller。**\n\n- packages/engine/src/session/persistence.rs::validate_save_slot\n- 同文件 validate_personal_states 与 validate_plan_contract；两者由 validate_save_slot 按既定次序调用。\n\n**数据 owner。**\n\n只拥有本次校验流程内的借用输入和派生索引，不拥有、修改或序列化任何游戏状态；原始事实仍归 SaveSlot/GameSession 所有。\n\n**组合边界。**\n\n仅 validate_save_slot 及 validate_personal_states/validate_plan_contract 共享一次已验证上下文。validate_saved_order_state 使用恢复后的GameSession，与前述边界阶段不同，保持独立上下文；不把 &GameSession optional 塞进万能validator。\n\n**迁移步骤。**\n\n- 先以现有逻辑和边界行为为基准，新增覆盖上下文派生事实与 phase 边界的验证用例。\n- 提取 saved_day、day_tick、phase、stock/account 集合和 market-minute 推导，保持错误种类及顺序稳定。\n- 逐个让现有域 validator 接收上下文，只消除重复推导，不合并领域规则。\n- 确认 GameSession 订单校验与 SaveSlot 校验是否同一恢复路径；若不是，保留独立上下文构造。\n\n**既有测试/守卫。**\n\n- persistence.rs::institution_account_latch_save_is_required_strict_and_preserved_on_restore\n- persistence.rs::institution_boundary_restore_rejects_confidence_above_10000\n- persistence.rs::saved_filled_identity_cannot_also_be_an_active_order\n\n**待补测试。**\n\n- 跨 phase 验证 day_tick 与 TradingPhase 派生边界保持一致，尤其 call auction、continuous、closing auction 和日切边界。\n- 一个恢复验证上下文被多个域校验器共享时，stock/account 集合及 market-minute 不发生重复计算语义漂移。\n- 上下文提取前后错误类别、首个报告错误和 A 股 T+1/odd-lot/reservation 边界不变。\n\n**语义边界。**\n\n不得让上下文推断或修补存档事实；TradingPhase 仅依 setup 的 ticks_per_day、auction_ticks、closing_auction_ticks 推导。不得将不同证券类别的数量规则归一化；SavedReservations 的 lot_size、odd-lot 卖出重构、现金 reservation 和 T+1 检查必须保留原有明确边界。该候选没有改变交易语义的授权或必要性。\n\n**优先级。**\n\nlow / optional\n\n**源码证据。**\n\n- packages/engine/src/session/persistence.rs:122 validate_save_slot 重复推导 saved_day/day_tick/saved_phase 与 expected_markets。\n- packages/engine/src/session/persistence.rs:301-307 npc_count/account count 推导；packages/engine/src/session/persistence.rs:346-353 current_market_minute/day_end_market_minute 推导。\n- packages/engine/src/session/persistence.rs:975 validate_personal_states 重算 saved_day、stock_codes、npc_count、current_market_minute。\n- packages/engine/src/session/persistence.rs:1303 validate_plan_contract 重算 saved_day、stock_codes、npc_count。\n- packages/engine/src/session/persistence.rs:1436 validate_saved_order_state 使用 GameSession 重建 markets/accounts/setup 校验上下文。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N07",
+    "proposed_type": "CumulativeFeeAuditV2",
+    "fields": [
+      "side: Side",
+      "filled_value: Money",
+      "charged: FeeComponentsV2"
+    ],
+    "methods": [
+      "nominal(config: &GameConfig) -> Result<FeeComponentsV2, SessionError>",
+      "validate(config: &GameConfig) -> Result<(), SessionError>"
+    ],
+    "production_callers": [
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "symbol": "validate_live_envelopes_against_orders"
+      },
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "symbol": "nominal_fees"
+      },
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "symbol": "charged_fees_are_valid"
+      }
+    ],
+    "data_owner": "该对象只拥有已持久化活动委托的累计费用审计约束；GameConfig 仍是费率权威，pipeline::EnvelopeAudit 仍是运行时事实 owner，FeeComponentsV2 仍是 wire DTO。",
+    "composition": "validate_live_envelopes_against_orders 为每个活动 envelope 的 audit 构造 CumulativeFeeAuditV2 并调用 validate；SaveRuntimeV2 与 JSON schema 不变。",
+    "migration_steps": [
+      "先为现有买卖累计费用边界固定行为测试，再引入私有值对象并将两段逻辑迁入其方法。",
+      "保留现有错误上下文与 SessionError 行为，调用点只负责遍历和报告订单身份。",
+      "确认累计费用校验不尝试重建按成交笔数产生的费用扣取优先级。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/persistence/v2_tests.rs::seller_cumulative_nominal_and_charged_audit_survives_restore",
+      "packages/engine/src/session/persistence/v2_tests.rs::negative_charged_fee_component_is_rejected_as_corrupt_save",
+      "packages/engine/src/session/persistence/v2_tests.rs::charged_fee_component_above_nominal_is_rejected_as_corrupt_save",
+      "packages/engine/src/session/persistence/v2_tests.rs::cumulative_charged_components_do_not_reconstruct_per_fill_priority",
+      "packages/engine/src/session/persistence/v2_tests.rs::charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal"
+    ],
+    "missing_tests": [
+      "明确覆盖买方 charged 必须与 nominal 完全相等的反向篡改边界。",
+      "覆盖 filled_value 为零与负值时 nominal 的处理；当前负值拒绝、零值费用为零。"
+    ],
+    "semantic_boundaries": [
+      "只复用当前 GameConfig commission、sell-side stamp tax、transfer fee 语义，不根据本次 OOP 工作改变费率或收费适用范围。",
+      "卖方 charged 逐项不超过 nominal，charged 总额不超过 nominal 总额及 gross filled_value；买方 charged 与 nominal 相等。",
+      "累计 audit 无法证明每笔成交费用扣取顺序，允许同一总额内不同组件分布；不能声称恢复了逐笔 priority。",
+      "SaveRuntimeV2 是严格 schema v2，不改变序列化字段或引入兼容迁移。"
+    ],
+    "priority": "low_optional",
+    "evidence": [
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "lines": "598-637",
+        "symbols": "validate_live_envelopes_against_orders"
+      },
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "lines": "638-666",
+        "symbols": "nominal_fees"
+      },
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "lines": "667-685",
+        "symbols": "charged_fees_are_valid"
+      },
+      {
+        "path": "packages/engine/src/session/persistence/v2.rs",
+        "lines": "561-596",
+        "symbols": "FeeComponentsV2::total, FeeComponentsV2::validate_nonnegative"
+      }
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "CumulativeFeeAuditV2 累计收费审计值",
+    "reader_candidate_id": "09-fee-audit",
+    "files": [
+      "packages/engine/src/session/persistence/v2.rs"
+    ],
+    "report_anchor": "session-r2-n07",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** CumulativeFeeAuditV2\n\n**字段与共同不变量。**\n\n- side: Side\n- filled_value: Money\n- charged: FeeComponentsV2\n\n**owner 方法。**\n\n- nominal(config: &GameConfig) -> Result<FeeComponentsV2, SessionError>\n- validate(config: &GameConfig) -> Result<(), SessionError>\n\n**实际生产 caller。**\n\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"symbol\": \"validate_live_envelopes_against_orders\"}\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"symbol\": \"nominal_fees\"}\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"symbol\": \"charged_fees_are_valid\"}\n\n**数据 owner。**\n\n该对象只拥有已持久化活动委托的累计费用审计约束；GameConfig 仍是费率权威，pipeline::EnvelopeAudit 仍是运行时事实 owner，FeeComponentsV2 仍是 wire DTO。\n\n**组合边界。**\n\nvalidate_live_envelopes_against_orders 为每个活动 envelope 的 audit 构造 CumulativeFeeAuditV2 并调用 validate；SaveRuntimeV2 与 JSON schema 不变。\n\n**迁移步骤。**\n\n- 先为现有买卖累计费用边界固定行为测试，再引入私有值对象并将两段逻辑迁入其方法。\n- 保留现有错误上下文与 SessionError 行为，调用点只负责遍历和报告订单身份。\n- 确认累计费用校验不尝试重建按成交笔数产生的费用扣取优先级。\n\n**既有测试/守卫。**\n\n- packages/engine/src/session/persistence/v2_tests.rs::seller_cumulative_nominal_and_charged_audit_survives_restore\n- packages/engine/src/session/persistence/v2_tests.rs::negative_charged_fee_component_is_rejected_as_corrupt_save\n- packages/engine/src/session/persistence/v2_tests.rs::charged_fee_component_above_nominal_is_rejected_as_corrupt_save\n- packages/engine/src/session/persistence/v2_tests.rs::cumulative_charged_components_do_not_reconstruct_per_fill_priority\n- packages/engine/src/session/persistence/v2_tests.rs::charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal\n\n**待补测试。**\n\n- 明确覆盖买方 charged 必须与 nominal 完全相等的反向篡改边界。\n- 覆盖 filled_value 为零与负值时 nominal 的处理；当前负值拒绝、零值费用为零。\n\n**语义边界。**\n\n- 只复用当前 GameConfig commission、sell-side stamp tax、transfer fee 语义，不根据本次 OOP 工作改变费率或收费适用范围。\n- 卖方 charged 逐项不超过 nominal，charged 总额不超过 nominal 总额及 gross filled_value；买方 charged 与 nominal 相等。\n- 累计 audit 无法证明每笔成交费用扣取顺序，允许同一总额内不同组件分布；不能声称恢复了逐笔 priority。\n- SaveRuntimeV2 是严格 schema v2，不改变序列化字段或引入兼容迁移。\n\n**优先级。**\n\nlow_optional\n\n**源码证据。**\n\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"lines\": \"598-637\", \"symbols\": \"validate_live_envelopes_against_orders\"}\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"lines\": \"638-666\", \"symbols\": \"nominal_fees\"}\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"lines\": \"667-685\", \"symbols\": \"charged_fees_are_valid\"}\n- {\"path\": \"packages/engine/src/session/persistence/v2.rs\", \"lines\": \"561-596\", \"symbols\": \"FeeComponentsV2::total, FeeComponentsV2::validate_nonnegative\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N08",
+    "proposed_type": "PlanRootCoordinator",
+    "fields": [
+      "AccountSource（Empty/Accounts/InFlight 状态）",
+      "Option<mpsc::Sender<TickWorkReady>> completion_sender"
+    ],
+    "methods": [
+      "accounts(...)：保存根计算所需的 frozen ChainObservations 与待处理账户",
+      "set_completion_sender(...)：限定 worker 启动前接入完成通知",
+      "start_ready_accounts(&mut self, session)：提取 PlanPersonalState 并在冻结 snapshot 上调度 Rayon 工作",
+      "prepare_ready_accounts(&mut self, session, blocking)：轮询/等待 PreparedRoot、安装个人状态並收集生成的操作",
+      "is_empty() 中有关 root source 的完成判断"
+    ],
+    "production_callers": [
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "symbol": "run_decision_chain; PlanChainOperationBatch::accounts 与 prepare_ready_accounts 调用点"
+      },
+      {
+        "path": "packages/engine/src/session/pipeline/ready_ingress.rs",
+        "symbol": "准备 roots 并调用 set_completion_sender"
+      },
+      {
+        "path": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+        "symbol": "AdaptivePlanChainCoordinator 持有并推进 PlanChainOperationBatch"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+        "symbol": "drive_adaptive_chain 调用 prepare_ready_accounts 并处理 ready root"
+      }
+    ],
+    "data_owner": "PlanRootCoordinator 成为账户级 decision root 的异步准备与个人状态返还 owner；GameSession 仍是 authoritative state owner，PlanChainOperationBatch 继续拥有后续 PlanChainOperation、candidate 序号、routes 与 reports。",
+    "composition": "PlanChainOperationBatch 持有 PlanRootCoordinator，并在已有批次方法边界委托根准备；PreparedRoot 仍将生成的 PlanChainOperationBatch 结果交回 coordinator 的调用方，避免 coordinator 持有或复制权威 session。",
+    "migration_steps": [
+      "先用现有 ready_ingress/decision_chain/adaptive callers 画定窄接口并添加 characterization coverage（重点是 blocking/nonblocking、空队列与 worker 失败）。",
+      "迁移 AccountSource 状态、completion_sender 和 root worker 方法至 PlanRootCoordinator，保留先 snapshot 再 take personal state 的顺序及 completion notify 在 send 成功之后的行为。",
+      "让 PlanChainOperationBatch 委托 root readiness 和 is_empty 判定；保持 plan operations 汇总顺序与 tick commit 路径不变。",
+      "检查同 tick 并行与单 Rayon worker 的 yield 路径，以及丢弃 transaction 后结果 receiver 断开的处理。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+      "packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs",
+      "packages/engine/src/session/pipeline/pre_open_transaction_tests.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs"
+    ],
+    "missing_tests": [
+      "明确覆盖 root coordinator 无账户时不启动 worker；已有 PlanChainOperationBatch::accounts 对空账户返回 empty 的现有行为需保留。",
+      "独立固定 InFlight receiver disconnected 时显式 StepFatal，以及单 worker 下 blocking poll 会 yield 而不自锁。",
+      "覆盖 completion sender 只能在 worker 启动前设置，且只有成功发布 PreparedRoot 才通知。"
+    ],
+    "semantic_boundaries": [
+      "不改变 NPC/玩家账户各自独立的计划决策状态；不合并 personal state。",
+      "所有 root 仍读取同一个 tick frozen GameSession snapshot 与 ChainObservations，不读取彼此刚计算的结果。",
+      "仅协调计算和状态交还，不拥有订单、账户现金、成交、计划执行或 A 股交易规则；不改变 route 的生成次序及 tick 的提交/回滚语义。"
+    ],
+    "priority": "low_optional",
+    "evidence": [
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates.rs",
+        "lines": "89-126",
+        "symbols": "PlanChainOperationBatch、AccountSource、PreparedRoot、ChainObservations 的不同状态职责"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates.rs",
+        "lines": "177-207",
+        "symbols": "accounts"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates.rs",
+        "lines": "209-219",
+        "symbols": "set_completion_sender"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates.rs",
+        "lines": "231-299",
+        "symbols": "start_ready_accounts"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates.rs",
+        "lines": "302-353",
+        "symbols": "prepare_ready_accounts"
+      },
+      {
+        "path": "packages/engine/src/session/pipeline/ready_ingress.rs",
+        "lines": "76-83",
+        "symbols": "roots setup 与 notification sender 接入"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain.rs",
+        "lines": "579-616",
+        "symbols": "run_decision_chain roots 创建与 blocking 收集"
+      },
+      {
+        "path": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+        "lines": "52-110",
+        "symbols": "adaptive coordinator 推进 roots 与候选路由"
+      }
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "PlanRootCoordinator 异步 root 计算生命周期",
+    "reader_candidate_id": "10-1",
+    "files": [
+      "packages/engine/src/session/plan_chain_candidates.rs",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs"
+    ],
+    "report_anchor": "session-r2-n08",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** PlanRootCoordinator\n\n**字段与共同不变量。**\n\n- AccountSource（Empty/Accounts/InFlight 状态）\n- Option<mpsc::Sender<TickWorkReady>> completion_sender\n\n**owner 方法。**\n\n- accounts(...)：保存根计算所需的 frozen ChainObservations 与待处理账户\n- set_completion_sender(...)：限定 worker 启动前接入完成通知\n- start_ready_accounts(&mut self, session)：提取 PlanPersonalState 并在冻结 snapshot 上调度 Rayon 工作\n- prepare_ready_accounts(&mut self, session, blocking)：轮询/等待 PreparedRoot、安装个人状态並收集生成的操作\n- is_empty() 中有关 root source 的完成判断\n\n**实际生产 caller。**\n\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"symbol\": \"run_decision_chain; PlanChainOperationBatch::accounts 与 prepare_ready_accounts 调用点\"}\n- {\"path\": \"packages/engine/src/session/pipeline/ready_ingress.rs\", \"symbol\": \"准备 roots 并调用 set_completion_sender\"}\n- {\"path\": \"packages/engine/src/session/pipeline/adaptive_plan_chain.rs\", \"symbol\": \"AdaptivePlanChainCoordinator 持有并推进 PlanChainOperationBatch\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates/adaptive.rs\", \"symbol\": \"drive_adaptive_chain 调用 prepare_ready_accounts 并处理 ready root\"}\n\n**数据 owner。**\n\nPlanRootCoordinator 成为账户级 decision root 的异步准备与个人状态返还 owner；GameSession 仍是 authoritative state owner，PlanChainOperationBatch 继续拥有后续 PlanChainOperation、candidate 序号、routes 与 reports。\n\n**组合边界。**\n\nPlanChainOperationBatch 持有 PlanRootCoordinator，并在已有批次方法边界委托根准备；PreparedRoot 仍将生成的 PlanChainOperationBatch 结果交回 coordinator 的调用方，避免 coordinator 持有或复制权威 session。\n\n**迁移步骤。**\n\n- 先用现有 ready_ingress/decision_chain/adaptive callers 画定窄接口并添加 characterization coverage（重点是 blocking/nonblocking、空队列与 worker 失败）。\n- 迁移 AccountSource 状态、completion_sender 和 root worker 方法至 PlanRootCoordinator，保留先 snapshot 再 take personal state 的顺序及 completion notify 在 send 成功之后的行为。\n- 让 PlanChainOperationBatch 委托 root readiness 和 is_empty 判定；保持 plan operations 汇总顺序与 tick commit 路径不变。\n- 检查同 tick 并行与单 Rayon worker 的 yield 路径，以及丢弃 transaction 后结果 receiver 断开的处理。\n\n**既有测试/守卫。**\n\n- packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs\n- packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs\n- packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs\n- packages/engine/src/session/pipeline/pre_open_transaction_tests.rs\n- packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs\n\n**待补测试。**\n\n- 明确覆盖 root coordinator 无账户时不启动 worker；已有 PlanChainOperationBatch::accounts 对空账户返回 empty 的现有行为需保留。\n- 独立固定 InFlight receiver disconnected 时显式 StepFatal，以及单 worker 下 blocking poll 会 yield 而不自锁。\n- 覆盖 completion sender 只能在 worker 启动前设置，且只有成功发布 PreparedRoot 才通知。\n\n**语义边界。**\n\n- 不改变 NPC/玩家账户各自独立的计划决策状态；不合并 personal state。\n- 所有 root 仍读取同一个 tick frozen GameSession snapshot 与 ChainObservations，不读取彼此刚计算的结果。\n- 仅协调计算和状态交还，不拥有订单、账户现金、成交、计划执行或 A 股交易规则；不改变 route 的生成次序及 tick 的提交/回滚语义。\n\n**优先级。**\n\nlow_optional\n\n**源码证据。**\n\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates.rs\", \"lines\": \"89-126\", \"symbols\": \"PlanChainOperationBatch、AccountSource、PreparedRoot、ChainObservations 的不同状态职责\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates.rs\", \"lines\": \"177-207\", \"symbols\": \"accounts\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates.rs\", \"lines\": \"209-219\", \"symbols\": \"set_completion_sender\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates.rs\", \"lines\": \"231-299\", \"symbols\": \"start_ready_accounts\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates.rs\", \"lines\": \"302-353\", \"symbols\": \"prepare_ready_accounts\"}\n- {\"path\": \"packages/engine/src/session/pipeline/ready_ingress.rs\", \"lines\": \"76-83\", \"symbols\": \"roots setup 与 notification sender 接入\"}\n- {\"path\": \"packages/engine/src/session/decision_chain.rs\", \"lines\": \"579-616\", \"symbols\": \"run_decision_chain roots 创建与 blocking 收集\"}\n- {\"path\": \"packages/engine/src/session/plan_chain_candidates/adaptive.rs\", \"lines\": \"52-110\", \"symbols\": \"adaptive coordinator 推进 roots 与候选路由\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N09",
+    "proposed_type": "StockRouteCoordination",
+    "fields": [
+      "pending: Option<(generation_index:u64, Box<PlanExecutionRoute>)>",
+      "retry_market: Option<MarketView>",
+      "reconsideration: Option<(CandidateAssessment, MarketView)>",
+      "account/code由外层map键提供，不复制为另一identity"
+    ],
+    "methods": [
+      "is_blocked_by_pending_route(unfinished_routes)",
+      "install_pending(generation_index, route)",
+      "resume(generation_index, outcome)",
+      "take_follow_up()"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::operation_blocked",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::yield_adaptive_candidates_with_root_wait",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::resume_adaptive_candidates"
+    ],
+    "data_owner": "PlanChainOperationBatch 仍是批次生命周期 owner；该具名对象只收拢 account/stock 维度的延迟 route 与续作上下文，不拥有 GameSession、TradingPlan 或订单事实。",
+    "composition": "PlanChainOperationBatch 以一张 keyed entry map收拢三类独立可选状态，或保留三map由一个私有协调owner持有；这两种是同一动作的实现备选。不得把三值强制视为同生同灭：reconsideration优先被取出时retry_market仍保留，Complete不需要reconsideration时两类上下文保持既有行为。",
+    "migration_steps": [
+      "先为同股票 route、reconsideration、retry_market 的读写定义具名协调 API，并明确各自可独立存在/消费的状态转换。",
+      "将 pending_routes 中 route 和 generation_index 迁入按账户/股票索引的协调条目，保持相同键互斥及 generation 检查。",
+      "逐个迁移 reconsideration 与 retry_market 的插入、取出路径；若生命周期不同则保留独立存储而不强行塞入该对象。",
+      "用现有测试和补充的同股票 route/续作次序用例验证候选批次、报告与业务状态一致。"
+    ],
+    "existing_tests": [
+      "adaptive_tests.rs::same_plan_cannot_yield_again_until_its_typed_result_arrives",
+      "adaptive_tests.rs::lifecycle_skips_a_pending_stock_and_observes_an_independent_stock",
+      "adaptive_tests.rs::adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands",
+      "source_tests.rs::source_enumeration_preserves_multi_continuation_order_and_payload"
+    ],
+    "missing_tests": [
+      "同一 account/stock pending route 存在时，lifecycle、Execute 和新增 route 均被协调条目一致阻塞，而其他股票可继续。",
+      "resume 的 generation 不匹配/无对应 route 时仍显式失败，且不会消费另一条续作上下文。",
+      "reconsideration 与 retry_market 的写入和消费可各自发生，不因合并存储互相覆盖或错误清除。"
+    ],
+    "semantic_boundaries": [
+      "不改变玩家/NPC 委托、撤单合法时段、价格优先/时间优先、整手或 T+1 语义。",
+      "route outcome 仍是外部执行结果的权威输入；对象不直接撤单、下单或更改账户、盘口和 parent order。",
+      "账户与证券代码只用于批次内部协调，不合并独立账户，不聚合持仓、现金或策略。",
+      "当前测试和候选逻辑表达游戏执行流程，没有引入新的 A 股交易制度假设。"
+    ],
+    "priority": "low_optional",
+    "evidence": [
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch 字段被 pending_routes/retry_market/reconsideration 分别访问。",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: operation_blocked 以 (AccountId, StockCode) 检查 pending route 和 unfinished route。",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: yield_adaptive_candidates_with_root_wait 写 retry_market 与 reconsideration。",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs: resume_adaptive_candidates 消费续作上下文并排入后续操作。",
+      "packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs: 同股票等待与独立股票继续处理已有代表性覆盖。"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "StockRouteCoordination 批次内延迟续作状态",
+    "reader_candidate_id": "11-stock-route-coordination",
+    "files": [
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs"
+    ],
+    "report_anchor": "session-r2-n09",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** StockRouteCoordination\n\n**字段与共同不变量。**\n\n- pending: Option<(generation_index:u64, Box<PlanExecutionRoute>)>\n- retry_market: Option<MarketView>\n- reconsideration: Option<(CandidateAssessment, MarketView)>\n- account/code由外层map键提供，不复制为另一identity\n\n**owner 方法。**\n\n- is_blocked_by_pending_route(unfinished_routes)\n- install_pending(generation_index, route)\n- resume(generation_index, outcome)\n- take_follow_up()\n\n**实际生产 caller。**\n\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::operation_blocked\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::yield_adaptive_candidates_with_root_wait\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch::resume_adaptive_candidates\n\n**数据 owner。**\n\nPlanChainOperationBatch 仍是批次生命周期 owner；该具名对象只收拢 account/stock 维度的延迟 route 与续作上下文，不拥有 GameSession、TradingPlan 或订单事实。\n\n**组合边界。**\n\nPlanChainOperationBatch 以一张 keyed entry map收拢三类独立可选状态，或保留三map由一个私有协调owner持有；这两种是同一动作的实现备选。不得把三值强制视为同生同灭：reconsideration优先被取出时retry_market仍保留，Complete不需要reconsideration时两类上下文保持既有行为。\n\n**迁移步骤。**\n\n- 先为同股票 route、reconsideration、retry_market 的读写定义具名协调 API，并明确各自可独立存在/消费的状态转换。\n- 将 pending_routes 中 route 和 generation_index 迁入按账户/股票索引的协调条目，保持相同键互斥及 generation 检查。\n- 逐个迁移 reconsideration 与 retry_market 的插入、取出路径；若生命周期不同则保留独立存储而不强行塞入该对象。\n- 用现有测试和补充的同股票 route/续作次序用例验证候选批次、报告与业务状态一致。\n\n**既有测试/守卫。**\n\n- adaptive_tests.rs::same_plan_cannot_yield_again_until_its_typed_result_arrives\n- adaptive_tests.rs::lifecycle_skips_a_pending_stock_and_observes_an_independent_stock\n- adaptive_tests.rs::adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands\n- source_tests.rs::source_enumeration_preserves_multi_continuation_order_and_payload\n\n**待补测试。**\n\n- 同一 account/stock pending route 存在时，lifecycle、Execute 和新增 route 均被协调条目一致阻塞，而其他股票可继续。\n- resume 的 generation 不匹配/无对应 route 时仍显式失败，且不会消费另一条续作上下文。\n- reconsideration 与 retry_market 的写入和消费可各自发生，不因合并存储互相覆盖或错误清除。\n\n**语义边界。**\n\n- 不改变玩家/NPC 委托、撤单合法时段、价格优先/时间优先、整手或 T+1 语义。\n- route outcome 仍是外部执行结果的权威输入；对象不直接撤单、下单或更改账户、盘口和 parent order。\n- 账户与证券代码只用于批次内部协调，不合并独立账户，不聚合持仓、现金或策略。\n- 当前测试和候选逻辑表达游戏执行流程，没有引入新的 A 股交易制度假设。\n\n**优先级。**\n\nlow_optional\n\n**源码证据。**\n\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: PlanChainOperationBatch 字段被 pending_routes/retry_market/reconsideration 分别访问。\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: operation_blocked 以 (AccountId, StockCode) 检查 pending route 和 unfinished route。\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: yield_adaptive_candidates_with_root_wait 写 retry_market 与 reconsideration。\n- packages/engine/src/session/plan_chain_candidates/adaptive.rs: resume_adaptive_candidates 消费续作上下文并排入后续操作。\n- packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs: 同股票等待与独立股票继续处理已有代表性覆盖。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N10",
+    "name": "LiveOrderReservations",
+    "proposed_type": "snapshot.rs 内部的临时派生聚合 struct，不实现持久化或交易执行行为",
+    "fields": [
+      "reserved_cash: BTreeMap<AccountId, Money>",
+      "reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>"
+    ],
+    "methods": [
+      "record_order(owner,code,side,price,remaining_qty,filled_value,config)：保留现行live_cash_reservation和checked累计；Sell另计股数",
+      "take_for(account)：同时移出两类派生汇总供AccountSnap构造，缺少合法无订单汇总仍表现零预留"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/snapshot.rs: GameSession::snapshot_inner 在遍历 markets 和 auction_orders 时调用"
+    ],
+    "data_owner": "本次 snapshot 构造中的订单预留派生总额；GameSession 仍拥有权威订单与账户状态，聚合对象仅活到 Snapshot 构造结束",
+    "composition": "GameSession::snapshot_inner 创建一个 LiveOrderReservations，连续和 auction 两类订单共用同一实例，完成汇总后将玩家账户视图移入 AccountSnap。",
+    "migration_steps": [
+      "先将两组 closure 与映射收拢为聚合对象，保留 continuous/auction 两处调用的参数和值。",
+      "保持 checked_add/add 的显式 invariant failure 行为和当前 Money 计算。",
+      "保持 Snapshot JSON/TS 字段及 include_npc_accounts、include_daily_candles 行为不变。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:509/531/556/559 只覆盖 partly filled buy 的 reserved_cash 和 positions.qty；没有断言 reserved_sell_qty。本轮独立复核纠正原reader过度覆盖声明，未运行测试。"
+    ],
+    "missing_tests": [
+      "若实施，新增短 fixture 同时含 continuous 与 auction 买卖单，分别核对跨订单簿 reserved_cash 与 reserved_sell_qty 汇总，包含 partial fill 对剩余订单现金预留的现有规则。",
+      "累加溢出仍应显式失败，不能被默认值吞掉。",
+      "明确补 snapshot reserved_sell_qty 的continuous/auction两来源、部分成交后余量和同账户跨证券累计；现引测试没有覆盖这项。"
+    ],
+    "semantic_boundaries": [
+      "仅表现引擎现有未成交订单冻结资源计算，不声称代表交易所清算或中国结算机制。",
+      "不可变更 live_cash_reservation、买卖单现金预留差异、订单剩余 qty、T+1 可卖股份等既有规则；不引入领域新规则。",
+      "Snapshot 是可编辑存档/远程展示所需的派生读模型，不将派生汇总作为新权威事实保存。"
+    ],
+    "priority": "低，可选；若无复用或更复杂聚合需求，建议暂不实施。",
+    "evidence": [
+      "packages/engine/src/session/snapshot.rs:84-104: 两份累计映射与 checked 累加 closure。",
+      "packages/engine/src/session/snapshot.rs:106-150: continuous 与 auction 共用汇总不变量。",
+      "packages/engine/src/session/snapshot.rs:169-195: 汇总转成 AccountSnap。",
+      "packages/engine/src/session/snapshot.rs:199-217: 完整/运行时快照的历史与 active K 线边界。"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "LiveOrderReservations 快照预留汇总",
+    "reader_candidate_id": "15-1",
+    "files": [
+      "packages/engine/src/session/snapshot.rs"
+    ],
+    "report_anchor": "session-r2-n10",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** snapshot.rs 内部的临时派生聚合 struct，不实现持久化或交易执行行为\n\n**字段与共同不变量。**\n\n- reserved_cash: BTreeMap<AccountId, Money>\n- reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>\n\n**owner 方法。**\n\n- record_order(owner,code,side,price,remaining_qty,filled_value,config)：保留现行live_cash_reservation和checked累计；Sell另计股数\n- take_for(account)：同时移出两类派生汇总供AccountSnap构造，缺少合法无订单汇总仍表现零预留\n\n**实际生产 caller。**\n\n- packages/engine/src/session/snapshot.rs: GameSession::snapshot_inner 在遍历 markets 和 auction_orders 时调用\n\n**数据 owner。**\n\n本次 snapshot 构造中的订单预留派生总额；GameSession 仍拥有权威订单与账户状态，聚合对象仅活到 Snapshot 构造结束\n\n**组合边界。**\n\nGameSession::snapshot_inner 创建一个 LiveOrderReservations，连续和 auction 两类订单共用同一实例，完成汇总后将玩家账户视图移入 AccountSnap。\n\n**迁移步骤。**\n\n- 先将两组 closure 与映射收拢为聚合对象，保留 continuous/auction 两处调用的参数和值。\n- 保持 checked_add/add 的显式 invariant failure 行为和当前 Money 计算。\n- 保持 Snapshot JSON/TS 字段及 include_npc_accounts、include_daily_candles 行为不变。\n\n**既有测试/守卫。**\n\n- packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:509/531/556/559 只覆盖 partly filled buy 的 reserved_cash 和 positions.qty；没有断言 reserved_sell_qty。本轮独立复核纠正原reader过度覆盖声明，未运行测试。\n\n**待补测试。**\n\n- 若实施，新增短 fixture 同时含 continuous 与 auction 买卖单，分别核对跨订单簿 reserved_cash 与 reserved_sell_qty 汇总，包含 partial fill 对剩余订单现金预留的现有规则。\n- 累加溢出仍应显式失败，不能被默认值吞掉。\n- 明确补 snapshot reserved_sell_qty 的continuous/auction两来源、部分成交后余量和同账户跨证券累计；现引测试没有覆盖这项。\n\n**语义边界。**\n\n- 仅表现引擎现有未成交订单冻结资源计算，不声称代表交易所清算或中国结算机制。\n- 不可变更 live_cash_reservation、买卖单现金预留差异、订单剩余 qty、T+1 可卖股份等既有规则；不引入领域新规则。\n- Snapshot 是可编辑存档/远程展示所需的派生读模型，不将派生汇总作为新权威事实保存。\n\n**优先级。**\n\n低，可选；若无复用或更复杂聚合需求，建议暂不实施。\n\n**源码证据。**\n\n- packages/engine/src/session/snapshot.rs:84-104: 两份累计映射与 checked 累加 closure。\n- packages/engine/src/session/snapshot.rs:106-150: continuous 与 auction 共用汇总不变量。\n- packages/engine/src/session/snapshot.rs:169-195: 汇总转成 AccountSnap。\n- packages/engine/src/session/snapshot.rs:199-217: 完整/运行时快照的历史与 active K 线边界。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N11",
+    "proposed_type": "CandidateTargetProposal（纯派生值，探索性）",
+    "fields": [
+      "target_weight_bp：经个体步幅和最大可持股数约束后的目标权重",
+      "target_qty：按权益、现价及100股整手换算出的目标股数",
+      "rounding：QuantityRounding，保留整手向下取整前数量"
+    ],
+    "methods": [
+      "from_score(current_weight_bp,score,position_step_bp,equity,price,max_holdable_shares,lot_size) -> CandidateTargetProposal：保持现行weight计算→股本/u32可表达性clamp→target_share_quantity顺序及错误上下文"
+    ],
+    "production_callers": [
+      "packages/engine/src/session/decision_chain.rs::GameSession::collect_plan_lifecycle_actions：target_position_weight_bp → max_holdable_shares clamp → target_share_quantity 当前连续装配。"
+    ],
+    "data_owner": "单次候选的目标权重、股本上限约束后的目标数量和舍入事实；它们构成一个明确纯值转换，不是账户现金或申报接受事实。",
+    "composition": "放在 plans/candidates/targets.rs，与 target_position_weight_bp / target_share_quantity 同层；内部复用现有函数和 A_SHARE_BOARD_LOT 常量。",
+    "migration_steps": [
+      "先固定 current_weight/score/step、max_holdable_shares与舍入的组合现状。",
+      "提取该组连续转换为value constructor，维持原错误上下文、股本clamp与lot舍入顺序。",
+      "调用方仍只读取所需target_qty；其余字段是内部过程事实，不新增UI或保存舍入诊断。"
+    ],
+    "existing_tests": [
+      "plans/candidates/targets.rs 两个现有函数的边界由现有候选/决策链测试消费；本轮未全文读取外部候选测试文件，不能称已有完整组合矩阵。",
+      "decision_chain.rs 内 institution_new_direction_requires_the_confirmed_signal_threshold 等生命周期场景。"
+    ],
+    "missing_tests": [
+      "股本上限非整手时对目标股数是否应再向下整手的边界。",
+      "目标权重因最大持股量收缩后 rounding.raw_qty 表示收缩前还是收缩后换算数量。",
+      "全现金目标、价格单位为分和恰好整手的组合边界。"
+    ],
+    "semantic_boundaries": [
+      "A股现有此路径固定100股整手；不得以此候选抹平其他证券类别差异。",
+      "这是意向目标，不代表申报可接受数量、现金可负担数量或成交；真实订单仍由路由层校验。",
+      "不改变 T+1、零股卖出、涨跌幅或交易阶段语义。"
+    ],
+    "priority": "low / exploratory",
+    "evidence": [
+      "packages/engine/src/plans/candidates/targets.rs:11-29 target_position_weight_bp",
+      "packages/engine/src/plans/candidates/targets.rs:43-77 target_share_quantity",
+      "packages/engine/src/session/decision_chain.rs:1248-1280 目标权重收缩及只取 target_qty"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "CandidateTargetProposal 权重到数量的共同转换",
+    "reader_candidate_id": "18a",
+    "files": [
+      "packages/engine/src/plans/candidates/targets.rs",
+      "packages/engine/src/session/decision_chain.rs"
+    ],
+    "report_anchor": "session-r2-n11",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** CandidateTargetProposal（纯派生值，探索性）\n\n**字段与共同不变量。**\n\n- target_weight_bp：经个体步幅和最大可持股数约束后的目标权重\n- target_qty：按权益、现价及100股整手换算出的目标股数\n- rounding：QuantityRounding，保留整手向下取整前数量\n\n**owner 方法。**\n\n- from_score(current_weight_bp,score,position_step_bp,equity,price,max_holdable_shares,lot_size) -> CandidateTargetProposal：保持现行weight计算→股本/u32可表达性clamp→target_share_quantity顺序及错误上下文\n\n**实际生产 caller。**\n\n- packages/engine/src/session/decision_chain.rs::GameSession::collect_plan_lifecycle_actions：target_position_weight_bp → max_holdable_shares clamp → target_share_quantity 当前连续装配。\n\n**数据 owner。**\n\n单次候选的目标权重、股本上限约束后的目标数量和舍入事实；它们构成一个明确纯值转换，不是账户现金或申报接受事实。\n\n**组合边界。**\n\n放在 plans/candidates/targets.rs，与 target_position_weight_bp / target_share_quantity 同层；内部复用现有函数和 A_SHARE_BOARD_LOT 常量。\n\n**迁移步骤。**\n\n- 先固定 current_weight/score/step、max_holdable_shares与舍入的组合现状。\n- 提取该组连续转换为value constructor，维持原错误上下文、股本clamp与lot舍入顺序。\n- 调用方仍只读取所需target_qty；其余字段是内部过程事实，不新增UI或保存舍入诊断。\n\n**既有测试/守卫。**\n\n- plans/candidates/targets.rs 两个现有函数的边界由现有候选/决策链测试消费；本轮未全文读取外部候选测试文件，不能称已有完整组合矩阵。\n- decision_chain.rs 内 institution_new_direction_requires_the_confirmed_signal_threshold 等生命周期场景。\n\n**待补测试。**\n\n- 股本上限非整手时对目标股数是否应再向下整手的边界。\n- 目标权重因最大持股量收缩后 rounding.raw_qty 表示收缩前还是收缩后换算数量。\n- 全现金目标、价格单位为分和恰好整手的组合边界。\n\n**语义边界。**\n\n- A股现有此路径固定100股整手；不得以此候选抹平其他证券类别差异。\n- 这是意向目标，不代表申报可接受数量、现金可负担数量或成交；真实订单仍由路由层校验。\n- 不改变 T+1、零股卖出、涨跌幅或交易阶段语义。\n\n**优先级。**\n\nlow / exploratory\n\n**源码证据。**\n\n- packages/engine/src/plans/candidates/targets.rs:11-29 target_position_weight_bp\n- packages/engine/src/plans/candidates/targets.rs:43-77 target_share_quantity\n- packages/engine/src/session/decision_chain.rs:1248-1280 目标权重收缩及只取 target_qty",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "session-R2-N12",
+    "name": "RetailDecisionContext（可选局部决策事实）",
+    "proposed_type": "私有 RetailDecisionContext 值类型，仅在 decide_retail 单次调用内构造，不作为存档或公开领域类型。",
+    "fields": [
+      "code: StockCode",
+      "stock_view: &StockView",
+      "minute_change: Option<f64> 或经明确策略处理后的变化值",
+      "position: Option<&PositionView>",
+      "cost_return: Option<f64>",
+      "effective_stop_threshold: f64",
+      "effective_dip_threshold: f64"
+    ],
+    "methods": [
+      "from_selected_stock(strategy, code, stock_view, own) -> Self",
+      "classify_chase(chase_prob 已由调用 RNG 决定后的纯信号分类) -> RetailSignal",
+      "可选的 sellable_qty() 只读取 position，不自行放宽 A 股卖出规则"
+    ],
+    "production_callers": [
+      "packages/engine/src/strategy/data.rs::decide_data 的 Retail 分支调用 decide_retail",
+      "packages/engine/src/strategy/zi_noise.rs::Strategy::decide 调用 decide_retail"
+    ],
+    "data_owner": "仅拥有 decide_retail 当前调用内从 StockView 与 SelfView 派生的同一股票事实；StrategyData 仍拥有可配置策略参数，账户仍拥有现金/持仓和资金冻结，sizing 函数仍拥有申报单位规则。",
+    "composition": "decide_retail 原随机选股/arrival/chase门抽样保持在原位置，仅在需要追涨/抄底/止损个人事实时构造局部value。噪声卖出可能重新选另一股票，必须重新建立code/view/position对应关系，不沿用首只股票的context。",
+    "migration_steps": [
+      "先以新增失败定向测试固定上涨止盈、下跌止损/抄底及零/无效成本的边界。",
+      "提取共享事实构造逻辑并逐分支替换原散落计算，确保行情序列不足语义保持一致。",
+      "保留 Intent 组装、随机方向、资金含费缩量与可卖数量计算在现有 owner。"
+    ],
+    "existing_tests": [
+      "sizing.rs::funded_buy_is_independent_of_existing_concentration_and_market_stock_count 使用 MomentumStrategy；只作为 shared sizing 的间接边界证据，不能称 retail decide 分支覆盖。sizing其余含费/整手测试也只验证helper边界。",
+      "packages/engine/tests/strategy.rs 中 zi_noise_arrival_rate_zero_produces_nothing 等 noise行为测试是既有锚点，未全文复读外部suite，不能据此宣称已覆盖所有retail追涨/抄底/止损分支。"
+    ],
+    "missing_tests": [
+      "缺成本时不触发take_profit；正stop_loss_threshold下loss=0不触发止损；合法stop_loss_threshold=0时保留现有loss=pnl.map_or(0.0,...)并按>=可能产生Sell的行为，不把理想禁卖断言混入context纯重构。若另要改变这项行为，独立登记并取得行为修改授权。",
+      "上涨止盈使用可卖数量；下跌止损但T+1无可卖股份不生成卖单；跌幅和盘口失衡阈值两侧保持原比较和RNG顺序。",
+      "不足/单点分钟历史保持现有change=0策略处理，不虚构方向变化，但仍允许原noise分支；context不能引入新的拒绝或错误。"
+    ],
+    "semantic_boundaries": [
+      "不改变现行游戏简化下的 100 股买入单位、卖出零股余量、T+1 可卖数量限制、真实手续费资金能力。",
+      "change 仍必须源自完整交易分钟收盘而非宿主 tick。",
+      "保持噪声/追涨分支所用主动最高买价和最低卖价语义；不得让上下文绕开账户层最终校验。",
+      "stop_loss_threshold=0在现行ZiNoiseStrategy::validate_state中合法；无cost的loss=0默认也是当前行为，重构必须保留比较及可能Sell，而不是顺手改为Unavailable等待。"
+    ],
+    "priority": "low_optional",
+    "evidence": [
+      "packages/engine/src/strategy/retail.rs:34-52 minute change 与个人成本收益散落派生",
+      "packages/engine/src/strategy/retail.rs:83-103 loss 与止损/抄底阈值联算",
+      "packages/engine/src/strategy/retail.rs:128-166 另一路筛选可卖持仓并重取报价/仓位",
+      "packages/engine/src/strategy/sizing.rs:15-27 与 30-69 说明申报单位和资金费用应保留独立规则 owner",
+      "packages/engine/src/strategy/zi_noise.rs::Strategy::decide 与 packages/engine/src/strategy/data.rs::StrategyData::decide 为生产调用路径",
+      "管理者复核 retail.rs 全文：行情/成本分别在分支进入后求值，移动构造不得提前触发新验证或消耗RNG；本动作可选。"
+    ],
+    "kind": "new",
+    "extends": null,
+    "title": "RetailDecisionContext 单股行情与个人收益事实",
+    "reader_candidate_id": "C23-1",
+    "files": [
+      "packages/engine/src/strategy/retail.rs"
+    ],
+    "report_anchor": "session-r2-n12",
+    "group": "session",
+    "details_markdown": "分类：新增，可选优先级保持下述标记。\n\n**拟议类型。** 私有 RetailDecisionContext 值类型，仅在 decide_retail 单次调用内构造，不作为存档或公开领域类型。\n\n**字段与共同不变量。**\n\n- code: StockCode\n- stock_view: &StockView\n- minute_change: Option<f64> 或经明确策略处理后的变化值\n- position: Option<&PositionView>\n- cost_return: Option<f64>\n- effective_stop_threshold: f64\n- effective_dip_threshold: f64\n\n**owner 方法。**\n\n- from_selected_stock(strategy, code, stock_view, own) -> Self\n- classify_chase(chase_prob 已由调用 RNG 决定后的纯信号分类) -> RetailSignal\n- 可选的 sellable_qty() 只读取 position，不自行放宽 A 股卖出规则\n\n**实际生产 caller。**\n\n- packages/engine/src/strategy/data.rs::decide_data 的 Retail 分支调用 decide_retail\n- packages/engine/src/strategy/zi_noise.rs::Strategy::decide 调用 decide_retail\n\n**数据 owner。**\n\n仅拥有 decide_retail 当前调用内从 StockView 与 SelfView 派生的同一股票事实；StrategyData 仍拥有可配置策略参数，账户仍拥有现金/持仓和资金冻结，sizing 函数仍拥有申报单位规则。\n\n**组合边界。**\n\ndecide_retail 原随机选股/arrival/chase门抽样保持在原位置，仅在需要追涨/抄底/止损个人事实时构造局部value。噪声卖出可能重新选另一股票，必须重新建立code/view/position对应关系，不沿用首只股票的context。\n\n**迁移步骤。**\n\n- 先以新增失败定向测试固定上涨止盈、下跌止损/抄底及零/无效成本的边界。\n- 提取共享事实构造逻辑并逐分支替换原散落计算，确保行情序列不足语义保持一致。\n- 保留 Intent 组装、随机方向、资金含费缩量与可卖数量计算在现有 owner。\n\n**既有测试/守卫。**\n\n- sizing.rs::funded_buy_is_independent_of_existing_concentration_and_market_stock_count 使用 MomentumStrategy；只作为 shared sizing 的间接边界证据，不能称 retail decide 分支覆盖。sizing其余含费/整手测试也只验证helper边界。\n- packages/engine/tests/strategy.rs 中 zi_noise_arrival_rate_zero_produces_nothing 等 noise行为测试是既有锚点，未全文复读外部suite，不能据此宣称已覆盖所有retail追涨/抄底/止损分支。\n\n**待补测试。**\n\n- 缺成本时不触发take_profit；正stop_loss_threshold下loss=0不触发止损；合法stop_loss_threshold=0时保留现有loss=pnl.map_or(0.0,...)并按>=可能产生Sell的行为，不把理想禁卖断言混入context纯重构。若另要改变这项行为，独立登记并取得行为修改授权。\n- 上涨止盈使用可卖数量；下跌止损但T+1无可卖股份不生成卖单；跌幅和盘口失衡阈值两侧保持原比较和RNG顺序。\n- 不足/单点分钟历史保持现有change=0策略处理，不虚构方向变化，但仍允许原noise分支；context不能引入新的拒绝或错误。\n\n**语义边界。**\n\n- 不改变现行游戏简化下的 100 股买入单位、卖出零股余量、T+1 可卖数量限制、真实手续费资金能力。\n- change 仍必须源自完整交易分钟收盘而非宿主 tick。\n- 保持噪声/追涨分支所用主动最高买价和最低卖价语义；不得让上下文绕开账户层最终校验。\n- stop_loss_threshold=0在现行ZiNoiseStrategy::validate_state中合法；无cost的loss=0默认也是当前行为，重构必须保留比较及可能Sell，而不是顺手改为Unavailable等待。\n\n**优先级。**\n\nlow_optional\n\n**源码证据。**\n\n- packages/engine/src/strategy/retail.rs:34-52 minute change 与个人成本收益散落派生\n- packages/engine/src/strategy/retail.rs:83-103 loss 与止损/抄底阈值联算\n- packages/engine/src/strategy/retail.rs:128-166 另一路筛选可卖持仓并重取报价/仓位\n- packages/engine/src/strategy/sizing.rs:15-27 与 30-69 说明申报单位和资金费用应保留独立规则 owner\n- packages/engine/src/strategy/zi_noise.rs::Strategy::decide 与 packages/engine/src/strategy/data.rs::StrategyData::decide 为生产调用路径\n- 管理者复核 retail.rs 全文：行情/成本分别在分支进入后求值，移动构造不得提前触发新验证或消耗RNG；本动作可选。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

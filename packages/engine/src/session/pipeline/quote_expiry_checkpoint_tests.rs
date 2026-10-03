@@ -7,7 +7,11 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     let player = crate::AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
-    game.accounts.get_mut(&npc).unwrap().strategy = None;
+    game.state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_strategy(None);
     let mut events = Vec::new();
     game.seed_order_for_test(
         npc,
@@ -29,11 +33,11 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         },
         &mut events,
     );
-    game.envelope_ledger = EnvelopeLedger::new(game.next_receipt_base, []).unwrap();
+    game.state.envelope_ledger = EnvelopeLedger::new(game.state.next_receipt_base, []).unwrap();
     let projected = game.project_live_envelopes().unwrap();
-    let cash_before = game.accounts[&npc].cash;
+    let cash_before = game.state.accounts[&npc].cash();
     let seq_before = game.seq();
-    let cursor_before = game.next_receipt_base;
+    let cursor_before = game.state.next_receipt_base;
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let ledger = plan.envelope_ledger().unwrap();
@@ -43,9 +47,9 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     for envelope in projected {
         assert_eq!(ledger.get(envelope.key()).unwrap(), &envelope);
     }
-    assert_eq!(game.markets[&code].resting_orders_for(npc).len(), 1);
-    assert_eq!(game.auction_orders[&code].len(), 1);
-    assert_eq!(game.accounts[&npc].cash, cash_before);
+    assert_eq!(game.state.markets[&code].resting_orders_for(npc).len(), 1);
+    assert_eq!(game.state.auction_orders[&code].len(), 1);
+    assert_eq!(game.state.accounts[&npc].cash(), cash_before);
     assert_eq!(game.seq(), seq_before);
-    assert_eq!(game.next_receipt_base, cursor_before);
+    assert_eq!(game.state.next_receipt_base, cursor_before);
 }

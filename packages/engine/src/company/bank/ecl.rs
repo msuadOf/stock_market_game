@@ -87,67 +87,85 @@ impl EclScenario {
 impl EclPolicy {
     /// 政策校验：两张情景表非空、逐情景合法、各自概率权重和恰为 10000bp。
     pub fn validate(&self) -> Result<(), BankError> {
-        validate_scenarios("stage1_default", &self.stage1_default)?;
-        validate_scenarios("lifetime_default", &self.lifetime_default)
+        EclScenariosRef::validate("stage1_default", &self.stage1_default)?;
+        EclScenariosRef::validate("lifetime_default", &self.lifetime_default)?;
+        Ok(())
+    }
+
+    /// 沿用初始政策的计算入口；启动校验仍由 BankBooks::new 负责。
+    /// serde 恢复不新增政策校验，以保留既有接受集合与发行错误次序。
+    pub(super) fn initial_allowance_target(
+        &self,
+        gross: AccountingAmount,
+    ) -> Result<AccountingAmount, BankError> {
+        EclScenariosRef {
+            scenarios: &self.stage1_default,
+        }
+        .allowance_target(gross)
     }
 }
 
-fn validate_scenarios(label: &str, scenarios: &[EclScenario]) -> Result<(), BankError> {
-    if scenarios.is_empty() {
-        return Err(BankError::EclInvalid {
-            detail: format!("{label} scenario list is empty"),
-        });
-    }
-    let mut total: i64 = 0;
-    for scenario in scenarios {
-        scenario.validate()?;
-        total += i64::from(scenario.weight_bp);
-    }
-    if total != i64::from(BP_CAP) {
-        return Err(BankError::EclInvalid {
-            detail: format!("{label} weights sum to {total}bp, expected {BP_CAP}bp"),
-        });
-    }
-    Ok(())
+/// 单次不可变情景借用，绑定列表校验和概率加权计量，不复制政策或存储金额。
+/// assess 通过 validate 构造；初始政策路径沿用启动校验，不承诺永久受检状态。
+struct EclScenariosRef<'a> {
+    scenarios: &'a [EclScenario],
 }
 
-/// 概率加权准备目标：rhe(Σ(权重×PD×LGD×gross)/10^12)——三个基点因子
-/// （10^4×10^4×10^4），单次舍入，无中间舍入损耗。gross ≥ 0 且各因子 ≥ 0
-/// ⇒ 结果 ≥ 0。
-pub(super) fn ecl_allowance_target(
-    gross: AccountingAmount,
-    scenarios: &[EclScenario],
-) -> Result<AccountingAmount, BankError> {
-    /// 权重×PD×LGD 的基点分母（10^12）。
-    const ECL_DENOM: i128 = 1_000_000_000_000;
-    let mut scaled: i128 = 0;
-    for scenario in scenarios {
-        let factor = i128::from(scenario.weight_bp)
-            .checked_mul(i128::from(scenario.pd_bp))
-            .and_then(|v| v.checked_mul(i128::from(scenario.lgd_bp)))
-            .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
-                op: "ecl factor",
-                detail: format!(
-                    "{}×{}×{}",
-                    scenario.weight_bp, scenario.pd_bp, scenario.lgd_bp
-                ),
-            }))?;
-        let contribution = gross
-            .cents()
-            .checked_mul(factor)
-            .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
-                op: "ecl target",
-                detail: format!("{} × {factor}", gross.cents()),
-            }))?;
-        scaled = scaled
-            .checked_add(contribution)
-            .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
-                op: "ecl target",
-                detail: format!("{scaled} + {contribution}"),
-            }))?;
+impl<'a> EclScenariosRef<'a> {
+    fn validate(label: &str, scenarios: &'a [EclScenario]) -> Result<Self, BankError> {
+        if scenarios.is_empty() {
+            return Err(BankError::EclInvalid {
+                detail: format!("{label} scenario list is empty"),
+            });
+        }
+        let mut total: i64 = 0;
+        for scenario in scenarios {
+            scenario.validate()?;
+            total += i64::from(scenario.weight_bp);
+        }
+        if total != i64::from(BP_CAP) {
+            return Err(BankError::EclInvalid {
+                detail: format!("{label} weights sum to {total}bp, expected {BP_CAP}bp"),
+            });
+        }
+        Ok(Self { scenarios })
     }
-    let target = crate::company::bank::loans::rhe_div(scaled, ECL_DENOM)?;
-    Ok(AccountingAmount::from_cents(target))
+
+    /// 概率加权准备目标：rhe(Σ(权重×PD×LGD×gross)/10^12)——三个基点因子
+    /// （10^4×10^4×10^4），单次舍入，无中间舍入损耗。gross ≥ 0 且各因子 ≥ 0
+    /// ⇒ 结果 ≥ 0。
+    fn allowance_target(&self, gross: AccountingAmount) -> Result<AccountingAmount, BankError> {
+        /// 权重×PD×LGD 的基点分母（10^12）。
+        const ECL_DENOM: i128 = 1_000_000_000_000;
+        let mut scaled: i128 = 0;
+        for scenario in self.scenarios {
+            let factor = i128::from(scenario.weight_bp)
+                .checked_mul(i128::from(scenario.pd_bp))
+                .and_then(|v| v.checked_mul(i128::from(scenario.lgd_bp)))
+                .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
+                    op: "ecl factor",
+                    detail: format!(
+                        "{}×{}×{}",
+                        scenario.weight_bp, scenario.pd_bp, scenario.lgd_bp
+                    ),
+                }))?;
+            let contribution = gross
+                .cents()
+                .checked_mul(factor)
+                .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
+                    op: "ecl target",
+                    detail: format!("{} × {factor}", gross.cents()),
+                }))?;
+            scaled = scaled
+                .checked_add(contribution)
+                .ok_or(BankError::Accounting(AccountingError::AmountOverflow {
+                    op: "ecl target",
+                    detail: format!("{scaled} + {contribution}"),
+                }))?;
+        }
+        let target = crate::company::bank::loans::rhe_div(scaled, ECL_DENOM)?;
+        Ok(AccountingAmount::from_cents(target))
+    }
 }
 
 impl BankBooks {
@@ -167,17 +185,12 @@ impl BankBooks {
         reason: &str,
         scenarios: Vec<EclScenario>,
     ) -> Result<Option<BusinessEventId>, BankError> {
-        validate_scenarios("assess", &scenarios)?;
+        let scenarios = EclScenariosRef::validate("assess", &scenarios)?;
         let state = self.loan(loan).ok_or(BankError::UnknownLoan {
             contract: loan.clone(),
         })?;
-        if state.is_written_off() && target_stage != state.stage() {
-            return Err(BankError::StageTransferOnWrittenOff {
-                contract: loan.clone(),
-                to_stage: target_stage,
-            });
-        }
-        let target = ecl_allowance_target(state.gross_carrying(), &scenarios)?;
+        state.validate_assessment(target_stage, loan)?;
+        let target = scenarios.allowance_target(state.gross_carrying())?;
         let delta = target.sub(state.allowance())?;
         let base = self.next_event_id;
         let event = BusinessEventId::new(base);

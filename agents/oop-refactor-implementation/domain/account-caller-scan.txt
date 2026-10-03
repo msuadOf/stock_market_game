@@ -1,0 +1,227 @@
+packages/engine/src/verification_evidence.rs:441:        Side::Sell => values.iter().all(|value| value.cash == Money::ZERO),
+packages/engine/src/verification_evidence.rs:465:        Side::Sell => values.iter().all(|value| value.cash == Money::ZERO),
+packages/engine/src/verification_evidence.rs:1678:                .filter(|receipt| receipt.journal == "SealedBatch" && receipt.kind == "Fill")
+packages/engine/src/verification_evidence.rs:1815:    let expected_tick = if current.kind == "CivilUpdate" {
+packages/engine/tests/session.rs:846:    save.snapshot.accounts.get_mut(&AccountId(0)).unwrap().cash = Money::from_cents(20_000_000);
+packages/engine/tests/session.rs:2039:        .filter(|a| a.id.0 != 0 && a.kind == kind)
+packages/engine/tests/session.rs:2851:    save.snapshot.accounts.get_mut(&AccountId(1)).unwrap().cash = Money::from_cents(200_502);
+apps/server/tests/api_contract.rs:135:    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+packages/engine/src/session.rs:1771:            .filter_map(|(id, account)| (account.kind == AccountKind::Retail).then_some(*id))
+packages/engine/src/session.rs:2594:                .is_none_or(|candidate| candidate.kind == AccountKind::Player)
+packages/engine/src/session.rs:2920:            acc.positions.clear();
+packages/engine/src/session.rs:2929:            acc.cash = snap_acc.cash;
+packages/engine/src/session.rs:2931:                acc.positions.insert(
+packages/engine/src/session.rs:2933:                    crate::account::Position {
+packages/engine/src/session.rs:3085:                                order.id == active_id
+packages/engine/tests/civil_clock.rs:451:            .any(|due| due.id == friday_own[0].id)),
+packages/engine/tests/company_scenarios/lifecycle.rs:139:            item.reports.kind == engine::accounting::reports::ReportKind::Annual
+packages/engine/tests/strategy.rs:2331:    d.kind = AccountKind::Player;
+packages/engine/tests/company_opening/isolation.rs:190:        .filter(|(_, counterparty)| counterparty.kind == CounterpartyKind::Lender)
+packages/engine/tests/scale_restore_limits.rs:178:            company.spec.id = engine::company::CompanyId(format!("collection-{index:03}"));
+packages/engine/tests/scale_restore_limits.rs:232:    orders[1].id = duplicate_id;
+packages/engine/tests/account.rs:82:    let p = Position {
+packages/engine/tests/account.rs:91:    let npc_decisions = Position {
+packages/engine/tests/account.rs:100:    let validator = Position {
+packages/engine/tests/account.rs:109:    let stock_execution = Position {
+packages/engine/tests/account.rs:117:    let receipt_aggregation = Position {
+packages/engine/tests/account.rs:130:    let p = Position {
+packages/engine/tests/account.rs:141:    let p = Position {
+packages/engine/tests/account.rs:153:    let p = Position {
+packages/engine/tests/account.rs:292:    account.positions.insert(
+packages/engine/tests/account.rs:294:        Position {
+packages/engine/tests/account.rs:572:    let _: Position = Position {
+packages/engine/src/orderbook/resting_index.rs:68:    if root.id == id {
+packages/engine/tests/causal_diagnostics.rs:180:    budget.kind = CausalFactKind::Budget {
+packages/engine/tests/behavior.rs:201:    own.cash = Money::from_cents(2_000_000);
+packages/engine/tests/behavior.rs:225:    own.cash = Money::from_cents(8_000_000);
+packages/engine/tests/behavior.rs:535:    risk.positions.get_mut(&code).unwrap().equity_weight = Some(f64::NAN);
+packages/engine/tests/behavior.rs:1059:    risk.positions.get_mut(&code).unwrap().equity_weight = None;
+packages/engine/tests/behavior.rs:1081:    risk.positions.get_mut(&code).unwrap().unrealized_return = None;
+packages/engine/tests/company_scenarios/controlled.rs:55:        .filter(|report| report.reports.kind == engine::accounting::reports::ReportKind::Annual)
+packages/engine/tests/company_opening/failures/registry.rs:103:    other.spec.id = CompanyId("T-ISS-2".to_string());
+packages/engine/src/orderbook/filled_orders.rs:70:    if root.id == id {
+packages/engine/src/verification_evidence/tests.rs:85:    invalid.cash = Money::from_cents(-1);
+packages/engine/src/verification_evidence/tests.rs:499:    negative.cash = Money::from_cents(-1);
+packages/engine/tests/publications/failures/publication_failures.rs:63:    req.kind = ReportKind::Annual;
+packages/engine/tests/company_opening/balanced.rs:99:            .filter(|(_, company)| company.spec().kind == kind)
+packages/engine/tests/company_opening/balanced.rs:194:                company.spec().kind == kind && company.spec().listed_stock.is_none()
+packages/engine/src/account.rs:144:        self.strategy = Some(StoredStrategy::production(s));
+packages/engine/src/account.rs:171:        for position in self.positions.values_mut() {
+packages/engine/src/account.rs:196:        self.positions.insert(
+packages/engine/src/account.rs:198:            Position {
+packages/engine/src/account.rs:302:        self.cash = new_cash;
+packages/engine/src/account.rs:303:        self.positions.insert(
+packages/engine/src/account.rs:305:            Position {
+packages/engine/src/account.rs:406:        self.cash = new_cash;
+packages/engine/src/account.rs:409:            self.positions.remove(&code);
+packages/engine/src/account.rs:536:pub struct Position {
+packages/engine/src/account.rs:547:impl Position {
+packages/engine/src/account.rs:608:        shadow.cash = Money::from_cents(900);
+packages/engine/tests/publications/failures/mod.rs:146:    req.kind = ReportKind::HalfYear;
+apps/desktop/src-tauri/src/lib_tests.rs:115:    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+packages/engine/src/strategy/sizing.rs:117:        own.cash = Money::from_cents(100_500);
+packages/engine/src/session/persistence.rs:1672:        if account.kind == AccountKind::Player {
+packages/engine/src/session/persistence.rs:1684:            .filter(|order| order.id == lifecycle.order_id)
+packages/engine/src/session/persistence.rs:1729:                        order.id == active_id && order.owner == *account && order.side == plan.side
+packages/engine/src/session/persistence.rs:1751:                                order.id == active_id
+packages/engine/src/session/decision_chain.rs:830:                    .any(|record| record.id == publication_id);
+packages/engine/src/session/decision_chain.rs:846:                        report.reports.kind == crate::accounting::reports::ReportKind::Annual
+packages/engine/src/session/decision_chain.rs:2241:        session.accounts.get_mut(&account).unwrap().cash =
+packages/engine/src/session/decision_chain.rs:2381:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:2388:        owner.cash = Money::from_cents(10_000_000);
+packages/engine/src/session/decision_chain.rs:2389:        owner.positions.insert(
+packages/engine/src/session/decision_chain.rs:2391:            crate::account::Position {
+packages/engine/src/session/decision_chain.rs:2580:                crate::Position {
+packages/engine/src/session/decision_chain.rs:2587:        session.accounts.get_mut(&account).unwrap().cash =
+packages/engine/src/session/decision_chain.rs:2589:        session.accounts.get_mut(&other).unwrap().cash = peak;
+packages/engine/src/session/decision_chain.rs:2613:        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(700_000 - 100);
+packages/engine/src/session/decision_chain.rs:2625:        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(800_000 - 100);
+packages/engine/src/session/decision_chain.rs:2660:        session.accounts.get_mut(&account).unwrap().cash =
+packages/engine/src/session/decision_chain.rs:2791:            session.accounts.get_mut(&account).unwrap().cash =
+packages/engine/src/session/decision_chain.rs:2802:            session.accounts.get_mut(&account).unwrap().cash = peak.sub(positions_value).unwrap();
+packages/engine/src/session/decision_chain.rs:2834:        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(60_000);
+packages/engine/src/session/decision_chain.rs:2835:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:2894:        session.accounts.get_mut(&account).unwrap().cash = frozen;
+packages/engine/src/session/decision_chain.rs:2970:        session.accounts.get_mut(&account).unwrap().cash = cash;
+packages/engine/src/session/decision_chain.rs:2971:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:3009:        session.accounts.get_mut(&account).unwrap().cash = cash.sub(Money::from_cents(1)).unwrap();
+packages/engine/src/session/decision_chain.rs:3304:            .any(|order| order.id == child));
+packages/engine/src/session/decision_chain.rs:3450:                account.cash = Money::from_cents(1_000_000);
+packages/engine/src/session/decision_chain.rs:3451:                account.positions.clear();
+packages/engine/src/session/decision_chain.rs:3453:                    account.positions.insert(
+packages/engine/src/session/decision_chain.rs:3455:                        crate::account::Position {
+packages/engine/src/session/decision_chain.rs:3526:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:3548:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:3569:        session.accounts.get_mut(&account).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:3575:        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(10_000_000);
+packages/engine/src/session/decision_chain.rs:3668:        session.accounts.get_mut(&owner).unwrap().strategy =
+packages/engine/src/session/decision_chain.rs:3677:        owner_account.cash = Money::from_cents(1_000_000);
+packages/engine/src/session/decision_chain.rs:3678:        owner_account.positions.clear();
+packages/engine/src/session/decision_chain.rs:3812:            session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(cash_cents);
+packages/engine/src/session/decision_chain.rs:3843:        owner_account.cash = Money::from_cents(1_000_000);
+packages/engine/src/session/decision_chain.rs:3846:        owner_account.positions.clear();
+packages/engine/src/session/decision_chain.rs:4297:            .any(|order| order.id == child_id));
+packages/engine/src/session/decision_chain.rs:4723:        session.accounts.get_mut(&owner).unwrap().positions.insert(
+packages/engine/src/session/decision_chain.rs:4725:            crate::account::Position {
+packages/engine/src/company/operations/core.rs:187:            let consistent = spec.kind == books.kind()
+packages/engine/src/strategy/fundamental/update.rs:293:        .find(|entry| entry.id == id)
+packages/engine/src/session/continuous_cancellation_tests.rs:8:    session.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/tests/bank_accounting/gold.rs:306:        .filter(|config| config.spec.kind == engine::company::CompanyKind::Bank)
+packages/engine/tests/company_operations/seam.rs:31:        .all(|due| due.kind == DueKind::InterestAccrual));
+packages/engine/src/information/queries.rs:151:            .filter(|report| report.reports.kind == kind && report.reports.period == period)
+packages/engine/src/session/failure_tests.rs:32:    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+packages/engine/src/session/failure_tests.rs:51:    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+packages/engine/src/session/failure_tests.rs:105:    game.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/information/npc_view.rs:104:                if record.kind == kind {
+packages/engine/src/session/account_book.rs:250:        shadow.get_mut(&AccountId(1)).unwrap().cash = Money::from_cents(100);
+packages/engine/src/session/protocol/delta.rs:111:    left.cash == right.cash
+packages/engine/src/session/protocol/delta.rs:126:    left.id == right.id
+packages/engine/src/session/plan_chain_candidates/source_tests.rs:22:        .kind = AccountKind::Player;
+packages/engine/src/session/persistence/v2.rs:429:            .strategy = Some(strategy);
+packages/engine/src/accounting/consolidation/eliminate.rs:191:    let known = id == &group.root || group.subsidiaries.iter().any(|sub| &sub.id == id);
+packages/engine/src/accounting/reports/consolidated_window.rs:78:        let is_root = member.spec.id == root;
+packages/engine/src/accounting/consolidation/group.rs:155:            if top.id == *root {
+packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs:218:    session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(7);
+packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs:235:    session.accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Player;
+packages/engine/src/session/protocol/civil/publication_tests.rs:68:                .any(|entry| entry.id == *publication_id));
+packages/engine/src/session/pipeline/decision_snapshot.rs:146:            if input.kind == AccountKind::Player {
+packages/engine/src/session/pipeline/decision_snapshot.rs:149:            if input.kind == AccountKind::Retail {
+packages/engine/src/session/persistence/v2_tests.rs:659:        .cash = Money::ZERO;
+packages/engine/src/session/pipeline/decision_resources.rs:37:                        && left.cash == right.cash
+packages/engine/src/session/plan_execution/actions.rs:96:                    .find(|working| working.id == order_id);
+packages/engine/src/session/plan_execution/actions.rs:141:                    if order.id == order_id
+packages/engine/src/session/pipeline/ledger_state_tests.rs:611:    receipts[0].kind = ReceiptKind::Rollover;
+packages/engine/src/session/pipeline/retail_projection_tests.rs:299:            Position {
+packages/engine/src/session/pipeline/retail_projection_tests.rs:551:        RetailProjectionError::FinalPosition {
+packages/engine/src/session/pipeline/adaptive_plan_chain.rs:981:                    && receipt.kind == ReceiptKind::Reject
+packages/engine/src/session/pipeline/adaptive_plan_chain.rs:1109:                && receipt.kind == ReceiptKind::Release
+packages/engine/src/session/pipeline/initial_candidate_round_tests.rs:444:    session.accounts.get_mut(&AccountId(1)).unwrap().cash = required;
+packages/engine/src/session/pipeline/retail_projection.rs:296:    FinalPosition { account: AccountId },
+packages/engine/src/session/pipeline/retail_projection.rs:503:                                .or_insert(Position {
+packages/engine/src/session/pipeline/retail_projection.rs:582:        (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition { account })
+packages/engine/src/session/pipeline/retail_projection.rs:674:        && left.kind == right.kind
+packages/engine/src/session/pipeline/commit_evidence_tests.rs:343:    session.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/commit_evidence_tests.rs:370:    session.accounts.get_mut(&seller).unwrap().strategy = strategy_source
+packages/engine/src/session/pipeline/ledger_validation.rs:122:    if receipt.kind == ReceiptKind::Fill
+packages/engine/src/session/pipeline/ledger_validation.rs:176:    if receipt.kind == ReceiptKind::Fill {
+packages/engine/src/session/pipeline/ledger_validation.rs:187:    if receipt.kind == ReceiptKind::Rollover && receipt.delta.released != ResVec::ZERO {
+packages/engine/src/session/pipeline/ledger_validation.rs:195:        || (receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0)
+packages/engine/src/session/pipeline/decision_resources_tests.rs:11:    game.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:40:    game.accounts.get_mut(&account).unwrap().cash = reservation;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:42:    before_expiry.accounts.get_mut(&account).unwrap().cash = reservation;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:182:    mismatched.id = crate::AccountId(99);
+packages/engine/src/session/pipeline/decision_resources_tests.rs:197:    game.accounts.get_mut(&seller).unwrap().strategy = None;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:260:    game.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:273:    game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(500_000);
+packages/engine/src/session/pipeline/decision_resources_tests.rs:362:    game.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:433:    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
+packages/engine/src/session/pipeline/decision_resources_tests.rs:493:    game.accounts.get_mut(&buyer).unwrap().cash = crate::Money::ZERO;
+packages/engine/src/session/pipeline/stock_execution_transaction_tests.rs:353:        .all(|receipt| receipt.kind == ReceiptKind::Fill));
+packages/engine/src/session/pipeline/stock_execution_transaction_tests.rs:392:    accounts.get_mut(&AccountId(0)).unwrap().kind = AccountKind::Retail;
+packages/engine/src/session/pipeline/ledger_receipt_tests.rs:14:    forged.kind = ReceiptKind::PriceResolved {
+packages/engine/src/session/pipeline/institutional_experience_projection.rs:20:        .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
+packages/engine/src/session/pipeline/institutional_experience_projection.rs:24:                .filter(|account| account.kind == AccountKind::Inst)
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:142:    session.accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Player;
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:312:            crate::account::Position {
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:380:            crate::account::Position {
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:495:    session.accounts.get_mut(&AccountId(1)).unwrap().cash = cash;
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:881:    session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(10_000_000);
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:1142:        session.accounts.get_mut(&id).unwrap().strategy =
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:1147:        session.accounts.get_mut(&id).unwrap().cash = template.accounts[&AccountId(1)].cash;
+packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:1148:        session.accounts.get_mut(&id).unwrap().positions =
+packages/engine/src/session/pipeline/decision_snapshot_capture.rs:157:            .is_some_and(|entry| entry.kind == AccountKind::Retail)
+packages/engine/src/session/pipeline/decision_snapshot_capture.rs:179:            if entry.kind == AccountKind::Retail && experience.is_none() {
+packages/engine/src/session/pipeline/decision_snapshot_capture.rs:350:        if entry.kind == AccountKind::Retail {
+packages/engine/src/session/pipeline/decision_snapshot_capture.rs:366:    let risk_positions = (entry.kind == AccountKind::Retail).then_some(risk_positions);
+packages/engine/src/session/pipeline/continuous_matching.rs:1184:        .filter(|receipt| receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0)
+packages/engine/src/session/pipeline/continuous_matching.rs:1299:        .find(|order| order.id == operation.order_id)
+packages/engine/src/session/pipeline/settlement_tests.rs:225:    receipt.kind = kind;
+packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs:236:    shadow.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs:260:    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(-1);
+packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs:118:            && receipt.kind == ReceiptKind::Fill
+packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs:130:    session.accounts.get_mut(&account).unwrap().kind = AccountKind::Inst;
+packages/engine/src/session/pipeline/account_validation_tests.rs:64:        game.accounts.get_mut(&crate::AccountId(0)).unwrap().cash = cash;
+packages/engine/src/session/pipeline/account_validation_tests.rs:108:    game.accounts.get_mut(&account).unwrap().strategy = None;
+packages/engine/src/session/pipeline/account_validation_tests.rs:504:    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
+packages/engine/src/session/pipeline/account_validation_tests.rs:632:    game.accounts.get_mut(&account).unwrap().cash = reservation;
+packages/engine/src/session/pipeline/account_validation_tests.rs:719:    game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(10_000_000_000);
+packages/engine/src/session/pipeline/stock_stream/auction_tests.rs:87:                .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+packages/engine/src/session/pipeline/stock_stream/auction_tests.rs:95:                .filter(|receipt| receipt.kind == ReceiptKind::Rollover)
+packages/engine/src/session/pipeline/npc_state_projection_tests.rs:263:    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(20_000_000);
+packages/engine/src/session/pipeline/npc_state_projection_tests.rs:329:    shadow.accounts.get_mut(&account).unwrap().cash = reserved;
+packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:134:    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:207:    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+packages/engine/src/session/pipeline/authoritative_tick_tests.rs:129:        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(1_000_000);
+packages/engine/src/session/pipeline/authoritative_tick_tests.rs:257:        session.accounts.get_mut(&account).unwrap().cash = if has_exact_cash {
+packages/engine/src/session/pipeline/npc_state_projection.rs:204:                    .strategy = Some(next_strategy);
+packages/engine/src/session/pipeline/npc_state_projection.rs:316:            (order.id == order_id).then(|| Intent::PlaceLimit {
+packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs:10:    game.accounts.get_mut(&npc).unwrap().strategy = None;
+packages/engine/src/session/pipeline/auction_day_end_tests.rs:249:        receipt.kind == ReceiptKind::Rollover
+packages/engine/src/session/pipeline/auction_day_end_tests.rs:673:        .find(|receipt| receipt.kind == ReceiptKind::Rollover)
+packages/engine/src/session/pipeline/auction_day_end_tests.rs:913:        receipt.kind == ReceiptKind::Release
+packages/engine/src/session/pipeline/stock_auction_tests.rs:500:        .all(|receipt| receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0));
+packages/engine/src/session/pipeline/account_settlement_tests.rs:325:    institutional.kind = AccountKind::Inst;
+packages/engine/src/session/pipeline/account_settlement_tests.rs:415:    institutional.kind = AccountKind::Inst;
+packages/engine/src/session/pipeline/account_settlement_tests.rs:464:    institutional.kind = AccountKind::Inst;
+packages/engine/src/session/pipeline/account_settlement_tests.rs:519:    accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Inst;
+packages/engine/src/session/pipeline/account_settlement_tests.rs:639:    receipt.kind = ReceiptKind::Release;
+packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs:555:            receipt.envelope == released.envelope && receipt.kind == super::ReceiptKind::Fill
+packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:63:            if receipt.kind == ReceiptKind::Fill {
+packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:244:        .any(|order| order.id == new_id && order.owner == owner));
+packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:641:    authority.accounts.get_mut(&owner).unwrap().cash = Money::ZERO;
+packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:1404:    authority.accounts.get_mut(&retail).unwrap().strategy = None;
+packages/engine/src/session/pipeline/auction_day_end.rs:1438:            if receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0 {
+packages/engine/src/session/pipeline/auction_day_end.rs:1468:                receipt.kind == ReceiptKind::Release
+packages/engine/src/session/pipeline/auction_day_end.rs:1916:        .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+packages/engine/src/session/pipeline/account_validation_driver_tests.rs:118:    game.accounts.get_mut(&account).unwrap().cash = reservation;
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:210:    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(30_000_000_000);
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:284:    authority.accounts.get_mut(&npc).unwrap().strategy = None;
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:303:    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(10_000_000);
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:305:    session.accounts.get_mut(&npc).unwrap().kind = crate::AccountKind::Player;
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:319:    session.accounts.get_mut(&npc).unwrap().kind = crate::AccountKind::Retail;
+packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs:447:    session.accounts.get_mut(&npc).unwrap().cash = session.reserved_cash_for_account(npc).unwrap();
+packages/engine/src/session/pipeline/account_settlement.rs:163:        .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
+packages/engine/src/session/pipeline/account_settlement.rs:176:                .is_some_and(|account| account.kind == AccountKind::Retail)
+packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs:1041:        .all(|receipt| receipt.kind == ReceiptKind::Fill));
+packages/engine/src/session/pipeline/account_validation.rs:481:                            .cash = budget.cash;
+packages/engine/src/session/pipeline/account_validation.rs:785:                budget.cash = cash_after;

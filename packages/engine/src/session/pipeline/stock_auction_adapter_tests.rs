@@ -57,8 +57,8 @@ fn opening_adapter_builds_stock_inputs_from_post_quote_expiry_state() {
         vec![auction_order(0, 50, Side::Buy, 990, 100)],
     );
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    let before_orders = game.auction_orders.clone();
-    let before_ledger = format!("{:?}", game.envelope_ledger);
+    let before_orders = game.state.auction_orders.clone();
+    let before_ledger = format!("{:?}", game.state.envelope_ledger);
 
     let inputs = prepare_incremental_auction_inputs(&game).unwrap();
 
@@ -96,15 +96,16 @@ fn opening_adapter_builds_stock_inputs_from_post_quote_expiry_state() {
     );
     assert_eq!(inputs[0].completion.exchange, StockExchange::Shanghai);
     assert_eq!(inputs[0].completion.price_tick, Money::from_cents(1));
-    assert_eq!(game.auction_orders, before_orders);
-    assert_eq!(format!("{:?}", game.envelope_ledger), before_ledger);
+    assert_eq!(game.state.auction_orders, before_orders);
+    assert_eq!(format!("{:?}", game.state.envelope_ledger), before_ledger);
 }
 
 #[test]
 fn closing_adapter_keeps_continuous_book_out_of_auction_state_but_validates_its_ledger() {
     let mut game = closing_game();
     let code = StockCode("600888".to_owned());
-    game.markets
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
         .place(resting_buy(20, 0))
@@ -142,8 +143,8 @@ fn adapter_rejects_cross_stock_market_identity() {
     let mut crossed = two_stock_opening_game();
     let first = StockCode("600888".to_owned());
     let second = StockCode("600889".to_owned());
-    let first_market = crossed.markets.remove(&first).unwrap();
-    crossed.markets.insert(second, first_market);
+    let first_market = crossed.state.markets.remove(&first).unwrap();
+    crossed.state.markets.insert(second, first_market);
     let error = prepare_incremental_auction_inputs(&crossed).unwrap_err();
     assert_adapter_error(error, "market map key");
 }
@@ -161,7 +162,7 @@ fn adapter_rejects_missing_stale_and_underfunded_ledger_evidence() {
     assert_adapter_error(error, "unledgered");
 
     missing.hydrate_or_validate_envelope_ledger().unwrap();
-    missing.auction_orders.clear();
+    missing.state.auction_orders.clear();
     let error = prepare_incremental_auction_inputs(&missing).unwrap_err();
     assert_adapter_error(error, "no matching live order");
 
@@ -171,7 +172,7 @@ fn adapter_rejects_missing_stale_and_underfunded_ledger_evidence() {
         code.clone(),
         vec![auction_order(0, 71, Side::Buy, 990, 100)],
     );
-    underfunded.envelope_ledger = EnvelopeLedger::new(
+    underfunded.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             EnvelopeKey {
@@ -208,6 +209,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
     );
     audit_drift.hydrate_or_validate_envelope_ledger().unwrap();
     audit_drift
+        .state
         .envelope_ledger
         .audits
         .values_mut()
@@ -227,6 +229,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
         .hydrate_or_validate_envelope_ledger()
         .unwrap();
     conservation_drift
+        .state
         .envelope_ledger
         .conservation
         .values_mut()
@@ -286,7 +289,8 @@ fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
 fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
     let mut game = opening_game();
     let code = StockCode("600888".to_owned());
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
@@ -300,7 +304,7 @@ fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
             auction_order(0, 50, Side::Sell, 1_000, 100),
         ],
     );
-    game.next_order_id = 101;
+    game.state.next_order_id = 101;
     game.hydrate_or_validate_envelope_ledger().unwrap();
 
     let restored = GameSession::restore(&game.save().unwrap()).unwrap();
@@ -331,7 +335,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
     };
 
     let mut max_place = opening_game();
-    max_place.next_order_id = js_safe_u64::MAX;
+    max_place.state.next_order_id = js_safe_u64::MAX;
     let validation = validate(&max_place, vec![place(code.clone())]);
     let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&max_place).unwrap(),
@@ -343,7 +347,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
     assert_auction_operation_error(error, "serializable next order id");
 
     let mut boundary_place = opening_game();
-    boundary_place.next_order_id = js_safe_u64::MAX - 1;
+    boundary_place.state.next_order_id = js_safe_u64::MAX - 1;
     let validation = validate(&boundary_place, vec![place(code.clone())]);
     let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&boundary_place).unwrap(),
@@ -381,6 +385,7 @@ fn adapter_rejects_non_auction_phases_and_opening_continuous_residue() {
     let mut opening = opening_game();
     let code = StockCode("600888".to_owned());
     opening
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -427,7 +432,7 @@ fn closing_game() -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.closing_auction_ticks = 10;
     let mut game = GameSession::new(setup, 42).unwrap();
-    game.tick = 90;
+    game.state.tick = 90;
     assert_eq!(game.phase(), TradingPhase::ClosingAuction);
     game
 }
@@ -450,8 +455,8 @@ fn validate(game: &GameSession, intents: Vec<Intent>) -> AccountValidationOutput
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         build_account_validation_context(game).unwrap(),
     )
     .unwrap()
@@ -480,7 +485,7 @@ fn install_auction_orders(
     code: StockCode,
     orders: Vec<crate::AuctionOrderSnap>,
 ) {
-    assert!(game.auction_orders.insert(code, orders).is_none());
+    assert!(game.state.auction_orders.insert(code, orders).is_none());
 }
 
 fn resting_buy(order_id: u64, owner: u64) -> Order {

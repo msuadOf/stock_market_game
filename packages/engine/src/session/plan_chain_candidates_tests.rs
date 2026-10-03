@@ -6,6 +6,7 @@ pub(super) fn execution_fixture() -> (GameSession, PlanExecutionRequest) {
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 47).unwrap();
     let code = StockCode("600888".to_owned());
     let plan_id = session
+        .state
         .plans
         .create(PlanOpen {
             account: AccountId(1),

@@ -11,7 +11,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
     let setup = fixture::civil_setup(CivilDate::from_iso("2030-01-02").unwrap());
     let id = manager.new_session(setup, 41).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let mut receiver = handles.event_tx.subscribe();
+    let mut receiver = handles.subscribe_events();
     handles.set_pause_preferences(1, preferences).await.unwrap();
     if fastest {
         handles.set_speed(f64::INFINITY).await.unwrap();

@@ -1,5 +1,4 @@
-//! Tick-private stock jobs. A completed stock can release its dependent plan work
-//! while unrelated books are still running on the same Rayon pool.
+//! tick 内的股票私有任务：已完成股票及时推进依赖计划，无关股票继续在 Rayon pool 执行。
 
 use super::{
     continuous_matching::{
@@ -7,7 +6,8 @@ use super::{
         IncrementalContinuousStockFinish,
     },
     stock_auction::auction_day_end::{
-        AuctionExecutionRound, IncrementalAuctionFinish, IncrementalAuctionStockCoordinator,
+        AuctionExecutionRound, AuctionTickBoundary, IncrementalAuctionFinish,
+        IncrementalAuctionStockCoordinator,
     },
     stock_auction_adapter::AuctionStockInput,
     StepFatal, ValidatedOperation,
@@ -26,8 +26,7 @@ mod auction_tests;
 #[path = "stock_stream/root_ready_tests.rs"]
 mod root_ready_tests;
 
-/// Payloads remain on their typed channels. Both kinds of completed work wake
-/// the same coordinator, without making one wait for unrelated stock work.
+/// payload 保留在各自 typed channel；两类完成通知共用唤醒入口，无须等待无关股票。
 #[derive(Debug)]
 pub(in crate::session) enum TickWorkReady {
     PlanRoot,
@@ -47,10 +46,9 @@ impl StockStreamNotifications {
 }
 
 pub(super) enum StockStreamProgress<'a, R> {
-    /// No stock worker remains, so the plan source may wait for its next root.
+    /// 已无股票 worker，计划来源可以等待下一个 root。
     Idle,
-    /// This notification may outlive a payload consumed by an earlier poll.
-    /// Inspect roots without waiting while stock work is still in flight.
+    /// 早先轮询可能已消费 root payload；仍有股票任务时只轮询，不等待 root。
     PlanRootReady,
     StockCompleted {
         code: &'a StockCode,
@@ -128,8 +126,7 @@ pub(super) fn finish_continuous_shards(
         .collect::<Vec<_>>();
     #[cfg(any(test, feature = "verification-harness"))]
     let finished = {
-        // This is the final collection after all roots and stock jobs drain,
-        // not a barrier on the incremental completion notifications above it.
+        // root 与股票任务排空后才汇总终结结果；增量完成通知不受此屏障限制。
         let mut finished = finished
             .into_iter()
             .collect::<Result<Vec<_>, StepFatal>>()?;
@@ -182,9 +179,7 @@ pub(super) fn auction_shards(
 
 pub(super) fn finish_auction_shards(
     shards: BTreeMap<StockCode, IncrementalAuctionStockCoordinator>,
-    tick_after: u64,
-    finish_auction: bool,
-    finish_day: bool,
+    boundary: AuctionTickBoundary,
 ) -> Result<IncrementalAuctionFinish, StepFatal> {
     let mut workers = BTreeMap::new();
     let mut detached_event_facts = Vec::new();
@@ -195,14 +190,17 @@ pub(super) fn finish_auction_shards(
         .into_par_iter()
         .map(|(code, shard)| {
             shard
-                .finish(tick_after, finish_auction, finish_day)
+                .finish(
+                    boundary.tick_after(),
+                    boundary.finish_auction(),
+                    boundary.finish_day(),
+                )
                 .map(|finished| (code, finished))
         })
         .collect::<Vec<_>>();
     #[cfg(any(test, feature = "verification-harness"))]
     let finished = {
-        // Select the first stock error before perturbing successful final output.
-        // These are drained-stream finish results, not per-arrival notifications.
+        // 成功结果扰动前按原股票顺序选首错；此处只处理排空后的终结结果。
         let mut finished = finished
             .into_iter()
             .collect::<Result<Vec<_>, StepFatal>>()?;
@@ -223,9 +221,8 @@ pub(super) fn finish_auction_shards(
         );
         finished.into_iter().map(Ok::<_, StepFatal>)
     };
-    // Production merges in stock order; the verification harness may reorder
-    // successful payloads only, after ordered error selection. Independent books
-    // have already completed their own clearing and finalization.
+    // 独立股票已各自完成清算及终结；生产按股票顺序合并，verification harness
+    // 只在稳定首错选择后扰动成功 payload。
     for result in finished {
         let (_, finished) = result?;
         for (code, worker) in finished.workers {
@@ -270,15 +267,13 @@ pub(super) fn operation_owner(operation: &ValidatedOperation) -> AccountId {
     }
 }
 
-/// A worker owns one book until it returns the book and its typed facts. The
-/// coordinator alone touches P3, plans and the session, and can immediately
-/// enqueue newly ready operations for any idle book.
+/// worker 独占股票簿与 typed facts；调用线程中的 coordinator 及时推进就绪工作。
 pub(super) fn drive_stock_stream<S, F, D>(
-    mut available: BTreeMap<StockCode, S>,
+    available: BTreeMap<StockCode, S>,
     initial: Vec<ValidatedOperation>,
     notifications: StockStreamNotifications,
-    mut detached: D,
-    mut on_progress: F,
+    detached: D,
+    on_progress: F,
 ) -> Result<BTreeMap<StockCode, S>, StepFatal>
 where
     S: StockShard,
@@ -286,121 +281,178 @@ where
         + Send,
     D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
 {
-    // Keep an external host's coordinator on its calling thread. Moving every
-    // coordinator into the shared pool can occupy all workers with receives,
-    // leaving no worker able to execute the stock jobs that would wake them.
-    rayon::in_place_scope(move |scope| {
-        let (sender, receiver) = mpsc::channel();
-        let mut pending = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
-        let mut in_flight = BTreeSet::<StockCode>::new();
-        enqueue(&mut pending, initial);
-        loop {
-            let dispatchable = pending
-                .keys()
-                .filter(|code| !in_flight.contains(*code))
-                .cloned()
-                .collect::<Vec<_>>();
-            #[cfg(any(test, feature = "verification-harness"))]
-            let dispatchable = {
-                let mut dispatchable = dispatchable;
-                if let Some(boundary) = S::DISPATCH_BOUNDARY {
-                    executor_perturbation::reorder(boundary, &mut dispatchable, |code| {
-                        (code.0.clone(), pending[code].len())
-                    });
-                }
-                dispatchable
-            };
-            for code in dispatchable {
-                let shard = match available.remove(&code) {
-                    Some(shard) => shard,
-                    None => detached(&code)?,
-                };
-                let operations = pending
-                    .remove(&code)
-                    .ok_or_else(|| invariant("dispatchable stock lost its operations"))?;
-                let worker_sender = sender.clone();
-                let worker_notifications = notifications.sender.clone();
-                in_flight.insert(code.clone());
-                scope.spawn(move |_| {
-                    let mut shard = shard;
-                    let round = shard.apply(operations);
-                    // A closed receiver means the whole private tick has failed.
-                    if worker_sender.send((code, shard, round)).is_ok() {
-                        let _ = worker_notifications.send(TickWorkReady::Stock);
-                    }
-                });
-            }
-
-            if in_flight.is_empty() {
-                crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-                let ready = on_progress(StockStreamProgress::Idle)?;
-                if ready.is_empty() {
-                    return Ok(available);
-                }
-                enqueue(&mut pending, ready);
-                continue;
-            }
-
-            crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let completed = if rayon::current_num_threads() == 1 {
-                loop {
-                    match notifications.receiver.try_recv() {
-                        Ok(done) => break done,
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            return Err(invariant(
-                                "work notification channel closed during stock processing",
-                            ));
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {
-                            // The coordinator occupies the only worker, so it
-                            // must help execute pending stock jobs or plan roots.
-                            let _ = rayon::yield_now();
-                        }
-                    }
-                }
-            } else {
-                notifications.receiver.recv().map_err(|_| {
-                    invariant("work notification channel closed during stock processing")
-                })?
-            };
-            if matches!(completed, TickWorkReady::PlanRoot) {
-                crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-                enqueue(
-                    &mut pending,
-                    on_progress(StockStreamProgress::PlanRootReady)?,
-                );
-                continue;
-            }
-            // A stock notification is sent only after its payload. Notifications
-            // from different workers need not have the same order as payloads.
-            let (code, shard, round) = receiver
-                .try_recv()
-                .map_err(|_| invariant("stock notification has no completed book"))?;
-            if !in_flight.remove(&code) || available.insert(code.clone(), shard).is_some() {
-                return Err(invariant("stock worker returned a duplicate book"));
-            }
-            let mut round = round?;
-            crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-            enqueue(
-                &mut pending,
-                on_progress(StockStreamProgress::StockCompleted {
-                    code: &code,
-                    round: &mut round,
-                })?,
-            );
-        }
-    })
+    let mut coordinator = StockStreamCoordinator::new(available, notifications);
+    coordinator.enqueue_ready(initial);
+    coordinator.drive(detached, on_progress)
 }
 
-fn enqueue(
-    pending: &mut BTreeMap<StockCode, Vec<ValidatedOperation>>,
-    operations: Vec<ValidatedOperation>,
-) {
-    for operation in operations {
-        pending
-            .entry(operation_code(&operation).clone())
-            .or_default()
-            .push(operation);
+type StockCompletion<S> = (StockCode, S, Result<<S as StockShard>::Round, StepFatal>);
+
+/// 只拥有本 tick 的股票工作；不持有账户、结算或 session authority。
+struct StockStreamCoordinator<S: StockShard> {
+    available: BTreeMap<StockCode, S>,
+    pending: BTreeMap<StockCode, Vec<ValidatedOperation>>,
+    in_flight: BTreeSet<StockCode>,
+    sender: mpsc::Sender<StockCompletion<S>>,
+    receiver: mpsc::Receiver<StockCompletion<S>>,
+    notifications: StockStreamNotifications,
+}
+
+impl<S: StockShard> StockStreamCoordinator<S> {
+    fn new(available: BTreeMap<StockCode, S>, notifications: StockStreamNotifications) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            available,
+            pending: BTreeMap::new(),
+            in_flight: BTreeSet::new(),
+            sender,
+            receiver,
+            notifications,
+        }
+    }
+
+    fn enqueue_ready(&mut self, operations: Vec<ValidatedOperation>) {
+        for operation in operations {
+            self.pending
+                .entry(operation_code(&operation).clone())
+                .or_default()
+                .push(operation);
+        }
+    }
+
+    fn dispatch_ready<'scope, D>(
+        &mut self,
+        scope: &rayon::Scope<'scope>,
+        detached: &mut D,
+    ) -> Result<(), StepFatal>
+    where
+        S: 'scope,
+        D: FnMut(&StockCode) -> Result<S, StepFatal>,
+    {
+        let dispatchable = self
+            .pending
+            .keys()
+            .filter(|code| !self.in_flight.contains(*code))
+            .cloned()
+            .collect::<Vec<_>>();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let dispatchable = {
+            let mut dispatchable = dispatchable;
+            if let Some(boundary) = S::DISPATCH_BOUNDARY {
+                executor_perturbation::reorder(boundary, &mut dispatchable, |code| {
+                    (code.0.clone(), self.pending[code].len())
+                });
+            }
+            dispatchable
+        };
+        for code in dispatchable {
+            let shard = match self.available.remove(&code) {
+                Some(shard) => shard,
+                None => detached(&code)?,
+            };
+            let operations = self
+                .pending
+                .remove(&code)
+                .ok_or_else(|| invariant("dispatchable stock lost its operations"))?;
+            let worker_sender = self.sender.clone();
+            let worker_notifications = self.notifications.sender.clone();
+            self.in_flight.insert(code.clone());
+            scope.spawn(move |_| {
+                let mut shard = shard;
+                let round = shard.apply(operations);
+                // receiver 关闭说明整个私有 tick 已放弃；只能丢弃此项工作。
+                if worker_sender.send((code, shard, round)).is_ok() {
+                    let _ = worker_notifications.send(TickWorkReady::Stock);
+                }
+            });
+        }
+        Ok(())
+    }
+
+    fn poll_progress(&self) -> Result<TickWorkReady, StepFatal> {
+        if rayon::current_num_threads() == 1 {
+            loop {
+                match self.notifications.receiver.try_recv() {
+                    Ok(done) => return Ok(done),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err(invariant(
+                            "work notification channel closed during stock processing",
+                        ));
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // 单 worker 等待时帮助执行已就绪的股票任务及计划 root。
+                        let _ = rayon::yield_now();
+                    }
+                }
+            }
+        } else {
+            self.notifications
+                .receiver
+                .recv()
+                .map_err(|_| invariant("work notification channel closed during stock processing"))
+        }
+    }
+
+    fn receive_completion(&mut self) -> Result<(StockCode, S::Round), StepFatal> {
+        // Stock notification 在 payload 成功发送后发出；跨 worker 的两种 channel 顺序可不同。
+        let (code, shard, round) = self
+            .receiver
+            .try_recv()
+            .map_err(|_| invariant("stock notification has no completed book"))?;
+        if !self.in_flight.remove(&code) || self.available.insert(code.clone(), shard).is_some() {
+            return Err(invariant("stock worker returned a duplicate book"));
+        }
+        Ok((code, round?))
+    }
+
+    fn return_idle<F>(&mut self, on_progress: &mut F) -> Result<bool, StepFatal>
+    where
+        F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<ValidatedOperation>, StepFatal>,
+    {
+        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
+        let ready = on_progress(StockStreamProgress::Idle)?;
+        let finished = ready.is_empty();
+        self.enqueue_ready(ready);
+        Ok(finished)
+    }
+
+    fn drive<F, D>(
+        mut self,
+        mut detached: D,
+        mut on_progress: F,
+    ) -> Result<BTreeMap<StockCode, S>, StepFatal>
+    where
+        F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<ValidatedOperation>, StepFatal>
+            + Send,
+        D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
+    {
+        // coordinator 留在宿主调用线程，避免多个宿主占满 Rayon worker 后互等。
+        rayon::in_place_scope(move |scope| {
+            loop {
+                self.dispatch_ready(scope, &mut detached)?;
+                if self.in_flight.is_empty() {
+                    if self.return_idle(&mut on_progress)? {
+                        return Ok(self.available);
+                    }
+                    continue;
+                }
+                crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
+                if matches!(self.poll_progress()?, TickWorkReady::PlanRoot) {
+                    // 过时 PlanRoot 唤醒仍可轮询 root，不消费股票 payload。
+                    crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
+                    let ready = on_progress(StockStreamProgress::PlanRootReady)?;
+                    self.enqueue_ready(ready);
+                    continue;
+                }
+                let (code, mut round) = self.receive_completion()?;
+                crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
+                let ready = on_progress(StockStreamProgress::StockCompleted {
+                    code: &code,
+                    round: &mut round,
+                })?;
+                self.enqueue_ready(ready);
+            }
+        })
     }
 }
 
@@ -480,6 +532,132 @@ mod tests {
             code: StockCode(code.to_owned()),
             order_id: OrderId(id),
         }
+    }
+
+    #[derive(Debug)]
+    struct EmptyShard;
+
+    impl StockShard for EmptyShard {
+        type Round = ();
+        const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
+        fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<(), StepFatal> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn stock_notification_without_payload_is_an_explicit_error() {
+        let mut coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications::new(),
+        );
+        coordinator
+            .notifications
+            .sender
+            .send(TickWorkReady::Stock)
+            .unwrap();
+        assert!(matches!(
+            coordinator.poll_progress().unwrap(),
+            TickWorkReady::Stock
+        ));
+        assert!(coordinator
+            .receive_completion()
+            .unwrap_err()
+            .to_string()
+            .contains("no completed book"));
+    }
+
+    #[test]
+    fn disconnected_notification_receiver_is_an_explicit_error() {
+        let (closed_sender, receiver) = mpsc::channel();
+        drop(closed_sender);
+        let (sender, _other_receiver) = mpsc::channel();
+        let coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications { sender, receiver },
+        );
+        assert!(coordinator
+            .poll_progress()
+            .unwrap_err()
+            .to_string()
+            .contains("notification channel closed"));
+    }
+
+    #[test]
+    fn stale_root_notification_does_not_take_stock_payload() {
+        let mut coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications::new(),
+        );
+        let code = StockCode("600001".to_owned());
+        coordinator.in_flight.insert(code.clone());
+        coordinator
+            .sender
+            .send((code.clone(), EmptyShard, Ok(())))
+            .unwrap();
+        coordinator
+            .notifications
+            .sender
+            .send(TickWorkReady::PlanRoot)
+            .unwrap();
+        assert!(matches!(
+            coordinator.poll_progress().unwrap(),
+            TickWorkReady::PlanRoot
+        ));
+        assert_eq!(coordinator.receive_completion().unwrap().0, code);
+        assert!(coordinator.in_flight.is_empty());
+        assert_eq!(coordinator.available.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_stock_completion_is_an_explicit_error() {
+        let mut coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications::new(),
+        );
+        let code = StockCode("600001".to_owned());
+        coordinator.in_flight.insert(code.clone());
+        coordinator
+            .sender
+            .send((code.clone(), EmptyShard, Ok(())))
+            .unwrap();
+        coordinator.receive_completion().unwrap();
+        coordinator.sender.send((code, EmptyShard, Ok(()))).unwrap();
+        assert!(coordinator
+            .receive_completion()
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate book"));
+        assert_eq!(coordinator.available.len(), 1);
+    }
+
+    #[test]
+    fn disconnected_stock_payload_receiver_is_an_explicit_error() {
+        let mut coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications::new(),
+        );
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        coordinator.receiver = receiver;
+        assert!(coordinator
+            .receive_completion()
+            .unwrap_err()
+            .to_string()
+            .contains("no completed book"));
+    }
+
+    #[test]
+    fn dropping_coordinator_closes_worker_payload_receiver() {
+        let coordinator = StockStreamCoordinator::<EmptyShard>::new(
+            BTreeMap::new(),
+            StockStreamNotifications::new(),
+        );
+        let worker_sender = coordinator.sender.clone();
+        drop(coordinator);
+        assert!(worker_sender
+            .send((StockCode("600001".to_owned()), EmptyShard, Ok(())))
+            .is_err());
     }
 
     #[test]
@@ -626,9 +804,7 @@ mod tests {
                         vec![cancel("A", 1)],
                         StockStreamNotifications::new(),
                         |code| {
-                            // Align independent host calls inside the coordinator,
-                            // before any stock job is dispatched. Moving these
-                            // coordinators into the shared pool exhausts it.
+                            // 分派前对齐独立宿主的 coordinator；迁入共享 pool 会占满 worker。
                             entered.wait();
                             Ok(MockShard {
                                 code: code.clone(),

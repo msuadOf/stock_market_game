@@ -86,7 +86,7 @@ fn prepare_npc_projection(
     NpcDecisionPreparationError,
 > {
     let captured = capture_decision_snapshot(prospective)?;
-    let config = prospective.setup.config.clone();
+    let config = prospective.state.setup.config.clone();
     let (source, roots) = match roots_override {
         Some(roots) => (
             run_npc_decisions(captured.snapshot.clone(), &config),
@@ -113,18 +113,19 @@ fn prepare_npc_projection(
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
-    if session.pending_npc.is_some() {
+    if session.state.pending_npc.is_some() {
         return Err(invariant(
             "next-tick NPC queue still contains an unconsumed batch",
         ));
     }
     if session
-        .attention_queue
-        .peek()
-        .is_none_or(|std::cmp::Reverse((scheduled_tick, _))| *scheduled_tick > session.tick)
+        .state
+        .attention_scheduler
+        .next_scheduled_tick()
+        .is_none_or(|scheduled_tick| scheduled_tick > session.state.tick)
     {
-        session.pending_npc = Some(PendingNpcBatch {
-            observed_tick: session.tick,
+        session.state.pending_npc = Some(PendingNpcBatch {
+            observed_tick: session.state.tick,
             observed_accounts: Vec::new(),
             intents: Vec::new(),
             dependencies: Vec::new(),
@@ -136,8 +137,8 @@ pub(in crate::session) fn queue_npc_for_next_tick(
             .map_err(|error| invariant(&error.to_string()))?;
     let projected = projected_ordered_intents(&source, &projection)
         .map_err(|error| invariant(&error.to_string()))?;
-    session.pending_npc = Some(PendingNpcBatch {
-        observed_tick: session.tick,
+    session.state.pending_npc = Some(PendingNpcBatch {
+        observed_tick: session.state.tick,
         observed_accounts: captured.snapshot.due_npc_ids().to_vec(),
         intents: projected.intents,
         dependencies: projected.dependencies,
@@ -150,10 +151,10 @@ pub(in crate::session) fn queue_npc_for_next_tick(
 pub(super) fn take_ready_npc_batch(
     session: &mut GameSession,
 ) -> Result<(IntentCandidateBatch, Vec<AccountId>), StepFatal> {
-    let ready = session.pending_npc.take().ok_or_else(|| {
+    let ready = session.state.pending_npc.take().ok_or_else(|| {
         invariant("next-tick NPC queue is missing from a committed market version")
     })?;
-    if ready.observed_tick != session.tick {
+    if ready.observed_tick != session.state.tick {
         return Err(invariant(
             "queued NPC observation tick does not match the next market tick",
         ));

@@ -41,12 +41,81 @@ fn save_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
 }
 
 thread_local! {
-    static REGISTRY: RefCell<HashMap<u32, ProtocolSession>> = RefCell::new(HashMap::new());
+    static REGISTRY: RefCell<SessionRegistry> = RefCell::new(SessionRegistry::default());
 }
 
 #[cfg(test)]
 mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
+
+/// WASM Worker 局部的句柄 owner；ProtocolSession 仍拥有引擎状态。
+#[derive(Default)]
+struct SessionRegistry {
+    sessions: HashMap<u32, ProtocolSession>,
+}
+
+impl SessionRegistry {
+    fn register(&mut self, session: ProtocolSession) -> u32 {
+        let id = NEXT.fetch_add(1, Ordering::SeqCst);
+        self.sessions.insert(id, session);
+        id
+    }
+
+    fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, SessionError> {
+        let session = ProtocolSession::new(setup, seed)?;
+        Ok(self.register(session))
+    }
+
+    fn restore(&mut self, slot: &SaveSlot) -> Result<u32, SessionError> {
+        let session = ProtocolSession::restore(slot)?;
+        Ok(self.register(session))
+    }
+
+    fn with_session<T>(
+        &mut self,
+        handle: u32,
+        operation: impl FnOnce(&mut ProtocolSession) -> T,
+    ) -> Result<T, String> {
+        self.sessions
+            .get_mut(&handle)
+            .map(operation)
+            .ok_or_else(|| format!("invalid session handle: {handle}"))
+    }
+
+    fn remove(&mut self, handle: u32) {
+        self.sessions.remove(&handle);
+    }
+
+    fn step_update(&mut self, handle: u32) -> Result<EngineUpdate, StepUpdateError> {
+        let session = self.sessions.get_mut(&handle).ok_or_else(|| {
+            StepUpdateError::Operation(format!("invalid session handle: {handle}"))
+        })?;
+        let result = (|| {
+            if session
+                .civil_day_ready()
+                .map_err(civil_error_to_step_update_error)?
+            {
+                let civil = session
+                    .end_civil_day_update()
+                    .map_err(civil_error_to_step_update_error)?;
+                return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
+            }
+            let frame = session
+                .step_frame()
+                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
+            let batch = session
+                .tick_batch(vec![frame])
+                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
+            Ok(EngineUpdate::TickBatch(Box::new(batch)))
+        })();
+        result.map_err(|error| match error {
+            StepUpdateError::Fatal(failure) => {
+                StepUpdateError::Fatal(Box::new((*failure).at_session(session)))
+            }
+            other => other,
+        })
+    }
+}
 
 /// Fatal engine failure delivered across the WASM boundary.
 ///
@@ -261,10 +330,9 @@ fn civil_error_to_step_update_error(error: SessionError) -> StepUpdateError {
 #[wasm_bindgen]
 pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
-    let sess = ProtocolSession::new(setup, seed).map_err(session_error_to_js)?;
-    let id = NEXT.fetch_add(1, Ordering::SeqCst);
-    REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
-    Ok(id)
+    REGISTRY
+        .with(|registry| registry.borrow_mut().create(setup, seed))
+        .map_err(session_error_to_js)
 }
 
 /// Returns the next ordered protocol update.
@@ -279,36 +347,7 @@ pub fn step(handle: u32) -> Result<JsValue, JsValue> {
 }
 
 fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
-    REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        let session = registry.get_mut(&handle).ok_or_else(|| {
-            StepUpdateError::Operation(format!("invalid session handle: {handle}"))
-        })?;
-        let result = (|| {
-            if session
-                .civil_day_ready()
-                .map_err(civil_error_to_step_update_error)?
-            {
-                let civil = session
-                    .end_civil_day_update()
-                    .map_err(civil_error_to_step_update_error)?;
-                return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
-            }
-            let frame = session
-                .step_frame()
-                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
-            let batch = session
-                .tick_batch(vec![frame])
-                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
-            Ok(EngineUpdate::TickBatch(Box::new(batch)))
-        })();
-        result.map_err(|error| match error {
-            StepUpdateError::Fatal(failure) => {
-                StepUpdateError::Fatal(Box::new((*failure).at_session(session)))
-            }
-            other => other,
-        })
-    })
+    REGISTRY.with(|registry| registry.borrow_mut().step_update(handle))
 }
 
 /// 拉完整快照（首次连/重连/存档）。
@@ -435,7 +474,7 @@ pub fn enqueue(handle: u32, intent: JsValue) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn drop_session(handle: u32) {
     REGISTRY.with(|r| {
-        r.borrow_mut().remove(&handle);
+        r.borrow_mut().remove(handle);
     });
 }
 
@@ -462,20 +501,18 @@ pub fn save_candidate(handle: u32, key: JsValue) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
     let slot: SaveSlot = serde_wasm_bindgen::from_value(save_slot)?;
-    let sess = ProtocolSession::restore(&slot).map_err(session_error_to_js)?;
-    let id = NEXT.fetch_add(1, Ordering::SeqCst);
-    REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
-    Ok(id)
+    REGISTRY
+        .with(|registry| registry.borrow_mut().restore(&slot))
+        .map_err(session_error_to_js)
 }
 
 #[wasm_bindgen]
 pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
     let slot: SaveSlot =
         serde_json::from_str(&save_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let sess = ProtocolSession::restore(&slot).map_err(session_error_to_js)?;
-    let id = NEXT.fetch_add(1, Ordering::SeqCst);
-    REGISTRY.with(|registry| registry.borrow_mut().insert(id, sess));
-    Ok(id)
+    REGISTRY
+        .with(|registry| registry.borrow_mut().restore(&slot))
+        .map_err(session_error_to_js)
 }
 
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。
@@ -483,14 +520,11 @@ fn with_session<T>(
     handle: u32,
     f: impl FnOnce(&mut ProtocolSession) -> Result<T, JsValue>,
 ) -> Result<T, JsValue> {
-    REGISTRY.with(|r| {
-        let mut reg = r.borrow_mut();
-        match reg.get_mut(&handle) {
-            Some(sess) => f(sess),
-            None => Err(JsValue::from_str(&format!(
-                "invalid session handle: {handle}"
-            ))),
-        }
+    REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .with_session(handle, f)
+            .map_err(|message| JsValue::from_str(&message))?
     })
 }
 

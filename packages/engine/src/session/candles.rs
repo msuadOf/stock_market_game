@@ -7,9 +7,8 @@ use std::ops::Index;
 
 const TECHNICAL_RECENT_VALID_DAYS: usize = crate::strategy::SMA_LONG_WINDOW;
 
-/// Complete daily history with a bounded cache for the technical indicators.
-/// Cloning a tick candidate shares old candles; only the newest history chunk
-/// can be copied when a day closes.
+/// 完整日 K 历史及技术指标的有界缓存。
+/// tick candidate clone 共享旧历史；收盘追加只复制最新 history chunk。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct DailyCandleHistory {
     candles: AppendOnlyHistory<DailyCandle>,
@@ -88,26 +87,65 @@ impl serde::Serialize for DailyCandleHistory {
     }
 }
 
-impl GameSession {
-    pub(super) fn update_active_daily_candle(
+/// 活动日 K 与完整历史的唯一 owner；对外存档仍分别投影两个 map。
+#[derive(Clone, Debug, Default)]
+pub(super) struct SessionCandleBook {
+    histories: BTreeMap<StockCode, DailyCandleHistory>,
+    active: BTreeMap<StockCode, DailyCandle>,
+}
+
+impl SessionCandleBook {
+    pub(super) fn new(
+        histories: BTreeMap<StockCode, DailyCandleHistory>,
+        active: BTreeMap<StockCode, DailyCandle>,
+    ) -> Self {
+        Self { histories, active }
+    }
+
+    pub(super) fn histories(&self) -> &BTreeMap<StockCode, DailyCandleHistory> {
+        &self.histories
+    }
+    pub(super) fn active(&self) -> &BTreeMap<StockCode, DailyCandle> {
+        &self.active
+    }
+
+    #[cfg(test)]
+    pub(super) fn replace_history(&mut self, code: StockCode, history: DailyCandleHistory) {
+        self.histories.insert(code, history);
+    }
+
+    pub(super) fn replace_histories(&mut self, histories: BTreeMap<StockCode, DailyCandleHistory>) {
+        self.histories = histories;
+    }
+
+    pub(super) fn replace_active(&mut self, active: BTreeMap<StockCode, DailyCandle>) {
+        self.active = active;
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_active(&mut self, code: StockCode, candle: DailyCandle) {
+        self.active.insert(code, candle);
+    }
+}
+
+impl SessionCandleBook {
+    pub(super) fn record_trade_or_mark(
         &mut self,
+        day: u32,
         code: &StockCode,
         price: Money,
         added_volume: u64,
     ) {
-        let time = i64::from(self.day) * SECONDS_PER_DAY;
-        let candle = self
-            .active_daily_candles
-            .entry(code.clone())
-            .or_insert(DailyCandle {
-                time,
-                open: price,
-                high: price,
-                low: price,
-                close: price,
-                volume: 0,
-                trade_stats: Some(DailyTradeStats::default()),
-            });
+        let time = i64::from(day) * SECONDS_PER_DAY;
+        let candle = self.active.entry(code.clone()).or_insert(DailyCandle {
+            time,
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: 0,
+            trade_stats: Some(DailyTradeStats::default()),
+        });
         // 开盘前 PriceTick 会用昨收建立零成交占位 K。集合竞价后的第一笔真实成交
         // 才是当日开盘价；此时必须丢弃占位 OHLC，否则跳空实体会错误连接到昨收。
         if candle.volume == 0 && added_volume > 0 {
@@ -140,13 +178,30 @@ impl GameSession {
         }
     }
 
-    pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
-        let closed = std::mem::take(&mut self.active_daily_candles);
+    pub(super) fn commit_active(&mut self) -> BTreeMap<StockCode, DailyCandle> {
+        let closed = std::mem::take(&mut self.active);
         for (code, candle) in &closed {
-            let history = self.daily_candles.entry(code.clone()).or_default();
+            let history = self.histories.entry(code.clone()).or_default();
             history.push(candle.clone());
         }
         closed
+    }
+}
+
+impl GameSession {
+    pub(super) fn update_active_daily_candle(
+        &mut self,
+        code: &StockCode,
+        price: Money,
+        added_volume: u64,
+    ) {
+        self.state
+            .candle_book
+            .record_trade_or_mark(self.state.day, code, price, added_volume);
+    }
+
+    pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
+        self.state.candle_book.commit_active()
     }
 }
 
@@ -297,5 +352,86 @@ mod shared_daily_history_tests {
                 .len(),
             1_025
         );
+    }
+}
+
+#[cfg(test)]
+mod candle_book_tests {
+    use super::*;
+
+    #[test]
+    fn no_trade_day_is_archived_without_becoming_a_traded_sample() {
+        let code = StockCode("600000".into());
+        let mut book = SessionCandleBook::default();
+        book.record_trade_or_mark(0, &code, Money::from_cents(1_000), 0);
+        let closed = book.commit_active();
+        assert_eq!(closed[&code].volume, 0);
+        assert_eq!(book.histories()[&code].len(), 1);
+        assert_eq!(book.histories()[&code].traded_count(), 0);
+        assert!(book.histories()[&code].recent_traded().is_empty());
+        assert_eq!(closed[&code].trade_stats, Some(DailyTradeStats::default()));
+    }
+
+    #[test]
+    #[should_panic(expected = "daily candle volume overflow: engine state invariant violated")]
+    fn active_candle_volume_overflow_stays_explicit() {
+        let code = StockCode("600000".into());
+        let mut book = SessionCandleBook::default();
+        book.set_active(
+            code.clone(),
+            DailyCandle {
+                time: 0,
+                open: Money::from_cents(1_000),
+                high: Money::from_cents(1_000),
+                low: Money::from_cents(1_000),
+                close: Money::from_cents(1_000),
+                volume: u64::MAX,
+                trade_stats: Some(DailyTradeStats::default()),
+            },
+        );
+        book.record_trade_or_mark(0, &code, Money::from_cents(1_000), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "daily trade turnover overflow: engine invariant violated")]
+    fn active_candle_trade_statistics_overflow_stays_explicit() {
+        let code = StockCode("600000".into());
+        let mut book = SessionCandleBook::default();
+        book.set_active(
+            code.clone(),
+            DailyCandle {
+                time: 0,
+                open: Money::from_cents(1_000),
+                high: Money::from_cents(1_000),
+                low: Money::from_cents(1_000),
+                close: Money::from_cents(1_000),
+                volume: 100,
+                trade_stats: Some(DailyTradeStats {
+                    turnover_cents: u64::MAX,
+                    trade_count: 1,
+                }),
+            },
+        );
+        book.record_trade_or_mark(0, &code, Money::from_cents(1_000), 1);
+    }
+
+    #[test]
+    fn first_trade_replaces_mark_and_commit_archives_once() {
+        let code = StockCode("600000".into());
+        let mut book = SessionCandleBook::default();
+        book.record_trade_or_mark(2, &code, Money::from_cents(1_000), 0);
+        book.record_trade_or_mark(2, &code, Money::from_cents(1_100), 100);
+        book.record_trade_or_mark(2, &code, Money::from_cents(1_050), 50);
+        let candle = &book.active()[&code];
+        assert_eq!(candle.open, Money::from_cents(1_100));
+        assert_eq!(candle.low, Money::from_cents(1_050));
+        assert_eq!(candle.high, Money::from_cents(1_100));
+        assert_eq!(candle.volume, 150);
+        assert_eq!(candle.trade_stats.as_ref().unwrap().trade_count, 2);
+        let closed = book.commit_active();
+        assert!(book.active().is_empty());
+        assert_eq!(book.histories()[&code].last(), Some(&closed[&code]));
+        assert!(book.commit_active().is_empty());
+        assert_eq!(book.histories()[&code].len(), 1);
     }
 }

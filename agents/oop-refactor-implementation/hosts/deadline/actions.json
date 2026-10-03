@@ -1,0 +1,99 @@
+[
+  {
+    "id": "hosts-N08",
+    "title": "把 bounded command 的 child、计时器、回调与完成态聚合",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "scripts/run-with-deadline.mjs",
+      "scripts/run-with-deadline.test.mjs",
+      "scripts/run-long-validation.mjs",
+      "scripts/run-web-tests.mjs",
+      "scripts/run-full-regression.mjs"
+    ],
+    "objects": [
+      "BoundedCommandRun"
+    ],
+    "report_anchor": "hosts-n08",
+    "group": "hosts",
+    "details_markdown": "`runBoundedCommand` 是一个持资源的闭包：child、stdout/stderr、outputCallbackError、timedOut、abortReason、settled、execution/hard timers、signal listener 与 cleanup 函数共同支配一次命令。私有 `BoundedCommandRun` 可以保持 `runBoundedCommand`/`runWithDeadline` 公共函数，聚合其 single-settlement 生命周期。旧正文已提 Windows taskkill 未等待问题，没有对应 items.actions ID；本轮具体化的是 owner，不冒充首次发现行为缺陷。\n\n- **字段/方法：** 上述字段与依赖注入 spawnProcess；`start()`、`on_output()`、`abort()`、`on_close()`、`on_error()`、`settle_once()`、`cleanup()`。保留 callbacks 异常→记录→terminate 与 close 后错误优先级。`parseArgs`、时间上限 validation 和 CLI main 继续函数；平台终止策略可作为函数注入，不要求继承层级。\n- **调用方：** `run-long-validation` 调 runBoundedCommand；run-web-tests/full-regression 以 facade 执行 child 与 sibling abort。全部调用方继续使用同样 args/options/Promise结果。\n- **迁移/测试：** 先保持普通10s、长300s与cleanup reserve；原样迁闭包字段、listeners与settlement；复用 run-with-deadline.test.mjs 的成功/非零/预算/回调用例；该文件当前缺少直接 abort 用例，迁移前须补 signal 已 abort、运行中 abort，以及单实例重复 close/error/abort 的 once-only 边界。Windows `taskkill` 的 unref/fire-and-forget 与未确认树关闭是另一行为修复，需显式 await/injected terminator、成功失败超时测试，不在纯抽对象批次暗修。`server-build.sh` 299000ms TERM/最后1000ms cleanup 方向已在旧正文记录；本轮不新增超时制度，不把它塞进 OOP。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "local_id": "46-2",
+    "title": "将回归制品库存建模为封存值对象",
+    "priority": "低优先级可选",
+    "files": [
+      "scripts/run-full-regression.mjs",
+      "scripts/run-full-regression.test.mjs"
+    ],
+    "source_symbols": [
+      "FULL_REGRESSION_INVENTORY_SCHEMA",
+      "inventoryDigest",
+      "sealTestArtifacts",
+      "writeJsonAtomically",
+      "readAndValidateInventory",
+      "buildFullRegressionArtifacts"
+    ],
+    "evidence": [
+      "run-full-regression.mjs:156-170：binary seal 将路径、字节数、SHA256 聚合。",
+      "run-full-regression.mjs:172-240：schema identity digest、JSON 原子写入、库存文件解析、workspace/source/target 绑定、symlink/path/byte/digest 校验共同定义不可变 artifact inventory。",
+      "run-full-regression.mjs:441-475：build 仅在源码指纹稳定和 artifact seal 后发布库存。",
+      "run-full-regression.test.mjs:348-384、420-450：测试锁定完整性验证与原子 inventory 生命周期。"
+    ],
+    "fields": [
+      "schema",
+      "source_root/workspace_root/cargo_target_dir/process_tmp_dir",
+      "source_fingerprint",
+      "build 的 argv、CPU 参数与 wall time",
+      "artifacts（label、相对路径、bytes、sha256）",
+      "identity_digest",
+      "唯一拥有的原解码record（保留字段插入顺序、extra fields与重复artifact，不另造规范化权威副本）"
+    ],
+    "methods": [
+      "fromDecodedInventory(decoded, expectedIdentity)先对原解码record去掉identity_digest后按现有JSON.stringify顺序实算并比较传入摘要",
+      "build阶段创建新inventory时才computeIdentityDigest()",
+      "toJson()保持原record字段顺序及extra/重复条目，不排序/删字段/去重",
+      "artifactDescriptors()；文件path/stat/hash校验由外部adapter返回实测结果后与封存值比较"
+    ],
+    "production_callers": [
+      "buildFullRegressionArtifacts 组装并写入库存",
+      "executeFullRegression 读取并验证库存后启动测试二进制"
+    ],
+    "data_owner": "封存后 inventory 值不可变；filesystem adapter 拥有写入/读取动作；inventory 对象拥有字段合法性、身份 digest 和 artifact seal 一致性规则。",
+    "composition": "FullRegressionInventory 由 build phase 创建，持久化为 workspace .tmp JSON；execute phase 重建值对象并验证，再向 Rust test batch 提供 artifact 描述。避免对象拥有全局 filesystem 或进程执行权限。",
+    "migration_steps": [
+      "定义 schema version 对应的不可变库存数据和值对象构造校验。",
+      "迁移 digest 和字段结构验证，并继续通过 workspace-paths 函数验证输出目录。",
+      "将原子 JSON I/O 留在 adapter，读入后调用对象 validate，写出前调用对象 serialize。",
+      "保留当前旧/错/跨 workspace/source 库存拒绝测试。"
+    ],
+    "existing_tests": [
+      "run-full-regression.test.mjs:282-310 fixture 创建库存",
+      "348-384 原子库存与字段封存",
+      "420-450 inventory执行和篡改、source drift 拒绝"
+    ],
+    "missing_tests": [
+      "迁移时覆盖当前已拒绝的缺失字段、identity/source/workspace/artifact byte/hash改变；不增加与实现镜像的每方法测试。",
+      "短fixture区分字段重排后保留旧摘要应拒绝，按重排/extra/duplicate原记录实算匹配摘要仍按当前结构规则接受；toJson保留顺序/extra/重复，禁止新增拒绝政策。",
+      "文件替换竞态若要规避，另批说明可接受边界，不能以对象化宣称解决。"
+    ],
+    "semantic_boundaries": "库存是本地测试二进制来源和文件身份封存，不是 Release manifest，也不代表二进制可移植/可信；仍要求完整 source fingerprint 和当前文件 SHA。脚本生成的环境路径不改变应用语义或 A 股交易规则。 identity_digest先与原解码记录去掉该字段后的JSON.stringify摘要比较，不重算替换输入摘要以掩盖篡改。validate/fromDecoded/toJson都不自动排序、删extra、去重artifact；保留现有extra/重复接受边界，只允许build阶段为新inventory生成digest。",
+    "why_oop": "inventory 不是任意 JSON，而是跨 build/execute 的不可变值，携带来源、workspace、文件摘要及自校验身份；将其变成值对象能把散落 schema 与完整性不变量放在数据所有者处。I/O 维持外部 adapter。",
+    "reader_job": "46",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/46-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "构建与执行之间封存的 inventory 具有 schema、来源/路径、artifact receipt 与 identity digest 自校验关系；可由不可变 RegressionInventory 表达并保留 filesystem I/O 外置。",
+    "id": "hosts-R2-N19",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n19",
+    "action_id": "hosts-R2-N19",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n构建与执行之间封存的 inventory 具有 schema、来源/路径、artifact receipt 与 identity digest 自校验关系；可由不可变 RegressionInventory 表达并保留 filesystem I/O 外置。\n\n范围：`scripts/run-full-regression.mjs`、`scripts/run-full-regression.test.mjs`。\n\n**字段**\n\n- schema\n- source_root/workspace_root/cargo_target_dir/process_tmp_dir\n- source_fingerprint\n- build 的 argv、CPU 参数与 wall time\n- artifacts（label、相对路径、bytes、sha256）\n- identity_digest\n- 唯一拥有的原解码record（保留字段插入顺序、extra fields与重复artifact，不另造规范化权威副本）\n\n**方法**\n\n- fromDecodedInventory(decoded, expectedIdentity)先对原解码record去掉identity_digest后按现有JSON.stringify顺序实算并比较传入摘要\n- build阶段创建新inventory时才computeIdentityDigest()\n- toJson()保持原record字段顺序及extra/重复条目，不排序/删字段/去重\n- artifactDescriptors()；文件path/stat/hash校验由外部adapter返回实测结果后与封存值比较\n\n**真实调用方**\n\n- buildFullRegressionArtifacts 组装并写入库存\n- executeFullRegression 读取并验证库存后启动测试二进制\n\n**数据所有者**\n\n封存后 inventory 值不可变；filesystem adapter 拥有写入/读取动作；inventory 对象拥有字段合法性、身份 digest 和 artifact seal 一致性规则。\n\n**组合方式**\n\nFullRegressionInventory 由 build phase 创建，持久化为 workspace .tmp JSON；execute phase 重建值对象并验证，再向 Rust test batch 提供 artifact 描述。避免对象拥有全局 filesystem 或进程执行权限。\n\n**迁移步骤**\n\n- 定义 schema version 对应的不可变库存数据和值对象构造校验。\n- 迁移 digest 和字段结构验证，并继续通过 workspace-paths 函数验证输出目录。\n- 将原子 JSON I/O 留在 adapter，读入后调用对象 validate，写出前调用对象 serialize。\n- 保留当前旧/错/跨 workspace/source 库存拒绝测试。\n\n**现有测试（未执行）**\n\n- run-full-regression.test.mjs:282-310 fixture 创建库存\n- 348-384 原子库存与字段封存\n- 420-450 inventory执行和篡改、source drift 拒绝\n\n**待补测试**\n\n- 迁移时覆盖当前已拒绝的缺失字段、identity/source/workspace/artifact byte/hash改变；不增加与实现镜像的每方法测试。\n- 短fixture区分字段重排后保留旧摘要应拒绝，按重排/extra/duplicate原记录实算匹配摘要仍按当前结构规则接受；toJson保留顺序/extra/重复，禁止新增拒绝政策。\n- 文件替换竞态若要规避，另批说明可接受边界，不能以对象化宣称解决。\n\n**语义边界**\n\n库存是本地测试二进制来源和文件身份封存，不是 Release manifest，也不代表二进制可移植/可信；仍要求完整 source fingerprint 和当前文件 SHA。脚本生成的环境路径不改变应用语义或 A 股交易规则。 identity_digest先与原解码记录去掉该字段后的JSON.stringify摘要比较，不重算替换输入摘要以掩盖篡改。validate/fromDecoded/toJson都不自动排序、删extra、去重artifact；保留现有extra/重复接受边界，只允许build阶段为新inventory生成digest。\n\n**对象化依据**\n\ninventory 不是任意 JSON，而是跨 build/execute 的不可变值，携带来源、workspace、文件摘要及自校验身份；将其变成值对象能把散落 schema 与完整性不变量放在数据所有者处。I/O 维持外部 adapter。\n\n**源码证据**\n\n- run-full-regression.mjs:156-170：binary seal 将路径、字节数、SHA256 聚合。\n- run-full-regression.mjs:172-240：schema identity digest、JSON 原子写入、库存文件解析、workspace/source/target 绑定、symlink/path/byte/digest 校验共同定义不可变 artifact inventory。\n- run-full-regression.mjs:441-475：build 仅在源码指纹稳定和 artifact seal 后发布库存。\n- run-full-regression.test.mjs:348-384、420-450：测试锁定完整性验证与原子 inventory 生命周期。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

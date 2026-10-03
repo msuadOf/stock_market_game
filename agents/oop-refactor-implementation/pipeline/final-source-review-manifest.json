@@ -1,0 +1,879 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "scope": "pipeline全部tracked diff、跨组state caller及untracked新source",
+  "aggregation_only": true,
+  "manager_is_not_independent_reviewer": true,
+  "source_manifests": [
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+      "sha256": "aff42d277c1a2b13fc4f8b0de42694a8a191764c7b7e5f5b27c2e5069fef2427",
+      "reviewer": "/root/implement_pipeline/review_resources"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+      "sha256": "9f5c774061341f05e22586352ea89d2ddcfa041c7a04ecb26101caeb5505a41d",
+      "reviewer": "review_continuous_core"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+      "sha256": "85f5b8593e525d8577a9b376de8dc55014c94c01b4839bbd4dc4581a0bcdde70",
+      "reviewer": "/root/implement_pipeline/review_stream"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+      "sha256": "ffd294eddbf6fdb690778eeceff0e78834c88beaa6913229163f7f6aef2a0597",
+      "reviewer": "review_auction"
+    }
+  ],
+  "file_count": 69,
+  "tracked_changed_count": 68,
+  "untracked_count": 1,
+  "coverage": {
+    "missing": [],
+    "unsigned": [],
+    "current_sha_mismatches": []
+  },
+  "files": [
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement.rs",
+      "sha256": "fce6ad3082fc4808a8b07be8cdff9b8da76ad7fe59b8755da5f316ae3d71b893",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement_tests.rs",
+      "sha256": "df96cb6963dc422463be7ef327c261b528f145b674eb9a7c5a69f6b53df3d1de",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation.rs",
+      "sha256": "6552b7cc7debe368ee45f2e9b332df4635eb3a1eaee6ce0f219df2f2d6ab41ad",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation_context.rs",
+      "sha256": "d2c7a1b87cde7df9271499b219bdbb95871d8be5ba693c8e6c7892e9c90693d5",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation_context_tests.rs",
+      "sha256": "cf9264178f8d7382aa21ed2fec36acf06bfaa4885026854d12c166d2dbf56705",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation_driver_tests.rs",
+      "sha256": "6e636213f2f16166075142e814ceea7d1790279810595bd4246cb511dbbb08ff",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_validation_tests.rs",
+      "sha256": "77cc8917605b5ab5af319fcf25489d4436aef4f5f82bb96302403d6995e8b702",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "sha256": "9904016208096d0c20a3565fc13ee06937e946d67d6d8a02064f1a3e7add5826",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+      "sha256": "8632c86c50676203c91151700f956127d0dc346db081b867c8a5ffa28ce5835e",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "sha256": "306eb1faec499f99a1fab984eb2058951c17f3eb344cc8a3bcc44f1652fe7d21",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_day_end_tests.rs",
+      "sha256": "71ea0e23f83ce00eb258b03fd17b0972c151a592e909c26ac5e11d9f4e1bfb73",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_refactor_tests.rs",
+      "sha256": "a7b268ab50c16f13cf35bc8825eff96e8e3d6aa2abc9a968804f7471460f90e3",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_tick_transaction.rs",
+      "sha256": "b0cf42e1a3f896857ed758c1980e06d1bd4e6f7c494e30d8bfbe042b51cc7f93",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs",
+      "sha256": "97fc4addd525b1a62ab62e63c69194b118612d5244ceda6a47e3c34da26f278c",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/authoritative_tick_tests.rs",
+      "sha256": "a7db2ccc504c7e71d613dd64c8c4162be3609e312d8ba5af1ad3373104cd6ab0",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/candidate_commit.rs",
+      "sha256": "9e42f7fa25e8e92b72b46242330df730480237e4e9711f84b0bbbf6d17168de7",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/candidate_commit_tests.rs",
+      "sha256": "0944b40dee9149034848d19b7a2d6afdd3fa097533095084159631c4c73a8cdd",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/commit_evidence_tests.rs",
+      "sha256": "f8e5bfe8a4f3373a796fd195aeda47eb2215db982053a13abc6f3dbc9e2c8108",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs",
+      "sha256": "4e46884d6b2bf8eb6dad91886c518a1719afe4ec1e70b494033afe4b91828a58",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching.rs",
+      "sha256": "7d833ea793bca35078a1c38c5f88746285f90701aa5c312b233e70aa215bab89",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching_adapter.rs",
+      "sha256": "eaeb7f8c08aa6cda8dbbdd5edd846395a5b4b716fc1440dbfb018fa7c712b425",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs",
+      "sha256": "869bf848e2c0a5173afb63eb88afddb7505c32018cccb5ca39fa0636dc09bd13",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_matching_tests.rs",
+      "sha256": "df52a6920761ab758bb725a94b05ae40e20ed4028aa689bd9a33f261ebe6763b",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "sha256": "96829d0a386463e276abcd5938d3d3ac0df99176ff9cdd554c27ee45762ed19e",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs",
+      "sha256": "a5028f9f38e784ee7ed604c07c3fe15d601c401b9c91dccb8abc9c9a73e2572e",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_transaction.rs",
+      "sha256": "f8fb6af3d25d8bcd83180c8066bd608b607ca1263b4315c72742bf085e022991",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs",
+      "sha256": "e495592c7d513ab3499f73b9b317db2f00afdcdc8f3b8a7c21fa9befa3efe7b9",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_trade_acceptance_tests.rs",
+      "sha256": "7f81f8db08517bd2e77797ae2a2730186a7917330460221ab2759dc483b76839",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_resources.rs",
+      "sha256": "f738eeb1ab65de56770faa97dae9a0669b829dfc6b8dc26c652499c6afe232da",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_resources_tests.rs",
+      "sha256": "90e15b1e9a308f6fedfd7263136bf7e805c2020e1d0512a09a34354db39d30ef",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+      "sha256": "e3e985acecbb5516bc0d167e7ce997df3e1568f2f5fed7fddde44d32cdd9413d",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+      "sha256": "9f5a5abc9dca4059b90e9b13612ee1107f8aa503ceb36be573b0ae7f010a29d3",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_tests.rs",
+      "sha256": "9730ab4a64e20cb0cbe215a624235967e582357fd9ee29ce7600c88970ebc474",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/executor_perturbation_tests.rs",
+      "sha256": "457c4345874e7a7dd86a40e0800090756a4f4d406d2b6e8e4cf2551ef092d154",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/incremental_auction_round_tests.rs",
+      "sha256": "03ebf581447434c40e5c50bb9c2e1aa9730d28f46b704ecef2b53f87f85c21f8",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        },
+        {
+          "reviewer": "review_auction",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-auction-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs",
+      "sha256": "8007ec010def75a3c71d20f93b648bf481684121ffbeb881c40f8016f29c28b4",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs",
+      "sha256": "6f0fe31143372eb7741d1ed6ae75550eb23ea127910a92fc9ee03e505f7fce8c",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/initial_candidate_round_tests.rs",
+      "sha256": "da6fb7835858000f792287dd0ffb284a5062e89df0946b4903112a1bf69817cc",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/institutional_experience_projection.rs",
+      "sha256": "e96acc6d7c6b6707f26e71a396d7eee8c76c3d3f934a814bb6ab0a8f742ea51e",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/local_admission.rs",
+      "sha256": "be5557eb3ec3712be73fc03be16912a120b42168563e05100cdc5276d365b5e4",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/mod.rs",
+      "sha256": "c72782c4bf4b4699922311da8038467fd0a4b531c9051106fd3b1b3493243d97",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs",
+      "sha256": "0753be5b857ab86a06c65101f3f5e4073b84de8f0da3bb9ad0d824f7d0178e89",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_state_projection.rs",
+      "sha256": "80e75f3c2268301ae39bcab83516a51e9162e289c00fb09fb9c0c7a01e69be0f",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_state_projection_tests.rs",
+      "sha256": "ec1ed87ef9ec654ccbf71a8def86f7e141e8ad0ef0399b88d411f35f785c6182",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+      "sha256": "d269328e65ce6be9a9ee5b1cc7f755cf779da050125565ad72f7473b73325f14",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_tick_preparation_tests.rs",
+      "sha256": "cdd3899acfa52494e947fb731da956db604715b1e86529e1ff350b1972f78885",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/pre_open_transaction.rs",
+      "sha256": "c6954295b08ab4bef303854b3a123a0b012f24bb94c6cf2eedb1a96ce90296b6",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/pre_open_transaction_tests.rs",
+      "sha256": "6e443ce33c9078622163d04e5367b566e228775fbf4327dd8c6dabde9496d422",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "sha256": "8ccf1e5a49b369f4864cedc0bdff8d3917682b84662ad7fe0e0e5bb18cf5fe78",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs",
+      "sha256": "370de23def02457d49bff6cfd0fd7b3d9d57c1d6ac732b8b6499324a059c807f",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        },
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry_tests.rs",
+      "sha256": "68dcef530d65dbcf3879ce5b25db19b7953664cb448a686aff6a4b6fb0c97a62",
+      "independent_review_bindings": [
+        {
+          "reviewer": "review_continuous_core",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-continuous-core-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/receipt_aggregation.rs",
+      "sha256": "ab9cb8d2f972f1a75163ddb2c0e8200927cc95c774696db81d303404cd9efe2e",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/receipt_aggregation_tests.rs",
+      "sha256": "823e28c38ae503af92b69d598148d0cfb14ee1232d61fa317a5660e59f0b55b5",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection.rs",
+      "sha256": "10fc159d7c91932216f27c5e561b034a02032b78810f5b9457c03b62d9e50e48",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs",
+      "sha256": "d06e5aa3ffe8a63af05a1e4dabcd2b90604f99f3bd6318f4c35e29cc0711fb32",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection_tests.rs",
+      "sha256": "5b5e81f1e5357f4d29b7f7bb203d537ec194dd2e3cfb0ff229dbca90fcb827f4",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/session_execution_transaction.rs",
+      "sha256": "12c6e22c81076c96db5b7155ed10a99f48d2b75a372dc3f86f8af20c1ddd51f9",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/session_execution_transaction_tests.rs",
+      "sha256": "06b675be990c1e0e2eb5661a942022d769f5ba03264618122077b94f7a597d84",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/settlement.rs",
+      "sha256": "1f1a39fa73d00eaf0755c4c1cfc8c61d61bc58096a2bd9092d05203aa2d9722c",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/settlement_tests.rs",
+      "sha256": "4b690541486400c8ee98696a457c7b237e94503257e3d9203878898f683b6559",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/shadow.rs",
+      "sha256": "bb106c7f87b421b131b622dcbecb507b5c828b050ef1b61b598fcdb0e6bfb714",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_auction_adapter.rs",
+      "sha256": "9c7c2594a35c105bb8f8cb78bbaf75d6e3e6291a8ed95630d0a04ad962de31bc",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_auction_adapter_tests.rs",
+      "sha256": "8280bd99381abfab8040752b0831dc0d1de2bc9cd1b95e84fd605d9b715942dc",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_execution_transaction.rs",
+      "sha256": "6e43815c3e72374018d37b793e4e1684e2845e452824b81a58bbebc068d478e5",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_execution_transaction_tests.rs",
+      "sha256": "ef8baa63c35823b4384a45d63b92c0e1e21e97a15fd9491fc6af8f1bc0edd17c",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_stream.rs",
+      "sha256": "2e8e720bea6bc730b9035b0c1f318b1dd3b38b994aa8e7752cabf3c576b182e9",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_stream/auction_tests.rs",
+      "sha256": "61628e19408c2a5f3ce092f840a9941d9184fc40b183c86bf1879db9fa4b50e3",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/tests.rs",
+      "sha256": "98e89fc4374e772ed8c95de61168e00bb4c8c8407000e5b3708ba2bdc354c773",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_stream",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-stream-callers-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/transition.rs",
+      "sha256": "d319d220d1d03b7d93ce32181299d3057905ec6bc4f756d669b62b9604ba87a0",
+      "independent_review_bindings": [
+        {
+          "reviewer": "/root/implement_pipeline/review_resources",
+          "manifest": "agents/oop-refactor-implementation/pipeline/review-resources-projections-manifest.json",
+          "review_record": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+          "attestation": "由原未实施者亲自签认，汇总仅复制该签认并验证当前SHA，不替代独立复核"
+        }
+      ]
+    }
+  ]
+}

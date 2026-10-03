@@ -1,0 +1,253 @@
+[
+  {
+    "id": "hosts-N07",
+    "title": "把测量 child 与 sampler 生命周期聚合为 ProcessSampleRun",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "scripts/simulation/escrow-performance-harness.mjs",
+      "scripts/simulation/escrow-performance-harness.test.mjs"
+    ],
+    "objects": [
+      "ProcessSampleRun"
+    ],
+    "report_anchor": "hosts-n07",
+    "group": "hosts",
+    "details_markdown": "`runProcessSample` 当前 closure 同时拥有 child/stdout/stderr/spawnError、start/end 时间、peakRss/threadStateSamples、sampling、delay timer 和 release promise；`stopSampling` 与 child close/sampler completion 共同结束一次测量。旧 tooling 正文已有 sampler failure 清理问题，但并无 `tooling-04-A03` 的 items.actions 实体。本轮登记新的具体 OOP 动作，避免引用不存在的动作 ID。\n\n- **字段/方法：** 私有 `ProcessSampleRun` 持上述资源；`start(endpoint)`、`sample_tree()`、`wait_next_sample()`、`stop_sampling()`、`collect_result()`；公开 `runProcessSample(endpoint, options)` 继续薄函数 facade；不变更 JSON测量schema。`linuxProcessTreeSample`、`summarizeThreadStateSamples`、validate*/aggregateSamples 继续纯函数。\n- **调用方：** `runPerformanceHarness` 默认 runSample 指向 runProcessSample；matrix 通过 CLI 启动本 harness；测试通过 runSample/sourceManifest 等依赖注入保持测量契约。\n- **迁移/测试：** 先固定正常/非零退出/spawn失败及无正RSS样本行为；迁采样资源与 stopSampling 原语；保留 before/after 交替顺序和公共配置 echo；测试位于 escrow-performance-harness.test.mjs。禁止把采样结果与 Rayon registry capacity 混为一谈，不能用 CPU utilization 替代 throughput。\n- **另批行为修复：** sampler rejection 时当前先等 child close 再 await sampler，无法确保及时停止仍存活 child。终止并等待整个树、shared deadline 和失败清理需单独规范及用例；不得声称抽对象已修复该问题或把自由调度测量变为固定 seed 字节比较。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "local_id": "H45-1",
+    "title": "行情性能脚本资源会话",
+    "priority": "低优先级可选",
+    "files": [
+      "scripts/performance/market-ui-report.mjs"
+    ],
+    "source_symbols": [
+      "main",
+      "CdpClient",
+      "startViteIfNeeded",
+      "stopProcess"
+    ],
+    "evidence": [
+      "main在233-247声明server/browser/client/browserProfile并开try/finally；256-284依次申请端口、profile、browser、CDP client；360-366的实际单次清理顺序为client.close()→stopProcess(browser)→stopProcess(server)→rm(browserProfile)。",
+      "screenshots在242单独创建并由314-330跨多阶段追加，性能采样阶段则分散在310-349。",
+      "CdpClient自身已有socket、nextId、pending及connect/send/close协议状态(119-154)，可作为组合对象而非合并其职责。"
+    ],
+    "fields": [
+      "config（不可变输入）",
+      "server: 可选自建 Vite child",
+      "browser: Chrome child",
+      "browserProfile: 本次临时目录",
+      "client: 既有 CdpClient"
+    ],
+    "methods": [
+      "startServerIfNeeded",
+      "launchBrowser",
+      "connectPage",
+      "close（仅按既有顺序释放已取得资源）"
+    ],
+    "production_callers": [
+      "CLI main()，脚本直接入口(370-373)；当前没有其它产品消费者。"
+    ],
+    "data_owner": "单次资源会话仅拥有自建Vite、Chrome、profile和CdpClient；screenshots/metric/chart/game观测值继续属于main的报告流水线，不转成会话字段。",
+    "composition": "PerformanceReportSession仅组合现有CdpClient及本次取得的Vite/Chrome进程和profile；close保持既有finally中的单次取得/释放与错误传播顺序：client.close()→stopProcess(browser)→stopProcess(server)→rm(browserProfile)。不承诺close幂等，不为继续清理聚合/重排错误，也不吞并行情或采样数据；重复调用或等待整树属于另批行为修改。",
+    "migration_steps": [
+      "先以注入fixture固定正常及部分初始化失败的既有释放行为。",
+      "只迁移main中的四类资源变量与取得/释放配对；指标读取、截图、报告构造继续显式函数。",
+      "stopProcess当前终止等待能力不因抽对象扩大；若新增幂等或等待整树，须另批行为规范和失败测试。"
+    ],
+    "existing_tests": [
+      "market-ui-report.test.mjs测试market-ui-report-lib的进度判断、异常格式和HTML生成；未测试本文件的浏览器/进程生命周期。"
+    ],
+    "missing_tests": [
+      "代表性短fixture固定本次单次清理顺序：client.close→stopProcess(browser)→stopProcess(server)→rm(profile)，部分初始化只对已取得资源执行现有条件分支。",
+      "固定各清理步骤抛错时的现有传播与后续步骤执行边界，不把更完整释放或错误聚合混入对象提取。",
+      "进程已退出与浏览器连接失败场景按现有stopProcess/null资源边界验证；close重复调用/幂等测试仅在另批明确改变该行为后添加，不能冒充当前契约。"
+    ],
+    "semantic_boundaries": [
+      "这是UI性能观测工具，不是engine逻辑，不修改行情/撮合数据。",
+      "性能数据仍来自真实Chrome、Performance API及页面诊断；对象化不得把缺失诊断静默填成默认结果。",
+      "startViteIfNeeded仅对localhost/127.0.0.1启动本地服务的边界需保留。",
+      "当前只从finally单次清理；不得借close方法新增幂等、重试、错误聚合、反序重排或等待整树保证。FR-final-01按源码单次流程纠正原raw误述。"
+    ],
+    "why_oop": "多项资源拥有同一个单次运行生命周期，且finally需覆盖任意中途失败。集中所有权可让释放逻辑和部分初始化失败行为可见；单纯把所有辅助函数静态搬进类则无价值。",
+    "reader_job": "45",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/45-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "性能报告有 server/browser/profile/CDP client 共同初始化和释放；把部分初始化清理集中于一个明确资源会话属于可选范围，不将全部指标函数迁入类。",
+    "id": "hosts-R2-N18",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n18",
+    "action_id": "hosts-R2-N18",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n性能报告有 server/browser/profile/CDP client 共同初始化和释放；把部分初始化清理集中于一个明确资源会话属于可选范围，不将全部指标函数迁入类。\n\n范围：`scripts/performance/market-ui-report.mjs`。\n\n**字段**\n\n- config（不可变输入）\n- server: 可选自建 Vite child\n- browser: Chrome child\n- browserProfile: 本次临时目录\n- client: 既有 CdpClient\n\n**方法**\n\n- startServerIfNeeded\n- launchBrowser\n- connectPage\n- close（仅按既有顺序释放已取得资源）\n\n**真实调用方**\n\n- CLI main()，脚本直接入口(370-373)；当前没有其它产品消费者。\n\n**数据所有者**\n\n单次资源会话仅拥有自建Vite、Chrome、profile和CdpClient；screenshots/metric/chart/game观测值继续属于main的报告流水线，不转成会话字段。\n\n**组合方式**\n\nPerformanceReportSession仅组合现有CdpClient及本次取得的Vite/Chrome进程和profile；close保持既有finally中的单次取得/释放与错误传播顺序：client.close()→stopProcess(browser)→stopProcess(server)→rm(browserProfile)。不承诺close幂等，不为继续清理聚合/重排错误，也不吞并行情或采样数据；重复调用或等待整树属于另批行为修改。\n\n**迁移步骤**\n\n- 先以注入fixture固定正常及部分初始化失败的既有释放行为。\n- 只迁移main中的四类资源变量与取得/释放配对；指标读取、截图、报告构造继续显式函数。\n- stopProcess当前终止等待能力不因抽对象扩大；若新增幂等或等待整树，须另批行为规范和失败测试。\n\n**现有测试（未执行）**\n\n- market-ui-report.test.mjs测试market-ui-report-lib的进度判断、异常格式和HTML生成；未测试本文件的浏览器/进程生命周期。\n\n**待补测试**\n\n- 代表性短fixture固定本次单次清理顺序：client.close→stopProcess(browser)→stopProcess(server)→rm(profile)，部分初始化只对已取得资源执行现有条件分支。\n- 固定各清理步骤抛错时的现有传播与后续步骤执行边界，不把更完整释放或错误聚合混入对象提取。\n- 进程已退出与浏览器连接失败场景按现有stopProcess/null资源边界验证；close重复调用/幂等测试仅在另批明确改变该行为后添加，不能冒充当前契约。\n\n**语义边界**\n\n- 这是UI性能观测工具，不是engine逻辑，不修改行情/撮合数据。\n- 性能数据仍来自真实Chrome、Performance API及页面诊断；对象化不得把缺失诊断静默填成默认结果。\n- startViteIfNeeded仅对localhost/127.0.0.1启动本地服务的边界需保留。\n- 当前只从finally单次清理；不得借close方法新增幂等、重试、错误聚合、反序重排或等待整树保证。FR-final-01按源码单次流程纠正原raw误述。\n\n**对象化依据**\n\n多项资源拥有同一个单次运行生命周期，且finally需覆盖任意中途失败。集中所有权可让释放逻辑和部分初始化失败行为可见；单纯把所有辅助函数静态搬进类则无价值。\n\n**源码证据**\n\n- main在233-247声明server/browser/client/browserProfile并开try/finally；256-284依次申请端口、profile、browser、CDP client；360-366的实际单次清理顺序为client.close()→stopProcess(browser)→stopProcess(server)→rm(browserProfile)。\n- screenshots在242单独创建并由314-330跨多阶段追加，性能采样阶段则分散在310-349。\n- CdpClient自身已有socket、nextId、pending及connect/send/close协议状态(119-154)，可作为组合对象而非合并其职责。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "host-1",
+    "title": "配对性能测量的运行上下文与样本汇总",
+    "priority": "低优先级可选",
+    "files": [
+      "scripts/simulation/escrow-performance-harness.mjs",
+      "scripts/simulation/escrow-performance-harness.test.mjs"
+    ],
+    "source_symbols": [
+      "validatePerformanceWorkload",
+      "validateEnvironmentContract",
+      "validatePerformanceConfig",
+      "validateMeasuredSample",
+      "runPerformanceHarness",
+      "aggregateSamples",
+      "loadReusableReport",
+      "config",
+      "measured"
+    ],
+    "evidence": [
+      "escrow-performance-harness.mjs:111-144 对 workload、environment contract、warmup/sample count 和两 endpoint 分层验证。",
+      "escrow-performance-harness.mjs:439-507 以闭包共享同一 config、分侧 samples，依次校验运行前后 source hash、执行两侧 benchmark，再由相同字段生成比较报告。",
+      "escrow-performance-harness.mjs:527-569 复用报告再次逐项比较 workload、environment、sample count、endpoint fingerprint/command/cwd。",
+      "escrow-performance-harness.test.mjs:38-89 config 与 measured 重复从 config() 派生 workload、environment contract 和 fingerprints。"
+    ],
+    "fields": [
+      "workload",
+      "environment_contract",
+      "before/after endpoint 身份",
+      "warmup_runs",
+      "sample_count",
+      "rss_sample_interval_ms",
+      "每个 side 的 samples",
+      "源码 fingerprint"
+    ],
+    "methods": [
+      "validate() 统一 config/workload/environment contract 验证",
+      "measureSide(side, context) 持有 source hash 前后检查及 measured sample 验证",
+      "appendSample(side, sample)",
+      "buildReport(environmentManifest, timestamp)",
+      "matchesReusableReport(report)"
+    ],
+    "production_callers": [
+      "main 调用 runPerformanceHarness；runPerformanceHarness 的当前实现内部创建 measure 和 samples，无其他直接消费者。"
+    ],
+    "data_owner": "每次 main/runPerformanceHarness 调用创建的新 run 对象拥有配置快照和样本数组；runProcessSample 继续拥有单个子进程与采样器 lifecycle。",
+    "composition": "保留 Linux process tree sampler、纯 validator 和统计 helper 为独立函数；PerformanceRun 仅封装单轮跨 side 工作流和报告所需的数据，不接管 OS I/O。测试 builder 仅为 test helper。",
+    "migration_steps": [
+      "先抽出 config/workload/environment 的不可变运行上下文，并让 validator 与 run harness 消费它。",
+      "把 measure 闭包的两侧样本累积和报告构造迁入单次 PerformanceRun，sourceManifest/runSample/clock 仍通过依赖参数注入。",
+      "让 reusable report 对同一运行上下文做匹配，避免再手写散落字段比较；保持 report JSON schema 字段不变。",
+      "同步更新 config/measured 测试夹具并保留现有比较顺序、错误关闭和 idempotent 写入契约。"
+    ],
+    "existing_tests": [
+      "escrow-performance-harness.test.mjs:92-124 配对顺序、汇总及比较语义。",
+      ":126-209 workload/source/instrumentation/status/stdout 边界。",
+      ":212-253 source drift 与 workload drift 拒绝。",
+      ":255-321 数值和配置边界。",
+      ":323-384 process sampling、错误退出、幂等写入与 report reuse。"
+    ],
+    "missing_tests": [
+      "如引入 run 对象，增加对象生命周期隔离用例：两轮 run 的样本不得共享，失败 run 不得产出可复用 PASS 报告。",
+      "测试 report reuse 对每一个关键比较字段的变化均拒绝，避免聚合迁移漏字段。"
+    ],
+    "semantic_boundaries": "这是工具链性能证据合同，不属于游戏撮合/资金/持仓语义；必须继续将 ticks/sec 按已提交 tick 数除 measured wall time、process-tree RSS 与 runnable thread 状态分开表达，Rayon registry capacity 不得冒充活跃 worker。source fingerprint 前后校验、两侧同 workload/toolchain、交替顺序和不设阈值必须保持。",
+    "why_oop": "运行数据在配置校验、两端执行、样本追加、报告创建及复用比较间组成一轮有身份的生命周期；聚合减少契约重复，但优先级建议而非必要，因为当前函数式依赖注入已明确且样本状态仅局部。",
+    "reader_job": "50",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/50-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "ProcessSampleRun 只拥有一个 child sampler；PerformanceComparisonRun 拥有跨 before/after 的 workload/environment/endpoint identity、samples 与报告复用比较，属于另一个真实不变量边界。",
+    "id": "hosts-R2-N21",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n21",
+    "action_id": "hosts-R2-N21",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nProcessSampleRun 只拥有一个 child sampler；PerformanceComparisonRun 拥有跨 before/after 的 workload/environment/endpoint identity、samples 与报告复用比较，属于另一个真实不变量边界。\n\n范围：`scripts/simulation/escrow-performance-harness.mjs`、`scripts/simulation/escrow-performance-harness.test.mjs`。\n\n**字段**\n\n- workload\n- environment_contract\n- before/after endpoint 身份\n- warmup_runs\n- sample_count\n- rss_sample_interval_ms\n- 每个 side 的 samples\n- 源码 fingerprint\n\n**方法**\n\n- validate() 统一 config/workload/environment contract 验证\n- measureSide(side, context) 持有 source hash 前后检查及 measured sample 验证\n- appendSample(side, sample)\n- buildReport(environmentManifest, timestamp)\n- matchesReusableReport(report)\n\n**真实调用方**\n\n- main 调用 runPerformanceHarness；runPerformanceHarness 的当前实现内部创建 measure 和 samples，无其他直接消费者。\n\n**数据所有者**\n\n每次 main/runPerformanceHarness 调用创建的新 run 对象拥有配置快照和样本数组；runProcessSample 继续拥有单个子进程与采样器 lifecycle。\n\n**组合方式**\n\n保留 Linux process tree sampler、纯 validator 和统计 helper 为独立函数；PerformanceRun 仅封装单轮跨 side 工作流和报告所需的数据，不接管 OS I/O。测试 builder 仅为 test helper。\n\n**迁移步骤**\n\n- 先抽出 config/workload/environment 的不可变运行上下文，并让 validator 与 run harness 消费它。\n- 把 measure 闭包的两侧样本累积和报告构造迁入单次 PerformanceRun，sourceManifest/runSample/clock 仍通过依赖参数注入。\n- 让 reusable report 对同一运行上下文做匹配，避免再手写散落字段比较；保持 report JSON schema 字段不变。\n- 同步更新 config/measured 测试夹具并保留现有比较顺序、错误关闭和 idempotent 写入契约。\n\n**现有测试（未执行）**\n\n- escrow-performance-harness.test.mjs:92-124 配对顺序、汇总及比较语义。\n- :126-209 workload/source/instrumentation/status/stdout 边界。\n- :212-253 source drift 与 workload drift 拒绝。\n- :255-321 数值和配置边界。\n- :323-384 process sampling、错误退出、幂等写入与 report reuse。\n\n**待补测试**\n\n- 如引入 run 对象，增加对象生命周期隔离用例：两轮 run 的样本不得共享，失败 run 不得产出可复用 PASS 报告。\n- 测试 report reuse 对每一个关键比较字段的变化均拒绝，避免聚合迁移漏字段。\n\n**语义边界**\n\n这是工具链性能证据合同，不属于游戏撮合/资金/持仓语义；必须继续将 ticks/sec 按已提交 tick 数除 measured wall time、process-tree RSS 与 runnable thread 状态分开表达，Rayon registry capacity 不得冒充活跃 worker。source fingerprint 前后校验、两侧同 workload/toolchain、交替顺序和不设阈值必须保持。\n\n**对象化依据**\n\n运行数据在配置校验、两端执行、样本追加、报告创建及复用比较间组成一轮有身份的生命周期；聚合减少契约重复，但优先级建议而非必要，因为当前函数式依赖注入已明确且样本状态仅局部。\n\n**源码证据**\n\n- escrow-performance-harness.mjs:111-144 对 workload、environment contract、warmup/sample count 和两 endpoint 分层验证。\n- escrow-performance-harness.mjs:439-507 以闭包共享同一 config、分侧 samples，依次校验运行前后 source hash、执行两侧 benchmark，再由相同字段生成比较报告。\n- escrow-performance-harness.mjs:527-569 复用报告再次逐项比较 workload、environment、sample count、endpoint fingerprint/command/cwd。\n- escrow-performance-harness.test.mjs:38-89 config 与 measured 重复从 config() 派生 workload、environment contract 和 fingerprints。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "host-2",
+    "title": "现金与股份资源值及 envelope 收据守恒聚合",
+    "priority": "建议",
+    "files": [
+      "scripts/simulation/escrow-verification-contracts.mjs",
+      "scripts/simulation/escrow-verification-contracts.test.mjs"
+    ],
+    "source_symbols": [
+      "resource",
+      "add",
+      "equalResource",
+      "requireResourceEqual",
+      "emptyResource",
+      "accumulateAccount",
+      "verifyConservationSnapshot",
+      "res",
+      "conservationSnapshot"
+    ],
+    "evidence": [
+      "escrow-verification-contracts.mjs:241-256 将 cash/shares 转为 BigInt 并分散定义加法、相等与不变量断言。",
+      ":277-299 初始化 envelope identity、basis、receipts 与资源状态。",
+      ":353-406 每条 receipt 重复转换 live_before/spent/released/live_after 并检查 side-specific 零资源、positive fill 与资源方程。",
+      ":407-419 独立检查 P1、sealed、created 和 combined conservation。",
+      "escrow-verification-contracts.test.mjs:73-74 res helper 与生产 cash_cents/shares 表达一一对应；:157-275 已覆盖 P1/created、PreSeal/SealedBatch、Buy/Sell、T+1 与 ordinal 边界。"
+    ],
+    "fields": [
+      "Resource.cash (分，BigInt)",
+      "Resource.shares (股，BigInt)",
+      "envelope 身份：account_id/stock_code/order_id/side",
+      "basis origin 与 P1 boundary",
+      "live resource",
+      "receipt 的 spent/released/live_after",
+      "receipt 的 journal/source/ordinal"
+    ],
+    "methods": [
+      "Resource.fromJson / toJson",
+      "Resource.add / equals / assertEquals",
+      "EnvelopeConservation.applyReceipt(receipt)",
+      "EnvelopeConservation.assertP1Boundary()",
+      "EnvelopeConservation.assertCommitAndConservation()"
+    ],
+    "production_callers": [
+      "verifyConservationSnapshot 调用这些局部函数；其调用者是 scripts 下的验证 runner，不是 web/engine 产品交易路径。"
+    ],
+    "data_owner": "单个 EnvelopeConservation 实例拥有一个 envelope row 的 basis、当前 live、PreSeal 汇总、SealedBatch 汇总和是否越过 journal 边界；账户 aggregate Map 仍由 verifyConservationSnapshot 单次调用拥有。",
+    "composition": "Resource 是不变 value object；EnvelopeConservation 组合 Resource 和 envelope key/side，执行业务验证器中的收据 transition policy。decimal codec、receipt global index/identity collector、账户聚合以及顶层 snapshot 遍历可继续独立函数。不得将验证器类误认为 engine 的订单/资金权威状态。",
+    "migration_steps": [
+      "为 cash/shares 引入只在验证器模块内使用的 Resource 值对象，保留 JSON schema 字段及 decimal string 编码。",
+      "先迁移 add/equal/empty 和资源方程到 Resource 方法，维持错误上下文与 BigInt 精度。",
+      "将逐 envelope 的 origin/basis/live/journal 收据转移迁入 EnvelopeConservation，顶层仍负责 receipt 全局连续性、账户聚合及 T+1 投影校验。",
+      "以现有测试逐项验证，再补多 receipt / 无 receipt / P1边界的 transition focused tests。"
+    ],
+    "existing_tests": [
+      "escrow-verification-contracts.test.mjs:157-182 created/quiet tick 与分 journal conservation。",
+      ":184-234 cross-resource leak、duplicate、aggregate、negative cash、T+1、Buy/Sell 零资源。",
+      ":236-275 positive Fill 和 receipt source/ordinal/index 约束。"
+    ],
+    "missing_tests": [
+      "Resource add/equals 的大数与零资源组合边界可由 envelope 行为覆盖，不必为每个方法镜像造类测试。",
+      "若拆 EnvelopeConservation，补多条连续 receipt 的跨 journal 状态转移测试，以及首次 SealedBatch 前无 receipt/仅 P0 receipt 的边界。",
+      "补 receipt 顺序变化时由 global receipt identity 与 envelope-local live chain 各自拒绝/接受的区别用例。",
+      "若迁移Resource codec，用超过i64/u64的合法非负decimal短fixture确认当前无上界行为保持；负数、非canonical字符串仍按现状拒绝。"
+    ],
+    "semantic_boundaries": "金额单位是人民币分，数量单位是股；这里只校验 escrow conservation evidence，不计算成交价格、可用资金或真实账户余额。Buy 只允许现金 escrow、Sell 只允许股份 escrow；PreSeal 的 P0Expiry 释放先于 P1，SealedBatch 在 P1 后。不能把 receipt JSON 的字符串整数变成 JS Number，也不能将 P1 boundary 或 T+1 事实简化。 Resource保持当前exactKeys后nonnegative canonical decimal→BigInt转换，不调用signedDecimal/unsignedDecimal添加i64/u64上界；验证器资源值不等同生产Money/Qty的范围政策。",
+    "why_oop": "cash/shares 作为同构资源值始终成对传递，Envelope 收据链拥有当前余额与 journal phase 等明确局部不变量；显式对象能将可变过程限定在一个 envelope 内并集中维护方程。类范围仅限证据验证器，避免把 policy object 扩散成通用框架。",
+    "reader_job": "50",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/50-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "逐 envelope 的 live/P1/PreSeal/SealedBatch 累计与 phase 必须一起转换，组合 Resource 值和 EnvelopeConservation 能收敛验证器状态；旧矩阵 run 对象未涵盖此收据算法 owner。",
+    "id": "hosts-R2-N22",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n22",
+    "action_id": "hosts-R2-N22",
+    "group": "hosts",
+    "details_markdown": "优先级：建议；处置：new。\n\n逐 envelope 的 live/P1/PreSeal/SealedBatch 累计与 phase 必须一起转换，组合 Resource 值和 EnvelopeConservation 能收敛验证器状态；旧矩阵 run 对象未涵盖此收据算法 owner。\n\n范围：`scripts/simulation/escrow-verification-contracts.mjs`、`scripts/simulation/escrow-verification-contracts.test.mjs`。\n\n**字段**\n\n- Resource.cash (分，BigInt)\n- Resource.shares (股，BigInt)\n- envelope 身份：account_id/stock_code/order_id/side\n- basis origin 与 P1 boundary\n- live resource\n- receipt 的 spent/released/live_after\n- receipt 的 journal/source/ordinal\n\n**方法**\n\n- Resource.fromJson / toJson\n- Resource.add / equals / assertEquals\n- EnvelopeConservation.applyReceipt(receipt)\n- EnvelopeConservation.assertP1Boundary()\n- EnvelopeConservation.assertCommitAndConservation()\n\n**真实调用方**\n\n- verifyConservationSnapshot 调用这些局部函数；其调用者是 scripts 下的验证 runner，不是 web/engine 产品交易路径。\n\n**数据所有者**\n\n单个 EnvelopeConservation 实例拥有一个 envelope row 的 basis、当前 live、PreSeal 汇总、SealedBatch 汇总和是否越过 journal 边界；账户 aggregate Map 仍由 verifyConservationSnapshot 单次调用拥有。\n\n**组合方式**\n\nResource 是不变 value object；EnvelopeConservation 组合 Resource 和 envelope key/side，执行业务验证器中的收据 transition policy。decimal codec、receipt global index/identity collector、账户聚合以及顶层 snapshot 遍历可继续独立函数。不得将验证器类误认为 engine 的订单/资金权威状态。\n\n**迁移步骤**\n\n- 为 cash/shares 引入只在验证器模块内使用的 Resource 值对象，保留 JSON schema 字段及 decimal string 编码。\n- 先迁移 add/equal/empty 和资源方程到 Resource 方法，维持错误上下文与 BigInt 精度。\n- 将逐 envelope 的 origin/basis/live/journal 收据转移迁入 EnvelopeConservation，顶层仍负责 receipt 全局连续性、账户聚合及 T+1 投影校验。\n- 以现有测试逐项验证，再补多 receipt / 无 receipt / P1边界的 transition focused tests。\n\n**现有测试（未执行）**\n\n- escrow-verification-contracts.test.mjs:157-182 created/quiet tick 与分 journal conservation。\n- :184-234 cross-resource leak、duplicate、aggregate、negative cash、T+1、Buy/Sell 零资源。\n- :236-275 positive Fill 和 receipt source/ordinal/index 约束。\n\n**待补测试**\n\n- Resource add/equals 的大数与零资源组合边界可由 envelope 行为覆盖，不必为每个方法镜像造类测试。\n- 若拆 EnvelopeConservation，补多条连续 receipt 的跨 journal 状态转移测试，以及首次 SealedBatch 前无 receipt/仅 P0 receipt 的边界。\n- 补 receipt 顺序变化时由 global receipt identity 与 envelope-local live chain 各自拒绝/接受的区别用例。\n- 若迁移Resource codec，用超过i64/u64的合法非负decimal短fixture确认当前无上界行为保持；负数、非canonical字符串仍按现状拒绝。\n\n**语义边界**\n\n金额单位是人民币分，数量单位是股；这里只校验 escrow conservation evidence，不计算成交价格、可用资金或真实账户余额。Buy 只允许现金 escrow、Sell 只允许股份 escrow；PreSeal 的 P0Expiry 释放先于 P1，SealedBatch 在 P1 后。不能把 receipt JSON 的字符串整数变成 JS Number，也不能将 P1 boundary 或 T+1 事实简化。 Resource保持当前exactKeys后nonnegative canonical decimal→BigInt转换，不调用signedDecimal/unsignedDecimal添加i64/u64上界；验证器资源值不等同生产Money/Qty的范围政策。\n\n**对象化依据**\n\ncash/shares 作为同构资源值始终成对传递，Envelope 收据链拥有当前余额与 journal phase 等明确局部不变量；显式对象能将可变过程限定在一个 envelope 内并集中维护方程。类范围仅限证据验证器，避免把 policy object 扩散成通用框架。\n\n**源码证据**\n\n- escrow-verification-contracts.mjs:241-256 将 cash/shares 转为 BigInt 并分散定义加法、相等与不变量断言。\n- :277-299 初始化 envelope identity、basis、receipts 与资源状态。\n- :353-406 每条 receipt 重复转换 live_before/spent/released/live_after 并检查 side-specific 零资源、positive fill 与资源方程。\n- :407-419 独立检查 P1、sealed、created 和 combined conservation。\n- escrow-verification-contracts.test.mjs:73-74 res helper 与生产 cash_cents/shares 表达一一对应；:157-275 已覆盖 P1/created、PreSeal/SealedBatch、Buy/Sell、T+1 与 ordinal 边界。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

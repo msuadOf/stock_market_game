@@ -1,35 +1,23 @@
 use super::*;
 use engine::session::protocol::ReplayGuard;
-use tauri::Listener;
 
 async fn capture(fastest: bool, preferences: PausePreferences) {
-    let app = tauri::test::mock_app();
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    app.listen(crate::ENGINE_EVENT_NAME, move |event| {
-        sender.send(event.payload().to_owned()).unwrap();
-    });
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     let game = ProtocolSession::new(setup, 41).unwrap();
-    let (_cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let mut actor = SessionActor {
-        injected_step_failure: None,
-        speed_meter: SpeedMeter::new(0),
+    let mut harness = ActorHarness::new_protocol_actor(
         game,
-        cmd_rx,
-        tick_interval: Duration::from_millis(1),
-        base_ms: 1,
-        session_id: "protocol".into(),
-        app: app.handle().clone(),
-        running: true,
         fastest,
-        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-        pending_fixed_events: Vec::new(),
-        last_fixed_publish: Instant::now(),
-        timeline_id: "protocol-timeline".into(),
-        generation: 1,
-        pause_preferences: preferences,
-    };
+        preferences,
+        "protocol",
+        "protocol-timeline",
+    );
+    harness.subscribe_engine_events();
+    let receiver = harness
+        .events_rx
+        .as_mut()
+        .expect("protocol 场景须订阅引擎事件");
+    let actor = &mut harness.actor;
     let mut guard = ReplayGuard::new(0, 0);
     let mut ticks = Vec::new();
     loop {
@@ -72,7 +60,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                     civil.validate().unwrap();
                     assert_eq!(ticks, (1..=30).collect::<Vec<_>>());
                     assert_eq!(civil.refresh.intraday.len(), 30);
-                    assert_eq!(actor.running, !preferences.pauses(civil));
+                    assert_eq!(actor.pacing.is_running(), !preferences.pauses(civil));
                     println!("desktop fastest={fastest}: {payload}");
                     actor
                         .handle_command(SessionCommand::SetRunning { running: true })

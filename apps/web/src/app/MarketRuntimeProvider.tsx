@@ -1,4 +1,4 @@
-/* oxlint-disable react/only-export-components -- provider hooks intentionally share these private contexts */
+/* oxlint-disable react/only-export-components -- Provider hooks 需要共用这些私有 Context */
 import {
   createContext,
   useContext,
@@ -19,8 +19,8 @@ import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
 type Runtime = ReturnType<typeof useMarketChartRuntime>;
 
 interface MarketRuntimeActions {
-  priceHistoryByCodeRef: Runtime["priceHistoryByCodeRef"];
-  activeDailyCandlesRef: Runtime["activeDailyCandlesRef"];
+  getPriceHistory: Runtime["getPriceHistory"];
+  getActiveDailyCandles: Runtime["getActiveDailyCandles"];
   acceptReduction: Runtime["acceptReduction"];
   installBaseline: Runtime["installBaseline"];
   selectChart: Runtime["selectChart"];
@@ -58,8 +58,8 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     return () => setCalculatorRegistration((current) => current?.token === token ? null : current);
   }, []);
   const actions = useMemo<MarketRuntimeActions>(() => ({
-    priceHistoryByCodeRef: runtime.priceHistoryByCodeRef,
-    activeDailyCandlesRef: runtime.activeDailyCandlesRef,
+    getPriceHistory: runtime.getPriceHistory,
+    getActiveDailyCandles: runtime.getActiveDailyCandles,
     acceptReduction: runtime.acceptReduction,
     installBaseline: runtime.installBaseline,
     selectChart: runtime.selectChart,
@@ -68,9 +68,9 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     setIndicatorCalculator,
   }), [
     runtime.acceptReduction,
-    runtime.activeDailyCandlesRef,
+    runtime.getActiveDailyCandles,
     runtime.installBaseline,
-    runtime.priceHistoryByCodeRef,
+    runtime.getPriceHistory,
     runtime.refreshDailyChart,
     runtime.resetMarketHistory,
     runtime.selectChart,

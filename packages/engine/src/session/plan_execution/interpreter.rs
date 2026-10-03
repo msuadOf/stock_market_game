@@ -146,7 +146,7 @@ impl PlanExecutionProgress {
             replaced: None,
             command: cancel_command(plan, order_id, PlanCancelCause::Explicit),
             continuation: Continuation::Cancel {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 order_id,
                 reason,
             },
@@ -172,8 +172,8 @@ fn cancel_command(
     cause: PlanCancelCause,
 ) -> PlanRouteCommand {
     PlanRouteCommand::Cancel {
-        account: plan.account,
-        code: plan.code.clone(),
+        account: plan.account(),
+        code: plan.code().clone(),
         order_id,
         cause,
     }
@@ -200,9 +200,9 @@ impl GameSession {
         Ok(PlanExecutionProgress::Route(Box::new(PlanExecutionRoute {
             replaced: None,
             command: PlanRouteCommand::SubmitLimit {
-                account: plan.account,
-                code: plan.code.clone(),
-                side: plan.direction,
+                account: plan.account(),
+                code: plan.code().clone(),
+                side: plan.direction(),
                 price: child.price,
                 qty: child.qty,
             },

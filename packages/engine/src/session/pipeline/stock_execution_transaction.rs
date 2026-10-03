@@ -89,12 +89,12 @@ pub(super) fn apply_stock_execution_transaction(
     workers: Vec<ContinuousStockOutput>,
     t1_enabled: bool,
 ) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
-    let belief_books = AccountPagedMap::default();
+    let belief_participants = AccountPagedMap::default();
     apply_stock_execution_transaction_with_beliefs(
         ledger,
         accounts,
         retail_experience,
-        &belief_books,
+        &belief_participants,
         seen,
         workers,
         SettlementApplicationContext::new(test_experience_moment(market_minute), &[], t1_enabled),
@@ -105,7 +105,9 @@ pub(super) fn apply_stock_execution_transaction_with_beliefs(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
-    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
+    belief_participants: &AccountPagedMap<
+        crate::session::decision_chain::personal_state::BeliefParticipantState,
+    >,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
     context: SettlementApplicationContext<'_>,
@@ -114,7 +116,7 @@ pub(super) fn apply_stock_execution_transaction_with_beliefs(
         ledger,
         accounts,
         retail_experience,
-        belief_books,
+        belief_participants,
         seen,
         workers,
         context,
@@ -129,7 +131,9 @@ pub(super) fn apply_stock_execution_transaction_with_preceding_beliefs(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
-    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
+    belief_participants: &AccountPagedMap<
+        crate::session::decision_chain::personal_state::BeliefParticipantState,
+    >,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
     context: SettlementApplicationContext<'_>,
@@ -184,7 +188,7 @@ pub(super) fn apply_stock_execution_transaction_with_preceding_beliefs(
     let prepared = prepare_settlement_transaction_with_beliefs(
         accounts,
         retail_experience,
-        belief_books,
+        belief_participants,
         seen,
         context.moment,
         &settlement_receipts,

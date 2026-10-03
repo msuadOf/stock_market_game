@@ -55,16 +55,18 @@ async fn capture(successful_steps: usize) {
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         injected_step_failure: Some((successful_steps, fatal.clone())),
-        speed_meter: SpeedMeter::new(game.tick()),
+        pacing: ServerPacing {
+            speed_meter: SpeedMeter::new(game.tick()),
+            tick_interval: Duration::from_millis(1),
+            base_ms: 1,
+            running: true,
+            fastest: true,
+            requested_speed: RequestedSpeed::Fastest,
+        },
         game,
         cmd_rx,
         event_tx,
-        tick_interval: Duration::from_millis(1),
-        base_ms: 1,
         session_id: "fatal".into(),
-        running: true,
-        fastest: true,
-        requested_speed: RequestedSpeed::Fastest,
         fastest_budget: Arc::new(Semaphore::new(1)),
         public_revision: 4,
         timeline_generation: 1,
@@ -94,9 +96,9 @@ async fn capture(successful_steps: usize) {
         serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         saved_before
     );
-    assert_eq!(actor.speed_meter.started_tick, before.0);
-    assert_eq!(actor.speed_meter.sample_ticks, 0);
-    assert!(!actor.running);
+    assert_eq!(actor.pacing.speed_meter.started_tick, before.0);
+    assert_eq!(actor.pacing.speed_meter.sample_ticks, 0);
+    assert!(!actor.pacing.is_running());
     actor.run_fastest_batch();
     assert!(receiver.try_recv().is_err());
 
@@ -188,8 +190,8 @@ async fn capture(successful_steps: usize) {
         serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         saved_before
     );
-    assert_eq!(actor.requested_speed, RequestedSpeed::Fastest);
-    assert!(!actor.running);
+    assert_eq!(actor.pacing.requested_speed, RequestedSpeed::Fastest);
+    assert!(!actor.pacing.is_running());
     assert_eq!(actor.pause_preferences, PausePreferences::default());
     for _ in before.0..fixture::TICKS_PER_DAY {
         actor.game.step_frame().unwrap();
@@ -292,16 +294,18 @@ async fn authority_reads_reject_stale_generations() {
     let mut actor = SessionActor {
         #[cfg(test)]
         injected_step_failure: None,
-        speed_meter: SpeedMeter::new(game.tick()),
+        pacing: ServerPacing {
+            speed_meter: SpeedMeter::new(game.tick()),
+            tick_interval: Duration::from_millis(1),
+            base_ms: 1,
+            running: false,
+            fastest: false,
+            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+        },
         game,
         cmd_rx,
         event_tx,
-        tick_interval: Duration::from_millis(1),
-        base_ms: 1,
         session_id: "authority-read".into(),
-        running: false,
-        fastest: false,
-        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
         fastest_budget: Arc::new(Semaphore::new(1)),
         public_revision: 0,
         timeline_generation: 7,
@@ -346,8 +350,8 @@ async fn authority_reads_reject_stale_generations() {
     ));
 }
 
-// The public save API exposes day-end archives, so inspect the paused actor's
-// authoritative checkpoint here to retain the pre-consumption queue assertions.
+// 公开 save API 只提供日终存档；读取暂停 actor 的权威 checkpoint，
+// 保留请求尚未消费时的队列断言。
 #[tokio::test]
 async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     use futures_util::FutureExt;
@@ -366,16 +370,18 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     };
     let mut actor = SessionActor {
         injected_step_failure: None,
-        speed_meter: SpeedMeter::new(game.tick()),
+        pacing: ServerPacing {
+            speed_meter: SpeedMeter::new(game.tick()),
+            tick_interval: Duration::from_millis(10_000),
+            base_ms: 10_000,
+            running: false,
+            fastest: false,
+            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+        },
         game,
         cmd_rx,
         event_tx,
-        tick_interval: Duration::from_millis(10_000),
-        base_ms: 10_000,
         session_id: "command-burst".into(),
-        running: false,
-        fastest: false,
-        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
         fastest_budget: Arc::new(Semaphore::new(1)),
         public_revision: 0,
         timeline_generation: 1,
@@ -395,7 +401,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
             )
         })
         .collect();
-    // Poll each real handle once to submit, then drop the caller's reply future.
+    // 每个真实 handle 只轮询一次完成提交，再丢弃调用者的 reply future。
     for (_, intent) in &expected {
         assert!(handles.enqueue(intent.clone()).now_or_never().is_none());
     }

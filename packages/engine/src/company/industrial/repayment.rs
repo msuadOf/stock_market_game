@@ -9,7 +9,7 @@ use crate::accounting::{
 use crate::calendar::CivilDate;
 use crate::company::contracts::ContractId;
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
-use crate::company::industrial::loans::{apply_accrual, loan_account, LoanState, RepaymentOutcome};
+use crate::company::industrial::loans::{loan_account, RepaymentOutcome};
 use crate::company::industrial::{chart, IndustrialBooks, IndustrialError};
 
 impl IndustrialBooks {
@@ -45,9 +45,7 @@ impl IndustrialBooks {
             }],
         )?;
         let lender = self.contract_counterparty(contract)?;
-        if let Some(state) = self.loans_mut().get_mut(contract) {
-            state.settle_accrued();
-        }
+        self.loans.settle_posted_interest(contract);
         self.counterparties_mut().record_flow(super::flow(
             date,
             &lender,
@@ -82,7 +80,9 @@ impl IndustrialBooks {
                 outstanding: state.outstanding(),
             });
         }
-        let accrual = self.accrue_loan(contract, state, date)?;
+        let accrual = self
+            .loans
+            .preview_repayment_accrual(self.contracts(), contract, date)?;
         let account = self.loan_account_of(contract);
 
         let base = self.next_event_id;
@@ -121,11 +121,10 @@ impl IndustrialBooks {
         events.push(repay_event);
         self.post_with_commit(next_id, entries)?;
         if let Some(item) = accrual {
-            apply_accrual(self.loans_mut(), &item, date)?;
+            self.loans
+                .apply_posted_accruals(std::slice::from_ref(&item), date)?;
         }
-        if let Some(state) = self.loans_mut().get_mut(contract) {
-            state.repay(amount)?;
-        }
+        self.loans.repay_posted_principal(contract, amount)?;
         let lender = self.contract_counterparty(contract)?;
         self.counterparties_mut().record_flow(super::flow(
             date,
@@ -160,42 +159,5 @@ impl IndustrialBooks {
             .get(contract)
             .expect("loan state implies registered contract");
         loan_account(contract.start_date, contract.maturity_date)
-    }
-
-    /// 单合同计提预览（纯读；天数 ≤ 0 → None/错误）。计提/还本共用。
-    pub(super) fn accrue_loan(
-        &self,
-        contract: &ContractId,
-        state: &LoanState,
-        through: CivilDate,
-    ) -> Result<Option<crate::company::industrial::InterestAccrualItem>, IndustrialError> {
-        let days = through.days_since(state.last_accrual_date());
-        if days < 0 {
-            return Err(IndustrialError::AccrualNotForward {
-                contract: contract.clone(),
-                through,
-                last_accrual: state.last_accrual_date(),
-            });
-        }
-        if days == 0 {
-            return Ok(None);
-        }
-        let rate_bp = self
-            .contracts()
-            .get(contract)
-            .map(|c| c.annual_rate_bp)
-            .expect("loan state implies registered contract");
-        let (amount, remaining_carried) = crate::company::industrial::loans::accrue_act_365f(
-            state.outstanding(),
-            rate_bp,
-            days,
-            state.carried(),
-        )?;
-        Ok(Some(crate::company::industrial::InterestAccrualItem {
-            contract: contract.clone(),
-            days,
-            amount,
-            remaining_carried,
-        }))
     }
 }

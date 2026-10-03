@@ -3,6 +3,7 @@ import test from "node:test";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { CompanyQueryCoordinator } from "./company-query-coordinator.ts";
+import { CompanyRequestRegistry } from "./company-request-registry.ts";
 import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
 import { parseNormalizedEngineUpdate, type NormalizedTickFrame } from "./protocol/index.ts";
 import type { EngineEvent } from "../types/engine.ts";
@@ -297,4 +298,67 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
   coordinator.acceptCivil(normalized);
+});
+
+test("同 key force 请求替换后旧成功或失败的 finally 不删除新请求", async () => {
+  for (const rejectOld of [false, true]) {
+    const pending: { resolve: (value: { reports: ReturnType<typeof report>[]; next_cursor: null }) => void; reject: (reason: Error) => void }[] = [];
+    const updates: { type: string }[] = [];
+    const coordinator = new CompanyQueryCoordinator({
+      capabilities: { ...host.capabilities, publicCompanyReports: true },
+      queryPublicReports: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    }, (action) => updates.push(action));
+    coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+    const query = { companyId: "600001", cursor: null };
+    const first = coordinator.query(query);
+    const replacement = coordinator.query(query, true);
+    assert.equal(pending.length, 2);
+    if (rejectOld) pending[0]!.reject(new Error("旧请求失败"));
+    else pending[0]!.resolve({ reports: [report("600001", "7")], next_cursor: null });
+    await first;
+    await coordinator.query(query);
+    assert.equal(pending.length, 2);
+    assert.equal(updates.some((action) => /recordCompanyPage|recordCompanyQueryFailure/.test(action.type)), false);
+    pending[1]!.resolve({ reports: [report("600001", "8")], next_cursor: null });
+    await replacement;
+    const next = coordinator.query(query);
+    assert.equal(pending.length, 3);
+    pending[2]!.resolve({ reports: [], next_cursor: null });
+    await next;
+    assert.equal(updates.filter((action) => action.type.endsWith("recordCompanyPage")).length, 2);
+  }
+});
+
+test("页和 by-id ticket 分别去重，清理后不复用旧 requestSequence", () => {
+  const registry = new CompanyRequestRegistry();
+  const page = registry.begin("page");
+  const report = registry.begin("report");
+  assert.ok(page !== null && report !== null);
+  assert.equal(registry.begin("page"), null);
+  assert.equal(registry.begin("report"), null);
+  const replacement = registry.begin("page", true);
+  assert.ok(replacement !== null && replacement > report);
+  registry.finishIfCurrent("page", page);
+  assert.equal(registry.matches("page", replacement), true);
+  registry.finishIfCurrent("report", report);
+  assert.equal(registry.matches("report", report), false);
+  registry.clear();
+  assert.equal(registry.matches("page", replacement), false);
+  const current = registry.begin("page");
+  assert.ok(current !== null && current > replacement);
+  registry.finishIfCurrent("page", replacement);
+  assert.equal(registry.matches("page", current), true);
+});
+
+test("缺少 company capability 的页和 by-id 请求立即结束 ticket", async () => {
+  const updates: { type: string }[] = [];
+  const coordinator = new CompanyQueryCoordinator(host, (action) => updates.push(action));
+  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  for (let index = 0; index < 2; index++) {
+    await Promise.all([
+      coordinator.query({ companyId: "600001", cursor: null }),
+      coordinator.queryReportById({ companyId: "600001", reportId: "7" }),
+    ]);
+  }
+  assert.equal(updates.filter((action) => action.type.endsWith("unavailable")).length, 4);
 });

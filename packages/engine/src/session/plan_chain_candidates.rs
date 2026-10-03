@@ -4,6 +4,7 @@ use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc};
 mod adaptive;
+use super::decision_chain::{DecisionChainObservation, InstitutionDecisionRoot, RootReadContext};
 pub(in crate::session) use adaptive::FrozenPlanChainObservation;
 #[cfg(test)]
 mod source_tests;
@@ -87,26 +88,133 @@ pub(in crate::session) struct QuotePlans {
 }
 
 pub(in crate::session) struct PlanChainOperationBatch {
-    source: AccountSource,
-    completion_sender: Option<mpsc::Sender<super::pipeline::TickWorkReady>>,
+    roots: PlanRootCoordinator,
     operations: VecDeque<PlanChainOperation>,
     candidate_source: PlanChainCandidateSource,
-    pending_routes: BTreeMap<(AccountId, StockCode), (u64, Box<PlanExecutionRoute>)>,
+    routes: StockRouteCoordination,
     reports: Vec<PlanExecutionReport>,
+}
+
+fn route_invariant(description: &str) -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "plan_chain_candidates::adaptive".to_owned(),
+    }
+}
+
+/// 三类延迟事实独立消费，生命周期复核优先时仍保留报价重试上下文。
+#[derive(Default)]
+struct StockRouteCoordination {
+    pending: BTreeMap<(AccountId, StockCode), (u64, Box<PlanExecutionRoute>)>,
     reconsideration: BTreeMap<(AccountId, StockCode), (CandidateAssessment, MarketView)>,
     retry_market: BTreeMap<(AccountId, StockCode), MarketView>,
+}
+
+impl StockRouteCoordination {
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+    fn pending_for_account(&self, account: AccountId) -> bool {
+        self.pending.keys().any(|(owner, _)| *owner == account)
+    }
+    fn is_blocked(
+        &self,
+        resource: &(AccountId, StockCode),
+        unfinished: &BTreeSet<(AccountId, StockCode)>,
+    ) -> bool {
+        self.pending.contains_key(resource) || unfinished.contains(resource)
+    }
+    fn install_pending(
+        &mut self,
+        resource: (AccountId, StockCode),
+        generation: u64,
+        route: Box<PlanExecutionRoute>,
+    ) {
+        assert!(
+            self.pending.insert(resource, (generation, route)).is_none(),
+            "stock route installed twice"
+        );
+    }
+    fn pending_for_outcome(
+        &self,
+        resource: &(AccountId, StockCode),
+        generation: u64,
+    ) -> Result<&PlanExecutionRoute, StepFatal> {
+        let (index, route) = self
+            .pending
+            .get(resource)
+            .ok_or_else(|| route_invariant("typed plan outcome has no pending stock route"))?;
+        if *index != generation {
+            return Err(route_invariant(
+                "typed plan outcome names a different command",
+            ));
+        }
+        Ok(route)
+    }
+    fn take_pending(
+        &mut self,
+        resource: &(AccountId, StockCode),
+        generation: u64,
+    ) -> Result<Box<PlanExecutionRoute>, StepFatal> {
+        self.pending_for_outcome(resource, generation)?;
+        Ok(self
+            .pending
+            .remove(resource)
+            .expect("checked pending route exists")
+            .1)
+    }
+    fn remember_retry(&mut self, resource: (AccountId, StockCode), market: MarketView) {
+        self.retry_market.insert(resource, market);
+    }
+    fn remember_reconsideration(
+        &mut self,
+        resource: (AccountId, StockCode),
+        assessment: CandidateAssessment,
+        market: MarketView,
+    ) {
+        self.reconsideration.insert(resource, (assessment, market));
+    }
+    fn take_follow_up(
+        &mut self,
+        (account, code): (AccountId, StockCode),
+    ) -> Option<PlanChainOperation> {
+        if let Some((assessment, market)) = self.reconsideration.remove(&(account, code.clone())) {
+            Some(PlanChainOperation::Lifecycle {
+                account,
+                assessments: BTreeMap::from([(code, assessment)]),
+                market,
+            })
+        } else {
+            self.retry_market
+                .remove(&(account, code))
+                .map(|market| PlanChainOperation::AccountExecution { account, market })
+        }
+    }
+    #[cfg(feature = "simulation-diagnostics")]
+    fn pending_cancel_cause(
+        &self,
+        generation: u64,
+    ) -> Option<crate::session::plan_execution::PlanCancelCause> {
+        self.pending
+            .values()
+            .find(|(index, _)| *index == generation)
+            .and_then(|(_, route)| match route.command() {
+                PlanRouteCommand::Cancel { cause, .. } => Some(*cause),
+                PlanRouteCommand::SubmitLimit { .. } => None,
+            })
+    }
 }
 
 enum AccountSource {
     Empty,
     Accounts {
         remaining: VecDeque<AccountId>,
-        observations: ChainObservations,
+        observations: DecisionChainObservation,
     },
     InFlight {
         receiver: mpsc::Receiver<PreparedRoot>,
         remaining: usize,
-        snapshot: Arc<GameSession>,
+        snapshot: Arc<RootReadContext>,
     },
 }
 
@@ -116,14 +224,6 @@ type PreparedRoot = (
     PlanChainOperationBatch,
     super::decision_chain::PlanRootDiagnostics,
 );
-
-struct ChainObservations {
-    market: MarketView,
-    paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
-    technical: BTreeMap<StockCode, crate::observation::TechnicalObservation>,
-    now: crate::calendar::CivilInstant,
-    exposed: BTreeSet<StockCode>,
-}
 
 enum PlanChainOperation {
     ExecutionRoute(Box<PlanExecutionRoute>),
@@ -146,66 +246,35 @@ enum PlanChainOperation {
     Execute(PlanExecutionRequest),
 }
 
-impl PlanChainOperationBatch {
-    pub(in crate::session) fn is_empty(&self) -> bool {
-        self.operations.is_empty()
-            && self.pending_routes.is_empty()
-            && match &self.source {
-                AccountSource::Empty => true,
-                AccountSource::Accounts { remaining, .. } => remaining.is_empty(),
-                AccountSource::InFlight { remaining, .. } => *remaining == 0,
-            }
-    }
+/// 管理异步 root 与个人状态返还，不拥有后续执行路由。
+struct PlanRootCoordinator {
+    source: AccountSource,
+    completion_sender: Option<mpsc::Sender<super::pipeline::TickWorkReady>>,
+}
 
-    pub(in crate::session) fn push_quote_plans(&mut self, cursor: QuotePlans) {
-        self.operations
-            .push_back(PlanChainOperation::QuotePlans(cursor));
-    }
-    pub(in crate::session) fn empty() -> Self {
+impl PlanRootCoordinator {
+    fn empty() -> Self {
         Self {
             source: AccountSource::Empty,
             completion_sender: None,
-            operations: VecDeque::new(),
-            candidate_source: PlanChainCandidateSource::default(),
-            pending_routes: BTreeMap::new(),
-            reports: Vec::new(),
-            reconsideration: BTreeMap::new(),
-            retry_market: BTreeMap::new(),
         }
     }
-
-    pub(in crate::session) fn accounts(
-        accounts: Vec<AccountId>,
-        market: MarketView,
-        paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
-        technical: BTreeMap<StockCode, crate::observation::TechnicalObservation>,
-        now: crate::calendar::CivilInstant,
-        exposed: BTreeSet<StockCode>,
-    ) -> Self {
-        if accounts.is_empty() {
-            return Self::empty();
+    fn is_empty(&self) -> bool {
+        match &self.source {
+            AccountSource::Empty => true,
+            AccountSource::Accounts { remaining, .. } => remaining.is_empty(),
+            AccountSource::InFlight { remaining, .. } => *remaining == 0,
         }
+    }
+    fn accounts(accounts: Vec<AccountId>, observations: DecisionChainObservation) -> Self {
         Self {
             source: AccountSource::Accounts {
                 remaining: accounts.into(),
-                observations: ChainObservations {
-                    market,
-                    paths,
-                    technical,
-                    now,
-                    exposed,
-                },
+                observations,
             },
             completion_sender: None,
-            operations: VecDeque::new(),
-            candidate_source: PlanChainCandidateSource::default(),
-            pending_routes: BTreeMap::new(),
-            reports: Vec::new(),
-            reconsideration: BTreeMap::new(),
-            retry_market: BTreeMap::new(),
         }
     }
-
     pub(in crate::session) fn set_completion_sender(
         &mut self,
         sender: mpsc::Sender<super::pipeline::TickWorkReady>,
@@ -218,17 +287,6 @@ impl PlanChainOperationBatch {
         self.completion_sender = Some(sender);
         Ok(())
     }
-
-    pub(in crate::session) fn enumerate_candidate(
-        &mut self,
-        command: &PlanRouteCommand,
-    ) -> Result<PlanChainCandidateBatch, PlanExecutionError> {
-        self.candidate_source.enumerate(command)
-    }
-
-    /// Start independent roots against one frozen tick view. Each completed root
-    /// hands back only its personal state and operations; later trade projections
-    /// keep ownership of the live PlanBook and parent orders.
     fn start_ready_accounts(&mut self, session: &mut GameSession) -> Result<(), StepFatal> {
         if !matches!(self.source, AccountSource::Accounts { .. }) {
             return Ok(());
@@ -243,7 +301,7 @@ impl PlanChainOperationBatch {
         if remaining.is_empty() {
             return Ok(());
         }
-        let snapshot = Arc::new(session.clone_for_plan_roots());
+        let snapshot = Arc::new(RootReadContext::capture(session)?);
         let observations = Arc::new(observations);
         let inputs = remaining
             .into_iter()
@@ -258,30 +316,16 @@ impl PlanChainOperationBatch {
             .collect::<Vec<_>>();
         let remaining = inputs.len();
         let (sender, receiver) = mpsc::channel();
-        for (account, mut personal) in inputs {
+        for (account, personal) in inputs {
             let snapshot = Arc::clone(&snapshot);
             let observations = Arc::clone(&observations);
             let sender = sender.clone();
             let completion_sender = self.completion_sender.clone();
             rayon::spawn(move || {
-                let mut generated = Self::empty();
-                let diagnostics = snapshot.run_chain_for_account(
-                    account,
-                    &mut personal,
-                    &observations.market,
-                    &observations.paths,
-                    &observations.technical,
-                    observations.now,
-                    &observations.exposed,
-                    &snapshot.plans,
-                    &mut generated,
-                );
-                // Publish the typed result before waking the coordinator. A
-                // dropped receiver means the private tick was already discarded.
-                if sender
-                    .send((account, personal, generated, diagnostics))
-                    .is_ok()
-                {
+                let result = InstitutionDecisionRoot::new(account, personal)
+                    .observe(&snapshot, &observations);
+                // 先发布 typed 结果再唤醒 coordinator；receiver 已关闭表示私有 tick 已丢弃。
+                if sender.send(result).is_ok() {
                     if let Some(sender) = completion_sender {
                         let _ = sender.send(super::pipeline::TickWorkReady::PlanRoot);
                     }
@@ -295,15 +339,11 @@ impl PlanChainOperationBatch {
         };
         Ok(())
     }
-
-    /// A nonblocking poll lets ready NPC/player requests enter while slower plan
-    /// roots are still computing. A later blocking poll waits only when the
-    /// transaction has no other ready work.
     pub(in crate::session) fn prepare_ready_accounts(
         &mut self,
         session: &mut GameSession,
         blocking: bool,
-    ) -> Result<bool, StepFatal> {
+    ) -> Result<Option<PlanChainOperationBatch>, StepFatal> {
         self.start_ready_accounts(session)?;
         let AccountSource::InFlight {
             receiver,
@@ -311,15 +351,14 @@ impl PlanChainOperationBatch {
             snapshot,
         } = &mut self.source
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let result = loop {
             match receiver.try_recv() {
                 Ok(result) => break Some(result),
                 Err(mpsc::TryRecvError::Empty) if !blocking => break None,
                 Err(mpsc::TryRecvError::Empty) => {
-                    // The tick may itself occupy the only Rayon worker. Let that
-                    // worker run pending roots instead of blocking on the channel.
+                    // tick 可能占据唯一 Rayon worker；等待期间让该 worker 执行 root，避免自锁。
                     if rayon::yield_now().is_none() {
                         std::thread::yield_now();
                     }
@@ -329,19 +368,97 @@ impl PlanChainOperationBatch {
                 }
             }
         };
-        let Some((account, personal, mut generated, diagnostics)) = result else {
-            return Ok(false);
+        let Some((account, personal, generated, diagnostics)) = result else {
+            return Ok(None);
         };
         personal.install(session, account);
         #[cfg(feature = "simulation-diagnostics")]
         session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans);
         #[cfg(not(feature = "simulation-diagnostics"))]
         let _ = (diagnostics, snapshot);
-        self.operations.append(&mut generated.operations);
         *remaining -= 1;
         if *remaining == 0 {
             self.source = AccountSource::Empty;
         }
+        Ok(Some(generated))
+    }
+}
+
+impl PlanChainOperationBatch {
+    pub(in crate::session) fn is_empty(&self) -> bool {
+        self.operations.is_empty() && !self.routes.has_pending() && self.roots.is_empty()
+    }
+
+    pub(in crate::session) fn push_quote_plans(&mut self, cursor: QuotePlans) {
+        self.operations
+            .push_back(PlanChainOperation::QuotePlans(cursor));
+    }
+    pub(in crate::session) fn empty() -> Self {
+        Self {
+            roots: PlanRootCoordinator::empty(),
+            operations: VecDeque::new(),
+            candidate_source: PlanChainCandidateSource::default(),
+            routes: StockRouteCoordination::default(),
+            reports: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::session) fn accounts(
+        accounts: Vec<AccountId>,
+        market: MarketView,
+        paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
+        technical: BTreeMap<StockCode, crate::observation::TechnicalObservation>,
+        now: crate::calendar::CivilInstant,
+        exposed: BTreeSet<StockCode>,
+    ) -> Self {
+        Self::from_observation(
+            accounts,
+            DecisionChainObservation {
+                market,
+                paths,
+                technical,
+                now,
+                exposed,
+            },
+        )
+    }
+
+    pub(in crate::session) fn from_observation(
+        accounts: Vec<AccountId>,
+        observation: DecisionChainObservation,
+    ) -> Self {
+        let mut batch = Self::empty();
+        if !accounts.is_empty() {
+            batch.roots = PlanRootCoordinator::accounts(accounts, observation);
+        }
+        batch
+    }
+
+    pub(in crate::session) fn set_completion_sender(
+        &mut self,
+        sender: mpsc::Sender<super::pipeline::TickWorkReady>,
+    ) -> Result<(), StepFatal> {
+        self.roots.set_completion_sender(sender)
+    }
+
+    pub(in crate::session) fn enumerate_candidate(
+        &mut self,
+        command: &PlanRouteCommand,
+    ) -> Result<PlanChainCandidateBatch, PlanExecutionError> {
+        self.candidate_source.enumerate(command)
+    }
+
+    /// 汇总已经完成的 root；仅在事务没有其他就绪工作时等待，保持后续执行操作次序。
+    pub(in crate::session) fn prepare_ready_accounts(
+        &mut self,
+        session: &mut GameSession,
+        blocking: bool,
+    ) -> Result<bool, StepFatal> {
+        let Some(mut generated) = self.roots.prepare_ready_accounts(session, blocking)? else {
+            return Ok(false);
+        };
+        self.operations.append(&mut generated.operations);
         Ok(true)
     }
 

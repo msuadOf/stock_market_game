@@ -1,8 +1,7 @@
-//! Per-stock continuous P4 shadows that survive adaptive route boundaries.
+//! 跨 adaptive route 保持的逐股 Continuous P4 shadow。
 //!
-//! The coordinator is private tick state. It is initialized once from the post-P0 candidate,
-//! applies every P3-accepted operation exactly once, and only exposes a consuming `finish` seam.
-//! ReceiptAggregation/Settlement/Projection therefore see one accumulated P4 outbox after all adaptive routes have drained.
+//! coordinator 从 post-P0 candidate 初始化一次，逐个应用 P3 Accepted 操作。
+//! 全部 route 排空后 consuming finish，ReceiptAggregation/Settlement/Projection 仅消费一次累计 outbox。
 
 #[cfg(test)]
 use super::ContinuousEnvelopeSnapshot;
@@ -24,13 +23,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
-    /// Only touched orders are applied to the tick candidate. The stock worker
-    /// keeps its complete book for subsequent ready rounds and final settlement.
+    /// 仅将变更订单应用到 tick candidate；worker 保留完整簿供后续轮次与最终 Settlement。
     pub(in crate::session::pipeline) market_delta: Option<MarketDelta>,
     pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
-/// Only the facts produced by this call to `apply_round`.
+/// 本次 `apply_round` 新产生的事实。
 #[derive(Debug)]
 pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<ContinuousExecutionFact>,
@@ -42,17 +40,16 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
-/// Accumulated P4 output after the caller has drained every adaptive route.
+/// 调用方排空全部 adaptive route 后的累计 P4 输出。
 pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
     pub(in crate::session::pipeline) workers: Vec<ContinuousStockOutput>,
     pub(in crate::session::pipeline) prices: BTreeMap<StockCode, ContinuousClosingPrice>,
     pub(in crate::session::pipeline) execution_facts: Vec<ContinuousExecutionFact>,
-    /// P4 business rejections that have no authoritative stock worker, currently only an
-    /// unknown-stock cancellation accepted by P3 without consulting the stock map.
+    /// 无对应股票 worker 的 P4 业务拒绝；当前仅包括 P3 接受的未知股票撤单。
     pub(in crate::session::pipeline) detached_facts: Vec<ContinuousExecutionFact>,
 }
 
-/// Freeze the final operation book before an optional DayEnd clears its depth.
+/// 可选 DayEnd 清簿前冻结最终行情与深度。
 pub(in crate::session::pipeline) struct ContinuousClosingPrice {
     pub(in crate::session::pipeline) last: Money,
     pub(in crate::session::pipeline) bids: Vec<(Money, u64)>,
@@ -174,10 +171,8 @@ impl IncrementalContinuousStockCoordinator {
         })
     }
 
-    /// Applies one ready route round to the discardable tick candidate. A typed
-    /// failure invalidates this coordinator; the caller drops the entire tick
-    /// candidate, so copying every touched order book to support a retry here
-    /// would duplicate the authority rollback boundary.
+    /// 应用一轮 ready route；typed 错误使 coordinator 失效，由调用方丢弃整个 tick candidate。
+    /// 不为轮次重试复制订单簿，以免重复权威回滚边界。
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
         operations: Vec<ValidatedOperation>,
@@ -271,7 +266,7 @@ impl IncrementalContinuousStockCoordinator {
             .into_par_iter()
             .map(|(code, shadow, operations)| {
                 let identity = code.clone();
-                let result = apply_stock_round(code, shadow, operations);
+                let result = shadow.apply_round(code, operations);
                 (identity, result)
             })
             .collect::<Vec<_>>();
@@ -291,8 +286,7 @@ impl IncrementalContinuousStockCoordinator {
             results
         };
 
-        // Rayon preserves indexed input order, but the caller may deliver completed work in a
-        // different order. Select errors and merge successful outputs by stock identity.
+        // 完成结果可能乱序交付；按股票身份选择首错并归并成功输出，不赋予交易优先级。
         let mut results = results;
         results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached.clone();
@@ -351,7 +345,7 @@ impl IncrementalContinuousStockCoordinator {
         self.finish_for_tick(false)
     }
 
-    /// The consuming boundary is reached only after every continuation has drained.
+    /// 仅在全部 continuation 排空后进入 consuming 边界。
     pub(in crate::session::pipeline) fn finish_for_tick(
         self,
         ends_day: bool,
@@ -363,44 +357,15 @@ impl IncrementalContinuousStockCoordinator {
         let mut prices = BTreeMap::new();
         let mut execution_facts = self.detached_facts.clone();
         let mut execution_count = self.detached_facts.len();
-        for (_, mut stock) in self.stocks {
-            if !stock.execution_facts.is_empty() {
-                validate_private_market_ledger(&stock.market, &stock.ledger, &stock.config)?;
-            }
-            prices.insert(
-                stock.market.code().clone(),
-                ContinuousClosingPrice {
-                    last: stock.market.last_price(),
-                    bids: stock.market.bid_depth_limited(5),
-                    asks: stock.market.ask_depth_limited(5),
-                },
-            );
-            if ends_day {
-                for (ordinal, (key, envelope)) in stock.ledger.iter().enumerate() {
-                    let source = u32::try_from(ordinal)
-                        .map_err(|_| invariant("continuous DayEnd source index overflow"))?;
-                    stock.receipts.push(
-                        crate::session::pipeline::stock_auction::day_end_release_receipt(
-                            envelope, source,
-                        )?,
-                    );
-                    stock.terminal_keys.push(key.clone());
-                }
-                stock.market.end_of_day();
-            }
+        for (_, stock) in self.stocks {
+            let code = stock.market.code().clone();
+            let (worker, price, mut stock_facts) = stock.finish(ends_day)?;
+            prices.insert(code, price);
             execution_count = execution_count
-                .checked_add(stock.execution_facts.len())
+                .checked_add(stock_facts.len())
                 .ok_or_else(|| invariant("incremental P4 fact count overflow"))?;
-            execution_facts.append(&mut stock.execution_facts);
-            workers.push(ContinuousStockOutput {
-                market: stock.market,
-                created_envelopes: stock.created_envelopes,
-                receipts: stock.receipts,
-                terminal_keys: stock.terminal_keys,
-                trades: stock.trades,
-                place_facts: stock.place_facts,
-                cancel_facts: stock.cancel_facts,
-            });
+            execution_facts.append(&mut stock_facts);
+            workers.push(worker);
         }
         if execution_count != self.applied_operation_count {
             return Err(invariant(
@@ -416,61 +381,111 @@ impl IncrementalContinuousStockCoordinator {
     }
 }
 
-fn apply_stock_round(
-    code: StockCode,
-    mut shadow: IncrementalContinuousStockShadow,
-    operations: Vec<ValidatedOperation>,
-) -> Result<StockRoundResult, StepFatal> {
-    let step = process_continuous_stock_step_with_ledger(
-        ContinuousStockInput {
-            phase: shadow.phase,
-            market: shadow.market,
-            envelopes: Vec::new(),
-            operations,
-            config: shadow.config.clone(),
-        },
-        shadow.next_trade_event_index,
-        shadow.ledger,
-    )?;
-    let output = step.output;
-    if step.execution_facts.len()
-        != output
-            .place_facts
-            .len()
-            .saturating_add(output.cancel_facts.len())
-    {
-        return Err(invariant(
-            "stock round typed-fact count disagrees with operation outcomes",
-        ));
-    }
-    let facts = step.execution_facts.clone();
-    let receipts = output.receipts.clone();
-    #[cfg(any(test, feature = "simulation-diagnostics"))]
-    let trades = output.trades.clone();
-
-    shadow.market = output.market;
-    shadow.ledger = step.ledger;
-    shadow.next_trade_event_index = step.next_trade_event_index;
-    shadow.created_envelopes.extend(output.created_envelopes);
-    shadow.receipts.extend(output.receipts);
-    shadow.terminal_keys.extend(output.terminal_keys);
-    shadow.trades.extend(output.trades);
-    shadow.place_facts.extend(output.place_facts);
-    shadow.cancel_facts.extend(output.cancel_facts);
-    shadow.execution_facts.extend(step.execution_facts);
-
-    Ok(StockRoundResult {
-        code,
-        shadow,
-        facts,
-        receipts,
+impl IncrementalContinuousStockShadow {
+    fn apply_round(
+        mut self,
+        code: StockCode,
+        operations: Vec<ValidatedOperation>,
+    ) -> Result<StockRoundResult, StepFatal> {
+        let step = process_continuous_stock_step_with_ledger(
+            ContinuousStockInput {
+                phase: self.phase,
+                market: self.market,
+                envelopes: Vec::new(),
+                operations,
+                config: self.config.clone(),
+            },
+            self.next_trade_event_index,
+            self.ledger,
+        )?;
+        let output = step.output;
+        if step.execution_facts.len()
+            != output
+                .place_facts
+                .len()
+                .saturating_add(output.cancel_facts.len())
+        {
+            return Err(invariant(
+                "stock round typed-fact count disagrees with operation outcomes",
+            ));
+        }
+        let facts = step.execution_facts.clone();
+        let receipts = output.receipts.clone();
         #[cfg(any(test, feature = "simulation-diagnostics"))]
-        trades,
-        acceptance_quotes: step.acceptance_quotes,
-        market_delta: step.market_delta,
-        #[cfg(feature = "simulation-diagnostics")]
-        operation_quotes: step.operation_quotes,
-    })
+        let trades = output.trades.clone();
+
+        self.market = output.market;
+        self.ledger = step.ledger;
+        self.next_trade_event_index = step.next_trade_event_index;
+        self.created_envelopes.extend(output.created_envelopes);
+        self.receipts.extend(output.receipts);
+        self.terminal_keys.extend(output.terminal_keys);
+        self.trades.extend(output.trades);
+        self.place_facts.extend(output.place_facts);
+        self.cancel_facts.extend(output.cancel_facts);
+        self.execution_facts.extend(step.execution_facts);
+
+        Ok(StockRoundResult {
+            code,
+            shadow: self,
+            facts,
+            receipts,
+            #[cfg(any(test, feature = "simulation-diagnostics"))]
+            trades,
+            acceptance_quotes: step.acceptance_quotes,
+            market_delta: step.market_delta,
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes: step.operation_quotes,
+        })
+    }
+
+    /// 全部 continuation 排空后消费本股；closing price 在 DayEnd 清簿前冻结。
+    fn finish(
+        mut self,
+        ends_day: bool,
+    ) -> Result<
+        (
+            ContinuousStockOutput,
+            ContinuousClosingPrice,
+            Vec<ContinuousExecutionFact>,
+        ),
+        StepFatal,
+    > {
+        if !self.execution_facts.is_empty() {
+            validate_private_market_ledger(&self.market, &self.ledger, &self.config)?;
+        }
+        let price = ContinuousClosingPrice {
+            last: self.market.last_price(),
+            bids: self.market.bid_depth_limited(5),
+            asks: self.market.ask_depth_limited(5),
+        };
+        if ends_day {
+            for (ordinal, (key, envelope)) in self.ledger.iter().enumerate() {
+                let source = u32::try_from(ordinal)
+                    .map_err(|_| invariant("continuous DayEnd source index overflow"))?;
+                self.receipts.push(
+                    crate::session::pipeline::stock_auction::day_end_release_receipt(
+                        envelope, source,
+                    )?,
+                );
+                self.terminal_keys.push(key.clone());
+            }
+            self.market.end_of_day();
+        }
+        Ok((
+            ContinuousStockOutput {
+                market: self.market,
+                created_envelopes: self.created_envelopes,
+                receipts: self.receipts,
+                terminal_keys: self.terminal_keys,
+                trades: self.trades,
+                place_facts: self.place_facts,
+                cancel_facts: self.cancel_facts,
+            },
+            price,
+            self.execution_facts,
+        ))
+    }
 }
 
 fn validate_new_operation_identities(
@@ -502,8 +517,7 @@ fn validate_round_identities(
     facts: &[ContinuousExecutionFact],
     receipts: &[EnvelopeReceipt],
 ) -> Result<(), StepFatal> {
-    // Each stock worker emits facts and receipts in its own execution order. Sorting those
-    // by an audit identity would turn that identity back into a business clock.
+    // 各股按实际执行顺序发出 facts/receipts；不得按审计身份重排为业务时钟。
     let fact_ids = facts
         .iter()
         .map(|fact| fact.sealed_index)

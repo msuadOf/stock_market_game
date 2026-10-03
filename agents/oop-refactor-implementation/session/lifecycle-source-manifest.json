@@ -1,0 +1,110 @@
+{
+  "reviewer": "/root/implement_session/review_lifecycle",
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "review_date": "2026-10-03",
+  "source_manifest": "agents/oop-refactor-implementation/session/source-manifest.json",
+  "source_manifest_sha256": "e410f344003cbe6ebb5c3fc323a98b244054890b7dbee5d85af4dfb90135989c",
+  "scoped_diff_sha256": "a15c84939fbacc069df3d00ae10c2e9e4ddf5d7555619d87033e27e3cc85daa0",
+  "review_scope": [
+    "packages/engine/src/session/execution.rs",
+    "packages/engine/src/session/execution",
+    "packages/engine/src/session/plan_execution.rs",
+    "packages/engine/src/session/plan_execution",
+    "packages/engine/src/session/protocol",
+    "packages/engine/src/session/candles.rs",
+    "packages/engine/src/session/attention.rs"
+  ],
+  "verification": "本人再次只读核对最终完整 diff 及 L1/L2/L3 修复，18 个变更文件均与已审内容一致；逐文件 SHA 全部匹配 source-manifest。本范围无新增源码文件。未改源码、未运行 Cargo 或测试。",
+  "files": [
+    {
+      "file": "packages/engine/src/session/attention.rs",
+      "sha256": "eb31033e2ff7a030fd4a220247ce9c8bebde964ce8a0ef3ce506c8d19d974266",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/candles.rs",
+      "sha256": "01eaa497889978a3dd11cca1f428b772de851e97fd5374e1c29a3b21d0302bd4",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution.rs",
+      "sha256": "754cfdddc552344cc44d0108a294d94eb14546b5060f88a7ce5051bb17f34495",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/orders.rs",
+      "sha256": "05a4e3fce6fea325b76ed04c5f57fdd44a4839feec2b1bd4089857d1c60ee7b3",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/reconcile_plan.rs",
+      "sha256": "5a5ac6e2f25b789addd26c9dda09f1e1c23d918c05c15f9dc82eb7c7a65f0361",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/records.rs",
+      "sha256": "2006786b472c23e7d904e560c489f4962cd7d4c974d2761b75fe5ed4149301f7",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution.rs",
+      "sha256": "ef9b48ed9411336cf6f0cc6b36b652ead1c046cb7129e677448d1fca0a5ce730",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/actions.rs",
+      "sha256": "2f1c4dfd125e0328e1bf36ca7a0e03400ce13dad257388966e411cf7f60e803a",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/continuation_tests.rs",
+      "sha256": "1ad42f3b714dda7e2546eb71af3167e163fc39a90259d9cf0ca84f08c8f80276",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/interpreter.rs",
+      "sha256": "96c30829b8045aa27802f86378ed2702d3d23545d140e7e946f2be9760949a0f",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/interpreter/resume.rs",
+      "sha256": "aee716bc1de76975f8e2340a7eacb7fe395b7474119625074e073b3a07425871",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/routing.rs",
+      "sha256": "71bec4082b73092b487b5a43a2e0fcb4bc4da6514eeff05cf8bf93abb7f1fbdb",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/synchronization.rs",
+      "sha256": "a39772c8e471429de75d068c0d96c4e9e89f632ef67a998fc1c0a54fb1abf8dc",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/mod.rs",
+      "sha256": "b475e6436fa19198cb8c03b8344731d3300361a51dd1400794db94db0f885ab1",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/publication_tests.rs",
+      "sha256": "3c598384bec9a99f491a75fb23994dde582fd2bc5c4eb4f1b2c7e34b31b219b3",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/session.rs",
+      "sha256": "abf6bacb61b218c147bd8f5de9855ae1b0363a98bffe8865eac4187ea749491a",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/delta.rs",
+      "sha256": "22f002390487087585f718c0d51fc06296f8d83b3b46eabeb9ec565e468b316f",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/player_orders.rs",
+      "sha256": "94d5df333af9835c0bc93da00c6f02b3bedc415f2368944feb7ca3664932b497",
+      "new_file": false
+    }
+  ]
+}

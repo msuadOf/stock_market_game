@@ -38,6 +38,19 @@ pub struct ZiNoiseStrategy {
 }
 
 impl ZiNoiseStrategy {
+    /// 把本实例的全部散户参数投影到临时 StrategyData，不增加持久化状态。
+    fn strategy_data(&self) -> StrategyData {
+        let mut data =
+            StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
+        data.dip_threshold = self.dip_threshold;
+        data.stop_loss_threshold = self.stop_loss_threshold;
+        data.take_profit_threshold = self.take_profit_threshold;
+        data.volume_confirmation = self.volume_confirmation;
+        data.position_step_bp = self.position_step_bp;
+        data.base_observation_probability = self.base_observation_probability;
+        data
+    }
+
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
         Self::new(self.arrival_rate, self.order_size_mean, self.chase_prob)
             .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
@@ -135,14 +148,7 @@ impl Strategy for ZiNoiseStrategy {
     ) -> StrategyDecision {
         match (behavior_market, account_risk) {
             (Some(behavior_market), Some(account_risk)) => {
-                let mut data =
-                    StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
-                data.dip_threshold = self.dip_threshold;
-                data.stop_loss_threshold = self.stop_loss_threshold;
-                data.take_profit_threshold = self.take_profit_threshold;
-                data.volume_confirmation = self.volume_confirmation;
-                data.position_step_bp = self.position_step_bp;
-                data.base_observation_probability = self.base_observation_probability;
+                let data = self.strategy_data();
                 let decision = decide_retail_position(
                     &data,
                     self.retail_style,
@@ -182,14 +188,7 @@ impl Strategy for ZiNoiseStrategy {
     ) -> StrategyDecision {
         match (behavior_market, account_risk, experience) {
             (Some(behavior_market), Some(account_risk), Some(experience)) => {
-                let mut data =
-                    StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
-                data.dip_threshold = self.dip_threshold;
-                data.stop_loss_threshold = self.stop_loss_threshold;
-                data.take_profit_threshold = self.take_profit_threshold;
-                data.volume_confirmation = self.volume_confirmation;
-                data.position_step_bp = self.position_step_bp;
-                data.base_observation_probability = self.base_observation_probability;
+                let data = self.strategy_data();
                 let decision = decide_retail_position_with_experience(
                     &data,
                     self.retail_style,
@@ -232,14 +231,7 @@ impl Strategy for ZiNoiseStrategy {
     ) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：struct 字段映射成 StrategyData，
         // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
-        let data = StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
-        let mut data = data;
-        data.dip_threshold = self.dip_threshold;
-        data.stop_loss_threshold = self.stop_loss_threshold;
-        data.take_profit_threshold = self.take_profit_threshold;
-        data.volume_confirmation = self.volume_confirmation;
-        data.position_step_bp = self.position_step_bp;
-        data.base_observation_probability = self.base_observation_probability;
+        let data = self.strategy_data();
         decide_retail(&data, market, own, rng, config)
     }
 }
@@ -294,4 +286,43 @@ fn retail_position_decision_to_intents(
         });
     }
     Vec::new()
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+
+    #[test]
+    fn strategy_data_projects_all_individual_retail_parameters() {
+        let mut strategy = ZiNoiseStrategy::new(0.27, 300, 0.61).unwrap();
+        strategy.retail_style = RetailStyle::DipBuyer;
+        strategy.dip_threshold = 0.037;
+        strategy.stop_loss_threshold = 0.094;
+        strategy.take_profit_threshold = 0.123;
+        strategy.volume_confirmation = 0.91;
+        strategy.position_step_bp = 1387;
+        strategy.base_observation_probability = 0.043;
+        strategy.validate_state().unwrap();
+
+        let data = strategy.strategy_data();
+
+        assert_eq!(data.kind, crate::account::AccountKind::Retail);
+        assert_eq!(data.order_size_mean, 300);
+        assert_eq!(data.position_step_bp, 1387);
+        for (actual, expected) in [
+            (data.arrival_rate, 0.27_f64),
+            (data.chase_prob, 0.61),
+            (data.dip_threshold, 0.037),
+            (data.stop_loss_threshold, 0.094),
+            (data.take_profit_threshold, 0.123),
+            (data.volume_confirmation, 0.91),
+            (data.base_observation_probability, 0.043),
+        ] {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        assert_eq!(
+            strategy.profile(),
+            StrategyProfile::Retail(RetailStyle::DipBuyer)
+        );
+    }
 }

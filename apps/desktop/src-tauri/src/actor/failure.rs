@@ -178,7 +178,7 @@ impl<R: Runtime> SessionActor<R> {
         failure.context.seq = Some(self.game.seq());
         failure.context.day = Some(self.game.day());
         failure.context.generation = Some(self.generation.to_string());
-        self.running = false;
+        self.pacing.stop_after_failure();
         let payload = EngineFailurePayload {
             session_id: &self.session_id,
             timeline_id: &self.timeline_id,

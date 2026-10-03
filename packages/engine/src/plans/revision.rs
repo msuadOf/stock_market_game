@@ -106,7 +106,7 @@ impl TradingPlan {
         Ok(())
     }
 
-    /// A successful order-book cancellation leaves the filled quantity untouched.
+    /// orderbook 撤销未成交余量成功后，累计真实成交数量保持不变。
     pub(super) fn record_child_order_canceled(
         &mut self,
         order_id: OrderId,
@@ -211,126 +211,121 @@ impl TradingPlan {
     }
 }
 
-/// 应用一次修订：先由纯规则分类，再落地版本与状态。
-pub(super) fn apply_revision(
-    plan: &mut TradingPlan,
-    revision: &PlanRevision,
-    policy: &PlanPolicy,
-) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("revision", revision.trading_day, false)?;
-    match classify_revision(plan, revision, policy)? {
-        RevisionOutcome::Forward => {}
-        RevisionOutcome::ReverseRestart => {
-            // 反向修订开新进度：旧腿的真实成交已在账户里，不在此重复记账。
-            plan.filled_qty = 0;
-            plan.active_child_order_id = None;
-            if plan.direction == Side::Buy && revision.direction == Side::Sell {
-                plan.status = PlanStatus::Active;
+impl TradingPlan {
+    /// 应用一次修订：先由纯规则分类，再落地版本与状态。
+    pub(super) fn apply_revision(
+        &mut self,
+        revision: &PlanRevision,
+        policy: &PlanPolicy,
+    ) -> Result<(), PlanError> {
+        self.ensure_event_allowed("revision", revision.trading_day, false)?;
+        match classify_revision(self, revision, policy)? {
+            RevisionOutcome::Forward => {}
+            RevisionOutcome::ReverseRestart => {
+                // 反向修订开新进度：旧腿的真实成交已在账户里，不在此重复记账。
+                self.filled_qty = 0;
+                self.active_child_order_id = None;
+                if self.direction == Side::Buy && revision.direction == Side::Sell {
+                    self.status = PlanStatus::Active;
+                }
+            }
+            RevisionOutcome::CompleteNow => {
+                self.status = PlanStatus::Completed;
+            }
+            RevisionOutcome::Terminate(reason) => {
+                self.status = PlanStatus::Terminated { reason };
             }
         }
-        RevisionOutcome::CompleteNow => {
-            plan.status = PlanStatus::Completed;
+        self.direction = revision.direction;
+        self.target = revision.target;
+        self.opinion = revision.opinion;
+        self.confidence_bp = revision.confidence_bp;
+        self.urgency = revision.urgency;
+        self.version = self
+            .version
+            .checked_add(1)
+            .ok_or(PlanError::VersionOverflow {
+                plan_id: self.plan_id,
+            })?;
+        self.last_revision = Some(RevisionRecord {
+            version: self.version,
+            reason: revision.reason,
+            trading_day: revision.trading_day,
+        });
+        self.review.last_review_signal_score_bp = revision.opinion.signal_score_bp;
+        self.review.last_review_trading_day = revision.trading_day;
+        self.last_event_trading_day = revision.trading_day;
+        Ok(())
+    }
+
+    /// 暂停：仅 Active 可暂停，且必须携带显式原因。
+    pub(super) fn pause(&mut self, reason: PauseReason, trading_day: u64) -> Result<(), PlanError> {
+        self.ensure_event_allowed("pause", trading_day, false)?;
+        let upgrades_risk_pressure = matches!(self.status, PlanStatus::Paused { reason: previous } if previous != PauseReason::RiskPressure)
+            && reason == PauseReason::RiskPressure;
+        if self.status != PlanStatus::Active && !upgrades_risk_pressure {
+            return Err(PlanError::InvalidTransition {
+                plan_id: self.plan_id,
+                from: self.status,
+                event: "pause",
+            });
         }
-        RevisionOutcome::Terminate(reason) => {
-            plan.status = PlanStatus::Terminated { reason };
+        self.status = PlanStatus::Paused { reason };
+        self.last_event_trading_day = trading_day;
+        Ok(())
+    }
+
+    /// 恢复：仅 Paused 可恢复，且必须携带显式原因。
+    pub(super) fn resume(
+        &mut self,
+        reason: ResumeReason,
+        trading_day: u64,
+    ) -> Result<(), PlanError> {
+        self.ensure_event_allowed("resume", trading_day, false)?;
+        if !matches!(self.status, PlanStatus::Paused { .. }) {
+            return Err(PlanError::InvalidTransition {
+                plan_id: self.plan_id,
+                from: self.status,
+                event: "resume",
+            });
         }
+        self.status = PlanStatus::Active;
+        self.last_resume = Some(reason);
+        self.last_event_trading_day = trading_day;
+        Ok(())
     }
-    plan.direction = revision.direction;
-    plan.target = revision.target;
-    plan.opinion = revision.opinion;
-    plan.confidence_bp = revision.confidence_bp;
-    plan.urgency = revision.urgency;
-    plan.version = plan
-        .version
-        .checked_add(1)
-        .ok_or(PlanError::VersionOverflow {
-            plan_id: plan.plan_id,
-        })?;
-    plan.last_revision = Some(RevisionRecord {
-        version: plan.version,
-        reason: revision.reason,
-        trading_day: revision.trading_day,
-    });
-    plan.review.last_review_signal_score_bp = revision.opinion.signal_score_bp;
-    plan.review.last_review_trading_day = revision.trading_day;
-    plan.last_event_trading_day = revision.trading_day;
-    Ok(())
-}
 
-/// 暂停：仅 Active 可暂停，且必须携带显式原因。
-pub(super) fn pause(
-    plan: &mut TradingPlan,
-    reason: PauseReason,
-    trading_day: u64,
-) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("pause", trading_day, false)?;
-    let upgrades_risk_pressure = matches!(plan.status, PlanStatus::Paused { reason: previous } if previous != PauseReason::RiskPressure)
-        && reason == PauseReason::RiskPressure;
-    if plan.status != PlanStatus::Active && !upgrades_risk_pressure {
-        return Err(PlanError::InvalidTransition {
-            plan_id: plan.plan_id,
-            from: plan.status,
-            event: "pause",
-        });
-    }
-    plan.status = PlanStatus::Paused { reason };
-    plan.last_event_trading_day = trading_day;
-    Ok(())
-}
-
-/// 恢复：仅 Paused 可恢复，且必须携带显式原因。
-pub(super) fn resume(
-    plan: &mut TradingPlan,
-    reason: ResumeReason,
-    trading_day: u64,
-) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("resume", trading_day, false)?;
-    if !matches!(plan.status, PlanStatus::Paused { .. }) {
-        return Err(PlanError::InvalidTransition {
-            plan_id: plan.plan_id,
-            from: plan.status,
-            event: "resume",
-        });
-    }
-    plan.status = PlanStatus::Active;
-    plan.last_resume = Some(reason);
-    plan.last_event_trading_day = trading_day;
-    Ok(())
-}
-
-/// 显式到期终止：只接受真正越过有效期末日之后的调用（守卫对到期事件
-/// 豁免有效期上限，因此该成功路径可达）。
-pub(super) fn expire(plan: &mut TradingPlan, trading_day: u64) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("horizon-expiry", trading_day, true)?;
-    if trading_day <= plan.last_valid_trading_day() {
-        return Err(PlanError::ExpireBeforeHorizonEnd {
-            plan_id: plan.plan_id,
-            trading_day,
-            last_valid_trading_day: plan.last_valid_trading_day(),
-        });
-    }
-    plan.status = PlanStatus::Terminated {
-        reason: TerminationReason::HorizonExpired,
-    };
-    plan.active_child_order_id = None;
-    plan.last_event_trading_day = trading_day;
-    Ok(())
-}
-
-/// 日终：仅结束子单生命周期（清除子单引用）；计划本身保留，状态除显式转移外不变。
-/// 覆盖最后一个有效交易日的日终执行到期终止；日终在有效期过后才送达（错过补账）
-/// 同样直接补终止，不把计划搁浅在 Active。
-pub(super) fn end_of_trading_day(
-    plan: &mut TradingPlan,
-    trading_day: u64,
-) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("day-end", trading_day, true)?;
-    plan.active_child_order_id = None;
-    if trading_day >= plan.last_valid_trading_day() {
-        plan.status = PlanStatus::Terminated {
+    /// 显式到期终止：只接受真正越过有效期末日之后的调用（守卫对到期事件
+    /// 豁免有效期上限，因此该成功路径可达）。
+    pub(super) fn expire(&mut self, trading_day: u64) -> Result<(), PlanError> {
+        self.ensure_event_allowed("horizon-expiry", trading_day, true)?;
+        if trading_day <= self.last_valid_trading_day() {
+            return Err(PlanError::ExpireBeforeHorizonEnd {
+                plan_id: self.plan_id,
+                trading_day,
+                last_valid_trading_day: self.last_valid_trading_day(),
+            });
+        }
+        self.status = PlanStatus::Terminated {
             reason: TerminationReason::HorizonExpired,
         };
+        self.active_child_order_id = None;
+        self.last_event_trading_day = trading_day;
+        Ok(())
     }
-    plan.last_event_trading_day = trading_day;
-    Ok(())
+
+    /// 日终：仅结束子单生命周期（清除子单引用）；计划本身保留，状态除显式转移外不变。
+    /// 覆盖最后一个有效交易日的日终执行到期终止；日终在有效期过后才送达（错过补账）
+    /// 同样直接补终止，不把计划搁浅在 Active。
+    pub(super) fn end_of_trading_day(&mut self, trading_day: u64) -> Result<(), PlanError> {
+        self.ensure_event_allowed("day-end", trading_day, true)?;
+        self.active_child_order_id = None;
+        if trading_day >= self.last_valid_trading_day() {
+            self.status = PlanStatus::Terminated {
+                reason: TerminationReason::HorizonExpired,
+            };
+        }
+        self.last_event_trading_day = trading_day;
+        Ok(())
+    }
 }

@@ -1069,9 +1069,188 @@ pub async fn ws_handler(
         Ok(handles) => handles,
         Err(response) => return *response,
     };
-    // handles 已是 Arc<SessionHandles>；clone 一份 event_tx 给 select 循环，handles 给取基线快照。
-    let event_tx = handles.event_tx.clone();
-    ws.on_upgrade(move |socket| run_ws(socket, event_tx, handles, q.delivery))
+    ws.on_upgrade(move |socket| run_ws(socket, handles, q.delivery))
+}
+
+/// 每条 WS 连接独占的 publisher 协议状态；socket I/O 仍由 run_ws 执行。
+struct WsPublisherConnection {
+    delivery: DeliveryMode,
+    baseline_seq: u64,
+    baseline_tick: u64,
+    timeline_generation: u64,
+    publisher: ClientFrameBuffer,
+    awaiting_resync: bool,
+    delivered_failure: Option<crate::actor::HostFailure>,
+}
+
+enum PublisherAction {
+    Buffered,
+    Ignored,
+    HostFailure(Box<crate::actor::HostFailure>),
+    ResyncRequired {
+        reason: &'static str,
+        capacity: Option<usize>,
+    },
+    Flush {
+        update: Box<crate::actor::EngineUpdate>,
+        all: bool,
+    },
+    Rejected(FrameBufferError),
+}
+
+enum FrameRequest {
+    ResyncRequired,
+    WrongDeliveryMode,
+    Frame(Box<PublisherFrame>),
+    Empty,
+}
+
+impl WsPublisherConnection {
+    fn new(
+        delivery: DeliveryMode,
+        cursor: (u64, u64, u64),
+        failure: Option<crate::actor::HostFailure>,
+        ticks_per_day: u64,
+        auction_ticks: u64,
+    ) -> Result<Self, FrameBufferError> {
+        Ok(Self {
+            delivery,
+            baseline_seq: cursor.0,
+            baseline_tick: cursor.1,
+            timeline_generation: cursor.2,
+            publisher: ClientFrameBuffer::new(ticks_per_day, auction_ticks)?,
+            awaiting_resync: failure.is_some(),
+            delivered_failure: failure,
+        })
+    }
+
+    fn ingest(&mut self, update: crate::actor::EngineUpdate) -> PublisherAction {
+        if let Some(failure) = &update.failure {
+            if self.delivered_failure.as_ref() == Some(failure) {
+                self.awaiting_resync = true;
+                return PublisherAction::Ignored;
+            }
+            return PublisherAction::HostFailure(Box::new(failure.clone()));
+        }
+        if update.timeline_generation != self.timeline_generation {
+            self.require_resync();
+            return PublisherAction::ResyncRequired {
+                reason: "timeline_changed",
+                capacity: None,
+            };
+        }
+        if self.awaiting_resync {
+            return PublisherAction::Ignored;
+        }
+        let Some(protocol) = &update.update else {
+            return PublisherAction::Ignored;
+        };
+        let covered = match protocol {
+            engine::session::protocol::EngineUpdate::TickBatch(batch) => {
+                batch.frames.last().is_some_and(|frame| {
+                    frame.tick <= self.baseline_tick && frame.seq_to <= self.baseline_seq
+                })
+            }
+            engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
+                civil.tick <= self.baseline_tick && civil.seq_to <= self.baseline_seq
+            }
+        };
+        if covered {
+            return PublisherAction::Ignored;
+        }
+        match self.publisher.push(update.clone()) {
+            Ok(()) => PublisherAction::Buffered,
+            Err(error) => self.buffer_error(update, error),
+        }
+    }
+
+    fn buffer_error(
+        &mut self,
+        update: crate::actor::EngineUpdate,
+        error: FrameBufferError,
+    ) -> PublisherAction {
+        match error {
+            FrameBufferError::MetadataTransition => PublisherAction::Flush {
+                update: Box::new(update),
+                all: false,
+            },
+            FrameBufferError::BufferCapacityExceeded { limit }
+                if self.delivery == DeliveryMode::Pull =>
+            {
+                self.require_resync();
+                PublisherAction::ResyncRequired {
+                    reason: "publisher_buffer_capacity",
+                    capacity: Some(limit),
+                }
+            }
+            FrameBufferError::BufferCapacityExceeded { .. } => PublisherAction::Flush {
+                update: Box::new(update),
+                all: true,
+            },
+            other => PublisherAction::Rejected(other),
+        }
+    }
+
+    fn failure_delivered(&mut self, failure: crate::actor::HostFailure) {
+        self.delivered_failure = Some(failure);
+        self.awaiting_resync = true;
+    }
+
+    fn require_resync(&mut self) {
+        self.publisher.clear();
+        self.awaiting_resync = true;
+    }
+
+    fn prepare_resync(&mut self) {
+        self.publisher.clear();
+    }
+
+    fn install_baseline_cursor(&mut self, baseline: &crate::actor::PublicBaseline) {
+        self.baseline_seq = baseline.snapshot.seq;
+        self.baseline_tick = baseline.snapshot.tick;
+        self.timeline_generation = baseline.timeline_generation;
+    }
+
+    fn baseline_delivered(&mut self, failure: Option<crate::actor::HostFailure>) {
+        self.awaiting_resync = failure.is_some();
+        self.delivered_failure = failure;
+    }
+
+    fn push_ready(&self) -> bool {
+        self.delivery == DeliveryMode::Push && !self.awaiting_resync
+    }
+
+    fn take_push_frame(&mut self) -> Option<PublisherFrame> {
+        if self.push_ready() {
+            self.publisher.take()
+        } else {
+            None
+        }
+    }
+
+    fn take_flush_frame(&mut self) -> Option<PublisherFrame> {
+        self.publisher.take()
+    }
+
+    fn accept_after_flush(
+        &mut self,
+        update: crate::actor::EngineUpdate,
+    ) -> Result<(), FrameBufferError> {
+        self.publisher.push(update)
+    }
+
+    fn request_frame(&mut self) -> FrameRequest {
+        if self.awaiting_resync {
+            return FrameRequest::ResyncRequired;
+        }
+        if self.delivery != DeliveryMode::Pull {
+            return FrameRequest::WrongDeliveryMode;
+        }
+        match self.publisher.take() {
+            Some(frame) => FrameRequest::Frame(Box::new(frame)),
+            None => FrameRequest::Empty,
+        }
+    }
 }
 
 /// WS 连接主循环。
@@ -1082,7 +1261,6 @@ pub async fn ws_handler(
 /// 4. 30s 心跳：发 Ping。
 async fn run_ws(
     socket: axum::extract::ws::WebSocket,
-    event_tx: tokio::sync::broadcast::Sender<crate::actor::EngineUpdate>,
     handles: Arc<crate::actor::SessionHandles>,
     delivery: DeliveryMode,
 ) {
@@ -1090,19 +1268,20 @@ async fn run_ws(
 
     // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
     // 缓冲事件在后续读取时跳过。
-    let mut rx = event_tx.subscribe();
-    let mut baseline_seq;
-    let mut baseline_tick;
-    let mut timeline_generation;
-    let initial_failure;
+    let mut rx = handles.subscribe_events();
+    let initial_baseline;
 
     // 1. 对齐基线：发完整 Snapshot JSON。
     match handles.public_baseline().await {
         Ok(baseline) => {
-            baseline_seq = baseline.snapshot.seq;
-            baseline_tick = baseline.snapshot.tick;
-            timeline_generation = baseline.timeline_generation;
-            initial_failure = baseline.failure.clone();
+            initial_baseline = (
+                (
+                    baseline.snapshot.seq,
+                    baseline.snapshot.tick,
+                    baseline.timeline_generation,
+                ),
+                baseline.failure.clone(),
+            );
             match send_baseline(&mut sender, baseline).await {
                 true => {}
                 false => {
@@ -1125,7 +1304,13 @@ async fn run_ws(
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = heartbeat.tick().await; // 跳过首个立即到期。
-    let mut publisher = match ClientFrameBuffer::new(handles.ticks_per_day, handles.auction_ticks) {
+    let mut connection = match WsPublisherConnection::new(
+        delivery,
+        initial_baseline.0,
+        initial_baseline.1,
+        handles.ticks_per_day,
+        handles.auction_ticks,
+    ) {
         Ok(buffer) => buffer,
         Err(error) => {
             error!(%error, "ws: invalid publisher configuration");
@@ -1135,8 +1320,6 @@ async fn run_ws(
     let mut push_clock = tokio::time::interval(CLIENT_PUSH_INTERVAL);
     push_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = push_clock.tick().await;
-    let mut awaiting_resync = initial_failure.is_some();
-    let mut delivered_failure = initial_failure;
 
     loop {
         tokio::select! {
@@ -1144,84 +1327,48 @@ async fn run_ws(
             ev = rx.recv() => {
                 match ev {
                     Ok(update) => {
-                        if let Some(failure) = update.failure {
-                            if delivered_failure.as_ref() == Some(&failure) {
-                                awaiting_resync = true;
-                                continue;
+                        match connection.ingest(update) {
+                            PublisherAction::Buffered | PublisherAction::Ignored => {}
+                            PublisherAction::HostFailure(failure) => {
+                                if !send_host_failure(&mut sender, (*failure).clone()).await { break; }
+                                connection.failure_delivered(*failure);
                             }
-                            if !send_host_failure(&mut sender, failure.clone()).await { break; }
-                            delivered_failure = Some(failure);
-                            awaiting_resync = true;
-                            continue;
-                        }
-                        if update.timeline_generation != timeline_generation {
-                            publisher.clear();
-                            awaiting_resync = true;
-                            if !send_resync_required(&mut sender, "timeline_changed", None).await { break; }
-                            continue;
-                        }
-                        if awaiting_resync { continue; }
-                        let Some(protocol) = &update.update else { continue; };
-                        let covered = match protocol {
-                            engine::session::protocol::EngineUpdate::TickBatch(batch) =>
-                                batch.frames.last().is_some_and(|frame| frame.tick <= baseline_tick && frame.seq_to <= baseline_seq),
-                            engine::session::protocol::EngineUpdate::CivilUpdate(civil) =>
-                                civil.tick <= baseline_tick && civil.seq_to <= baseline_seq,
-                        };
-                        if covered {
-                            continue;
-                        }
-                        if let Err(error) = publisher.push(update.clone()) {
-                            match error {
-                                FrameBufferError::MetadataTransition => {
-                                    if let Some(frame) = publisher.take() {
-                                        if !send_publisher_frame(&mut sender, frame).await { break; }
-                                    }
-                                    if let Err(error) = publisher.push(update) {
-                                        error!(%error, "ws: publisher rejected metadata segment");
+                            PublisherAction::ResyncRequired { reason, capacity } => {
+                                if let Some(limit) = capacity {
+                                    warn!(limit, "ws: pull publisher buffer full; client must re-sync");
+                                }
+                                if !send_resync_required(&mut sender, reason, None).await { break; }
+                            }
+                            PublisherAction::Flush { update, all } => {
+                                let mut delivered = true;
+                                while let Some(frame) = connection.take_flush_frame() {
+                                    if !send_publisher_frame(&mut sender, frame).await {
+                                        delivered = false;
                                         break;
                                     }
+                                    if !all { break; }
                                 }
-                                FrameBufferError::BufferCapacityExceeded { limit } => {
-                                    if delivery == DeliveryMode::Push {
-                                        // Backlog pressure must not discard a complete update
-                                        // that has not yet reached this push client.
-                                        let mut delivered = true;
-                                        while let Some(frame) = publisher.take() {
-                                            if !send_publisher_frame(&mut sender, frame).await {
-                                                delivered = false;
-                                                break;
-                                            }
-                                        }
-                                        if !delivered { break; }
-                                        if let Err(error) = publisher.push(update) {
-                                            error!(%error, "ws: publisher rejected update after flushing backlog");
-                                            break;
-                                        }
+                                if !delivered { break; }
+                                if let Err(error) = connection.accept_after_flush(*update) {
+                                    if all {
+                                        error!(%error, "ws: publisher rejected update after flushing backlog");
                                     } else {
-                                        warn!(limit, "ws: pull publisher buffer full; client must re-sync");
-                                        publisher.clear();
-                                        awaiting_resync = true;
-                                        if !send_resync_required(&mut sender, "publisher_buffer_capacity", None).await {
-                                            break;
-                                        }
-                                    }
-                                }
-                                other => {
-                                    error!(error = %other, "ws: publisher rejected engine update");
-                                    if !send_gateway_error(&mut sender, None, "PUBLISHER_SEQUENCE_ERROR", other.to_string()).await {
-                                        break;
+                                        error!(%error, "ws: publisher rejected metadata segment");
                                     }
                                     break;
                                 }
+                            }
+                            PublisherAction::Rejected(error) => {
+                                error!(%error, "ws: publisher rejected engine update");
+                                if !send_gateway_error(&mut sender, None, "PUBLISHER_SEQUENCE_ERROR", error.to_string()).await { break; }
+                                break;
                             }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
                         warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
-                        publisher.clear();
-                        awaiting_resync = true;
+                        connection.require_resync();
                         if !send_resync_required(&mut sender, "event_stream_lagged", Some(n)).await {
                             break;
                         }
@@ -1232,8 +1379,8 @@ async fn run_ws(
                     }
                 }
             }
-            _ = push_clock.tick(), if delivery == DeliveryMode::Push && !awaiting_resync => {
-                if let Some(frame) = publisher.take() {
+            _ = push_clock.tick(), if connection.push_ready() => {
+                if let Some(frame) = connection.take_push_frame() {
                     if !send_publisher_frame(&mut sender, frame).await {
                         break;
                     }
@@ -1266,17 +1413,14 @@ async fn run_ws(
                             };
                             match command {
                                 ClientCommand::Resync {} => {
-                                    rx = event_tx.subscribe();
-                                    publisher.clear();
+                                    rx = handles.subscribe_events();
+                                    connection.prepare_resync();
                                     match handles.public_baseline().await {
                                         Ok(baseline) => {
-                                            baseline_seq = baseline.snapshot.seq;
-                                            baseline_tick = baseline.snapshot.tick;
-                                            timeline_generation = baseline.timeline_generation;
+                                            connection.install_baseline_cursor(&baseline);
                                             let latched_failure = baseline.failure.clone();
                                             if !send_baseline(&mut sender, baseline).await { break; }
-                                            awaiting_resync = latched_failure.is_some();
-                                            delivered_failure = latched_failure;
+                                            connection.baseline_delivered(latched_failure);
                                         }
                                         Err(error) => {
                                             if !send_gateway_error(&mut sender, None, "RESYNC_FAILED", error.to_string()).await { break; }
@@ -1284,22 +1428,19 @@ async fn run_ws(
                                     }
                                 }
                                 ClientCommand::GetFrame {} => {
-                                    if awaiting_resync {
-                                        if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
-                                        continue;
-                                    }
-                                    if delivery != DeliveryMode::Pull {
-                                        if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await {
-                                            break;
+                                    match connection.request_frame() {
+                                        FrameRequest::ResyncRequired => {
+                                            if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
                                         }
-                                    } else if let Some(frame) = publisher.take() {
-                                        if !send_publisher_frame(&mut sender, frame).await {
-                                            break;
+                                        FrameRequest::WrongDeliveryMode => {
+                                            if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await { break; }
                                         }
-                                    } else {
-                                        let empty = serde_json::json!({ "FrameEmpty": {} }).to_string();
-                                        if sender.send(axum::extract::ws::Message::Text(empty)).await.is_err() {
-                                            break;
+                                        FrameRequest::Frame(frame) => {
+                                            if !send_publisher_frame(&mut sender, *frame).await { break; }
+                                        }
+                                        FrameRequest::Empty => {
+                                            let empty = serde_json::json!({ "FrameEmpty": {} }).to_string();
+                                            if sender.send(axum::extract::ws::Message::Text(empty)).await.is_err() { break; }
                                         }
                                     }
                                 }
@@ -1497,4 +1638,229 @@ async fn send_resync_required(
         .send(axum::extract::ws::Message::Text(json))
         .await
         .is_ok()
+}
+
+#[cfg(test)]
+mod publisher_connection_tests {
+    use super::*;
+    use crate::actor::{EngineUpdate, HostFailure, PublicBaseline, PublicBaselineSnapshot};
+
+    fn baseline(failure: Option<HostFailure>) -> PublicBaseline {
+        PublicBaseline {
+            timeline_generation: 7,
+            snapshot: PublicBaselineSnapshot {
+                seq: 4,
+                tick: 5,
+                day: 1,
+                phase: engine::TradingPhase::Continuous,
+                markets: Default::default(),
+                accounts: Default::default(),
+                daily_candles: Default::default(),
+                active_daily_candles: Default::default(),
+            },
+            civil_date: "2030-01-02".into(),
+            public_revision: 6,
+            public_report_ids: Vec::new(),
+            failure,
+        }
+    }
+
+    fn connection(delivery: DeliveryMode) -> WsPublisherConnection {
+        let baseline = baseline(None);
+        WsPublisherConnection::new(
+            delivery,
+            (
+                baseline.snapshot.seq,
+                baseline.snapshot.tick,
+                baseline.timeline_generation,
+            ),
+            baseline.failure,
+            120,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn failure() -> HostFailure {
+        HostFailure::step(&engine::session::StepFatal::InvariantViolation {
+            location: "server.step".into(),
+            description: "receipt chain broke".into(),
+        })
+    }
+
+    fn update(tick: u64, seq: u64) -> EngineUpdate {
+        use engine::session::protocol::{TickBatch, TickFrame};
+        EngineUpdate {
+            timeline_generation: 7,
+            update: Some(engine::session::protocol::EngineUpdate::TickBatch(
+                Box::new(TickBatch {
+                    frames: vec![TickFrame {
+                        tick,
+                        seq_from: seq,
+                        seq_to: seq,
+                        facts: Vec::new(),
+                        events: Vec::new(),
+                        timeseries_payload: Default::default(),
+                    }],
+                    runtime_snapshot: None,
+                    runtime_delta: None,
+                }),
+            )),
+            civil_date: "2030-01-02".into(),
+            public_revision: 6,
+            failure: None,
+        }
+    }
+
+    fn frame_tick(frame: PublisherFrame) -> u64 {
+        let Some(engine::session::protocol::EngineUpdate::TickBatch(batch)) = frame.update else {
+            panic!("fixture 应为 TickBatch")
+        };
+        batch.frames[0].tick
+    }
+
+    #[test]
+    fn failure_precedes_generation_and_resync_and_latches_after_delivery() {
+        let mut connection = connection(DeliveryMode::Pull);
+        connection.require_resync();
+        let mut failed = update(6, 4);
+        failed.timeline_generation = 6;
+        failed.failure = Some(failure());
+        let PublisherAction::HostFailure(delivered) = connection.ingest(failed.clone()) else {
+            panic!("故障必须先于旧 timeline 和 resync barrier")
+        };
+        assert!(connection.delivered_failure.is_none());
+        connection.failure_delivered(*delivered);
+        assert!(matches!(
+            connection.ingest(failed),
+            PublisherAction::Ignored
+        ));
+        assert!(matches!(
+            connection.request_frame(),
+            FrameRequest::ResyncRequired
+        ));
+    }
+
+    #[test]
+    fn covered_updates_timeline_changes_and_lag_keep_frame_barrier() {
+        let mut connection = connection(DeliveryMode::Pull);
+        assert!(matches!(
+            connection.ingest(update(5, 4)),
+            PublisherAction::Ignored
+        ));
+        assert!(matches!(connection.request_frame(), FrameRequest::Empty));
+        assert!(matches!(
+            connection.ingest(update(6, 4)),
+            PublisherAction::Buffered
+        ));
+        let mut replacement = update(7, 4);
+        replacement.timeline_generation = 8;
+        assert!(matches!(
+            connection.ingest(replacement),
+            PublisherAction::ResyncRequired {
+                reason: "timeline_changed",
+                ..
+            }
+        ));
+        assert!(connection.take_push_frame().is_none());
+        assert!(matches!(
+            connection.request_frame(),
+            FrameRequest::ResyncRequired
+        ));
+        connection.baseline_delivered(None);
+        connection.require_resync();
+        assert!(matches!(
+            connection.request_frame(),
+            FrameRequest::ResyncRequired
+        ));
+    }
+
+    #[test]
+    fn resync_preparation_clears_buffer_without_mutating_failed_baseline_state() {
+        let mut connection = connection(DeliveryMode::Pull);
+        assert!(matches!(
+            connection.ingest(update(6, 4)),
+            PublisherAction::Buffered
+        ));
+        connection.failure_delivered(failure());
+        let before = (
+            connection.baseline_seq,
+            connection.baseline_tick,
+            connection.timeline_generation,
+            connection.awaiting_resync,
+            connection.delivered_failure.clone(),
+        );
+        connection.prepare_resync();
+        assert!(connection.take_flush_frame().is_none());
+        assert_eq!(
+            (
+                connection.baseline_seq,
+                connection.baseline_tick,
+                connection.timeline_generation,
+                connection.awaiting_resync,
+                connection.delivered_failure.clone()
+            ),
+            before
+        );
+        let mut fresh = baseline(None);
+        fresh.timeline_generation += 1;
+        connection.install_baseline_cursor(&fresh);
+        assert!(connection.awaiting_resync);
+        connection.baseline_delivered(None);
+        assert!(!connection.awaiting_resync);
+        assert!(connection.delivered_failure.is_none());
+    }
+
+    #[test]
+    fn flush_actions_leave_incoming_update_unaccepted_until_send_succeeds() {
+        for (error, expected_all) in [
+            (FrameBufferError::MetadataTransition, false),
+            (FrameBufferError::BufferCapacityExceeded { limit: 1 }, true),
+        ] {
+            let mut connection = connection(DeliveryMode::Push);
+            connection.ingest(update(6, 4));
+            let PublisherAction::Flush {
+                update: incoming,
+                all,
+            } = connection.buffer_error(update(7, 4), error)
+            else {
+                panic!("Push 应返回待发送动作")
+            };
+            assert_eq!(
+                all, expected_all,
+                "MetadataTransition 应仅 flush 一帧，Push capacity 应 flush 全部 backlog"
+            );
+            let frame = connection.take_flush_frame().unwrap();
+            assert_eq!(frame_tick(frame), 6);
+            assert!(
+                connection.take_flush_frame().is_none(),
+                "发送失败前不得接受后继 update"
+            );
+            connection.accept_after_flush(*incoming).unwrap();
+            assert_eq!(frame_tick(connection.take_push_frame().unwrap()), 7);
+        }
+    }
+
+    #[test]
+    fn pull_capacity_clears_backlog_and_get_frame_rejects_push_mode() {
+        let mut pull = connection(DeliveryMode::Pull);
+        pull.ingest(update(6, 4));
+        assert!(matches!(
+            pull.buffer_error(
+                update(7, 4),
+                FrameBufferError::BufferCapacityExceeded { limit: 1 }
+            ),
+            PublisherAction::ResyncRequired {
+                reason: "publisher_buffer_capacity",
+                ..
+            }
+        ));
+        assert!(pull.take_flush_frame().is_none());
+        assert!(matches!(pull.request_frame(), FrameRequest::ResyncRequired));
+        let mut push = connection(DeliveryMode::Push);
+        assert!(matches!(
+            push.request_frame(),
+            FrameRequest::WrongDeliveryMode
+        ));
+    }
 }

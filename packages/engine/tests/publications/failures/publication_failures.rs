@@ -1,9 +1,9 @@
 //! 拒绝路径套件（报告公布面）：时间逆序、非法报告窗口、相位/排期偏离、
 //! 重复 ID、更正关系错配。全部类型化拒绝（绝不静默补默认值）。
 //!
-//! 共享基线（`base`/`request`）在 `super`。
+//! 共享基线（`Base`）在 `super`。
 
-use super::{base, request, OTHER};
+use super::{Base, OTHER};
 use crate::books_fixture::correction_books;
 use crate::fixture::d;
 use engine::accounting::closing::ClosingEngine;
@@ -20,9 +20,9 @@ use engine::information::{
 /// 时间逆序：公布早于批准 / 批准不晚于报告期末。
 #[test]
 fn time_inversion_rejected() {
-    let mut base = base();
+    let mut base = Base::valid_q1();
     // 公布早于批准。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.approved_at = CivilInstant::from_hms(base.q1_instant.date(), 19, 0, 0).unwrap();
     req.published_at = base.q1_instant;
     req.origin = PublicationOrigin::Correction;
@@ -34,7 +34,7 @@ fn time_inversion_rejected() {
         InformationError::PublishBeforeApproval { .. }
     ));
     // 批准落在报告期最后一天（3-31）之内：批准必须严格晚于期末。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.approved_at = CivilInstant::from_hms(d("2030-03-31"), 23, 0, 0).unwrap();
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
@@ -45,21 +45,15 @@ fn time_inversion_rejected() {
 /// 非法报告窗口：排期引用与请求期间不一致（Q1 排期挂 6 月期、年报挂 6 月期）。
 #[test]
 fn illegal_report_window_rejected() {
-    let mut base = base();
-    let req = request(
-        &base,
-        AccountingPeriod::from_ymd(2030, 6).expect("h1 period"),
-    );
+    let mut base = Base::valid_q1();
+    let req = base.publication_request(AccountingPeriod::from_ymd(2030, 6).expect("h1 period"));
     // Q1 排期指向 2030-03，请求期间却是 2030-06。
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
         InformationError::IllegalWindowPublication { .. }
     ));
     // 年报排期指向 12 月，请求期间 6 月。
-    let mut req = request(
-        &base,
-        AccountingPeriod::from_ymd(2030, 6).expect("h1 period"),
-    );
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 6).expect("h1 period"));
     req.kind = ReportKind::Annual;
     req.origin = PublicationOrigin::ScheduledDisclosure {
         fiscal_year: 2030,
@@ -75,16 +69,16 @@ fn illegal_report_window_rejected() {
 /// 相位与排期偏离：17:00 非披露相位；正确相位但错误日期；偏移越界。
 #[test]
 fn off_schedule_and_phase_rejected() {
-    let mut base = base();
+    let mut base = Base::valid_q1();
     // 17:00 —— 非披露相位。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.published_at = CivilInstant::from_hms(base.q1_instant.date(), 17, 0, 0).unwrap();
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
         InformationError::PublicationOutsidePhase { .. }
     ));
     // 正确相位、错误日期（次日 18:00）。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.published_at =
         CivilInstant::from_hms(base.q1_instant.date().next().expect("next day"), 18, 0, 0).unwrap();
     assert!(matches!(
@@ -92,7 +86,7 @@ fn off_schedule_and_phase_rejected() {
         InformationError::OffSchedulePublication { .. }
     ));
     // 偏移越界（8 > 7）。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.origin = PublicationOrigin::ScheduledDisclosure {
         fiscal_year: 2030,
         kind: ScheduledReportKind::Q1,
@@ -108,7 +102,7 @@ fn off_schedule_and_phase_rejected() {
 /// 不重复、计数器与最大 id 严格衔接）。
 #[test]
 fn duplicate_and_out_of_range_ids_rejected() {
-    let base = base();
+    let base = Base::valid_q1();
     let id = base.library.publication_ids()[0];
     let report = base
         .library
@@ -151,10 +145,10 @@ fn duplicate_and_out_of_range_ids_rejected() {
 /// 范围/期间/种类的既有公布；未知目标拒绝。
 #[test]
 fn correction_link_rejected_on_mismatch() {
-    let mut base = base();
+    let mut base = Base::valid_q1();
     let target = base.library.publication_ids()[0];
     // Correction 不带 supersedes。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.origin = PublicationOrigin::Correction;
     req.supersedes = None;
     assert!(matches!(
@@ -162,14 +156,14 @@ fn correction_link_rejected_on_mismatch() {
         InformationError::OriginSupersedesMismatch
     ));
     // Scheduled 带 supersedes。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.supersedes = Some(target);
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
         InformationError::OriginSupersedesMismatch
     ));
     // 未知目标。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.origin = PublicationOrigin::Correction;
     req.supersedes = Some(PublicationId::new(999));
     assert!(matches!(
@@ -211,7 +205,7 @@ fn correction_link_rejected_on_mismatch() {
             },
         )
         .expect("other company publishes its own version");
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.origin = PublicationOrigin::Correction;
     req.supersedes = Some(other_id);
     assert!(matches!(
@@ -219,7 +213,7 @@ fn correction_link_rejected_on_mismatch() {
         InformationError::CorrectionTargetMismatch { .. }
     ));
     // 范围与公司不一致：scope 的 MemberId 必须镜像公司 id。
-    let mut req = request(&base, AccountingPeriod::from_ymd(2030, 3).expect("q1"));
+    let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
     req.company = CompanyId(OTHER.to_string());
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
