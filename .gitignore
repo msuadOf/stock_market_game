@@ -122,5 +122,8 @@ artifacts/market-ui-performance/
 .tmp/
 /bindings/
 
-# Agent 机器生成的 JSON 记录；中文 Markdown 审计文档仍纳入版本管理
+# OOP 重构调查工作目录仅在本地保留，不纳入版本管理
+/agents/oop-refactor-audit/
+
+# Agent 机器生成的 JSON 记录；其他中文 Markdown 审计文档仍纳入版本管理
 /agents/**/*.json
