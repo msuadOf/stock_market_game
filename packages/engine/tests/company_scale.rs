@@ -121,9 +121,12 @@ fn restore_byte_identically(bytes: &[u8], boundary: &str) -> GameSession {
 
 #[test]
 fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
-    let mut session = GameSession::new(default_five_stock_setup(2, 10), SEED)
+    // 单股、两个 tick 足以生成真实计划，避免短引用校验重复构建五股历史。
+    let mut setup = default_five_stock_setup(2, 2);
+    setup.stocks.truncate(1);
+    let mut session = GameSession::new(setup, SEED)
         .expect("representative session constructs");
-    settle_natural_days(&mut session, 1, 10);
+    settle_natural_days(&mut session, 1, 2);
     let save = session.save().expect("healthy save");
     let bytes = serde_json::to_vec(&save).expect("save serializes");
     restore_byte_identically(&bytes, "representative checkpoint");

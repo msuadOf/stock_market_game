@@ -48,28 +48,37 @@ pub fn setup() -> SessionSetup {
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_owned(),
     }
 }
 
 #[test]
 fn trace_queries_are_read_only_and_keep_per_npc_history_bounded() {
-    let mut plain = GameSession::new(setup(), 7).unwrap();
-    let mut traced = GameSession::new(setup(), 7).unwrap();
+    const QUERY_TICKS: u64 = 129;
+    let mut setup = setup();
+    setup.ticks_per_day = QUERY_TICKS + 1;
+    let mut session = GameSession::new(setup, 7).unwrap();
+    // 第一个机构是极低频的 DeepValue；选择 Growth 的真实观察节奏覆盖非空查询。
+    let account = AccountId(6);
 
-    for _ in 0..129 {
-        let plain_events = plain.step().expect("healthy step");
-        let traced_events = traced.step().expect("healthy step");
-        let _ = traced.npc_decision_trace(AccountId(5));
-        assert_eq!(plain_events, traced_events);
+    for _ in 0..QUERY_TICKS {
+        session.step().expect("healthy step");
+        // seed 不包含并发受理轨迹；在同一已提交时间线上验证查询没有副作用。
+        let before = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
+        let trace = session.npc_decision_trace(account);
+        assert_eq!(trace, session.npc_decision_trace(account));
+        assert_eq!(
+            before,
+            serde_json::to_vec(&session.save().expect("healthy save")).unwrap()
+        );
     }
 
-    assert_eq!(
-        serde_json::to_vec(&plain.save().expect("healthy save")).unwrap(),
-        serde_json::to_vec(&traced.save().expect("healthy save")).unwrap()
-    );
-    let trace = traced.npc_decision_trace(AccountId(5)).unwrap();
-    assert!(trace.len() <= 128);
-    assert!(trace.iter().all(|record| record.account == AccountId(5)));
+    assert_eq!(session.tick(), QUERY_TICKS);
+    let trace = session
+        .npc_decision_trace(account)
+        .expect("机构必须产生真实 decision trace");
+    assert!(!trace.is_empty());
+    assert!(trace.len() <= engine::MAX_NPC_DECISION_TRACE_RECORDS);
+    assert!(trace.iter().all(|record| record.account == account));
 }

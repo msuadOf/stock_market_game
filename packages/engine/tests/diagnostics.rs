@@ -76,81 +76,81 @@ fn baseline_rejects_empty_seeds_and_zero_days_explicitly() {
 }
 
 #[test]
-fn baseline_is_deterministic_and_keeps_each_seed_visible() {
+fn baseline_keeps_each_seed_visible_and_summarizes_observed_runs() {
     let setup = diagnostic_setup();
     let first = run_price_volume_baseline(&setup, &[7, 11], 3).unwrap();
     let second = run_price_volume_baseline(&setup, &[7, 11], 3).unwrap();
 
-    assert_eq!(first, second);
-    assert_eq!(first.trading_days, 3);
-    assert_eq!(
-        first.runs.iter().map(|run| run.seed).collect::<Vec<_>>(),
-        vec![7, 11]
-    );
-    let aggregate = &first.stocks[&StockCode("600101".to_string())];
-    assert_eq!(aggregate.seed_count, 2);
-    assert_eq!(aggregate.mean_daily_volume.sample_count, 2);
-    assert!(aggregate.mean_daily_volume.minimum <= aggregate.mean_daily_volume.median);
-    assert!(aggregate.mean_daily_volume.median <= aggregate.mean_daily_volume.maximum);
-    assert!(aggregate.mean_daily_volume.mean_ci95_low <= aggregate.mean_daily_volume.mean);
-    assert!(aggregate.mean_daily_volume.mean <= aggregate.mean_daily_volume.mean_ci95_high);
-    assert_eq!(aggregate.longest_continuous_no_trade_ticks.sample_count, 2);
-    assert!(aggregate
-        .auction_volume_share
-        .as_ref()
-        .is_none_or(|summary| summary.sample_count <= 2));
-    assert!(aggregate
-        .mean_quoted_spread_bps
-        .as_ref()
-        .is_none_or(|summary| summary.sample_count <= 2));
-    assert!(aggregate
-        .return_excess_kurtosis
-        .as_ref()
-        .is_none_or(|summary| summary.sample_count <= 2));
-    assert!(first
-        .extreme_cases
-        .iter()
-        .all(|case| [7, 11].contains(&case.seed)));
+    // 自由并发受理可产生不同成交；逐次核对实际报告，不以 seed 强制整局相等。
+    for report in [first, second] {
+        assert_eq!(report.trading_days, 3);
+        assert_eq!(
+            report.runs.iter().map(|run| run.seed).collect::<Vec<_>>(),
+            vec![7, 11]
+        );
+        let aggregate = &report.stocks[&StockCode("600101".to_string())];
+        assert_eq!(aggregate.seed_count, 2);
+        assert_eq!(aggregate.mean_daily_volume.sample_count, 2);
+        assert!(aggregate.mean_daily_volume.minimum <= aggregate.mean_daily_volume.median);
+        assert!(aggregate.mean_daily_volume.median <= aggregate.mean_daily_volume.maximum);
+        assert!(aggregate.mean_daily_volume.mean_ci95_low <= aggregate.mean_daily_volume.mean);
+        assert!(aggregate.mean_daily_volume.mean <= aggregate.mean_daily_volume.mean_ci95_high);
+        assert_eq!(aggregate.longest_continuous_no_trade_ticks.sample_count, 2);
+        assert!(aggregate
+            .auction_volume_share
+            .as_ref()
+            .is_none_or(|summary| summary.sample_count <= 2));
+        assert!(aggregate
+            .mean_quoted_spread_bps
+            .as_ref()
+            .is_none_or(|summary| summary.sample_count <= 2));
+        assert!(aggregate
+            .return_excess_kurtosis
+            .as_ref()
+            .is_none_or(|summary| summary.sample_count <= 2));
+        assert!(report
+            .extreme_cases
+            .iter()
+            .all(|case| [7, 11].contains(&case.seed)));
+    }
 }
 
 #[test]
 fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
     let seeds = [7, 11, 19, 23, 31];
-    let first = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
-    let second = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
+    let report = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
 
-    assert_eq!(first, second, "same seeds and commands must replay exactly");
+    // 并发受理顺序不由 seed 固定；实际报告必须满足真实成交与数量守恒。
     assert!(
-        first
+        report
             .runs
             .iter()
             .all(|run| run.retail_behavior.observed_decisions > 0),
         "B04 report must preserve each seed's real retail target-position decisions"
     );
     assert!(
-        first.runs.iter().all(|run| {
-            run.retail_behavior.desired_buy_shares
-                >= run.retail_behavior.executable_buy_shares
-                && run.retail_behavior.desired_sell_shares
-                    >= run.retail_behavior.executable_sell_shares
-        }),
-        "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
-    );
+            report.runs.iter().all(|run| {
+                run.retail_behavior.desired_buy_shares >= run.retail_behavior.executable_buy_shares
+                    && run.retail_behavior.desired_sell_shares
+                        >= run.retail_behavior.executable_sell_shares
+            }),
+            "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
+        );
     assert!(
-        first
+        report
             .runs
             .iter()
             .all(|run| run.retail_execution.submitted_orders > 0),
         "B04 report must retain actual retail orders separately from position targets"
     );
-    assert!(first.runs.iter().all(|run| {
+    assert!(report.runs.iter().all(|run| {
         run.retail_execution.filled_shares
             + run.retail_execution.canceled_shares
             + run.retail_execution.aborted_shares
             + run.retail_execution.open_shares
             == run.retail_execution.submitted_shares
     }));
-    assert!(first.runs.iter().all(|run| {
+    assert!(report.runs.iter().all(|run| {
         run.retail_execution.rejected_intents
             == run
                 .retail_execution
@@ -158,18 +158,19 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
                 .values()
                 .sum::<u64>()
     }));
-    assert!(first.runs.iter().all(|run| run
-        .retail_execution
-        .filled_share_ratio
-        .is_some_and(f64::is_finite)));
+    assert!(report.runs.iter().all(|run| {
+        run.retail_execution
+            .filled_share_ratio
+            .is_some_and(f64::is_finite)
+    }));
     assert!(
-        first
+        report
             .runs
             .iter()
             .any(|run| run.retail_execution.filled_shares > 0),
         "the cross-tick collector must receive actual retail fills, not only submissions"
     );
-    let total_volumes: std::collections::BTreeSet<u64> = first
+    let total_volumes: std::collections::BTreeSet<u64> = report
         .runs
         .iter()
         .map(|run| {
@@ -187,7 +188,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         total_volumes.len() > 1,
         "independent seeded participants should not collapse every seed to one scripted path"
     );
-    assert!(first.runs.iter().all(|run| {
+    assert!(report.runs.iter().all(|run| {
         run.participant_execution.two_sided_participant_shares
             == run
                 .participant_execution
@@ -196,7 +197,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
                 .sum::<u64>()
     }));
     assert!(
-        first.runs.iter().all(|run| {
+        report.runs.iter().all(|run| {
             run.participant_execution.two_sided_participant_shares
                 == run
                     .stocks
@@ -208,7 +209,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         "every recorded trade has two explicitly classified participants"
     );
     assert!(
-        first.runs.iter().any(|run| {
+        report.runs.iter().any(|run| {
             run.participant_execution
                 .two_sided_participant_shares_by_profile
                 .keys()

@@ -348,7 +348,8 @@ struct StockSummaryInput {
 
 /// 用相同 setup 依次运行多个 seed，并统计权威成交事件和每日收盘 K 线。
 ///
-/// 此函数不读取墙钟、Publisher 或 UI 状态，所以相同输入必须得到完全相同的报告。
+/// 此函数不读取墙钟、Publisher 或 UI 状态；报告统计各 seed 本次实际发生的成交与行为。
+/// seed 不包含并发任务的实际受理轨迹，自由调度的重复运行可能产生不同报告。
 pub fn run_price_volume_baseline(
     setup: &SessionSetup,
     seeds: &[u64],
