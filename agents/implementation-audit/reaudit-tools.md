@@ -2,7 +2,7 @@
 
 ## 范围与判定方法
 
-- 当前源码基线为 `7198348`（产品代码同 `dddcc31`）；在 `b89afb3..8cf34a1` 原核查基础上，已继续逐项检查 `8cf34a1..dddcc31` 的代码和政策差异。本记录只复核旧审计 G21、G26、G27、G39、Q05，及相关 build/CI/script 契约。没有运行全量回归、构建或 K7 矩阵，也没有修改生产代码。
+- 当前源码基线为 `2247f4f`；在 `b89afb3..8cf34a1` 原核查基础上，已继续逐项检查后续代码和政策差异。本记录只复核旧审计 G21、G26、G27、G39、Q05，及相关 build/CI/script 契约。没有运行全量回归、构建或 K7 矩阵，也没有修改生产代码。
 - 完整阅读了 `AGENTS.md`、`docs/principles.md`、`agents/implementation-audit/implementation-audit-2026-10-02.md`、`docs/superpowers/plans/2026-09-24-single-world-multithreading.md` 和 `docs/decisions/0028-tagged-release-and-static-pages.md`。另全文读取更新后的 ADR-0028、testing、actions-cache，并核对量价清单、测试清理清单、脚本与实际调用路径。
 - “缺”表示契约问题在当前生产/工具路径仍存在；“部分”表示存在有效守卫但闭环不足；“原误判”表示旧审计错误归因或把本来允许的行为称作错误。自由并发下不同运行顺序不自动等于重放失败。
 
@@ -26,7 +26,7 @@
 
 - 依据：现行ADR-0028要求冻结SHA、拒绝标签移动，并在公开Release前核验上传资产；发布不再依赖CI通过。
 - 当前链路：`.github/workflows/release.yml` 为 validate → distributions → publish → pages。脚本83行先查询tag，86行上传draft，随后重新读取远端资产并核对名称、大小和SHA-256；`scripts/publish-release.mjs:109–113` 在公开前再次解析tag。与RELEASE_SHA不一致或查询失败时不会执行公开，已有draft保留并显式报错。
-- `0e64ae7` 已补上这个此前缺少的守卫。本轮读取正常路径的二次查询顺序断言及“上传draft期间tag移动”行为测试，并在定向短测中执行通过；该用例确认两次SHA查询、已创建draft且未调用edit。
+- `0e64ae7` 已补上这个此前缺少的守卫。上一基线复核读取正常路径的二次查询顺序断言及“上传draft期间tag移动”行为测试，并在定向短测中执行通过；该用例确认两次SHA查询、已创建draft且未调用edit。本轮对应代码未变且未重跑。
 - 判定：核销G27，不再列为未实现。仍然存在两个GitHub请求之间的平台竞争窗口，但原要求是补公开前重查，不是实现平台级原子锁，不能据此继续保留同一缺口。
 
 ### G39 — K7 跨 worker 完整产物相等：缺（需求判断不变，工具契约仍过严）
@@ -36,6 +36,7 @@
 - 当前工具门禁：`run-escrow-verification-matrix.mjs:583-594` 对所有非负控模式保存首个完整 artifact vector，后续必须逐字节相等；vector 包含 state、event stream、receipts、save slot 的 hash。独立 contracts 入口 `scripts/simulation/escrow-verification-contracts.mjs:135-160` 也要求每种 worker budget/repeat 与 `1/0` 的 artifacts 和 execution coverage JSON 相等。矩阵包含 1/2/4/auto worker，故这里不是只验证同一已发生受理事实的重放，而是把跨 worker 的完整交易输出相等当作硬门禁。
 - 与 `b89afb3` 对照：完整产物比较和跨预算矩阵仍在；`8cf34a1` 改动了脚本/fixture 的证据组织与校验，但没有移除这项全 artifact 相等要求。`8cf34a1..dddcc31` 对该harness仅作格式调整，仍未固定实际受理轨迹；新增session测试通过先确认实际受理再提交下一单消除错误fixture假设，但没有改变K7门禁。
 - 判定：旧审计把“尚未冻结同一受理轨迹”列为工具遗漏，是有效发现；但不能据此推导生产必须跨 worker 产生相同整局事件顺序。当前工具仍把非确定跨账户/股票调度误判为 determinism drift，故契约缺口保留。应验证局部受理事实、资源守恒、价格时间、依赖、失败隔离等不变量；只有输入了完全相同的受理事实时，才把结果相等称为 replay 要求。不能通过删除失败负控或守恒断言来规避。
+- `7198348..2247f4f` 新增Session/规模测试已改为各自实际成交对账、存档立即恢复等价，量价报告注释及测试也移除自由调度必然整局一致的错误前提；但本节两个K7比较入口没有变化，重新查看仍要求完整artifact相等。因此不能将别处测试契约修正核销为G39完成。
 
 ### Q05 — scripts 测试正式发现与持续覆盖策略：部分已有，入口待定
 
@@ -53,10 +54,12 @@
 
 ## 定向验证
 
-使用Node v25.8.2执行：
+上一基线 `7198348` 复核使用Node v25.8.2执行（本轮未重跑）：
 
 ```sh
 node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/publish-release.test.mjs scripts/release-policy.test.mjs scripts/distribution-workflow.test.mjs scripts/cache-workflow.test.mjs
 ```
 
 退出0，4个测试文件通过、0失败，reporter耗时1526.195603ms；文件并发4，每case及整个命令进程树期限均为10秒。没有运行完整回归、K7、构建、浏览器或线上验收。测试使用替代GitHub调用核查脚本分支，不等于真实网络发布。
+
+本轮完整读取 `scripts/simulation/baseline-run.test.mjs` 的新增差异：清理阶段在原剩余期限内等待被终止后代PID消失，替代执行器处理已中止signal，短fixture调整调度余量及对应错误断言。没有放宽正式共享deadline，也没有修改生产baseline执行器或K7矩阵；只核对源码，未将其他任务的运行结果计为本轮通过。

@@ -68,6 +68,8 @@ OOP 新 `OperatingDayRun::advance` 只按阶段调用 shock、due、行业 flow�
 
 trace writer 能从给定 `events` 取本账户 OrderAccepted/OrderCanceled ID（`packages/engine/src/session/decision_chain.rs:774-811`），但 `record_plan_root_diagnostics` 的生产调用固定传 `&[]`（同文件 754-770 行），当前新异步 coordinator 仍调用该方法（`packages/engine/src/session/plan_chain_candidates.rs:371-377`）。因此不是订单 ID 符号不存在，而是这条 trace 生成时没有被提供交易事件。`budget_constraints` 仅从 terminal plans 的 status 派生（decision_chain.rs:812-817），也不代表真实 `AllocationConstraint`。保留 DEV 隔离已有事实，不把空 trace 误称未提交的交易事实。
 
+继续核对至 `2247f4f`，上述生产路径未变。`diagnostic_parity.rs` 改为同一会话中重复查询前后save字节不变、trace稳定且有界，并使用交易日与较频繁观察的Growth账户；这验证查询只读，不验证trace包含实际受理订单ID。`causal_diagnostics.rs` 改用三个交易日、显式跨休市日的真实成交fixture；`diagnostics.rs` 测试改为逐次报告核对seed、统计及成交数量守恒，不再断言自由调度整局相等。生产报告注释明确seed不含实际受理轨迹；微结构 `DirectionPersistenceAccumulator::consume` 将嵌套匹配等价合并，仍只消费Execution中有side的事实，逐股方向及pairs/same计数不变。没有补上诊断订单关联，不能据此核销G37；本轮未执行这些Rust测试。
+
 ### G38 — 续行与新机会预算分类未进入生产请求
 
 预算排序实现 `ExistingPlan` 优先于 `NewOpportunity`（`packages/engine/src/plans/allocation.rs:115-126`），但当前生产提交点 `decision_chain.rs:971-982,1235-1246` 都标 `ExistingPlan`。全仓目前没有 `AllocationClass::NewOpportunity` 生产构造调用（只见优先级分支定义），故续行与新机会竞争的分类仍未进入分配器。这是同一账户计划分类，不应泛化到不同账户撮合。相同调用点的 `AllocationExperience::default()` 不列为缺口：机构真实失败/信心已在其上游分析与计划决策中消费；把它再传给通用 allocator 会重复施加惩罚，不是 G38 的实现要求。
