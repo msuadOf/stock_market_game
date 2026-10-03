@@ -28,7 +28,7 @@
 
 ## 必要修正与失败记录
 
-规模恢复用例原来比较两个自由调度实例的未来事件、PlanId 和整档字节，与 ADR-0017、ADR-0018 及 `docs/testing.md` 的现行实际受理契约不符。保留初始 seed 确定性和精确恢复，两个实例分别对账真实 Trade／双边 Fill、实收费用和现金、逐股股份、日 K、完整 DayBoundary 与末尾全字段恢复，并加入现金、股份、成交数量及缺少日界的负控制。跨季度保留 attention、experience、public_library 对照，新增中途和两个末尾 checkpoint 的精确字节恢复、计划引用与历史报告留存。首次四项失败及 10 万超时记录均保留。
+规模恢复用例原来比较两个自由调度实例的未来事件、PlanId 和整档字节，与 ADR-0017、ADR-0018 及 `docs/testing.md` 的现行实际受理契约不符。保留初始 seed 确定性和精确恢复，两个实例分别对账真实 Trade／双边 Fill、实收费用和现金、逐股股份、日 K、完整 DayBoundary 与末尾全字段恢复，并加入现金、股份、成交数量及缺少日界的负控制。跨季度保留 `npc_attention`、`retail_experience`、`public_library` 对照，新增中途和两个末尾 checkpoint 的精确字节恢复、计划引用与历史报告留存。首次四项失败及 10 万超时记录均保留。
 
 诊断 feature 验收发现 actor 无条件预期 Unsupported；修正为按编译 feature 区分，debug／release 诊断分支及默认编译均验证。诊断查询改用实际会观察的 Growth 机构，在同一已提交时间线比较查询前后存档和 trace，避免低频 DeepValue 的空样本及无效跨未来比较。causal fixture 使用既有公司发行股份和 ST 类别、全部 retail 风格及三个真实交易日，保留真实成交、来源、守恒和篡改拒绝检查，在 1／2／8 Rayon workers 下通过。价格成交量基线保留 20 日、5 seed，删除仅用于错误跨运行相等的冗余长运行，全部有效行为和统计断言保留；公开文档同步说明实际调度契约。
 
@@ -38,6 +38,10 @@ shared deadline fixture 的初始真实 I/O 清理预算过小；另有 SIGKILL 
 
 ## 发布与适用范围
 
-Release 尚未启动。本地最终回归已结束；保存记录后，fast-forward 合入 `main`，将其冻结 SHA 与新的 `test-*` 标签同步，跟进 GitHub Actions 的三平台构建、十组 manifest、Release 资产完整性校验、Pages 和缓存清理。实际标签、SHA、run 和下载地址将在完成后原位更新。
+本轮修正与验收记录已 fast-forward 合入 `main` 并同步，发布源码为 `b76ece39b3a1635adde52da07375607f19b56ecc`。新标签为 `test-20261003-075118`，对应 [GitHub Actions run 37108236778](https://github.com/msuadOf/stock_market_game/actions/runs/37108236778)。原子非强制同步 main 与标签时，GitHub 使用当前账户权限跳过了要求 Pull Request 的分支规则；未强制推送、改写历史或移动旧标签。
+
+[test Release 已公开](https://github.com/msuadOf/stock_market_game/releases/tag/test-20261003-075118)，`prerelease=true`、`draft=false`，完整 Actions run 最终为 `completed / success`。共享生产前端及三平台 Desktop、Server、WebUI Server 构建全部通过，publish、Pages deploy 和末尾 prune-caches 均成功；`pages / build` 因复用本轮 site artifact 跳过，分发内部清理由发布末尾统一执行，均属于设计内的 skipped。发布链路未调用 CI 或 smoke。
+
+下载十组 manifest 和 `release-source.json` 后逐项核对：来源 SHA 为上述发布提交，35 个资产的名称集合、大小和 GitHub 远端 SHA-256 与 manifest 完全一致，下载的 11 份 JSON 自身大小和摘要也一致。Release 说明已更新为中文。Pages 成功只表示本轮静态制品部署，不等于公网完整游戏验收。后续仅更新本记录，不移动已发布标签或覆盖资产。
 
 原始日志、JSON、trace 和临时 runner 按忽略规则仅保留本地，不假称都可从 GitHub 下载。额外 K7 after/sensitivity 矩阵、真实 UI 性能报告、三平台 GUI 安装、签名、公证不属于本轮自动化测试与发行范围，未宣称通过。现有 Rust runner 没有每个普通 case 独立十秒 watchdog，批次通过不能证明逐 case 十秒上限。金额分、股数、T+1、实际受理顺序和日终存档语义保持不变。
