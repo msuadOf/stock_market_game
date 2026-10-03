@@ -1,0 +1,2261 @@
+{
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "actions": [
+    {
+      "id": "engine-pipeline-01-A01",
+      "title": "AccountBudget 快照加载 / apply_update / lane 补丁采纳 API",
+      "owner": "AccountBudget",
+      "methods": [
+        "ensure_from_snapshot",
+        "ensure_sellable_from_snapshot",
+        "apply_update",
+        "adopt_cash_lane",
+        "adopt_shares_lane"
+      ],
+      "callers": [
+        "AccountValidationState::prepare_place",
+        "AccountValidationState::prepare_account_round"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/account_validation.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "account_validation_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::account_validation_driver_tests::account_validation_independent_share_reservations_of_one_account_use_two_workers",
+          "session::pipeline::account_validation_driver_tests::account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R103",
+          "R104"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "AccountValidationState::ensure_account_budget → AccountBudget::ensure_from_snapshot：延迟物化账户现金及其缺失条目不变量，应由拥有可变预算的资源值负责。",
+          "implemented_owner": "AccountBudget",
+          "actual_methods": [
+            "ensure_from_snapshot",
+            "ensure_sellable_from_snapshot",
+            "apply_update",
+            "adopt_cash_lane",
+            "adopt_shares_lane"
+          ],
+          "production_callers": [
+            "AccountValidationState::prepare_place",
+            "AccountValidationState::prepare_account_round"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "AccountValidationState::ensure_sellable_budget → AccountBudget::ensure_sellable_from_snapshot：延迟物化逐股票股份是预算不变量，且必须继续使用不可变的 P1 来源。",
+          "implemented_owner": "AccountBudget",
+          "actual_methods": [
+            "ensure_from_snapshot",
+            "ensure_sellable_from_snapshot",
+            "apply_update",
+            "adopt_cash_lane",
+            "adopt_shares_lane"
+          ],
+          "production_callers": [
+            "AccountValidationState::prepare_place",
+            "AccountValidationState::prepare_account_round"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "AccountValidationState::apply_budget_update → AccountBudget::apply_update：预留更新应归预算结构体所有并保持现金与股份分离；该更新不会失败，因为 BudgetUpdate 携带已计算完成的值。",
+          "implemented_owner": "AccountBudget",
+          "actual_methods": [
+            "ensure_from_snapshot",
+            "ensure_sellable_from_snapshot",
+            "apply_update",
+            "adopt_cash_lane",
+            "adopt_shares_lane"
+          ],
+          "production_callers": [
+            "AccountValidationState::prepare_place",
+            "AccountValidationState::prepare_account_round"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 4,
+          "requirement": "AccountValidationState::prepare_account_round worker merge → AccountBudget lane-patch adoption API：成功的 Cash worker 只补丁账户现金，Shares worker 只补丁该股票的可卖数量；AccountBudget 应负责这些字段写入，状态协调器则保留 lane 选择和采纳时机。",
+          "implemented_owner": "AccountBudget",
+          "actual_methods": [
+            "ensure_from_snapshot",
+            "ensure_sellable_from_snapshot",
+            "apply_update",
+            "adopt_cash_lane",
+            "adopt_shares_lane"
+          ],
+          "production_callers": [
+            "AccountValidationState::prepare_place",
+            "AccountValidationState::prepare_account_round"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "engine-pipeline-03-A02",
+      "title": "AuctionStockShadow 和 IncrementalAuctionStockCoordinator",
+      "owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+      "methods": [
+        "apply_round",
+        "apply_operation",
+        "finish",
+        "validate_identities"
+      ],
+      "callers": [
+        "IncrementalAuctionStockCoordinator::apply_round",
+        "IncrementalAuctionStockCoordinator::finish"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/auction_day_end.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "incremental_auction_round_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::checked_auction_boundary_distinguishes_opening_rollover_and_closing_day_end",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::checked_auction_boundary_preserves_phase_tick_and_day_first_errors",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_rejects_each_live_order_family_before_mutating_candidate",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_overflow_keeps_original_candidate_partial_progress",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_duplicate_identity_does_not_commit_projection_buffers",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_rejects_zero_and_regressing_fill_before_committing_buffers",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_child_quantity_mismatch_discards_pending_parent_changes",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_is_phase_independent_and_publishes_one_closed_candle_boundary",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_plan_failure_precedes_day_overflow_and_leaves_authority_untouched"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R082",
+          "R083",
+          "R084",
+          "R085",
+          "R086",
+          "R087",
+          "R088",
+          "R089",
+          "R090"
+        ],
+        "passed": 9,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "AuctionStockShadow::from_post_expiry → AuctionStockShadow::from_post_expiry：已正确负责从经校验的 P0 后股票输入构造状态；保留现有封装。",
+          "implemented_owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "production_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "apply_auction_stock_round → AuctionStockShadow::apply_round：轮次状态变更和 lifecycle 计数校验仅操作一个 shadow。",
+          "implemented_owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "production_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "apply_auction_operation → AuctionStockShadow::apply_operation：下单／撤单处理将该股票的订单簿、envelope ledger、receipt 和事实作为一个内聚的状态转换进行变更。",
+          "implemented_owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "production_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 4,
+          "requirement": "finish_auction_stock → AuctionStockShadow::finish：消耗自身的股票尾部执行负责股票局部 candidate 上的竞价完成和日界转换。",
+          "implemented_owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "production_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 5,
+          "requirement": "validate_incremental_operation_identities → IncrementalAuctionStockCoordinator::validate_identities：重放和订单 ID 可序列化校验以 coordinator 拥有的身份集合为依据。",
+          "implemented_owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "production_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [
+        {
+          "id": "pipeline-R2-E01",
+          "optional": false,
+          "title": "纠正既有动作的局部受理语义说明",
+          "requirements": [
+            "沿用旧 receiver 迁移，不改算法。"
+          ],
+          "status": "已实施，不新增目标计数",
+          "owner": "AuctionStockShadow / IncrementalAuctionStockCoordinator",
+          "actual_methods": [
+            "apply_round",
+            "apply_operation",
+            "finish",
+            "validate_identities"
+          ],
+          "actual_callers": [
+            "IncrementalAuctionStockCoordinator::apply_round",
+            "IncrementalAuctionStockCoordinator::finish"
+          ],
+          "details": "ADR-0017顶部与ADR-0018§7现行局部受理决定登记在对应实施/独立复核；未用sealed identity替代交易优先级。"
+        }
+      ],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "engine-pipeline-03-A03",
+      "title": "AuctionLifecycleProjector（私有投影辅助对象，拥有 parent order 与 retail lifecycle 投影）",
+      "owner": "AuctionLifecycleProjector",
+      "methods": [
+        "new",
+        "apply",
+        "clear_child"
+      ],
+      "callers": [
+        "apply_finished_candidate"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/auction_day_end.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "auction_refactor_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_duplicate_identity_does_not_commit_projection_buffers",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_rejects_zero_and_regressing_fill_before_committing_buffers",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::auction_lifecycle_child_quantity_mismatch_discards_pending_parent_changes"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R086",
+          "R087",
+          "R088"
+        ],
+        "passed": 3,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "apply_auction_lifecycle_projection → AuctionLifecycleProjector::apply：这段较长的投影负责由类型化操作事实和 receipt 驱动的内聚 parent-child 及 retail 事件状态转换。",
+          "implemented_owner": "AuctionLifecycleProjector",
+          "actual_methods": [
+            "new",
+            "apply",
+            "clear_child"
+          ],
+          "production_callers": [
+            "apply_finished_candidate"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "clear_parent_child → AuctionLifecycleProjector::clear_child：该函数强制维护 projector 的活动 child order 身份和剩余数量不变量。",
+          "implemented_owner": "AuctionLifecycleProjector",
+          "actual_methods": [
+            "new",
+            "apply",
+            "clear_child"
+          ],
+          "production_callers": [
+            "apply_finished_candidate"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "push_pending_plan_event → 移除，或在 AuctionLifecycleProjector 中直接追加到缓冲区：当前辅助函数只向调用方拥有的 Vec 追加值，没有独立领域行为或状态。",
+          "implemented_owner": "AuctionLifecycleProjector",
+          "actual_methods": [
+            "new",
+            "apply",
+            "clear_child"
+          ],
+          "production_callers": [
+            "apply_finished_candidate"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "engine-pipeline-05-A01",
+      "title": "private ContinuousStockRoundProcessor",
+      "owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+      "methods": [
+        "new",
+        "run",
+        "reject_place",
+        "record_place_fact",
+        "apply_receipts",
+        "fill_receipts",
+        "record_fill"
+      ],
+      "callers": [
+        "process_continuous_stock_step_inner"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/continuous_matching.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals"
+        ],
+        "executed_filters": [
+          "session::pipeline::continuous_matching_tests::fill_receipts_loads_only_the_incoming_order_and_traded_maker",
+          "session::pipeline::continuous_matching_tests::symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R105",
+          "R106"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "process_continuous_stock_step_inner 的局部状态和操作循环 → ContinuousStockRoundProcessor::run：这些值的生命周期仅限一个股票轮次，并会在按序应用操作时一并变化。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "reject_place and push_place_execution_fact → ContinuousStockRoundProcessor::reject_place / record_place_fact：二者都会更新同一组由账本支撑的轮次日志，必须保持为单个原子操作结果。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "fill_receipts and fill_receipt → private ContinuousStockRoundProcessor receipt methods：持续演进的 envelope 审计/序号状态属于该轮；费用转换运算仍交由 FillTransition 处理。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 4,
+          "requirement": "validate_and_apply → ContinuousStockRoundProcessor::apply_receipts：收据校验和终止项移除作为一个操作修改处理器持有的账本。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 5,
+          "requirement": "独立/初始工作线程路径中的 validate_private_market_ledger → ContinuousStockRoundProcessor 轮次结束（仅针对该已完成的工作线程候选状态）：初始或独立 worker 持有本边界所校验的 Market 和 EnvelopeLedger；这不涵盖之后的跨轮最终状态。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 6,
+          "requirement": "validate_private_market_ledger in IncrementalContinuousStockCoordinator::finish_for_tick → 保留在协调器消费式 finish_for_tick 边界上：这是所有轮次和 continuation 均已排空后的跨轮最终状态检查。轮次局部处理器已返回其 Market 和 EnvelopeLedger，无法持有最终累计状态。",
+          "implemented_owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "production_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [
+        {
+          "id": "pipeline-R2-E03",
+          "optional": true,
+          "title": "ContinuousFillReceiptProjection 聚合逐成交腿累积状态",
+          "requirements": [
+            "capture 初始化 incoming 并在原位置应用可选 resolution；record_trade 原样计算 gross、buyer/seller key 与各自 filled_value_before，再依次调用 record_fill。",
+            "record_fill / take_ordinal 管理 states 和 ordinals 的联合迁移，保留 filled_value 对照、数量/金额运算、费用计算、ordinal 递增、ReceiptLocalKey 构造、filled_qty 运算与 Envelope::apply 的原顺序。",
+            "finish 消耗自身返回原 receipts/states/ordinals 三元结果，后续市价单余量释放和私有 ledger 验证仍在既有 caller。"
+          ],
+          "status": "已实施，不新增目标计数",
+          "owner": "ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "capture",
+            "run",
+            "record_fill"
+          ],
+          "actual_callers": [
+            "ContinuousStockRoundProcessor::fill_receipts"
+          ],
+          "details": "run 消耗单Place owned states/ordinals/receipts；record_trade行为位于run原序循环，finish行为为run尾部返回原三元结果；checked ordinal更新复用纯take_ordinal helper，映射仍由builder唯一持有，无第二owner。"
+        },
+        {
+          "id": "pipeline-R2-E02",
+          "optional": false,
+          "title": "纠正既有动作的局部受理语义说明",
+          "requirements": [
+            "沿用旧 receiver 迁移，不改算法。"
+          ],
+          "status": "已实施，不新增目标计数",
+          "owner": "ContinuousStockRoundProcessor / ContinuousFillReceiptProjection",
+          "actual_methods": [
+            "new",
+            "run",
+            "reject_place",
+            "record_place_fact",
+            "apply_receipts",
+            "fill_receipts",
+            "record_fill"
+          ],
+          "actual_callers": [
+            "process_continuous_stock_step_inner"
+          ],
+          "details": "ADR-0017顶部与ADR-0018§7现行局部受理决定登记在对应实施/独立复核；未用sealed identity替代交易优先级。"
+        }
+      ],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "engine-pipeline-10-A01",
+      "title": "ExperienceUpdateMode（封闭参数枚举）",
+      "owner": "ExperienceUpdateMode",
+      "methods": [
+        "InstitutionalFacts(ExperienceMoment)"
+      ],
+      "callers": [
+        "project_institutional_receipts",
+        "AccountFillProjection::apply_order"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/retail_projection.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "retail_projection_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::account_settlement_tests::institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically",
+          "session::pipeline::account_settlement_tests::institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent",
+          "session::pipeline::account_settlement_tests::institutional_exit_profit_requires_net_cash_after_actual_fees",
+          "session::pipeline::retail_projection_tests::institutional_exit_missing_actual_fee_history_returns_no_patch"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R099",
+          "R100",
+          "R101",
+          "R120"
+        ],
+        "passed": 4,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "enum ExperienceUpdateMode { Retail, InstitutionalFacts } + project_receipts(mode, Option<ExperienceMoment>) → enum ExperienceUpdateMode { Retail, InstitutionalFacts(ExperienceMoment) }：机构时间是该分支的必需输入，零售分支不应能携带/缺失它；消除非法的 InstitutionalFacts + None 组合。",
+          "implemented_owner": "ExperienceUpdateMode",
+          "actual_methods": [
+            "InstitutionalFacts(ExperienceMoment)"
+          ],
+          "production_callers": [
+            "project_institutional_receipts",
+            "AccountFillProjection::apply_order"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "project_retail_account(..., mode, moment) 中 mode match 与 moment.expect(...)；project_receipts 两个入口 → project_retail_account(..., mode)，按模式变体取得 ExperienceMoment；两个入口构造各自变体：让领域模式与其数据一起传递，避免内部 panic 和重复的分离参数。",
+          "implemented_owner": "ExperienceUpdateMode",
+          "actual_methods": [
+            "InstitutionalFacts(ExperienceMoment)"
+          ],
+          "production_callers": [
+            "project_institutional_receipts",
+            "AccountFillProjection::apply_order"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "engine-pipeline-11-A01",
+      "title": "StockStreamCoordinator<S>（从 drive_stock_stream 提取的私有 per-tick owner）",
+      "owner": "StockStreamCoordinator<S>",
+      "methods": [
+        "enqueue_ready",
+        "dispatch_ready",
+        "receive_completion",
+        "return_idle",
+        "poll_progress",
+        "drive"
+      ],
+      "callers": [
+        "drive_stock_stream"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/stock_stream.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "stock_stream::tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::stock_stream::tests::stock_notification_without_payload_is_an_explicit_error",
+          "session::pipeline::stock_stream::tests::disconnected_notification_receiver_is_an_explicit_error",
+          "session::pipeline::stock_stream::tests::stale_root_notification_does_not_take_stock_payload",
+          "session::pipeline::stock_stream::tests::duplicate_stock_completion_is_an_explicit_error",
+          "session::pipeline::stock_stream::tests::disconnected_stock_payload_receiver_is_an_explicit_error",
+          "session::pipeline::stock_stream::tests::dropping_coordinator_closes_worker_payload_receiver"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R091",
+          "R092",
+          "R093",
+          "R094",
+          "R095",
+          "R096"
+        ],
+        "passed": 6,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "drive_stock_stream 内局部 pending/in_flight/dispatch 循环 → StockStreamCoordinator::enqueue_ready / dispatch_ready / receive_completion / return_idle：per-tick 协调状态与 transitions 形成一个显式 lifecycle；命名可显露 invariants，同时不使其成为持久 session authority。",
+          "implemented_owner": "StockStreamCoordinator<S>",
+          "actual_methods": [
+            "enqueue_ready",
+            "dispatch_ready",
+            "receive_completion",
+            "return_idle",
+            "poll_progress",
+            "drive"
+          ],
+          "production_callers": [
+            "drive_stock_stream"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "drive_stock_stream 的 notification 和 stock payload 接收分支 → StockStreamCoordinator::poll_progress：typed readiness 与 payload ownership 保持区别，并集中维护 stock notification 位于其 payload 之后的不变量。",
+          "implemented_owner": "StockStreamCoordinator<S>",
+          "actual_methods": [
+            "enqueue_ready",
+            "dispatch_ready",
+            "receive_completion",
+            "return_idle",
+            "poll_progress",
+            "drive"
+          ],
+          "production_callers": [
+            "drive_stock_stream"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "drive_stock_stream 的 rayon::in_place_scope caller-thread wrapper → StockStreamCoordinator::drive：coordinator 必须留在调用方线程，以免宿主 coordinators 等待时占用 Rayon pool。",
+          "implemented_owner": "StockStreamCoordinator<S>",
+          "actual_methods": [
+            "enqueue_ready",
+            "dispatch_ready",
+            "receive_completion",
+            "return_idle",
+            "poll_progress",
+            "drive"
+          ],
+          "production_callers": [
+            "drive_stock_stream"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-N01",
+      "title": "聚合同订单连续交易诊断的临时依赖状态",
+      "owner": "ContinuousLifecycleEventBatch",
+      "methods": [
+        "from_events",
+        "emit_event",
+        "emit_fill",
+        "finish"
+      ],
+      "callers": [
+        "order_lifecycle_events"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "lifecycle_batch_"
+        ],
+        "executed_filters": [
+          "session::pipeline::continuous_lifecycle_projection::tests::lifecycle_batch_preserves_quantity_and_dependency_first_errors",
+          "session::pipeline::continuous_lifecycle_projection::tests::lifecycle_batch_rejects_unresolved_dependencies_without_publishing_output"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R066",
+          "R067"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "六项共同状态由单次批拥有；构造阶段的数量映射不机械延长生命周期",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "struct字段与from_events"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:137",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "先数量映射完整性与数量链，再Submitted防重，再按原event循环；混合错误保持首错",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "from_events"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:147",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "同OrderId Submitted→Fill→terminal联合推进，无关订单原相对处理不变",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "emit_event",
+            "emit_fill"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:224",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 4,
+          "requirement": "finish只检查pending空后交出owned ordered，错误丢弃buffer不写Session",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "finish"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:287",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 5,
+          "requirement": "原真实finalizer链调用owner，全部成功后唯一append，不改parent/PlanBook/receipt authority",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "order_lifecycle_events",
+            "project_continuous_retail_lifecycle"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:124",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 6,
+          "requirement": "缺项/多项、broken chain、重复Submitted、双terminal、unresolved及first-error边界",
+          "implemented_owner": "ContinuousLifecycleEventBatch",
+          "actual_methods": [
+            "lifecycle_batch_preserves_quantity_and_dependency_first_errors",
+            "lifecycle_batch_rejects_unresolved_dependencies_without_publishing_output"
+          ],
+          "production_callers": [
+            "order_lifecycle_events"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs::tests",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+          "runtime_case_ids": [
+            "R066",
+            "R067"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-N02",
+      "title": "以 AuctionTickBoundary value object 表达 checked 收尾边界",
+      "owner": "AuctionTickBoundary",
+      "methods": [
+        "capture",
+        "tick_after",
+        "finish_auction",
+        "finish_day"
+      ],
+      "callers": [
+        "apply_session_auction_transaction",
+        "finish_auction_shards"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/auction_day_end.rs",
+        "packages/engine/src/session/pipeline/auction_tick_transaction.rs",
+        "packages/engine/src/session/pipeline/stock_stream.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "auction_refactor_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::checked_auction_boundary_distinguishes_opening_rollover_and_closing_day_end",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::checked_auction_boundary_preserves_phase_tick_and_day_first_errors"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R082",
+          "R083"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "私有不可变三事实与finish_day⇒finish_auction不变量，不拥有clock/book/authority",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "struct",
+            "capture",
+            "只读getter"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_day_end.rs:940",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "当前phase/tick/day公式与错误类别文字/次序，原两个生产checked capture都保留且不前置",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "capture"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_day_end.rs:947",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 3,
+          "requirement": "测试apply_candidate及finish seam复用同一checked公式不新增市场时段",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "capture",
+            "for_test"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_day_end.rs:790",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 4,
+          "requirement": "context组合boundary/consumed/preceding_receipts而非散布三个字段",
+          "implemented_owner": "AuctionFinishContext",
+          "actual_methods": [
+            "boundary字段及apply_finished_candidate"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_day_end.rs:1017",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 5,
+          "requirement": "stream排空后capture，typed boundary传finish_shards，最底层旧三参数仅adapter拆解",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/stock_stream.rs:180",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 6,
+          "requirement": "worker输入/游标/finalizer guards保持独立职责，tail恰一次；不把沪深类别差异揉进value",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "validate_order_cursor",
+            "validate_worker_input",
+            "validate_worker_finalizers"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_day_end.rs",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        },
+        {
+          "requirement_index": 7,
+          "requirement": "opening非最终/rollover、closing+DayEnd、phase/tick/day首错及回滚保持",
+          "implemented_owner": "AuctionTickBoundary",
+          "actual_methods": [
+            "checked_auction_boundary_distinguishes_opening_rollover_and_closing_day_end",
+            "checked_auction_boundary_preserves_phase_tick_and_day_first_errors"
+          ],
+          "production_callers": [
+            "apply_session_auction_transaction",
+            "finish_auction_shards"
+          ],
+          "source_evidence": "packages/engine/src/session/pipeline/auction_refactor_tests.rs",
+          "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+          "runtime_case_ids": [
+            "R082",
+            "R083"
+          ],
+          "status": "完整正文requirement已具名核销；独立复核及所列精准短测通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N01",
+      "title": "PlanChainFactConsumption 拥有跨轮查重与消费登记",
+      "owner": "PlanChainFactConsumption",
+      "methods": [
+        "prepare_continuous_round",
+        "prepare_auction_round",
+        "commit_round",
+        "contains_operation",
+        "contains_receipt"
+      ],
+      "callers": [
+        "AdaptivePlanChainCoordinator::project_round",
+        "AdaptivePlanChainCoordinator::project_auction_round",
+        "project_continuous_retail_lifecycle",
+        "AuctionLifecycleProjector::apply"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+        "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+        "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs",
+        "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+        "packages/engine/src/session/pipeline/auction_day_end.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "consumption_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::adaptive_plan_chain::consumption_tests::consumption_preparation_is_discardable_and_duplicate_precedes_payload_error",
+          "session::pipeline::adaptive_plan_chain::consumption_tests::consumption_payload_failure_precedes_a_later_duplicate_in_the_same_round"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R064",
+          "R065"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "在既有 PlanChainFactConsumption 增加 prepare_continuous_round / prepare_auction_round，构造轮次局部 operations/receipts/candidate_keys/sealed_indices 增量；保持每个 fact 的四项身份检查、payload 检查及每个 receipt 检查原先交错顺序。",
+          "implemented_owner": "PlanChainFactConsumption",
+          "actual_methods": [
+            "prepare_continuous_round",
+            "prepare_auction_round",
+            "commit_round",
+            "contains_operation",
+            "contains_receipt"
+          ],
+          "production_callers": [
+            "AdaptivePlanChainCoordinator::project_round",
+            "AdaptivePlanChainCoordinator::project_auction_round",
+            "project_continuous_retail_lifecycle",
+            "AuctionLifecycleProjector::apply"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "commit_round 增量仅在所有私有 market/parent/plan 投影及同步成功后登记；contains_operation / contains_receipt 为 finalizer 提供只读查询。coordinator 的 pending、roots、failed 和 session 投影仍保留。",
+          "implemented_owner": "PlanChainFactConsumption",
+          "actual_methods": [
+            "prepare_continuous_round",
+            "prepare_auction_round",
+            "commit_round",
+            "contains_operation",
+            "contains_receipt"
+          ],
+          "production_callers": [
+            "AdaptivePlanChainCoordinator::project_round",
+            "AdaptivePlanChainCoordinator::project_auction_round",
+            "project_continuous_retail_lifecycle",
+            "AuctionLifecycleProjector::apply"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N02",
+      "title": "TradingDayEndTransition 组织共用日终状态迁移",
+      "owner": "TradingDayEndTransition",
+      "methods": [
+        "new",
+        "apply",
+        "sweep_owned_plans"
+      ],
+      "callers": [
+        "finalize_continuous_tick",
+        "apply_finished_candidate"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/auction_day_end.rs",
+        "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "auction_refactor_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_rejects_each_live_order_family_before_mutating_candidate",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_overflow_keeps_original_candidate_partial_progress",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_is_phase_independent_and_publishes_one_closed_candle_boundary",
+          "session::pipeline::stock_auction::auction_day_end::auction_refactor_tests::day_end_transition_plan_failure_precedes_day_overflow_and_leaves_authority_untouched"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R084",
+          "R085",
+          "R089",
+          "R090"
+        ],
+        "passed": 4,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "consuming apply 依次承接现有 finalize_trading_day：清簿/envelope 前置检查→按既有 setup 解锁 T+1→checked_sweep_decision_chain_day_end→清除 parent/NPC lifecycle→commit_active_daily_candles→checked day+1→清 minute history→产生 DayBoundary。",
+          "implemented_owner": "TradingDayEndTransition",
+          "actual_methods": [
+            "new",
+            "apply",
+            "sweep_owned_plans"
+          ],
+          "production_callers": [
+            "finalize_continuous_tick",
+            "apply_finished_candidate"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "sweep_owned_plans 组织原 mem::take、synchronize_owned_plan_execution、active_plan_ids 遍历与写回；失败位置、原候选局部修改/丢弃方式均保持。",
+          "implemented_owner": "TradingDayEndTransition",
+          "actual_methods": [
+            "new",
+            "apply",
+            "sweep_owned_plans"
+          ],
+          "production_callers": [
+            "finalize_continuous_tick",
+            "apply_finished_candidate"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/auction/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N04",
+      "title": "ContinuousDayEndLifecycleProjection 收拢日终取消投影",
+      "owner": "ContinuousDayEndLifecycleProjection",
+      "methods": [
+        "new",
+        "apply",
+        "apply_release",
+        "finish"
+      ],
+      "callers": [
+        "finalize_continuous_tick"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+        "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "day_end_release_projection_"
+        ],
+        "executed_filters": [
+          "session::pipeline::continuous_tick_finalizer::lifecycle_tests::empty_day_end_release_projection_has_no_order_outbox",
+          "session::pipeline::continuous_tick_finalizer::lifecycle_tests::day_end_release_projection_orders_envelopes_and_keeps_partial_candidate_on_index_error",
+          "session::pipeline::continuous_tick_finalizer_tests::day_end_release_terminates_the_causal_lifecycle",
+          "session::pipeline::continuous_tick_finalizer_tests::day_end_causal_facts_keep_the_completed_continuous_phase",
+          "session::pipeline::continuous_tick_finalizer_tests::day_end_quotes_each_cleared_stock_and_skips_untouched_stocks"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R072",
+          "R073",
+          "R107",
+          "R108",
+          "R109"
+        ],
+        "passed": 5,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "apply_release 按现有排序依次执行 causal termination、parent cancellation、NPC lifecycle removal、retail canceled 事件、checked local index 与 Event::OrderCanceled。",
+          "implemented_owner": "ContinuousDayEndLifecycleProjection",
+          "actual_methods": [
+            "new",
+            "apply",
+            "apply_release",
+            "finish"
+          ],
+          "production_callers": [
+            "finalize_continuous_tick"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "finish 仍在 releases 完毕后产生 causal snapshot、收集未完成 parent 的 linked plan 并追加 DayEnded；外层随后调用共同 TradingDayEndTransition。",
+          "implemented_owner": "ContinuousDayEndLifecycleProjection",
+          "actual_methods": [
+            "new",
+            "apply",
+            "apply_release",
+            "finish"
+          ],
+          "production_callers": [
+            "finalize_continuous_tick"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N05",
+      "title": "CapturedExperienceObservation 绑定同源观察输出",
+      "owner": "CapturedExperienceObservation",
+      "methods": [
+        "capture",
+        "consume"
+      ],
+      "callers": [
+        "capture_decision_snapshot_in_place"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+        "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+        "packages/engine/src/session/pipeline/decision_snapshot_tests.rs",
+        "packages/engine/src/session/pipeline/decision_snapshot.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "decision_snapshot_capture_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::decision_snapshot_capture_tests::capture_held_retail_positions_share_equity_peaks_and_t1_with_experience",
+          "session::pipeline::decision_snapshot_capture_tests::capture_non_retail_experience_keeps_self_positions_without_retail_risk",
+          "session::pipeline::decision_snapshot_capture_tests::capture_missing_position_market_does_not_update_the_source_session",
+          "session::pipeline::decision_snapshot_capture_tests::capture_equity_overflow_does_not_install_observed_experience",
+          "session::pipeline::decision_snapshot_capture_tests::capture_self_view_money_error_precedes_risk_and_missing_strategy",
+          "session::pipeline::decision_snapshot_capture_tests::capture_risk_error_precedes_missing_strategy",
+          "session::pipeline::decision_snapshot_tests::decision_snapshot_accepts_non_retail_experience_without_retail_risk"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R110",
+          "R111",
+          "R112",
+          "R113",
+          "R114",
+          "R115",
+          "R117"
+        ],
+        "passed": 7,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "capture 在当前 observe_retail_experience_for 位置构造 NoExperience 或 Captured；继续观察 equity、position peaks 并 prune 原 watchlist。",
+          "implemented_owner": "CapturedExperienceObservation",
+          "actual_methods": [
+            "capture",
+            "consume"
+          ],
+          "production_callers": [
+            "capture_decision_snapshot_in_place"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "consume 将同源 experience/risk/self positions 交给 capture closure；非 Retail 但有 experience 的现有 Some(exp)/None-risk/Some(self) 组合仍可表达，不擅自只支持 Retail。",
+          "implemented_owner": "CapturedExperienceObservation",
+          "actual_methods": [
+            "capture",
+            "consume"
+          ],
+          "production_callers": [
+            "capture_decision_snapshot_in_place"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N06",
+      "title": "IncrementalContinuousStockShadow 拥有跨轮迁移与收尾",
+      "owner": "IncrementalContinuousStockShadow",
+      "methods": [
+        "apply_round",
+        "finish"
+      ],
+      "callers": [
+        "IncrementalContinuousStockCoordinator::apply_round",
+        "IncrementalContinuousStockCoordinator::finish_for_tick"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "consuming_stock_finish_freezes_depth_before_day_end_and_emits_one_release"
+        ],
+        "executed_filters": [
+          "session::pipeline::continuous_matching::incremental_continuous_stock_shadow::tests::successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish",
+          "session::pipeline::continuous_matching::incremental_continuous_stock_shadow::tests::one_stock_worker_failure_invalidates_the_discardable_tick_coordinator",
+          "session::pipeline::continuous_matching::incremental_continuous_stock_shadow::tests::two_stock_worker_errors_select_first_stock_under_reversed_delivery",
+          "session::pipeline::continuous_matching::incremental_continuous_stock_shadow::tests::consuming_stock_finish_freezes_depth_before_day_end_and_emits_one_release"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R068",
+          "R069",
+          "R070",
+          "R071"
+        ],
+        "passed": 4,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "将 apply_stock_round 改为既有 shadow 的 consuming apply_round(code,operations)，共同推进 market/ledger/trade index 与各 outbox，输出 StockRoundResult。",
+          "implemented_owner": "IncrementalContinuousStockShadow",
+          "actual_methods": [
+            "apply_round",
+            "finish"
+          ],
+          "production_callers": [
+            "IncrementalContinuousStockCoordinator::apply_round",
+            "IncrementalContinuousStockCoordinator::finish_for_tick"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "每股 consuming finish(ends_day) 承接现有 book-ledger 校验、清簿前 closing price、DayEnd receipts/terminal keys 与 worker output；总 fact 计数由 coordinator 保留。",
+          "implemented_owner": "IncrementalContinuousStockShadow",
+          "actual_methods": [
+            "apply_round",
+            "finish"
+          ],
+          "production_callers": [
+            "IncrementalContinuousStockCoordinator::apply_round",
+            "IncrementalContinuousStockCoordinator::finish_for_tick"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/continuous/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N07",
+      "title": "SellerChargeAllocation 表达单腿实收费用封顶",
+      "owner": "SellerChargeAllocation",
+      "methods": [
+        "calculate",
+        "allocate_components"
+      ],
+      "callers": [
+        "FillTransition::sell"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/transition.rs",
+        "packages/engine/src/session/pipeline/ledger_validation.rs",
+        "packages/engine/src/session/pipeline/ledger_receipt_tests.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "seller_charge_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::transition::seller_charge_tests::seller_charge_allocation_caps_at_each_component_boundary",
+          "session::pipeline::transition::seller_charge_tests::seller_charge_allocation_rejects_component_excess_and_total_overflow"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R097",
+          "R098"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "checked calculate 在原算法中计算历史欠费，按 commission→stamp_tax→transfer_fee 分配本腿 cap 并得到净交付；不拥有新费率或替代 fees 函数。",
+          "implemented_owner": "SellerChargeAllocation",
+          "actual_methods": [
+            "calculate",
+            "allocate_components"
+          ],
+          "production_callers": [
+            "FillTransition::sell"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "validate_receipt 仍在 ledger validator 逐项检查字段、累计链、nominal、charged、delivery 与 delta；可保留独立分配算法作为对照，不能因共享 value 弱化 validator。",
+          "implemented_owner": "SellerChargeAllocation",
+          "actual_methods": [
+            "calculate",
+            "allocate_components"
+          ],
+          "production_callers": [
+            "FillTransition::sell"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N08",
+      "title": "ReadyAdmissionPlan 拥有批内偏序构造与消费",
+      "owner": "ReadyAdmissionPlan",
+      "methods": [
+        "build_resource_edges",
+        "add_quote_dependencies",
+        "run_stock_gates",
+        "finish_layout"
+      ],
+      "callers": [
+        "admit_ready_batch"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/local_admission.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "local_admission::tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::local_admission::tests::cash_and_different_stock_share_lanes_have_independent_roots",
+          "session::pipeline::local_admission::tests::damaged_dependency_cycle_is_reported_by_gates_and_layout",
+          "session::pipeline::local_admission::tests::damaged_atomic_dependency_count_is_reported",
+          "session::pipeline::local_admission::tests::mixed_request_phases_keep_cash_receipts_when_layout_is_reversed",
+          "session::pipeline::local_admission::tests::plan_receipt_scan_keeps_progress_before_later_validation_error"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R074",
+          "R075",
+          "R076",
+          "R077",
+          "R078"
+        ],
+        "passed": 5,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "build_resource_edges、add_quote_dependencies 在原顺序构造/核对明确边；run_stock_gates 仍用原 Rayon scope 与 StockAdmission。",
+          "implemented_owner": "ReadyAdmissionPlan",
+          "actual_methods": [
+            "build_resource_edges",
+            "add_quote_dependencies",
+            "run_stock_gates",
+            "finish_layout"
+          ],
+          "production_callers": [
+            "admit_ready_batch"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "finish_layout 消耗本批 slots，组合实际 gate arrival edges 与资源/quote 边并完成拓扑遍历，保留 ready.pop 的原顺序与当前 errors。",
+          "implemented_owner": "ReadyAdmissionPlan",
+          "actual_methods": [
+            "build_resource_edges",
+            "add_quote_dependencies",
+            "run_stock_gates",
+            "finish_layout"
+          ],
+          "production_callers": [
+            "admit_ready_batch"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/stream/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N09",
+      "title": "NpcOrderLifecycleBook 收拢普通报价期限集合维护",
+      "owner": "NpcOrderLifecycleBook",
+      "methods": [
+        "new",
+        "ensure_order_absent",
+        "append_prepared",
+        "remove",
+        "due_at",
+        "clear"
+      ],
+      "callers": [
+        "GameSession::register_npc_order_lifecycle_at_quote",
+        "GameSession::remove_npc_order_lifecycle",
+        "GameSession::apply_quote_expiry",
+        "TradingDayEndTransition::apply"
+      ],
+      "files": [
+        "packages/engine/src/session.rs",
+        "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+        "packages/engine/src/session/pipeline/quote_expiry.rs",
+        "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+        "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "lifecycle_book_"
+        ],
+        "executed_filters": [
+          "session::pipeline::quote_expiry::ownership_tests::lifecycle_book_removal_uses_all_three_identity_fields_and_due_keeps_order",
+          "session::pipeline::quote_expiry::ownership_tests::lifecycle_book_duplicate_order_is_global_across_account_and_stock"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R079",
+          "R080"
+        ],
+        "passed": 2,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "ensure_order_absent 必须在原 phase/account/parent 排除之后、placed minute/lifetime/day cap 计算之前，保持全局OrderId duplicate panic；GameSession 在原位置继续计算期限，最后 append_prepared 仅追加同一事实。不能把duplicate检查放到计算后的注册入口。",
+          "implemented_owner": "NpcOrderLifecycleBook",
+          "actual_methods": [
+            "new",
+            "ensure_order_absent",
+            "append_prepared",
+            "remove",
+            "due_at",
+            "clear"
+          ],
+          "production_callers": [
+            "GameSession::register_npc_order_lifecycle_at_quote",
+            "GameSession::remove_npc_order_lifecycle",
+            "GameSession::apply_quote_expiry",
+            "TradingDayEndTransition::apply"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "remove(account,code,order_id) 完全保持原三字段 retain 谓词和不存在时 no-op；due_at 只提供原到期迭代，expiry sorting 仍外层执行；clear 供日终现有清理点。",
+          "implemented_owner": "NpcOrderLifecycleBook",
+          "actual_methods": [
+            "new",
+            "ensure_order_absent",
+            "append_prepared",
+            "remove",
+            "due_at",
+            "clear"
+          ],
+          "production_callers": [
+            "GameSession::register_npc_order_lifecycle_at_quote",
+            "GameSession::remove_npc_order_lifecycle",
+            "GameSession::apply_quote_expiry",
+            "TradingDayEndTransition::apply"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N10",
+      "title": "ExpiryOutput 拥有逐笔释放与账户汇总的同步写入",
+      "owner": "ExpiryOutput",
+      "methods": [
+        "record_release"
+      ],
+      "callers": [
+        "GameSession::apply_quote_expiry"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/quote_expiry.rs",
+        "packages/engine/src/session/pipeline/decision_resources.rs",
+        "packages/engine/src/session/pipeline/mod.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default",
+          "simulation-diagnostics"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "expiry_release_aggregation_"
+        ],
+        "executed_filters": [
+          "session::pipeline::quote_expiry::ownership_tests::expiry_release_aggregation_keeps_resource_units_and_failed_append_boundary"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R081"
+        ],
+        "passed": 1,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-continuous-core.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "record_release 接收已验证/已应用 receipt 对应的 ExpiryRelease，原样先 checked_add 账户 ResVec 再 append 明细；不新增重复身份校验，也不改错误先后。",
+          "implemented_owner": "ExpiryOutput",
+          "actual_methods": [
+            "record_release"
+          ],
+          "production_callers": [
+            "GameSession::apply_quote_expiry"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "只读视图与必要消费方法可继续提供原数据；最小方案不收紧 public 字段，以免变更外部构造 API；若另拟私有化须额外评估已存在 public 使用。",
+          "implemented_owner": "ExpiryOutput",
+          "actual_methods": [
+            "record_release"
+          ],
+          "production_callers": [
+            "GameSession::apply_quote_expiry"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/core-implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N11",
+      "title": "AccountFillProjection 拥有账户级经验与持仓对账累积态",
+      "owner": "AccountFillProjection",
+      "methods": [
+        "new",
+        "apply_order",
+        "finish"
+      ],
+      "callers": [
+        "project_receipts"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/retail_projection.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "retail_projection_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::account_settlement_tests::institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically",
+          "session::pipeline::account_settlement_tests::institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent",
+          "session::pipeline::account_settlement_tests::institutional_exit_profit_requires_net_cash_after_actual_fees",
+          "session::pipeline::retail_projection_tests::retail_order_average_truncates_fractional_cents_without_changing_gross",
+          "session::pipeline::retail_projection_tests::retail_multiple_stock_fills_prune_only_unheld_watchlist_entries",
+          "session::pipeline::retail_projection_tests::institutional_exit_missing_actual_fee_history_returns_no_patch",
+          "session::pipeline::retail_projection_tests::retail_sell_beyond_the_running_position_returns_no_patch",
+          "session::pipeline::retail_projection_tests::retail_zero_quantity_fill_reports_non_positive_gross"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R099",
+          "R100",
+          "R101",
+          "R118",
+          "R119",
+          "R120",
+          "R121",
+          "R122"
+        ],
+        "passed": 8,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "apply_order 原样推进 state、running_qty、机构 running_positions 与 RetailReceiptEvent；保持平均价整分截断、实际 charged 费用与成本读取来源。",
+          "implemented_owner": "AccountFillProjection",
+          "actual_methods": [
+            "new",
+            "apply_order",
+            "finish"
+          ],
+          "production_callers": [
+            "project_receipts"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "finish 计算并保存原 final_position_error，而不立即 Err；随后仍进行 Retail watchlist prune 并返回 AccountProjection。project_receipts 先扫描所有 job 的 Result 错误，再处理 final_position_error 的原优先级不可改变。",
+          "implemented_owner": "AccountFillProjection",
+          "actual_methods": [
+            "new",
+            "apply_order",
+            "finish"
+          ],
+          "production_callers": [
+            "project_receipts"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N12",
+      "title": "ReceiptSettlementPlan 拥有收据聚合与账户准备工作态",
+      "owner": "ReceiptSettlementPlan",
+      "methods": [
+        "from_receipts",
+        "record_receipt",
+        "prepare_accounts"
+      ],
+      "callers": [
+        "prepare_settlement_transaction_with_beliefs"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/settlement.rs",
+        "packages/engine/src/session/pipeline/account_settlement.rs",
+        "packages/engine/src/session/pipeline/settlement_tests.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "settlement_plan_"
+        ],
+        "executed_filters": [
+          "session::pipeline::account_settlement_tests::settlement_plan_account_failure_preserves_all_four_transaction_containers",
+          "session::pipeline::settlement_tests::settlement_plan_ignores_zero_quantity_fill_before_gross_and_fee_checks",
+          "session::pipeline::settlement_tests::settlement_plan_later_malformed_receipt_does_not_apply_earlier_fill",
+          "session::pipeline::settlement_tests::settlement_plan_accumulates_each_actual_seller_fee_component"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R102",
+          "R124",
+          "R125",
+          "R126"
+        ],
+        "passed": 4,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "record_receipt 原样跳过非 Fill 和零数量 Fill，checked 计算数量/gross、买方印花税校验并依次累计五项 SettlementTotals 与 applied_receipts。",
+          "implemented_owner": "ReceiptSettlementPlan",
+          "actual_methods": [
+            "from_receipts",
+            "record_receipt",
+            "prepare_accounts"
+          ],
+          "production_callers": [
+            "prepare_settlement_transaction_with_beliefs"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "prepare_accounts 消耗聚合态并保持 account 并行、stock 排序、同股 Buy-before-Sell、clone_for_shadow/Account::apply_settlement 以及 deterministic first error，最后累计 groups。",
+          "implemented_owner": "ReceiptSettlementPlan",
+          "actual_methods": [
+            "from_receipts",
+            "record_receipt",
+            "prepare_accounts"
+          ],
+          "production_callers": [
+            "prepare_settlement_transaction_with_beliefs"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/resources/implementation.json",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    },
+    {
+      "id": "pipeline-R2-N13",
+      "title": "SelfViewCashReservations 拥有可替换报价现金累计",
+      "owner": "SelfViewCashReservations",
+      "methods": [
+        "record",
+        "available_cash"
+      ],
+      "callers": [
+        "build_self_view_for"
+      ],
+      "files": [
+        "packages/engine/src/session/pipeline/decision_snapshot_capture.rs"
+      ],
+      "short_tests": {
+        "features": [
+          "default"
+        ],
+        "status": "所列精准cases真实执行通过；不是完整回归",
+        "requested_filters": [
+          "decision_snapshot_capture_tests"
+        ],
+        "executed_filters": [
+          "session::pipeline::decision_snapshot_capture_tests::capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset"
+        ],
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "case_ids": [
+          "R116"
+        ],
+        "passed": 1,
+        "failed": 0,
+        "source_sha256_matches_current": true,
+        "features_note": "该批测试binary使用root既定engine/simulation-diagnostics与verification-harness特性；不宣称分别运行default features",
+        "parallel_processes": 8,
+        "rayon_per_process": 4,
+        "case_and_command_deadline_ms": 10000
+      },
+      "implementation_record": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+      "independent_review": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "status": "实现与生产caller完成；独立完整diff复核通过；所列精准短测试及成熟源码编译检查通过",
+      "unfinished": [],
+      "requirements": [
+        {
+          "requirement_index": 1,
+          "requirement": "record(required,may_replace) 先增加 reserved 再按分支增加 replaceable，返回原 MoneyError；不更改 caller 对 continuous/auction reservation sum 的错误 location。",
+          "implemented_owner": "SelfViewCashReservations",
+          "actual_methods": [
+            "record",
+            "available_cash"
+          ],
+          "production_callers": [
+            "build_self_view_for"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        },
+        {
+          "requirement_index": 2,
+          "requirement": "available_cash(raw_cash) 按原 sub→add 顺序计算 SelfView cash，保持它与 P1 execution budget 不同的既有含义。",
+          "implemented_owner": "SelfViewCashReservations",
+          "actual_methods": [
+            "record",
+            "available_cash"
+          ],
+          "production_callers": [
+            "build_self_view_for"
+          ],
+          "evidence": "agents/oop-refactor-implementation/pipeline/projections/implementation.md",
+          "status": "已实施，独立复核与对应精准短测试通过"
+        }
+      ],
+      "extensions": [],
+      "review_status": "未实施者完整diff独立静态复核通过；有效发现已修复并复核，无未解决发现"
+    }
+  ],
+  "cross_group_callers": [
+    "state-callers0.md",
+    "state-callers1.md"
+  ],
+  "tdd": "本批等价重构依既有行为测试保护；新tests已写，但按root协调本组未cargo、无运行red/green证据，不宣称TDD红灯。",
+  "test_fixture_correction_evidence": "编译02私有getter/state/fixture接线、03 Position四事实比较、04两fixture literal均已修并原reviewer复核；运行结果见本台账runtime_validation",
+  "runtime_validation": {
+    "short_tests": {
+      "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+      "batch_passed": 232,
+      "batch_failed": 0,
+      "pipeline_passed": 63,
+      "pipeline_failed": 0,
+      "pipeline_source_sha256_matches_current": true,
+      "parallel_processes": 8,
+      "rayon_per_process": 4,
+      "deadline_ms": 10000,
+      "scope": "逐case精准短单测，未运行复杂/完整回归"
+    },
+    "mature_source_compile": {
+      "evidence": "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+      "exit_code": 0,
+      "scope": "engine/server lib及16 integration targets重新编译；--no-run，不误报这些integration执行通过"
+    },
+    "all_targets_type_check": {
+      "evidence": "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json",
+      "exit_code": 0,
+      "scope": "engine/server/web-wasm/stock-market-game四包--all-targets与既定full features；仅check，不误报执行测试"
+    }
+  },
+  "untracked_source_evidence": [
+    {
+      "file": "packages/engine/src/session/pipeline/auction_refactor_tests.rs",
+      "sha256": "a7b268ab50c16f13cf35bc8825eff96e8e3d6aa2abc9a968804f7471460f90e3",
+      "lines": 339,
+      "independent_review": "review-auction.md"
+    }
+  ],
+  "independent_review_findings": [
+    {
+      "id": "C1",
+      "finding": "mod.rs两个retail缓存GameSession新state写口漏接",
+      "fix": "精准迁game.state.*，原P0前时点不变",
+      "review": "review-continuous-core.md",
+      "status": "修复并复核关闭"
+    },
+    {
+      "id": "S1",
+      "finding": "session execution非空机构belief patch保留三成员缺边界覆盖",
+      "fix": "新增真实Institutional Fill txn测试，四成员及另一账户隔离断言",
+      "short_filter": "institutional_fill_updates_belief_and_preserves_participant_members_and_other_account",
+      "review": "review-stream-callers.md",
+      "status": "修复并复核关闭"
+    }
+  ],
+  "final_source_review_manifest": "agents/oop-refactor-implementation/pipeline/final-source-review-manifest.json",
+  "final_source_review_file_count": 69
+}

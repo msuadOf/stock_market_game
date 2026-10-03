@@ -31,7 +31,7 @@ test("renders the inspector from a diagnostics-enabled active host without creat
     capabilities: { npcDecisionDiagnostics: true },
     npcDecisionTrace: async () => records,
   } as unknown as EngineHost;
-  const html = renderToStaticMarkup(createElement(NpcDecisionInspector, { host }));
+  const html = renderToStaticMarkup(createElement<NonNullable<Parameters<typeof NpcDecisionInspector>[0]>>(NpcDecisionInspector, { host }));
   assert.match(html, /读取当前会话记录/);
   assert.match(html, /当前会话/);
   assert.doesNotMatch(html, /推进一 tick|推进 129 ticks/);

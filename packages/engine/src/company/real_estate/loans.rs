@@ -6,8 +6,6 @@
 //! 费用化是两条独立余数链**——逐链不变量 Σpaid×3_650_000 + 终余数 ==
 //! Σ(本金×bp×链内天数)，两条链合计恒等于合同全期利息，分毫不丢。
 
-use std::collections::BTreeMap;
-
 use crate::accounting::{AccountingAmount, AccountingError, FractionUnits};
 use crate::calendar::CivilDate;
 use crate::company::contracts::ContractId;
@@ -94,6 +92,43 @@ impl ProjectLoanState {
         &self.debt_account
     }
 
+    /// 预览全额付息；只拒绝现有的零应计额。
+    pub(super) fn preview_interest_payment(
+        &self,
+        contract: &ContractId,
+    ) -> Result<AccountingAmount, super::RealEstateError> {
+        let accrued = self.accrued_unpaid();
+        if accrued.is_zero() {
+            return Err(super::RealEstateError::NothingAccrued {
+                contract: contract.clone(),
+            });
+        }
+        Ok(accrued)
+    }
+
+    /// 还本的合同局部 guard；正金额检查先于本金上限。
+    pub(super) fn validate_repayment(
+        &self,
+        contract: &ContractId,
+        amount: AccountingAmount,
+    ) -> Result<(), super::RealEstateError> {
+        if !amount.is_positive() {
+            return Err(super::RealEstateError::NonPositiveAmount {
+                what: "principal repayment",
+                amount,
+            });
+        }
+        let outstanding = self.outstanding();
+        if amount > outstanding {
+            return Err(super::RealEstateError::PrincipalBeyondOutstanding {
+                contract: contract.clone(),
+                requested: amount,
+                outstanding,
+            });
+        }
+        Ok(())
+    }
+
     /// 落地一条计提（金额为零也推进余数与计提日——守恒所需）。
     pub(super) fn apply_split(
         &mut self,
@@ -133,18 +168,6 @@ pub struct InterestSplitItem {
     pub expensed_amount: AccountingAmount,
     pub carried_cap: FractionUnits,
     pub carried_exp: FractionUnits,
-}
-
-/// 计提落地的通用入口（无该合同则 no-op——仅由过账成功路径调用）。
-pub(super) fn apply_split(
-    loans: &mut BTreeMap<ContractId, ProjectLoanState>,
-    item: &InterestSplitItem,
-    through: CivilDate,
-) -> Result<(), AccountingError> {
-    if let Some(state) = loans.get_mut(&item.contract) {
-        state.apply_split(item, through)?;
-    }
-    Ok(())
 }
 
 /// 借款科目：到期 − 起息 ≤ 365 天 → 短期借款；否则长期借款。

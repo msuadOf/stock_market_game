@@ -13,8 +13,6 @@ use crate::accounting::{
 };
 use crate::calendar::CivilDate;
 use crate::company::contracts::ContractId;
-use crate::company::insurance::csm::unit_release;
-use crate::company::insurance::groups::ReleaseBatch;
 use crate::company::insurance::{chart, InsuranceBooks, InsuranceError};
 
 impl InsuranceBooks {
@@ -43,52 +41,9 @@ impl InsuranceBooks {
                 remaining: remaining_units,
             });
         }
-        let final_batch = units == remaining_units;
-        let units_total = state.units_total();
-        let (claims, carried_claims) = unit_release(
-            state.expected_claims_remaining().cents(),
-            units,
-            units_total,
-            state.carried_claims(),
-            final_batch,
-        )?;
-        let (risk_adjustment, carried_ra) = unit_release(
-            state.risk_adjustment_remaining().cents(),
-            units,
-            units_total,
-            state.carried_risk_adjustment(),
-            final_batch,
-        )?;
-        let (csm, carried_csm) = if state.csm().is_positive() {
-            unit_release(
-                state.csm().cents(),
-                units,
-                units_total,
-                state.carried_csm(),
-                final_batch,
-            )?
-        } else {
-            (0, state.carried_csm())
-        };
-        let (finance, carried_finance) = unit_release(
-            state.finance_remaining().cents(),
-            units,
-            units_total,
-            state.carried_finance(),
-            final_batch,
-        )?;
-        let (loss_memo, carried_loss) = if state.loss_component().is_positive() {
-            unit_release(
-                state.loss_component().cents(),
-                units,
-                units_total,
-                state.carried_loss(),
-                final_batch,
-            )?
-        } else {
-            (0, state.carried_loss())
-        };
-        let revenue = claims + risk_adjustment + csm;
+        let batch = state.measurement().preview_release(units)?;
+        let revenue = batch.claims + batch.risk_adjustment + batch.csm;
+        let finance = batch.finance;
         let base = self.next_event_id;
         let event = BusinessEventId::new(base);
         let mut entries = Vec::with_capacity(2);
@@ -141,19 +96,7 @@ impl InsuranceBooks {
         // 恒单调、不复用）。
         self.post_with_commit(base + 2, entries)?;
         if let Some(state) = self.groups.get_mut(group) {
-            state.apply_release(ReleaseBatch {
-                claims,
-                risk_adjustment,
-                csm,
-                finance,
-                loss_memo,
-                units,
-                carried_claims,
-                carried_risk_adjustment: carried_ra,
-                carried_csm,
-                carried_finance,
-                carried_loss,
-            })?;
+            state.measurement_mut().apply_release(batch)?;
         }
         Ok(posted)
     }

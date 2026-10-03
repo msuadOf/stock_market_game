@@ -42,25 +42,25 @@ pub struct InsuranceConfig {
     pub discount: DiscountAssumption,
 }
 
-/// 开局行子账种子守卫：触碰任何保险子账/损益科目（应收保费/未到期责任
-/// 负债/已发生赔款负债/保险服务收入/费用/财务损益）→
-/// `OpeningInsuranceBooksSeeded`。现金（1002）与权益（4001/4103）是开局
-/// 唯一合法落点。
-pub(super) fn check_opening_lines(lines: &[JournalLine]) -> Result<(), InsuranceError> {
-    const SEEDED_ACCOUNTS: [&str; 6] = [
-        codes::PREMIUM_RECEIVABLE,
-        codes::LRC,
-        codes::LIC,
-        codes::INSURANCE_REVENUE,
-        codes::INSURANCE_EXPENSE,
-        codes::INSURANCE_FINANCE,
-    ];
-    for line in lines {
-        if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
-            return Err(InsuranceError::OpeningInsuranceBooksSeeded {
-                account: LedgerAccountId(line.account.0.clone()),
-            });
+impl InsuranceConfig {
+    /// 开局行子账种子守卫：保留六个保险子账/损益科目的禁止清单，按输入
+    /// 顺序返回首个 `OpeningInsuranceBooksSeeded`；其余科目交由过账验证。
+    pub(super) fn check_opening_lines(&self) -> Result<(), InsuranceError> {
+        const SEEDED_ACCOUNTS: [&str; 6] = [
+            codes::PREMIUM_RECEIVABLE,
+            codes::LRC,
+            codes::LIC,
+            codes::INSURANCE_REVENUE,
+            codes::INSURANCE_EXPENSE,
+            codes::INSURANCE_FINANCE,
+        ];
+        for line in &self.opening_lines {
+            if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
+                return Err(InsuranceError::OpeningInsuranceBooksSeeded {
+                    account: LedgerAccountId(line.account.0.clone()),
+                });
+            }
         }
+        Ok(())
     }
-    Ok(())
 }

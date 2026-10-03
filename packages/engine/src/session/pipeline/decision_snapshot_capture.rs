@@ -6,8 +6,8 @@
 use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
 use crate::behavior::BehaviorMarketObservation;
 use crate::observation::{
-    build_account_risk_observation, build_equal_weight_market_observation, ObservationError,
-    RiskPositionInput,
+    build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
+    ObservationError, RiskPositionInput,
 };
 use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
 use crate::strategy::{PositionView, SelfView, StrategyStateError};
@@ -15,7 +15,6 @@ use crate::{
     AccountId, AccountKind, ExperienceError, Money, MoneyError, RetailExperienceState, StockCode,
 };
 use rayon::prelude::*;
-use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -96,7 +95,7 @@ pub(in crate::session) fn capture_decision_snapshot(
 fn capture_decision_snapshot_in_place(
     shadow: &mut super::GameSession,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
-    let tick = shadow.tick;
+    let tick = shadow.state.tick;
     let phase = shadow.phase();
     validate_market_view_inputs(shadow)?;
     let market = shadow.build_market_view();
@@ -106,18 +105,18 @@ fn capture_decision_snapshot_in_place(
     if let Some(account) = popped
         .iter()
         .map(|(_, account)| *account)
-        .find(|account| !shadow.npc_attention.contains_key(account))
+        .find(|account| !shadow.state.npc_attention.contains_key(account))
     {
         return Err(DecisionSnapshotCaptureError::MissingAttention(account));
     }
-    let accounts = &shadow.accounts;
-    let attention_results = shadow.npc_attention.mutate_existing_parallel(
+    let accounts = &shadow.state.accounts;
+    let attention_results = shadow.state.npc_attention.mutate_existing_parallel(
         &due_npc_ids,
         DecisionSnapshotCaptureError::MissingAttention,
         |account, attention| {
             let kind = accounts
                 .get(&account)
-                .map(|entry| entry.kind)
+                .map(|entry| entry.kind())
                 .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
             if kind == AccountKind::Player {
                 return Err(DecisionSnapshotCaptureError::PlayerAccount(account));
@@ -152,9 +151,10 @@ fn capture_decision_snapshot_in_place(
     };
     let has_retail_observer = accepted_due_npc_ids.iter().any(|account| {
         shadow
+            .state
             .accounts
             .get(account)
-            .is_some_and(|entry| entry.kind == AccountKind::Retail)
+            .is_some_and(|entry| entry.kind() == AccountKind::Retail)
     });
     let behavior_market = has_retail_observer
         .then(|| build_behavior_market_checked(shadow))
@@ -163,46 +163,28 @@ fn capture_decision_snapshot_in_place(
         .par_iter()
         .map(|account| {
             let entry = shadow
+                .state
                 .accounts
                 .get(account)
                 .ok_or(DecisionSnapshotCaptureError::MissingAccount(*account))?;
-            let (experience, risk_positions, self_positions) =
-                observe_retail_experience_for(shadow, *account, market_minute)?;
-            let self_view = build_self_view_for(
-                shadow,
-                *account,
-                phase,
-                &working_continuous,
-                &working_auction,
-                self_positions,
-            )?;
-            if entry.kind == AccountKind::Retail && experience.is_none() {
-                return Err(DecisionSnapshotCaptureError::MissingAccount(*account));
-            }
-            let account_risk = risk_positions
-                .map(|positions| {
-                    let experience = experience
-                        .as_ref()
-                        .expect("risk positions require retail experience");
-                    build_account_risk_observation(
-                        entry.cash,
-                        &positions,
-                        experience.reference_equity,
-                        experience.peak_equity,
-                    )
-                    .map_err(|source| {
-                        DecisionSnapshotCaptureError::Observation {
-                            location: "account risk",
-                            account: Some(*account),
-                            source,
-                        }
-                    })
-                })
-                .transpose()?;
-            let experience = experience.map(Arc::new);
+            let observation =
+                CapturedExperienceObservation::capture(shadow, *account, market_minute)?;
+            let CapturedAccountObservation {
+                self_view,
+                account_risk,
+                experience,
+            } = observation.consume(*account, entry.kind(), entry.cash(), |self_positions| {
+                build_self_view_for(
+                    shadow,
+                    *account,
+                    phase,
+                    &working_continuous,
+                    &working_auction,
+                    self_positions,
+                )
+            })?;
             let strategy_state = entry
-                .strategy
-                .as_ref()
+                .strategy()
                 .ok_or(DecisionSnapshotCaptureError::MissingStrategy(*account))?
                 .production_state()
                 .map_err(|source| DecisionSnapshotCaptureError::StrategyState {
@@ -210,7 +192,7 @@ fn capture_decision_snapshot_in_place(
                     source,
                 })?;
             let input = DecisionAccountInput::new_shared(
-                entry.kind,
+                entry.kind(),
                 self_view,
                 strategy_state,
                 account_risk,
@@ -232,7 +214,7 @@ fn capture_decision_snapshot_in_place(
 
     let snapshot = DecisionSnapshot::new(
         tick,
-        shadow.seed,
+        shadow.state.seed,
         phase,
         market_minute,
         market,
@@ -241,15 +223,16 @@ fn capture_decision_snapshot_in_place(
         accounts,
     )
     .map_err(DecisionSnapshotCaptureError::Snapshot)?
-    .with_urgency_policy(shadow.urgency_policy)?;
+    .with_urgency_policy(shadow.state.urgency_policy)?;
 
     shadow
+        .state
         .retail_experience
         .replace_existing_shared_parallel(experience_updates)
         .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
-    shadow
-        .attention_queue
-        .extend(scheduled.into_iter().map(Reverse));
+    for (tick, account) in scheduled {
+        shadow.state.attention_scheduler.enqueue(tick, account);
+    }
     Ok(CapturedDecisionSnapshot {
         snapshot: Arc::new(snapshot),
         working_continuous,
@@ -260,17 +243,20 @@ fn capture_decision_snapshot_in_place(
 fn validate_market_view_inputs(
     session: &super::GameSession,
 ) -> Result<(), DecisionSnapshotCaptureError> {
-    for code in session.markets.keys() {
+    for code in session.state.markets.keys() {
         for (location, present) in [
             (
                 "market price history",
-                session.price_history.contains_key(code),
+                session.state.price_history.contains_key(code),
             ),
             (
                 "market-minute history",
-                session.market_minute_closes.contains_key(code),
+                session.state.market_minute_closes.contains_key(code),
             ),
-            ("daily history", session.daily_candles.contains_key(code)),
+            (
+                "daily history",
+                session.state.candle_book.histories().contains_key(code),
+            ),
         ] {
             if !present {
                 return Err(DecisionSnapshotCaptureError::MissingMarketData {
@@ -283,88 +269,181 @@ fn validate_market_view_inputs(
     Ok(())
 }
 
-type RetailExperienceObservation = (
-    Option<RetailExperienceState>,
-    Option<BTreeMap<StockCode, RiskPositionInput>>,
-    Option<BTreeMap<StockCode, PositionView>>,
-);
+/// 同一次账户观察的派生事实；非 Retail 的已有 experience 仍可不携带风险输入。
+enum CapturedExperienceObservation {
+    NoExperience,
+    Captured {
+        experience: Arc<RetailExperienceState>,
+        risk_positions: Option<BTreeMap<StockCode, RiskPositionInput>>,
+        self_positions: BTreeMap<StockCode, PositionView>,
+    },
+}
 
-fn observe_retail_experience_for(
-    session: &super::GameSession,
-    account: AccountId,
-    market_minute: u64,
-) -> Result<RetailExperienceObservation, DecisionSnapshotCaptureError> {
-    let Some(mut experience) = session.retail_experience.get(&account).cloned() else {
-        return Ok((None, None, None));
-    };
-    let entry = session
-        .accounts
-        .get(&account)
-        .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
-    let mut equity = entry.cash;
-    let mut positions = Vec::with_capacity(entry.positions.len());
-    let mut self_positions = BTreeMap::new();
-    for (code, position) in &entry.positions {
-        let price = session
-            .markets
-            .get(code)
-            .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
-                location: "retail experience position",
-                code: code.clone(),
-            })?
-            .last_price();
-        equity = equity
-            .add(price.mul_shares(position.qty).map_err(|source| {
-                DecisionSnapshotCaptureError::Money {
+struct CapturedAccountObservation {
+    self_view: SelfView,
+    account_risk: Option<AccountRiskObservation>,
+    experience: Option<Arc<RetailExperienceState>>,
+}
+
+impl CapturedExperienceObservation {
+    fn capture(
+        session: &super::GameSession,
+        account: AccountId,
+        market_minute: u64,
+    ) -> Result<Self, DecisionSnapshotCaptureError> {
+        let Some(mut experience) = session.state.retail_experience.get(&account).cloned() else {
+            return Ok(Self::NoExperience);
+        };
+        let entry = session
+            .state
+            .accounts
+            .get(&account)
+            .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
+        let mut equity = entry.cash();
+        let mut positions = Vec::with_capacity(entry.positions().len());
+        let mut self_positions = BTreeMap::new();
+        for (code, position) in entry.positions() {
+            let price = session
+                .state
+                .markets
+                .get(code)
+                .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
+                    location: "retail experience position",
+                    code: code.clone(),
+                })?
+                .last_price();
+            equity = equity
+                .add(price.mul_shares(position.qty()).map_err(|source| {
+                    DecisionSnapshotCaptureError::Money {
+                        location: "retail experience equity",
+                        account,
+                        source,
+                    }
+                })?)
+                .map_err(|source| DecisionSnapshotCaptureError::Money {
                     location: "retail experience equity",
                     account,
                     source,
-                }
-            })?)
-            .map_err(|source| DecisionSnapshotCaptureError::Money {
-                location: "retail experience equity",
-                account,
-                source,
-            })?;
-        positions.push((code.clone(), price, position.qty, position.cost_price()));
-        self_positions.insert(
-            code.clone(),
-            PositionView {
-                qty: position.qty,
-                sellable_qty: position.sellable(),
-                cost_price: position.cost_price(),
-            },
-        );
-    }
-    if equity.cents() > 0 {
-        experience
-            .observe_equity(equity)
-            .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
-    }
-    let held: BTreeSet<_> = self_positions.keys().cloned().collect();
-    let mut risk_positions = BTreeMap::new();
-    for (code, price, qty, cost_price) in positions {
-        experience
-            .observe_position(&code, price, market_minute)
-            .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
-        if entry.kind == AccountKind::Retail {
-            risk_positions.insert(
+                })?;
+            positions.push((code.clone(), price, position.qty(), position.cost_price()));
+            self_positions.insert(
                 code.clone(),
-                RiskPositionInput {
-                    qty,
-                    cost_price: cost_price.filter(|price| price.cents() > 0),
-                    last_price: price,
-                    peak_price_since_entry: experience
-                        .stocks
-                        .get(&code)
-                        .and_then(|stock| stock.peak_price_since_entry),
+                PositionView {
+                    qty: position.qty(),
+                    sellable_qty: position.sellable(),
+                    cost_price: position.cost_price(),
                 },
             );
         }
+        if equity.cents() > 0 {
+            experience
+                .observe_equity(equity)
+                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
+        }
+        let held: BTreeSet<_> = self_positions.keys().cloned().collect();
+        let mut risk_positions = BTreeMap::new();
+        for (code, price, qty, cost_price) in positions {
+            experience
+                .observe_position(&code, price, market_minute)
+                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
+            if entry.kind() == AccountKind::Retail {
+                risk_positions.insert(
+                    code.clone(),
+                    RiskPositionInput {
+                        qty,
+                        cost_price: cost_price.filter(|price| price.cents() > 0),
+                        last_price: price,
+                        peak_price_since_entry: experience
+                            .stocks
+                            .get(&code)
+                            .and_then(|stock| stock.peak_price_since_entry),
+                    },
+                );
+            }
+        }
+        experience.prune_watchlist(&held);
+        let risk_positions = (entry.kind() == AccountKind::Retail).then_some(risk_positions);
+        Ok(Self::Captured {
+            experience: Arc::new(experience),
+            risk_positions,
+            self_positions,
+        })
     }
-    experience.prune_watchlist(&held);
-    let risk_positions = (entry.kind == AccountKind::Retail).then_some(risk_positions);
-    Ok((Some(experience), risk_positions, Some(self_positions)))
+
+    fn consume(
+        self,
+        account: AccountId,
+        kind: AccountKind,
+        cash: Money,
+        build_self_view: impl FnOnce(
+            Option<BTreeMap<StockCode, PositionView>>,
+        ) -> Result<SelfView, DecisionSnapshotCaptureError>,
+    ) -> Result<CapturedAccountObservation, DecisionSnapshotCaptureError> {
+        match self {
+            Self::NoExperience => {
+                let self_view = build_self_view(None)?;
+                if kind == AccountKind::Retail {
+                    return Err(DecisionSnapshotCaptureError::MissingAccount(account));
+                }
+                Ok(CapturedAccountObservation {
+                    self_view,
+                    account_risk: None,
+                    experience: None,
+                })
+            }
+            Self::Captured {
+                experience,
+                risk_positions,
+                self_positions,
+            } => {
+                // SelfView 的 Money 错误仍先于风险观察错误；不得在 capture 中提前计算风险。
+                let self_view = build_self_view(Some(self_positions))?;
+                let account_risk = risk_positions
+                    .map(|positions| {
+                        build_account_risk_observation(
+                            cash,
+                            &positions,
+                            experience.reference_equity,
+                            experience.peak_equity,
+                        )
+                        .map_err(|source| {
+                            DecisionSnapshotCaptureError::Observation {
+                                location: "account risk",
+                                account: Some(account),
+                                source,
+                            }
+                        })
+                    })
+                    .transpose()?;
+                Ok(CapturedAccountObservation {
+                    self_view,
+                    account_risk,
+                    experience: Some(experience),
+                })
+            }
+        }
+    }
+}
+
+/// SelfView 的报价现金累计；可替换部分不构成本轮 P1 执行预算。
+#[derive(Default)]
+struct SelfViewCashReservations {
+    reserved: Money,
+    replaceable: Money,
+}
+
+impl SelfViewCashReservations {
+    fn record(&mut self, required: Money, may_replace: bool) -> Result<(), MoneyError> {
+        self.reserved = self.reserved.add(required)?;
+        if may_replace {
+            self.replaceable = self.replaceable.add(required)?;
+        }
+        Ok(())
+    }
+
+    fn available_cash(&self, raw_cash: Money) -> Result<Money, MoneyError> {
+        raw_cash.sub(self.reserved)?.add(self.replaceable)
+    }
 }
 
 fn build_self_view_for(
@@ -376,68 +455,62 @@ fn build_self_view_for(
     self_positions: Option<BTreeMap<StockCode, PositionView>>,
 ) -> Result<SelfView, DecisionSnapshotCaptureError> {
     let auction_cancelable = phase == crate::TradingPhase::CallAuction
-        && session.tick % session.setup.ticks_per_day < session.setup.auction_ticks / 3;
+        && session.state.tick % session.state.setup.ticks_per_day
+            < session.state.setup.auction_ticks / 3;
     let entry = session
+        .state
         .accounts
         .get(&account)
         .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
-    let mut reserved = Money::ZERO;
-    let mut replaceable = Money::ZERO;
-    let mut record = |required: Money, may_replace: bool| -> Result<(), MoneyError> {
-        reserved = reserved.add(required)?;
-        if may_replace {
-            replaceable = replaceable.add(required)?;
-        }
-        Ok(())
-    };
+    let mut reservations = SelfViewCashReservations::default();
     for (_, order) in continuous.get(&account).into_iter().flatten() {
-        record(
-            super::super::live_cash_reservation(
-                &session.setup.config,
-                order.side,
-                order.price,
-                order.qty,
-                order.filled_value,
+        reservations
+            .record(
+                super::super::live_cash_reservation(
+                    &session.state.setup.config,
+                    order.side,
+                    order.price,
+                    order.qty,
+                    order.filled_value,
+                )
+                .map_err(|source| DecisionSnapshotCaptureError::Money {
+                    location: "continuous self-view reservation",
+                    account,
+                    source,
+                })?,
+                phase == crate::TradingPhase::Continuous,
             )
             .map_err(|source| DecisionSnapshotCaptureError::Money {
-                location: "continuous self-view reservation",
+                location: "continuous self-view reservation sum",
                 account,
                 source,
-            })?,
-            phase == crate::TradingPhase::Continuous,
-        )
-        .map_err(|source| DecisionSnapshotCaptureError::Money {
-            location: "continuous self-view reservation sum",
-            account,
-            source,
-        })?;
+            })?;
     }
     for (_, order) in auction.get(&account).into_iter().flatten() {
-        record(
-            super::super::live_cash_reservation(
-                &session.setup.config,
-                order.side,
-                order.limit,
-                order.qty,
-                Money::ZERO,
+        reservations
+            .record(
+                super::super::live_cash_reservation(
+                    &session.state.setup.config,
+                    order.side,
+                    order.limit,
+                    order.qty,
+                    Money::ZERO,
+                )
+                .map_err(|source| DecisionSnapshotCaptureError::Money {
+                    location: "auction self-view reservation",
+                    account,
+                    source,
+                })?,
+                auction_cancelable,
             )
             .map_err(|source| DecisionSnapshotCaptureError::Money {
-                location: "auction self-view reservation",
+                location: "auction self-view reservation sum",
                 account,
                 source,
-            })?,
-            auction_cancelable,
-        )
-        .map_err(|source| DecisionSnapshotCaptureError::Money {
-            location: "auction self-view reservation sum",
-            account,
-            source,
-        })?;
+            })?;
     }
-    let cash = entry
-        .cash
-        .sub(reserved)
-        .and_then(|cash| cash.add(replaceable))
+    let cash = reservations
+        .available_cash(entry.cash())
         .map_err(|source| DecisionSnapshotCaptureError::Money {
             location: "available self-view cash",
             account,
@@ -445,13 +518,13 @@ fn build_self_view_for(
         })?;
     let positions = self_positions.unwrap_or_else(|| {
         entry
-            .positions
+            .positions()
             .iter()
             .map(|(code, position)| {
                 (
                     code.clone(),
                     PositionView {
-                        qty: position.qty,
+                        qty: position.qty(),
                         sellable_qty: position.sellable(),
                         cost_price: position.cost_price(),
                     },

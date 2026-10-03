@@ -64,17 +64,17 @@ fn account_states(session: &GameSession) -> AccountStates {
                 .expect("player id 0 plus sequential NPC ids are contiguous");
             (
                 ordinal,
-                account.cash,
+                account.cash(),
                 account
-                    .positions
+                    .positions()
                     .iter()
                     .map(|(code, position)| {
                         (
                             code.0.clone(),
-                            position.qty,
-                            position.t1_locked,
-                            position.invested_cents,
-                            position.recovered_cents,
+                            position.qty(),
+                            position.t1_locked(),
+                            position.invested_cents(),
+                            position.recovered_cents(),
                         )
                     })
                     .collect(),

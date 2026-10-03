@@ -203,9 +203,9 @@ fn apply_session_pre_open_transaction(
         || -> Result<_, StepFatal> {
             let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_continuous_inputs(frozen_candidate)?;
-            let ledger = frozen_candidate.envelope_ledger.clone();
-            let next_order_id = frozen_candidate.next_order_id;
-            let config = frozen_candidate.setup.config.clone();
+            let ledger = frozen_candidate.state.envelope_ledger.clone();
+            let next_order_id = frozen_candidate.state.next_order_id;
+            let config = frozen_candidate.state.setup.config.clone();
             Ok((context, stock_inputs, ledger, next_order_id, config))
         },
     );
@@ -267,7 +267,7 @@ fn apply_session_pre_open_transaction(
                 error,
             )
         })?;
-    candidate.next_order_id = validation.next_order_id_after();
+    candidate.state.next_order_id = validation.next_order_id_after();
     for event in &events {
         if let Event::IntentRejected { account, .. } = event {
             candidate.record_retail_intent_rejections(*account, std::slice::from_ref(event));
@@ -347,15 +347,16 @@ fn advance_silent_pre_open_clock(candidate: &mut GameSession) -> Result<(), Step
         return Err(invariant("silent PreOpen clock advanced outside PreOpen"));
     }
     let tick_after = candidate
+        .state
         .tick
         .checked_add(1)
         .ok_or_else(|| invariant("PreOpen tick overflow"))?;
-    if tick_after.is_multiple_of(candidate.setup.ticks_per_day) {
+    if tick_after.is_multiple_of(candidate.state.setup.ticks_per_day) {
         return Err(invariant(
             "PreOpen clock unexpectedly crossed the trading-day boundary",
         ));
     }
-    candidate.tick = tick_after;
+    candidate.state.tick = tick_after;
     Ok(())
 }
 

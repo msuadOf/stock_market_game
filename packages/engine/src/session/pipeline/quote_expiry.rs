@@ -18,6 +18,74 @@ pub struct ExpiryOutput {
     pub released_by_account: BTreeMap<crate::AccountId, ResVec>,
 }
 
+/// 普通 NPC 报价生命周期的窄编辑器，借用 GameSession 保存的原始 Vec。
+pub(in crate::session) struct NpcOrderLifecycleBook<'a> {
+    lifecycles: &'a mut Vec<crate::session::NpcOrderLifecycle>,
+}
+
+impl<'a> NpcOrderLifecycleBook<'a> {
+    pub(in crate::session) fn new(
+        lifecycles: &'a mut Vec<crate::session::NpcOrderLifecycle>,
+    ) -> Self {
+        Self { lifecycles }
+    }
+
+    pub(in crate::session) fn ensure_order_absent(&self, order: crate::OrderId) {
+        if self
+            .lifecycles
+            .iter()
+            .any(|lifecycle| lifecycle.order_id == order)
+        {
+            panic!("NPC quote lifecycle already exists for order {}", order.0);
+        }
+    }
+
+    pub(in crate::session) fn append_prepared(
+        &mut self,
+        lifecycle: crate::session::NpcOrderLifecycle,
+    ) {
+        self.lifecycles.push(lifecycle);
+    }
+
+    pub(in crate::session) fn remove(
+        &mut self,
+        account: crate::AccountId,
+        code: &crate::StockCode,
+        order: crate::OrderId,
+    ) {
+        self.lifecycles.retain(|lifecycle| {
+            !(lifecycle.account == account
+                && lifecycle.code == *code
+                && lifecycle.order_id == order)
+        });
+    }
+
+    pub(in crate::session) fn due_at(
+        &self,
+        market_minute: u64,
+    ) -> impl Iterator<Item = &crate::session::NpcOrderLifecycle> {
+        self.lifecycles
+            .iter()
+            .filter(move |lifecycle| lifecycle.expires_market_minute <= market_minute)
+    }
+
+    pub(in crate::session) fn clear(&mut self) {
+        self.lifecycles.clear();
+    }
+}
+
+impl ExpiryOutput {
+    pub(super) fn record_release(&mut self, release: ExpiryRelease) -> Result<(), StepFatal> {
+        let total = self
+            .released_by_account
+            .entry(release.account)
+            .or_insert(ResVec::ZERO);
+        *total = total.checked_add(release.resources)?;
+        self.releases.push(release);
+        Ok(())
+    }
+}
+
 pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, StepFatal> {
     if shadow.expiry_applied {
         return Err(invariant("P0 expiry was applied more than once"));
@@ -52,27 +120,19 @@ impl GameSession {
     fn apply_quote_expiry(
         &mut self,
     ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
-        // TickShadow already owns an isolated candidate. A failure drops that candidate,
-        // so cloning the whole session again here adds no authority protection.
-        // P0 establishes the complete live-envelope view used by P1 allocation.
+        // TickShadow 已拥有隔离的 candidate，失败由外层丢弃；P0 建立供 P1 分配的完整 live envelope 视图。
         self.hydrate_or_validate_envelope_ledger()?;
         if self.phase() != crate::TradingPhase::Continuous {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
         }
         let market_minute = self.current_market_minute();
-        if !self
-            .npc_order_lifecycles
-            .iter()
-            .any(|lifecycle| lifecycle.expires_market_minute <= market_minute)
-        {
-            return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
-        }
-        let mut expired: Vec<_> = self
-            .npc_order_lifecycles
-            .iter()
-            .filter(|lifecycle| lifecycle.expires_market_minute <= market_minute)
+        let mut expired: Vec<_> = NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
+            .due_at(market_minute)
             .cloned()
             .collect();
+        if expired.is_empty() {
+            return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
+        }
         expired
             .sort_by(|left, right| (&left.code, left.order_id).cmp(&(&right.code, right.order_id)));
 
@@ -81,6 +141,7 @@ impl GameSession {
             let source_index =
                 u32::try_from(source_index).map_err(|_| invariant("P0 expiry index overflow"))?;
             let envelope = self
+                .state
                 .envelope_ledger
                 .iter()
                 .find(|(key, _)| {
@@ -97,13 +158,13 @@ impl GameSession {
             .iter()
             .map(|(_, _, receipt)| receipt.clone())
             .collect();
-        self.envelope_ledger.apply(&mut receipts)?;
+        self.state.envelope_ledger.apply(&mut receipts)?;
         let terminal_keys: Vec<_> = prepared
             .iter()
             .map(|(_, envelope, _)| envelope.clone())
             .collect();
-        self.envelope_ledger.remove_terminal(&terminal_keys)?;
-        self.next_receipt_base = self.envelope_ledger.next_receipt_index();
+        self.state.envelope_ledger.remove_terminal(&terminal_keys)?;
+        self.state.next_receipt_base = self.state.envelope_ledger.next_receipt_index();
 
         let mut output = ExpiryOutput::default();
         let mut events = Vec::with_capacity(prepared.len());
@@ -127,19 +188,14 @@ impl GameSession {
             if fact.side != envelope.side {
                 return Err(invariant("P0 cancellation side disagrees with envelope"));
             }
-            let total = output
-                .released_by_account
-                .entry(fact.account)
-                .or_insert(ResVec::ZERO);
-            *total = total.checked_add(receipt.delta.released)?;
-            output.releases.push(ExpiryRelease {
+            output.record_release(ExpiryRelease {
                 receipt_index: receipt.index,
                 account: fact.account,
                 stock: fact.code.clone(),
                 order_id: fact.order_id,
                 side: fact.side,
                 resources: receipt.delta.released,
-            });
+            })?;
             events.push(Event::OrderCanceled {
                 seq: self.next_seq(),
                 account: fact.account,
@@ -214,5 +270,102 @@ fn cancellation_failure(
     StepFatal::InvariantViolation {
         description,
         location: "pipeline::quote_expiry".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    fn lifecycle(
+        account: u64,
+        code: &str,
+        order: u64,
+        expires: u64,
+    ) -> crate::session::NpcOrderLifecycle {
+        crate::session::NpcOrderLifecycle {
+            account: crate::AccountId(account),
+            code: crate::StockCode(code.to_owned()),
+            order_id: crate::OrderId(order),
+            placed_market_minute: 1,
+            expires_market_minute: expires,
+        }
+    }
+
+    #[test]
+    fn lifecycle_book_removal_uses_all_three_identity_fields_and_due_keeps_order() {
+        let mut values = vec![
+            lifecycle(1, "600888", 1, 5),
+            lifecycle(2, "600888", 1, 4),
+            lifecycle(1, "600999", 1, 6),
+        ];
+        let mut book = NpcOrderLifecycleBook::new(&mut values);
+        assert_eq!(
+            book.due_at(5)
+                .map(|entry| entry.account)
+                .collect::<Vec<_>>(),
+            vec![crate::AccountId(1), crate::AccountId(2)]
+        );
+        book.remove(
+            crate::AccountId(1),
+            &crate::StockCode("600888".to_owned()),
+            crate::OrderId(1),
+        );
+        book.remove(
+            crate::AccountId(99),
+            &crate::StockCode("600888".to_owned()),
+            crate::OrderId(1),
+        );
+        assert_eq!(
+            book.due_at(6)
+                .map(|entry| entry.account)
+                .collect::<Vec<_>>(),
+            vec![crate::AccountId(2), crate::AccountId(1)]
+        );
+        book.clear();
+        assert_eq!(book.due_at(u64::MAX).count(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "NPC quote lifecycle already exists for order 1")]
+    fn lifecycle_book_duplicate_order_is_global_across_account_and_stock() {
+        let mut values = vec![lifecycle(1, "600888", 1, 5)];
+        NpcOrderLifecycleBook::new(&mut values).ensure_order_absent(crate::OrderId(1));
+    }
+
+    fn release(account: u64, shares: u32, cash: i64) -> ExpiryRelease {
+        ExpiryRelease {
+            receipt_index: 0,
+            account: crate::AccountId(account),
+            stock: crate::StockCode("600888".to_owned()),
+            order_id: crate::OrderId(1),
+            side: crate::Side::Buy,
+            resources: ResVec::new(crate::Money::from_cents(cash), shares),
+        }
+    }
+
+    #[test]
+    fn expiry_release_aggregation_keeps_resource_units_and_failed_append_boundary() {
+        let mut output = ExpiryOutput::default();
+        output.record_release(release(1, u32::MAX, 4)).unwrap();
+        let error = output.record_release(release(1, 1, 5)).unwrap_err();
+        assert_eq!(
+            error,
+            StepFatal::InvariantViolation {
+                description: "shares add".to_owned(),
+                location: "pipeline::ResVec".to_owned()
+            }
+        );
+        assert_eq!(output.releases.len(), 1);
+        assert_eq!(
+            output.released_by_account[&crate::AccountId(1)],
+            ResVec::new(crate::Money::from_cents(4), u32::MAX)
+        );
+        output.record_release(release(2, 1, 9)).unwrap();
+        assert_eq!(output.releases.len(), 2);
+        assert_eq!(
+            output.released_by_account[&crate::AccountId(2)],
+            ResVec::new(crate::Money::from_cents(9), 1)
+        );
     }
 }

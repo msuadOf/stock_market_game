@@ -9,17 +9,16 @@
 //!   悲观 g−300,r+200 → 145,033,183；乐观 g+300,r−200 → 265,974,604；每股 1916/1450/2660。
 
 use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
+use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
 use engine::account::StockCode;
 use engine::accounting::AccountingAmount;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyKind;
 use engine::information::PublicationId;
-use engine::information::{NpcInformationState, NpcObservationContext};
 use engine::orderbook::AccountId;
 use engine::strategy::{
-    AnalysisProfile, AnalysisWeights, AnnualFacts, BeliefBook, BeliefCause, BeliefInputs,
-    ForecastBasis, FundamentalMethod, PersonalAssumptions, PriorRevenue, StrategyProfile,
-    ValuationOutcome,
+    AnalysisProfile, AnalysisWeights, AnnualFacts, BeliefCause, ForecastBasis, FundamentalMethod,
+    PersonalAssumptions, PriorRevenue, StrategyProfile, ValuationOutcome,
 };
 use engine::Money;
 
@@ -73,48 +72,41 @@ pub(crate) fn hand_facts(equity_cents: i128, opening_cents: i128, ni_cents: i128
 fn earnings_multiple_end_to_end_gold() {
     let sc = scenario();
     let npc = AccountId(2);
-    let mut state = NpcInformationState::new(npc);
-    state
-        .record_acquisition(
-            npc,
-            &sc.library,
-            sc.annual_ids[3],
-            hour_after(sc.annual_instants[3]),
-        )
-        .expect("acquire FY2030");
-    let market_view = market(40_000);
     let mut rng = assumptions_rng(1.0);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(40_000),
         momentum_profile(),
         momentum_analysis(FundamentalMethod::EarningsMultiple),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut rng,
     );
+    case.acquire(
+        case.scenario.annual_ids[3],
+        hour_after(case.scenario.annual_instants[3]),
+    )
+    .expect("acquire FY2030");
+
     assert_eq!(
         rng.draws(),
         6,
         "assumptions drawn exactly once at construction"
     );
 
-    let ctx =
-        NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx builds");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_000,
-    };
-    book.apply_cause(
+    case.apply_cause(
         &stock_code(),
         BeliefCause::NewMaterial {
-            report: sc.annual_ids[3],
+            report: case.scenario.annual_ids[3],
         },
-        &inputs,
+        1_000,
     )
     .expect("formation succeeds");
 
-    let entry = book.entry(&stock_code()).expect("entry exists");
+    let entry = case.book.entry(&stock_code()).expect("entry exists");
     assert_eq!(entry.method, Some(FundamentalMethod::EarningsMultiple));
     assert_eq!(
         entry.forecast.basis,
@@ -124,7 +116,7 @@ fn earnings_multiple_end_to_end_gold() {
     assert_eq!(entry.confidence_bp, 6_000);
     assert_eq!(entry.horizon_trading_days, 5);
     assert_eq!(entry.anchor_trading_day, 1_000);
-    assert_eq!(entry.used_report_ids, vec![sc.annual_ids[3]]);
+    assert_eq!(entry.used_report_ids, vec![case.scenario.annual_ids[3]]);
     let ValuationOutcome::Available {
         total_equity_estimate,
         per_share,
@@ -143,41 +135,34 @@ fn earnings_multiple_end_to_end_gold() {
 fn cash_flow_end_to_end_gold() {
     let sc = scenario();
     let npc = AccountId(3);
-    let mut state = NpcInformationState::new(npc);
-    state
-        .record_acquisition(
-            npc,
-            &sc.library,
-            sc.annual_ids[3],
-            hour_after(sc.annual_instants[3]),
-        )
-        .expect("acquire FY2030");
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         momentum_profile(),
         momentum_analysis(FundamentalMethod::CashFlow),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    let ctx =
-        NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx builds");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_000,
-    };
-    book.apply_cause(
+    case.acquire(
+        case.scenario.annual_ids[3],
+        hour_after(case.scenario.annual_instants[3]),
+    )
+    .expect("acquire FY2030");
+
+    case.apply_cause(
         &stock_code(),
         BeliefCause::NewMaterial {
-            report: sc.annual_ids[3],
+            report: case.scenario.annual_ids[3],
         },
-        &inputs,
+        1_000,
     )
     .expect("formation succeeds");
 
-    let entry = book.entry(&stock_code()).expect("entry exists");
+    let entry = case.book.entry(&stock_code()).expect("entry exists");
     assert_eq!(entry.method, Some(FundamentalMethod::CashFlow));
     assert_eq!(entry.forecast.growth_bp, Some(0));
     let ValuationOutcome::Available {

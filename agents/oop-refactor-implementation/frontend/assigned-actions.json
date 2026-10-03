@@ -1,0 +1,754 @@
+[
+  {
+    "id": "web-01-A06",
+    "title": "AppShell 组合的 SessionHostLifecycle 闭包对象、SaveCommands 门面与 TradingCommands hook 返回对象（候选）；AppShell 保留 JSX 与 ProtocolCoordinator 接线",
+    "group": "frontend",
+    "origin": "baseline",
+    "files": [
+      "apps/web/src/App.tsx"
+    ],
+    "details": {
+      "id": "web-01-A06",
+      "target": "AppShell 组合的 SessionHostLifecycle 闭包对象、SaveCommands 门面与 TradingCommands hook 返回对象（候选）；AppShell 保留 JSX 与 ProtocolCoordinator 接线",
+      "status": "proposed",
+      "owned_state": [
+        "useSessionHostLifecycle 只拥有启动 effect 的 cancelled 与 ownedHost 单次挂载局部量；AppShell 仍唯一持有/接线 hostRef、companyCoordinatorRef、protocolCoordinatorRef、stopStartupRef、hostUpdateRef 和 ProtocolCoordinator 回调桥。hook 需以回调把启动产生的 activeSetup/startDateDraft/priceCageEnabledDraft、ready、hostBaselineReady、deliveryModes/deliveryModeState 写回 AppShell，并接收当前 sessionSetup、startupTarget、pause preferences、refreshPlayerOrders 与 setIndicatorCalculator；它不得另存第二份 host/coordinator authority。 Lifecycle effect还通过store.dispatch写Redux running，并调用App持有的InitialSaveSource.complete；releaseOwnedHost清除并置空App提供的AutoOrderManager ref。它需要注入这些现有owner，不持有Redux/manager/source副本。 ProtocolCoordinator callbacks 仍属于 AppShell：onBaseline 还清空 player orders，安装日终 generation/company/chart baselines，并设置 hostBaselineReady；onApplied 将更新路由给 company/chart/persistence owners，可能清除 canceling IDs，在配置的 barrier 写入 notice 或 Redux running=false；onFailure 写入 AppShell error。这些 callbacks 可以调用 hook 返回的窄命令，但仍留在 AppShell composition 边界。 对象化落点是 effect 内的 SessionHostLifecycle：私有 cancelled、ownedHost、unsetIndicatorCalculator；start、stopCurrentSession、releaseOwnedHost、dispose 方法共享这些字段，dispose/异步取消都沿现有清理顺序执行。AppShell.hostRef 是当前宿主的借用别名，不拥有第二个实例；coordinator refs仍在Shell接线，不挪入新大对象。",
+        "useSaveCommands 只拥有命令执行闭包，不拥有当前被多方共享的target/generation/gates：dayEndFileTargetRef 被日终 onApplied callback 与 handleSaveFile 共用；saveSelectionGenerationRef 被启动清理、baseline callback、文件目标选择及读档命令共用；sessionReplacementGateRef 被启动清理与替换命令共用。三者继续由 AppShell 持有并以同一 ref 注入 lifecycle/save command hooks。App 外层仍唯一拥有 sessionSetup/setSessionSetup、InitialSaveSource 和 DayEndPersistence。 SaveCommands 聚合六个用例方法及注入依赖/当前host getter；没有额外持久状态。其价值是受控组合既有 source/gate/writer 的命令入口，不能声称新建存档 authority。",
+        "useTradingCommands 可拥有 tradeCode/orderKind/priceChoice/priceText/qtyText、autoType/autoTrigger/autoQty 表单 state，以及 queriedPlayerOrders/setPlayerOrders、cancelingOrderIds/setCancelingOrderIds；PlayerOrderRefreshGate 由 lifecycle 的 host cleanup/baseline 与委托查询共同使用，继续由 AppShell 持有并注入。playerAccount、activeSetup、Redux orders/snapshot 与 autoOrders 仍由 AppShell selectors/store 权威提供；AutoOrderManager 由现有 ref/provider 持有。 因 host callbacks 也会清这些 state，hook 需把稳定 clear/reset callbacks 返回给 AppShell；不能另建一套列表用于 protocol callback。 TradingCommands 返回form只读视图、窄setters、buildIntent/submit/cancel/addAuto/refresh及clear/reset方法，所有方法访问同一hook私有state；不是在原Shell保留同名state后复制一层。",
+        "AppShell 继续独占 ready、hostBaselineReady、error、activeSetup/startDateDraft/priceCageEnabledDraft、speedMetrics/speedMetricsError/speedMetricsPollingGeneration、deliveryMode/deliveryModes、pausePreferencesReady 等宿主/呈现 state，并持有对应 setters。候选 hooks 只通过必要 setter、store.dispatch、setNotice/fatalHostError、现存屏障/manager 实例及 host getter/命令回调写入；不得复制 AppShell state 或 Redux/store authority。 speedMetricsRequestGateRef 同时被 AppShell metrics polling effect 和 load command 写入，也继续留 AppShell 并注入；speedMetricsLoadInProgressRef 及 pausePreferences refs/readiness 也留 AppShell。"
+      ],
+      "moves": [
+        {
+          "from": "AppShell useEffect（异步读取 InitialSaveSource、按 startupTarget 创建 host、load、host.start、StrictMode cleanup 中 stop/dispose）",
+          "to": "SessionHostLifecycle::start/dispose（useSessionHostLifecycle 的 effect 内闭包对象）",
+          "reason": "把当前宿主的创建/启动/释放与异步取消放在一个 React effect owner，ownedHost 与 cancelled 仍为单次挂载局部状态；AppShell 继续持有 hostRef 和 coordinator 接线，避免新增宿主 authority。"
+        },
+        {
+          "from": "stopStartupRef.current",
+          "to": "SessionHostLifecycle::stopCurrentSession（经hook返回窄命令）",
+          "reason": "宿主切换入口需要与同一个 ownedHost、generation invalidation 和释放顺序一致。"
+        },
+        {
+          "from": "recoverFromFile、handleSave、handleLoad、handleSaveFile、handleLoadFile、handleNewGame",
+          "to": "SaveCommands::recoverFromFile/noticeSavePolicy/load/selectFile/loadFile/newGame（useSaveCommands返回组合门面）",
+          "reason": "六个 handler 都是存档/会话命令，但它们写入的外部 owner 不同，迁移只聚合命令入口与依赖调用流程；共享 gate/target 继续由 AppShell 持有并注入，不声称统一 state owner；逐 handler 写集与注入契约见 api_boundary。recoverFromFile/handleNewGame 必须通过注入的 setSessionSetup 请求 App 重启会话；存档屏障、首次读取 authority 和日终队列继续由既有对象持有。"
+        },
+        {
+          "from": "buildIntent、submit、cancelPlayerOrder、addAuto、refreshPlayerOrders",
+          "to": "TradingCommands::buildIntent/submit/cancelPlayerOrder/addAuto/refreshPlayerOrders（useTradingCommands返回对象）",
+          "reason": "集中输入解析与预检、提交/撤单/条件单和活动委托刷新；类别校验使用传入的 activeSetup，EngineHost 仍作最终受理权威。"
+        },
+        {
+          "from": "ProtocolCoordinator onBaseline/onApplied/onFailure 回调闭包、hostUpdateRef.current",
+          "to": "保留在 AppShell 的 ProtocolCoordinator 宿主接线",
+          "reason": "ProtocolCoordinator 与 hostUpdateRef 桥仍由 AppShell 唯一持有；启动/基线/失败回调对 AppShell 状态的写入通过窄 setter 注入，onApplied 的图表 reduction 仍只委托 useMarketChartRuntime，避免宿主接线与投影重复归属。"
+        },
+        {
+          "from": "App、AppShell JSX 与局部呈现 state（showNpcInspector、chartPeriod、klineDays、移动 UI state）",
+          "to": "保留在 App 与 AppShell 函数组件",
+          "reason": "页面组合/局部呈现状态没有独立领域生命周期，抽走会扩大依赖面；App 持有跨 Shell setup、InitialSaveSource 和 DayEndPersistence。"
+        }
+      ],
+      "api_boundary": "候选 hooks 只管理其命令/生命周期专属 refs 与流程。useSessionHostLifecycle 接收 sessionSetup/startupTarget/InitialSaveSource/DayEndPersistence/pause preferences/refreshPlayerOrders/indicator registration 等现有依赖；通过回调注入 setReady、setHostBaselineReady、setError、setActiveSetup、draft setters、setDeliveryModes/setDeliveryModeState，hostRef 与 ProtocolCoordinator 桥仍由 AppShell 持有。useSaveCommands 不拥有跨 callback/lifecycle 共享 refs；通过参数或窄回调注入现有 host getter/load 与 baseline refresh、InitialSaveSource、DayEndPersistence、AppShell 持有并共享的 SessionReplacementGate/PlayerOrderRefreshGate/saveSelectionGenerationRef/dayEndFileTargetRef/speedMetricsRequestGateRef、AutoOrderManager、Redux dispatch、resetMarketHistory/refreshPlayerOrders、setNotice/setError/setReady/setStartDateError/setSpeedMetricsPollingGeneration/setSpeedMetrics/setSpeedMetricsError/setSessionSetup 和 setup draft setters；这些 setter 仅用于写回 AppShell 继续独占的现有 state，不转移或复制 state owner；不得自行 new 跨层屏障或持有第二份 sessionSetup。逐 handler 写集：recoverFromFile：无 host 命令；用 loadFromFile/validate、DayEndPersistence.invalidate/idle、InitialSaveSource.select；写 notice（busy/cancel/failure）、AutoOrderManager.clear、Redux clearAutoOrders、player orders 清空、error=null、ready=false，并调用 setSessionSetup(slot.setup) 触发 App 重建 host；不写 activeSetup/drafts/speed metrics。handleSave：不写存档、不调用 host，只写 notice 说明日终自动存档。handleLoad：调用当前 host.load(slot)，失败时 host.refreshBaseline 并可能 fatalHostError 写 Redux running=false 与 AppShell error；管理 save-selection/session-replacement/player-order-refresh/speed-metrics gates，通过注入的 setSpeedMetricsPollingGeneration 写 polling generation，并通过 setSpeedMetrics(null)/setSpeedMetricsError(null) 清 metrics/error；成功后 resetMarketHistory(host.snapshot())，清 player orders、更新 activeSetup/startDateDraft/priceCageEnabledDraft、触发委托刷新、清 manager 和 Redux autoOrders、写 notice；不写 ready/setSessionSetup。handleSaveFile：只选择并写 dayEndFileTargetRef/saveSelectionGenerationRef 与 notice，不调用 host.save（授权目标由后续日终持久化使用）。handleLoadFile：与 handleLoad 相同的 host.load/baseline recovery、通过相同三个注入 setter 写 metrics、order/activeSetup/draft/manager/Redux/notice 写集，但文件来源 loadFromFile，且仅在进入时递增 saveSelectionGenerationRef；不写 ready/setSessionSetup。handleNewGame：校验并通过注入的 setStartDateError 写 startDateError；等现有 DayEndPersistence 屏障后调用 InitialSaveSource.reset、AutoOrderManager.clear、Redux clearAutoOrders、清 player orders、error=null、ready=false，最后调用 setSessionSetup(new setup) 触发 App 重建宿主并写 notice；不直接调用 host.load/stop，不写 activeSetup/drafts/speed metrics。useTradingCommands 通过 host getter 调 EngineHost.submitIntent/playerWorkingOrders，manager/store dispatch 注入；Redux running/autoOrders/snapshot 不迁入 hook。 useTradingCommands 若持有 queriedPlayerOrders/cancelingOrderIds React state，须向 AppShell 返回稳定的 clearPlayerOrders/clearCancelingOrderIds 回调供 ProtocolCoordinator onBaseline/onApplied 调用；refreshPlayerOrders 也由该 hook 返回给生命周期回调。onBaseline 当前清活动委托，onApplied 在账户委托事实改变时清取消中集合。",
+      "composition": "React hooks 返回具名窄对象，以字段与方法聚合生命周期或命令专属 UI state；不是仅拆散函数。useSessionHostLifecycle 内构造单次 effect 的 SessionHostLifecycle 闭包对象，组合现有 host/coordinator/gates；useSaveCommands 返回 SaveCommands 用例门面，只借用现有存档 owner；useTradingCommands 返回聚合表单/查询/取消 state 与行为的 TradingCommands 对象。ProtocolCoordinator、CompanyQueryCoordinator、SessionReplacementGate、DayEndPersistence、InitialSaveSource、AutoOrderManager 保持现有 authority，不增加 AppSession 大对象、共享可变全局或 Redux class。",
+      "callers_and_contracts": [
+        "apps/web/src/App.tsx:App -> MarketRuntimeProvider -> AppShell；AppShell useEffect 创建 EngineHost 并创建 ProtocolCoordinator。",
+        "apps/web/src/host/protocol-coordinator.ts:ProtocolCoordinator.accept/onBaseline/onApplied；回调桥保留 AppShell，onApplied 通过 acceptReductionRef 委托图表 hook。",
+        "apps/web/src/save/session-replacement.ts:InitialSaveSource、SessionReplacementGate、synchronizeCurrentBaseline；一次启动读档和替换屏障按现有 owner 维持。",
+        "apps/web/src/save/day-end-persistence.ts:DayEndPersistence；App 跨 Shell 保存队列及日终写入屏障。",
+        "ADR-0010 HostUpdate baseline/delta 与局部刷新；ADR-0025 日终存档、一次启动读取与恢复屏障。",
+        "docs/trading-rules.md：前端仅预检，engine 权威受理；类别/板块差异需与活动 SessionSetup 一致。"
+      ],
+      "steps": [
+        "先按现有逐handler写集定义窄对象接口：生命周期对象拥有effect局部资源，SaveCommands门面借用已存在owner，TradingCommands拥有命令专属UI state与行为；不得仅移动函数文件后宣称对象聚合。",
+        "先迁 useSessionHostLifecycle：生命周期局部 ownedHost/cancelled 归 hook，host/coordinator refs 和 callback bridge 留 AppShell；按原 effect 的 StrictMode dispose、创建后取消 dispose、start/stop 与 coordinator 清理顺序写回现有 AppShell setter。 将cancelled/ownedHost/unsetIndicatorCalculator与start/stop/release/dispose方法同时迁入effect内对象，StrictMode每次effect建立独立生命周期，cleanup只释放自己拥有的host/registration。",
+        "再迁 recoverFromFile/handleSave/handleLoad/handleSaveFile/handleLoadFile/handleNewGame；逐一保持各自 host 操作、gates、metrics/orders、manager/Redux 及 setup/error/ready 回写，不合并不同写集。useSaveCommands 通过注入的 setStartDateError 写回 AppShell 新游戏日期校验 state；两个 handleLoad 路径通过注入的 setSpeedMetricsPollingGeneration、setSpeedMetrics、setSpeedMetricsError 写回 AppShell 既有 metrics state。setSessionSetup 仅由 recoverFromFile 与 handleNewGame 经注入回调调用，handleLoad* 仅更新当前 Shell 的 activeSetup/drafts。",
+        "迁 useTradingCommands 时传 activeSetup、playerAccount 和报价/输入 state；Manager、store、EngineHost 均使用现有实例/入口，Redux serializable state 不复制到 hook 私有 authority。",
+        "最后 AppShell 保留 JSX、宿主 refs/coordinator bridge、App-owned 跨挂载对象；移除仅已迁 handler 的本地实现，不改变错误可见性或生命周期屏障。"
+      ],
+      "validation": [
+        "apps/web/src/app/app-startup-wiring.test.ts：启动选择、WASM 检查先后、释放/重选、共享屏障、过期更新拒绝与 baseline readiness。",
+        "apps/web/src/app/app-persistence-wiring.test.ts、startup-recovery.test.ts、startup-save-source.test.ts：日终队列、一次读档、旧异步响应和恢复 setup。",
+        "apps/web/src/app/app-error-wiring.test.ts：结构化 HostFailure 仍显式传到 FatalHostError。",
+        "apps/web/e2e/trading-workflows.spec.ts：集合竞价、撤单/冻结、资金不足和日终读档。",
+        "本轮未运行测试；以上是后续迁移验证建议。"
+      ],
+      "dependencies": [
+        "apps/web/src/host/engine-host.ts：唯一宿主接口；hostRef identity 与 start/stop/dispose 仍由 AppShell lifecycle composition 接线。",
+        "apps/web/src/host/protocol-coordinator.ts：AppShell 唯一协议协调器与 baseline/applied/failure callbacks；chart acceptReduction 经现有 runtime hook。",
+        "apps/web/src/save/session-replacement.ts：InitialSaveSource、SessionReplacementGate、synchronizeCurrentBaseline；InitialSaveSource 由 App 持有，gate 由 AppShell 持有并注入，但不得复制首次读取对象。",
+        "apps/web/src/save/day-end-persistence.ts：DayEndPersistence 由 App 跨 AppShell 重挂持有；命令仅调用 invalidate/idle，不创建并行队列。",
+        "apps/web/src/app/MarketRuntimeProvider.tsx 和 useMarketChartRuntime.ts：存档 load 后 resetMarketHistory；Protocol reduction 投影归 chart runtime。",
+        "apps/web/src/components/auto-order-manager.ts、store/store.ts、components/player-orders.ts：复用现有 manager/Redux actions/refresh gate，不复制其权威 state。",
+        "web-01-A27 chart runtime：仅 AppShell onApplied 通过 acceptReductionRef 调用；无 ownership 依赖。",
+        "apps/web/src/host/speed.ts：SpeedMetricsRequestGate 由 AppShell polling effect 与读档命令共用，保持单一实例。",
+        "apps/web/src/components/player-orders.ts：PlayerOrderRefreshGate 由 AppShell host baseline/cleanup 与交易查询共用，保持单一实例。"
+      ]
+    },
+    "batch": "web-01",
+    "extensions": [
+      {
+        "id": "frontend-E01",
+        "title": "App 倍速指标轮询职责",
+        "kind": "extension",
+        "extends": "web-01-A06",
+        "files": [
+          "apps/web/src/App.tsx"
+        ],
+        "objects": [
+          "useSpeedMetricsPolling"
+        ],
+        "report_anchor": "frontend-e01",
+        "group": "frontend",
+        "details_markdown": "**分类：extension；extends：web-01-A06。** 对象：`useSpeedMetricsPolling`。\n\n文件：`apps/web/src/App.tsx`。\n\n七个 effects 被原动作整体列为 AppShell 保留，但 speed-metrics polling effect 本身拥有请求循环、取消和 timer 重试行为，应明确 React hook 作为该 effect 行为 owner；它无需新建通用 metrics manager。\n\n**唯一所有权与生命周期：** 建议 useSpeedMetricsPolling hook 拥有每次 effect 的 cancelled/timer 生命周期和 poll/read/retry 行为。speedMetrics/speedMetricsError/speedMetricsPollingGeneration 是由 AppShell 持有的显示 state；speedMetricsRequestGateRef 与 speedMetricsLoadInProgressRef 被读档命令共用，继续唯一留在 AppShell 并注入。\n\n**可聚合字段：**\n\n- hook 私有：effect cancelled 标志、timeout handle。\n- AppShell 唯一：speedMetrics、speedMetricsError、speedMetricsPollingGeneration、SpeedMetricsRequestGate、speedMetricsLoadInProgressRef。\n\n**具体方法：**\n\n- useSpeedMetricsPolling({host, ready, speed, running, requestGate, loadInProgress, onMetrics, onError, pollingGeneration})；按当前语义立即读取、成功更新、失败提示并 1 秒重试，cleanup 取消 timer/请求结果写入。\n\n**真实调用方：**\n\n- AppShell 当前位于 [speed, running, ready, speedMetricsPollingGeneration] 依赖下的 polling useEffect 是真实生产调用方。\n- handleLoad/handleLoadFile 通过同一个 speedMetricsRequestGateRef invalidate/capture 并设置 load-in-progress，必须保持与 polling hook 的共享实例。\n\n**迁移顺序：**\n\n- 先固定立即 poll、成功、失败重试、取消、generation 过期及读档期间不轮询等行为。\n- 实现 hook 并接收既有 gate 与 load-in-progress 读取，不复制请求代数 authority。\n- 替换 AppShell polling effect，保留 AppShell 的 metrics state setters 与 loading UI。\n\n**测试位置与边界（未运行）：**\n\n- 新增 apps/web/src/app/speed-metrics-polling.test.ts：fake host 成功/失败、恰好一次重试 timer、unmount cleanup、gate invalidate 后忽略结果、load-in-progress 阻止启动。\n- apps/web/src/host/speed.test.ts：保持 SpeedMetricsRequestGate 的独立 generation 行为。\n- apps/web/src/app/app-startup-wiring.test.ts：保留 App 宿主启动到 metrics hook 的生产 wiring。\n\n**领域/跨层边界：**\n\n- 调用 EngineHost.readSpeedMetrics 的 UI 观测，不改变 EngineHost 设定/实测 SpeedMetrics 语义。\n- 暂停、MAX 倍速及后台页面行为遵循既有 host 协议；指标采样不可反向改变模拟状态。\n- 读档与 polling 共享 request gate；不可用新 hook 创建第二份 gate。"
+      },
+      {
+        "id": "frontend-E02",
+        "title": "App 暂停偏好生命周期职责",
+        "kind": "extension",
+        "extends": "web-01-A06",
+        "files": [
+          "apps/web/src/App.tsx"
+        ],
+        "objects": [
+          "usePausePreferences"
+        ],
+        "report_anchor": "frontend-e02",
+        "group": "frontend",
+        "details_markdown": "**分类：extension；extends：web-01-A06。** 对象：`usePausePreferences`。\n\n文件：`apps/web/src/App.tsx`。\n\npause-preference load/synchronization 两个 effects 与 loaded/ready/latest refs 被列作 AppShell 保留，却没有作为一个明确职责单元记录。一个窄 hook 可拥有其初始化和适配流程，不应创建新偏好存储 authority。\n\n**唯一所有权与生命周期：** 建议 usePausePreferences hook 拥有首次 sessionStorage 读取/错误回报及偏好到 host/sessionStorage 的同步生命周期；Redux settings.pauseAfterClose/pauseBeforeOpen 仍是唯一偏好值 authority。AppShell 继续拥有 pausePreferencesReady gating，并把最新 Redux 值提供给 HostUpdate barrier callback，或 hook 返回只读最新值回调，不保留第二份偏好值。\n\n**可聚合字段：**\n\n- hook 私有生命周期状态：是否完成首次加载（对应 pausePreferencesLoadedRef）。\n- Redux 唯一数据：pauseAfterClose、pauseBeforeOpen。\n- AppShell 启动 gating：pausePreferencesReady；ProtocolCoordinator onApplied 读取的 latest preferences 必须来自当前 Redux state/稳定读回调。\n\n**具体方法：**\n\n- loadOnce(storage, dispatch, onReady, onError)：调用 loadPausePreferences，dispatch 两个 setting，成功后标记已加载并放开 readiness。\n- synchronize(host, preferences, storage)：将当前 Redux preferences 写入 EngineHost；已加载后写 sessionStorage；分别显式回报 host/storage 错误。\n\n**真实调用方：**\n\n- AppShell 首次加载 effect 调用 loadOnce，是启动 host lifecycle 的 readiness 前置条件。\n- AppShell pauseAfterClose/pauseBeforeOpen 变化 effect 调用 synchronize。\n- ProtocolCoordinator onApplied 的 civil-barrier callback 读取同一 Redux 当前偏好以决定暂停。\n\n**迁移顺序：**\n\n- 先固定首次load成功/失败、window缺失、host未ready、E2E skip及storage写入时机。\n- 窄hook接管首次loaded/ref与两个effects，但Redux为偏好authority；AppShell readiness与startup setter注入。\n- pausePreferencesRef是提供当前Redux偏好的稳定callback镜像，不是第二份可独立写的authority；保留它或同等稳定getter，不把删除ref当需求。\n- host初次setPausePreferences仍属于SessionHostLifecycle；后续sync保持当前effect依赖及host-null时return语义，不顺手新增同步触发。\n\n**测试位置与边界（未运行）：**\n\n- 新增 apps/web/src/app/pause-preferences-runtime.test.ts：首次加载只一次、load error 不伪造 ready、host 未就绪、host sync 失败、sessionStorage write 失败、偏好变化后 barrier 读取最新值。\n- apps/web/src/config/pause-preferences.test.ts：保持配置 schema/default 与存储 adapter 行为。\n- apps/web/e2e/mobile-layout.spec.ts：保持用户偏好同步及 pause/resume 可见行为。\n\n**领域/跨层边界：**\n\n- 暂停偏好只是 host pause-after-close/before-open 配置，不改变 A 股交易日、竞价或委托语义。\n- Redux settings 是偏好事实来源；sessionStorage 是当前标签页恢复介质，不成为第二份业务状态。\n- host 错误和 storage 错误必须明确展示，不得 catch 后静默回退。"
+      }
+    ]
+  },
+  {
+    "id": "web-01-A27",
+    "title": "MarketChartProjection（候选）+ useMarketChartRuntime React适配hook",
+    "group": "frontend",
+    "origin": "baseline",
+    "files": [
+      "apps/web/src/app/useMarketChartRuntime.ts"
+    ],
+    "details": {
+      "id": "web-01-A27",
+      "target": "MarketChartProjection（候选）+ useMarketChartRuntime React适配hook",
+      "status": "proposed",
+      "owned_state": [
+        "MarketChartProjection唯一拥有pricesByCode、auctionsByCode、continuousVolumes、completedDailyByCode、activeDailyByCode；迁入现有五组refs的数据与写行为，不在hook中保留第二组可写缓存。数据属于可重建的视图投影，不是engine/protocol/Redux authority，也不进入存档。",
+        "useMarketChartRuntime保持chartCode及chartData/auctionChartData/dailyChartData三个React输出数组state、ProtocolReduction分支编排、Redux dispatch和applyEffects；数组是投影的呈现快照，不反向写对象。Provider继续拥有indicator registration token/calculator state。",
+        "hook每次挂载以稳定ref或惰性state构造一个纯投影对象；对象无计时器/订阅/I/O，不添加无意义dispose。Provider重挂后新实例从baseline重建；StrictMode不得重复消费一份reduction。对象私有map不外露可写ref。"
+      ],
+      "moves": [
+        {
+          "from": "priceHistoryByCodeRef/auctionHistoryByCodeRef/continuousVolumesRef + upsertFrames",
+          "to": "MarketChartProjection私有prices/auctions/volumes + upsertFrames(frames)",
+          "reason": "跨批次累计量基线与分钟点必须一起写入同一投影owner，方法只修改自己的accumulator。"
+        },
+        {
+          "from": "chartsFromHistory与baseline/civil分支history重建",
+          "to": "MarketChartProjection::rebuildHistory(frames)",
+          "reason": "重建替换三组map并清掉旧证券，保持输入帧顺序与累计量差值。"
+        },
+        {
+          "from": "dailyCandlesByCodeRef/activeDailyCandlesRef + chartCandlesFor + replaceSnapshot中的candlesFromSnapshot",
+          "to": "MarketChartProjection私有completed/active + replaceSnapshot(snapshot)/candlesFor(code)",
+          "reason": "完成与活动日K的共同读取/替换行为归同一owner；Redux setSnapshot仍留hook。"
+        },
+        {
+          "from": "acceptReduction finalFrame active candle替换",
+          "to": "MarketChartProjection::replaceActiveCandles(frame.activeDailyCandles)",
+          "reason": "只在无runtimeSnapshot的分支整体替换active map，保留缺失证券移除行为。"
+        },
+        {
+          "from": "installBaseline/resetMarketHistory中的map修改",
+          "to": "MarketChartProjection::installBaseline(state)/reset(snapshot)",
+          "reason": "将相关缓存构造/恢复/清空与状态集中，hook仍编排Redux和React输出。"
+        },
+        {
+          "from": "Provider/actions与LocalRefreshViews可写history/active refs读取",
+          "to": "投影只读history/active视图或窄getter",
+          "reason": "同步迁移读者，禁止暴露projection mutation入口给组件；Readonly嵌套数组约束并维护无写别名，React selected arrays继续复制。"
+        }
+      ],
+      "api_boundary": "installBaseline(state)只重建投影；rebuildHistory(frames)、upsertFrames(frames)、replaceSnapshot(snapshot)、replaceActiveCandles(map)、reset(snapshot)是hook唯一写入口。candlesFor(code)、pricePointsFor(code)、auctionPointsFor(code)、history/active只读视图返回借用只读数据或必要副本，不外露current setter/可写map。对象不调用Redux、React、host、notice或AutoOrderManager。hook按现有顺序dispatch snapshot/frame，再更新React选择输出，最后逐项applyEffects。对象输入normalized frames/snapshot为借用，不能修改。 Provider暴露稳定只读getters，组件每次渲染读当前map；不把整体可替换map快照作为一次性Context值，不新增tick渲染驱动。",
+      "composition": "数据+行为投影对象与React适配hook组合；不用继承，不另建chart host/service或AppSession。continuousPoint/auctionPoints保持模块私有纯转换或对象私有无状态helper；upsertFrames成为对象内部有意mutation方法，不能称纯函数。",
+      "callers_and_contracts": [
+        "apps/web/src/app/MarketRuntimeProvider.tsx:MarketRuntimeProvider -> useMarketChartRuntime，并通过 Actions/Selection/Data contexts 暴露相应结果。",
+        "apps/web/src/App.tsx:AppShell 创建 ProtocolCoordinator；其 onApplied 回调调用 acceptReductionRef.current(reduction)，仅此处连接协议 reduction 到图表 hook。",
+        "apps/web/src/host/protocol-coordinator.ts:ProtocolCoordinator 负责 baseline/delta 接受和顺序；chart hook 只应用已接受的 ProtocolReduction。",
+        "ADR-0010 HostUpdate baseline/delta 与局部刷新：civil-update 重建日内图表历史，tick-batch 按序更新点，runtime snapshot 覆盖历史基线，普通 delta 取最后帧 active candle。",
+        "现有历史缓存仅供视图使用，不进入 Redux 序列化状态或存档；engine/protocol snapshot 仍为权威数据。",
+        "apps/web/src/app/LocalRefreshViews.tsx:ConnectedMarketPanel消费priceHistoryByCodeRef.current；ConnectedMobileDetail消费activeDailyCandlesRef.current，两者只读；Provider对应两项Context契约同步迁为read-only view。",
+        "app/market-chart-runtime.test-support.tsx::MarketChartRuntimeProbe消费active cache，probe直接调用hook，生产由Provider调用hook，App通过Context消费。"
+      ],
+      "steps": [
+        "先固定baseline、civil、带runtimeSnapshot与无snapshot tick四条路径及selection/reset的行为测试；再定义五组私有字段、窄写方法和只读输出。",
+        "一次性迁五组缓存及其更新/重建方法；删除hook旧可写refs，保留chartCode和三个React输出state，effect switch与Redux dispatch顺序不迁进对象。",
+        "baseline: rebuildHistory再replaceSnapshot；civil: 用update.intraday重建再replaceSnapshot；tick: 逐帧upsert，然后有runtimeSnapshot时replaceSnapshot，否则取最后帧替换active；各路仍由hook在原位置dispatch。最后更新选择数组再applyEffects，不合并两个active写分支。",
+        "同步Provider/context、LocalRefreshViews和probe读取API。只读历史视图不需要每tick深复制全量；避免可写别名，保持完成日K/未变证券引用复用和现有通知/渲染频率。",
+        "每个Provider挂载持有唯一对象，baseline/reset明确整体替换缓存；不添加时间器、事件监听、通用dispose或新的恢复authority。"
+      ],
+      "validation": [
+        "apps/web/src/app/market-chart-runtime.test.ts：baseline 与连续 delta 下 completed candle 历史引用稳定；active candle 更新；连续 delta 采用最后 authoritative active candle；缺失代码从 active map 移除。",
+        "为纯 projection 补定向用例：continuousPoint 缺点返回 null/累计成交量差值与时间点；auctionPoints 排除 ClosingAuction 且 null indicative price；chartsFromHistory 对空/多帧输入不修改输入引用并确定性地产生新结果。",
+        "upsertFrames reducer 用例明确 accumulator 原地更新，并断言 frames 及其嵌套输入引用和值保持不变；相同 frames 与相同初始 accumulator 的独立副本产生相同输出，覆盖多帧顺序和 volume baseline。不得把 accumulator 自身未变作为期望。",
+        "保留 apps/web/src/app/market-chart-runtime.test-support.tsx 作为真实 ProtocolCoordinator 到 hook 的测试 probe；AppShell startup/persistence/E2E 测试仅是跨层背景，不替代图表验证。",
+        "本轮未运行测试；以上为后续候选迁移的验证要求。",
+        "增加MarketChartProjection行为用例：跨批次volume基线、全量重建清旧代码、selected view无反向写入、baseline/reset分别保留/清空规则；Provider/context读取迁移与production hook wiring保持。现有SSR probe只覆盖active/completed candles，不能替代全部分时/竞价/volume边界。"
+      ],
+      "dependencies": [
+        "apps/web/src/mobile/market-model.ts:mergeMinutePoints",
+        "apps/web/src/mobile/kline-sync.ts:candlesFromSnapshot/toChartCandle",
+        "apps/web/src/app/MarketRuntimeProvider.tsx",
+        "apps/web/src/App.tsx:AppShell ProtocolCoordinator 的 onApplied 回调桥",
+        "apps/web/src/app/LocalRefreshViews.tsx:ConnectedMarketPanel/ConnectedMobileDetail只读缓存契约"
+      ]
+    },
+    "batch": "web-01",
+    "extensions": []
+  },
+  {
+    "id": "web-08-A01",
+    "title": "MobileTradingConceptController（原型交互，可选）",
+    "group": "frontend",
+    "origin": "baseline",
+    "files": [
+      "design/ui/mobile/mobile-trading-concept.html"
+    ],
+    "details": {
+      "id": "web-08-A01",
+      "target": "MobileTradingConceptController（原型交互，可选）",
+      "status": "proposed",
+      "owned_state": [
+        "页面生命周期内唯一持有 root、panels、p/r/d/o 和按钮引用及已绑定的回调；具体字段分别对应现有脚本词法变量。",
+        "保留 DOM 的 hidden/class/input.value 作为当前视图状态，不新增与 DOM 竞争的 currentPage/currentChartView 可写副本；不拥有行情、资金或委托事实。"
+      ],
+      "moves": [
+        {
+          "from": "第 110 行 [data-v] onclick 回调及 panels 显隐/class 切换",
+          "to": "MobileTradingConceptController::selectChartView(button)",
+          "reason": "视图面板与按钮样式由同一事件同时变更，归拥有相应 DOM 引用的控制器；保留未知面板直接返回。"
+        },
+        {
+          "from": "第 110 行 [data-p] onclick 回调",
+          "to": "MobileTradingConceptController::navigateTo(button)",
+          "reason": "detail/watch/book 页面跳转和导航选中状态是同一组 UI 状态迁移；book 入口还要求切至盘口周期，应由一个入口协调。"
+        },
+        {
+          "from": "第 110 行 draw 函数和 p.oninput 注册",
+          "to": "MobileTradingConceptController::renderProgress() / bindEvents()",
+          "reason": "该回调共同更新图表裁切宽度、点位和时间输出，DOM 引用与输入生命周期由控制器持有。将值映射计算与 DOM 写入分开，避免控制器承担纯计算。"
+        }
+      ],
+      "api_boundary": "在原第 109–111 行脚本位置构造并 bindEvents，保持 onclick/oninput 赋值、初次 draw 调用以及后续 DOM 移动的顺序。selectChartView 保留未知面板时直接返回的现状；navigateTo 保留 book 分支不更新标题的现状；进度方法读取现有 p.value 并更新 r/d/o。不得顺带增加输入拒绝、节点校验、卸载清理或新的事件传播语义；这些若需要，另列行为任务。当前没有 dispose 契约，不凭对象化新增产品生命周期。 两个选择方法保留被点击按钮引用，以 x===button 切换 class；多个 data-p=watch 按钮不能因目标页相同而同时选中。book 分支继续触发对应 chart 按钮 click，不能把它静默换成不派发事件的直接调用。",
+      "composition": "一个页面范围的控制器组合现有 DOM 引用与事件方法，替代脚本顶层散落变量。静态 DOM 装配维持独立顺序，数值映射可留无状态私有函数；无需继承、全局 store 或新增业务模型。",
+      "callers_and_contracts": [
+        "同一 HTML 中的 nav.tabs [data-v] 按钮与 footer.nav [data-p] 按钮是第 110 行处理器的调用入口；#time/#day/#book 与 #detail/#watch、#ttl 是其操作目标。",
+        "#p 滑块当前声明 min=20、max=100、value=68（第 104 行）；第 110 行 draw 将值按 x=3.6*v、m=round(570+2.4*v) 映射，y 使用 42/60/80 分段，显示 HH:MM。此映射只是图稿动画，不是交易时段或行情模型。",
+        "不应将示例证券、涨跌颜色、固定价格交易、盘口/逐笔/资金流样例解读为引擎 domain object 或真实 A 股交易规则；若产品化需由真实契约提供数据并遵守 docs/trading-rules.md。"
+      ],
+      "steps": [
+        "若继续维护此交互原型，先用本文件现有选择器建立 DOM 行为 baseline，记录 time/day/book、watch/detail 和 book 标题分支的当前表现。",
+        "将 root/panels/p/r/d/o 及两个 onclick closure、draw 迁入一个控制器；bindEvents 继续使用相同 onclick/oninput 入口，保持 draw 初次执行时点。",
+        "保留后续 DOM 拼装脚本及其顺序；单独提取进度的数值映射时保留范围端点、42/60/80 分段和 HH:MM 算法，不把它换成真实交易时钟。"
+      ],
+      "validation": [
+        "本文件没有现成自动测试；拟在 design/ui/mobile 相邻新增原型 DOM 行为测试，覆盖 time/day/book 显隐与按钮 class、watch/detail 标题、book 入口保持原标题且切换盘口、未知面板直接返回、滑块范围边界及 42/60/80 分段。",
+        "验证后续 chart/volume 节点搬移后，既有 r/d/o 引用仍更新同一节点；不得将硬编码盘后交易、盘口和金额样例作为 A 股规则断言。本轮未运行浏览器或测试。",
+        "同为 data-p=watch 的自选/持仓/我的按钮分别点击后，仅实际被点击按钮选中；book 导航的程序化图表点击事件与现有事件顺序一致。"
+      ],
+      "dependencies": [
+        "依赖当前 HTML 的 DOM 结构及脚本执行顺序；仅整理本原型交互，不依赖或迁移 App/EngineHost/engine。",
+        "若将原型产品化或引入 dispose/更强校验，另行定义生命周期和真实数据契约，不计入本项行为等价迁移。"
+      ]
+    },
+    "batch": "web-08",
+    "extensions": [
+      {
+        "id": "frontend-E03",
+        "title": "原型导航引用补充",
+        "kind": "extension",
+        "extends": "web-08-A01",
+        "files": [
+          "design/ui/mobile/mobile-trading-concept.html"
+        ],
+        "objects": [
+          "MobileTradingConceptController"
+        ],
+        "report_anchor": "frontend-e03",
+        "group": "frontend",
+        "details_markdown": "**分类：extension；extends：web-08-A01。** 对象：`MobileTradingConceptController`。\n\n文件：`design/ui/mobile/mobile-trading-concept.html`。\n\n旧候选方法已涵盖navigateTo，但字段清单遗漏其依赖。\n\n**唯一所有权与生命周期：** 只属于静态原型controller；不接生产EngineHost。\n\n**可聚合字段：**\n\n- 旧动作已列DOM refs之外补 #detail/#watch/#ttl 的对应引用\n\n**具体方法：**\n\n- navigateTo沿用既有display/title切换与click顺序\n\n**真实调用方：**\n\n- prototype内navigateTo与底栏/返回按钮click\n\n**迁移顺序：**\n\n- 在web-08-A01迁移时同时移动navigateTo使用的三节点ref；保留不同button身份与初始绘制顺序。\n\n**测试位置与边界（未运行）：**\n\n- 原型DOM静态检查/短interaction检查（目前无production测试），覆盖detail/watch/title切换。\n\n**领域/跨层边界：**\n\n- 静态样例不作为真实A股行情；不新增validation/dispose或生产接线。"
+      }
+    ]
+  },
+  {
+    "id": "frontend-N01",
+    "title": "Remote 报告查询时间线与归属索引",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/host/remote-host.ts",
+      "apps/web/src/host/remote-company-reports.test.ts"
+    ],
+    "objects": [
+      "ReportQueryContext"
+    ],
+    "report_anchor": "frontend-n01",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`ReportQueryContext`。\n\n文件：`apps/web/src/host/remote-host.ts`, `apps/web/src/host/remote-company-reports.test.ts`。\n\n在保留 RemoteHost facade 与现有 transport 边界下，将远程报告分页后 ID/company 归属索引和会话时间线失效状态收拢为可独立验证的窄对象。它表达真实 Remote 查询约束，避免 RemoteHost 工厂闭包继续直接维护两个相互依赖字段及对应校验。仅为 Remote API 适配需要；Worker/Tauri 通过自身宿主查询 authority 处理报告，不应声称三端存在重复映射。\n\n**唯一所有权与生命周期：** 唯一 owner 为 createRemoteHost 实例持有的 ReportQueryContext；对象不得进入 Redux/EngineHost 公共契约，也不得与 Worker/Tauri generation 或恢复 coordinator 合并。\n\n**可聚合字段：**\n\n- reportQueryEpoch: bigint\n- reportCompanies: Map<string, string>（或内部等价索引）\n\n**具体方法：**\n\n- captureEpoch(): bigint\n- invalidate(): void（时间线切换时递增 epoch 并清空索引）\n- acceptPage(queryCompanyId, capturedEpoch, page): void（先验证 epoch，再验证每个 report company_id 和已登记 id 归属，成功后登记）\n- companyFor(reportId): string（未知归属显式报错）\n- assertCurrent(capturedEpoch, messageContext): void（异步响应后验证时间线仍有效）\n- validateReport(capturedEpoch, requestedCompanyId, requestedId, report): void（验证响应 ID/company 与查询一致）\n\n**真实调用方：**\n\nremote-host.ts 的 queryPublicReports 在 HTTP 返回后调用 acceptPage；publicReportById 调用 companyFor 生成按 company 路由的 URL，并在 await 前后通过 epoch 校验；handle 收到跨 generation baseline 和 load 成功后调用 invalidate。App.tsx 经 CompanyQueryCoordinator 调用 EngineHost 查询接口；remote-company-reports.test.ts 当前覆盖实际 Remote adapter 的页登记、未知旧 ID 拒绝和 company/id 校验，可扩为对象行为测试。\n\n**迁移顺序：**\n\n先以现有 remote-company-reports.test.ts 固定查询页登记、同一 ID 公司冲突、未知 ID、请求期间时间线切换、by-ID 响应错配和 invalidate 清空边界；再新增对象并仅替换 RemoteHost 中 reportQueryEpoch/reportCompanies 相关操作；最后复核 App/CompanyQueryCoordinator 接口及 Remote/Worker/Tauri 行为差异。不得触碰 host generation、协议传输或 A 股报告字段/金额语义。\n\n**测试位置与边界（未运行）：**\n\napps/web/src/host/remote-company-reports.test.ts：page 正常登记；同一 report ID 被不同 company 返回时拒绝；query await 期间 baseline generation 改变时旧页不得登记；generation 改变/load 后旧 ID lookup 拒绝；by-ID 响应 company/id 不匹配拒绝；新 epoch 页能重新登记 ID。每个 case 用短 fake fetch/WebSocket fixture。\n\n**领域/跨层边界：**\n\n报告 ID 是 opaque decimal string，原样作为 Map key 和 URL segment；不转 number。epoch 与 Remote timeline generation 分工不同：Remote host 接受 baseline 时，只有跨 generation 才 invalidate（现行行为）；显式 load 后 invalidate，再等 authoritative baseline。不得改成三宿主共用序号、不得从 public_report_ids 推断映射、不得放宽 normalizePublicReportPage/ById 校验。generation baseline 乱序接受语义另行确认。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N02",
+    "title": "命令式图表资源所有权",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/components/PriceChart.tsx",
+      "apps/web/src/components/chart-resize.ts"
+    ],
+    "objects": [
+      "PriceChartRuntime"
+    ],
+    "report_anchor": "frontend-n02",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`PriceChartRuntime`。\n\n文件：`apps/web/src/components/PriceChart.tsx`, `apps/web/src/components/chart-resize.ts`。\n\n当前生命周期跨三组 effects，以大量可空 refs 隐式共享 series 所属关系；例如切换指标需先逐组 removeSeries 并置空，再按当前指标创建，而 chart dispose 又必须清理所有 refs。runtime 把资源成组所有权和更新命令变成可测边界，降低遗漏 cleanup、错误 chart/series 配对及跨指标残留的风险。它不是把组件生命周期整体改成 class，也不同于 A27 MarketChartProjection：后者是有缓存的行情投影/数据派生 owner；此处 runtime 不拥有输入行情、不缓存投影、不成为领域状态来源，只持有第三方命令式图表句柄与副作用资源。\n\n**唯一所有权与生命周期：** PriceChart 每次挂载effect唯一拥有一个 runtime；runtime唯一持有两个chart、各series和resize资源。React继续持有DOM container refs、indicator选择与useIndicatorResults；输入行情只借用。dispose原有效果在cleanup执行，不额外扩大生命周期保证。\n\n**可聚合字段：**\n\n- 主 IChartApi 与主 price/candle ISeriesApi\n- 副图 IChartApi 与 volume、MACD、KDJ series 引用\n- resize observer disconnect handle 与 window resize listener 的注册/移除闭包\n\n**具体方法：**\n\n- create(containers)：创建主/副图及初始 series，并安装 resize 资源；返回 runtime\n- updatePrice(data, dailyCandles, lastClose, chartType, klineDays)：执行现有分时/日K显示切换、清空旧模式数据、窗口裁剪与 fitContent\n- updateIndicator(indicator, source, result, klineDays)：维护单个活动指标对应的 series，更新数据并 fitContent；保留 pending/error 时清空旧值的行为\n- resize()：按现有容器宽度更新两个 chart\n- dispose()：解除 observer/listener，移除本次挂载的两个 chart，释放内部引用；每个effect cleanup清理自己创建的实例\n\n**真实调用方：**\n\n- ConnectedChartPanel -> PriceChart\n- apps/web/src/app/LocalRefreshViews.tsx；PriceChart原有挂载effect、价格更新effect、指标更新effect与cleanup是窄owner调用边界\n\n**迁移顺序：**\n\n- 先用 runtime 单元测试固定 create/dispose、resize、分时/日K切换清空行为、三种指标切换时 series 删除/创建、结果 pending/error 清旧数据及窗口边界；使用 lightweight-charts 可替身记录调用。\n- 新增 PriceChartRuntime，先迁移资源字段、create/resize/dispose，不改变 React effect 和数据语义。\n- 将价格与指标 effects 的图表命令逐步转发给 runtime；保留 effect 对输入变化的调度及 indicator hook。\n- 删除重复 refs 与内联 ResizeObserver/listener 管理；组件继续持有 runtime ref 或 effect 局部实例，并在 cleanup dispose。\n\n**测试位置与边界（未运行）：**\n\n- 现有 chart-resize.test.ts、price-chart-indicators.test.ts；新增 price-chart-runtime.test.ts\n- unmount/dispose 后 observer disconnect、window listener 移除、主副图各 remove 一次；不遗留 series 句柄\n- 固定当前容器缺失的创建分支与创建失败的抛错路径；失败时局部已建资源如何回收属于独立行为修复，不把半初始化回滚混入等价提取\n- 分时空数据清空旧曲线；切日K先清分时线并隐藏，日K只呈现 authority dailyCandles 的最近 klineDays 根；反切换清空蜡烛\n- volume/macd/kdj/none 任意切换不保留前一指标 series；计算 pending/error 时清空当前 MACD/KDJ 数据，不错误复用旧结果\n- 两个容器独立 resize；cleanup解除observer/listener，固定已有回调与cleanup顺序；若增加晚到回调防护，另批验证其新行为\n- 重复创建和 dispose 的资源边界明确；React StrictMode effect setup-cleanup-setup 可正常重新创建\n\n**领域/跨层边界：**\n\n只迁移展示资源管理，不改 Cents/yuan、成交量股/手的既有格式映射、权威日 K 来源、A 股涨跌着色或指标规则。日K继续只使用引擎同步的已完成交易日 OHLC；不从分时缓存合成日K。Lightweight Charts API 具体 generic series 类型应被 runtime 内部约束，避免把 chart API 泄漏到组件。不能让 runtime 接受宽泛 Props 对象并复制业务状态；方法参数应保持显式。新增抽象有成本，只有把创建、系列切换、resize 与释放一并收口才有净收益。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N03",
+    "title": "AG Grid 行提交同步所有权",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/components/MarketGrid.tsx",
+      "apps/web/src/components/market-grid-rows.ts"
+    ],
+    "objects": [
+      "MarketGridRowSynchronizer"
+    ],
+    "report_anchor": "frontend-n03",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`MarketGridRowSynchronizer`。\n\n文件：`apps/web/src/components/MarketGrid.tsx`, `apps/web/src/components/market-grid-rows.ts`。\n\nattach 之前数据会继续变化，onGridReady 必须取最新 rows；attach 后 effect 根据已提交目标比较并发送异步事务。这是一个时序协调对象，内聚 data 与行为，且允许脱离完整 React grid 测试迟绑定和连续更新语义。与 A27 MarketChartProjection 缓存不同，这里缓存的是行对象的应用记账/外部 GridApi 同步游标，不是从行情派生新的市场投影；buildMarketRows 仍是纯投影，Redux markets 仍是权威输入。\n\n**唯一所有权与生命周期：** MarketGrid每次挂载唯一持有一个synchronizer；它拥有借用的GridApi引用与latest/submitted记账数组。AG Grid继续唯一拥有实际grid及异步事务执行；builtRows identity cache和初始rowData可继续留组件，但不能保留第二套latest/submitted refs。\n\n**可聚合字段：**\n\n- 当前 GridApi<RowData> 或尚未 attach 的状态\n- 最新期望 RowData[]\n- 已提交目标 RowData[]（现 appliedRowsRef 的准确语义）\n\n**具体方法：**\n\n- attach(api, initialRows)：登记 GridApi，并将 attach 时最新期望行与初始行进行同步；需避免 onGridReady 与 effect 顺序导致陈旧行覆盖\n- updateLatest(rows)：记录最新期望行；若已 attach，调用 diffMarketRows 并仅在事务非空时 applyTransactionAsync，再前移 submitted rows\n- dispose()（仅当 grid 生命周期确需）：解除 API 引用，不能伪称取消已提交 AG Grid async transaction\n\n**真实调用方：**\n\n- ConnectedMarketPanel -> MarketGrid\n- apps/web/src/app/LocalRefreshViews.tsx；组件原有effects/onGridReady/cleanup是窄owner调用边界\n\n**迁移顺序：**\n\n- 先写 synchronizer 的短测试，模拟 applyTransactionAsync；验证未 attach 多次更新只保留最新 rows，attach 使用最新值，逐次差异只产生正确事务，空事务不提交。\n- 新增 MarketGridRowSynchronizer，接管 gridApi/latestRows/submittedRows 与同步方法，纯 diff 函数保持独立。\n- MarketGrid 用一个 ref 持有 synchronizer；grid-ready 调用 attach，allRowData effect 调用 updateLatest；cleanup 按 grid destroy 时机 dispose。\n- 移除 appliedRowsRef/gridApiRef/latestRowsRef/initialRowsRef 中被同步器取代的重复记账，确认 AG Grid 初始 rowData 与首次 transaction 不重复添加。\n\n**测试位置与边界（未运行）：**\n\n- 现有 market-grid-rows.test.ts、local-refresh-boundaries.test.ts；新增 market-grid-row-synchronizer.test.ts\n- GridApi attach 前收多次 rows 更新，attach 只根据最新期望行同步，不提交中间过期行\n- attach 后只更新一个证券时仅提交该 code 的 update，未变化 row identity 稳定\n- watchlist/持仓集合改变时生成正确 add/remove；变为空集合也能删除旧行\n- 相同 rows 引用/相同行集合不产生空异步事务；连续快行情更新按当前实现提交正确的前序目标差异\n- applyTransactionAsync 被调用后即记录 submitted target；明确该状态不代表 async transaction callback 已完成\n- Grid 重新 attach/new API 时基准清晰，不能把旧 GridApi 的提交账本错误套用到新实例\n- React 首次 rowData 初始化、onGridReady 和后续 effect 任意合理顺序下不重复添加/丢失首批行\n\n**领域/跨层边界：**\n\n保留稳定证券代码 row ID 和 engine 提供的 MarketSnap；不得改变 Cents 转显示元、涨跌幅计算、A 股证券集合或现有显式标注的模拟指数口径。MarketGridRow 继续是展示投影，不成为行情真相。AG Grid 的异步事务是否自动合并、交易完成回调及 Grid destroy 时序需以当前依赖 API 明确；同步器不能声称拥有或回滚 AG Grid 内部执行。若 tests/调用证明只有两三个不变量且封装无法比 React refs 更清楚，则可保持独立 hook/ref 实现；候选理由是闭环所有权和时序测试，而非为了 class 化。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N04",
+    "title": "WASM 会话槽资源所有权",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/host/wasm-worker.ts",
+      "apps/web/src/host/wasm-restore-transaction.ts"
+    ],
+    "objects": [
+      "WasmSessionSlot"
+    ],
+    "report_anchor": "frontend-n04",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`WasmSessionSlot`。\n\n文件：`apps/web/src/host/wasm-worker.ts`, `apps/web/src/host/wasm-restore-transaction.ts`。\n\n单 Worker 只是基数约束，不意味着其内部资源没有生命周期 owner。wasmModule、handle、generation 及 requireHandle/create/drop/restore 共同构成一个 WASM 会话槽：handle 必须由该槽唯一拥有；替换时需先构造并 snapshot candidate，再切换 authority，正确清理旧 handle 或 candidate，并维持 restore 成功后的 generation 变化。把这一边界封装出来可让 create/restore/drop 原子性和资源释放有单一可测试入口，且不会令 Worker 可复用或改变单 Worker 单会话协议。\n\n**唯一所有权与生命周期：** WasmSessionSlot 是 Worker realm 内当前 WASM handle 与其 generation 的唯一 owner。协议 message listener 仍由 Worker 模块组合/安装；不要复制 handle/generation 到另一个长期可变 owner。\n\n**可聚合字段：**\n\n- handle: number | null\n- generation: number\n- 已初始化bindings只读借用；异步加载wasmModule仍归Worker组合根\n\n**具体方法：**\n\n- requireHandle / requireGeneration\n- create(setup,seed)：迁移现有create调用与generation递增\n- restore(parsedSlot,loopHooks)：沿用restoreWasmSession，成功后推进generation\n- drop()：沿用当前drop与清空顺序；调用方先stop loop\n\n**真实调用方：**\n\n- wasm-worker.ts message switch 的 create、restore、drop 分支\n- wasm-worker.ts requireHandle 的全部 WASM session 命令、postBaseline、stepOnce\n- worker-host.ts createWorkerHost 通过 Worker 协议间接调用；不直接拥有 WASM handle\n\n**迁移顺序：**\n\n- 先固定现有create、restore(candidate失败与成功)、drop与generation行为，包括重复create和drop失败的既有结果。\n- 先迁handle/generation和当前handle访问；继续借用module初始化后的bindings，message schema/顺序不变。\n- restore仍委托现有事务helper与loop stop/restart回调；移除旧handle/generation globals。\n- 重复create旧handle泄漏等修复另成行为变更，不与本提取混合。\n\n**测试位置与边界（未运行）：**\n\n- 现有 wasm-restore-transaction.test.ts、wasm-worker-failure.test.ts；新增 wasm-session-slot.test.ts\n- restoreWasmSession 现有边界是candidate snapshot成功后替换handle、finally清理未提交candidate并按wasRunning恢复loop；drop旧handle失败可能发生在authority已切换后，提取不得把它描述为所有失败均回滚。\n- 现有 wasm-worker.ts 的 create 会直接覆盖 handle，未先 drop；这是可单独修复/验证的资源缺陷，不应把修复效果冒充对象抽取本身的收益。\n- restore 成功后 WASM 回应 generation 是请求旧 generation，而 baseline 使用新 generation；该 wire 契约必须保持。\n- drop 必须停止循环后释放句柄；会话槽本身不拥有 timer 或 Worker port。\n\n**领域/跨层边界：**\n\n宿主内部资源重构，不改变 EngineHost/HostUpdate、存档 schema、A 股交易行为、金额或股份单位。create重复覆盖旧handle、drop(old)在authority切换后抛错、restore prepare_public_baseline失败均是现有边界，不把全部restore称为绝对原子；对象提取保持现状，资源缺陷另行TDD修复。restored响应回显旧generation，baseline使用新generation。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N05",
+    "title": "WASM tick 调度循环所有权",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/host/wasm-worker.ts",
+      "apps/web/src/host/speed.ts",
+      "apps/web/src/host/wasm-update-delivery.ts"
+    ],
+    "objects": [
+      "WasmTickLoop"
+    ],
+    "report_anchor": "frontend-n05",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`WasmTickLoop`。\n\n文件：`apps/web/src/host/wasm-worker.ts`, `apps/web/src/host/speed.ts`, `apps/web/src/host/wasm-update-delivery.ts`。\n\ntimer、running、speed、flushMs、lastStepAt、pausePreferences、HostSpeedMeter 与 startLoop/stopLoop/frameLoop/stepOnce 构成协调一致的循环状态和行为。该闭环管理可暂停/恢复的运行时资源、节拍及 barrier pause，提取后可隔离 fake clock/timer 测试。它与会话槽是组合关系：loop 调用 session step，但不拥有 handle；Worker module 仍唯一持有两者并保持一个实例。\n\n**唯一所有权与生命周期：** WasmTickLoop 唯一拥有 timer、循环时序参数、暂停策略和 HostSpeedMeter；WasmSessionSlot 唯一拥有 handle/generation。Worker realm 的单一组合根创建且只创建一个 loop 和一个 slot。publish绑定loop.pausePreferences与stop，端口post/error与clock/timer以窄依赖注入；endCivilDay的CivilUpdate也走同一publish，不在module保留第二份pausePreferences。\n\n**可聚合字段：**\n\n- timer\n- running\n- speed\n- flushMs\n- lastStepAt\n- pausePreferences\n- HostSpeedMeter\n\n**具体方法：**\n\n- start()：幂等开始循环并启用 speed meter\n- stop()：停止并清理待执行 timer，关闭 speed meter\n- setSpeed(speed)：校验后更新倍率和下一 tick 基准\n- setFrameRate(fps)：校验后更新 flush 周期\n- setPausePreferences(preferences)：更新 publish barrier 策略\n- frame()：按设定倍率 step/yield 并安排下一 timer\n- stepOnce()：通过 session slot 执行一步、发布 update、记录市场 tick，失败时停循环并报错\n- isRunning/readSpeedMetrics()：仅在调用方确需查询时暴露窄观察接口\n- publish(rawUpdate)：检查barrier、先post协议再stop/post barrierPaused；endCivilDay分支也委托它\n\n**真实调用方：**\n\n- wasm-worker.ts message switch 的 start、stop、setSpeed、setFrameRate、setPausePreferences、speedMetrics、stepOnce\n- wasm-worker.ts restore 调用 stop/restart hooks；drop 先 stop 再 drop slot\n- publish/stepOnce/frameLoop/startLoop/stopLoop 现有函数之间的 Worker 内调用\n\n**迁移顺序：**\n\n- 先以可控 timer/clock 和 fake slot/post 函数固定有限倍率调度、Infinity 每步让出 Worker task、stop 清 timer、重复 start/stop、step 失败停止并报错、barrier pause 及 restore running 状态恢复。\n- 提取 WasmTickLoop，注入执行一步、发布 update、失败上报和 session slot 依赖；先保持当前 FRAME_MS/TICK_MS/UI_TARGET_HZ 的取值与调度算法。\n- Worker module 仅保留协议分发与对象组合；逐一将循环相关消息委托给 loop。\n\n**测试位置与边界（未运行）：**\n\n- 现有 speed.test.ts、wasm-update-delivery.test.ts；新增 wasm-tick-loop.test.ts\n- speed === Infinity 时每次 frame 只 step 一次并在下一 timer task 继续，确保入站 Worker 消息可被处理。\n- 有限 speed 的 interval、lastStepAt 校正、flushMs 与 FRAME_MS 共同确定 wake delay；不能只测理想时刻而遗漏超时/滞后情况。\n- barrier pause 在 publish 后停循环并发送 barrierPaused；市场 tick 计数只对 recordsMarketTick 成立，CivilUpdate 语义保持。\n- restore 前 running loop 停止，恢复后通过 microtask 重启；restore 失败也按当前事务 finally 路径恢复原运行意图。\n- stop 与 drop 均应清除 timer；不要让已经排队的旧回调在 stop 后执行新 step。\n\n**领域/跨层边界：**\n\n严格保持 tick/自然日、CivilUpdate/市场 TickBatch、PausePreferences 和 SpeedMetrics 既有语义；不据此调整模拟速度或 A 股规则。仅recordsMarketTick才计speedMeter，不把CivilUpdate计为市场tick。时钟/计时器注入是测试seam，不引入第二套生产调度。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N06",
+    "title": "Worker 请求资源范围与序号分配",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/host/worker-host.ts",
+      "apps/web/src/host/worker-request.ts",
+      "apps/web/src/host/worker-lifecycle.ts"
+    ],
+    "objects": [
+      "WorkerRequestScope"
+    ],
+    "report_anchor": "frontend-n06",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`WorkerRequestScope`。\n\n文件：`apps/web/src/host/worker-host.ts`, `apps/web/src/host/worker-request.ts`, `apps/web/src/host/worker-lifecycle.ts`。\n\n每次 requestWorker 的 requestId 匹配 listener 与 timeout 是独立资源，当前各自 Promise 自行 cleanup；requestSequence 却由 WorkerHost 持有，host dispose/fatal 时没有集中 pending registry，故未完成请求只能等各自 timeout。WorkerHost 跨命令协调是实际 caller，存在将序号、活动请求登记和统一 reject/dispose 接入的实际价值。该改善必须拆成两个可审查变化：先做状态抽取/注册与清理 ownership，再单独改变 dispose/fatal 立即拒绝行为。不要与 RemoteHost.pendingCommands 合并。\n\n**唯一所有权与生命周期：** WorkerRequestScope 只拥有主线程 WorkerHost 发出的短期请求、requestSequence 与每请求 listener/timeout。WorkerHost 仍拥有当前 generation、baselineEpoch、callback 与 session lifecycle；Worker module requestGeneration 仍做 Worker 处理时 generation 校验。RemoteHost.pendingCommands 是 WebSocket SubmitIntent 的服务器入队确认，使用另一协议、生命周期和失败语义，不共用 scope。\n\n**可聚合字段：**\n\n- sequence（由当前 WorkerHost 唯一 scope 递增 requestId）\n- pending: Map<requestId, request resource>；资源至少包含 listener、timeout、resolve/reject 和幂等 cleanup/settle 状态\n- WorkerRequestPort（scope 绑定的 transport boundary，或每次调用显式传入；不得跨 Worker port 复用）\n\n**具体方法：**\n\n- request(request, successType)：注册单请求 listener/timeout，按 requestId 与该请求 generation 匹配，再 settle 并 cleanup\n- dispose(reason)：幂等关闭 scope 并按既定策略拒绝/清理所有 pending 请求；此方法存在不自动意味着必须与抽取同时改变外部可见拒绝时机\n- 可选 nextRequestId()：仅当 registry 统一拥有 ID 源能减少重复且不破坏现有 caller 时提供\n\n**真实调用方：**\n\n- worker-host.ts EngineHost methods：setPausePreferences、readSpeedMetrics、playerWorkingOrders、npcDecisionTrace、calculateIndicators、stepOnceForE2E、submitIntent、civilDate、endCivilDay、save、refreshBaseline、load、queryPublicReports、publicReportById\n- worker-host.ts helper：readWorkerSpeedMetrics、readWorkerPlayerWorkingOrders、requestWorkerIndicators、stepWorkerOnce、restoreWorkerSlot、refreshWorkerBaseline\n\n**迁移顺序：**\n\n- 先固定requestId+本请求generation关联、逐请求listener/timer和原拒绝时机。\n- scope接管sequence与活动请求资源登记；所有host helper/命令使用同一scope，删旧sequence owner；保持逐请求listener协议，不改成Remote WS registry。\n- 成功/operationError/timeout只settle一次并移除现有listener/timer。\n- postMessage同步throw立即cleanup、dispose/fatal立即reject、restore新旧请求取消策略均独立行为修复，先分别测试后单独审查。\n\n**测试位置与边界（未运行）：**\n\n- worker-request.test.ts现有逆序/旧id/旧generation/重复响应；新增 worker-request-scope.test.ts 验证唯一序号、登记回收、短fake timer timeout；worker-host.test.ts固定所有命令接线。\n\n**领域/跨层边界：**\n\n等价提取保持现有 Worker 控制面 requestId 加本次请求 generation 的响应关联、每请求 listener/timer 与成功、operationError、timeout 的清理顺序。scope 不改变 EngineHost 业务结果、A 股领域状态，也不替代 host 对 currentGeneration、baselineEpoch 或 disposed 的异步回写检查。多个请求逆序完成、旧代次/其他ID响应忽略与重复响应不能错误 settle，均沿用现有契约。\n\npostMessage 同步 throw 时立即清理 listener/timer、host dispose/fatal 时立即拒绝并清理 pending、restore 时取消旧请求，属于另批待测行为修复；本次只登记边界，不要求把它们并入等价提取。若后续实施，需分别固定新拒绝时机、错误内容和幂等 cleanup，不用对象提取暗示这些问题已解决。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N07",
+    "title": "Remote 写命令关联登记",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/host/remote-host.ts",
+      "apps/web/src/host/remote-host.test.ts"
+    ],
+    "objects": [
+      "RemoteCommandRegistry"
+    ],
+    "report_anchor": "frontend-n07",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`RemoteCommandRegistry`。\n\n文件：`apps/web/src/host/remote-host.ts`, `apps/web/src/host/remote-host.test.ts`。\n\n跨submitIntent、两类wire确认与fail的sequence/Map/单次settle是同一内聚不变量；宽closure唯一owner并不排除用窄registry隔离该职责。\n\n**唯一所有权与生命周期：** createRemoteHost唯一持有registry；socket、connectionGeneration、baselineWaiter与awaitingBaseline继续由RemoteHost持有；registry不拥有transport、不判断订单成交。\n\n**可聚合字段：**\n\n- requestSequence: number\n- pendingCommands: Map<number,{resolve,reject}>\n\n**具体方法：**\n\n- next/register：递增request id并安装同一次Promise waiter\n- resolveQueued(id)：未知id显式抛错；先删除entry再resolve\n- rejectGateway(id,failure)：未知id显式抛错；先删除entry再reject\n- rejectAll(failure)：fail路径全部reject并clear\n\n**真实调用方：**\n\n- submitIntent安装waiter再socket.send；handle queued/gateway-error取出并完成；fail批拒绝；App TradingCommands/AutoOrderManager经EngineHost提交。\n\n**迁移顺序：**\n\n- 用短fake WS固定并发逆序queued、gateway-error、unknown ID与fail批拒绝。\n- 移入sequence/map及四操作；submitIntent仍先基线/连接预检，socket.send留adapter。\n- 按现有handle/fail顺序委托registry；不自动接入dispose。\n- dispose当前不reject pending、send同步throw未删除登记项；这些边界另行行为修复和TDD，不能借提取静默改变。\n\n**测试位置与边界（未运行）：**\n\n- remote-host.test.ts现有wire/认证/基线/save/dispose测试不能替代command关联；新增 remote-command-registry.test.ts覆盖唯一ID、删后settle、逆序、未知/重复ID、单request错误与all reject。\n\n**领域/跨层边界：**\n\n- CommandQueued只表示入队，不表示订单接受或成交。\n- Remote没有Worker逐请求listener/timer/generation回显；两对象不统一，不新增超时/重试。\n- 保留未知/重复ID的当前显式失败，处理reconnect/dispose策略必须有独立契约。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N08",
+    "title": "移动分时视图投影值",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/mobile/MobileStockDetail.tsx",
+      "apps/web/src/mobile/market-model.ts"
+    ],
+    "objects": [
+      "MobileIntradayProjection"
+    ],
+    "report_anchor": "frontend-n08",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`MobileIntradayProjection`。\n\n文件：`apps/web/src/mobile/MobileStockDetail.tsx`, `apps/web/src/mobile/market-model.ts`。\n\n同一组visible points/scale/phase事实被四种几何输出和元信息重复消费，局部y等行为已绑定数据；先前只有“React组件 retain”未对该immutable value聚合给出结论。\n\n**唯一所有权与生命周期：** IntradayPanel本次render或useMemo持有不可变projection，输入MarketSnap/minute/auction/trades只借用；不维护跨tick可写history。MarketChartProjection A27仍唯一拥有时间缓存。React JSX、FiveLevelBook组件与ARIA标记保留。\n\n**可聚合字段：**\n\n- visible连续点、visible竞价点与有效价格子集\n- lastClose/scale、phase volume maxima\n- elapsed/total/gameDay/gameTick与当前投影signature\n\n**具体方法：**\n\n- fromInputs：按现有slice/filter建立本次只读投影\n- priceY / auctionLine / continuousLine / averageLine\n- volumeMarks：共用phase/x与各自volume scale\n- displayedAverage / progress / signature / recentTrades视图读取\n\n**真实调用方：**\n\n- ConnectedMobileDetail -> MobileStockDetail -> IntradayPanel；本文件原y、平均线、volume marks与signature闭包读同组facts。\n\n**迁移顺序：**\n\n- 先为本次分时projection固定当前空/单点/null竞价价格/phase volume scale/午休坐标/均价和signature。\n- 以immutable value承接现有visible点/scale与绑定其数据的几何方法；market-model无状态primitive仍作为私有或独立函数复用。\n- IntradayPanel JSX仅读取projection；删除重复slice/scale/局部y/line/volume集合，保持输入引用无写入与既有输出。\n\n**测试位置与边界（未运行）：**\n\n- mobile-component-render.test.ts现有股手/固定分钟轴；market-model.test.ts既有scale/X/volume规则；新增 mobile-intraday-projection.test.ts 组合多阶段/null价格/量大价空/空数据/极值/输入不变。\n\n**领域/跨层边界：**\n\n- 竞价volume是累计值、continuous是分钟增量，两个scale不合并。\n- 当前均价是价格点算术均值，不能改成VWAP或声称撮合均价；展示/算法修复另行。\n- 当前trade显示取最近7条、统一用elapsedMinutes-1时间；保留既有呈现，不在提取中重建逐笔时戳。\n- ClosingAuction仍由上游A27过滤开盘区域，日K与当日统计来自engine，金额分转元/股转手只做既有投影。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-N09",
+    "title": "移动 K 线窗口投影值",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "apps/web/src/mobile/MobileStockDetail.tsx",
+      "apps/web/src/mobile/market-model.ts"
+    ],
+    "objects": [
+      "MobileKlineProjection"
+    ],
+    "report_anchor": "frontend-n09",
+    "group": "frontend",
+    "details_markdown": "**分类：new；extends：无（冻结条目仅retain，无对象提取动作）。** 对象：`MobileKlineProjection`。\n\n文件：`apps/web/src/mobile/MobileStockDetail.tsx`, `apps/web/src/mobile/market-model.ts`。\n\nwindow、price/indicator domain与slot同时约束K线、均线、volume和KDJ多处输出，适合immutable layout value聚合；现有pure primitives只描述单项运算，未覆盖这组组合数据+方法。\n\n**唯一所有权与生命周期：** KlinePanel继续拥有React viewport及useIndicatorResults请求；immutable projection只聚合当前window和几何，不拥有engine历史、calculator或mutable viewport。code-period key仍负责重挂/reset，reduceKlineViewport保留纯reducer。\n\n**可聚合字段：**\n\n- 完整聚合candles与normalized KlineWindow\n- visible candles/price domain、共享slot geometry\n- 全历史MA5/10/20切片、KDJ切片、volume maxima\n\n**具体方法：**\n\n- fromInputs(aggregateCandles,viewport,result)：建立单次只读projection\n- priceY / slotFor / candleBodyAndWick\n- movingAverageLine(days) / indicatorLine / volumeMarks\n- visibleWindow / latestSignature只读观察\n\n**真实调用方：**\n\n- ConnectedMobileDetail -> MobileStockDetail -> KlinePanel；原y/slotFor/movingAverage/line/indicatorLine与volumeBars共用window。\n\n**迁移顺序：**\n\n- 先固定全历史先计算MA/指标再按window切片，shared slots与蜡烛实体/影线。\n- 提取immutable projection并复用aggregateCandles/klineWindow/chartSlotGeometry等primitives；不复制第二份mutable history。\n- KlinePanel保留viewport actions、indicator query/result状态与JSX，读取同一projection，删除内联几何闭包。\n\n**测试位置与边界（未运行）：**\n\n- mobile-component-render.test.ts现有日K渲染；market-model.test.ts窗口/实体/影线/槽位；新增 mobile-kline-projection.test.ts覆盖空/单根/容量大于历史/offset clamp/MA窗口前历史/KDJ pending-error/周月聚合以及输入不变。\n\n**领域/跨层边界：**\n\n- 现有周K/月K按5/20个游戏交易日分组，不得默改日历周/月；作为现有游戏简化明确保留。\n- 技术指标仍由Rust calculator产出；MA现有算法照搬，不能在该OOP提取中另写第二套MACD/KDJ。\n- volume以股为事实、显示手；窗口切换只影响展示，不改authoritative OHLC。\n- 当前viewport在code-period组件key变更时reset，不改为跨股票共享或用klineDays代替capacity。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-R2-N01",
+    "title": "IndicatorResultRequest：可选聚合请求身份与结果转换",
+    "classification": "new",
+    "existing_action_id": null,
+    "files": [
+      "apps/web/src/components/useIndicatorResults.ts",
+      "apps/web/src/components/indicator-results.ts",
+      "apps/web/src/components/PriceChart.tsx",
+      "apps/web/src/mobile/MobileStockDetail.tsx",
+      "apps/web/src/components/indicator-results.test.ts"
+    ],
+    "owned_fields": [
+      "每次 effect 的 generation ticket 与同一个 IndicatorRequestGate 的借用",
+      "calculator 与 input 的引用身份",
+      "本次请求的 pending/ready/error 不可变结果记录；React 仍拥有呈现 state"
+    ],
+    "methods": [
+      "capture(gate, calculator, input)：创建当前请求 ticket",
+      "pendingRecord()：产生供 React setter 使用的当前身份记录",
+      "resolveRecord(response)：当前 ticket 有效时解析为 ready/error 记录，过期时不给提交记录",
+      "rejectRecord(error)：仅当前 ticket 返回显式 error 记录",
+      "matches(calculator,input)：引用身份判断；invalidate 仍委托挂载 gate"
+    ],
+    "production_callers": [
+      "PriceChart 调用 useIndicatorResults(calculator, indicatorSource.input, indicator==='macd'||indicator==='kdj')",
+      "MobileStockDetail 的 KlinePanel 调用 useIndicatorResults(calculator, indicatorInput, allCandles.length>0)"
+    ],
+    "data_owner": "现有 63 行 useIndicatorResults hook 已经内聚并组合 IndicatorRequestGate，本动作只进一步把请求 ticket、calculator/input 身份及转换资格封成每次 effect 的窄对象。每个 hook 挂载保留一个 generation gate；React 仍唯一拥有 requestState 和 effect cleanup，不复制为对象内的第二份 render state。",
+    "composition": "每次 effect 创建请求对象并组合挂载级 gate；Promise 接线、React setter、依赖数组和 cleanup 保持 hook。对象不持有 React setter、timer、host、cache 或订阅，不新建 AbortController。parseIndicatorResults 继续供 transport/同步转换直接复用。",
+    "migration_steps": [
+      "先补 hook 行为特征测试，固定 A/B 逆序、依赖身份变化、禁用/卸载和异常。",
+      "将 ticket 与身份及记录转换一起迁入每次 effect 的 IndicatorResultRequest；保留挂载 gate，避免 generation 在每个对象中重置。",
+      "hook 继续同步发 pending，再以 Promise.resolve().then(() => calculator(input)) 推迟计算器调用；仅将有效记录交给同一 React setter。",
+      "返回值仍先判断 disabled→idle，再 calculator=null→unavailable，再依据 calculator/input 的 === 身份决定 pending；不得改为深比较或 cache 命中。"
+    ],
+    "existing_tests": [
+      "apps/web/src/components/indicator-results.test.ts 覆盖 IndicatorRequestGate generation 失效及 parseIndicatorResults 结果长度/有限数值校验。"
+    ],
+    "missing_tests": [
+      "现有列举范围未见 useIndicatorResults 的 React 集成测试；新增边界应覆盖旧请求晚到不覆盖新输入、disable/unmount 后忽略结果、calculator identity 变化、成功响应结构不合法与 reject 错误可见。"
+    ],
+    "semantic_boundaries": [
+      "只处理 MACD/KDJ 计算请求生命周期；不得重写 Rust authoritative 指标计算或指标公式。",
+      "输入价格单位/输入投影由 PriceChart 与 Mobile Kline 既有构造保持；不改变 A 股价格、成交量或日K语义。",
+      "保留异步错误明确显示的现有 error state，不静默 fallback。",
+      "不改变 Promise microtask 时序、parse 失败捕获、Error.name/message 文案、禁用优先级或旧 generation 忽略行为。",
+      "该低优先级抽取不是缺陷修复；原 hook 已有封装，只有独立测试请求身份/转换确有收益时才实施。"
+    ],
+    "evidence": [
+      "useIndicatorResults.ts:26-38 创建 gate、capture generation、同步设 pending 并调用 calculator。",
+      "useIndicatorResults.ts:39-53 在有效 generation 下解析/更新 ready/error，cleanup 调 invalidate。",
+      "useIndicatorResults.ts:55-59 再以 calculator 与 input 对象身份判 pending。",
+      "indicator-results.ts:32-46 的 IndicatorRequestGate 只持 generation；result identity/state 位于 hook 的另一个 useState。",
+      "PriceChart.tsx:75-80 与 MobileStockDetail.tsx:78 为两个真实生产调用点；indicator-results.test.ts 仅直接测 gate 与 parser。",
+      "manager 全文读取 useIndicatorResults.ts、indicator-results.ts、PriceChart.tsx、MobileStockDetail.tsx 和 indicator-results.test.ts。"
+    ],
+    "dedup_reason": "精确检查 50 动作与扩展：frontend-N06 是 Worker 请求资源范围/序号分配，owner 位于 worker transport，未覆盖图表组件的指标请求 generation + React 结果状态；web-01-A27 的 MarketChartProjection 明确把 calculator registration 留给 Provider，并不涵盖每个消费者的异步结果状态；web-01-A06 的 frontend-E02 是暂停偏好生命周期，范围不同。其余现有 web/frontend 动作无指标请求 owner。故该候选为源码中新识别对象，不沿用或扩写不相干动作。",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "frontend-r2-n01",
+    "priority": "低；可选",
+    "group": "frontend",
+    "reading_jobs": [
+      "08",
+      "10"
+    ],
+    "details_markdown": "**分类：new；优先级：低；可选；extends：无。**\n\n文件：`apps/web/src/components/useIndicatorResults.ts`、`apps/web/src/components/indicator-results.ts`、`apps/web/src/components/PriceChart.tsx`、`apps/web/src/mobile/MobileStockDetail.tsx`、`apps/web/src/components/indicator-results.test.ts`。\n\n**字段：**\n\n- 每次 effect 的 generation ticket 与同一个 IndicatorRequestGate 的借用\n- calculator 与 input 的引用身份\n- 本次请求的 pending/ready/error 不可变结果记录；React 仍拥有呈现 state\n\n**方法：**\n\n- capture(gate, calculator, input)：创建当前请求 ticket\n- pendingRecord()：产生供 React setter 使用的当前身份记录\n- resolveRecord(response)：当前 ticket 有效时解析为 ready/error 记录，过期时不给提交记录\n- rejectRecord(error)：仅当前 ticket 返回显式 error 记录\n- matches(calculator,input)：引用身份判断；invalidate 仍委托挂载 gate\n\n**生产 caller：**\n\n- PriceChart 调用 useIndicatorResults(calculator, indicatorSource.input, indicator==='macd'||indicator==='kdj')\n- MobileStockDetail 的 KlinePanel 调用 useIndicatorResults(calculator, indicatorInput, allCandles.length>0)\n\n**唯一 data owner：**\n\n现有 63 行 useIndicatorResults hook 已经内聚并组合 IndicatorRequestGate，本动作只进一步把请求 ticket、calculator/input 身份及转换资格封成每次 effect 的窄对象。每个 hook 挂载保留一个 generation gate；React 仍唯一拥有 requestState 和 effect cleanup，不复制为对象内的第二份 render state。\n\n**组合：**\n\n每次 effect 创建请求对象并组合挂载级 gate；Promise 接线、React setter、依赖数组和 cleanup 保持 hook。对象不持有 React setter、timer、host、cache 或订阅，不新建 AbortController。parseIndicatorResults 继续供 transport/同步转换直接复用。\n\n**迁移步骤：**\n\n- 先补 hook 行为特征测试，固定 A/B 逆序、依赖身份变化、禁用/卸载和异常。\n- 将 ticket 与身份及记录转换一起迁入每次 effect 的 IndicatorResultRequest；保留挂载 gate，避免 generation 在每个对象中重置。\n- hook 继续同步发 pending，再以 Promise.resolve().then(() => calculator(input)) 推迟计算器调用；仅将有效记录交给同一 React setter。\n- 返回值仍先判断 disabled→idle，再 calculator=null→unavailable，再依据 calculator/input 的 === 身份决定 pending；不得改为深比较或 cache 命中。\n\n**现有测试（仅静态读取，未执行）：**\n\n- apps/web/src/components/indicator-results.test.ts 覆盖 IndicatorRequestGate generation 失效及 parseIndicatorResults 结果长度/有限数值校验。\n\n**待补边界测试：**\n\n- 现有列举范围未见 useIndicatorResults 的 React 集成测试；新增边界应覆盖旧请求晚到不覆盖新输入、disable/unmount 后忽略结果、calculator identity 变化、成功响应结构不合法与 reject 错误可见。\n\n**语义与既有缺陷边界：**\n\n- 只处理 MACD/KDJ 计算请求生命周期；不得重写 Rust authoritative 指标计算或指标公式。\n- 输入价格单位/输入投影由 PriceChart 与 Mobile Kline 既有构造保持；不改变 A 股价格、成交量或日K语义。\n- 保留异步错误明确显示的现有 error state，不静默 fallback。\n- 不改变 Promise microtask 时序、parse 失败捕获、Error.name/message 文案、禁用优先级或旧 generation 忽略行为。\n- 该低优先级抽取不是缺陷修复；原 hook 已有封装，只有独立测试请求身份/转换确有收益时才实施。\n\n**源码证据：**\n\n- useIndicatorResults.ts:26-38 创建 gate、capture generation、同步设 pending 并调用 calculator。\n- useIndicatorResults.ts:39-53 在有效 generation 下解析/更新 ready/error，cleanup 调 invalidate。\n- useIndicatorResults.ts:55-59 再以 calculator 与 input 对象身份判 pending。\n- indicator-results.ts:32-46 的 IndicatorRequestGate 只持 generation；result identity/state 位于 hook 的另一个 useState。\n- PriceChart.tsx:75-80 与 MobileStockDetail.tsx:78 为两个真实生产调用点；indicator-results.test.ts 仅直接测 gate 与 parser。\n- manager 全文读取 useIndicatorResults.ts、indicator-results.ts、PriceChart.tsx、MobileStockDetail.tsx 和 indicator-results.test.ts。\n\n**与旧动作去重：**\n\n精确检查 50 动作与扩展：frontend-N06 是 Worker 请求资源范围/序号分配，owner 位于 worker transport，未覆盖图表组件的指标请求 generation + React 结果状态；web-01-A27 的 MarketChartProjection 明确把 calculator registration 留给 Provider，并不涵盖每个消费者的异步结果状态；web-01-A06 的 frontend-E02 是暂停偏好生命周期，范围不同。其余现有 web/frontend 动作无指标请求 owner。故该候选为源码中新识别对象，不沿用或扩写不相干动作。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-R2-N02",
+    "title": "RemotePublisherState：消费端连接与基线同步状态",
+    "classification": "new",
+    "existing_action_id": null,
+    "files": [
+      "apps/web/src/host/remote-host.ts",
+      "apps/web/src/host/remote-startup.test.ts"
+    ],
+    "owned_fields": [
+      "socket（当前 WebSocket 资源句柄）",
+      "connectionGeneration（本地连接身份）",
+      "awaitingBaseline",
+      "baselineWaiter（等待者；load 等待者闭包的 timer 资源）",
+      "cachedBaseline（完整权威 baseline 的只读缓存）",
+      "baselineEpoch（本地查询响应失效序号）"
+    ],
+    "methods": [
+      "attachSocket(next)/isCurrentConnection(identity)/clearSocketIfCurrent(next)",
+      "detachSocket()/invalidateConnection()：供 fail、dispose、delivery mode 切换按原次序操作",
+      "beginBaselineWait(waiter)/takeBaselineWaiter()：管理单槽 waiter，不增加排队策略",
+      "beginResync()/installBaseline(update)/baselineForRead()/captureQueryCursor()",
+      "isProtocolDeliverable(generation)/assertQueryCursor(...)：方法保留各 caller 当前不同的检查条件"
+    ],
+    "production_callers": [
+      "createRemoteHost.start/connect",
+      "handle 的 baseline/protocol/resync/failure 分支",
+      "setDeliveryMode",
+      "refreshBaseline",
+      "load/connectRestoredBaseline",
+      "submitIntent 基线就绪前置检查"
+    ],
+    "data_owner": "每个 createRemoteHost 实例唯一组合一个私有 RemotePublisherState，迁走列出的六组字段及其共享读写，不在 facade 闭包保留可写副本。running/disposed/delivery/callback/fatalCallback、HTTP session/token 和纯 parser 仍归 RemoteHost。",
+    "composition": "RemoteHost 继续拥有连接建立、HTTP/WS 命令、消息 switch 与用户 callback 编排；窄对象只拥有连接身份、socket 句柄、等待资源和基线同步状态。socketFactory、send/close 的执行仍由 adapter 发起；对象以 attach/detach 的资源移交契约保证同一 socket 只有一个 owner。fail 先取并清 socket/waiter，再由 adapter 按原顺序 reject waiter、close socket、reject command registry、通知 fatal。",
+    "migration_steps": [
+      "先固定当前 baseline、generation mismatch、ResyncRequired、load 新连接、delivery mode 与 fail/dispose 行为；timer 用 fake clock。",
+      "把六组字段及相应读写一起迁入单个状态对象；消息 parser/switch 和 HTTP/WS I/O 留 adapter，frontend-N01/N07 的 report context 与 command registry 仍独立。",
+      "基线安装仍先增加 epoch/更新 report context/cache/清 awaiting，再调用用户 callback，随后 resolve 并清 waiter；不重排 callback 与 waiter。",
+      "requestResync 仍 send Resync 后登记 waiter，refreshBaseline 不新增 timeout；只有 connectRestoredBaseline 使用现有 5000ms timeout。",
+      "setDeliveryMode 仍按当前实现增加 connection identity/关闭旧 socket；不得借抽取给 awaitingBaseline 新增写入。最后删除旧字段。"
+    ],
+    "existing_tests": [
+      "remote-startup.test.ts: 恢复权威基线并缓存且不提前启动市场",
+      "remote-startup.test.ts: 市场暂停时连接丢失仍拒绝恢复",
+      "remote-startup.test.ts: 缺 baseline 在 5000ms 超时并关闭连接",
+      "remote-startup.test.ts: dispose 后迟到 load 响应不得重连",
+      "manager 全读 remote-host.test.ts：同 generation refreshBaseline 重交付、查询无基线拒绝、日终候选 pin generation/旧保存响应拒绝与认证删除；并全读 remote-startup.test.ts 四条行为用例。"
+    ],
+    "missing_tests": [
+      "旧连接晚到 onmessage/onclose 对新 connectionGeneration 不产生状态影响",
+      "requestResync 与并发/替代 waiter 的单次完成及明确拒绝",
+      "baseline 到达与超时/close 同时发生的 settle 顺序",
+      "delivery mode 切换时旧 socket 消息因 connection identity 丢弃；新连接沿当前 awaitingBaseline 值，可在已同步状态接受同 generation protocol。新增基线 gating 必须另批行为变更。",
+      "用现状特征测试明确 callback 抛错、send 同步失败、waiter 替换、旧 socket onerror、模式切换 awaiting 标记、fail 后缓存保留；任何新期望另行审查。"
+    ],
+    "semantic_boundaries": [
+      "timeline generation 是远程时间线身份；baselineEpoch 是本地查询响应失效序号，不能互换。",
+      "baseline 是完整权威状态；protocol delta 仅在当前 generation 且基线同步后交付，不能部分应用。",
+      "不能改变命令入队不等于受理/成交的含义；不新增重试或自动恢复。",
+      "A 股市场与交易制度语义由 Rust engine 权威，连接重构只维持协议传递，不触及规则。",
+      "现有 requestResync 会覆盖单槽 waiter；并发 resync 可能留下旧 waiter，抽取需原样表征，修复另做行为变更。",
+      "onmessage/onclose 有 identity guard；onerror 当前直接 fail，不得借对象化声称旧 socket error 已被屏蔽，增加 guard 属另批修复。",
+      "fail 当前不会清 cachedBaseline 或设置 awaitingBaseline；dispose 当前不 reject pendingCommands。不得把提取描述为已修复这些边界。",
+      "hosts-R2-N14 的 Rust WsPublisherConnection 是生成/发送端 owner；本对象是 JS 消费端，connectionGeneration/baselineEpoch 不是服务端 timeline_generation。两个动作互补、不合并，也不统一两端状态。"
+    ],
+    "evidence": [
+      "remote-host.ts: handle 首先按 connectionGeneration 拒绝旧回调；baseline 更新 cachedBaseline/awaitingBaseline 并 resolve baselineWaiter。",
+      "remote-host.ts: protocol 先检查 awaitingBaseline 和 cachedBaseline，再验证 generation；代际变化及 ResyncRequired 调 requestResync。",
+      "remote-host.ts: connectRestoredBaseline 设置 5000ms timer，并将成功/拒绝清理 timeout；connect onclose 在 running 或存在 baselineWaiter 时 fail。",
+      "remote-host.ts: setDeliveryMode 增加 connectionGeneration 并关闭旧 socket；load 后请求/等待权威重同步。",
+      "remote-startup.test.ts 覆盖恢复、断连、超时、销毁四条生命周期路径。"
+    ],
+    "dedup_reason": "精确检查 50 actions 与扩展后，frontend-N01 只拥有 reportQueryEpoch/reportCompanies 的报告归属查询索引；frontend-N07 只拥有 requestSequence/pendingCommands 的写命令关联。两者明确将 socket、connectionGeneration、baselineWaiter、awaitingBaseline 留在 RemoteHost，未覆盖本候选字段及基线/重同步状态转换，因此不是 extends 或 covered。",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "frontend-r2-n02",
+    "priority": "中",
+    "group": "frontend",
+    "relationships": [
+      {
+        "action": "frontend-N01",
+        "relation": "不同子 owner；ReportQueryContext 继续拥有 reportCompanies/reportQueryEpoch"
+      },
+      {
+        "action": "frontend-N07",
+        "relation": "不同子 owner；RemoteCommandRegistry 继续拥有 requestSequence/pendingCommands"
+      },
+      {
+        "action": "hosts-R2-N14",
+        "relation": "Rust 发送端与 JS 消费端，互补且不得合并"
+      }
+    ],
+    "reading_jobs": [
+      "16",
+      "17"
+    ],
+    "details_markdown": "**分类：new；优先级：中；extends：无。**\n\n文件：`apps/web/src/host/remote-host.ts`、`apps/web/src/host/remote-startup.test.ts`。\n\n**字段：**\n\n- socket（当前 WebSocket 资源句柄）\n- connectionGeneration（本地连接身份）\n- awaitingBaseline\n- baselineWaiter（等待者；load 等待者闭包的 timer 资源）\n- cachedBaseline（完整权威 baseline 的只读缓存）\n- baselineEpoch（本地查询响应失效序号）\n\n**方法：**\n\n- attachSocket(next)/isCurrentConnection(identity)/clearSocketIfCurrent(next)\n- detachSocket()/invalidateConnection()：供 fail、dispose、delivery mode 切换按原次序操作\n- beginBaselineWait(waiter)/takeBaselineWaiter()：管理单槽 waiter，不增加排队策略\n- beginResync()/installBaseline(update)/baselineForRead()/captureQueryCursor()\n- isProtocolDeliverable(generation)/assertQueryCursor(...)：方法保留各 caller 当前不同的检查条件\n\n**生产 caller：**\n\n- createRemoteHost.start/connect\n- handle 的 baseline/protocol/resync/failure 分支\n- setDeliveryMode\n- refreshBaseline\n- load/connectRestoredBaseline\n- submitIntent 基线就绪前置检查\n\n**唯一 data owner：**\n\n每个 createRemoteHost 实例唯一组合一个私有 RemotePublisherState，迁走列出的六组字段及其共享读写，不在 facade 闭包保留可写副本。running/disposed/delivery/callback/fatalCallback、HTTP session/token 和纯 parser 仍归 RemoteHost。\n\n**组合：**\n\nRemoteHost 继续拥有连接建立、HTTP/WS 命令、消息 switch 与用户 callback 编排；窄对象只拥有连接身份、socket 句柄、等待资源和基线同步状态。socketFactory、send/close 的执行仍由 adapter 发起；对象以 attach/detach 的资源移交契约保证同一 socket 只有一个 owner。fail 先取并清 socket/waiter，再由 adapter 按原顺序 reject waiter、close socket、reject command registry、通知 fatal。\n\n**迁移步骤：**\n\n- 先固定当前 baseline、generation mismatch、ResyncRequired、load 新连接、delivery mode 与 fail/dispose 行为；timer 用 fake clock。\n- 把六组字段及相应读写一起迁入单个状态对象；消息 parser/switch 和 HTTP/WS I/O 留 adapter，frontend-N01/N07 的 report context 与 command registry 仍独立。\n- 基线安装仍先增加 epoch/更新 report context/cache/清 awaiting，再调用用户 callback，随后 resolve 并清 waiter；不重排 callback 与 waiter。\n- requestResync 仍 send Resync 后登记 waiter，refreshBaseline 不新增 timeout；只有 connectRestoredBaseline 使用现有 5000ms timeout。\n- setDeliveryMode 仍按当前实现增加 connection identity/关闭旧 socket；不得借抽取给 awaitingBaseline 新增写入。最后删除旧字段。\n\n**现有测试（仅静态读取，未执行）：**\n\n- remote-startup.test.ts: 恢复权威基线并缓存且不提前启动市场\n- remote-startup.test.ts: 市场暂停时连接丢失仍拒绝恢复\n- remote-startup.test.ts: 缺 baseline 在 5000ms 超时并关闭连接\n- remote-startup.test.ts: dispose 后迟到 load 响应不得重连\n- manager 全读 remote-host.test.ts：同 generation refreshBaseline 重交付、查询无基线拒绝、日终候选 pin generation/旧保存响应拒绝与认证删除；并全读 remote-startup.test.ts 四条行为用例。\n\n**待补边界测试：**\n\n- 旧连接晚到 onmessage/onclose 对新 connectionGeneration 不产生状态影响\n- requestResync 与并发/替代 waiter 的单次完成及明确拒绝\n- baseline 到达与超时/close 同时发生的 settle 顺序\n- delivery mode 切换时旧 socket 消息因 connection identity 丢弃；新连接沿当前 awaitingBaseline 值，可在已同步状态接受同 generation protocol。新增基线 gating 必须另批行为变更。\n- 用现状特征测试明确 callback 抛错、send 同步失败、waiter 替换、旧 socket onerror、模式切换 awaiting 标记、fail 后缓存保留；任何新期望另行审查。\n\n**语义与既有缺陷边界：**\n\n- timeline generation 是远程时间线身份；baselineEpoch 是本地查询响应失效序号，不能互换。\n- baseline 是完整权威状态；protocol delta 仅在当前 generation 且基线同步后交付，不能部分应用。\n- 不能改变命令入队不等于受理/成交的含义；不新增重试或自动恢复。\n- A 股市场与交易制度语义由 Rust engine 权威，连接重构只维持协议传递，不触及规则。\n- 现有 requestResync 会覆盖单槽 waiter；并发 resync 可能留下旧 waiter，抽取需原样表征，修复另做行为变更。\n- onmessage/onclose 有 identity guard；onerror 当前直接 fail，不得借对象化声称旧 socket error 已被屏蔽，增加 guard 属另批修复。\n- fail 当前不会清 cachedBaseline 或设置 awaitingBaseline；dispose 当前不 reject pendingCommands。不得把提取描述为已修复这些边界。\n- hosts-R2-N14 的 Rust WsPublisherConnection 是生成/发送端 owner；本对象是 JS 消费端，connectionGeneration/baselineEpoch 不是服务端 timeline_generation。两个动作互补、不合并，也不统一两端状态。\n\n**源码证据：**\n\n- remote-host.ts: handle 首先按 connectionGeneration 拒绝旧回调；baseline 更新 cachedBaseline/awaitingBaseline 并 resolve baselineWaiter。\n- remote-host.ts: protocol 先检查 awaitingBaseline 和 cachedBaseline，再验证 generation；代际变化及 ResyncRequired 调 requestResync。\n- remote-host.ts: connectRestoredBaseline 设置 5000ms timer，并将成功/拒绝清理 timeout；connect onclose 在 running 或存在 baselineWaiter 时 fail。\n- remote-host.ts: setDeliveryMode 增加 connectionGeneration 并关闭旧 socket；load 后请求/等待权威重同步。\n- remote-startup.test.ts 覆盖恢复、断连、超时、销毁四条生命周期路径。\n\n**与旧动作去重：**\n\n精确检查 50 actions 与扩展后，frontend-N01 只拥有 reportQueryEpoch/reportCompanies 的报告归属查询索引；frontend-N07 只拥有 requestSequence/pendingCommands 的写命令关联。两者明确将 socket、connectionGeneration、baselineWaiter、awaitingBaseline 留在 RemoteHost，未覆盖本候选字段及基线/重同步状态转换，因此不是 extends 或 covered。\n\n**跨组关系：**\n\n- {\"action\": \"frontend-N01\", \"relation\": \"不同子 owner；ReportQueryContext 继续拥有 reportCompanies/reportQueryEpoch\"}\n- {\"action\": \"frontend-N07\", \"relation\": \"不同子 owner；RemoteCommandRegistry 继续拥有 requestSequence/pendingCommands\"}\n- {\"action\": \"hosts-R2-N14\", \"relation\": \"Rust 发送端与 JS 消费端，互补且不得合并\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-R2-N03",
+    "title": "TauriTimelineState：缩小会话时间线与查询游标 owner",
+    "classification": "new",
+    "existing_action_id": null,
+    "files": [
+      "apps/web/src/host/tauri-host.ts",
+      "apps/web/src/host/tauri-host.test.ts",
+      "apps/web/src/host/tauri-startup-contract.test.ts"
+    ],
+    "owned_fields": [
+      "timelineId",
+      "currentGeneration（规范十进制 string，初始 1）",
+      "cachedBaseline",
+      "baselineEpoch"
+    ],
+    "methods": [
+      "setInitialTimeline(sessionId)：保持初始化 engine_baseline 前的临时时间线行为",
+      "installInitialBaseline/replaceRefreshedBaseline/replaceRestoredBaseline：分别保留当前 generation 校验与安装步骤",
+      "matchesTimeline(timelineId)/currentGeneration()/baselineForRead()",
+      "captureGeneration/captureQueryCursor/assertGeneration/assertQueryCursor：按现有 save 与 orders/diagnostics 的不同检查条件提供窄方法",
+      "clearForDispose()：仅清 timeline/cache，不重置现有 generation/epoch"
+    ],
+    "production_callers": [
+      "createTauriHost 初始化：create_session 后先设临时时间线；校验 engine_baseline 的 generation 后先写 timelineId=initialBaseline.timeline_id，再解析 snapshot 并安装 cachedBaseline，最后增加 baselineEpoch。解析失败时 timeline 已被写入，按现有 catch 清监听并抛错。",
+      "engine-event 与 engine-failure listeners：session/timeline/disposed 过滤后才交付。",
+      "refreshBaseline 与 load：分别校验当前 generation 或 nextGeneration，更新四字段后 callback；load 的 pause/resume 仍由 adapter。",
+      "save 只 pin generation 并在返回时检查 disposed/generation；playerWorkingOrders/npcDecisionTrace 额外 pin baselineEpoch；snapshot/tick/day 读缓存。"
+    ],
+    "data_owner": "createTauriHost 唯一持有私有 TauriTimelineState；只迁四项相关字段及其比较/安装操作。sessionId、running/disposed、callback/fatalCallback、两 unlisten 句柄、capability 与 invoke/listen I/O 继续由 TauriHost facade 拥有。",
+    "composition": "将 reader 的整个 TauriHostSession 粗粒度包装缩成四字段时间线对象：事件过滤先在 adapter 检查 sessionId/disposed，再问时间线是否匹配。基线更新与 callback/resume 编排仍由 adapter 分步执行，不创建跨宿主基类，不包裹整个 EngineHost。",
+    "migration_steps": [
+      "先以 mockIPC/mock events 固定四字段的初始化、同 generation refresh、next generation restore 和查询 pinning。",
+      "迁四字段及比较/只读接口；相同 host 实例的 listeners、save/orders/diagnostics/refresh/load 委托同一对象。",
+      "保持 load 目前先写 currentGeneration、timelineId，再解析/建立 cachedBaseline、增加 epoch、callback、resume 的步骤；不能宣称所有字段绝对原子替换。",
+      "保留每个查询原有检查强度：publicReports/byId/civilDate 当前没有完成后的统一 epoch 检查，不顺带加上；save 当前不检查 baselineEpoch。",
+      "删除原四变量；其余 transport/callback/listener 生命周期仍在现有闭包，避免新对象覆盖所有职责。"
+    ],
+    "existing_tests": [
+      "tauri-host.test.ts 的 mockIPC 行为用例：日终候选 generation 请求及 load 后晚到 save 响应拒绝。",
+      "tauri-startup-contract.test.ts 主要是静态源码/跨层接线断言；不能把它当作 listener/restore 运行时行为已经覆盖。"
+    ],
+    "missing_tests": [
+      "真实 mock event 的旧 timeline 丢弃、同 generation refresh 使旧 orders/NPC diagnostics epoch 失效。",
+      "generation 超 Number.MAX_SAFE_INTEGER 保持 string/BigInt 精确递增；初始 baseline mismatch 与 restore 非 nextGeneration。",
+      "snapshot 解析失败、callback 抛错、restore/resume 失败时当前部分更新与 running 行为必须先记录现状。",
+      "dispose 后晚到 refresh/load 的当前行为与 query 按现有各自 guard 拒绝/接受边界，不用一个统一 guard 擅自改变语义。"
+    ],
+    "semantic_boundaries": [
+      "只聚合 IPC 消费者的 timeline/generation/baselineEpoch；不改变 Rust 权威状态、A 股账户/委托字段或日终 SaveCandidateKey。",
+      "ADR-0010 的 invoke/event 两路径不全序；timeline_id 切换与旧事件过滤仍按现有操作顺序。",
+      "generation 保持规范十进制字符串，用 BigInt nextGeneration；baselineEpoch 是本地查询序号，不能与 generation/tick/seq 混同。",
+      "当前 restore/refresh 可能部分写入后 parse 或 callback 失败，load pause/恢复失败不自动 resume，初始化 listener/stop_session 资源问题另批处理。",
+      "既有 ProtocolState/ProtocolCoordinator owns tick/seq/replay/apply，TauriTimelineState owns IPC 时间线/cache pinning，层不同；frontend-N04 owns WASM handle，亦不同。"
+    ],
+    "evidence": [
+      "tauri-host.ts::createTauriHost 同一闭包声明会话标识、generation、baseline epoch、回调、运行/销毁状态及两类 unlisten 句柄。",
+      "engine-event listener 同时检查 sessionId/timelineId/disposed 后以 currentGeneration 创建 protocol update。",
+      "save/playerWorkingOrders/refreshBaseline/load/npcDecisionTrace 均依赖 generation 或 baselineEpoch；load 在 restore 后替换时间线、generation、baseline 并通知 callback。",
+      "dispose 清空 callback/baseline 并调用 unlisten；stop/dispose 的 invoke 生命周期仍在 adapter。",
+      "tauri-startup-contract.test.ts 跨 App.tsx、Tauri adapter 与 Rust actor/lib 固定部分契约。"
+    ],
+    "dedup_reason": "旧 50 动作没有四字段 IPC 时间线 owner；web-01-A06 是 App effect 生命周期，frontend-N04 是 WASM 句柄，session-N02 是 Rust ProtocolSession 回滚容器。reader 整体 TauriHostSession 建议缩到可证明共同不变量的子 owner，不新增整个 facade 包装。",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "frontend-r2-n03",
+    "priority": "中；可选",
+    "group": "frontend",
+    "reading_jobs": [
+      "18",
+      "19"
+    ],
+    "details_markdown": "**分类：new；优先级：中；可选；extends：无。**\n\n文件：`apps/web/src/host/tauri-host.ts`、`apps/web/src/host/tauri-host.test.ts`、`apps/web/src/host/tauri-startup-contract.test.ts`。\n\n**字段：**\n\n- timelineId\n- currentGeneration（规范十进制 string，初始 1）\n- cachedBaseline\n- baselineEpoch\n\n**方法：**\n\n- setInitialTimeline(sessionId)：保持初始化 engine_baseline 前的临时时间线行为\n- installInitialBaseline/replaceRefreshedBaseline/replaceRestoredBaseline：分别保留当前 generation 校验与安装步骤\n- matchesTimeline(timelineId)/currentGeneration()/baselineForRead()\n- captureGeneration/captureQueryCursor/assertGeneration/assertQueryCursor：按现有 save 与 orders/diagnostics 的不同检查条件提供窄方法\n- clearForDispose()：仅清 timeline/cache，不重置现有 generation/epoch\n\n**生产 caller：**\n\n- createTauriHost 初始化：create_session 后先设临时时间线；校验 engine_baseline 的 generation 后先写 timelineId=initialBaseline.timeline_id，再解析 snapshot 并安装 cachedBaseline，最后增加 baselineEpoch。解析失败时 timeline 已被写入，按现有 catch 清监听并抛错。\n- engine-event 与 engine-failure listeners：session/timeline/disposed 过滤后才交付。\n- refreshBaseline 与 load：分别校验当前 generation 或 nextGeneration，更新四字段后 callback；load 的 pause/resume 仍由 adapter。\n- save 只 pin generation 并在返回时检查 disposed/generation；playerWorkingOrders/npcDecisionTrace 额外 pin baselineEpoch；snapshot/tick/day 读缓存。\n\n**唯一 data owner：**\n\ncreateTauriHost 唯一持有私有 TauriTimelineState；只迁四项相关字段及其比较/安装操作。sessionId、running/disposed、callback/fatalCallback、两 unlisten 句柄、capability 与 invoke/listen I/O 继续由 TauriHost facade 拥有。\n\n**组合：**\n\n将 reader 的整个 TauriHostSession 粗粒度包装缩成四字段时间线对象：事件过滤先在 adapter 检查 sessionId/disposed，再问时间线是否匹配。基线更新与 callback/resume 编排仍由 adapter 分步执行，不创建跨宿主基类，不包裹整个 EngineHost。\n\n**迁移步骤：**\n\n- 先以 mockIPC/mock events 固定四字段的初始化、同 generation refresh、next generation restore 和查询 pinning。\n- 迁四字段及比较/只读接口；相同 host 实例的 listeners、save/orders/diagnostics/refresh/load 委托同一对象。\n- 保持 load 目前先写 currentGeneration、timelineId，再解析/建立 cachedBaseline、增加 epoch、callback、resume 的步骤；不能宣称所有字段绝对原子替换。\n- 保留每个查询原有检查强度：publicReports/byId/civilDate 当前没有完成后的统一 epoch 检查，不顺带加上；save 当前不检查 baselineEpoch。\n- 删除原四变量；其余 transport/callback/listener 生命周期仍在现有闭包，避免新对象覆盖所有职责。\n\n**现有测试（仅静态读取，未执行）：**\n\n- tauri-host.test.ts 的 mockIPC 行为用例：日终候选 generation 请求及 load 后晚到 save 响应拒绝。\n- tauri-startup-contract.test.ts 主要是静态源码/跨层接线断言；不能把它当作 listener/restore 运行时行为已经覆盖。\n\n**待补边界测试：**\n\n- 真实 mock event 的旧 timeline 丢弃、同 generation refresh 使旧 orders/NPC diagnostics epoch 失效。\n- generation 超 Number.MAX_SAFE_INTEGER 保持 string/BigInt 精确递增；初始 baseline mismatch 与 restore 非 nextGeneration。\n- snapshot 解析失败、callback 抛错、restore/resume 失败时当前部分更新与 running 行为必须先记录现状。\n- dispose 后晚到 refresh/load 的当前行为与 query 按现有各自 guard 拒绝/接受边界，不用一个统一 guard 擅自改变语义。\n\n**语义与既有缺陷边界：**\n\n- 只聚合 IPC 消费者的 timeline/generation/baselineEpoch；不改变 Rust 权威状态、A 股账户/委托字段或日终 SaveCandidateKey。\n- ADR-0010 的 invoke/event 两路径不全序；timeline_id 切换与旧事件过滤仍按现有操作顺序。\n- generation 保持规范十进制字符串，用 BigInt nextGeneration；baselineEpoch 是本地查询序号，不能与 generation/tick/seq 混同。\n- 当前 restore/refresh 可能部分写入后 parse 或 callback 失败，load pause/恢复失败不自动 resume，初始化 listener/stop_session 资源问题另批处理。\n- 既有 ProtocolState/ProtocolCoordinator owns tick/seq/replay/apply，TauriTimelineState owns IPC 时间线/cache pinning，层不同；frontend-N04 owns WASM handle，亦不同。\n\n**源码证据：**\n\n- tauri-host.ts::createTauriHost 同一闭包声明会话标识、generation、baseline epoch、回调、运行/销毁状态及两类 unlisten 句柄。\n- engine-event listener 同时检查 sessionId/timelineId/disposed 后以 currentGeneration 创建 protocol update。\n- save/playerWorkingOrders/refreshBaseline/load/npcDecisionTrace 均依赖 generation 或 baselineEpoch；load 在 restore 后替换时间线、generation、baseline 并通知 callback。\n- dispose 清空 callback/baseline 并调用 unlisten；stop/dispose 的 invoke 生命周期仍在 adapter。\n- tauri-startup-contract.test.ts 跨 App.tsx、Tauri adapter 与 Rust actor/lib 固定部分契约。\n\n**与旧动作去重：**\n\n旧 50 动作没有四字段 IPC 时间线 owner；web-01-A06 是 App effect 生命周期，frontend-N04 是 WASM 句柄，session-N02 是 Rust ProtocolSession 回滚容器。reader 整体 TauriHostSession 建议缩到可证明共同不变量的子 owner，不新增整个 facade 包装。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "frontend-R2-N04",
+    "kind": "new",
+    "extends": null,
+    "title": "CompanyRequestRegistry：可选聚合页查询与 by-id 请求 ticket",
+    "report_anchor": "frontend-r2-n04",
+    "priority": "低；可选",
+    "group": "frontend",
+    "files": [
+      "apps/web/src/host/company-query-coordinator.ts",
+      "apps/web/src/host/company-query-coordinator.test.ts"
+    ],
+    "owned_fields": [
+      "requestSequence",
+      "activeRequests: Map<string,number>"
+    ],
+    "methods": [
+      "begin(key,force)：非 force 有现存请求时不给新 ticket；否则递增序号并替换登记",
+      "matches(key,request)：只比较同 key 的当前 ticket",
+      "finishIfCurrent(key,request)：旧请求 finally 不删新请求",
+      "clear()：installBaseline/dispose 清登记；sequence 按当前实现不重置"
+    ],
+    "production_callers": [
+      "CompanyQueryCoordinator.query 页查询，包括 disclosure/CivilUpdate 触发的 force root 重查",
+      "CompanyQueryCoordinator.queryReportById 去重、接受/拒绝结果与 finally 清理",
+      "CompanyQueryCoordinator.installBaseline/dispose 清理 activeRequests"
+    ],
+    "data_owner": "CompanyQueryCoordinator 现有 class 已是完整公司查询 owner；它只进一步组合一个私有请求登记子对象。generation/disposed/lastEventSeq/cachedCompanies/host/dispatch 全部仍由 coordinator 拥有；isCurrentRequest 合成 generation/disposed + registry.matches，不复制代际 authority。",
+    "composition": "一个 coordinator 对应一个 registry，私有 request ticket 表承接两个不同请求入口共有的登记/替换/单次完成逻辑；key 构造、capability、DTO 校验、Redux dispatch 与 event seq coverage 留 coordinator。不是把现有 CompanyQueryCoordinator 再造一次。",
+    "migration_steps": [
+      "先补 force 同 key 替换后旧请求 success/reject/finally 不触碰新登记的定向测试；保持 page 与 by-id 不同 key/不同 capability 和 dispatch。",
+      "一起迁 requestSequence/activeRequests 和 begin/matches/finishIfCurrent/clear；query 的 force 只传现有 boolean，by-id 保持去重。",
+      "isCurrentRequest 仍由 coordinator 合并 !disposed/generation 等条件，注册对象不自行引入全局代际；baseline/dispose 调 clear 且不重置 sequence。",
+      "保留 root key 当前 cursor??root、report key 的字符串格式、cachedCompanies.add 次序及错误呈现。若 key 碰撞、取消/并发策略要修复，另批明确行为变更。"
+    ],
+    "existing_tests": [
+      "company-query-coordinator.test.ts 已覆盖 disposed/旧 baseline 页与 by-id 结果忽略、当前数据接受、malformed DTO/unavailable、disclosure 重查及 seq coverage；manager 全文读取。"
+    ],
+    "missing_tests": [
+      "同 generation 同 key force A→B，A resolve/reject/finally 均不能清 B；B 完成再允许非 force 请求。",
+      "page/by-id 同时存在、capability 缺失立即清登记、重复非 force 不额外 dispatch，clear 后旧 ticket 不被重新认为 current。"
+    ],
+    "semantic_boundaries": [
+      "只管理公开报告请求 identity，不改变公开日期/revision/披露窗口或 canonical public ID；cached report ownership仍Redux/host。",
+      "不得将报告请求登记与 frontend-N01 Remote ID-company index、frontend-N06 Worker RPC 资源或 frontend-N07 写命令队列合并。",
+      "原 coordinator 已完整封装；此项是内部职责可选细分，不是缺陷/强制任务。无 timer、retry、AbortController 或新 API。"
+    ],
+    "evidence": [
+      "query/queryReportById 两个生产方法分别重复 ++requestSequence、activeRequests.set、isCurrentRequest 检查和 finally 删除；installBaseline/dispose 共同 clear。",
+      "force 查询替换同 key request，旧 finally 用 current request guard 保护新登记，构成独立可测试的不变量。",
+      "manager 全文核实 coordinator 与 300 行测试。"
+    ],
+    "dedup_reason": "reader12 对整个已存在 CompanyQueryCoordinator 报 new 无迁移，不成立；manager 进一步反查其内部字段和两个入口后新增这个窄子 owner。旧 50 动作无此 request ticket 表和 CompanyQueryCoordinator 两 caller，故独立低优先级 new。",
+    "reading_jobs": [
+      "11",
+      "12"
+    ],
+    "details_markdown": "**分类：new；优先级：低；可选；extends：无。**\n\n文件：`apps/web/src/host/company-query-coordinator.ts`、`apps/web/src/host/company-query-coordinator.test.ts`。\n\n**字段：**\n\n- requestSequence\n- activeRequests: Map<string,number>\n\n**方法：**\n\n- begin(key,force)：非 force 有现存请求时不给新 ticket；否则递增序号并替换登记\n- matches(key,request)：只比较同 key 的当前 ticket\n- finishIfCurrent(key,request)：旧请求 finally 不删新请求\n- clear()：installBaseline/dispose 清登记；sequence 按当前实现不重置\n\n**生产 caller：**\n\n- CompanyQueryCoordinator.query 页查询，包括 disclosure/CivilUpdate 触发的 force root 重查\n- CompanyQueryCoordinator.queryReportById 去重、接受/拒绝结果与 finally 清理\n- CompanyQueryCoordinator.installBaseline/dispose 清理 activeRequests\n\n**唯一 data owner：**\n\nCompanyQueryCoordinator 现有 class 已是完整公司查询 owner；它只进一步组合一个私有请求登记子对象。generation/disposed/lastEventSeq/cachedCompanies/host/dispatch 全部仍由 coordinator 拥有；isCurrentRequest 合成 generation/disposed + registry.matches，不复制代际 authority。\n\n**组合：**\n\n一个 coordinator 对应一个 registry，私有 request ticket 表承接两个不同请求入口共有的登记/替换/单次完成逻辑；key 构造、capability、DTO 校验、Redux dispatch 与 event seq coverage 留 coordinator。不是把现有 CompanyQueryCoordinator 再造一次。\n\n**迁移步骤：**\n\n- 先补 force 同 key 替换后旧请求 success/reject/finally 不触碰新登记的定向测试；保持 page 与 by-id 不同 key/不同 capability 和 dispatch。\n- 一起迁 requestSequence/activeRequests 和 begin/matches/finishIfCurrent/clear；query 的 force 只传现有 boolean，by-id 保持去重。\n- isCurrentRequest 仍由 coordinator 合并 !disposed/generation 等条件，注册对象不自行引入全局代际；baseline/dispose 调 clear 且不重置 sequence。\n- 保留 root key 当前 cursor??root、report key 的字符串格式、cachedCompanies.add 次序及错误呈现。若 key 碰撞、取消/并发策略要修复，另批明确行为变更。\n\n**现有测试（仅静态读取，未执行）：**\n\n- company-query-coordinator.test.ts 已覆盖 disposed/旧 baseline 页与 by-id 结果忽略、当前数据接受、malformed DTO/unavailable、disclosure 重查及 seq coverage；manager 全文读取。\n\n**待补边界测试：**\n\n- 同 generation 同 key force A→B，A resolve/reject/finally 均不能清 B；B 完成再允许非 force 请求。\n- page/by-id 同时存在、capability 缺失立即清登记、重复非 force 不额外 dispatch，clear 后旧 ticket 不被重新认为 current。\n\n**语义与既有缺陷边界：**\n\n- 只管理公开报告请求 identity，不改变公开日期/revision/披露窗口或 canonical public ID；cached report ownership仍Redux/host。\n- 不得将报告请求登记与 frontend-N01 Remote ID-company index、frontend-N06 Worker RPC 资源或 frontend-N07 写命令队列合并。\n- 原 coordinator 已完整封装；此项是内部职责可选细分，不是缺陷/强制任务。无 timer、retry、AbortController 或新 API。\n\n**源码证据：**\n\n- query/queryReportById 两个生产方法分别重复 ++requestSequence、activeRequests.set、isCurrentRequest 检查和 finally 删除；installBaseline/dispose 共同 clear。\n- force 查询替换同 key request，旧 finally 用 current request guard 保护新登记，构成独立可测试的不变量。\n- manager 全文核实 coordinator 与 300 行测试。\n\n**与旧动作去重：**\n\nreader12 对整个已存在 CompanyQueryCoordinator 报 new 无迁移，不成立；manager 进一步反查其内部字段和两个入口后新增这个窄子 owner。旧 50 动作无此 request ticket 表和 CompanyQueryCoordinator 两 caller，故独立低优先级 new。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

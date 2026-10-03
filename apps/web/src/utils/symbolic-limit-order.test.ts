@@ -36,6 +36,8 @@ test("App wires symbolic limit choices without reclassifying them as market orde
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   assert.match(appSource, /最高限价/);
   assert.match(appSource, /最低限价/);
-  assert.match(appSource, /buildPlayerOrderIntent/);
+  const commandsSource = readFileSync(new URL("../app/useTradingCommands.ts", import.meta.url), "utf8");
+  assert.match(appSource, /useTradingCommands/);
+  assert.match(commandsSource, /buildPlayerOrderIntent/);
   assert.match(appSource, /orderPriceInputState/);
 });

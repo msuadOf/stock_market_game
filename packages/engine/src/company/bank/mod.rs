@@ -30,6 +30,9 @@ mod lending;
 mod loans;
 mod writeoff;
 
+#[cfg(test)]
+mod behavior_tests;
+
 pub use chart::bank_chart_v3;
 pub use config::BankConfig;
 pub use deposits::{DepositAccrualItem, DepositState};
@@ -105,7 +108,7 @@ impl BankBooks {
     /// 对手方登记。任一步失败 ⇒ 不产生半构造账套。
     pub fn new(config: BankConfig) -> Result<Self, BankError> {
         config.ecl_policy.validate()?;
-        config::check_opening_lines(&config.opening_lines)?;
+        config.check_opening_lines()?;
         let mut books = Books::new(config.chart);
         books.post_batch(vec![crate::accounting::JournalEntry {
             source: opening_event_id(),

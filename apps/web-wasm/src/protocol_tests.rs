@@ -22,10 +22,11 @@ fn producer_failure_contains_real_location_and_recovery_details() {
 #[test]
 fn registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let session = ProtocolSession::new(setup, 41).unwrap();
-    REGISTRY.with(|registry| registry.borrow_mut().insert(123, session));
+    let handle = REGISTRY
+        .with(|registry| registry.borrow_mut().create(setup, 41))
+        .unwrap();
 
-    let update = step_update(123).unwrap();
+    let update = step_update(handle).unwrap();
 
     let EngineUpdate::TickBatch(batch) = &update else {
         panic!()
@@ -37,10 +38,10 @@ fn registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit() {
         "wasm registry output: {}",
         serde_json::to_string(&update).unwrap()
     );
-    drop_session(123);
+    drop_session(handle);
     assert_eq!(
-        step_update(123).unwrap_err(),
-        StepUpdateError::Operation("invalid session handle: 123".into())
+        step_update(handle).unwrap_err(),
+        StepUpdateError::Operation(format!("invalid session handle: {handle}"))
     );
 }
 
@@ -107,15 +108,13 @@ fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
 #[test]
 fn registry_retains_complete_closing_history() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    REGISTRY.with(|registry| {
-        registry
-            .borrow_mut()
-            .insert(124, ProtocolSession::new(setup, 41).unwrap())
-    });
+    let handle = REGISTRY
+        .with(|registry| registry.borrow_mut().create(setup, 41))
+        .unwrap();
     for _ in 0..fixture::TICKS_PER_DAY {
-        step_update(124).unwrap();
+        step_update(handle).unwrap();
     }
-    let EngineUpdate::CivilUpdate(civil) = step_update(124).unwrap() else {
+    let EngineUpdate::CivilUpdate(civil) = step_update(handle).unwrap() else {
         panic!("completed trading day must publish CivilUpdate before another tick")
     };
 
@@ -128,11 +127,11 @@ fn registry_retains_complete_closing_history() {
         "wasm registry civil: {}",
         serde_json::to_string(&EngineUpdate::CivilUpdate(civil)).unwrap()
     );
-    let EngineUpdate::TickBatch(next) = step_update(124).unwrap() else {
+    let EngineUpdate::TickBatch(next) = step_update(handle).unwrap() else {
         panic!("CivilUpdate must be published exactly once before stepping resumes")
     };
     assert_eq!(next.frames[0].tick, fixture::TICKS_PER_DAY + 1);
-    drop_session(124);
+    drop_session(handle);
 }
 #[test]
 fn producer_failure_preserves_real_source_chain_without_private_state() {
@@ -195,4 +194,82 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
         "公司会计金额运算溢出（操作数已脱敏）"
     );
     assert!(value["cause"]["cause"]["cause"].is_null());
+}
+
+#[test]
+fn registry_owns_independent_handles_and_failed_construction_does_not_register() {
+    let mut registry = SessionRegistry::default();
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let first = registry.create(setup.clone(), 41).unwrap();
+    let second = registry.create(setup.clone(), 42).unwrap();
+    assert_ne!(first, second);
+    registry.step_update(first).unwrap();
+    assert_eq!(
+        registry
+            .with_session(first, |session| session.tick())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        registry
+            .with_session(second, |session| session.tick())
+            .unwrap(),
+        0
+    );
+    let count = registry.sessions.len();
+    let mut invalid = setup;
+    invalid.stocks.clear();
+    assert!(registry.create(invalid, 43).is_err());
+    assert_eq!(registry.sessions.len(), count);
+    registry.remove(u32::MAX);
+    assert_eq!(registry.sessions.len(), count);
+    registry.remove(first);
+    assert!(registry.with_session(first, |_| ()).is_err());
+    assert!(registry.step_update(first).is_err());
+    assert_eq!(
+        registry
+            .with_session(second, |session| session.tick())
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn registry_restore_failure_preserves_existing_session_and_civil_barrier() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());
+    let mut settled = ProtocolSession::new(setup.clone(), 41).unwrap();
+    settled.end_civil_day_update().unwrap();
+    let slot = settled.save().unwrap();
+    let mut registry = SessionRegistry::default();
+    let original = registry.create(setup, 42).unwrap();
+    let restored = registry.restore(&slot).unwrap();
+    let count = registry.sessions.len();
+    let mut invalid = slot.clone();
+    invalid.pending_player.push((
+        AccountId(0),
+        Intent::Cancel {
+            code: engine::StockCode("600101".into()),
+            id: engine::OrderId(1),
+        },
+    ));
+    assert!(registry.restore(&invalid).is_err());
+    assert_eq!(registry.sessions.len(), count);
+    assert_eq!(
+        registry
+            .with_session(original, |session| session.civil_date())
+            .unwrap()
+            .to_iso(),
+        "2030-01-05"
+    );
+    let EngineUpdate::CivilUpdate(civil) = registry.step_update(restored).unwrap() else {
+        panic!("恢复的周日应先发布 CivilUpdate")
+    };
+    assert_eq!(civil.tick, slot.snapshot.tick);
+    assert_eq!(
+        registry
+            .with_session(restored, |session| session.civil_date())
+            .unwrap()
+            .to_iso(),
+        "2030-01-07"
+    );
 }

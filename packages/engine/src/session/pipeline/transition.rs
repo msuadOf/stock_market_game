@@ -95,12 +95,11 @@ impl FillTransition {
             .map_err(invariant)?;
         let nominal_after = seller_nominal_total(input.config, filled_value_after)?;
         let nominal = nominal_after.checked_sub(nominal_before)?;
-        let unpaid = nominal_after.checked_sub(input.charged_before)?;
-        let charge_cap = unpaid.total()?.min(input.gross_delta);
-        let charged = allocate_charged_components(unpaid, charge_cap)?;
-        let charged_after = input.charged_before.checked_add(charged)?;
-        validate_charged_chain(charged_after, nominal_after)?;
-        let deliver_cash = input.gross_delta.sub(charge_cap).map_err(invariant)?;
+        let allocation = SellerChargeAllocation::calculate(
+            nominal_after,
+            input.charged_before,
+            input.gross_delta,
+        )?;
 
         Ok(Self {
             delta: ReceiptDelta::sealed(
@@ -110,10 +109,10 @@ impl FillTransition {
             ),
             nominal,
             nominal_after,
-            charged,
-            charged_after,
+            charged: allocation.charged_delta,
+            charged_after: allocation.charged_after,
             deliver_qty: 0,
-            deliver_cash,
+            deliver_cash: allocation.deliver_cash,
         })
     }
 }
@@ -187,26 +186,53 @@ fn seller_nominal_total(
     })
 }
 
-fn allocate_charged_components(
-    unpaid: FeeComponents,
-    charge_cap: Money,
-) -> Result<FeeComponents, super::super::StepFatal> {
-    let commission = unpaid.commission.min(charge_cap);
-    let after_commission = charge_cap.sub(commission).map_err(invariant)?;
-    let stamp_tax = unpaid.stamp_tax.min(after_commission);
-    let after_stamp_tax = after_commission.sub(stamp_tax).map_err(invariant)?;
-    let transfer_fee = unpaid.transfer_fee.min(after_stamp_tax);
-    let charged = FeeComponents {
-        commission,
-        stamp_tax,
-        transfer_fee,
-    };
-    if charged.total()? != charge_cap {
-        return Err(invariant_message(
-            "seller charge allocation does not exhaust capped charge",
-        ));
+/// 单腿卖出费用的实收分配；分项优先级沿用 ADR-0017 的游戏简化。
+struct SellerChargeAllocation {
+    charged_delta: FeeComponents,
+    charged_after: FeeComponents,
+    deliver_cash: Money,
+}
+
+impl SellerChargeAllocation {
+    fn calculate(
+        nominal_after: FeeComponents,
+        charged_before: FeeComponents,
+        gross_delta: Money,
+    ) -> Result<Self, super::super::StepFatal> {
+        let unpaid = nominal_after.checked_sub(charged_before)?;
+        let charge_cap = unpaid.total()?.min(gross_delta);
+        let charged_delta = Self::allocate_components(unpaid, charge_cap)?;
+        let charged_after = charged_before.checked_add(charged_delta)?;
+        validate_charged_chain(charged_after, nominal_after)?;
+        let deliver_cash = gross_delta.sub(charge_cap).map_err(invariant)?;
+        Ok(Self {
+            charged_delta,
+            charged_after,
+            deliver_cash,
+        })
     }
-    Ok(charged)
+
+    fn allocate_components(
+        unpaid: FeeComponents,
+        charge_cap: Money,
+    ) -> Result<FeeComponents, super::super::StepFatal> {
+        let commission = unpaid.commission.min(charge_cap);
+        let after_commission = charge_cap.sub(commission).map_err(invariant)?;
+        let stamp_tax = unpaid.stamp_tax.min(after_commission);
+        let after_stamp_tax = after_commission.sub(stamp_tax).map_err(invariant)?;
+        let transfer_fee = unpaid.transfer_fee.min(after_stamp_tax);
+        let charged = FeeComponents {
+            commission,
+            stamp_tax,
+            transfer_fee,
+        };
+        if charged.total()? != charge_cap {
+            return Err(invariant_message(
+                "seller charge allocation does not exhaust capped charge",
+            ));
+        }
+        Ok(charged)
+    }
 }
 
 fn validate_charged_chain(
@@ -261,5 +287,70 @@ fn invariant_message(description: &str) -> super::super::StepFatal {
     super::super::StepFatal::InvariantViolation {
         description: description.to_owned(),
         location: "pipeline::transition".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod seller_charge_tests {
+    use super::*;
+
+    #[test]
+    fn seller_charge_allocation_caps_at_each_component_boundary() {
+        let nominal_after = FeeComponents {
+            commission: Money::from_cents(5),
+            stamp_tax: Money::from_cents(3),
+            transfer_fee: Money::from_cents(2),
+        };
+        for (gross, commission, stamp_tax, transfer_fee, delivery) in [
+            (4, 4, 0, 0, 0),
+            (5, 5, 0, 0, 0),
+            (7, 5, 2, 0, 0),
+            (8, 5, 3, 0, 0),
+            (9, 5, 3, 1, 0),
+            (10, 5, 3, 2, 0),
+            (11, 5, 3, 2, 1),
+        ] {
+            let allocation = SellerChargeAllocation::calculate(
+                nominal_after,
+                FeeComponents::ZERO,
+                Money::from_cents(gross),
+            )
+            .unwrap();
+            assert_eq!(
+                allocation.charged_delta,
+                FeeComponents {
+                    commission: Money::from_cents(commission),
+                    stamp_tax: Money::from_cents(stamp_tax),
+                    transfer_fee: Money::from_cents(transfer_fee),
+                }
+            );
+            assert_eq!(allocation.charged_after, allocation.charged_delta);
+            assert_eq!(allocation.deliver_cash, Money::from_cents(delivery));
+        }
+    }
+
+    #[test]
+    fn seller_charge_allocation_rejects_component_excess_and_total_overflow() {
+        let nominal = FeeComponents {
+            commission: Money::from_cents(5),
+            stamp_tax: Money::from_cents(3),
+            ..FeeComponents::ZERO
+        };
+        let charged = FeeComponents {
+            commission: Money::from_cents(6),
+            ..FeeComponents::ZERO
+        };
+        assert!(
+            matches!(SellerChargeAllocation::calculate(nominal, charged, Money::from_cents(10)), Err(super::super::StepFatal::InvariantViolation { location, .. }) if location == "pipeline::transition")
+        );
+        let nominal = FeeComponents {
+            commission: Money::from_cents(i64::MAX),
+            stamp_tax: Money::from_cents(1),
+            ..FeeComponents::ZERO
+        };
+        assert!(matches!(
+            SellerChargeAllocation::calculate(nominal, FeeComponents::ZERO, Money::from_cents(1)),
+            Err(super::super::StepFatal::InvariantViolation { .. })
+        ));
     }
 }

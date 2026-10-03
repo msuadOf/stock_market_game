@@ -9,17 +9,16 @@
 use std::collections::BTreeMap;
 
 use crate::accounting::consolidation::ScopeId;
-use crate::accounting::journal::BusinessEventId;
 use crate::accounting::period::AccountingPeriod;
 use crate::accounting::reports::{ReportKind, ReportSet};
 
-use super::{ClosingEngine, RestatementWorksheet, VersionKey};
+use super::{ClosingEngine, RestatementRegister, RestatementRows, VersionKey};
 
 /// 存档形态：版本序列与重述底稿均平铺（键组合成为元组值）。
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct EngineSave {
     versions: Vec<(ScopeId, AccountingPeriod, ReportKind, Vec<ReportSet>)>,
-    restatements: Vec<(ScopeId, Vec<(BusinessEventId, AccountingPeriod)>)>,
+    restatements: RestatementRows,
 }
 
 impl From<&ClosingEngine> for EngineSave {
@@ -30,19 +29,7 @@ impl From<&ClosingEngine> for EngineSave {
                 .iter()
                 .map(|((scope, period, kind), sets)| (scope.clone(), *period, *kind, sets.clone()))
                 .collect(),
-            restatements: engine
-                .restatements
-                .iter()
-                .map(|(scope, worksheet)| {
-                    (
-                        scope.clone(),
-                        worksheet
-                            .iter()
-                            .map(|(source, target)| (*source, *target))
-                            .collect(),
-                    )
-                })
-                .collect(),
+            restatements: engine.restatements.save_rows(),
         }
     }
 }
@@ -55,12 +42,7 @@ impl From<EngineSave> for ClosingEngine {
                 versions.insert((scope, period, kind), sets);
             }
         }
-        let mut restatements: RestatementWorksheet = BTreeMap::new();
-        for (scope, worksheet) in save.restatements {
-            if !worksheet.is_empty() {
-                restatements.insert(scope, worksheet.into_iter().collect());
-            }
-        }
+        let restatements = RestatementRegister::from_rows(save.restatements);
         ClosingEngine {
             versions,
             restatements,

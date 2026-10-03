@@ -1,0 +1,246 @@
+[
+  {
+    "id": "hosts-N03",
+    "title": "把测试披露场景的变更方法归属 Scenario",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/tests/information_acquisition/fixture.rs",
+      "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+      "packages/engine/tests/information_acquisition/failures.rs",
+      "packages/engine/tests/information_acquisition/view_gold.rs"
+    ],
+    "objects": [
+      "Scenario"
+    ],
+    "report_anchor": "hosts-n03",
+    "group": "hosts",
+    "details_markdown": "`information_acquisition/fixture.rs::Scenario` 已拥有 company/member、Books、ClosingEngine、PublicLibrary、两次报告/公告时点与 id，但 `scenario()`、`post_undisclosed_fact(&mut Scenario)`、`publish_correction(&mut Scenario)` 仍为 free function。尤其更正操作同时读取/修改账套、结账登记簿和公开库，这是既有对象的共同变更职责，旧 support 结论未收录迁移方法。\n\n- **字段/方法：** 不添字段，把构造改为 `Scenario::new()`，两个变更改为 `&mut self` 方法，`publish_correction` 仍返回新 `PublicationId`。`hour_after`、`minute_before`、`d`、`yuan`、`entry`、`cash_rev`、`two_line`、`npc_a/b` 继续作为确定性输入 helper；`FixtureMarket::quiet` 已是适合的对象方法。\n- **真实调用方：** acquisition_gold 的 `unread_publication_never_enters_unread_npc_inputs` 先未披露过账再公开 v2；failures 的 `unacquired_read_rejected`；view_gold 的 `acquired_version_pinned_across_later_correction`、`dev_reads_leave_every_npc_state_unchanged`、`discovery_candidates_index_publications_without_reading`。各测试分别持有自己的 Scenario，个人 `NpcInformationState`/行情仍由测试直接拥有。\n- **迁移/验证：** 先保持原 fixture 数值与所有信息隔离断言；搬构造与两个 mutator；依次更新三测试模块 imports/callers；不隐藏 `record_acquisition` 或 dev query。保留 v1不可变、v2 supersedes、首次获知、未读不进入判断输入、dev读取不改个人状态、未来时点拒绝与 serde 往返。已读报告没有因把 mutator 改为方法而变成本人获知。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "hosts-N04",
+    "title": "周末披露 fixture 聚合共同日结与派发流程",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/tests/publications/weekend_publish.rs"
+    ],
+    "objects": [
+      "WeekendScenario"
+    ],
+    "report_anchor": "hosts-n04",
+    "group": "hosts",
+    "details_markdown": "`publications/weekend_publish.rs::weekend_scenario` 返回 `(year, SeededPrehistory, GameSession, DisclosureDispatch)`；两个测试都执行 install、周五 step、`end_civil_day`→`seeded.ops.advance_civil_day`→`dispatch.run_day_end`，并在周六重复共同后三步。具名 `WeekendScenario` 可拥有这四个彼此关联的资源，私有 `settle_and_dispatch()` 收拢共同步骤；收益不仅是四元组换名字。\n\n- **字段/方法：** year、seeded、session、dispatch；构造器保留确定性 Saturday search；`install_dispatch()`、显式 `step_friday()`（仅循环现有 TICKS_PER_DAY）、`settle_and_dispatch()` 返回原 DayEndReport 与派发输出。周六不自动调用 step；不将报告/公告验证藏进方法。可先仅具名化，再按重复代码需要迁方法。\n- **真实调用方/所有权：** `weekend_report_publishes_without_trade` 与 `interim_announcement_publishes_at_next_disclosure_phase` 各自创建独立对象。shock 注入、before snapshot、repeat dispatch 与可见性断言由各测试显式执行。\n- **迁移/边界：** 先替换四元组；原样收拢两测试相同的 finalize→disclosure 链；分别运行两现有用例。保护周六无撮合/无 tick/无 RNG 消费、civil event seq 增一、周五不提前发 Q1、18:00 相位、早读拒绝和重复 dispatch 幂等。该排期是合成游戏场景；不把尚未完整取证的 Q1 法定期限宣称为本轮验证通过。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "hosts-N05",
+    "title": "可选：具名组织跨模块的两日存档 fixture 与只读缓存",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/tests/save_contract/main.rs",
+      "packages/engine/tests/save_contract/failures.rs"
+    ],
+    "objects": [
+      "SeasonedSaveFixture"
+    ],
+    "report_anchor": "hosts-n05",
+    "group": "hosts",
+    "details_markdown": "`save_contract/main.rs` 的 `seasoned_session` 用相同 setup/seed 推进两次完整 CivilUpdate；`seasoned_json` 在 `OnceLock<Value>` 中缓存其完整日终 JSON，供 failures 的多个篡改用例复制。当前 `OnceLock` 已有唯一清晰 owner，本动作是可选的测试职责表达改善，不称生命周期失控或必修设计缺陷。\n\n- **字段/方法：** 测试私有 `SeasonedSaveFixture` 聚合固定场景说明与 immutable baseline JSON；`build_session()` 按原 factory 新建并推进两日，`clone_save_value()` 返回独立 Value clone。`OnceLock<SeasonedSaveFixture>` 仍只缓存不可变结果，不共享可变 GameSession，不通过恢复缓存档替代原鲜建场景（恢复会改变某些观测历史）。简单 stock/setup/date/定位/断言 helper 保留函数。\n- **调用方：** failures 的缺字段及个人状态/引用/日历/账本篡改用例调用 `seasoned_json`；`rejections_leave_the_running_session_untouched` 调 `seasoned_session`；主模块 roundtrip 与 invariant 两测试也鲜建场景。\n- **迁移/测试：** 先确认两日 JSON 字节和 clone 隔离；定义 fixture，原样迁两个访问入口；可保留原 helper 名为薄桥接以免无收益改全部测试。测试位于 save_contract/main.rs/failures.rs。不合并 continuity/quiet-point 的不同 setup，不改变两日交易/经营/披露顺序、固定 seed、schema v2、非法档拒绝及源 session 不变断言。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "local_id": "H02-1",
+    "title": "将重复的公告曝光测试输入收拢为 AnnouncementExposureFixture",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/attention_discovery/exposure.rs",
+      "packages/engine/tests/attention_discovery/failures/discovery.rs"
+    ],
+    "source_symbols": [
+      "library_with_announcement",
+      "exposed_codes",
+      "quiet_market",
+      "discovery_setup"
+    ],
+    "evidence": [
+      "exposure.rs:95-108 构造并配对返回公告 PublicLibrary 与发布时间；exposure.rs:111-122 用 library、codes、as_of 派生曝光集合；exposure.rs:131-140 同时组装 library、market、codes 并检查公布前后。",
+      "failures/discovery.rs:96-101 再次组装 library/published/market/all_codes/exposed；failures/discovery.rs:134-139 在第二次取样中重复同类调用输入。"
+    ],
+    "fields": [
+      "library: PublicLibrary",
+      "published: CivilInstant",
+      "codes: Vec<StockCode>",
+      "market: MarketView"
+    ],
+    "methods": [
+      "exposed_at(as_of) -> BTreeSet<StockCode>（按给定时点计算，不缓存）",
+      "market()/codes()/library()只读借用；private Books仍独立归测试持有"
+    ],
+    "production_callers": "无；仅供 exposure.rs 与 failures/discovery.rs 测试使用。",
+    "data_owner": "test helper 拥有可复用公告/市场/代码夹具；每个测试仍拥有自己的 RNG、PersonalWatchlist 和私有 Books；session_bytes 独占 GameSession。",
+    "composition": "纯测试 fixture 值对象，持有同一公开公告曝光场景的不可变输入。不得进入 engine production crate，也不得把未披露 Books 混入 PublicLibrary。",
+    "migration_steps": [
+      "先命名已存在的library/published/market/codes场景组合，保持生成值不变。",
+      "将exposed_codes(library,codes,as_of)委托为exposed_at(as_of)，不新增exposed字段。",
+      "调用方继续显式输入as_of/RNG/watchlist并直接断言公布前后及私有事实不泄漏。"
+    ],
+    "existing_tests": [
+      "exposure.rs::announcement_exposure_enters_weights_only_through_the_public_surface",
+      "exposure.rs::one_public_announcement_never_synchronizes_all_npc_candidates",
+      "failures/discovery.rs::mutating_only_private_operating_facts_changes_no_candidate_and_no_order",
+      "failures/discovery.rs::discovery_sampling_never_writes_into_information_state"
+    ],
+    "missing_tests": [
+      "若 fixture 提供按 as_of 求曝光的方法，验证公告公布前空集、公布后只包含公告公司股票；现有两测试已覆盖主要语义，可能无需新增测试。"
+    ],
+    "semantic_boundaries": [
+      "公告只有到 published_at 才进入 discovery_candidates；fixture 不能预先暴露未披露事实。",
+      "发现候选提高概率不等于已获知；不能触碰 NpcInformationState。",
+      "公告公开账本与 Books 私有经营事实必须保持隔离。",
+      "该建议只整理测试输入，不改变 A 股规则或 production 状态。"
+    ],
+    "why_oop": "多个测试反复共同传递同一组公告、发布时间、代码集合和市场快照，存在明确场景身份与不变量；一个窄范围 test fixture 可以拥有这组配套数据并封装曝光查询。其价值限于减少跨文件重复，优先级低且绝非生产领域对象。",
+    "reader_job": "02",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/02-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "公告身份、发布时间、证券集合与可见市场成套流转，有可独立查询的时间边界；仅列测试侧低优先级可选。",
+    "acceptance_condition": "低优先级条件候选：只有场景组合与按时点曝光关系收益成立才实施；禁止缓存as_of派生exposed。",
+    "id": "hosts-R2-N01",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n01",
+    "action_id": "hosts-R2-N01",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n公告身份、发布时间、证券集合与可见市场成套流转，有可独立查询的时间边界；仅列测试侧低优先级可选。\n\n范围：`packages/engine/tests/attention_discovery/exposure.rs`、`packages/engine/tests/attention_discovery/failures/discovery.rs`。\n\n**实施条件**\n\n低优先级条件候选：只有场景组合与按时点曝光关系收益成立才实施；禁止缓存as_of派生exposed。\n\n**字段**\n\n- library: PublicLibrary\n- published: CivilInstant\n- codes: Vec<StockCode>\n- market: MarketView\n\n**方法**\n\n- exposed_at(as_of) -> BTreeSet<StockCode>（按给定时点计算，不缓存）\n- market()/codes()/library()只读借用；private Books仍独立归测试持有\n\n**真实调用方**\n\n无；仅供 exposure.rs 与 failures/discovery.rs 测试使用。\n\n**数据所有者**\n\ntest helper 拥有可复用公告/市场/代码夹具；每个测试仍拥有自己的 RNG、PersonalWatchlist 和私有 Books；session_bytes 独占 GameSession。\n\n**组合方式**\n\n纯测试 fixture 值对象，持有同一公开公告曝光场景的不可变输入。不得进入 engine production crate，也不得把未披露 Books 混入 PublicLibrary。\n\n**迁移步骤**\n\n- 先命名已存在的library/published/market/codes场景组合，保持生成值不变。\n- 将exposed_codes(library,codes,as_of)委托为exposed_at(as_of)，不新增exposed字段。\n- 调用方继续显式输入as_of/RNG/watchlist并直接断言公布前后及私有事实不泄漏。\n\n**现有测试（未执行）**\n\n- exposure.rs::announcement_exposure_enters_weights_only_through_the_public_surface\n- exposure.rs::one_public_announcement_never_synchronizes_all_npc_candidates\n- failures/discovery.rs::mutating_only_private_operating_facts_changes_no_candidate_and_no_order\n- failures/discovery.rs::discovery_sampling_never_writes_into_information_state\n\n**待补测试**\n\n- 若 fixture 提供按 as_of 求曝光的方法，验证公告公布前空集、公布后只包含公告公司股票；现有两测试已覆盖主要语义，可能无需新增测试。\n\n**语义边界**\n\n- 公告只有到 published_at 才进入 discovery_candidates；fixture 不能预先暴露未披露事实。\n- 发现候选提高概率不等于已获知；不能触碰 NpcInformationState。\n- 公告公开账本与 Books 私有经营事实必须保持隔离。\n- 该建议只整理测试输入，不改变 A 股规则或 production 状态。\n\n**对象化依据**\n\n多个测试反复共同传递同一组公告、发布时间、代码集合和市场快照，存在明确场景身份与不变量；一个窄范围 test fixture 可以拥有这组配套数据并封装曝光查询。其价值限于减少跨文件重复，优先级低且绝非生产领域对象。\n\n**源码证据**\n\n- exposure.rs:95-108 构造并配对返回公告 PublicLibrary 与发布时间；exposure.rs:111-122 用 library、codes、as_of 派生曝光集合；exposure.rs:131-140 同时组装 library、market、codes 并检查公布前后。\n- failures/discovery.rs:96-101 再次组装 library/published/market/all_codes/exposed；failures/discovery.rs:134-139 在第二次取样中重复同类调用输入。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "04-C1",
+    "title": "可选：用 AuctionFixture 聚合竞价测试场景和存档恢复构造",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/auction.rs"
+    ],
+    "source_symbols": [
+      "auction_setup",
+      "representative_auction_setup",
+      "restored_with_orders",
+      "restored_with_previous_close",
+      "restored_on_exchange",
+      "synchronize_v2_auction_envelopes"
+    ],
+    "evidence": [
+      "auction_setup 在 7-50 行构造单证券、无活跃 NPC 的 SessionSetup；representative_auction_setup 在 128-183 行重复 SessionSetup 的策略、时间、交易配置字段并构造沪深/不同 SecurityCategory 的代表样本。",
+      "恢复路径在 342-360 和 363-388 行重复从 SessionSetup 创建 session、save、覆盖昨日收盘价、注入 auction_orders、设置 next_order_id、同步 runtime_v2.live_envelopes、restore 的顺序。",
+      "单股 NPC 测试在 207-211 行又从代表 setup 过滤证券后创建 GameSession；多股 NPC 测试在 237 行直接使用完整 setup。"
+    ],
+    "fields": [
+      "场景所用 SessionSetup（含 stocks、竞价 tick 数和共同策略/日期配置）",
+      "测试 seed",
+      "用于恢复场景的 StockCode 与 StockExchange",
+      "昨日收盘价",
+      "待注入的 AuctionOrderSnap 列表"
+    ],
+    "methods": [
+      "单证券静默 setup 构造",
+      "代表性多证券/NPC setup 构造",
+      "由当前 setup/seed 创建 GameSession",
+      "将指定竞价单和昨日收盘注入 SaveSlot 并恢复 session",
+      "为测试存档生成并排序匹配 auction order keys 的 live_envelopes"
+    ],
+    "production_callers": "无；候选只服务 packages/engine/tests/auction.rs 的测试 helper 和 #[test] 调用者。不能视作 engine 生产消费者。",
+    "data_owner": "AuctionFixture（若采用）独占其测试场景的 SessionSetup 与 seed；测试调用者仍拥有每个测试运行中的 GameSession、临时 SaveSlot、待注入订单和断言结果。fixture 不拥有生产状态，也不跨测试共享可变对象。",
+    "composition": "可由一个轻量 AuctionFixture 组合 SessionSetup 与 seed，恢复方法接收明确的 orders、previous_close、exchange 参数并在方法内构造局部 SaveSlot。也可用两个明确的构造函数区分静默单股场景和 NPC 代表场景；不需要继承层次或通用 TestUtils/Utility。",
+    "migration_steps": [
+      "先新增仅在本 integration test 文件内可见的 AuctionFixture，并以一个恢复型测试替换 restored_with_previous_close 的调用验证接口足够表达其场景。",
+      "迁移 restored_on_exchange 和 restored_with_orders，确认 exchange/code、昨日收盘和订单数据仍由测试显式给出。",
+      "再迁移两类 setup 构造及 NPC 测试的单股过滤；保留所有测试函数和交易断言原样。"
+    ],
+    "existing_tests": [
+      "同文件覆盖沪深最终竞价 tie-break、半价 tick rounding、成交价/成交量、无交叉、不同时段撤单、冻结现金/股份、pre-open 下单边界、恢复确定性、事件 JSON 与日终收盘竞价。"
+    ],
+    "missing_tests": [
+      "若引入 fixture，可增加少量 fixture 自身测试确认 Shanghai/Shenzhen 场景证券代码与 exchange 一致、注入订单的 envelope key 与 account/stock/order/side 对应；否则无需为了封装单独新增生产测试。",
+      "本候选不提出新的交易规则测试；测试领域语义保持现状。"
+    ],
+    "semantic_boundaries": "fixture 仅减少测试配置与恢复流水线的重复，不能替代或隐去测试对 auction phase、撮合价格、matched_volume、撤单限制、订单冻结、T+1、pre-open、日结的明确断言。沪深差异、SecurityCategory.limit_pct、价格单位 Money::from_cents、成交数量单位必须仍由场景输入和现有断言清楚表达。未查官方现行规则；本项纯测试组织审阅，不提出规则变更。",
+    "why_oop": "这里聚合的依据不是函数长度或已有 helper 的数量，而是测试 fixture 生命周期内共同变化的一组场景数据和状态转换：setup 参数决定 GameSession；恢复测试又依赖同一组股票身份和订单数据正确更新快照价格、订单 map、order id 与 runtime envelope。把场景身份和构造/恢复操作放在测试专属对象中，可让同一 fixture 保持这些测试不变量一致，并把测试持有的临时状态边界说明白。优先级低，因为目前只有一个文件消费者、函数式 helper 已可读，若封装增加隐式默认或压低领域断言可见性，应保留现状。",
+    "reader_job": "04",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/04-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "竞价恢复夹具必须同步昨日收盘、auction_orders、order ID 与 envelope；具名测试场景拥有恢复输入，区别于生产 auction owner。",
+    "id": "hosts-R2-N02",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n02",
+    "action_id": "hosts-R2-N02",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n竞价恢复夹具必须同步昨日收盘、auction_orders、order ID 与 envelope；具名测试场景拥有恢复输入，区别于生产 auction owner。\n\n范围：`packages/engine/tests/auction.rs`。\n\n**字段**\n\n- 场景所用 SessionSetup（含 stocks、竞价 tick 数和共同策略/日期配置）\n- 测试 seed\n- 用于恢复场景的 StockCode 与 StockExchange\n- 昨日收盘价\n- 待注入的 AuctionOrderSnap 列表\n\n**方法**\n\n- 单证券静默 setup 构造\n- 代表性多证券/NPC setup 构造\n- 由当前 setup/seed 创建 GameSession\n- 将指定竞价单和昨日收盘注入 SaveSlot 并恢复 session\n- 为测试存档生成并排序匹配 auction order keys 的 live_envelopes\n\n**真实调用方**\n\n无；候选只服务 packages/engine/tests/auction.rs 的测试 helper 和 #[test] 调用者。不能视作 engine 生产消费者。\n\n**数据所有者**\n\nAuctionFixture（若采用）独占其测试场景的 SessionSetup 与 seed；测试调用者仍拥有每个测试运行中的 GameSession、临时 SaveSlot、待注入订单和断言结果。fixture 不拥有生产状态，也不跨测试共享可变对象。\n\n**组合方式**\n\n可由一个轻量 AuctionFixture 组合 SessionSetup 与 seed，恢复方法接收明确的 orders、previous_close、exchange 参数并在方法内构造局部 SaveSlot。也可用两个明确的构造函数区分静默单股场景和 NPC 代表场景；不需要继承层次或通用 TestUtils/Utility。\n\n**迁移步骤**\n\n- 先新增仅在本 integration test 文件内可见的 AuctionFixture，并以一个恢复型测试替换 restored_with_previous_close 的调用验证接口足够表达其场景。\n- 迁移 restored_on_exchange 和 restored_with_orders，确认 exchange/code、昨日收盘和订单数据仍由测试显式给出。\n- 再迁移两类 setup 构造及 NPC 测试的单股过滤；保留所有测试函数和交易断言原样。\n\n**现有测试（未执行）**\n\n- 同文件覆盖沪深最终竞价 tie-break、半价 tick rounding、成交价/成交量、无交叉、不同时段撤单、冻结现金/股份、pre-open 下单边界、恢复确定性、事件 JSON 与日终收盘竞价。\n\n**待补测试**\n\n- 若引入 fixture，可增加少量 fixture 自身测试确认 Shanghai/Shenzhen 场景证券代码与 exchange 一致、注入订单的 envelope key 与 account/stock/order/side 对应；否则无需为了封装单独新增生产测试。\n- 本候选不提出新的交易规则测试；测试领域语义保持现状。\n\n**语义边界**\n\nfixture 仅减少测试配置与恢复流水线的重复，不能替代或隐去测试对 auction phase、撮合价格、matched_volume、撤单限制、订单冻结、T+1、pre-open、日结的明确断言。沪深差异、SecurityCategory.limit_pct、价格单位 Money::from_cents、成交数量单位必须仍由场景输入和现有断言清楚表达。未查官方现行规则；本项纯测试组织审阅，不提出规则变更。\n\n**对象化依据**\n\n这里聚合的依据不是函数长度或已有 helper 的数量，而是测试 fixture 生命周期内共同变化的一组场景数据和状态转换：setup 参数决定 GameSession；恢复测试又依赖同一组股票身份和订单数据正确更新快照价格、订单 map、order id 与 runtime envelope。把场景身份和构造/恢复操作放在测试专属对象中，可让同一 fixture 保持这些测试不变量一致，并把测试持有的临时状态边界说明白。优先级低，因为目前只有一个文件消费者、函数式 helper 已可读，若封装增加隐式默认或压低领域断言可见性，应保留现状。\n\n**源码证据**\n\n- auction_setup 在 7-50 行构造单证券、无活跃 NPC 的 SessionSetup；representative_auction_setup 在 128-183 行重复 SessionSetup 的策略、时间、交易配置字段并构造沪深/不同 SecurityCategory 的代表样本。\n- 恢复路径在 342-360 和 363-388 行重复从 SessionSetup 创建 session、save、覆盖昨日收盘价、注入 auction_orders、设置 next_order_id、同步 runtime_v2.live_envelopes、restore 的顺序。\n- 单股 NPC 测试在 207-211 行又从代表 setup 过滤证券后创建 GameSession；多股 NPC 测试在 237 行直接使用完整 setup。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "06-behavior-scenario",
+    "title": "把成对市场输入聚合为行为决策测试场景",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/behavior.rs"
+    ],
+    "source_symbols": [
+      "market_and_observations",
+      "MarketView",
+      "BehaviorMarketObservation",
+      "EqualWeightMarketObservation"
+    ],
+    "evidence": [
+      "market_and_observations 在 78-121 行从同一 price_paths key 集合构建 StockView 与 price_paths，并同时设置市场宽度 observation，返回二元 tuple。",
+      "测试反复成对接收 tuple，例如 186-203、222-242、264-286；多个场景需直接改 observations.thirty_minute_market 中多个字段（186-196、228-239），拆开后关系靠调用者维护。",
+      "路径、观察和市场被大量不同测试重复配置；决策调用仍把 MarketView 和 BehaviorMarketObservation 分别传入（如 201-203）。"
+    ],
+    "fields": [
+      "market: MarketView",
+      "observations: BehaviorMarketObservation"
+    ],
+    "methods": [
+      "from_paths(paths, decline_fraction) -> BehaviorScenario",
+      "set_market_breadth(total_stock_count, observed_stock_count, equal_weight_return) -> &mut Self，若保留此类变更入口则同时维护 decline/advance/unchanged 的定义约束；也可选用显式完整 observation 替代 preset",
+      "market(&self) -> &MarketView",
+      "observations(&self) -> &BehaviorMarketObservation"
+    ],
+    "production_callers": "无生产消费者；调用方全是本文件中的 test helper 与 #[test]。",
+    "data_owner": "只拥有测试中的 MarketView 和 BehaviorMarketObservation fixture；不拥有 engine 生产状态、持仓风险、StrategyData 或 RNG。",
+    "composition": "内部沿用现有纯函数生成 PricePathObservation/StockView，并将现有 own_and_risk、strategy、FixedRng 留在场景对象之外；不增加生产依赖。决策 API 暂继续接收解构后的两项输入，避免让 fixture 型包装跨进生产接口。",
+    "migration_steps": [
+      "将 market_and_observations 的返回结构改为 BehaviorScenario 测试专用 struct。",
+      "把依赖市场宽度的调用端变更显式放到场景构造参数或一个命名 setter；限制随意散改互相关联字段。",
+      "消费决策处通过字段借用传入原 engine API；确认测试含义和大 A 交易断言原样保留。"
+    ],
+    "existing_tests": "本文件 39 个行为测试覆盖零散个股历史、市场宽度、持仓风险、T+1 可卖数量、整手目标差额与 style 决策；候选仅收拢现有 fixture，没有新增行为覆盖。",
+    "missing_tests": "若实施，需定向确认从构造参数导出的 stocks/price_paths 代码集合一致，且市场宽度三个比例/观测字段准确表达构造输入；如果 setter 更新市场宽度，检查其组合结果。测试夹具本身不需要生命周期测试。",
+    "semantic_boundaries": "仅是测试数据建模；不得改动 engine 真实观察窗口、沪深市场宽度口径、T+1、交易单位或策略输出。现有构造值含显式模拟语义（固定 1000 分当前价、横盘 recent_prices、独立 30 分钟 observation），不能推断为真实市场数据。",
+    "why_oop": "MarketView 与 BehaviorMarketObservation 由同一组代码路径共同派生，形成稳定的 fixture 不变量；用小型命名场景对象可将所有权及联动数据变更放在一起。价值限于减少测试调用者维持两份相关 map/字段一致性的负担，且这属于可选可读性改进，当前纯函数和 tuple 并未造成生产风险。",
+    "reader_job": "06",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/06-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "MarketView 和 observations 的股票集合来自同一输入，测试还共同更新市场宽度；保留具体场景组合，禁止默认化观察含义。",
+    "id": "hosts-R2-N04",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n04",
+    "action_id": "hosts-R2-N04",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nMarketView 和 observations 的股票集合来自同一输入，测试还共同更新市场宽度；保留具体场景组合，禁止默认化观察含义。\n\n范围：`packages/engine/tests/behavior.rs`。\n\n**字段**\n\n- market: MarketView\n- observations: BehaviorMarketObservation\n\n**方法**\n\n- from_paths(paths, decline_fraction) -> BehaviorScenario\n- set_market_breadth(total_stock_count, observed_stock_count, equal_weight_return) -> &mut Self，若保留此类变更入口则同时维护 decline/advance/unchanged 的定义约束；也可选用显式完整 observation 替代 preset\n- market(&self) -> &MarketView\n- observations(&self) -> &BehaviorMarketObservation\n\n**真实调用方**\n\n无生产消费者；调用方全是本文件中的 test helper 与 #[test]。\n\n**数据所有者**\n\n只拥有测试中的 MarketView 和 BehaviorMarketObservation fixture；不拥有 engine 生产状态、持仓风险、StrategyData 或 RNG。\n\n**组合方式**\n\n内部沿用现有纯函数生成 PricePathObservation/StockView，并将现有 own_and_risk、strategy、FixedRng 留在场景对象之外；不增加生产依赖。决策 API 暂继续接收解构后的两项输入，避免让 fixture 型包装跨进生产接口。\n\n**迁移步骤**\n\n- 将 market_and_observations 的返回结构改为 BehaviorScenario 测试专用 struct。\n- 把依赖市场宽度的调用端变更显式放到场景构造参数或一个命名 setter；限制随意散改互相关联字段。\n- 消费决策处通过字段借用传入原 engine API；确认测试含义和大 A 交易断言原样保留。\n\n**现有测试（未执行）**\n\n本文件 39 个行为测试覆盖零散个股历史、市场宽度、持仓风险、T+1 可卖数量、整手目标差额与 style 决策；候选仅收拢现有 fixture，没有新增行为覆盖。\n\n**待补测试**\n\n若实施，需定向确认从构造参数导出的 stocks/price_paths 代码集合一致，且市场宽度三个比例/观测字段准确表达构造输入；如果 setter 更新市场宽度，检查其组合结果。测试夹具本身不需要生命周期测试。\n\n**语义边界**\n\n仅是测试数据建模；不得改动 engine 真实观察窗口、沪深市场宽度口径、T+1、交易单位或策略输出。现有构造值含显式模拟语义（固定 1000 分当前价、横盘 recent_prices、独立 30 分钟 observation），不能推断为真实市场数据。\n\n**对象化依据**\n\nMarketView 与 BehaviorMarketObservation 由同一组代码路径共同派生，形成稳定的 fixture 不变量；用小型命名场景对象可将所有权及联动数据变更放在一起。价值限于减少测试调用者维持两份相关 map/字段一致性的负担，且这属于可选可读性改进，当前纯函数和 tuple 并未造成生产风险。\n\n**源码证据**\n\n- market_and_observations 在 78-121 行从同一 price_paths key 集合构建 StockView 与 price_paths，并同时设置市场宽度 observation，返回二元 tuple。\n- 测试反复成对接收 tuple，例如 186-203、222-242、264-286；多个场景需直接改 observations.thirty_minute_market 中多个字段（186-196、228-239），拆开后关系靠调用者维护。\n- 路径、观察和市场被大量不同测试重复配置；决策调用仍把 MarketView 和 BehaviorMarketObservation 分别传入（如 201-203）。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

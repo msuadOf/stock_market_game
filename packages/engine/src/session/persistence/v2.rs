@@ -121,27 +121,28 @@ pub fn validate_schema_version(version: u32) -> Result<(), SessionError> {
 /// Captures every v2-only authority from a healthy, committed quiet point.
 pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFatal> {
     session.require_healthy()?;
-    if session.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
         return Err(invariant(format!(
             "simulation policy {:?} cannot be written as schema v2",
-            session.setup.simulation_policy_id
+            session.state.setup.simulation_policy_id
         )));
     }
-    session.envelope_ledger.validate_complete_evidence()?;
-    if session.envelope_ledger.terminal_count() != 0 {
+    session.state.envelope_ledger.validate_complete_evidence()?;
+    if session.state.envelope_ledger.terminal_count() != 0 {
         return Err(invariant(
             "quiet-point envelope ledger retains terminal tick evidence".to_owned(),
         ));
     }
-    if session.envelope_ledger.next_receipt_index() != session.next_receipt_base {
+    if session.state.envelope_ledger.next_receipt_index() != session.state.next_receipt_base {
         return Err(invariant(format!(
             "envelope ledger cursor {} disagrees with next_receipt_base {}",
-            session.envelope_ledger.next_receipt_index(),
-            session.next_receipt_base
+            session.state.envelope_ledger.next_receipt_index(),
+            session.state.next_receipt_base
         )));
     }
 
     let live_envelopes = session
+        .state
         .envelope_ledger
         .iter()
         .map(|(_, envelope)| {
@@ -159,15 +160,16 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut rebased_ledger = session.envelope_ledger.clone();
+    let mut rebased_ledger = session.state.envelope_ledger.clone();
     rebased_ledger.rebase_live_for_next_tick()?;
-    if rebased_ledger != session.envelope_ledger {
+    if rebased_ledger != session.state.envelope_ledger {
         return Err(invariant(
             "save requires a fully rebased envelope-ledger quiet point".to_owned(),
         ));
     }
 
     let retail_projection_seen = session
+        .state
         .retail_projection_seen
         .authoritative_identities()
         .into_iter()
@@ -180,10 +182,11 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         .collect::<Result<Vec<_>, StepFatal>>()?;
 
     let strategy_states = session
+        .state
         .accounts
         .iter()
         .filter_map(|(account, value)| {
-            value.strategy.as_ref().map(|strategy| {
+            value.strategy().map(|strategy| {
                 strategy
                     .production_state()
                     .map(|state| (*account, state))
@@ -194,7 +197,7 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
 
     let state = SaveRuntimeV2 {
         poisoned: false,
-        next_receipt_base: session.next_receipt_base,
+        next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
         retail_projection_seen,
         strategy_states,
@@ -205,6 +208,7 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         .build_ledger(session)
         .map_err(session_error_as_invariant)?;
     let actual: Vec<_> = session
+        .state
         .envelope_ledger
         .iter()
         .map(|(_, envelope)| envelope.clone())
@@ -230,10 +234,10 @@ pub fn validate_runtime_v2(
             "schema v2 explicitly rejects poisoned session state".to_owned(),
         ));
     }
-    if session.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
         return Err(SessionError::InvalidSave(format!(
             "schema v2 requires simulation policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
-            session.setup.simulation_policy_id
+            session.state.setup.simulation_policy_id
         )));
     }
 
@@ -272,9 +276,10 @@ pub fn validate_runtime_v2(
     }
 
     let expected_strategy_accounts: BTreeSet<_> = session
+        .state
         .accounts
         .iter()
-        .filter_map(|(account, value)| value.strategy.as_ref().map(|_| *account))
+        .filter_map(|(account, value)| value.strategy().map(|_| *account))
         .collect();
     let saved_strategy_accounts: BTreeSet<_> = state.strategy_states.keys().copied().collect();
     if saved_strategy_accounts != expected_strategy_accounts {
@@ -284,6 +289,7 @@ pub fn validate_runtime_v2(
     }
     for (account, saved_state) in &state.strategy_states {
         let expected_profile = session
+            .state
             .accounts
             .get(account)
             .ok_or_else(|| {
@@ -292,8 +298,7 @@ pub fn validate_runtime_v2(
                     account.0
                 ))
             })?
-            .strategy
-            .as_ref()
+            .strategy()
             .ok_or_else(|| {
                 SessionError::InvalidSave(format!(
                     "saved StrategyState refers to strategy-free account {}",
@@ -308,6 +313,7 @@ pub fn validate_runtime_v2(
             )));
         }
         let attention_probability = session
+            .state
             .npc_attention
             .get(account)
             .ok_or_else(|| {
@@ -340,22 +346,22 @@ fn validate_receipt_identity_domain(
     identity: &RetailReceiptIdentityV2,
 ) -> Result<(), SessionError> {
     let envelope = &identity.local_key.transition.envelope;
-    if !session.accounts.contains_key(&envelope.account) {
+    if !session.state.accounts.contains_key(&envelope.account) {
         return Err(SessionError::InvalidSave(format!(
             "saved receipt {} refers to unknown account {}",
             identity.index, envelope.account.0
         )));
     }
-    if !session.markets.contains_key(&envelope.stock) {
+    if !session.state.markets.contains_key(&envelope.stock) {
         return Err(SessionError::InvalidSave(format!(
             "saved receipt {} refers to unknown stock {:?}",
             identity.index, envelope.stock
         )));
     }
-    if envelope.order.0 == 0 || envelope.order.0 >= session.next_order_id {
+    if envelope.order.0 == 0 || envelope.order.0 >= session.state.next_order_id {
         return Err(SessionError::InvalidSave(format!(
             "saved receipt {} has invalid order {}; expected 1..{}",
-            identity.index, envelope.order.0, session.next_order_id
+            identity.index, envelope.order.0, session.state.next_order_id
         )));
     }
     Ok(())
@@ -403,6 +409,7 @@ pub fn restore_runtime_v2(
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
     let mut accounts = session
+        .state
         .accounts
         .iter()
         .map(|(account, value)| {
@@ -426,12 +433,12 @@ pub fn restore_runtime_v2(
                     account.0
                 ))
             })?
-            .strategy = Some(strategy);
+            .restore_strategy(Some(strategy));
     }
-    session.accounts = accounts;
-    session.envelope_ledger = ledger;
-    session.retail_projection_seen = seen;
-    session.next_receipt_base = state.next_receipt_base;
+    session.state.accounts = accounts;
+    session.state.envelope_ledger = ledger;
+    session.state.retail_projection_seen = seen;
+    session.state.next_receipt_base = state.next_receipt_base;
     Ok(())
 }
 
@@ -620,13 +627,12 @@ fn validate_live_envelopes_against_orders(
             SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
         })?;
         let saved_audit = saved.audit();
-        let nominal = nominal_fees(&session.setup.config, key.side, saved_audit.filled_value)?;
-        if !charged_fees_are_valid(
-            key.side,
-            nominal,
-            saved_audit.charged,
-            saved_audit.filled_value,
-        )? {
+        let audit = CumulativeFeeAuditV2 {
+            side: key.side,
+            filled_value: saved_audit.filled_value,
+            charged: FeeComponentsV2::from_runtime(saved_audit.charged),
+        };
+        if !audit.validate(&session.state.setup.config)? {
             return Err(SessionError::InvalidSave(format!(
                 "saved envelope {key:?} has inconsistent cumulative charged fee audit"
             )));
@@ -635,53 +641,57 @@ fn validate_live_envelopes_against_orders(
     Ok(())
 }
 
-fn nominal_fees(
-    config: &GameConfig,
-    side: Side,
-    filled_value: Money,
-) -> Result<pipeline::FeeComponents, SessionError> {
-    if filled_value.cents() < 0 {
-        return Err(SessionError::InvalidSave(
-            "saved filled value cannot be negative".to_owned(),
-        ));
-    }
-    if filled_value == Money::ZERO {
-        return Ok(pipeline::FeeComponents::ZERO);
-    }
-    Ok(pipeline::FeeComponents {
-        commission: config
-            .commission(filled_value)
-            .map_err(|error| invalid_save("saved cumulative commission", error))?,
-        stamp_tax: match side {
-            Side::Buy => Money::ZERO,
-            Side::Sell => config
-                .stamp_tax(filled_value)
-                .map_err(|error| invalid_save("saved cumulative stamp tax", error))?,
-        },
-        transfer_fee: config
-            .transfer_fee(filled_value)
-            .map_err(|error| invalid_save("saved cumulative transfer fee", error))?,
-    })
+/// 活动委托的累计收费审计；GameConfig 与 EnvelopeAudit 仍各自拥有费率和运行时事实。
+/// 此处只校验累计边界，不能从累计分量重建逐笔收费优先级。
+pub(super) struct CumulativeFeeAuditV2 {
+    pub(super) side: Side,
+    pub(super) filled_value: Money,
+    pub(super) charged: FeeComponentsV2,
 }
 
-fn charged_fees_are_valid(
-    side: Side,
-    nominal: pipeline::FeeComponents,
-    charged: pipeline::FeeComponents,
-    filled_value: Money,
-) -> Result<bool, SessionError> {
-    let nominal = FeeComponentsV2::from_runtime(nominal);
-    let charged = FeeComponentsV2::from_runtime(charged);
-    nominal.validate_nonnegative("nominal")?;
-    charged.validate_nonnegative("charged")?;
-    if side == Side::Buy {
-        return Ok(charged == nominal);
+impl CumulativeFeeAuditV2 {
+    pub(super) fn nominal(&self, config: &GameConfig) -> Result<FeeComponentsV2, SessionError> {
+        if self.filled_value.cents() < 0 {
+            return Err(SessionError::InvalidSave(
+                "saved filled value cannot be negative".to_owned(),
+            ));
+        }
+        if self.filled_value == Money::ZERO {
+            return Ok(FeeComponentsV2::default());
+        }
+        Ok(FeeComponentsV2 {
+            commission: config
+                .commission(self.filled_value)
+                .map_err(|error| invalid_save("saved cumulative commission", error))?,
+            stamp_tax: match self.side {
+                Side::Buy => Money::ZERO,
+                Side::Sell => config
+                    .stamp_tax(self.filled_value)
+                    .map_err(|error| invalid_save("saved cumulative stamp tax", error))?,
+            },
+            transfer_fee: config
+                .transfer_fee(self.filled_value)
+                .map_err(|error| invalid_save("saved cumulative transfer fee", error))?,
+        })
     }
-    let component_bounds_hold = charged.commission <= nominal.commission
-        && charged.stamp_tax <= nominal.stamp_tax
-        && charged.transfer_fee <= nominal.transfer_fee;
-    let charged_total = charged.total()?;
-    Ok(component_bounds_hold && charged_total <= nominal.total()? && charged_total <= filled_value)
+
+    /// 返回累计分量是否一致，由遍历调用方附加委托身份错误上下文。
+    pub(super) fn validate(&self, config: &GameConfig) -> Result<bool, SessionError> {
+        let nominal = self.nominal(config)?;
+        let charged = self.charged;
+        nominal.validate_nonnegative("nominal")?;
+        charged.validate_nonnegative("charged")?;
+        if self.side == Side::Buy {
+            return Ok(charged == nominal);
+        }
+        let component_bounds_hold = charged.commission <= nominal.commission
+            && charged.stamp_tax <= nominal.stamp_tax
+            && charged.transfer_fee <= nominal.transfer_fee;
+        let charged_total = charged.total()?;
+        Ok(component_bounds_hold
+            && charged_total <= nominal.total()?
+            && charged_total <= self.filled_value)
+    }
 }
 
 impl ReceiptLocalKeyV2 {

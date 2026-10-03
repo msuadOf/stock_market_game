@@ -390,74 +390,119 @@ pub fn run_price_volume_baseline(
     })
 }
 
-fn run_one_seed(
-    setup: &SessionSetup,
+struct StockRunDiagnostics {
+    candles: Vec<DailyCandle>,
+    trade_event_volume: u64,
+    trade_event_turnover: u64,
+    market: MarketDiagnosticsAccumulator,
+}
+
+struct SeedDiagnostics {
     seed: u64,
     trading_days: u32,
-    total_ticks: u64,
-) -> Result<PriceVolumeRunReport, BaselineError> {
-    let mut session = GameSession::new(setup.clone(), seed)
-        .map_err(|source| BaselineError::Session { seed, source })?;
-    let mut daily_candles: BTreeMap<StockCode, Vec<DailyCandle>> = setup
-        .stocks
-        .iter()
-        .map(|stock| {
-            (
-                stock.code.clone(),
-                Vec::with_capacity(trading_days as usize),
-            )
-        })
-        .collect();
-    let mut trade_event_volume: BTreeMap<StockCode, u64> = setup
-        .stocks
-        .iter()
-        .map(|stock| (stock.code.clone(), 0))
-        .collect();
-    let mut trade_event_turnover: BTreeMap<StockCode, u64> = setup
-        .stocks
-        .iter()
-        .map(|stock| (stock.code.clone(), 0))
-        .collect();
-    let mut market_diagnostics: BTreeMap<StockCode, MarketDiagnosticsAccumulator> = setup
-        .stocks
-        .iter()
-        .map(|stock| (stock.code.clone(), MarketDiagnosticsAccumulator::default()))
-        .collect();
-    let mut trade_events = 0_u64;
-    let mut rejection_events = 0_u64;
-    let mut engine_error_events = 0_u64;
-    let mut retail_behavior = RetailBehaviorRunReport::default();
-    let mut retail_execution = RetailExecutionRunReport::default();
-    let mut retail_orders: BTreeMap<u64, RetailOrderOutcome> = BTreeMap::new();
-    let mut participant_execution = ParticipantExecutionAccumulator::default();
-    let mut participant_profiles: BTreeMap<AccountId, &'static str> = session
-        .account_strategy_profiles()
-        .into_iter()
-        .map(|(account, profile)| (account, strategy_profile_name(&profile)))
-        .collect();
-    participant_profiles.insert(AccountId(0), "player");
+    stocks: BTreeMap<StockCode, StockRunDiagnostics>,
+    trade_events: u64,
+    rejection_events: u64,
+    engine_error_events: u64,
+    retail_behavior: RetailBehaviorRunReport,
+    retail_orders: RetailOrderLedger,
+    participant_execution: ParticipantExecutionAccumulator,
+    participant_profiles: BTreeMap<AccountId, &'static str>,
+}
 
-    for elapsed_tick in 1..=total_ticks {
-        let phase = session.phase();
-        let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
-        let mut traded_codes = BTreeSet::new();
-        let events = session.step().map_err(|source| BaselineError::Session {
+impl SeedDiagnostics {
+    fn new(setup: &SessionSetup, seed: u64, trading_days: u32, session: &GameSession) -> Self {
+        let stocks = setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    stock.code.clone(),
+                    StockRunDiagnostics {
+                        candles: Vec::with_capacity(trading_days as usize),
+                        trade_event_volume: 0,
+                        trade_event_turnover: 0,
+                        market: MarketDiagnosticsAccumulator::default(),
+                    },
+                )
+            })
+            .collect();
+        let mut participant_profiles: BTreeMap<AccountId, &'static str> = session
+            .account_strategy_profiles()
+            .into_iter()
+            .map(|(account, profile)| (account, strategy_profile_name(&profile)))
+            .collect();
+        participant_profiles.insert(AccountId(0), "player");
+        Self {
             seed,
-            source: source.into(),
-        })?;
-        for trace in session.last_retail_decisions() {
-            record_retail_decision(
-                &mut retail_behavior,
-                trace.decision.action,
-                trace.decision.reason,
-                trace.decision.desired_delta_shares,
-                trace.decision.executable_delta_shares,
-                seed,
-            )?;
+            trading_days,
+            stocks,
+            trade_events: 0,
+            rejection_events: 0,
+            engine_error_events: 0,
+            retail_behavior: RetailBehaviorRunReport::default(),
+            retail_orders: RetailOrderLedger::new(seed),
+            participant_execution: ParticipantExecutionAccumulator::default(),
+            participant_profiles,
         }
-        for event in session.last_retail_order_events() {
-            record_retail_order_event(&mut retail_execution, &mut retail_orders, event, seed)?;
-        }
+    }
+
+    fn record_retail_decision(
+        &mut self,
+        action: PositionAction,
+        reason: DecisionReason,
+        desired_delta_shares: i64,
+        executable_delta_shares: i64,
+    ) -> Result<(), BaselineError> {
+        let seed = self.seed;
+        let report = &mut self.retail_behavior;
+        report.observed_decisions =
+            checked_increment(report.observed_decisions, seed, "retail observed decisions")?;
+        increment_named_count(
+            &mut report.action_counts,
+            position_action_name(action),
+            seed,
+            "retail action counts",
+        )?;
+        increment_named_count(
+            &mut report.reason_counts,
+            decision_reason_name(reason),
+            seed,
+            "retail reason counts",
+        )?;
+        add_signed_delta(
+            &mut report.desired_buy_shares,
+            &mut report.desired_sell_shares,
+            desired_delta_shares,
+            seed,
+            "retail desired target shares",
+        )?;
+        add_signed_delta(
+            &mut report.executable_buy_shares,
+            &mut report.executable_sell_shares,
+            executable_delta_shares,
+            seed,
+            "retail executable target shares",
+        )
+    }
+
+    fn record_retail_order(
+        &mut self,
+        event: &RetailOrderDiagnosticEvent,
+    ) -> Result<(), BaselineError> {
+        self.retail_orders.record(event)
+    }
+
+    fn observe_committed_events(
+        &mut self,
+        events: Vec<Event>,
+        phase: TradingPhase,
+        day_tick: u64,
+        setup: &SessionSetup,
+    ) -> Result<(), BaselineError> {
+        let seed = self.seed;
+        let trading_days = self.trading_days;
+        let mut traded_codes = BTreeSet::new();
         for event in events {
             match event {
                 Event::Trade {
@@ -468,23 +513,21 @@ fn run_one_seed(
                     taker,
                     ..
                 } => {
-                    record_trade_participant(
-                        &mut participant_execution,
-                        &participant_profiles,
+                    self.participant_execution.record(
+                        &self.participant_profiles,
                         maker,
                         qty,
                         seed,
                     )?;
-                    record_trade_participant(
-                        &mut participant_execution,
-                        &participant_profiles,
+                    self.participant_execution.record(
+                        &self.participant_profiles,
                         taker,
                         qty,
                         seed,
                     )?;
                     traded_codes.insert(code.clone());
-                    trade_events = checked_increment(trade_events, seed, "trade_events")?;
-                    let volume = trade_event_volume.get_mut(&code).ok_or_else(|| {
+                    self.trade_events = checked_increment(self.trade_events, seed, "trade_events")?;
+                    let stock = self.stocks.get_mut(&code).ok_or_else(|| {
                         BaselineError::MissingDailyCandles {
                             seed,
                             code: code.clone(),
@@ -492,40 +535,25 @@ fn run_one_seed(
                             actual: 0,
                         }
                     })?;
-                    *volume = volume.checked_add(u64::from(qty)).ok_or_else(|| {
-                        BaselineError::VolumeOverflow {
+                    stock.trade_event_volume = stock
+                        .trade_event_volume
+                        .checked_add(u64::from(qty))
+                        .ok_or_else(|| BaselineError::VolumeOverflow {
                             seed,
                             code: code.clone(),
-                        }
-                    })?;
+                        })?;
                     let turnover = u64::try_from(price.cents())
                         .ok()
                         .and_then(|price_cents| price_cents.checked_mul(u64::from(qty)))
                         .and_then(|fill_turnover| {
-                            trade_event_turnover
-                                .get(&code)
-                                .and_then(|current| current.checked_add(fill_turnover))
+                            stock.trade_event_turnover.checked_add(fill_turnover)
                         })
                         .ok_or_else(|| BaselineError::TurnoverOverflow {
                             seed,
                             code: code.clone(),
                         })?;
-                    *trade_event_turnover.get_mut(&code).ok_or_else(|| {
-                        BaselineError::MissingDailyCandles {
-                            seed,
-                            code: code.clone(),
-                            expected: trading_days,
-                            actual: 0,
-                        }
-                    })? = turnover;
-                    let diagnostics = market_diagnostics.get_mut(&code).ok_or_else(|| {
-                        BaselineError::MissingDailyCandles {
-                            seed,
-                            code: code.clone(),
-                            expected: trading_days,
-                            actual: 0,
-                        }
-                    })?;
+                    stock.trade_event_turnover = turnover;
+                    let diagnostics = &mut stock.market;
                     match phase {
                         TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
                             diagnostics.auction_volume = diagnostics
@@ -585,7 +613,7 @@ fn run_one_seed(
                     ..
                 } => {
                     for (code, candle) in closed_daily_candles {
-                        let candles = daily_candles.get_mut(&code).ok_or_else(|| {
+                        let stock = self.stocks.get_mut(&code).ok_or_else(|| {
                             BaselineError::MissingDailyCandles {
                                 seed,
                                 code: code.clone(),
@@ -593,23 +621,25 @@ fn run_one_seed(
                                 actual: 0,
                             }
                         })?;
-                        candles.push(candle);
+                        stock.candles.push(candle);
                     }
                 }
                 Event::IntentRejected { .. } => {
-                    rejection_events =
-                        checked_increment(rejection_events, seed, "rejection_events")?;
+                    self.rejection_events =
+                        checked_increment(self.rejection_events, seed, "rejection_events")?;
                 }
                 Event::SettlementError { .. } => {
-                    engine_error_events =
-                        checked_increment(engine_error_events, seed, "engine_error_events")?;
+                    self.engine_error_events =
+                        checked_increment(self.engine_error_events, seed, "engine_error_events")?;
                 }
                 Event::PriceTick {
                     code, bids, asks, ..
                 } => {
-                    let diagnostics = market_diagnostics
+                    let diagnostics = &mut self
+                        .stocks
                         .get_mut(&code)
-                        .expect("setup stocks initialized the market diagnostics map");
+                        .expect("setup stocks initialized the market diagnostics map")
+                        .market;
                     diagnostics.book_samples =
                         checked_increment(diagnostics.book_samples, seed, "book_samples")?;
                     let bid_depth = bids.iter().map(|(_, qty)| *qty as f64).sum::<f64>();
@@ -640,9 +670,11 @@ fn run_one_seed(
                     }
                 }
                 Event::OrderAccepted { code, .. } => {
-                    let diagnostics = market_diagnostics
+                    let diagnostics = &mut self
+                        .stocks
                         .get_mut(&code)
-                        .expect("setup stocks initialized the market diagnostics map");
+                        .expect("setup stocks initialized the market diagnostics map")
+                        .market;
                     diagnostics.resting_order_acceptances = checked_increment(
                         diagnostics.resting_order_acceptances,
                         seed,
@@ -650,9 +682,11 @@ fn run_one_seed(
                     )?;
                 }
                 Event::OrderCanceled { code, .. } => {
-                    let diagnostics = market_diagnostics
+                    let diagnostics = &mut self
+                        .stocks
                         .get_mut(&code)
-                        .expect("setup stocks initialized the market diagnostics map");
+                        .expect("setup stocks initialized the market diagnostics map")
+                        .market;
                     diagnostics.all_cancellations_including_day_expiry = checked_increment(
                         diagnostics.all_cancellations_including_day_expiry,
                         seed,
@@ -665,7 +699,8 @@ fn run_one_seed(
                 | Event::CompanyDisclosurePublished { .. } => {}
             }
         }
-        for (code, diagnostics) in &mut market_diagnostics {
+        for (code, stock) in &mut self.stocks {
+            let diagnostics = &mut stock.market;
             if phase != TradingPhase::Continuous || traded_codes.contains(code) {
                 diagnostics.current_continuous_no_trade_ticks = 0;
             } else {
@@ -682,152 +717,194 @@ fn run_one_seed(
                 diagnostics.current_continuous_no_trade_ticks = 0;
             }
         }
+        Ok(())
     }
 
-    let one_sided_market_trade_shares =
-        trade_event_volume.values().try_fold(0_u64, |total, qty| {
-            total
-                .checked_add(*qty)
-                .ok_or(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "one-sided market trade shares",
-                })
-        })?;
-    reconcile_participant_execution(&participant_execution, one_sided_market_trade_shares, seed)?;
-    let participant_execution = finalize_participant_execution(participant_execution);
+    fn finish_run(
+        mut self,
+        setup: &SessionSetup,
+        total_ticks: u64,
+    ) -> Result<PriceVolumeRunReport, BaselineError> {
+        let seed = self.seed;
+        let trading_days = self.trading_days;
+        let one_sided_market_trade_shares =
+            self.stocks.values().try_fold(0_u64, |total, stock| {
+                total
+                    .checked_add(stock.trade_event_volume)
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "one-sided market trade shares",
+                    })
+            })?;
+        self.participant_execution
+            .reconcile(one_sided_market_trade_shares, seed)?;
+        let participant_execution = self.participant_execution.finish();
 
-    let mut stocks = BTreeMap::new();
-    for stock in &setup.stocks {
-        let candles = daily_candles
-            .remove(&stock.code)
-            .expect("setup stocks initialized the diagnostics candle map");
-        if candles.len() != trading_days as usize {
-            return Err(BaselineError::MissingDailyCandles {
-                seed,
-                code: stock.code.clone(),
-                expected: trading_days,
-                actual: candles.len(),
-            });
-        }
-        let event_volume = trade_event_volume
-            .remove(&stock.code)
-            .expect("setup stocks initialized the diagnostics volume map");
-        let event_turnover = trade_event_turnover
-            .remove(&stock.code)
-            .expect("setup stocks initialized the diagnostics turnover map");
-        let diagnostics = market_diagnostics
-            .remove(&stock.code)
-            .expect("setup stocks initialized the market diagnostics map");
-        stocks.insert(
-            stock.code.clone(),
-            summarize_stock(StockSummaryInput {
-                initial_price: stock.initial_price,
+        let mut stocks = BTreeMap::new();
+        for stock in &setup.stocks {
+            let StockRunDiagnostics {
                 candles,
                 trade_event_volume: event_volume,
-                trade_event_turnover_cents: event_turnover,
-                float_shares: stock.float_shares,
-                market_diagnostics: diagnostics,
-                seed,
-                code: stock.code.clone(),
-            })?,
-        );
-    }
+                trade_event_turnover: event_turnover,
+                market: diagnostics,
+            } = self
+                .stocks
+                .remove(&stock.code)
+                .expect("setup stocks initialized the diagnostics candle map");
+            if candles.len() != trading_days as usize {
+                return Err(BaselineError::MissingDailyCandles {
+                    seed,
+                    code: stock.code.clone(),
+                    expected: trading_days,
+                    actual: candles.len(),
+                });
+            }
+            stocks.insert(
+                stock.code.clone(),
+                summarize_stock(StockSummaryInput {
+                    initial_price: stock.initial_price,
+                    candles,
+                    trade_event_volume: event_volume,
+                    trade_event_turnover_cents: event_turnover,
+                    float_shares: stock.float_shares,
+                    market_diagnostics: diagnostics,
+                    seed,
+                    code: stock.code.clone(),
+                })?,
+            );
+        }
 
-    Ok(PriceVolumeRunReport {
-        seed,
-        final_tick: total_ticks,
-        trade_events,
-        rejection_events,
-        engine_error_events,
-        retail_behavior,
-        retail_execution: finalize_retail_execution(retail_execution, retail_orders, seed)?,
-        participant_execution,
-        stocks,
-    })
-}
-
-fn record_trade_participant(
-    report: &mut ParticipantExecutionAccumulator,
-    profiles: &BTreeMap<AccountId, &'static str>,
-    account: AccountId,
-    qty: u32,
-    seed: u64,
-) -> Result<(), BaselineError> {
-    let profile = profiles
-        .get(&account)
-        .ok_or(BaselineError::UnknownTradeParticipant { seed, account })?;
-    let qty = u64::from(qty);
-    report.two_sided_participant_shares = report
-        .two_sided_participant_shares
-        .checked_add(qty)
-        .ok_or(BaselineError::CounterOverflow {
+        Ok(PriceVolumeRunReport {
             seed,
-            counter: "two-sided participant shares",
-        })?;
-    let total = report
-        .two_sided_participant_shares_by_profile
-        .entry(*profile)
-        .or_default();
-    *total = total
-        .checked_add(qty)
-        .ok_or(BaselineError::CounterOverflow {
-            seed,
-            counter: "participant shares by profile",
-        })?;
-    Ok(())
-}
-
-fn finalize_participant_execution(
-    accumulator: ParticipantExecutionAccumulator,
-) -> ParticipantExecutionRunReport {
-    ParticipantExecutionRunReport {
-        two_sided_participant_shares: accumulator.two_sided_participant_shares,
-        two_sided_participant_shares_by_profile: accumulator
-            .two_sided_participant_shares_by_profile
-            .into_iter()
-            .map(|(profile, shares)| (profile.to_string(), shares))
-            .collect(),
+            final_tick: total_ticks,
+            trade_events: self.trade_events,
+            rejection_events: self.rejection_events,
+            engine_error_events: self.engine_error_events,
+            retail_behavior: self.retail_behavior,
+            retail_execution: self.retail_orders.finish()?,
+            participant_execution,
+            stocks,
+        })
     }
 }
 
-fn reconcile_participant_execution(
-    report: &ParticipantExecutionAccumulator,
-    one_sided_market_trade_shares: u64,
+fn run_one_seed(
+    setup: &SessionSetup,
     seed: u64,
-) -> Result<(), BaselineError> {
-    let expected_two_sided =
-        one_sided_market_trade_shares
-            .checked_mul(2)
+    trading_days: u32,
+    total_ticks: u64,
+) -> Result<PriceVolumeRunReport, BaselineError> {
+    let mut session = GameSession::new(setup.clone(), seed)
+        .map_err(|source| BaselineError::Session { seed, source })?;
+    let mut diagnostics = SeedDiagnostics::new(setup, seed, trading_days, &session);
+    for elapsed_tick in 1..=total_ticks {
+        let phase = session.phase();
+        let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
+        let events = session.step().map_err(|source| BaselineError::Session {
+            seed,
+            source: source.into(),
+        })?;
+        for trace in session.last_retail_decisions() {
+            diagnostics.record_retail_decision(
+                trace.decision.action,
+                trace.decision.reason,
+                trace.decision.desired_delta_shares,
+                trace.decision.executable_delta_shares,
+            )?;
+        }
+        for event in session.last_retail_order_events() {
+            diagnostics.record_retail_order(event)?;
+        }
+        diagnostics.observe_committed_events(events, phase, day_tick, setup)?;
+    }
+    diagnostics.finish_run(setup, total_ticks)
+}
+
+impl ParticipantExecutionAccumulator {
+    fn record(
+        &mut self,
+        profiles: &BTreeMap<AccountId, &'static str>,
+        account: AccountId,
+        qty: u32,
+        seed: u64,
+    ) -> Result<(), BaselineError> {
+        let report = self;
+        let profile = profiles
+            .get(&account)
+            .ok_or(BaselineError::UnknownTradeParticipant { seed, account })?;
+        let qty = u64::from(qty);
+        report.two_sided_participant_shares = report
+            .two_sided_participant_shares
+            .checked_add(qty)
             .ok_or(BaselineError::CounterOverflow {
                 seed,
-                counter: "expected two-sided participant shares",
+                counter: "two-sided participant shares",
             })?;
-    if report.two_sided_participant_shares != expected_two_sided {
-        return Err(BaselineError::ParticipantVolumeMismatch {
-            seed,
-            expected: expected_two_sided,
-            actual: report.two_sided_participant_shares,
-        });
+        let total = report
+            .two_sided_participant_shares_by_profile
+            .entry(*profile)
+            .or_default();
+        *total = total
+            .checked_add(qty)
+            .ok_or(BaselineError::CounterOverflow {
+                seed,
+                counter: "participant shares by profile",
+            })?;
+        Ok(())
     }
-    let profile_total = report
-        .two_sided_participant_shares_by_profile
-        .values()
-        .try_fold(0_u64, |total, qty| {
-            total
-                .checked_add(*qty)
+
+    fn finish(self) -> ParticipantExecutionRunReport {
+        let accumulator = self;
+        ParticipantExecutionRunReport {
+            two_sided_participant_shares: accumulator.two_sided_participant_shares,
+            two_sided_participant_shares_by_profile: accumulator
+                .two_sided_participant_shares_by_profile
+                .into_iter()
+                .map(|(profile, shares)| (profile.to_string(), shares))
+                .collect(),
+        }
+    }
+
+    fn reconcile(
+        &self,
+        one_sided_market_trade_shares: u64,
+        seed: u64,
+    ) -> Result<(), BaselineError> {
+        let report = self;
+        let expected_two_sided =
+            one_sided_market_trade_shares
+                .checked_mul(2)
                 .ok_or(BaselineError::CounterOverflow {
                     seed,
-                    counter: "participant shares by profile total",
-                })
-        })?;
-    if profile_total != report.two_sided_participant_shares {
-        return Err(BaselineError::ParticipantProfileVolumeMismatch {
-            seed,
-            expected: report.two_sided_participant_shares,
-            actual: profile_total,
-        });
+                    counter: "expected two-sided participant shares",
+                })?;
+        if report.two_sided_participant_shares != expected_two_sided {
+            return Err(BaselineError::ParticipantVolumeMismatch {
+                seed,
+                expected: expected_two_sided,
+                actual: report.two_sided_participant_shares,
+            });
+        }
+        let profile_total = report
+            .two_sided_participant_shares_by_profile
+            .values()
+            .try_fold(0_u64, |total, qty| {
+                total
+                    .checked_add(*qty)
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "participant shares by profile total",
+                    })
+            })?;
+        if profile_total != report.two_sided_participant_shares {
+            return Err(BaselineError::ParticipantProfileVolumeMismatch {
+                seed,
+                expected: report.two_sided_participant_shares,
+                actual: profile_total,
+            });
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn strategy_profile_name(profile: &StrategyProfile) -> &'static str {
@@ -854,210 +931,184 @@ fn strategy_profile_name(profile: &StrategyProfile) -> &'static str {
     }
 }
 
-fn record_retail_decision(
-    report: &mut RetailBehaviorRunReport,
-    action: PositionAction,
-    reason: DecisionReason,
-    desired_delta_shares: i64,
-    executable_delta_shares: i64,
+struct RetailOrderLedger {
     seed: u64,
-) -> Result<(), BaselineError> {
-    report.observed_decisions =
-        checked_increment(report.observed_decisions, seed, "retail observed decisions")?;
-    increment_named_count(
-        &mut report.action_counts,
-        position_action_name(action),
-        seed,
-        "retail action counts",
-    )?;
-    increment_named_count(
-        &mut report.reason_counts,
-        decision_reason_name(reason),
-        seed,
-        "retail reason counts",
-    )?;
-    add_signed_delta(
-        &mut report.desired_buy_shares,
-        &mut report.desired_sell_shares,
-        desired_delta_shares,
-        seed,
-        "retail desired target shares",
-    )?;
-    add_signed_delta(
-        &mut report.executable_buy_shares,
-        &mut report.executable_sell_shares,
-        executable_delta_shares,
-        seed,
-        "retail executable target shares",
-    )
+    report: RetailExecutionRunReport,
+    orders: BTreeMap<u64, RetailOrderOutcome>,
 }
 
-fn record_retail_order_event(
-    report: &mut RetailExecutionRunReport,
-    orders: &mut BTreeMap<u64, RetailOrderOutcome>,
-    event: &RetailOrderDiagnosticEvent,
-    seed: u64,
-) -> Result<(), BaselineError> {
-    match event {
-        RetailOrderDiagnosticEvent::Submitted { order_id, qty, .. } => {
-            report.submitted_orders =
-                checked_increment(report.submitted_orders, seed, "retail submitted orders")?;
-            report.submitted_shares = report.submitted_shares.checked_add(u64::from(*qty)).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail submitted shares",
-                },
-            )?;
-            if orders
-                .insert(
-                    order_id.0,
-                    RetailOrderOutcome {
-                        requested_qty: u64::from(*qty),
-                        ..RetailOrderOutcome::default()
-                    },
-                )
-                .is_some()
-            {
-                return Err(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "duplicate retail order diagnostic id",
-                });
-            }
-        }
-        RetailOrderDiagnosticEvent::Filled { order_id, qty, .. } => {
-            let order = orders
-                .get_mut(&order_id.0)
-                .ok_or(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail fill without submitted order",
-                })?;
-            order.filled_qty = order.filled_qty.checked_add(u64::from(*qty)).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail filled order shares",
-                },
-            )?;
-            if order.filled_qty > order.requested_qty {
-                return Err(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail fill exceeds submitted order",
-                });
-            }
-            report.filled_shares = report.filled_shares.checked_add(u64::from(*qty)).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail filled shares",
-                },
-            )?;
-        }
-        RetailOrderDiagnosticEvent::Canceled {
-            order_id,
-            remaining_qty,
-            ..
-        } => {
-            let order = orders
-                .get_mut(&order_id.0)
-                .ok_or(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail cancellation without submitted order",
-                })?;
-            let remaining = u64::from(*remaining_qty);
-            if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
-                return Err(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail cancellation quantity mismatch",
-                });
-            }
-            order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail canceled order shares",
-                },
-            )?;
-            report.canceled_shares = report.canceled_shares.checked_add(remaining).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail canceled shares",
-                },
-            )?;
-        }
-        RetailOrderDiagnosticEvent::Aborted {
-            order_id,
-            remaining_qty,
-            ..
-        } => {
-            let order = orders
-                .get_mut(&order_id.0)
-                .ok_or(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail abort without submitted order",
-                })?;
-            let remaining = u64::from(*remaining_qty);
-            if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
-                return Err(BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail abort quantity mismatch",
-                });
-            }
-            order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail aborted order shares",
-                },
-            )?;
-            report.aborted_shares = report.aborted_shares.checked_add(remaining).ok_or(
-                BaselineError::CounterOverflow {
-                    seed,
-                    counter: "retail aborted shares",
-                },
-            )?;
-        }
-        RetailOrderDiagnosticEvent::Rejected { reason, .. } => {
-            report.rejected_intents =
-                checked_increment(report.rejected_intents, seed, "retail rejected intents")?;
-            increment_named_count(
-                &mut report.rejection_reason_counts,
-                rejection_reason_name(reason),
-                seed,
-                "retail rejection reasons",
-            )?;
+impl RetailOrderLedger {
+    fn new(seed: u64) -> Self {
+        Self {
+            seed,
+            report: RetailExecutionRunReport::default(),
+            orders: BTreeMap::new(),
         }
     }
-    Ok(())
-}
 
-fn finalize_retail_execution(
-    mut report: RetailExecutionRunReport,
-    orders: BTreeMap<u64, RetailOrderOutcome>,
-    seed: u64,
-) -> Result<RetailExecutionRunReport, BaselineError> {
-    for order in orders.values() {
-        let accounted = order.filled_qty.checked_add(order.canceled_qty).ok_or(
-            BaselineError::CounterOverflow {
-                seed,
-                counter: "retail final order accounting",
-            },
-        )?;
-        let remaining =
-            order
-                .requested_qty
-                .checked_sub(accounted)
-                .ok_or(BaselineError::CounterOverflow {
+    fn record(&mut self, event: &RetailOrderDiagnosticEvent) -> Result<(), BaselineError> {
+        let seed = self.seed;
+        let report = &mut self.report;
+        let orders = &mut self.orders;
+        match event {
+            RetailOrderDiagnosticEvent::Submitted { order_id, qty, .. } => {
+                report.submitted_orders =
+                    checked_increment(report.submitted_orders, seed, "retail submitted orders")?;
+                report.submitted_shares = report
+                    .submitted_shares
+                    .checked_add(u64::from(*qty))
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail submitted shares",
+                    })?;
+                if orders
+                    .insert(
+                        order_id.0,
+                        RetailOrderOutcome {
+                            requested_qty: u64::from(*qty),
+                            ..RetailOrderOutcome::default()
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "duplicate retail order diagnostic id",
+                    });
+                }
+            }
+            RetailOrderDiagnosticEvent::Filled { order_id, qty, .. } => {
+                let order = orders
+                    .get_mut(&order_id.0)
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail fill without submitted order",
+                    })?;
+                order.filled_qty = order.filled_qty.checked_add(u64::from(*qty)).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail filled order shares",
+                    },
+                )?;
+                if order.filled_qty > order.requested_qty {
+                    return Err(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail fill exceeds submitted order",
+                    });
+                }
+                report.filled_shares = report.filled_shares.checked_add(u64::from(*qty)).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail filled shares",
+                    },
+                )?;
+            }
+            RetailOrderDiagnosticEvent::Canceled {
+                order_id,
+                remaining_qty,
+                ..
+            } => {
+                let order = orders
+                    .get_mut(&order_id.0)
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail cancellation without submitted order",
+                    })?;
+                let remaining = u64::from(*remaining_qty);
+                if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
+                    return Err(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail cancellation quantity mismatch",
+                    });
+                }
+                order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail canceled order shares",
+                    },
+                )?;
+                report.canceled_shares = report.canceled_shares.checked_add(remaining).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail canceled shares",
+                    },
+                )?;
+            }
+            RetailOrderDiagnosticEvent::Aborted {
+                order_id,
+                remaining_qty,
+                ..
+            } => {
+                let order = orders
+                    .get_mut(&order_id.0)
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail abort without submitted order",
+                    })?;
+                let remaining = u64::from(*remaining_qty);
+                if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
+                    return Err(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail abort quantity mismatch",
+                    });
+                }
+                order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail aborted order shares",
+                    },
+                )?;
+                report.aborted_shares = report.aborted_shares.checked_add(remaining).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "retail aborted shares",
+                    },
+                )?;
+            }
+            RetailOrderDiagnosticEvent::Rejected { reason, .. } => {
+                report.rejected_intents =
+                    checked_increment(report.rejected_intents, seed, "retail rejected intents")?;
+                increment_named_count(
+                    &mut report.rejection_reason_counts,
+                    rejection_reason_name(reason),
+                    seed,
+                    "retail rejection reasons",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<RetailExecutionRunReport, BaselineError> {
+        let Self {
+            mut report,
+            orders,
+            seed,
+        } = self;
+        for order in orders.values() {
+            let accounted = order.filled_qty.checked_add(order.canceled_qty).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail final order accounting",
+                },
+            )?;
+            let remaining = order.requested_qty.checked_sub(accounted).ok_or(
+                BaselineError::CounterOverflow {
                     seed,
                     counter: "retail final order quantity mismatch",
-                })?;
-        report.open_shares =
-            report
-                .open_shares
-                .checked_add(remaining)
-                .ok_or(BaselineError::CounterOverflow {
+                },
+            )?;
+            report.open_shares = report.open_shares.checked_add(remaining).ok_or(
+                BaselineError::CounterOverflow {
                     seed,
                     counter: "retail open shares",
-                })?;
+                },
+            )?;
+        }
+        report.filled_share_ratio = (report.submitted_shares > 0)
+            .then(|| report.filled_shares as f64 / report.submitted_shares as f64);
+        Ok(report)
     }
-    report.filled_share_ratio = (report.submitted_shares > 0)
-        .then(|| report.filled_shares as f64 / report.submitted_shares as f64);
-    Ok(report)
 }
 
 fn increment_named_count(
@@ -1611,9 +1662,8 @@ fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64
 #[cfg(test)]
 mod tests {
     use super::{
-        distribution, lag_one_correlation, reconcile_participant_execution, summarize_stock,
-        BaselineError, MarketDiagnosticsAccumulator, ParticipantExecutionAccumulator,
-        StockSummaryInput,
+        distribution, lag_one_correlation, summarize_stock, BaselineError,
+        MarketDiagnosticsAccumulator, ParticipantExecutionAccumulator, StockSummaryInput,
     };
     use crate::{DailyCandle, DailyTradeStats, Money, StockCode};
 
@@ -1632,6 +1682,282 @@ mod tests {
         }
     }
 
+    fn retail_event(order: u64, qty: u32, kind: &str) -> super::RetailOrderDiagnosticEvent {
+        use crate::{AccountId, OrderId, Side};
+        let account = AccountId(1);
+        let code = StockCode("600101".to_owned());
+        let order_id = OrderId(order);
+        match kind {
+            "submitted" => super::RetailOrderDiagnosticEvent::Submitted {
+                account,
+                code,
+                side: Side::Buy,
+                order_id,
+                qty,
+            },
+            "filled" => super::RetailOrderDiagnosticEvent::Filled {
+                account,
+                code,
+                side: Side::Buy,
+                order_id,
+                qty,
+            },
+            "canceled" => super::RetailOrderDiagnosticEvent::Canceled {
+                account,
+                code,
+                order_id,
+                remaining_qty: qty,
+            },
+            "aborted" => super::RetailOrderDiagnosticEvent::Aborted {
+                account,
+                code,
+                order_id,
+                remaining_qty: qty,
+            },
+            _ => panic!("未知 retail fixture 类型"),
+        }
+    }
+
+    #[test]
+    fn retail_ledger_partial_fills_keep_canceled_aborted_and_open_shares_distinct() {
+        let mut ledger = super::RetailOrderLedger::new(7);
+        for (order, qty, kind) in [
+            (1, 300, "submitted"),
+            (1, 100, "filled"),
+            (1, 100, "filled"),
+            (1, 100, "canceled"),
+            (2, 100, "submitted"),
+            (2, 100, "aborted"),
+            (3, 200, "submitted"),
+        ] {
+            ledger.record(&retail_event(order, qty, kind)).unwrap();
+        }
+        let report = ledger.finish().unwrap();
+        assert_eq!(
+            (
+                report.submitted_shares,
+                report.filled_shares,
+                report.canceled_shares,
+                report.aborted_shares,
+                report.open_shares
+            ),
+            (600, 200, 100, 100, 200)
+        );
+        assert_eq!(report.filled_share_ratio, Some(1.0 / 3.0));
+    }
+
+    #[test]
+    fn retail_ledger_rejects_unknown_orders_and_preserves_overfill_failure_write() {
+        let mut ledger = super::RetailOrderLedger::new(7);
+        for kind in ["filled", "canceled", "aborted"] {
+            assert!(ledger.record(&retail_event(1, 100, kind)).is_err());
+        }
+        ledger.record(&retail_event(1, 100, "submitted")).unwrap();
+        assert!(matches!(
+            ledger.record(&retail_event(1, 101, "filled")),
+            Err(BaselineError::CounterOverflow {
+                counter: "retail fill exceeds submitted order",
+                ..
+            })
+        ));
+        assert_eq!(ledger.orders[&1].filled_qty, 101);
+        assert_eq!(ledger.report.filled_shares, 0);
+    }
+
+    fn seed_projection_fixture() -> (super::SeedDiagnostics, crate::SessionSetup) {
+        use crate::{
+            FloatAllocation, GameConfig, HotParams, InstParams, NpcSetup, RetailParams,
+            SecurityCategory, StockExchange, StockSpec, StrategyParams,
+        };
+        let setup = crate::SessionSetup {
+            stocks: vec![StockSpec {
+                code: StockCode("600101".to_owned()),
+                exchange: StockExchange::Shanghai,
+                initial_price: Money::from_cents(1_000),
+                category: SecurityCategory::MainBoard,
+                limit_pct: 0.10,
+                tick: Money::from_cents(1),
+                total_shares: 100_000,
+                float_shares: 0,
+            }],
+            npcs: NpcSetup {
+                retail_count: 0,
+                inst_count: 0,
+                hot_count: 0,
+                retail_cash_median: Money::from_cents(1_000_000),
+            },
+            config: GameConfig::proposed_defaults(),
+            strategy_params: StrategyParams {
+                retail: RetailParams {
+                    arrival_rate: 0.0,
+                    order_size_mean: 100,
+                    chase_prob: 0.0,
+                },
+                inst: InstParams {
+                    margin: 0.02,
+                    order_size: 100,
+                },
+                hot: HotParams {
+                    lookback: 2,
+                    trend_threshold: 0.01,
+                    order_size: 100,
+                },
+            },
+            ticks_per_day: 10,
+            auction_ticks: 0,
+            closing_auction_ticks: 0,
+            history_len: 2,
+            t1_enabled: true,
+            float_allocation: FloatAllocation::Random,
+            start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            simulation_policy_id: crate::SIMULATION_POLICY_ID_V2.to_owned(),
+        };
+        let session = crate::GameSession::new(setup.clone(), 7).unwrap();
+        (super::SeedDiagnostics::new(&setup, 7, 1, &session), setup)
+    }
+
+    #[test]
+    fn seed_projection_keeps_empty_book_and_day_boundary_no_trade_statistics() {
+        let (mut projection, setup) = seed_projection_fixture();
+        let code = setup.stocks[0].code.clone();
+        let quote = |bids, asks| crate::Event::PriceTick {
+            seq: 0,
+            tick: 1,
+            code: code.clone(),
+            last_price: Money::from_cents(1_000),
+            daily_candle: candle(1_000, 1_000, 0),
+            bids,
+            asks,
+        };
+        projection
+            .observe_committed_events(
+                vec![quote(vec![], vec![])],
+                crate::TradingPhase::Continuous,
+                9,
+                &setup,
+            )
+            .unwrap();
+        let market = &projection.stocks[&code].market;
+        assert_eq!(
+            (
+                market.book_samples,
+                market.spread_samples,
+                market.imbalance_samples
+            ),
+            (1, 0, 0)
+        );
+        assert_eq!(market.top_five_depth_sum, 0.0);
+        projection
+            .observe_committed_events(
+                vec![quote(
+                    vec![(Money::from_cents(990), 100)],
+                    vec![(Money::from_cents(1_010), 300)],
+                )],
+                crate::TradingPhase::Continuous,
+                10,
+                &setup,
+            )
+            .unwrap();
+        let market = &projection.stocks[&code].market;
+        assert_eq!(
+            (
+                market.book_samples,
+                market.spread_samples,
+                market.imbalance_samples
+            ),
+            (2, 1, 1)
+        );
+        assert_eq!(market.top_five_depth_sum, 400.0);
+        assert_eq!(market.spread_bps_sum, 200.0);
+        assert_eq!(market.absolute_imbalance_sum, 0.5);
+        assert_eq!(
+            (
+                market.current_continuous_no_trade_ticks,
+                market.longest_continuous_no_trade_ticks
+            ),
+            (0, 2)
+        );
+        projection
+            .observe_committed_events(vec![], crate::TradingPhase::PreOpen, 1, &setup)
+            .unwrap();
+        assert_eq!(
+            projection.stocks[&code]
+                .market
+                .current_continuous_no_trade_ticks,
+            0
+        );
+    }
+
+    #[test]
+    fn seed_projection_preserves_partial_trade_counters_before_preopen_error() {
+        let (mut projection, setup) = seed_projection_fixture();
+        let code = setup.stocks[0].code.clone();
+        let event = crate::Event::Trade {
+            seq: 0,
+            code: code.clone(),
+            price: Money::from_cents(1_000),
+            qty: 100,
+            maker: crate::AccountId(0),
+            taker: crate::AccountId(0),
+        };
+        assert!(matches!(
+            projection.observe_committed_events(
+                vec![event],
+                crate::TradingPhase::PreOpen,
+                1,
+                &setup
+            ),
+            Err(BaselineError::TradeDuringPreOpen { .. })
+        ));
+        assert_eq!(projection.trade_events, 1);
+        assert_eq!(
+            projection
+                .participant_execution
+                .two_sided_participant_shares,
+            200
+        );
+        let stock = &projection.stocks[&code];
+        assert_eq!(
+            (stock.trade_event_volume, stock.trade_event_turnover),
+            (100, 100_000)
+        );
+        assert_eq!(stock.market.continuous_volume, 0);
+    }
+
+    #[test]
+    fn seed_projection_unknown_taker_preserves_only_the_known_maker_participation() {
+        let (mut projection, setup) = seed_projection_fixture();
+        let code = setup.stocks[0].code.clone();
+        let event = crate::Event::Trade {
+            seq: 0,
+            code: code.clone(),
+            price: Money::from_cents(1_000),
+            qty: 100,
+            maker: crate::AccountId(0),
+            taker: crate::AccountId(999),
+        };
+        assert!(matches!(
+            projection.observe_committed_events(
+                vec![event],
+                crate::TradingPhase::Continuous,
+                1,
+                &setup
+            ),
+            Err(BaselineError::UnknownTradeParticipant {
+                account: crate::AccountId(999),
+                ..
+            })
+        ));
+        assert_eq!(
+            projection
+                .participant_execution
+                .two_sided_participant_shares,
+            100
+        );
+        assert_eq!(projection.trade_events, 0);
+        assert_eq!(projection.stocks[&code].trade_event_volume, 0);
+    }
+
     #[test]
     fn participant_execution_reconciliation_rejects_missing_side_or_profile_volume() {
         let mut missing_side = ParticipantExecutionAccumulator {
@@ -1639,7 +1965,7 @@ mod tests {
             two_sided_participant_shares_by_profile: [("player", 100)].into(),
         };
         assert!(matches!(
-            reconcile_participant_execution(&missing_side, 100, 7),
+            missing_side.reconcile(100, 7),
             Err(BaselineError::ParticipantVolumeMismatch {
                 expected: 200,
                 actual: 100,
@@ -1649,7 +1975,7 @@ mod tests {
 
         missing_side.two_sided_participant_shares = 200;
         assert!(matches!(
-            reconcile_participant_execution(&missing_side, 100, 7),
+            missing_side.reconcile(100, 7),
             Err(BaselineError::ParticipantProfileVolumeMismatch {
                 expected: 200,
                 actual: 100,

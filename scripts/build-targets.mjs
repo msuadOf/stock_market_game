@@ -151,75 +151,154 @@ async function assertTree(source, directoryExpected, bundleRoot) {
   } else if (!stat.isFile() || (stat.size === 0 && bundleRoot === undefined)) throw new Error(`artifact file missing or empty: ${source}`);
 }
 
-export async function publishArtifact({ root, target, executable, desktopExecutable, webRoot, bundleRoot, output, host = hostName(), stageDirectory }) {
-  const directory = outputPath(root, target, output);
-  await assertNewOutput(root, directory);
-  const license = path.join(root, "LICENSE");
-  await assertTree(license, false);
-  let portableSource;
-  if (target === "desktop") {
-    await assertTree(bundleRoot, true, bundleRoot);
-    if (host === "windows") portableSource = desktopExecutable;
-    else if (host === "linux") {
-      const images = (await readdir(path.join(bundleRoot, "appimage"))).filter((name) => name.endsWith(".AppImage"));
-      if (images.length !== 1) throw new Error(`portable desktop requires exactly one AppImage; found ${images.length}.`);
-      portableSource = path.join(bundleRoot, "appimage", images[0]);
-    }
-    if (host !== "macos") {
-      if (portableSource === undefined) throw new Error("portable desktop executable is missing.");
-      await assertTree(portableSource, false);
-    }
+class BuildArtifactPublisher {
+  constructor(inputs) {
+    this.inputs = inputs;
+    this.directory = outputPath(inputs.root, inputs.target, inputs.output);
+    this.stage = undefined;
   }
-  else {
-    await assertTree(executable, false);
-    if (target !== "server") {
-      await assertTree(webRoot, true);
-      await assertTree(path.join(webRoot, "index.html"), false);
-    }
-  }
-  const stage = stageDirectory === undefined ? await mkdtemp(path.join(path.dirname(directory), `stage-${target}-`)) : stageDirectory;
-  if (stageDirectory !== undefined) await mkdir(stage);
-  try {
-    await copyFile(license, path.join(stage, "LICENSE"));
+
+  async publish() {
+    const { root, target, executable, desktopExecutable, webRoot, bundleRoot, host = hostName(), stageDirectory } = this.inputs;
+    const directory = this.directory;
+    await assertNewOutput(root, directory);
+    const license = path.join(root, "LICENSE");
+    await assertTree(license, false);
+    let portableSource;
     if (target === "desktop") {
-      await cp(bundleRoot, path.join(stage, "bundle"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
-      if (portableSource !== undefined) {
-        const portable = path.join(stage, "portable");
-        await mkdir(portable);
-        await copyFile(portableSource, path.join(portable, host === "windows" ? "stock-market-game.exe" : "stock-market-game.AppImage"));
-        await copyFile(license, path.join(portable, "LICENSE"));
+      await assertTree(bundleRoot, true, bundleRoot);
+      if (host === "windows") portableSource = desktopExecutable;
+      else if (host === "linux") {
+        const images = (await readdir(path.join(bundleRoot, "appimage"))).filter((name) => name.endsWith(".AppImage"));
+        if (images.length !== 1) throw new Error(`portable desktop requires exactly one AppImage; found ${images.length}.`);
+        portableSource = path.join(bundleRoot, "appimage", images[0]);
+      }
+      if (host !== "macos") {
+        if (portableSource === undefined) throw new Error("portable desktop executable is missing.");
+        await assertTree(portableSource, false);
       }
     }
     else {
-      await copyFile(executable, path.join(stage, host === "windows" ? "server.exe" : "server"));
-      if (target !== "server") await cp(webRoot, path.join(stage, "webui"), { recursive: true, errorOnExist: true, force: false });
+      await assertTree(executable, false);
+      if (target !== "server") {
+        await assertTree(webRoot, true);
+        await assertTree(path.join(webRoot, "index.html"), false);
+      }
     }
-    await assertNewOutput(root, directory);
-    await rename(stage, directory);
-    return directory;
-  } finally {
-    await rm(stage, { recursive: true, force: true });
+    this.stage = stageDirectory === undefined ? await mkdtemp(path.join(path.dirname(directory), `stage-${target}-`)) : stageDirectory;
+    const stage = this.stage;
+    if (stageDirectory !== undefined) await mkdir(stage);
+    try {
+      await copyFile(license, path.join(stage, "LICENSE"));
+      if (target === "desktop") {
+        await cp(bundleRoot, path.join(stage, "bundle"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+        if (portableSource !== undefined) {
+          const portable = path.join(stage, "portable");
+          await mkdir(portable);
+          await copyFile(portableSource, path.join(portable, host === "windows" ? "stock-market-game.exe" : "stock-market-game.AppImage"));
+          await copyFile(license, path.join(portable, "LICENSE"));
+        }
+      }
+      else {
+        await copyFile(executable, path.join(stage, host === "windows" ? "server.exe" : "server"));
+        if (target !== "server") await cp(webRoot, path.join(stage, "webui"), { recursive: true, errorOnExist: true, force: false });
+      }
+      await assertNewOutput(root, directory);
+      await rename(stage, directory);
+      return directory;
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
   }
 }
 
-async function prepareOwnedDirectories(plan) {
-  const owned = [];
-  try {
-    if (!plan.compileOnly) await assertNewOutput(plan.root, plan.artifact.directory);
-    for (const directory of [plan.work, ...(plan.target === "server" ? [] : [plan.wasmRoot])]) {
-      await safeDirectories(plan.root, path.dirname(directory));
-      await mkdir(directory);
-      owned.push(directory);
-    }
-    return owned;
-  } catch (error) {
-    await cleanupOwnedDirectories(owned);
-    throw error;
-  }
+export async function publishArtifact(inputs) {
+  return new BuildArtifactPublisher(inputs).publish();
 }
 
-async function cleanupOwnedDirectories(owned) {
-  await Promise.all(owned.map((directory) => rm(directory, { recursive: true, force: true })));
+class BuildRun {
+  constructor(plan, { options, context, borrowed = false } = {}) {
+    this.plan = plan;
+    this.options = options;
+    this.context = context;
+    this.borrowed = borrowed;
+    this.owned = [];
+  }
+
+  async prepare() {
+    const plan = this.plan;
+    const owned = this.owned;
+    try {
+      if (!plan.compileOnly) await assertNewOutput(plan.root, plan.artifact.directory);
+      for (const directory of [plan.work, ...(plan.target === "server" ? [] : [plan.wasmRoot])]) {
+        await safeDirectories(plan.root, path.dirname(directory));
+        await mkdir(directory);
+        owned.push(directory);
+      }
+    } catch (error) {
+      await this.cleanup();
+      throw error;
+    }
+  }
+
+  async cleanup() {
+    const owned = this.owned;
+    this.owned = [];
+    await Promise.all(owned.map((directory) => rm(directory, { recursive: true, force: true })));
+  }
+
+  async execute(commandRunner) {
+    if (!this.borrowed) await this.prepare();
+    try {
+      await this.executePrepared(commandRunner);
+    } finally {
+      await this.cleanup();
+    }
+  }
+
+  async executePrepared(commandRunner) {
+    const { options, context } = this;
+    let plan = this.plan;
+    const probe = await commandRunner(plan.commands[0]);
+    const host = /^host: ([a-zA-Z0-9_-]+)$/m.exec(probe);
+    if (host === null) throw new Error("rustc -vV did not report a valid native host; no artifact published.");
+    this.plan = plan = createBuildPlan(options, { ...context, buildId: plan.buildId, nativeTarget: host[1] });
+    await safeDirectories(plan.root, plan.cargoDirectory);
+    if (plan.target !== "server" && options.frontendDist === undefined) {
+      await safeDirectories(plan.root, path.join(plan.cargoDirectory, "wasm"));
+      await safeDirectories(plan.root, path.dirname(plan.wasmPackage));
+    }
+    for (const command of plan.commands.slice(1)) {
+      process.stdout.write(`[build ${plan.target}] jobs=${plan.jobs} (cd ${command.cwd} && ${[command.command, ...command.args].join(" ")})\n`);
+      if (command.action === "check-frontend") {
+        let parent = plan.root;
+        for (const component of path.relative(plan.root, plan.frontendDist).split(path.sep)) {
+          parent = path.join(parent, component);
+          const stat = await lstat(parent);
+          if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`prebuilt frontend has a symbolic-link or non-directory parent: ${parent}`);
+        }
+        await assertTree(plan.frontendDist, true);
+        await assertTree(path.join(plan.frontendDist, "index.html"), false);
+        await verifyWebReleaseWasm(plan.frontendDist);
+      } else if (command.action === "clear-bundles") {
+        const bundle = command.args[0];
+        await safeDirectories(plan.root, path.dirname(bundle));
+        const stat = await statIfExists(bundle);
+        if (stat !== undefined && (stat.isSymbolicLink() || !stat.isDirectory())) throw new Error(`unsafe cached bundle directory: ${bundle}`);
+        await rm(bundle, { recursive: true, force: true });
+      } else if (command.action === "stage-frontend") await stageFrontend(plan);
+      else await commandRunner(command);
+    }
+    if (plan.compileOnly) {
+      process.stdout.write(`[build desktop] native library cache prepared; binary linking/bundling is a separate stage; no distribution published.\n`);
+      return;
+    }
+    await publishArtifact({ root: plan.root, target: plan.target, host: plan.host, output: plan.artifact.directory, stageDirectory: path.join(plan.work, "artifact"),
+      executable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", plan.host === "windows" ? "server.exe" : "server"),
+      desktopExecutable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", "stock-market-game.exe"),
+      webRoot: plan.frontendDist, bundleRoot: path.join(plan.cargoDirectory, plan.nativeTarget, "release/bundle") });
+    process.stdout.write(`[build ${plan.target}] published ${plan.artifact.directory}\n`);
+  }
 }
 
 export async function stageFrontend(plan) {
@@ -257,51 +336,8 @@ export function executeBuildCommand(command) {
 }
 
 export async function executeBuild(options, { commandRunner = executeBuildCommand, prepared = false, ...context } = {}) {
-  let plan = createBuildPlan(options, context);
-  const owned = prepared ? [] : await prepareOwnedDirectories(plan);
-  try {
-    const probe = await commandRunner(plan.commands[0]);
-    const host = /^host: ([a-zA-Z0-9_-]+)$/m.exec(probe);
-    if (host === null) throw new Error("rustc -vV did not report a valid native host; no artifact published.");
-    plan = createBuildPlan(options, { ...context, buildId: plan.buildId, nativeTarget: host[1] });
-    await safeDirectories(plan.root, plan.cargoDirectory);
-    if (plan.target !== "server" && options.frontendDist === undefined) {
-      await safeDirectories(plan.root, path.join(plan.cargoDirectory, "wasm"));
-      await safeDirectories(plan.root, path.dirname(plan.wasmPackage));
-    }
-    for (const command of plan.commands.slice(1)) {
-      process.stdout.write(`[build ${plan.target}] jobs=${plan.jobs} (cd ${command.cwd} && ${[command.command, ...command.args].join(" ")})\n`);
-      if (command.action === "check-frontend") {
-        let parent = plan.root;
-        for (const component of path.relative(plan.root, plan.frontendDist).split(path.sep)) {
-          parent = path.join(parent, component);
-          const stat = await lstat(parent);
-          if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`prebuilt frontend has a symbolic-link or non-directory parent: ${parent}`);
-        }
-        await assertTree(plan.frontendDist, true);
-        await assertTree(path.join(plan.frontendDist, "index.html"), false);
-        await verifyWebReleaseWasm(plan.frontendDist);
-      } else if (command.action === "clear-bundles") {
-        const bundle = command.args[0];
-        await safeDirectories(plan.root, path.dirname(bundle));
-        const stat = await statIfExists(bundle);
-        if (stat !== undefined && (stat.isSymbolicLink() || !stat.isDirectory())) throw new Error(`unsafe cached bundle directory: ${bundle}`);
-        await rm(bundle, { recursive: true, force: true });
-      } else if (command.action === "stage-frontend") await stageFrontend(plan);
-      else await commandRunner(command);
-    }
-    if (plan.compileOnly) {
-      process.stdout.write(`[build desktop] native library cache prepared; binary linking/bundling is a separate stage; no distribution published.\n`);
-      return;
-    }
-    await publishArtifact({ root: plan.root, target: plan.target, host: plan.host, output: plan.artifact.directory, stageDirectory: path.join(plan.work, "artifact"),
-      executable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", plan.host === "windows" ? "server.exe" : "server"),
-      desktopExecutable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", "stock-market-game.exe"),
-      webRoot: plan.frontendDist, bundleRoot: path.join(plan.cargoDirectory, plan.nativeTarget, "release/bundle") });
-    process.stdout.write(`[build ${plan.target}] published ${plan.artifact.directory}\n`);
-  } finally {
-    await cleanupOwnedDirectories(owned);
-  }
+  const run = new BuildRun(createBuildPlan(options, context), { options, context, borrowed: prepared });
+  return run.execute(commandRunner);
 }
 
 export async function superviseBuild(plan, arguments_, { run = runBoundedCommand, timeoutMs = deadlineMs } = {}) {
@@ -312,16 +348,16 @@ export async function superviseBuild(plan, arguments_, { run = runBoundedCommand
     process.stderr.write(`[build] total ${timeoutMs}ms deadline exhausted; cleanup not confirmed: ${plan.work}, ${plan.wasmRoot}\n`);
     process.exit(1);
   }, timeoutMs);
-  let owned = [];
+  const buildRun = new BuildRun(plan);
   try {
-    owned = await prepareOwnedDirectories(plan);
+    await buildRun.prepare();
     const remaining = Math.floor(timeoutMs - reserveMs - (performance.now() - started));
     if (remaining <= 1) throw new Error("build preparation exhausted its shared execution deadline.");
     await run({ command: process.execPath, args: [path.join(plan.root, "scripts/build-targets-worker.mjs"), ...arguments_], cwd: plan.root, timeoutMs: remaining,
       cleanupReserveMs: Math.min(reserveMs, Math.max(1, Math.floor(remaining / 3))),
       env: compilerEnvironment({ STOCK_TARGET_BUILD_ID: plan.buildId }) });
   } finally {
-    try { await cleanupOwnedDirectories(owned); } finally { clearTimeout(hardTimer); }
+    try { await buildRun.cleanup(); } finally { clearTimeout(hardTimer); }
   }
 }
 

@@ -43,6 +43,21 @@ pub struct PublicRuntimeState {
     working_orders: BTreeMap<u64, PlayerWorkingOrder>,
 }
 
+#[cfg(test)]
+impl PublicRuntimeState {
+    pub(in crate::session::protocol) fn test_projection(&self) -> serde_json::Value {
+        serde_json::to_value((
+            self.tick,
+            self.seq,
+            self.day,
+            self.phase,
+            &self.accounts,
+            &self.working_orders,
+        ))
+        .unwrap()
+    }
+}
+
 impl RuntimeDelta {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.seq_to < self.seq_from {

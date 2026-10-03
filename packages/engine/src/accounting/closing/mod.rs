@@ -41,13 +41,62 @@ type VersionKey = (ScopeId, AccountingPeriod, ReportKind);
 
 /// 累积重述底稿：Scope →（调整分录来源 → 目标历史期间）。serde 随引擎
 /// 状态整体存取（存档形态见 `save`——JSON 键必须为字符串，故平铺为值）。
-type RestatementWorksheet = BTreeMap<ScopeId, BTreeMap<BusinessEventId, AccountingPeriod>>;
+#[derive(Default, Clone, Debug)]
+struct RestatementRegister {
+    scopes: BTreeMap<ScopeId, BTreeMap<BusinessEventId, AccountingPeriod>>,
+}
+
+type RestatementRows = Vec<(ScopeId, Vec<(BusinessEventId, AccountingPeriod)>)>;
+
+impl RestatementRegister {
+    fn record_correction(
+        &mut self,
+        scope: ScopeId,
+        entries: &[JournalEntry],
+        target: AccountingPeriod,
+    ) -> &BTreeMap<BusinessEventId, AccountingPeriod> {
+        let worksheet = self.scopes.entry(scope).or_default();
+        for entry in entries {
+            worksheet.insert(entry.source, target);
+        }
+        worksheet
+    }
+
+    fn for_scope(&self, scope: &ScopeId) -> Option<&BTreeMap<BusinessEventId, AccountingPeriod>> {
+        self.scopes.get(scope)
+    }
+
+    fn save_rows(&self) -> RestatementRows {
+        self.scopes
+            .iter()
+            .map(|(scope, worksheet)| {
+                (
+                    scope.clone(),
+                    worksheet
+                        .iter()
+                        .map(|(source, target)| (*source, *target))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn from_rows(rows: RestatementRows) -> Self {
+        let mut scopes = BTreeMap::new();
+        for (scope, worksheet) in rows {
+            if !worksheet.is_empty() {
+                scopes.insert(scope, worksheet.into_iter().collect());
+            }
+        }
+        Self { scopes }
+    }
+}
 
 /// 结账引擎：不可变期间版本登记簿。
 #[derive(Default, Clone, Debug)]
 pub struct ClosingEngine {
     versions: BTreeMap<VersionKey, Vec<ReportSet>>,
-    restatements: RestatementWorksheet,
+    restatements: RestatementRegister,
     hash_projection_cache: OnceLock<ClosingEngineHashProjection>,
 }
 
@@ -220,10 +269,9 @@ impl ClosingEngine {
         // 原子过账（已封期间/重复来源/负现金由底座守卫拒绝；失败 ⇒ 零改动）。
         books.post_batch(request.entries.clone())?;
         // 累积进持久重述底稿：本 Scope 的所有后续生成从此带上该映射。
-        let worksheet = self.restatements.entry(scope.clone()).or_default();
-        for entry in &request.entries {
-            worksheet.insert(entry.source, target.0);
-        }
+        let worksheet =
+            self.restatements
+                .record_correction(scope.clone(), &request.entries, target.0);
         let version = ReportVersion {
             sequence: previous + 1,
             supersedes: Some(previous),
@@ -325,7 +373,7 @@ impl ClosingEngine {
             kind: VersionKind::Original,
         };
         let empty = BTreeMap::new();
-        let adjustments = self.restatements.get(&scope).unwrap_or(&empty);
+        let adjustments = self.restatements.for_scope(&scope).unwrap_or(&empty);
         Self::generate_with(target, version, adjustments)
     }
 
@@ -369,3 +417,34 @@ impl ClosingEngine {
 
 /// 比较项诚实性守卫（公布前置；实现与附注勾稽同处 reports::validate）。
 pub use crate::accounting::reports::validate::verify_comparative_honesty;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restatement_rows_preserve_overwrite_empty_and_scope_semantics() {
+        let first = ScopeId::Standalone(MemberId("a".into()));
+        let second = ScopeId::Standalone(MemberId("b".into()));
+        let old = AccountingPeriod::from_ymd(2030, 1).unwrap();
+        let new = AccountingPeriod::from_ymd(2030, 2).unwrap();
+        let source = BusinessEventId::new(1);
+        let register = RestatementRegister::from_rows(vec![
+            (first.clone(), vec![(source, old)]),
+            (second.clone(), vec![(source, old), (source, new)]),
+            (first.clone(), vec![]),
+            (second.clone(), vec![(source, old)]),
+        ]);
+        assert_eq!(register.for_scope(&first).unwrap()[&source], old);
+        assert_eq!(register.for_scope(&second).unwrap()[&source], old);
+        assert_eq!(
+            register.save_rows(),
+            vec![(first, vec![(source, old)]), (second, vec![(source, old)])]
+        );
+        let duplicate_sources = RestatementRegister::from_rows(vec![(
+            ScopeId::Standalone(MemberId("c".into())),
+            vec![(source, old), (source, new)],
+        )]);
+        assert_eq!(duplicate_sources.save_rows()[0].1, vec![(source, new)]);
+    }
+}

@@ -20,6 +20,7 @@ pub(super) fn prepare_incremental_continuous_inputs(
         ));
     }
     if session
+        .state
         .auction_orders
         .values()
         .any(|orders| !orders.is_empty())
@@ -30,6 +31,7 @@ pub(super) fn prepare_incremental_continuous_inputs(
     }
 
     let mut prepared = session
+        .state
         .markets
         .par_iter()
         .map(|(code, market)| (code.clone(), prepare_stock_input(session, code, market)))
@@ -45,8 +47,8 @@ pub(super) fn prepare_incremental_continuous_inputs(
             .ok_or_else(|| invariant("continuous live order count overflow"))?;
         inputs.push(input);
     }
-    if matched != session.envelope_ledger.iter().count() {
-        for (_, envelope) in session.envelope_ledger.iter() {
+    if matched != session.state.envelope_ledger.iter().count() {
+        for (_, envelope) in session.state.envelope_ledger.iter() {
             envelope.validate()?;
             if envelope.origin() != EnvelopeOrigin::TickStart {
                 return Err(invariant(
@@ -86,6 +88,7 @@ fn prepare_stock_input(
             ));
         }
         let envelope = session
+            .state
             .envelope_ledger
             .get(&key)
             .map_err(|_| invariant("continuous order books contain an unledgered order"))?;
@@ -126,7 +129,7 @@ fn prepare_stock_input(
             market: market.clone(),
             envelopes,
             operations: Vec::new(),
-            config: session.setup.config.clone(),
+            config: session.state.setup.config.clone(),
         },
     ))
 }

@@ -29,7 +29,11 @@ fn skeleton_failure_preserves_business_and_poison_context() {
 #[test]
 fn public_step_rejects_and_poisons_a_missing_npc_strategy() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+    game.state
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_strategy(None);
     let business = game.business_state_hash().unwrap();
 
     let fatal = game.step().unwrap_err();
@@ -48,7 +52,11 @@ fn public_step_rejects_and_poisons_a_missing_npc_strategy() {
 #[test]
 fn injected_failure_runs_before_missing_npc_strategy_validation() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+    game.state
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_strategy(None);
     let injected = StepFatal::InvariantViolation {
         description: "injected before malformed strategy validation".to_owned(),
         location: "failure_tests::missing_strategy_hook_order".to_owned(),
@@ -63,19 +71,21 @@ fn injected_failure_runs_before_missing_npc_strategy_validation() {
 fn business_hash_detects_pending_facts_counters_and_strategy_state() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
-    game.next_order_id += 1;
+    game.state.next_order_id += 1;
     assert_ne!(game.business_state_hash().unwrap(), before);
-    game.next_order_id -= 1;
-    game.next_receipt_base += 1;
+    game.state.next_order_id -= 1;
+    game.state.next_receipt_base += 1;
     assert_ne!(game.business_state_hash().unwrap(), before);
-    game.next_receipt_base -= 1;
-    game.pending_plan_events.push(PendingPlanEvent::DayEnded {
-        plan_id: crate::plans::PlanId(999),
-        trading_day: 0,
-    });
+    game.state.next_receipt_base -= 1;
+    game.state
+        .pending_plan_events
+        .push(PendingPlanEvent::DayEnded {
+            plan_id: crate::plans::PlanId(999),
+            trading_day: 0,
+        });
     assert_ne!(game.business_state_hash().unwrap(), before);
-    game.pending_plan_events.clear();
-    let account = game.accounts.get_mut(&AccountId(1)).unwrap();
+    game.state.pending_plan_events.clear();
+    let account = game.state.accounts.get_mut(&AccountId(1)).unwrap();
     account.set_strategy(Box::new(
         crate::MomentumStrategy::new(5, 0.04, 100).unwrap(),
     ));
@@ -87,7 +97,8 @@ fn diagnostic_metadata_changes_only_session_hash() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let business = game.business_state_hash().unwrap();
     let session = game.session_state_hash().unwrap();
-    game.last_retail_order_events
+    game.state
+        .last_retail_order_events
         .push(RetailOrderDiagnosticEvent::Rejected {
             account: AccountId(1),
             code: StockCode("600888".to_owned()),
@@ -102,16 +113,22 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     let code = StockCode("600888".to_owned());
     let account = AccountId(1);
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
-    game.accounts
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 2, Money::from_cents(1))
         .unwrap();
-    game.markets
+    game.state
+        .markets
         .get_mut(&code)
         .unwrap()
-        .set_last_price(Money::from_cents(i64::MAX));
+        .fixture_set_last_price(Money::from_cents(i64::MAX));
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 

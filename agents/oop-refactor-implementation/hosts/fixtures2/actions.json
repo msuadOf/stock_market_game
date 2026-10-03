@@ -1,0 +1,444 @@
+[
+  {
+    "local_id": "civil-scenario",
+    "title": "把春节跨休市 fixture 聚合为有名测试场景对象",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/civil_clock.rs"
+    ],
+    "source_symbols": [
+      "spring_festival_session",
+      "own",
+      "assert_fired_once_each",
+      "run_full_trading_session"
+    ],
+    "evidence": [
+      "civil_clock.rs:84-106 以无字段名 tuple 返回 GameSession 与注册的 DueBusiness 列表；每个 due 都通过该 session 的 civil_clock_mut().register_due 产生。",
+      "civil_clock.rs:117-140 own/assert_fired_once_each 要求调用方同时持有 registered 列表与 dispatched reports，并依据 ID 过滤、比对恰好一次。",
+      "civil_clock.rs:224-282 主测试继续独立推进 session，另行保存 friday_report 与 closed_day_reports；其它测试在 357、411、600 行附近重复消费 tuple 两项。",
+      "session.rs:2315-2361 表明生产日结状态及披露 observers 归 GameSession/CivilClock 持有；候选仅包装测试场景，不应迁移业务状态。"
+    ],
+    "fields": [
+      "session: GameSession（唯一生产会话状态仍由 engine::GameSession 管理）",
+      "registered_due: Vec<DueBusiness>（fixture 注册后生成的测试标识集合）"
+    ],
+    "methods": [
+      "new_spring_festival() -> Result<Self, ...> 或保留当前 setup expect 策略",
+      "own_due(items) -> Vec<DueBusiness>",
+      "end_closed_day() -> CivilDayEndReport（可选；需避免封装导致错误路径不可观察）",
+      "assert_registered_due_fired_once(reports) 可作为测试断言方法，也可继续独立函数"
+    ],
+    "production_callers": "无；只由 packages/engine/tests/civil_clock.rs 内测试辅助函数/用例消费，不能描述为产品消费者。",
+    "data_owner": "对象仅拥有测试 GameSession 与注册 ID 清单；生产权威 CivilClock、自然日、due 派发、RNG 与披露观察器仍由 GameSession 持有和推进。测试对象应避免复制生产规则或遮蔽 end_civil_day 的错误。",
+    "composition": "纯 Rust 测试辅助 struct，不改变 engine production API。scenario 对象组合 GameSession 与登记清单；reports 是否放入对象按测试需要决定，建议只在跨多个自然日的测试中采用 Vec<CivilDayEndReport>，避免全局状态。",
+    "migration_steps": [
+      "将返回 tuple 的 spring_festival_session 调整为返回具名 SpringFestivalScenario。",
+      "把所有 let (mut session, registered) 改为具名字段访问；仅将反复传入的 registered 与 reports 封装进过滤/校验方法。",
+      "保持原有各用例对具体 report、日期、T+1、休市状态、RNG、错误原子性的断言就地可见；不改测试语义。"
+    ],
+    "existing_tests": [
+      "同文件 closed_days_accrue_without_trading 覆盖整段周五到周三跨休市 lifecycle。",
+      "restored_period_boundary_is_exactly_once 覆盖保存恢复后 pending dues 恰好一次。",
+      "skipping_a_day_with_unprocessed_dues_is_rejected 覆盖跳日拒绝与清单保留。",
+      "其它测试覆盖重复/乱序/上界/会话未完成时的原子错误和 disclosure observer retry。"
+    ],
+    "missing_tests": [
+      "若实施，仅需确认构造的登记 ID 与当前 scenario 的 session 匹配；避免跨 session 混用 fixture ID。",
+      "场景包装方法不能改变失败后 GameSession rollback 或 observer 保留；保留现有端到端断言即可。"
+    ],
+    "semantic_boundaries": [
+      "A 股交易日历、模拟春节休市安排、T+1 与交易时间规则均属于被测领域输入，不从测试对象中提取默认交易规则。",
+      "fixture 的 2030 春节仅为模拟日历场景；不将其包装命名为官方真实交易日历策略。",
+      "不得让 convenience method 把交易日自动推进与自然日日结混为一体；休市自然日不产生 tick。"
+    ],
+    "why_oop": "session 与 due 清单由同一个构造流程建立，测试时始终按 pair 使用；具名对象能表达这项 fixture 不变量，避免 tuple 顺序错置和每个 caller 手工穿透注册列表。由于它没有产品生命周期且只服务一个测试文件，价值有限，保持为可选测试对象；绝不为包装几行纯函数再建通用 Fixture/Utility 层。",
+    "reader_job": "08",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/08-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "注册到 session 的 DueBusiness 与 session 配对使用，具体自然日推进和到期集合属于一个测试场景。",
+    "id": "hosts-R2-N05",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n05",
+    "action_id": "hosts-R2-N05",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n注册到 session 的 DueBusiness 与 session 配对使用，具体自然日推进和到期集合属于一个测试场景。\n\n范围：`packages/engine/tests/civil_clock.rs`。\n\n**字段**\n\n- session: GameSession（唯一生产会话状态仍由 engine::GameSession 管理）\n- registered_due: Vec<DueBusiness>（fixture 注册后生成的测试标识集合）\n\n**方法**\n\n- new_spring_festival() -> Result<Self, ...> 或保留当前 setup expect 策略\n- own_due(items) -> Vec<DueBusiness>\n- end_closed_day() -> CivilDayEndReport（可选；需避免封装导致错误路径不可观察）\n- assert_registered_due_fired_once(reports) 可作为测试断言方法，也可继续独立函数\n\n**真实调用方**\n\n无；只由 packages/engine/tests/civil_clock.rs 内测试辅助函数/用例消费，不能描述为产品消费者。\n\n**数据所有者**\n\n对象仅拥有测试 GameSession 与注册 ID 清单；生产权威 CivilClock、自然日、due 派发、RNG 与披露观察器仍由 GameSession 持有和推进。测试对象应避免复制生产规则或遮蔽 end_civil_day 的错误。\n\n**组合方式**\n\n纯 Rust 测试辅助 struct，不改变 engine production API。scenario 对象组合 GameSession 与登记清单；reports 是否放入对象按测试需要决定，建议只在跨多个自然日的测试中采用 Vec<CivilDayEndReport>，避免全局状态。\n\n**迁移步骤**\n\n- 将返回 tuple 的 spring_festival_session 调整为返回具名 SpringFestivalScenario。\n- 把所有 let (mut session, registered) 改为具名字段访问；仅将反复传入的 registered 与 reports 封装进过滤/校验方法。\n- 保持原有各用例对具体 report、日期、T+1、休市状态、RNG、错误原子性的断言就地可见；不改测试语义。\n\n**现有测试（未执行）**\n\n- 同文件 closed_days_accrue_without_trading 覆盖整段周五到周三跨休市 lifecycle。\n- restored_period_boundary_is_exactly_once 覆盖保存恢复后 pending dues 恰好一次。\n- skipping_a_day_with_unprocessed_dues_is_rejected 覆盖跳日拒绝与清单保留。\n- 其它测试覆盖重复/乱序/上界/会话未完成时的原子错误和 disclosure observer retry。\n\n**待补测试**\n\n- 若实施，仅需确认构造的登记 ID 与当前 scenario 的 session 匹配；避免跨 session 混用 fixture ID。\n- 场景包装方法不能改变失败后 GameSession rollback 或 observer 保留；保留现有端到端断言即可。\n\n**语义边界**\n\n- A 股交易日历、模拟春节休市安排、T+1 与交易时间规则均属于被测领域输入，不从测试对象中提取默认交易规则。\n- fixture 的 2030 春节仅为模拟日历场景；不将其包装命名为官方真实交易日历策略。\n- 不得让 convenience method 把交易日自动推进与自然日日结混为一体；休市自然日不产生 tick。\n\n**对象化依据**\n\nsession 与 due 清单由同一个构造流程建立，测试时始终按 pair 使用；具名对象能表达这项 fixture 不变量，避免 tuple 顺序错置和每个 caller 手工穿透注册列表。由于它没有产品生命周期且只服务一个测试文件，价值有限，保持为可选测试对象；绝不为包装几行纯函数再建通用 Fixture/Utility 层。\n\n**源码证据**\n\n- civil_clock.rs:84-106 以无字段名 tuple 返回 GameSession 与注册的 DueBusiness 列表；每个 due 都通过该 session 的 civil_clock_mut().register_due 产生。\n- civil_clock.rs:117-140 own/assert_fired_once_each 要求调用方同时持有 registered 列表与 dispatched reports，并依据 ID 过滤、比对恰好一次。\n- civil_clock.rs:224-282 主测试继续独立推进 session，另行保存 friday_report 与 closed_day_reports；其它测试在 357、411、600 行附近重复消费 tuple 两项。\n- session.rs:2315-2361 表明生产日结状态及披露 observers 归 GameSession/CivilClock 持有；候选仅包装测试场景，不应迁移业务状态。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "C1",
+    "title": "FundamentalBeliefCase 测试场景对象集中重复的 belief 调用生命周期",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/fundamental_beliefs/main.rs",
+      "packages/engine/tests/fundamental_beliefs/centers.rs",
+      "packages/engine/tests/fundamental_beliefs/failures/mod.rs",
+      "packages/engine/tests/fundamental_beliefs/gold.rs",
+      "packages/engine/tests/fundamental_beliefs/per_share.rs"
+    ],
+    "source_symbols": [
+      "Scenario",
+      "scenario",
+      "BeliefMarket",
+      "NpcInformationState::new",
+      "BeliefBook::new",
+      "NpcObservationContext::new",
+      "BeliefInputs"
+    ],
+    "evidence": [
+      "main.rs:87-201 已有 Scenario value 聚合公司、披露库、年度 publication id/instant 与公告 id。",
+      "failures/mod.rs:23-61、76-98、116-138、154-181 多次重复 state、market、book、context、inputs 初始化；cause 分别不同。",
+      "gold.rs:73-115、143 起端到端用例重复建立获知时点、context、inputs；per_share.rs:45-82 同样重复并跨两个流通股样本。",
+      "centers.rs:58-75 复用 form_on 场景入口；同一测试通过 test helper 取 scenario、构造信念簿。"
+    ],
+    "fields": [
+      "Scenario（已有）",
+      "npc: AccountId",
+      "state: NpcInformationState",
+      "market: BeliefMarket",
+      "book: BeliefBook",
+      "company kind、发行人已发行总股数、as_of_trading_day 等本用例输入"
+    ],
+    "methods": [
+      "acquire(report, instant) 显式记录获知事实，不隐式默认已获知",
+      "with_inputs(as_of, closure) 在借用 self.state/library/market 的短作用域中构造 NpcObservationContext 与 BeliefInputs",
+      "new_book(profile, analysis, rng) 构造 book；不缓存 RNG 或隐匿抽样次数",
+      "构造器收 Scenario 与 npc/market/profile 等明确参数"
+    ],
+    "production_callers": "无。此对象仅供 packages/engine/tests/fundamental_beliefs 测试 helper 调用，不伪称产品消费者。生产状态仍由 engine::strategy::BeliefBook 与 engine::information::NpcInformationState 拥有。",
+    "data_owner": "test fixture 拥有测试期间的 NPC 信息状态、可见行情样本与 BeliefBook；Scenario 拥有披露库及稳定 fixture ids。NpcObservationContext 与 BeliefInputs 是借用视图，创建于方法调用作用域，不由 fixture 储存。",
+    "composition": "组合现有 Scenario（披露来源）与每个测试 case 的短期信息状态/市场/book。避免自引用结构；每次 with_inputs 临时构造 context。不要合并手工报表 HandReportSpec，也不要将 A 股财务字段/业务规则放入 test case。",
+    "migration_steps": [
+      "先在 main.rs 添加 test-only fixture struct 与最小方法，字段均显式传入。",
+      "迁移 failures/mod.rs 和 gold.rs 的重复初始化，明确 acquire 是否调用及其 publication id/instant。",
+      "迁移 per_share.rs/centers.rs；保留行情 spy 和不同流通股值独立可见。",
+      "删除只被统一 fixture 替代的重复 setup；不要搬迁断言或合并产品逻辑。"
+    ],
+    "existing_tests": [
+      "本文件范围内现有端到端 gold、typed failures、serde round trip、market spy、acquisition guards 均覆盖组成流程。",
+      "不运行测试（任务禁止）。"
+    ],
+    "missing_tests": [
+      "若实施 fixture，需新增/调整 helper 层短测或经既有消费用例证明 acquire/no-acquire 与 context 时点透传；不要让 fixture 自动绕过 NotAcquired 场景。",
+      "保证不同 case 的 NpcInformationState、BeliefBook 不共享；错误路径仍能表达未获知材料及公告已获知但年报未获知。"
+    ],
+    "semantic_boundaries": [
+      "这是纯测试夹具重构，不改变现行 A 股制度或估值输入。",
+      "total_issued_shares 必须继续来自发行人已发行普通股总股数；不得替换为 float_shares（per_share.rs:42-44）。",
+      "报告获取时点必须不早于 publication；不能由对象默认成可前视时点。",
+      "合并报表归母权益/归母净利与集团总额/少数股东仍保持区别。"
+    ],
+    "why_oop": "这些用例反复拥有同一组相互依赖的 test lifecycle 状态并反复创建借用视图；现有 Scenario 只承载披露域，无法表达 NPC 取得材料后对 book 执行 cause 的测试 case。小型组合对象能明确状态所有权并减少初始化漂移。它只建议用于 tests，生产 API 仍是显式的纯逻辑状态输入输出。",
+    "reader_job": "14",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/14-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "Scenario、NPC 信息状态、BeliefBook 和行情 spy 组成真实 acquire→apply_cause 生命周期；对象只持有拥有值，借用 context 在方法内临时生成。",
+    "id": "hosts-R2-N06",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n06",
+    "action_id": "hosts-R2-N06",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nScenario、NPC 信息状态、BeliefBook 和行情 spy 组成真实 acquire→apply_cause 生命周期；对象只持有拥有值，借用 context 在方法内临时生成。\n\n范围：`packages/engine/tests/fundamental_beliefs/main.rs`、`packages/engine/tests/fundamental_beliefs/centers.rs`、`packages/engine/tests/fundamental_beliefs/failures/mod.rs`、`packages/engine/tests/fundamental_beliefs/gold.rs`、`packages/engine/tests/fundamental_beliefs/per_share.rs`。\n\n**字段**\n\n- Scenario（已有）\n- npc: AccountId\n- state: NpcInformationState\n- market: BeliefMarket\n- book: BeliefBook\n- company kind、发行人已发行总股数、as_of_trading_day 等本用例输入\n\n**方法**\n\n- acquire(report, instant) 显式记录获知事实，不隐式默认已获知\n- with_inputs(as_of, closure) 在借用 self.state/library/market 的短作用域中构造 NpcObservationContext 与 BeliefInputs\n- new_book(profile, analysis, rng) 构造 book；不缓存 RNG 或隐匿抽样次数\n- 构造器收 Scenario 与 npc/market/profile 等明确参数\n\n**真实调用方**\n\n无。此对象仅供 packages/engine/tests/fundamental_beliefs 测试 helper 调用，不伪称产品消费者。生产状态仍由 engine::strategy::BeliefBook 与 engine::information::NpcInformationState 拥有。\n\n**数据所有者**\n\ntest fixture 拥有测试期间的 NPC 信息状态、可见行情样本与 BeliefBook；Scenario 拥有披露库及稳定 fixture ids。NpcObservationContext 与 BeliefInputs 是借用视图，创建于方法调用作用域，不由 fixture 储存。\n\n**组合方式**\n\n组合现有 Scenario（披露来源）与每个测试 case 的短期信息状态/市场/book。避免自引用结构；每次 with_inputs 临时构造 context。不要合并手工报表 HandReportSpec，也不要将 A 股财务字段/业务规则放入 test case。\n\n**迁移步骤**\n\n- 先在 main.rs 添加 test-only fixture struct 与最小方法，字段均显式传入。\n- 迁移 failures/mod.rs 和 gold.rs 的重复初始化，明确 acquire 是否调用及其 publication id/instant。\n- 迁移 per_share.rs/centers.rs；保留行情 spy 和不同流通股值独立可见。\n- 删除只被统一 fixture 替代的重复 setup；不要搬迁断言或合并产品逻辑。\n\n**现有测试（未执行）**\n\n- 本文件范围内现有端到端 gold、typed failures、serde round trip、market spy、acquisition guards 均覆盖组成流程。\n- 不运行测试（任务禁止）。\n\n**待补测试**\n\n- 若实施 fixture，需新增/调整 helper 层短测或经既有消费用例证明 acquire/no-acquire 与 context 时点透传；不要让 fixture 自动绕过 NotAcquired 场景。\n- 保证不同 case 的 NpcInformationState、BeliefBook 不共享；错误路径仍能表达未获知材料及公告已获知但年报未获知。\n\n**语义边界**\n\n- 这是纯测试夹具重构，不改变现行 A 股制度或估值输入。\n- total_issued_shares 必须继续来自发行人已发行普通股总股数；不得替换为 float_shares（per_share.rs:42-44）。\n- 报告获取时点必须不早于 publication；不能由对象默认成可前视时点。\n- 合并报表归母权益/归母净利与集团总额/少数股东仍保持区别。\n\n**对象化依据**\n\n这些用例反复拥有同一组相互依赖的 test lifecycle 状态并反复创建借用视图；现有 Scenario 只承载披露域，无法表达 NPC 取得材料后对 book 执行 cause 的测试 case。小型组合对象能明确状态所有权并减少初始化漂移。它只建议用于 tests，生产 API 仍是显式的纯逻辑状态输入输出。\n\n**源码证据**\n\n- main.rs:87-201 已有 Scenario value 聚合公司、披露库、年度 publication id/instant 与公告 id。\n- failures/mod.rs:23-61、76-98、116-138、154-181 多次重复 state、market、book、context、inputs 初始化；cause 分别不同。\n- gold.rs:73-115、143 起端到端用例重复建立获知时点、context、inputs；per_share.rs:45-82 同样重复并跨两个流通股样本。\n- centers.rs:58-75 复用 form_on 场景入口；同一测试通过 test helper 取 scenario、构造信念簿。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "16-1",
+    "title": "将更正重述测试场景的相关生命周期状态聚合",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/industry_reports/correction_restatement.rs"
+    ],
+    "source_symbols": [
+      "books_through_correction",
+      "Books",
+      "ClosingEngine",
+      "MemberId",
+      "original_report_json"
+    ],
+    "evidence": [
+      "L24-L82 books_through_correction 创建 Books 与 ClosingEngine，重复用同一个 MemberId，并在年结后保存 v1 JSON、调用 correct，最后以四元组返回。",
+      "L87-L92 首个测试立即解包该四元组并再次构造 scope；L205-L214 serde 测试又以同一四元组重建现场并分别推进 live/restored 路径。"
+    ],
+    "fields": [
+      "books: Books",
+      "closing: ClosingEngine",
+      "member: MemberId",
+      "original_report_json: String（仅对 v1 不变性断言需要；可留为场景快照）"
+    ],
+    "methods": [
+      "through_correction()构造场景",
+      "close_month(period)/close_year(year)始终使用同一member并调用既有ClosingEngine",
+      "原报告JSON只读访问；serde往返live/restored分支继续由测试显式展开"
+    ],
+    "production_callers": [
+      "仅 test helper；产品代码无消费者。"
+    ],
+    "data_owner": "测试场景对象独占 Books 与 ClosingEngine，MemberId 和 v1 JSON 快照由其持有；serde round-trip 测试可从其字段克隆/序列化得到独立副本。",
+    "composition": "组合生产 Books 与 ClosingEngine；不改变生产类型，也不把会计规则挪进测试 fixture。",
+    "migration_steps": [
+      "只将Books/ClosingEngine/MemberId配对为CorrectionScenario；原v1字节为只读证据。",
+      "迁移需要同member的close_month/close_year配对调用；每个会计语义断言留原测试。",
+      "serde往返的两套live/restored账套及报告字节比较继续显式，不隐藏在返回PASS的fixture方法。"
+    ],
+    "existing_tests": [
+      "correction_does_not_leak_into_later_periods 覆盖历史重述、v1 不变、后续损益/留存/现金/比较数。",
+      "restatement_worksheet_survives_serde_round_trip 覆盖重述底稿序列化恢复。"
+    ],
+    "missing_tests": [
+      "若新增对象有错误返回路径，应验证构造失败不会返回部分场景；若沿用 expect 式测试夹具则无需另造生命周期测试。"
+    ],
+    "semantic_boundaries": [
+      "更正仍归入目标历史损益及后续期初留存；现金仍按实际收付期恰一次。",
+      "v1 报告保持不变，重述底稿经 serde 恢复有效。",
+      "测试对象只编排已测生命周期，不定义 CAS 28 或会计生产语义。"
+    ],
+    "why_oop": "现有四元组是强相关状态包，创建和后续推进依赖共同的 Books/ClosingEngine/MemberId 不变量；对象能表达“一个已执行更正的报告现场”，比裸 tuple 更清楚且减少关联值散落。",
+    "reader_job": "16",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/16-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "更正重述现场的 Books/ClosingEngine/MemberId 和原版本快照共同推进，匿名四元组掩盖状态关系；列低优先级测试场景。",
+    "acceptance_condition": "低优先级条件候选：必须真正收敛同member的close_month/close_year，不能只有裸tuple改struct。",
+    "id": "hosts-R2-N08",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n08",
+    "action_id": "hosts-R2-N08",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n更正重述现场的 Books/ClosingEngine/MemberId 和原版本快照共同推进，匿名四元组掩盖状态关系；列低优先级测试场景。\n\n范围：`packages/engine/tests/industry_reports/correction_restatement.rs`。\n\n**实施条件**\n\n低优先级条件候选：必须真正收敛同member的close_month/close_year，不能只有裸tuple改struct。\n\n**字段**\n\n- books: Books\n- closing: ClosingEngine\n- member: MemberId\n- original_report_json: String（仅对 v1 不变性断言需要；可留为场景快照）\n\n**方法**\n\n- through_correction()构造场景\n- close_month(period)/close_year(year)始终使用同一member并调用既有ClosingEngine\n- 原报告JSON只读访问；serde往返live/restored分支继续由测试显式展开\n\n**真实调用方**\n\n- 仅 test helper；产品代码无消费者。\n\n**数据所有者**\n\n测试场景对象独占 Books 与 ClosingEngine，MemberId 和 v1 JSON 快照由其持有；serde round-trip 测试可从其字段克隆/序列化得到独立副本。\n\n**组合方式**\n\n组合生产 Books 与 ClosingEngine；不改变生产类型，也不把会计规则挪进测试 fixture。\n\n**迁移步骤**\n\n- 只将Books/ClosingEngine/MemberId配对为CorrectionScenario；原v1字节为只读证据。\n- 迁移需要同member的close_month/close_year配对调用；每个会计语义断言留原测试。\n- serde往返的两套live/restored账套及报告字节比较继续显式，不隐藏在返回PASS的fixture方法。\n\n**现有测试（未执行）**\n\n- correction_does_not_leak_into_later_periods 覆盖历史重述、v1 不变、后续损益/留存/现金/比较数。\n- restatement_worksheet_survives_serde_round_trip 覆盖重述底稿序列化恢复。\n\n**待补测试**\n\n- 若新增对象有错误返回路径，应验证构造失败不会返回部分场景；若沿用 expect 式测试夹具则无需另造生命周期测试。\n\n**语义边界**\n\n- 更正仍归入目标历史损益及后续期初留存；现金仍按实际收付期恰一次。\n- v1 报告保持不变，重述底稿经 serde 恢复有效。\n- 测试对象只编排已测生命周期，不定义 CAS 28 或会计生产语义。\n\n**对象化依据**\n\n现有四元组是强相关状态包，创建和后续推进依赖共同的 Books/ClosingEngine/MemberId 不变量；对象能表达“一个已执行更正的报告现场”，比裸 tuple 更清楚且减少关联值散落。\n\n**源码证据**\n\n- L24-L82 books_through_correction 创建 Books 与 ClosingEngine，重复用同一个 MemberId，并在年结后保存 v1 JSON、调用 correct，最后以四元组返回。\n- L87-L92 首个测试立即解包该四元组并再次构造 scope；L205-L214 serde 测试又以同一四元组重建现场并分别推进 live/restored 路径。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "21.plan_scenario",
+    "title": "测试专用个人计划场景封装",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/plans.rs"
+    ],
+    "source_symbols": [
+      "book_with_buy_plan",
+      "link_and_fill",
+      "link_and_fill_with_completion",
+      "buy_open"
+    ],
+    "evidence": [
+      {
+        "lines": "51-55",
+        "detail": "初始化 PlanBook、创建默认买入计划并将关联的 book 与 id 以二元组返回。"
+      },
+      {
+        "lines": "57-87",
+        "detail": "子单受理与实际成交总是按同一 PlanBook/PlanId 成对应用；helper 参数反复携带 book、id、订单序号和交易日。"
+      },
+      {
+        "lines": "113-114, 133-134, 164-165, 199-200, 281-282, 343-347, 446-447, 556-557, 578-579, 612-613, 991-993, 1041-1048",
+        "detail": "常见测试重复建立默认计划、解构 book/id，再施加成交或生命周期事件；多个用例还直接依赖相同 PlanId 继续操作。"
+      },
+      {
+        "lines": "320-332",
+        "detail": "真实部分成交后更换子单继续累计，测试场景的订单序号和计划身份需要保持一致。"
+      },
+      {
+        "lines": "360-405",
+        "detail": "跨日 serde 往返有意同时保留原始与恢复后的独立 PlanBook，因此封装需允许显式取出/克隆 book，不能遮蔽被测存档语义。"
+      }
+    ],
+    "fields": [
+      "PlanBook（单个测试场景持有的可变测试状态）",
+      "PlanId（该场景主要操作的计划）",
+      "可选的下一个测试 OrderId 序号；若使用则只用于避免散落手写序号，不代表生产订单分配器"
+    ],
+    "methods": [
+      "new_buy() -> Result<Self, PlanError> 或仅测试中 expect 的构造器",
+      "book()/book_mut() 显式访问底层 PlanBook",
+      "plan() 按持有的 PlanId 查询",
+      "accept_and_fill(order_id, qty, trading_day, child_complete) 显式施加两类 PlanEvent",
+      "apply(event) 可选地将主计划常用 apply 绑定到 PlanId"
+    ],
+    "production_callers": [],
+    "data_owner": "仅测试辅助对象拥有其创建的 PlanBook 与主 PlanId；生产状态仍由生产调用方持有并序列化 PlanBook。tests/plans.rs 当前调用者全是 #[test] 函数，不得将该辅助对象描述为产品消费者。",
+    "composition": "测试层组合，不进入 packages/engine/src，不替换 PlanBook/PlanEvent，也不接管生产的 OrderId 生成或真实撮合。",
+    "migration_steps": [
+      "可选地新增本文件私有 PlanScenario，将 book_with_buy_plan 返回值统一为场景对象。",
+      "只迁移反复操作单计划的用例；多计划和 serde 对照用例继续直接使用 PlanBook。",
+      "将成交 helper 的参数改为场景方法时，保留 child_complete 显式参数，并保留实际施加 ChildOrderAccepted 后才施加 ChildOrderFilled 的顺序。",
+      "不改变断言、PlanBook 创建/恢复语义或 A 股成交规则。"
+    ],
+    "existing_tests": [
+      "no_change_observations_keep_direction_and_filled_progress",
+      "real_fills_reaching_share_target_complete_the_plan",
+      "day_end_ends_only_child_order_lifecycle_not_the_plan",
+      "cross_day_state_persists_through_serde_round_trip",
+      "fill_beyond_target_is_rejected",
+      "fraction_targets_accumulate_fills_without_share_completion_semantics"
+    ],
+    "missing_tests": [
+      "若引入封装，确认 child_complete=true 与 false 均原样传递，且实际更新仍只来自 ChildOrderFilled。",
+      "确认多次 accept_and_fill 可对不同 OrderId 累计真实成交，并不意外将 PlanId 或 OrderId 复用规则写入 fixture。"
+    ],
+    "semantic_boundaries": "PlanOpen 的方向、目标类型、bp 单位、horizon，以及 PlanEvent 中受理不等于成交、真实成交才累计、日终结束子单而非个人计划完成等契约应继续由 engine 类型及断言决定。测试场景不得暗示份额目标适用到 PositionFractionBp，也不得模拟日内持久存档。当前检查不涉及交易所规则变更。",
+    "why_oop": "相较裸 helper，场景对象可让测试中反复共同出现的 PlanBook 与主 PlanId 具有显式生命周期所有者，并把同一订单受理/真实成交的多步操作限制在该计划上下文；但这是测试便利性和可读性改善，现有函数简单且没有分布在其他文件的共享 fixture，因此仅属可选低优先级机会。",
+    "reader_job": "21",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/21-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "PlanBook 与主要 PlanId 的测试受理/成交多步骤可归于一个场景；保留单文件可选范围，不变更 TradingPlan 生产生命周期。",
+    "id": "hosts-R2-N10",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n10",
+    "action_id": "hosts-R2-N10",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nPlanBook 与主要 PlanId 的测试受理/成交多步骤可归于一个场景；保留单文件可选范围，不变更 TradingPlan 生产生命周期。\n\n范围：`packages/engine/tests/plans.rs`。\n\n**字段**\n\n- PlanBook（单个测试场景持有的可变测试状态）\n- PlanId（该场景主要操作的计划）\n- 可选的下一个测试 OrderId 序号；若使用则只用于避免散落手写序号，不代表生产订单分配器\n\n**方法**\n\n- new_buy() -> Result<Self, PlanError> 或仅测试中 expect 的构造器\n- book()/book_mut() 显式访问底层 PlanBook\n- plan() 按持有的 PlanId 查询\n- accept_and_fill(order_id, qty, trading_day, child_complete) 显式施加两类 PlanEvent\n- apply(event) 可选地将主计划常用 apply 绑定到 PlanId\n\n**真实调用方**\n\n\n\n**数据所有者**\n\n仅测试辅助对象拥有其创建的 PlanBook 与主 PlanId；生产状态仍由生产调用方持有并序列化 PlanBook。tests/plans.rs 当前调用者全是 #[test] 函数，不得将该辅助对象描述为产品消费者。\n\n**组合方式**\n\n测试层组合，不进入 packages/engine/src，不替换 PlanBook/PlanEvent，也不接管生产的 OrderId 生成或真实撮合。\n\n**迁移步骤**\n\n- 可选地新增本文件私有 PlanScenario，将 book_with_buy_plan 返回值统一为场景对象。\n- 只迁移反复操作单计划的用例；多计划和 serde 对照用例继续直接使用 PlanBook。\n- 将成交 helper 的参数改为场景方法时，保留 child_complete 显式参数，并保留实际施加 ChildOrderAccepted 后才施加 ChildOrderFilled 的顺序。\n- 不改变断言、PlanBook 创建/恢复语义或 A 股成交规则。\n\n**现有测试（未执行）**\n\n- no_change_observations_keep_direction_and_filled_progress\n- real_fills_reaching_share_target_complete_the_plan\n- day_end_ends_only_child_order_lifecycle_not_the_plan\n- cross_day_state_persists_through_serde_round_trip\n- fill_beyond_target_is_rejected\n- fraction_targets_accumulate_fills_without_share_completion_semantics\n\n**待补测试**\n\n- 若引入封装，确认 child_complete=true 与 false 均原样传递，且实际更新仍只来自 ChildOrderFilled。\n- 确认多次 accept_and_fill 可对不同 OrderId 累计真实成交，并不意外将 PlanId 或 OrderId 复用规则写入 fixture。\n\n**语义边界**\n\nPlanOpen 的方向、目标类型、bp 单位、horizon，以及 PlanEvent 中受理不等于成交、真实成交才累计、日终结束子单而非个人计划完成等契约应继续由 engine 类型及断言决定。测试场景不得暗示份额目标适用到 PositionFractionBp，也不得模拟日内持久存档。当前检查不涉及交易所规则变更。\n\n**对象化依据**\n\n相较裸 helper，场景对象可让测试中反复共同出现的 PlanBook 与主 PlanId 具有显式生命周期所有者，并把同一订单受理/真实成交的多步操作限制在该计划上下文；但这是测试便利性和可读性改善，现有函数简单且没有分布在其他文件的共享 fixture，因此仅属可选低优先级机会。\n\n**源码证据**\n\n- {\"lines\": \"51-55\", \"detail\": \"初始化 PlanBook、创建默认买入计划并将关联的 book 与 id 以二元组返回。\"}\n- {\"lines\": \"57-87\", \"detail\": \"子单受理与实际成交总是按同一 PlanBook/PlanId 成对应用；helper 参数反复携带 book、id、订单序号和交易日。\"}\n- {\"lines\": \"113-114, 133-134, 164-165, 199-200, 281-282, 343-347, 446-447, 556-557, 578-579, 612-613, 991-993, 1041-1048\", \"detail\": \"常见测试重复建立默认计划、解构 book/id，再施加成交或生命周期事件；多个用例还直接依赖相同 PlanId 继续操作。\"}\n- {\"lines\": \"320-332\", \"detail\": \"真实部分成交后更换子单继续累计，测试场景的订单序号和计划身份需要保持一致。\"}\n- {\"lines\": \"360-405\", \"detail\": \"跨日 serde 往返有意同时保留原始与恢复后的独立 PlanBook，因此封装需允许显式取出/克隆 book，不能遮蔽被测存档语义。\"}",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "23-C1",
+    "title": "将失败披露基线的构造与请求派生收敛到 Base fixture",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/publications/failures/mod.rs",
+      "packages/engine/tests/publications/failures/announcement_failures.rs",
+      "packages/engine/tests/publications/failures/publication_failures.rs"
+    ],
+    "source_symbols": [
+      "Base",
+      "base()",
+      "request(&Base, AccountingPeriod)"
+    ],
+    "evidence": [
+      "failures/mod.rs:25-32 Base 同时保存 closing、library、scope、offset、q1_instant、approval。",
+      "failures/mod.rs:34-82 base() 建立期末快照、按偏移生成 Q1 时点并发布合法基线报告，形成一致依赖状态。",
+      "failures/mod.rs:84-100 request() 再从 Base 读取 scope/approval/q1_instant/offset；publication_failures 多处调用 request(&base, period)，两个拒绝子模块也各自读取 Base 中相关字段。"
+    ],
+    "fields": [
+      "closing: ClosingEngine",
+      "library: PublicLibrary",
+      "scope: ScopeId",
+      "offset: u8",
+      "q1_instant: CivilInstant",
+      "approval: CivilInstant"
+    ],
+    "methods": [
+      "创建合法失败测试基线（当前 base()）",
+      "由基线生成指定 AccountingPeriod 的 PublicationRequest（当前 request()）",
+      "可选提供公司 ID/基线 publication ID 的只读访问；仅在减少重复且不掩盖断言时加入"
+    ],
+    "production_callers": "无生产调用者；明确属于集成测试 helper。生产披露状态由 engine::information::PublicLibrary 与 ClosingEngine 管理，不转移给此测试夹具。",
+    "data_owner": "测试代码拥有 Base 及其 ClosingEngine/PublicLibrary 值；engine::PublicLibrary 仍拥有正式公开报告集合，ClosingEngine 拥有测试用结账登记簿。",
+    "composition": "保持 Base 组合 ClosingEngine、PublicLibrary 和生成请求所需的 ScopeId/排期时点；不包装 serde、CivilInstant 或错误断言。",
+    "migration_steps": [
+      "把 base() 改为 Base::valid_q1() 或同义关联构造方法，集中合法前置状态创建。",
+      "把 request() 改为 Base::publication_request(period)，按调用点仍显式传入 period。",
+      "失败测试继续显式改写 origin、supersedes、时点等用于触发边界的字段，并直接断言 InformationError。"
+    ],
+    "existing_tests": [
+      "announcement_timing_rejected",
+      "missing_instant_field_is_a_deserialize_error",
+      "early_read_rejected",
+      "unfinalized_report_rejected",
+      "unbalanced_report_rejected_at_restore_boundary",
+      "time_inversion_rejected",
+      "illegal_report_window_rejected",
+      "off_schedule_and_phase_rejected",
+      "duplicate_and_out_of_range_ids_rejected",
+      "correction_link_rejected_on_mismatch"
+    ],
+    "missing_tests": [
+      "若作此纯重构无需新增领域语义测试；现有测试覆盖基线被各类拒绝场景复用。仅需保留现有集成套件运行结果，不要增加只校验 method forwarding 的镜像测试。"
+    ],
+    "semantic_boundaries": [
+      "公司范围始终为 C-FAIL，scope 为其独立主体；跨公司错配测试仍显式使用 C-OTHER。",
+      "Q1 2030 公布时点仍由 OPS_SEED 与 stable_company_offset 决定，不能把排期简化为硬编码通用时点。",
+      "此候选只整理测试夹具，不改披露阶段、批准时间、PublicLibrary 拒绝规则或 A 股信息披露语义；测试输入单位和概念保持现有领域类型。"
+    ],
+    "why_oop": "Base 已经是持有相关状态的对象，生命周期前置构造与从这些字段派生 PublicationRequest 却分布在两个自由函数中。将两项紧邻行为放回对象能让聚合边界更完整，并减少模块外直接读取字段的机会；收益局限于测试夹具可读性，因此仅列可选，不能推广成通用测试工具类。",
+    "reader_job": "23",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/23-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "已有 Base 的 scope/closing/offset/instant 共同派生 PublicationRequest；把 base/request 归为 Base 构造与方法，无需新工具类。",
+    "id": "hosts-R2-N11",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n11",
+    "action_id": "hosts-R2-N11",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\n已有 Base 的 scope/closing/offset/instant 共同派生 PublicationRequest；把 base/request 归为 Base 构造与方法，无需新工具类。\n\n范围：`packages/engine/tests/publications/failures/mod.rs`、`packages/engine/tests/publications/failures/announcement_failures.rs`、`packages/engine/tests/publications/failures/publication_failures.rs`。\n\n**字段**\n\n- closing: ClosingEngine\n- library: PublicLibrary\n- scope: ScopeId\n- offset: u8\n- q1_instant: CivilInstant\n- approval: CivilInstant\n\n**方法**\n\n- 创建合法失败测试基线（当前 base()）\n- 由基线生成指定 AccountingPeriod 的 PublicationRequest（当前 request()）\n- 可选提供公司 ID/基线 publication ID 的只读访问；仅在减少重复且不掩盖断言时加入\n\n**真实调用方**\n\n无生产调用者；明确属于集成测试 helper。生产披露状态由 engine::information::PublicLibrary 与 ClosingEngine 管理，不转移给此测试夹具。\n\n**数据所有者**\n\n测试代码拥有 Base 及其 ClosingEngine/PublicLibrary 值；engine::PublicLibrary 仍拥有正式公开报告集合，ClosingEngine 拥有测试用结账登记簿。\n\n**组合方式**\n\n保持 Base 组合 ClosingEngine、PublicLibrary 和生成请求所需的 ScopeId/排期时点；不包装 serde、CivilInstant 或错误断言。\n\n**迁移步骤**\n\n- 把 base() 改为 Base::valid_q1() 或同义关联构造方法，集中合法前置状态创建。\n- 把 request() 改为 Base::publication_request(period)，按调用点仍显式传入 period。\n- 失败测试继续显式改写 origin、supersedes、时点等用于触发边界的字段，并直接断言 InformationError。\n\n**现有测试（未执行）**\n\n- announcement_timing_rejected\n- missing_instant_field_is_a_deserialize_error\n- early_read_rejected\n- unfinalized_report_rejected\n- unbalanced_report_rejected_at_restore_boundary\n- time_inversion_rejected\n- illegal_report_window_rejected\n- off_schedule_and_phase_rejected\n- duplicate_and_out_of_range_ids_rejected\n- correction_link_rejected_on_mismatch\n\n**待补测试**\n\n- 若作此纯重构无需新增领域语义测试；现有测试覆盖基线被各类拒绝场景复用。仅需保留现有集成套件运行结果，不要增加只校验 method forwarding 的镜像测试。\n\n**语义边界**\n\n- 公司范围始终为 C-FAIL，scope 为其独立主体；跨公司错配测试仍显式使用 C-OTHER。\n- Q1 2030 公布时点仍由 OPS_SEED 与 stable_company_offset 决定，不能把排期简化为硬编码通用时点。\n- 此候选只整理测试夹具，不改披露阶段、批准时间、PublicLibrary 拒绝规则或 A 股信息披露语义；测试输入单位和概念保持现有领域类型。\n\n**对象化依据**\n\nBase 已经是持有相关状态的对象，生命周期前置构造与从这些字段派生 PublicationRequest 却分布在两个自由函数中。将两项紧邻行为放回对象能让聚合边界更完整，并减少模块外直接读取字段的机会；收益局限于测试夹具可读性，因此仅列可选，不能推广成通用测试工具类。\n\n**源码证据**\n\n- failures/mod.rs:25-32 Base 同时保存 closing、library、scope、offset、q1_instant、approval。\n- failures/mod.rs:34-82 base() 建立期末快照、按偏移生成 Q1 时点并发布合法基线报告，形成一致依赖状态。\n- failures/mod.rs:84-100 request() 再从 Base 读取 scope/approval/q1_instant/offset；publication_failures 多处调用 request(&base, period)，两个拒绝子模块也各自读取 Base 中相关字段。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "local_id": "hosts-test-save-fixture-builder",
+    "title": "集中构造并恢复满足跨投影不变量的订单 SaveSlot 测试夹具",
+    "priority": "低优先级可选",
+    "files": [
+      "packages/engine/tests/session.rs"
+    ],
+    "source_symbols": [
+      "synchronize_v2_live_envelopes",
+      "session_with_resting_sellers",
+      "player_session_with_position"
+    ],
+    "evidence": [
+      "96-234：同步函数内部构建费用计算，遍历 resting 与 auction orders 生成 LiveEnvelopeV2，更新每股历史 FIFO cursor，写回 runtime_v2，并通过 restore/snapshot 交叉验证账户 reservation。",
+      "2225、2332、2728、2867、4309、4374：六处显式调用同步器；周边调用方均先手工修改 SaveSlot 多个相互约束的投影字段。",
+      "2669-2729：session_with_resting_sellers 同时初始化账户 PositionSnap、RetailExperience、resting order、NPC attention、order id，再同步、restore；说明夹具拥有明确的构造至恢复生命周期。"
+    ],
+    "fields": [
+      "SaveSlot（唯一被 builder 管理的权威测试输入）",
+      "订单编辑期间的订单/账户同步责任（临时局部变量，不复制保存第二份状态）"
+    ],
+    "methods": [
+      "new(SessionSetup, seed) -> builder",
+      "save_mut() 或专用 add_resting_order/add_auction_order/add_position 操作",
+      "restore(self) -> Result<GameSession, SessionError>；内部只在合法 fixture 构造路径同步 envelope/cursor 并返回 restore 结果"
+    ],
+    "production_callers": "无；只由 packages/engine/tests/session.rs 的 test helper 与测试 case 调用。不得进入 engine 生产 API。",
+    "data_owner": "测试 case 决定 setup 与测试意图；builder 在构造阶段暂时拥有 SaveSlot，restore 后 GameSession 成为运行时状态 owner。不要让 builder 同时影子持有 GameSession 与 SaveSlot。",
+    "composition": "Builder 组合 SessionSetup/SaveSlot 数据，并复用 GameSession::restore；不是继承 GameSession，也不抽象 fee 公式为通用 Utility。",
+    "migration_steps": [
+      "先只包裹订单存档相关场景，保留测试可见的明确 Arrange/Act/Assert。",
+      "把 synchronize_v2_live_envelopes 拆入 builder 的“完成合法存档并恢复”步骤；将 session_with_resting_sellers 的关联账户与 NPC 夹具编辑移入专用构造方法。",
+      "逐点迁移六个调用处；腐坏存档测试必须继续直接篡改字段且不调用合法同步路径。"
+    ],
+    "existing_tests": [
+      "allocated_market_produces_trades (2184-2245)",
+      "all_stocks_produce_trades_multistock (2266-2339)",
+      "continuous_multi_fill_charges_one_minimum_commission_per_account_batch (2734-2770)",
+      "restore_accepts_non_lot_remainders_after_a_real_partial_fill (4257-4330)",
+      "restore_validates_multiple_partial_sell_orders_independently_of_storage_order (4333-4380)"
+    ],
+    "missing_tests": [
+      "若采纳 builder，应有一个针对性用例验证合法 fixture 的订单 envelope、cursor 和 reserved_cash/reserved_sell_qty 同步后可 restore；现有 helper 内联断言提供部分覆盖，但无独立 builder API 契约。",
+      "保留负例覆盖：restore_rejects_* 的篡改存档仍必须绕过 builder 的修复/同步行为，保证损坏状态 fail-closed。"
+    ],
+    "semantic_boundaries": [
+      "仅测试夹具生命周期，不改 A 股撮合、佣金、过户费、印花税、挂单冻结或 T+1 的产品语义。",
+      "测试便利构造不得进入生产存档加载路径，不得自动修复外部坏档；其合法化仅适用于测试明确搭建订单 fixture。",
+      "单独根据剩余订单推导 cursor 会丢失取消订单后的历史 FIFO 序号，必须保留当前 checked_add/max 规则。"
+    ],
+    "why_oop": "builder 有清楚且有限的测试对象生命周期，并封装跨多个 SaveSlot 子结构共同变化的不变量；比把每个简单 factory 改成对象更有理由。它仍属可选，因为当前同步辅助函数仅在六处显式使用且已通过 restore 断言校验，抽象收益有限，不应作为生产架构重构。",
+    "reader_job": "26",
+    "reader_evidence": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/jobs/26-result.json",
+    "disposition": "new",
+    "existing_action": null,
+    "coordinator_reason": "Session 测试编辑 orders/auction_orders/账户预留/runtime envelope 时必须联动同步，TestOrderSaveFixture 拥有一个权威 SaveSlot 输入；不复制生产状态。",
+    "id": "hosts-R2-N12",
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "hosts-r2-n12",
+    "action_id": "hosts-R2-N12",
+    "group": "hosts",
+    "details_markdown": "优先级：低优先级可选；处置：new。\n\nSession 测试编辑 orders/auction_orders/账户预留/runtime envelope 时必须联动同步，TestOrderSaveFixture 拥有一个权威 SaveSlot 输入；不复制生产状态。\n\n范围：`packages/engine/tests/session.rs`。\n\n**字段**\n\n- SaveSlot（唯一被 builder 管理的权威测试输入）\n- 订单编辑期间的订单/账户同步责任（临时局部变量，不复制保存第二份状态）\n\n**方法**\n\n- new(SessionSetup, seed) -> builder\n- save_mut() 或专用 add_resting_order/add_auction_order/add_position 操作\n- restore(self) -> Result<GameSession, SessionError>；内部只在合法 fixture 构造路径同步 envelope/cursor 并返回 restore 结果\n\n**真实调用方**\n\n无；只由 packages/engine/tests/session.rs 的 test helper 与测试 case 调用。不得进入 engine 生产 API。\n\n**数据所有者**\n\n测试 case 决定 setup 与测试意图；builder 在构造阶段暂时拥有 SaveSlot，restore 后 GameSession 成为运行时状态 owner。不要让 builder 同时影子持有 GameSession 与 SaveSlot。\n\n**组合方式**\n\nBuilder 组合 SessionSetup/SaveSlot 数据，并复用 GameSession::restore；不是继承 GameSession，也不抽象 fee 公式为通用 Utility。\n\n**迁移步骤**\n\n- 先只包裹订单存档相关场景，保留测试可见的明确 Arrange/Act/Assert。\n- 把 synchronize_v2_live_envelopes 拆入 builder 的“完成合法存档并恢复”步骤；将 session_with_resting_sellers 的关联账户与 NPC 夹具编辑移入专用构造方法。\n- 逐点迁移六个调用处；腐坏存档测试必须继续直接篡改字段且不调用合法同步路径。\n\n**现有测试（未执行）**\n\n- allocated_market_produces_trades (2184-2245)\n- all_stocks_produce_trades_multistock (2266-2339)\n- continuous_multi_fill_charges_one_minimum_commission_per_account_batch (2734-2770)\n- restore_accepts_non_lot_remainders_after_a_real_partial_fill (4257-4330)\n- restore_validates_multiple_partial_sell_orders_independently_of_storage_order (4333-4380)\n\n**待补测试**\n\n- 若采纳 builder，应有一个针对性用例验证合法 fixture 的订单 envelope、cursor 和 reserved_cash/reserved_sell_qty 同步后可 restore；现有 helper 内联断言提供部分覆盖，但无独立 builder API 契约。\n- 保留负例覆盖：restore_rejects_* 的篡改存档仍必须绕过 builder 的修复/同步行为，保证损坏状态 fail-closed。\n\n**语义边界**\n\n- 仅测试夹具生命周期，不改 A 股撮合、佣金、过户费、印花税、挂单冻结或 T+1 的产品语义。\n- 测试便利构造不得进入生产存档加载路径，不得自动修复外部坏档；其合法化仅适用于测试明确搭建订单 fixture。\n- 单独根据剩余订单推导 cursor 会丢失取消订单后的历史 FIFO 序号，必须保留当前 checked_add/max 规则。\n\n**对象化依据**\n\nbuilder 有清楚且有限的测试对象生命周期，并封装跨多个 SaveSlot 子结构共同变化的不变量；比把每个简单 factory 改成对象更有理由。它仍属可选，因为当前同步辅助函数仅在六处显式使用且已通过 restore 断言校验，抽象收益有限，不应作为生产架构重构。\n\n**源码证据**\n\n- 96-234：同步函数内部构建费用计算，遍历 resting 与 auction orders 生成 LiveEnvelopeV2，更新每股历史 FIFO cursor，写回 runtime_v2，并通过 restore/snapshot 交叉验证账户 reservation。\n- 2225、2332、2728、2867、4309、4374：六处显式调用同步器；周边调用方均先手工修改 SaveSlot 多个相互约束的投影字段。\n- 2669-2729：session_with_resting_sellers 同时初始化账户 PositionSnap、RetailExperience、resting order、NPC attention、order id，再同步、restore；说明夹具拥有明确的构造至恢复生命周期。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

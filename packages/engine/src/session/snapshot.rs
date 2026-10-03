@@ -60,6 +60,53 @@ pub struct Snapshot {
     pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
 }
 
+/// 单次 Snapshot 构建中，由全部在簿订单派生的资源预留总额。
+#[derive(Default)]
+struct LiveOrderReservations {
+    reserved_cash: BTreeMap<AccountId, Money>,
+    reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
+}
+
+impl LiveOrderReservations {
+    // 订单事实按原调用点逐项传入，避免增加仅用于参数打包的 DTO。
+    #[allow(clippy::too_many_arguments)]
+    fn record_order(
+        &mut self,
+        owner: AccountId,
+        code: &StockCode,
+        side: Side,
+        price: Money,
+        remaining_qty: u32,
+        filled_value: Money,
+        config: &GameConfig,
+    ) {
+        if side == Side::Sell {
+            let reserved = self
+                .reserved_sell_qty
+                .entry(owner)
+                .or_default()
+                .entry(code.clone())
+                .or_default();
+            *reserved = reserved
+                .checked_add(remaining_qty)
+                .expect("validated live sell reservations cannot exceed u32 holdings");
+        }
+        let required = live_cash_reservation(config, side, price, remaining_qty, filled_value)
+            .expect("validated live cash reservation must fit Money");
+        let reserved = self.reserved_cash.entry(owner).or_default();
+        *reserved = reserved
+            .add(required)
+            .expect("validated live cash reservations cannot exceed account cash");
+    }
+
+    fn take_for(&mut self, account: AccountId) -> (Money, BTreeMap<StockCode, u32>) {
+        (
+            self.reserved_cash.remove(&account).unwrap_or(Money::ZERO),
+            self.reserved_sell_qty.remove(&account).unwrap_or_default(),
+        )
+    }
+}
+
 impl GameSession {
     /// 完整状态快照（首次连/重连/存档）。
     ///
@@ -81,75 +128,35 @@ impl GameSession {
         include_daily_candles: bool,
         include_npc_accounts: bool,
     ) -> Snapshot {
-        let mut reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>> = BTreeMap::new();
-        let mut reserved_cash: BTreeMap<AccountId, Money> = BTreeMap::new();
-        let mut record_reserved_sell = |owner: AccountId, code: &StockCode, qty: u32| {
-            let reserved = reserved_sell_qty
-                .entry(owner)
-                .or_default()
-                .entry(code.clone())
-                .or_default();
-            *reserved = reserved
-                .checked_add(qty)
-                .expect("validated live sell reservations cannot exceed u32 holdings");
-        };
-        let mut record_reserved_cash =
-            |owner: AccountId, side: Side, price: Money, qty: u32, filled_value: Money| {
-                let required =
-                    live_cash_reservation(&self.setup.config, side, price, qty, filled_value)
-                        .expect("validated live cash reservation must fit Money");
-                let reserved = reserved_cash.entry(owner).or_default();
-                *reserved = reserved
-                    .add(required)
-                    .expect("validated live cash reservations cannot exceed account cash");
-            };
-        for (code, market) in &self.markets {
+        let mut reservations = LiveOrderReservations::default();
+        for (code, market) in &self.state.markets {
             for order in market.resting_orders() {
-                match order.side {
-                    Side::Buy => record_reserved_cash(
-                        order.owner,
-                        order.side,
-                        order.price,
-                        order.qty,
-                        order.filled_value,
-                    ),
-                    Side::Sell => {
-                        record_reserved_sell(order.owner, code, order.qty);
-                        record_reserved_cash(
-                            order.owner,
-                            order.side,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        );
-                    }
-                }
+                reservations.record_order(
+                    order.owner,
+                    code,
+                    order.side,
+                    order.price,
+                    order.qty,
+                    order.filled_value,
+                    &self.state.setup.config,
+                );
             }
         }
-        for (code, orders) in &self.auction_orders {
+        for (code, orders) in &self.state.auction_orders {
             for order in orders {
-                match order.side {
-                    Side::Buy => record_reserved_cash(
-                        order.owner,
-                        order.side,
-                        order.limit,
-                        order.qty,
-                        Money::ZERO,
-                    ),
-                    Side::Sell => {
-                        record_reserved_sell(order.owner, code, order.qty);
-                        record_reserved_cash(
-                            order.owner,
-                            order.side,
-                            order.limit,
-                            order.qty,
-                            Money::ZERO,
-                        );
-                    }
-                }
+                reservations.record_order(
+                    order.owner,
+                    code,
+                    order.side,
+                    order.limit,
+                    order.qty,
+                    Money::ZERO,
+                    &self.state.setup.config,
+                );
             }
         }
         let markets = self
+            .state
             .markets
             .iter()
             .map(|(code, m)| {
@@ -167,44 +174,48 @@ impl GameSession {
             })
             .collect();
         let accounts = self
+            .state
             .accounts
             .iter()
             .filter(|(id, _)| include_npc_accounts || id.0 == 0)
             .map(|(id, a)| {
+                let (reserved_cash, reserved_sell_qty) = reservations.take_for(*id);
                 (
                     *id,
                     AccountSnap {
-                        cash: a.cash,
+                        cash: a.cash(),
                         positions: a
-                            .positions
+                            .positions()
                             .iter()
                             .map(|(c, p)| {
                                 (
                                     c.clone(),
                                     PositionSnap {
-                                        qty: p.qty,
-                                        t1_locked: p.t1_locked,
-                                        invested_cents: p.invested_cents,
-                                        recovered_cents: p.recovered_cents,
+                                        qty: p.qty(),
+                                        t1_locked: p.t1_locked(),
+                                        invested_cents: p.invested_cents(),
+                                        recovered_cents: p.recovered_cents(),
                                     },
                                 )
                             })
                             .collect(),
-                        reserved_cash: reserved_cash.remove(id).unwrap_or(Money::ZERO),
-                        reserved_sell_qty: reserved_sell_qty.remove(id).unwrap_or_default(),
+                        reserved_cash,
+                        reserved_sell_qty,
                     },
                 )
             })
             .collect();
         Snapshot {
-            seq: self.seq,
-            tick: self.tick,
-            day: self.day,
+            seq: self.state.seq,
+            tick: self.state.tick,
+            day: self.state.day,
             phase: self.phase(),
             markets,
             accounts,
             daily_candles: if include_daily_candles {
-                self.daily_candles
+                self.state
+                    .candle_book
+                    .histories()
                     .iter()
                     .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
                     .collect()
@@ -213,7 +224,160 @@ impl GameSession {
             },
             // 当前交易日累计很小且是 UI 权威统计来源；成交/竞价完成等低频状态
             // 快照必须携带它，不能迫使客户端从可压缩逐笔流重算。
-            active_daily_candles: self.active_daily_candles.clone(),
+            active_daily_candles: self.state.candle_book.active().clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_reservations_combine_continuous_auction_and_partial_orders() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.npcs.inst_count = 0;
+        let mut second = setup.stocks[0].clone();
+        second.code = StockCode("600889".to_string());
+        setup.stocks.push(second);
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let first = session.state.setup.stocks[0].code.clone();
+        let second = session.state.setup.stocks[1].code.clone();
+        let owner = AccountId(0);
+        for (code, id, side, price, qty, filled_qty, filled_value) in [
+            (&first, 1, Side::Buy, 900, 150, 50, 45_000),
+            (&first, 2, Side::Sell, 1_100, 30, 70, 77_000),
+            (&second, 3, Side::Sell, 1_100, 200, 0, 0),
+        ] {
+            session
+                .state
+                .markets
+                .get_mut(code)
+                .unwrap()
+                .place(Order {
+                    id: OrderId(id),
+                    side,
+                    price: Money::from_cents(price),
+                    qty,
+                    original_qty: qty + filled_qty,
+                    filled_qty,
+                    filled_value: Money::from_cents(filled_value),
+                    owner,
+                    seq: id,
+                })
+                .unwrap();
+        }
+        for (code, id, side, qty) in [
+            (&first, 4, Side::Sell, 70),
+            (&second, 5, Side::Sell, 100),
+            (&second, 6, Side::Buy, 100),
+        ] {
+            session
+                .state
+                .auction_orders
+                .entry(code.clone())
+                .or_default()
+                .push(AuctionOrderSnap {
+                    order_id: id,
+                    owner,
+                    side,
+                    limit: Money::from_cents(1_000),
+                    qty,
+                });
+        }
+        let snapshot = session.runtime_snapshot();
+        let account = &snapshot.accounts[&owner];
+        // 部分买单只预留剩余成交额及累计费用增量；未成交买单仍收首笔佣金下限。
+        assert_eq!(account.reserved_cash, Money::from_cents(235_503));
+        assert_eq!(
+            account.reserved_sell_qty,
+            BTreeMap::from([(first, 100), (second, 300)])
+        );
+        assert!(snapshot.daily_candles.is_empty());
+        assert_eq!(
+            session.runtime_snapshot().accounts[&owner].reserved_cash,
+            account.reserved_cash
+        );
+    }
+
+    #[test]
+    fn live_order_reservations_take_is_isolated_and_empty_accounts_have_zero() {
+        let config = GameConfig::proposed_defaults();
+        let code = StockCode("600888".to_string());
+        let mut reservations = LiveOrderReservations::default();
+        reservations.record_order(
+            AccountId(1),
+            &code,
+            Side::Buy,
+            Money::from_cents(1_000),
+            100,
+            Money::ZERO,
+            &config,
+        );
+        reservations.record_order(
+            AccountId(2),
+            &code,
+            Side::Sell,
+            Money::from_cents(1_000),
+            200,
+            Money::ZERO,
+            &config,
+        );
+        assert_eq!(
+            reservations.take_for(AccountId(0)),
+            (Money::ZERO, BTreeMap::new())
+        );
+        assert_eq!(
+            reservations.take_for(AccountId(1)),
+            (Money::from_cents(100_501), BTreeMap::new())
+        );
+        assert_eq!(
+            reservations.take_for(AccountId(2)),
+            (Money::ZERO, BTreeMap::from([(code, 200)]))
+        );
+        assert_eq!(
+            reservations.take_for(AccountId(1)),
+            (Money::ZERO, BTreeMap::new())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "validated live sell reservations cannot exceed u32 holdings")]
+    fn live_order_reservations_sell_overflow_is_explicit() {
+        let config = GameConfig::proposed_defaults();
+        let code = StockCode("600888".to_string());
+        let mut reservations = LiveOrderReservations::default();
+        for qty in [u32::MAX, 1] {
+            reservations.record_order(
+                AccountId(0),
+                &code,
+                Side::Sell,
+                Money::from_cents(1),
+                qty,
+                Money::ZERO,
+                &config,
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "validated live cash reservations cannot exceed account cash")]
+    fn live_order_reservations_cash_overflow_is_explicit() {
+        let mut config = GameConfig::proposed_defaults();
+        config.commission_rate = 0.0;
+        config.commission_min = Money::ZERO;
+        let code = StockCode("600888".to_string());
+        let mut reservations = LiveOrderReservations::default();
+        for _ in 0..2 {
+            reservations.record_order(
+                AccountId(0),
+                &code,
+                Side::Buy,
+                Money::from_cents(i64::MAX / 2 + 1),
+                1,
+                Money::ZERO,
+                &config,
+            );
         }
     }
 }

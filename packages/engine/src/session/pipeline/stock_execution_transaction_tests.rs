@@ -68,12 +68,12 @@ fn account_validation_buy_operations_for_quantities(
         ),
     )])
     .unwrap();
-    let config = game.setup.config.clone();
+    let config = game.state.setup.config.clone();
     let validation = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
+        game.state.next_order_id,
         config.clone(),
         context,
     )
@@ -205,7 +205,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
     assert_eq!(committed.settlement.settlement.applied_receipts, 4);
     assert_eq!(committed.ledger.terminal_count(), 3);
     assert_eq!(
-        committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
+        committed.account_patch[&AccountId(0)].positions()[&code].t1_locked(),
         200
     );
 }
@@ -268,7 +268,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
     assert_eq!(committed.receipts.len(), 3);
     assert_eq!(committed.settlement.settlement.applied_receipts, 2);
     assert_eq!(
-        committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
+        committed.account_patch[&AccountId(0)].positions()[&code].t1_locked(),
         100
     );
     assert_eq!(committed.ledger.terminal_count(), 2);
@@ -313,7 +313,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     assert!(committed.receipts.is_empty());
     assert_eq!(committed.settlement.settlement.applied_receipts, 0);
     assert!(committed.account_patch.is_empty());
-    assert_eq!(accounts[&AccountId(0)].cash, Money::from_cents(300_000));
+    assert_eq!(accounts[&AccountId(0)].cash(), Money::from_cents(300_000));
 }
 
 #[test]
@@ -356,12 +356,12 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     assert!(committed.stocks[&code].market.resting_orders().is_empty());
     assert_eq!(committed.settlement.settlement.applied_receipts, 2);
     assert_eq!(committed.settlement.settlement.applied_groups, 2);
-    let position = &committed.account_patch[&AccountId(0)].positions[&code];
-    assert_eq!(position.qty, 100, "P6 applies the buy before the sell");
-    assert_eq!(position.t1_locked, 100);
+    let position = &committed.account_patch[&AccountId(0)].positions()[&code];
+    assert_eq!(position.qty(), 100, "P6 applies the buy before the sell");
+    assert_eq!(position.t1_locked(), 100);
     assert_ne!(
-        committed.account_patch[&AccountId(0)].cash,
-        accounts[&AccountId(0)].cash
+        committed.account_patch[&AccountId(0)].cash(),
+        accounts[&AccountId(0)].cash()
     );
 }
 
@@ -389,14 +389,17 @@ fn settlement_projection_failure_after_receipt_aggregation_receipts_keeps_every_
     let ledger_before = initial_ledger.clone();
     let live_before = initial_ledger.get(maker.envelope.key()).unwrap().live();
     let mut accounts = accounts_with_position(&code);
-    accounts.get_mut(&AccountId(0)).unwrap().kind = AccountKind::Retail;
-    let cash_before = accounts[&AccountId(0)].cash;
-    let position_before = &accounts[&AccountId(0)].positions[&code];
+    accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .fixture_set_kind(AccountKind::Retail);
+    let cash_before = accounts[&AccountId(0)].cash();
+    let position_before = &accounts[&AccountId(0)].positions()[&code];
     let position_before = (
-        position_before.qty,
-        position_before.t1_locked,
-        position_before.invested_cents,
-        position_before.recovered_cents,
+        position_before.qty(),
+        position_before.t1_locked(),
+        position_before.invested_cents(),
+        position_before.recovered_cents(),
     );
     let retail =
         crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(
@@ -432,15 +435,15 @@ fn settlement_projection_failure_after_receipt_aggregation_receipts_keeps_every_
         live_before
     );
     assert_eq!(initial_ledger.terminal_count(), 0);
-    assert_eq!(accounts[&AccountId(0)].cash, cash_before);
-    assert_eq!(accounts[&AccountId(0)].positions.len(), 1);
-    let position_after = &accounts[&AccountId(0)].positions[&code];
+    assert_eq!(accounts[&AccountId(0)].cash(), cash_before);
+    assert_eq!(accounts[&AccountId(0)].positions().len(), 1);
+    let position_after = &accounts[&AccountId(0)].positions()[&code];
     assert_eq!(
         (
-            position_after.qty,
-            position_after.t1_locked,
-            position_after.invested_cents,
-            position_after.recovered_cents,
+            position_after.qty(),
+            position_after.t1_locked(),
+            position_after.invested_cents(),
+            position_after.recovered_cents(),
         ),
         position_before
     );

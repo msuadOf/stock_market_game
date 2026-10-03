@@ -7,7 +7,7 @@ pub(in crate::session) struct PlayerCandidateBatch {
 impl GameSession {
     pub(in crate::session) fn capture_player_candidate_batch(&mut self) -> PlayerCandidateBatch {
         PlayerCandidateBatch {
-            intents: std::mem::take(&mut self.pending_player),
+            intents: std::mem::take(&mut self.state.pending_player),
         }
     }
 }

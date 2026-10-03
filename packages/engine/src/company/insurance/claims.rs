@@ -16,6 +16,7 @@ use crate::calendar::CivilDate;
 use crate::company::contracts::ContractId;
 use crate::company::counterparty::FlowDirection;
 use crate::company::insurance::{chart, InsuranceBooks, InsuranceError};
+use std::collections::BTreeMap;
 
 /// 赔案 id newtype（组内唯一；随存档序列化）。
 #[derive(
@@ -29,6 +30,45 @@ pub struct ClaimState {
     incurred: AccountingAmount,
     paid: AccountingAmount,
     date_incurred: CivilDate,
+}
+
+/// 组内赔案账：唯一持有赔案映射，负责登记与支付累计的落地。
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub(super) struct ClaimRegister {
+    pub(super) claims: BTreeMap<ClaimId, ClaimState>,
+}
+
+impl ClaimRegister {
+    pub(super) fn new() -> Self {
+        Self::from_claims(BTreeMap::new())
+    }
+
+    pub(super) fn from_claims(claims: BTreeMap<ClaimId, ClaimState>) -> Self {
+        Self { claims }
+    }
+
+    pub(super) fn get(&self, id: &ClaimId) -> Option<&ClaimState> {
+        self.claims.get(id)
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&ClaimId, &ClaimState)> {
+        self.claims.iter()
+    }
+
+    pub(super) fn insert(&mut self, id: ClaimId, state: ClaimState) {
+        self.claims.insert(id, state);
+    }
+
+    /// 存在性已由处理器 validate 保证；保留既有 Option/溢出行为。
+    pub(super) fn apply_payment(
+        &mut self,
+        claim: &ClaimId,
+        amount: AccountingAmount,
+    ) -> Option<Result<(), AccountingError>> {
+        self.claims
+            .get_mut(claim)
+            .map(|state| state.apply_payment(amount))
+    }
 }
 
 impl ClaimState {
@@ -111,7 +151,9 @@ impl InsuranceBooks {
             }],
         )?;
         if let Some(state) = self.groups.get_mut(group) {
-            state.insert_claim(claim, ClaimState::new(amount, date));
+            state
+                .claim_register_mut()
+                .insert(claim, ClaimState::new(amount, date));
         }
         Ok(event)
     }
@@ -163,7 +205,7 @@ impl InsuranceBooks {
             }],
         )?;
         if let Some(state) = self.groups.get_mut(group) {
-            if let Some(applied) = state.apply_claim_payment(claim, amount) {
+            if let Some(applied) = state.claim_register_mut().apply_payment(claim, amount) {
                 applied?;
             }
         }

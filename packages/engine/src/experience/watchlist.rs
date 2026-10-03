@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::MAX_UNHELD_WATCHLIST_STOCKS;
+use super::{retention::RetentionCandidates, MAX_UNHELD_WATCHLIST_STOCKS};
 use crate::StockCode;
 
 /// 个人关注列表失败。绝不静默吞掉（铁律二）。
@@ -137,16 +137,16 @@ impl PersonalWatchlist {
     /// 能驱逐它们。未受保护股票按 `(last_observed_minute, StockCode)` 降序
     /// 保留前 [`MAX_UNHELD_WATCHLIST_STOCKS`] 个：同分钟代码较大者保留。
     pub fn prune(&mut self, protected: &BTreeSet<StockCode>) {
-        let mut unprotected: Vec<(u64, StockCode)> = self
-            .stocks
-            .iter()
-            .filter(|(code, _)| !protected.contains(*code))
-            .map(|(code, entry)| (entry.last_observed_market_minute, code.clone()))
-            .collect();
-        unprotected.sort_by(|left, right| right.cmp(left));
-        for (_, code) in unprotected.into_iter().skip(MAX_UNHELD_WATCHLIST_STOCKS) {
-            self.stocks.remove(&code);
-        }
+        let kept = RetentionCandidates::from_contacts(
+            self.stocks
+                .iter()
+                .map(|(code, entry)| (code, entry.last_observed_market_minute)),
+            protected,
+            MAX_UNHELD_WATCHLIST_STOCKS,
+        )
+        .select_kept_unprotected();
+        self.stocks
+            .retain(|code, _| protected.contains(code) || kept.contains(code));
     }
 
     /// 恢复边界：条目分钟不得越过列表注意力时钟。任何失败 ⇒ 状态不产生
@@ -169,5 +169,58 @@ impl PersonalWatchlist {
             stocks,
             latest_attention_minute,
         })
+    }
+}
+
+#[cfg(test)]
+mod protection_tests {
+    use super::*;
+
+    #[test]
+    fn watchlist_protection_exceeds_cap_and_ties_keep_larger_codes() {
+        let mut list = PersonalWatchlist::new();
+        let mut protected = BTreeSet::new();
+        for index in 0..20 {
+            let code = StockCode(format!("600{index:03}"));
+            list.record_attention(&code, 7, 7).unwrap();
+            if index < 10 {
+                protected.insert(code);
+            }
+        }
+        list.prune(&protected);
+        assert_eq!(list.stock_count(), 18);
+        assert!(protected.iter().all(|code| list.stock(code).is_some()));
+        assert!(list.stock(&StockCode("600010".to_owned())).is_none());
+        assert!(list.stock(&StockCode("600011".to_owned())).is_none());
+        assert!(list.stock(&StockCode("600012".to_owned())).is_some());
+        assert_eq!(list.latest_attention_minute, 7);
+        assert_eq!(
+            PersonalWatchlist::from_parts(list.stocks.clone(), 7).unwrap(),
+            list
+        );
+        assert!(PersonalWatchlist::from_parts(list.stocks.clone(), 6).is_err());
+    }
+    #[test]
+    fn public_history_touch_does_not_change_watchlist_attention_eviction() {
+        let mut list = PersonalWatchlist::new();
+        let mut memory = super::super::PersonalPriceMemory::default();
+        let codes: Vec<_> = (0..10)
+            .map(|index| StockCode(format!("600{index:03}")))
+            .collect();
+        for (index, code) in codes.iter().enumerate() {
+            let minute = index as u64 + 1;
+            list.record_attention(code, minute, minute).unwrap();
+            memory
+                .observe_price(code, crate::Money::from_cents(100), minute)
+                .unwrap();
+        }
+        memory.record_public_history_read(&codes[0], 11).unwrap();
+        list.prune(&BTreeSet::new());
+        memory.prune(&BTreeSet::new());
+        assert!(list.stock(&codes[0]).is_none());
+        assert!(memory.stock(&codes[0]).is_some());
+        assert!(list.stock(&codes[2]).is_some());
+        assert!(memory.stock(&codes[2]).is_none());
+        assert_eq!(list.latest_attention_minute, 10);
     }
 }

@@ -274,3 +274,50 @@ describe("per-envelope and per-account conservation", () => {
     assert.throws(() => verifyConservationSnapshot(indexGap), /global receipt_index has a gap/);
   });
 });
+
+describe("EnvelopeConservation transition 边界", () => {
+  it("保持超过 i64/u64 的 Resource 精度及 canonical decimal 接受集", () => {
+    const huge = 2n ** 80n;
+    const snapshot = conservationSnapshot();
+    const buy = snapshot.envelopes[0];
+    buy.basis.tick_start_live.cash_cents = String(huge);
+    buy.basis.p1_live.cash_cents = String(huge - 20n);
+    buy.receipts[0].live_before.cash_cents = String(huge);
+    buy.receipts[0].live_after.cash_cents = String(huge - 20n);
+    buy.receipts[1].live_before.cash_cents = String(huge - 20n);
+    buy.receipts[1].live_after.cash_cents = String(huge - 80n);
+    buy.commit_live.cash_cents = String(huge - 80n);
+    snapshot.accounts[0].aggregate.left.cash_cents = String(huge);
+    snapshot.accounts[0].aggregate.right.cash_cents = String(huge);
+    assert.equal(verifyConservationSnapshot(snapshot).receipt_rows, 4);
+    for (const value of ["-1", "01", "1.0"]) {
+      const invalid = structuredClone(snapshot);
+      invalid.envelopes[0].basis.tick_start_live.cash_cents = value;
+      assert.throws(() => verifyConservationSnapshot(invalid), /non-negative decimal/);
+    }
+  });
+
+  it("无 receipt 与仅 P0 receipt 都检查 P1 截点", () => {
+    for (const onlyP0 of [false, true]) {
+      const snapshot = conservationSnapshot();
+      snapshot.envelopes = [snapshot.envelopes[0]];
+      const buy = snapshot.envelopes[0];
+      buy.receipts = onlyP0 ? [buy.receipts[0]] : [];
+      buy.basis.p1_live = res(onlyP0 ? 80 : 100, 0);
+      buy.commit_live = res(onlyP0 ? 80 : 100, 0);
+      snapshot.accounts[0].aggregate = { left: res(100, 0), right: res(100, 0) };
+      assert.equal(verifyConservationSnapshot(snapshot).receipt_rows, onlyP0 ? 1 : 0);
+      buy.basis.p1_live.cash_cents = "79";
+      assert.throws(() => verifyConservationSnapshot(snapshot), /P1 boundary/);
+    }
+  });
+
+  it("global identity 可跨 envelope 重排，envelope 内 live chain 仍须衔接", () => {
+    const independent = conservationSnapshot();
+    independent.envelopes.reverse();
+    assert.equal(verifyConservationSnapshot(independent).receipt_rows, 4);
+    const broken = conservationSnapshot();
+    broken.envelopes[1].receipts.reverse();
+    assert.throws(() => verifyConservationSnapshot(broken), /receipt chain/);
+  });
+});

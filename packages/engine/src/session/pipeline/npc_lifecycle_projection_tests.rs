@@ -10,34 +10,36 @@ fn npc_session() -> (GameSession, AccountId, StockCode) {
     )
     .unwrap();
     let account = AccountId(1);
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
-    let tick = session.tick;
+    let tick = session.state.tick;
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, tick);
     (session, account, code)
 }
 
 fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
-    // The forced-observation fixture must restore the seed-derived probability before save.
-    let baseline = GameSession::new(session.setup.clone(), session.seed).unwrap();
-    let probability = baseline.npc_attention[&npc].base_probability;
+    // 强制观察 fixture 保存前必须恢复由 seed 推导的 probability。
+    let baseline = GameSession::new(session.state.setup.clone(), session.state.seed).unwrap();
+    let probability = baseline.state.npc_attention[&npc].base_probability;
     session
+        .state
         .npc_attention
         .get_mut(&npc)
         .unwrap()
         .base_probability = probability;
-    let mut state = session.accounts[&npc]
-        .strategy
-        .as_ref()
+    let mut state = session.state.accounts[&npc]
+        .strategy()
         .unwrap()
         .production_state()
         .unwrap();
     state.set_base_observation_probability(probability);
     session
+        .state
         .accounts
         .get_mut(&npc)
         .unwrap()
@@ -47,13 +49,13 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
 #[test]
 fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling() {
     let (mut session, npc, code) = npc_session();
-    session.pending_npc = None;
+    session.state.pending_npc = None;
     crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
     prepare_continuous_tick(&mut session).unwrap().commit();
-    let resting = session.markets[&code].resting_orders_for(npc);
+    let resting = session.state.markets[&code].resting_orders_for(npc);
     assert_eq!(resting.len(), 1);
-    assert_eq!(session.npc_order_lifecycles.len(), 1);
-    let lifecycle = &session.npc_order_lifecycles[0];
+    assert_eq!(session.state.npc_order_lifecycles.len(), 1);
+    let lifecycle = &session.state.npc_order_lifecycles[0];
     assert_eq!(lifecycle.order_id, resting[0].id);
     assert_eq!(
         lifecycle.expires_market_minute - lifecycle.placed_market_minute,
@@ -62,7 +64,10 @@ fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling()
     restore_attention_profile(&mut session, npc);
     let saved = session.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
-    assert_eq!(restored.npc_order_lifecycles, session.npc_order_lifecycles);
+    assert_eq!(
+        restored.state.npc_order_lifecycles,
+        session.state.npc_order_lifecycles
+    );
     assert_eq!(
         serde_json::to_vec(&restored.save().unwrap()).unwrap(),
         serde_json::to_vec(&saved).unwrap()
@@ -73,6 +78,7 @@ fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling()
 fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
     let (mut session, npc, code) = npc_session();
     session
+        .state
         .accounts
         .get_mut(&npc)
         .unwrap()
@@ -88,16 +94,17 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         },
         &mut Vec::new(),
     );
-    assert_eq!(session.npc_order_lifecycles.len(), 1);
-    let old_id = session.npc_order_lifecycles[0].order_id;
+    assert_eq!(session.state.npc_order_lifecycles.len(), 1);
+    let old_id = session.state.npc_order_lifecycles[0].order_id;
     restore_attention_profile(&mut session, npc);
-    session.attention_queue.clear();
+    session.state.attention_scheduler.clear();
     session
+        .state
         .npc_attention
         .get_mut(&npc)
         .unwrap()
         .next_attention_candidate_tick = 100;
-    session.attention_queue.push(std::cmp::Reverse((100, npc)));
+    session.state.attention_scheduler.enqueue(100, npc);
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -117,17 +124,24 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         .any(|receipt| receipt.envelope.order == old_id
             && receipt.kind == ReceiptKind::Fill
             && receipt.qty_after == 0));
-    assert!(session.npc_order_lifecycles.is_empty());
-    assert!(session.markets[&code].resting_orders_for(npc).is_empty());
+    assert!(session.state.npc_order_lifecycles.is_empty());
+    assert!(session.state.markets[&code]
+        .resting_orders_for(npc)
+        .is_empty());
     let restored = GameSession::restore(&session.save().unwrap()).unwrap();
-    assert!(restored.npc_order_lifecycles.is_empty());
+    assert!(restored.state.npc_order_lifecycles.is_empty());
 }
 
 #[test]
 fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     let (mut session, request) = fixture();
     let account = AccountId(1);
-    session.accounts.get_mut(&account).unwrap().kind = AccountKind::Inst;
+    session
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_kind(AccountKind::Inst);
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
     while execute(
@@ -138,16 +152,19 @@ fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     )
     .is_some()
     {}
-    assert!(session.parent_orders[&account][&request.allocation.code]
-        .active_child_order_id
-        .is_some());
-    assert!(session.npc_order_lifecycles.is_empty());
+    assert!(
+        session.state.parent_orders[&account][&request.allocation.code]
+            .active_child_order_id()
+            .is_some()
+    );
+    assert!(session.state.npc_order_lifecycles.is_empty());
 }
 
 fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
+        .state
         .accounts
         .get_mut(&player)
         .unwrap()
@@ -191,13 +208,13 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
 #[test]
 fn npc_partial_resting_fill_registers_once_and_immediate_full_fill_does_not_register() {
     let (partial, order_id) = project_npc_limit_against_player_ask(200);
-    assert_eq!(partial.npc_order_lifecycles.len(), 1);
-    assert_eq!(partial.npc_order_lifecycles[0].order_id, order_id);
-    let code = &partial.setup.stocks[0].code;
-    assert_eq!(partial.markets[code].resting_orders()[0].qty, 100);
+    assert_eq!(partial.state.npc_order_lifecycles.len(), 1);
+    assert_eq!(partial.state.npc_order_lifecycles[0].order_id, order_id);
+    let code = &partial.state.setup.stocks[0].code;
+    assert_eq!(partial.state.markets[code].resting_orders()[0].qty, 100);
     let (filled, _) = project_npc_limit_against_player_ask(100);
-    assert!(filled.npc_order_lifecycles.is_empty());
-    assert!(filled.markets[code].resting_orders().is_empty());
+    assert!(filled.state.npc_order_lifecycles.is_empty());
+    assert!(filled.state.markets[code].resting_orders().is_empty());
 }
 
 #[test]
@@ -205,6 +222,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
+        .state
         .accounts
         .get_mut(&player)
         .unwrap()
@@ -219,7 +237,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     let (mut validator, mut stock_execution) = seal(&mut session);
     // 受理时报价：NPC 买单是本轮首个操作，受理瞬间的盘口即 sealing 后、玩家卖单进入前。
     let (last_at_acceptance, bid_at_acceptance, ask_at_acceptance) = {
-        let market = session.markets.get(&code).unwrap();
+        let market = session.state.markets.get(&code).unwrap();
         (market.last_price(), market.best_bid(), market.best_ask())
     };
     let placed = session.current_market_minute();
@@ -253,11 +271,11 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     chain
         .project_execution_round(&mut session, &mut round)
         .unwrap();
-    assert_eq!(session.npc_order_lifecycles.len(), 1);
-    let lifecycle = &session.npc_order_lifecycles[0];
+    assert_eq!(session.state.npc_order_lifecycles.len(), 1);
+    let lifecycle = &session.state.npc_order_lifecycles[0];
     assert_eq!(lifecycle.account, npc);
     assert_eq!(lifecycle.code, code);
-    let resting = &session.markets[&code].resting_orders_for(npc)[0];
+    let resting = &session.state.markets[&code].resting_orders_for(npc)[0];
     assert_eq!(lifecycle.order_id, resting.id);
     assert_eq!(lifecycle.placed_market_minute, placed);
     // 期望期限由测试独立提供的受理时报价输入推导，不复制生产输出。
@@ -274,7 +292,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         placed + acceptance_lifetime
     );
     assert_eq!(
-        session.markets[&code].best_ask(),
+        session.state.markets[&code].best_ask(),
         Some(Money::from_cents(1_008))
     );
     // 盘口移动后按当前簿重算得到不同期限：到期必须锚定受理时报价，而非投影后盘口。
@@ -289,6 +307,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
+        .state
         .accounts
         .get_mut(&player)
         .unwrap()
@@ -339,7 +358,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
         }
     ));
     let new_id = round.facts[0].allocated_order_id.unwrap();
-    let mut projected_market = session.markets[&code].clone();
+    let mut projected_market = session.state.markets[&code].clone();
     projected_market
         .apply_changed_orders(
             round.projections[&code]
@@ -365,7 +384,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
     chain
         .project_execution_round(&mut session, &mut round)
         .unwrap();
-    assert!(session.npc_order_lifecycles.is_empty());
+    assert!(session.state.npc_order_lifecycles.is_empty());
 }
 
 #[test]
@@ -403,6 +422,6 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
         matches!(error, StepFatal::InvariantViolation { description, .. }
         if description.contains("no acceptance quote"))
     );
-    assert!(chain.consumed.operations.is_empty());
-    assert!(session.npc_order_lifecycles.is_empty());
+    assert_eq!(chain.consumed.operation_count(), 0);
+    assert!(session.state.npc_order_lifecycles.is_empty());
 }

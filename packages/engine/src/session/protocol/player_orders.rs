@@ -28,7 +28,7 @@ pub struct PlayerWorkingOrder {
 impl crate::session::GameSession {
     pub fn player_working_orders(&self) -> Vec<PlayerWorkingOrder> {
         let mut orders = Vec::new();
-        for (code, auction_orders) in &self.auction_orders {
+        for (code, auction_orders) in &self.state.auction_orders {
             for order in auction_orders {
                 if order.owner != crate::AccountId(0) || order.qty == 0 {
                     continue;
@@ -49,7 +49,7 @@ impl crate::session::GameSession {
                 });
             }
         }
-        for (code, market) in &self.markets {
+        for (code, market) in &self.state.markets {
             for order in market.resting_orders_for(crate::AccountId(0)) {
                 if order.owner != crate::AccountId(0) || order.qty == 0 {
                     continue;

@@ -106,24 +106,24 @@ fn closed_day_setup_json() -> Value {
     setup
 }
 
-fn closed_day_save(setup: engine::SessionSetup, seed: u64) -> engine::SaveSlot {
-    let mut session = engine::session::protocol::ProtocolSession::new(setup, seed)
-        .expect("closed-day fixture session must be valid");
-    session
-        .end_civil_day_update()
-        .expect("closed day must settle without market ticks");
-    session
-        .save()
-        .expect("settled fixture must have a day-end save")
+fn closed_day_save(
+    setup: engine::SessionSetup,
+    seed: u64,
+) -> Result<engine::SaveSlot, engine::SessionError> {
+    let mut session = engine::session::protocol::ProtocolSession::new(setup, seed)?;
+    session.end_civil_day_update()?;
+    session.save()
 }
 
 #[tokio::test]
 async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
-    let manager = server::SessionManager::default();
-    let app = server::app_router_with_manager(manager.clone());
-    let (session_id, token) =
-        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
-    let handles = manager.lookup(&session_id).unwrap();
+    let fixture = ApiTestSession::new_settled(closed_day_setup_json(), 42)
+        .await
+        .unwrap();
+    let session_id = &fixture.session_id;
+    let token = &fixture.session_token;
+    let handles = &fixture.handles;
+    let app = fixture.app.clone();
     let baseline = handles.public_baseline().await.unwrap();
     let mut slot = handles.save(2, None).await.unwrap();
     let candidate = json!({ "seq": slot.snapshot.seq, "settledDate": "2030-01-05" });
@@ -174,42 +174,105 @@ async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
         saved.snapshot.accounts[&engine::AccountId(0)].cash,
         handles.snapshot().await.unwrap().accounts[&engine::AccountId(0)].cash
     );
+    fixture.shutdown().await;
 }
 
-async fn new_settled_session(
+/// Router、SessionManager 与会话凭据来自同一次 fixture 初始化。
+struct ApiTestSession {
     app: axum::Router,
-    manager: &server::SessionManager,
-    setup_json: Value,
-    seed: u64,
-) -> (String, String) {
-    let setup: engine::SessionSetup =
-        serde_json::from_value(setup_json.clone()).expect("fixture setup must deserialize");
-    let (status, body) = new_session(
-        app,
-        json!({ "setup": setup_json, "seed": seed.to_string() }),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "settled fixture actor must start: {body}"
-    );
-    let session_id = body["session_id"]
-        .as_str()
-        .expect("new session returns its id")
-        .to_owned();
-    let handles = manager
-        .lookup(&session_id)
-        .expect("fixture actor must be registered");
-    handles
-        .restore(closed_day_save(setup, seed))
-        .await
-        .expect("actor must accept its matching settled-day fixture");
-    let session_token = body["session_token"]
-        .as_str()
-        .expect("new session returns its session token")
-        .to_owned();
-    (session_id, session_token)
+    manager: server::SessionManager,
+    session_id: String,
+    session_token: String,
+    handles: std::sync::Arc<server::SessionHandles>,
+}
+
+impl ApiTestSession {
+    async fn new_settled(setup_json: Value, seed: u64) -> Result<Self, String> {
+        let setup: engine::SessionSetup = serde_json::from_value(setup_json.clone())
+            .map_err(|error| format!("ApiTestSession setup 解码失败：{error}"))?;
+        let manager = server::SessionManager::default();
+        let app = server::app_router_with_manager(manager.clone());
+        let (status, body) = new_session(
+            app.clone(),
+            json!({ "setup": setup_json, "seed": seed.to_string() }),
+        )
+        .await;
+        if status != StatusCode::OK {
+            return Err(format!("ApiTestSession 创建失败（{status}）：{body}"));
+        }
+        let session_id = body["session_id"]
+            .as_str()
+            .ok_or_else(|| format!("ApiTestSession 创建响应缺少 session_id：{body}"))?
+            .to_owned();
+        let handles = manager
+            .lookup(&session_id)
+            .ok_or_else(|| format!("ApiTestSession 注册表中找不到 session_id {session_id}"))?;
+        let session_token = body["session_token"]
+            .as_str()
+            .ok_or_else(|| format!("ApiTestSession 创建响应缺少 session_token：{body}"))?
+            .to_owned();
+        let fixture = Self {
+            app,
+            manager,
+            session_id,
+            session_token,
+            handles,
+        };
+        let slot = match closed_day_save(setup, seed) {
+            Ok(slot) => slot,
+            Err(error) => {
+                let reason = format!("ApiTestSession 日终 fixture 构造失败：{error}");
+                fixture.shutdown().await;
+                return Err(reason);
+            }
+        };
+        if let Err(error) = fixture.handles.restore(slot).await {
+            let reason = format!("ApiTestSession 日终恢复失败：{error}");
+            fixture.shutdown().await;
+            return Err(reason);
+        }
+        Ok(fixture)
+    }
+
+    async fn shutdown(self) {
+        self.manager
+            .remove(&self.session_id)
+            .expect("fixture session 应仍在注册表中");
+        self.handles
+            .shutdown()
+            .await
+            .expect("fixture actor 应正常停止");
+    }
+}
+
+#[tokio::test]
+async fn settled_api_fixture_reports_creation_failure_with_context() {
+    let mut invalid = closed_day_setup_json();
+    invalid["stocks"] = json!([]);
+    let error = match ApiTestSession::new_settled(invalid, 42).await {
+        Ok(fixture) => {
+            fixture.shutdown().await;
+            panic!("非法 setup 不应创建 fixture")
+        }
+        Err(error) => error,
+    };
+    assert!(error.contains("ApiTestSession 创建失败"));
+    assert!(error.contains("400"));
+    assert!(error.contains("INVALID_SETUP"));
+}
+
+#[tokio::test]
+async fn settled_api_fixture_reports_unsettled_day_with_context() {
+    let mut setup = closed_day_setup_json();
+    setup["start_date"] = json!("2030-01-02");
+    let error = match ApiTestSession::new_settled(setup, 42).await {
+        Ok(fixture) => {
+            fixture.shutdown().await;
+            panic!("日内 fixture 不应冒充日终档")
+        }
+        Err(error) => error,
+    };
+    assert!(error.contains("ApiTestSession 日终 fixture 构造失败"));
 }
 
 #[cfg(feature = "host-parity")]
@@ -363,13 +426,14 @@ async fn new_session_rejects_invalid_setup_with_400() {
 
 #[tokio::test]
 async fn legal_history_window_can_be_created_saved_and_restored() {
-    let manager = server::SessionManager::default();
-    let app = server::app_router_with_manager(manager.clone());
     let mut setup = closed_day_setup_json();
     // This is a history window, not a market-size quota. One stock and four NPCs
     // exercise the real routes without constructing a large world.
     setup["history_len"] = json!(10_001);
-    let (id, token) = new_settled_session(app.clone(), &manager, setup, 42).await;
+    let fixture = ApiTestSession::new_settled(setup, 42).await.unwrap();
+    let id = &fixture.session_id;
+    let token = &fixture.session_token;
+    let app = fixture.app.clone();
 
     let response = app
         .clone()
@@ -406,10 +470,11 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
         .expect("restore request must return");
     let (status, restored) = response_json(response).await;
     assert_eq!(status, StatusCode::OK, "own save must restore: {restored}");
-    let handles = manager.lookup(&id).expect("same session remains available");
+    let handles = &fixture.handles;
     let saved_again = serde_json::to_value(handles.save(3, None).await.expect("restored save"))
         .expect("save serializes");
     assert_eq!(saved_again, saved, "restore must preserve the whole market");
+    fixture.shutdown().await;
 }
 
 #[tokio::test]
@@ -758,11 +823,13 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
 
 #[tokio::test]
 async fn load_rejects_corrupt_body_before_actor_replacement() {
-    let manager = server::SessionManager::default();
-    let app = server::app_router_with_manager(manager.clone());
-    let (session_id, token) =
-        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
-    let handles = manager.lookup(&session_id).expect("session must exist");
+    let fixture = ApiTestSession::new_settled(closed_day_setup_json(), 42)
+        .await
+        .unwrap();
+    let session_id = &fixture.session_id;
+    let token = &fixture.session_token;
+    let handles = &fixture.handles;
+    let app = fixture.app.clone();
     let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
 
@@ -794,16 +861,19 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
         baseline_before,
         "rejected load must preserve the live actor state and timeline, not only its archive"
     );
+    fixture.shutdown().await;
 }
 
 #[tokio::test]
 async fn load_rejects_excessive_nesting_before_actor_replacement() {
     // Given: a live actor and a restore envelope with depth beyond the parser gate.
-    let manager = server::SessionManager::default();
-    let app = server::app_router_with_manager(manager.clone());
-    let (session_id, token) =
-        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
-    let handles = manager.lookup(&session_id).expect("session must exist");
+    let fixture = ApiTestSession::new_settled(closed_day_setup_json(), 42)
+        .await
+        .unwrap();
+    let session_id = &fixture.session_id;
+    let token = &fixture.session_token;
+    let handles = &fixture.handles;
+    let app = fixture.app.clone();
     let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
     let nested = format!("{}0{}", "[".repeat(65), "]".repeat(65));
@@ -836,6 +906,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
         baseline_before,
         "rejected load must preserve the live actor state and timeline, not only its archive"
     );
+    fixture.shutdown().await;
 }
 
 // --- POST /api/intent ---
@@ -1050,7 +1121,7 @@ async fn excessive_numeric_speed_is_rejected() {
 #[test]
 fn large_pending_player_queue_survives_engine_save_restore_exactly() {
     let setup: engine::SessionSetup = serde_json::from_value(closed_day_setup_json()).unwrap();
-    let mut slot = closed_day_save(setup, 42);
+    let mut slot = closed_day_save(setup, 42).expect("日终 fixture 应合法");
     const REQUEST_COUNT: usize = 5_001;
     slot.pending_player = (0..REQUEST_COUNT)
         .map(|_| {
@@ -1087,17 +1158,12 @@ fn large_pending_player_queue_survives_engine_save_restore_exactly() {
 
 #[tokio::test]
 async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
-    use server::{app_router_with_manager, SessionManager};
-    let manager = SessionManager::default();
-    let app = app_router_with_manager(manager.clone());
-    let setup: engine::SessionSetup = serde_json::from_value(closed_day_setup_json()).unwrap();
-    let id = manager.new_session(setup.clone(), 42).unwrap();
-    let handles = manager.lookup(&id).unwrap();
-    let clean_slot = closed_day_save(setup, 42);
-    handles
-        .restore(clean_slot)
+    let fixture = ApiTestSession::new_settled(closed_day_setup_json(), 42)
         .await
-        .expect("actor accepts its settled public fixture");
+        .unwrap();
+    let id = &fixture.session_id;
+    let handles = &fixture.handles;
+    let app = fixture.app.clone();
     let before = serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
 
@@ -1148,6 +1214,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
         baseline_before,
         "rejected load must preserve the live actor state and timeline, not only its archive"
     );
+    fixture.shutdown().await;
 }
 
 #[tokio::test]

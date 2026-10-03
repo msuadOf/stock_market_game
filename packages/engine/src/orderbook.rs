@@ -8,7 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
+mod book_state;
+use book_state::BookState;
 mod filled_orders;
+mod persistent_index;
+#[cfg(test)]
+mod state_contract_tests;
 use filled_orders::FilledOrders;
 mod resting_index;
 use resting_index::{RestingKey, RestingOrderIndex};
@@ -171,6 +176,44 @@ pub struct Order {
     pub seq: u64,
 }
 
+impl Order {
+    /// 只校验成交进度；身份、价格、tick 和 FIFO 仍由撮合 owner 判断。
+    pub fn validate_progress(&self) -> Result<(), OrderError> {
+        if self.qty == 0 {
+            return Err(OrderError::InvalidQty(self.qty));
+        }
+        if self.filled_value.cents() < 0 {
+            return Err(OrderError::InvalidFilledValue(self.filled_value));
+        }
+        if self
+            .filled_qty
+            .checked_add(self.qty)
+            .is_none_or(|total| total != self.original_qty)
+        {
+            return Err(self.quantity_progress_error());
+        }
+        Ok(())
+    }
+
+    fn quantity_progress_error(&self) -> OrderError {
+        OrderError::InvalidQuantityProgress {
+            original_qty: self.original_qty,
+            filled_qty: self.filled_qty,
+            remaining_qty: self.qty,
+        }
+    }
+
+    fn filled_value_after(&self, fill_value: Money) -> Result<Money, OrderError> {
+        Ok(self.filled_value.add(fill_value)?)
+    }
+
+    fn filled_qty_after(&self, fill_qty: u32) -> Result<u32, OrderError> {
+        self.filled_qty
+            .checked_add(fill_qty)
+            .ok_or_else(|| self.quantity_progress_error())
+    }
+}
+
 /// 一笔成交。成交价取被动方（maker）的价格。
 ///
 /// 派生 `Eq`+`PartialEq` 便于测试整体比较与去重；可序列化供成交历史/存档。
@@ -238,13 +281,7 @@ pub(crate) struct OrderBookDelta {
 /// （如 `Result::unwrap_err` 要求 `T: Debug`）与诊断输出。
 #[derive(Clone, Debug)]
 pub struct OrderBook {
-    /// 买盘：key=(Reverse(price), seq)，value=Order。
-    bids: BTreeMap<(Reverse<Money>, u64), Order>,
-    /// 卖盘：key=(price, seq)，value=Order。
-    asks: BTreeMap<(Money, u64), Order>,
-    /// Derived lookup only. Price and time keys above alone determine priority.
-    live_by_id: RestingOrderIndex,
-    filled_orders: FilledOrders,
+    state: BookState,
     /// 下一个分配的时间序（同价位 FIFO 排序键）。
     next_seq: u64,
     /// 价格最小变动单位（必须 > 0）。
@@ -256,9 +293,9 @@ impl OrderBook {
         (
             &self.tick,
             &self.next_seq,
-            self.filled_orders.entries(),
-            self.bids.iter().collect::<Vec<_>>(),
-            self.asks.iter().collect::<Vec<_>>(),
+            self.state.filled_orders().entries(),
+            self.state.bids().iter().collect::<Vec<_>>(),
+            self.state.asks().iter().collect::<Vec<_>>(),
         )
     }
     /// 构造订单簿。tick 必须 > 0（价格最小变动为正才有意义）；否则返回 [`OrderError::InvalidTick`]。
@@ -269,10 +306,7 @@ impl OrderBook {
             return Err(OrderError::InvalidTick { tick });
         }
         Ok(OrderBook {
-            bids: BTreeMap::new(),
-            asks: BTreeMap::new(),
-            live_by_id: RestingOrderIndex::default(),
-            filled_orders: FilledOrders::default(),
+            state: BookState::default(),
             next_seq: 0,
             tick,
         })
@@ -282,14 +316,17 @@ impl OrderBook {
     ///
     /// 买盘 key 为 `(Reverse(price), seq)`，`first_key_value` 取价最高（Reverse 反转后最小）者。
     pub fn best_bid(&self) -> Option<Money> {
-        self.bids.first_key_value().map(|((Reverse(p), _), _)| *p)
+        self.state
+            .bids()
+            .first_key_value()
+            .map(|((Reverse(p), _), _)| *p)
     }
 
     /// 卖盘最优价（最低卖价）。空簿返回 None。
     ///
     /// 卖盘 key 为 `(price, seq)`，`first_key_value` 取价最低者。
     pub fn best_ask(&self) -> Option<Money> {
-        self.asks.first_key_value().map(|((p, _), _)| *p)
+        self.state.asks().first_key_value().map(|((p, _), _)| *p)
     }
 
     /// 撮合新单。先校验数量/价格，再与对手盘逐档撮合；剩余挂入己方簿。
@@ -311,27 +348,12 @@ impl OrderBook {
         mut order: Order,
         record_makers: bool,
     ) -> Result<MatchResult, OrderError> {
-        if self.filled_orders.owner(order.id).is_some() || self.live_by_id.get(order.id).is_some() {
+        if self.state.filled_orders().owner(order.id).is_some()
+            || self.state.live_by_id().get(order.id).is_some()
+        {
             return Err(OrderError::DuplicateOrderId(order.id));
         }
-        // 校验数量：必须 > 0（0 股无意义）。
-        if order.qty == 0 {
-            return Err(OrderError::InvalidQty(order.qty));
-        }
-        if order.filled_value.cents() < 0 {
-            return Err(OrderError::InvalidFilledValue(order.filled_value));
-        }
-        if order
-            .filled_qty
-            .checked_add(order.qty)
-            .is_none_or(|total| total != order.original_qty)
-        {
-            return Err(OrderError::InvalidQuantityProgress {
-                original_qty: order.original_qty,
-                filled_qty: order.filled_qty,
-                remaining_qty: order.qty,
-            });
-        }
+        order.validate_progress()?;
         // 校验价格：正数 + tick 整数倍。A 股委托价不能为零，价格用整数分取模，无 f64。
         if order.price.cents() <= 0 || order.price.cents() % self.tick.cents() != 0 {
             return Err(OrderError::InvalidPrice {
@@ -359,12 +381,14 @@ impl OrderBook {
             // 是否交叉？买单：买价 >= 最优卖价；卖单：卖价 <= 最优买价（统一为「新单价 >= 对手最优价」）。
             let crossed = match side {
                 Side::Buy => self
-                    .asks
+                    .state
+                    .asks()
                     .first_key_value()
                     .map(|((ask_p, _), _)| order.price >= *ask_p)
                     .unwrap_or(false),
                 Side::Sell => self
-                    .bids
+                    .state
+                    .bids()
                     .first_key_value()
                     .map(|((Reverse(bid_p), _), _)| order.price <= *bid_p)
                     .unwrap_or(false),
@@ -376,14 +400,22 @@ impl OrderBook {
             // 取对手最优档（maker），成交价取 maker.price。
             let (maker, fill_price) = match side {
                 Side::Buy => {
-                    let entry = self.asks.first_entry().expect("crossed => non-empty");
-                    let m = entry.get().clone();
+                    let entry = self
+                        .state
+                        .asks()
+                        .first_key_value()
+                        .expect("crossed => non-empty");
+                    let m = entry.1.clone();
                     let p = m.price;
                     (m, p)
                 }
                 Side::Sell => {
-                    let entry = self.bids.first_entry().expect("crossed => non-empty");
-                    let m = entry.get().clone();
+                    let entry = self
+                        .state
+                        .bids()
+                        .first_key_value()
+                        .expect("crossed => non-empty");
+                    let m = entry.1.clone();
                     let p = m.price;
                     (m, p)
                 }
@@ -396,60 +428,14 @@ impl OrderBook {
             let fill_value = fill_price.mul_shares(fill_qty)?;
             let maker_filled_value_before = maker.filled_value;
             let taker_filled_value_before = order.filled_value;
-            let maker_filled_value_after = maker.filled_value.add(fill_value)?;
-            order.filled_value = order.filled_value.add(fill_value)?;
-            order.filled_qty = order.filled_qty.checked_add(fill_qty).ok_or(
-                OrderError::InvalidQuantityProgress {
-                    original_qty: order.original_qty,
-                    filled_qty: order.filled_qty,
-                    remaining_qty: order.qty,
-                },
-            )?;
+            let maker_filled_value_after = maker.filled_value_after(fill_value)?;
+            order.filled_value = order.filled_value_after(fill_value)?;
+            order.filled_qty = order.filled_qty_after(fill_qty)?;
             order.qty -= fill_qty;
 
             // 更新对手档：maker 清零则 pop_first，否则按 (price,seq) 定位原档扣减。
-            match side {
-                Side::Buy => {
-                    if maker.qty == fill_qty {
-                        self.asks.pop_first();
-                        self.live_by_id.remove(maker.id);
-                        self.filled_orders.insert(maker.id, maker.owner)?;
-                    } else {
-                        let key = (maker.price, maker.seq);
-                        if let Some(m) = self.asks.get_mut(&key) {
-                            m.qty -= fill_qty;
-                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
-                                OrderError::InvalidQuantityProgress {
-                                    original_qty: m.original_qty,
-                                    filled_qty: m.filled_qty,
-                                    remaining_qty: m.qty,
-                                },
-                            )?;
-                            m.filled_value = maker_filled_value_after;
-                        }
-                    }
-                }
-                Side::Sell => {
-                    if maker.qty == fill_qty {
-                        self.bids.pop_first();
-                        self.live_by_id.remove(maker.id);
-                        self.filled_orders.insert(maker.id, maker.owner)?;
-                    } else {
-                        let key = (Reverse(maker.price), maker.seq);
-                        if let Some(m) = self.bids.get_mut(&key) {
-                            m.qty -= fill_qty;
-                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
-                                OrderError::InvalidQuantityProgress {
-                                    original_qty: m.original_qty,
-                                    filled_qty: m.filled_qty,
-                                    remaining_qty: m.qty,
-                                },
-                            )?;
-                            m.filled_value = maker_filled_value_after;
-                        }
-                    }
-                }
-            }
+            self.state
+                .apply_maker_fill(side, &maker, fill_qty, maker_filled_value_after)?;
 
             trades.push(Trade {
                 price: fill_price,
@@ -465,7 +451,7 @@ impl OrderBook {
 
         // 剩余量 > 0 才分配时间序挂入己方簿；否则 resting=None（全成交）。
         if order.qty == 0 {
-            self.filled_orders.insert(order.id, order.owner)?;
+            self.state.record_filled(order.id, order.owner)?;
         }
         let resting = if order.qty > 0 {
             let seq = self.next_seq;
@@ -492,34 +478,7 @@ impl OrderBook {
     /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
     /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
     fn insert_resting(&mut self, order: Order) -> Result<(), OrderError> {
-        if self.live_by_id.get(order.id).is_some() || self.filled_orders.owner(order.id).is_some() {
-            return Err(OrderError::DuplicateOrderId(order.id));
-        }
-        let id = order.id;
-        let key = match order.side {
-            Side::Buy => {
-                let key = (Reverse(order.price), order.seq);
-                if self.bids.contains_key(&key) {
-                    return Err(OrderError::ProjectionMismatch {
-                        reason: "bid price-time key already exists".to_owned(),
-                    });
-                }
-                self.bids.insert(key, order);
-                RestingKey::Bid(key.0, key.1)
-            }
-            Side::Sell => {
-                let key = (order.price, order.seq);
-                if self.asks.contains_key(&key) {
-                    return Err(OrderError::ProjectionMismatch {
-                        reason: "ask price-time key already exists".to_owned(),
-                    });
-                }
-                self.asks.insert(key, order);
-                RestingKey::Ask(key.0, key.1)
-            }
-        };
-        self.live_by_id.insert(id, key)?;
-        Ok(())
+        self.state.insert_resting(order)
     }
 
     /// 按 id 撤单，返回被撤订单（供上层回写状态）。id 不存在 → [`OrderError::OrderNotFound`]。
@@ -528,50 +487,33 @@ impl OrderBook {
     ///
     /// 订单身份索引只用于定位，实际价格与时间优先级仍由买卖档排序键决定。
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
-        if let Some(key) = self.live_by_id.remove(id) {
-            let order = match key {
-                RestingKey::Bid(price, seq) => self.bids.remove(&(price, seq)),
-                RestingKey::Ask(price, seq) => self.asks.remove(&(price, seq)),
-            };
-            return order.ok_or_else(|| OrderError::ProjectionMismatch {
-                reason: format!("live order index points at an absent order: {id:?}"),
-            });
-        }
-        if self.filled_orders.owner(id).is_some() {
-            return Err(OrderError::OrderAlreadyFilled(id));
-        }
-        Err(OrderError::OrderNotFound(id))
+        self.state.cancel(id)
     }
 
     /// Returns the owner of an order that has no remaining shares after a fill.
     pub fn filled_order_owner(&self, id: OrderId) -> Option<AccountId> {
-        self.filled_orders.owner(id)
+        self.state.filled_orders().owner(id)
     }
 
     /// The durable status index is saved separately from still resting orders.
     pub fn filled_orders(&self) -> Vec<(OrderId, AccountId)> {
-        self.filled_orders.entries()
+        self.state.filled_orders().entries()
     }
 
     pub fn restore_filled_orders(
         &mut self,
         entries: impl IntoIterator<Item = (OrderId, AccountId)>,
     ) -> Result<(), OrderError> {
-        for (id, owner) in entries {
-            if self.live_by_id.get(id).is_some() {
-                return Err(OrderError::DuplicateOrderId(id));
-            }
-            self.filled_orders.insert(id, owner)?;
-        }
-        Ok(())
+        self.state.restore_filled_orders(entries)
     }
 
     /// 返回指定账户当前仍在订单簿中的全部未成交委托快照。
     /// 上层据此计算冻结资金/股份；返回克隆避免暴露内部排序容器。
     pub fn resting_orders_for(&self, owner: AccountId) -> Vec<Order> {
-        self.bids
+        self.state
+            .bids()
             .values()
-            .chain(self.asks.values())
+            .chain(self.state.asks().values())
             .filter(|order| order.owner == owner)
             .cloned()
             .collect()
@@ -583,14 +525,11 @@ impl OrderBook {
     }
 
     pub(crate) fn resting_order_refs(&self) -> impl Iterator<Item = &Order> {
-        self.bids.values().chain(self.asks.values())
+        self.state.bids().values().chain(self.state.asks().values())
     }
 
     pub(crate) fn resting_order_by_id(&self, id: OrderId) -> Option<&Order> {
-        match self.live_by_id.get(id)? {
-            RestingKey::Bid(price, seq) => self.bids.get(&(price, seq)),
-            RestingKey::Ask(price, seq) => self.asks.get(&(price, seq)),
-        }
+        self.state.resting_order_by_id(id)
     }
 
     pub(crate) fn next_sequence(&self) -> u64 {
@@ -643,19 +582,7 @@ impl OrderBook {
         expected_next_seq: u64,
         originals: BTreeMap<OrderId, Option<Order>>,
     ) -> OrderBookDelta {
-        let changes = originals
-            .into_iter()
-            .filter_map(|(id, before)| {
-                let after = self.resting_order_by_id(id).cloned();
-                let filled_owner = self.filled_orders.owner(id);
-                (before != after || filled_owner.is_some()).then_some(OrderBookChange {
-                    id,
-                    before,
-                    after,
-                    filled_owner,
-                })
-            })
-            .collect();
+        let changes = self.state.changed_orders_since(originals);
         OrderBookDelta {
             expected_next_seq,
             next_seq: self.next_seq,
@@ -669,39 +596,17 @@ impl OrderBook {
                 reason: "candidate book time sequence differs from stock worker".to_owned(),
             });
         }
-        for change in &delta.changes {
-            if self.resting_order_by_id(change.id) != change.before.as_ref()
-                || (change.before.is_none() && self.filled_orders.owner(change.id).is_some())
-                || change
-                    .after
-                    .as_ref()
-                    .is_some_and(|order| order.id != change.id)
-                || (change.after.is_some() && change.filled_owner.is_some())
-            {
-                return Err(OrderError::ProjectionMismatch {
-                    reason: format!("candidate order differs from stock worker: {:?}", change.id),
-                });
-            }
-        }
-        for change in delta.changes {
-            if change.before.is_some() {
-                self.cancel(change.id)?;
-            }
-            if let Some(after) = change.after {
-                self.insert_resting(after)?;
-            } else if let Some(owner) = change.filled_owner {
-                self.filled_orders.insert(change.id, owner)?;
-            }
-        }
+        self.state.apply_changes(delta.changes)?;
         self.next_seq = delta.next_seq;
         Ok(())
     }
 
     fn resting_orders_matching(&self, mut matches: impl FnMut(&Order) -> bool) -> Vec<Order> {
         let mut orders: Vec<Order> = self
-            .bids
+            .state
+            .bids()
             .values()
-            .chain(self.asks.values())
+            .chain(self.state.asks().values())
             .filter(|order| matches(order))
             .cloned()
             .collect();
@@ -716,14 +621,12 @@ impl OrderBook {
     }
 
     pub fn resting_order_count(&self) -> usize {
-        self.bids.len() + self.asks.len()
+        self.state.bids().len() + self.state.asks().len()
     }
 
     /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
     pub fn clear(&mut self) {
-        self.bids.clear();
-        self.asks.clear();
-        self.live_by_id.clear();
+        self.state.clear_resting();
     }
 
     /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。
@@ -732,12 +635,12 @@ impl OrderBook {
     /// 价序天然由 BTreeMap 给出——买盘 key 含 `Reverse(price)`，`values()` 遍历即「价高优先、
     /// 同价先挂优先」，故只需把相邻同价累加。
     pub fn bid_depth(&self) -> Vec<(Money, u64)> {
-        self.aggregate(&self.bids)
+        self.aggregate(self.state.bids())
     }
 
     /// 买盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
     pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
-        self.aggregate_limited(&self.bids, max_levels)
+        self.aggregate_limited(self.state.bids(), max_levels)
     }
 
     /// 卖盘深度：按价低→高，每个价位聚合所有挂单的总数量。
@@ -746,12 +649,12 @@ impl OrderBook {
     /// 价序天然由 BTreeMap 给出——卖盘 key 为 `(price, seq)`，`values()` 遍历即「价低优先、
     /// 同价先挂优先」，故只需把相邻同价累加。
     pub fn ask_depth(&self) -> Vec<(Money, u64)> {
-        self.aggregate(&self.asks)
+        self.aggregate(self.state.asks())
     }
 
     /// 卖盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
     pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
-        self.aggregate_limited(&self.asks, max_levels)
+        self.aggregate_limited(self.state.asks(), max_levels)
     }
 
     /// 将一个盘口的挂单按相邻同价聚合为 (价位, 累计量) 序列。

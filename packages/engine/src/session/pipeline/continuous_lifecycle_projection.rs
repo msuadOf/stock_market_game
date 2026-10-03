@@ -1,4 +1,4 @@
-//! Continuous Continuous lifecycle diagnostics projected from typed P3/P4/ReceiptAggregation facts.
+//! 根据 typed P3/P4/ReceiptAggregation 事实投影 Continuous 生命周期诊断。
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
@@ -35,7 +35,7 @@ pub(super) fn project_continuous_retail_lifecycle(
                 "continuous P4 facts contain a duplicate identity",
             ));
         }
-        if !consumed.operations.contains(&identity) {
+        if !consumed.contains_operation(&identity.0, identity.1) {
             return Err(invariant(
                 "continuous final projection received an operation not consumed by the adaptive chain",
             ));
@@ -55,7 +55,7 @@ pub(super) fn project_continuous_retail_lifecycle(
     let mut fills_by_request = BTreeMap::<u64, Vec<&EnvelopeReceipt>>::new();
     for receipt in receipts {
         if let ReceiptSource::SealedIntent(sealed_index) = receipt.local_key.source() {
-            if !consumed.receipts.contains(&receipt.local_key) {
+            if !consumed.contains_receipt(&receipt.local_key) {
                 return Err(invariant(
                     "continuous final projection received a receipt not consumed by the adaptive chain",
                 ));
@@ -98,6 +98,7 @@ pub(super) fn project_continuous_retail_lifecycle(
                             invariant("continuous retail fill has no positive quantity")
                         })?;
                     if session
+                        .state
                         .retail_experience
                         .contains_key(&receipt.envelope.account)
                     {
@@ -119,155 +120,178 @@ pub(super) fn project_continuous_retail_lifecycle(
         return Err(invariant("continuous P4 fact has no P3 result"));
     }
     session
+        .state
         .last_retail_order_events
         .extend(order_lifecycle_events(events, fill_quantities)?);
     Ok(())
 }
 
 fn order_lifecycle_events(
-    mut events: Vec<RetailOrderDiagnosticEvent>,
-    mut fill_quantities: BTreeMap<usize, (u32, u32)>,
+    events: Vec<RetailOrderDiagnosticEvent>,
+    fill_quantities: BTreeMap<usize, (u32, u32)>,
 ) -> Result<Vec<RetailOrderDiagnosticEvent>, StepFatal> {
-    let mut fills_by_order =
-        BTreeMap::<OrderId, Vec<(u32, u32, RetailOrderDiagnosticEvent)>>::new();
-    for (position, event) in events.iter().enumerate() {
-        if let RetailOrderDiagnosticEvent::Filled { order_id, .. } = event {
-            let (before, after) = fill_quantities.remove(&position).ok_or_else(|| {
-                invariant("continuous retail fill has no source quantity transition")
-            })?;
-            fills_by_order
-                .entry(*order_id)
-                .or_default()
-                .push((before, after, event.clone()));
-        }
-    }
-    if !fill_quantities.is_empty() {
-        return Err(invariant(
-            "continuous retail quantity transition has no fill event",
-        ));
-    }
-    let remaining_fills = fills_by_order
-        .iter()
-        .map(|(order_id, fills)| (*order_id, fills.len()))
-        .collect::<BTreeMap<_, _>>();
-    let mut sorted_fills = fills_by_order
-        .into_iter()
-        .map(|(order_id, mut fills)| -> Result<_, StepFatal> {
-            fills.sort_by_key(|fill| std::cmp::Reverse(fill.0));
-            if fills.windows(2).any(|pair| pair[0].1 != pair[1].0) {
-                return Err(invariant("continuous retail fill quantity chain is broken"));
-            }
-            Ok((
-                order_id,
-                fills
-                    .into_iter()
-                    .map(|(_, _, event)| event)
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-    for event in &mut events {
-        if let RetailOrderDiagnosticEvent::Filled { order_id, .. } = event {
-            *event = sorted_fills
-                .get_mut(order_id)
-                .and_then(Iterator::next)
-                .ok_or_else(|| invariant("continuous retail fill ordering lost a receipt"))?;
-        }
-    }
+    ContinuousLifecycleEventBatch::from_events(events, fill_quantities)?.finish()
+}
 
-    let mut submitted_this_tick = BTreeSet::<OrderId>::new();
-    for event in &events {
-        if let RetailOrderDiagnosticEvent::Submitted { order_id, .. } = event {
-            if !submitted_this_tick.insert(*order_id) {
-                return Err(invariant(
-                    "continuous retail lifecycle submits an order twice",
-                ));
+/// 仅拥有本批诊断的同订单依赖，全部校验成功后才交给 Session。
+struct ContinuousLifecycleEventBatch {
+    submitted_this_tick: BTreeSet<OrderId>,
+    published: BTreeSet<OrderId>,
+    remaining_fills: BTreeMap<OrderId, usize>,
+    pending_fills: BTreeMap<OrderId, Vec<RetailOrderDiagnosticEvent>>,
+    pending_terminal: BTreeMap<OrderId, RetailOrderDiagnosticEvent>,
+    ordered: Vec<RetailOrderDiagnosticEvent>,
+}
+
+impl ContinuousLifecycleEventBatch {
+    fn from_events(
+        mut events: Vec<RetailOrderDiagnosticEvent>,
+        mut fill_quantities: BTreeMap<usize, (u32, u32)>,
+    ) -> Result<Self, StepFatal> {
+        let mut fills_by_order =
+            BTreeMap::<OrderId, Vec<(u32, u32, RetailOrderDiagnosticEvent)>>::new();
+        for (position, event) in events.iter().enumerate() {
+            if let RetailOrderDiagnosticEvent::Filled { order_id, .. } = event {
+                let (before, after) = fill_quantities.remove(&position).ok_or_else(|| {
+                    invariant("continuous retail fill has no source quantity transition")
+                })?;
+                fills_by_order
+                    .entry(*order_id)
+                    .or_default()
+                    .push((before, after, event.clone()));
             }
         }
+        if !fill_quantities.is_empty() {
+            return Err(invariant(
+                "continuous retail quantity transition has no fill event",
+            ));
+        }
+        let remaining_fills = fills_by_order
+            .iter()
+            .map(|(order_id, fills)| (*order_id, fills.len()))
+            .collect::<BTreeMap<_, _>>();
+        let mut sorted_fills = fills_by_order
+            .into_iter()
+            .map(|(order_id, mut fills)| -> Result<_, StepFatal> {
+                fills.sort_by_key(|fill| std::cmp::Reverse(fill.0));
+                if fills.windows(2).any(|pair| pair[0].1 != pair[1].0) {
+                    return Err(invariant("continuous retail fill quantity chain is broken"));
+                }
+                Ok((
+                    order_id,
+                    fills
+                        .into_iter()
+                        .map(|(_, _, event)| event)
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        for event in &mut events {
+            if let RetailOrderDiagnosticEvent::Filled { order_id, .. } = event {
+                *event = sorted_fills
+                    .get_mut(order_id)
+                    .and_then(Iterator::next)
+                    .ok_or_else(|| invariant("continuous retail fill ordering lost a receipt"))?;
+            }
+        }
+
+        let mut submitted_this_tick = BTreeSet::<OrderId>::new();
+        for event in &events {
+            if let RetailOrderDiagnosticEvent::Submitted { order_id, .. } = event {
+                if !submitted_this_tick.insert(*order_id) {
+                    return Err(invariant(
+                        "continuous retail lifecycle submits an order twice",
+                    ));
+                }
+            }
+        }
+
+        let mut batch = Self {
+            submitted_this_tick,
+            published: BTreeSet::new(),
+            remaining_fills,
+            pending_fills: BTreeMap::new(),
+            pending_terminal: BTreeMap::new(),
+            ordered: Vec::with_capacity(events.len()),
+        };
+        for event in events {
+            batch.emit_event(event)?;
+        }
+        Ok(batch)
     }
 
-    let mut published = BTreeSet::<OrderId>::new();
-    let mut remaining_fills = remaining_fills;
-    let mut pending_fills = BTreeMap::<OrderId, Vec<RetailOrderDiagnosticEvent>>::new();
-    let mut pending_terminal = BTreeMap::<OrderId, RetailOrderDiagnosticEvent>::new();
-    let mut ordered = Vec::with_capacity(events.len());
-    for event in events {
+    fn emit_event(&mut self, event: RetailOrderDiagnosticEvent) -> Result<(), StepFatal> {
         match &event {
             RetailOrderDiagnosticEvent::Filled { order_id, .. }
-                if submitted_this_tick.contains(order_id) && !published.contains(order_id) =>
+                if self.submitted_this_tick.contains(order_id)
+                    && !self.published.contains(order_id) =>
             {
-                pending_fills.entry(*order_id).or_default().push(event);
+                self.pending_fills.entry(*order_id).or_default().push(event);
             }
             RetailOrderDiagnosticEvent::Submitted { order_id, .. } => {
                 let order_id = *order_id;
-                published.insert(order_id);
-                ordered.push(event);
-                if let Some(fills) = pending_fills.remove(&order_id) {
+                self.published.insert(order_id);
+                self.ordered.push(event);
+                if let Some(fills) = self.pending_fills.remove(&order_id) {
                     for fill in fills {
-                        push_fill_and_terminal(
-                            &mut ordered,
-                            &mut remaining_fills,
-                            &mut pending_terminal,
-                            order_id,
-                            fill,
-                        )?;
+                        self.emit_fill(order_id, fill)?;
                     }
                 }
-                if remaining_fills.get(&order_id).copied().unwrap_or(0) == 0 {
-                    if let Some(terminal) = pending_terminal.remove(&order_id) {
-                        ordered.push(terminal);
+                if self.remaining_fills.get(&order_id).copied().unwrap_or(0) == 0 {
+                    if let Some(terminal) = self.pending_terminal.remove(&order_id) {
+                        self.ordered.push(terminal);
                     }
                 }
             }
-            RetailOrderDiagnosticEvent::Filled { order_id, .. } => push_fill_and_terminal(
-                &mut ordered,
-                &mut remaining_fills,
-                &mut pending_terminal,
-                *order_id,
-                event,
-            )?,
+            RetailOrderDiagnosticEvent::Filled { order_id, .. } => {
+                self.emit_fill(*order_id, event)?
+            }
             RetailOrderDiagnosticEvent::Canceled { order_id, .. }
             | RetailOrderDiagnosticEvent::Aborted { order_id, .. }
-                if remaining_fills.get(order_id).copied().unwrap_or(0) > 0
-                    || (submitted_this_tick.contains(order_id)
-                        && !published.contains(order_id)) =>
+                if self.remaining_fills.get(order_id).copied().unwrap_or(0) > 0
+                    || (self.submitted_this_tick.contains(order_id)
+                        && !self.published.contains(order_id)) =>
             {
-                if pending_terminal.insert(*order_id, event).is_some() {
+                if self.pending_terminal.insert(*order_id, event).is_some() {
                     return Err(invariant("continuous retail order has two terminal events"));
                 }
             }
-            _ => ordered.push(event),
+            _ => self.ordered.push(event),
         }
-    }
-    if !pending_fills.is_empty() || !pending_terminal.is_empty() {
-        return Err(invariant(
-            "continuous retail order lifecycle has unresolved local dependencies",
-        ));
-    }
-    Ok(ordered)
-}
 
-fn push_fill_and_terminal(
-    ordered: &mut Vec<RetailOrderDiagnosticEvent>,
-    remaining_fills: &mut BTreeMap<OrderId, usize>,
-    pending_terminal: &mut BTreeMap<OrderId, RetailOrderDiagnosticEvent>,
-    order_id: OrderId,
-    fill: RetailOrderDiagnosticEvent,
-) -> Result<(), StepFatal> {
-    let remaining = remaining_fills
-        .get_mut(&order_id)
-        .ok_or_else(|| invariant("continuous retail fill has no local quantity chain"))?;
-    *remaining = remaining
-        .checked_sub(1)
-        .ok_or_else(|| invariant("continuous retail fill was emitted twice"))?;
-    ordered.push(fill);
-    if *remaining == 0 {
-        if let Some(terminal) = pending_terminal.remove(&order_id) {
-            ordered.push(terminal);
-        }
+        Ok(())
     }
-    Ok(())
+
+    fn emit_fill(
+        &mut self,
+        order_id: OrderId,
+        fill: RetailOrderDiagnosticEvent,
+    ) -> Result<(), StepFatal> {
+        let remaining = self
+            .remaining_fills
+            .get_mut(&order_id)
+            .ok_or_else(|| invariant("continuous retail fill has no local quantity chain"))?;
+        *remaining = remaining
+            .checked_sub(1)
+            .ok_or_else(|| invariant("continuous retail fill was emitted twice"))?;
+        self.ordered.push(fill);
+        if *remaining == 0 {
+            if let Some(terminal) = self.pending_terminal.remove(&order_id) {
+                self.ordered.push(terminal);
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Vec<RetailOrderDiagnosticEvent>, StepFatal> {
+        if !self.pending_fills.is_empty() || !self.pending_terminal.is_empty() {
+            return Err(invariant(
+                "continuous retail order lifecycle has unresolved local dependencies",
+            ));
+        }
+        Ok(self.ordered)
+    }
 }
 
 fn validate_result_identities(results: &[CandidateValidationResult]) -> Result<(), StepFatal> {
@@ -450,7 +474,7 @@ fn project_operation(
                 },
             original_qty,
         } => {
-            if session.retail_experience.contains_key(account) {
+            if session.state.retail_experience.contains_key(account) {
                 events.push(RetailOrderDiagnosticEvent::Submitted {
                     account: *account,
                     code: code.clone(),
@@ -477,7 +501,7 @@ fn project_operation(
             remaining_qty,
             ..
         }) => {
-            if session.retail_experience.contains_key(account) {
+            if session.state.retail_experience.contains_key(account) {
                 events.push(RetailOrderDiagnosticEvent::Canceled {
                     account: *account,
                     code: code.clone(),
@@ -518,7 +542,7 @@ fn push_rejected_payload(
     code: &StockCode,
     reason: RejectionReason,
 ) {
-    if session.retail_experience.contains_key(&account) {
+    if session.state.retail_experience.contains_key(&account) {
         events.push(RetailOrderDiagnosticEvent::Rejected {
             account,
             code: code.clone(),
@@ -662,6 +686,98 @@ mod tests {
             )
             .unwrap(),
             vec![filled, canceled]
+        );
+    }
+    #[test]
+    fn lifecycle_batch_preserves_quantity_and_dependency_first_errors() {
+        let code = StockCode("600001".to_owned());
+        let order_id = OrderId(10);
+        let submitted = RetailOrderDiagnosticEvent::Submitted {
+            account: AccountId(1),
+            code: code.clone(),
+            side: Side::Buy,
+            order_id,
+            qty: 100,
+        };
+        let filled = |qty| RetailOrderDiagnosticEvent::Filled {
+            account: AccountId(1),
+            code: code.clone(),
+            side: Side::Buy,
+            order_id,
+            qty,
+        };
+        let canceled = RetailOrderDiagnosticEvent::Canceled {
+            account: AccountId(1),
+            code: code.clone(),
+            order_id,
+            remaining_qty: 60,
+        };
+        let cases = [
+            (
+                vec![filled(40)],
+                BTreeMap::new(),
+                "continuous retail fill has no source quantity transition",
+            ),
+            (
+                vec![],
+                BTreeMap::from([(0, (100, 60))]),
+                "continuous retail quantity transition has no fill event",
+            ),
+            (
+                vec![filled(40), filled(30)],
+                BTreeMap::from([(0, (100, 60)), (1, (50, 20))]),
+                "continuous retail fill quantity chain is broken",
+            ),
+            (
+                vec![submitted.clone(), submitted.clone()],
+                BTreeMap::new(),
+                "continuous retail lifecycle submits an order twice",
+            ),
+            (
+                vec![canceled.clone(), canceled.clone(), filled(40)],
+                BTreeMap::from([(2, (100, 60))]),
+                "continuous retail order has two terminal events",
+            ),
+            (
+                vec![submitted.clone(), submitted, filled(40)],
+                BTreeMap::new(),
+                "continuous retail fill has no source quantity transition",
+            ),
+        ];
+        for (events, quantities, expected) in cases {
+            assert_eq!(
+                order_lifecycle_events(events, quantities).unwrap_err(),
+                invariant(expected)
+            );
+        }
+    }
+    #[test]
+    fn lifecycle_batch_rejects_unresolved_dependencies_without_publishing_output() {
+        let order_id = OrderId(10);
+        let fill = RetailOrderDiagnosticEvent::Filled {
+            account: AccountId(1),
+            code: StockCode("600001".to_owned()),
+            side: Side::Buy,
+            order_id,
+            qty: 100,
+        };
+        let mut batch =
+            ContinuousLifecycleEventBatch::from_events(vec![], BTreeMap::new()).unwrap();
+        assert_eq!(
+            batch.emit_fill(order_id, fill.clone()).unwrap_err(),
+            invariant("continuous retail fill has no local quantity chain")
+        );
+        batch.remaining_fills.insert(order_id, 0);
+        assert_eq!(
+            batch.emit_fill(order_id, fill.clone()).unwrap_err(),
+            invariant("continuous retail fill was emitted twice")
+        );
+        // 模拟尚未发布 Submitted 的缓冲状态，finish 必须拒绝交出 partial outbox。
+        batch.submitted_this_tick.insert(order_id);
+        batch.emit_event(fill).unwrap();
+        assert_eq!(
+            batch.finish().unwrap_err(),
+            invariant("continuous retail order lifecycle has unresolved local dependencies")
         );
     }
 }

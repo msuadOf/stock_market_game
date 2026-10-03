@@ -12,35 +12,69 @@ export interface WorkerRequestPort {
   postMessage(message: unknown): void;
 }
 
-/** 发送带关联 id 的 Worker 请求；并发请求不会互相误收响应。 */
-export function requestWorker(
-  port: WorkerRequestPort,
-  request: { type: string; requestId: number; generation: number; [key: string]: unknown },
-  successType: string,
-  timeoutMs = 10_000,
-): Promise<WorkerResponse> {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      clearTimeout(timeout);
-      port.removeEventListener("message", handler);
-    };
-    const handler = (event: MessageEvent) => {
-      const response = event.data as WorkerResponse;
-      if (response.requestId !== request.requestId) return;
-      if (response.generation !== request.generation) return;
-      if (response.type === successType) {
+type WorkerRequest = { type: string; requestId: number; generation: number; [key: string]: unknown };
+
+type PendingRequest = {
+  readonly listener: (event: MessageEvent) => void;
+  readonly timeout: ReturnType<typeof setTimeout>;
+  readonly resolve: (response: WorkerResponse) => void;
+  readonly reject: (error: Error) => void;
+  settled: boolean;
+};
+
+/** 每个 WorkerHost 独占请求序号与逐请求资源，generation 仍由宿主提供。 */
+export class WorkerRequestScope {
+  private readonly port: WorkerRequestPort;
+  private sequence = 0;
+  private readonly pending = new Map<number, PendingRequest>();
+
+  constructor(port: WorkerRequestPort) {
+    this.port = port;
+  }
+
+  nextRequestId(): number {
+    return ++this.sequence;
+  }
+
+  pendingCount(): number {
+    return this.pending.size;
+  }
+
+  request(request: WorkerRequest, successType: string, timeoutMs = 10_000): Promise<WorkerResponse> {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        if (resource.settled) return;
+        resource.settled = true;
+        clearTimeout(resource.timeout);
+        this.port.removeEventListener("message", resource.listener);
+        this.pending.delete(request.requestId);
+      };
+      const handler = (event: MessageEvent) => {
+        const response = event.data as WorkerResponse;
+        if (response.requestId !== request.requestId) return;
+        if (response.generation !== request.generation) return;
+        if (response.type === successType) {
+          cleanup();
+          resource.resolve(response);
+        } else if (response.type === "operationError") {
+          cleanup();
+          resource.reject(new Error(String(response.message ?? "Worker 操作失败")));
+        }
+      };
+      const timeout = setTimeout(() => {
         cleanup();
-        resolve(response);
-      } else if (response.type === "operationError") {
-        cleanup();
-        reject(new Error(String(response.message ?? "Worker 操作失败")));
-      }
-    };
-    const timeout = setTimeout(() => {
-      port.removeEventListener("message", handler);
-      reject(new Error(`Worker ${request.type} 操作超时（${timeoutMs}ms）`));
-    }, timeoutMs);
-    port.addEventListener("message", handler);
-    port.postMessage(request);
-  });
+        resource.reject(new Error(`Worker ${request.type} 操作超时（${timeoutMs}ms）`));
+      }, timeoutMs);
+      const resource: PendingRequest = { listener: handler, timeout, resolve, reject, settled: false };
+      this.pending.set(request.requestId, resource);
+      this.port.addEventListener("message", handler);
+      // 保留同步 postMessage 抛错后由原 timeout 清理的既有时序。
+      this.port.postMessage(request);
+    });
+  }
+}
+
+/** 独立请求兼容入口；WorkerHost 的命令通过其唯一 scope 发送。 */
+export function requestWorker(port: WorkerRequestPort, request: WorkerRequest, successType: string, timeoutMs = 10_000): Promise<WorkerResponse> {
+  return new WorkerRequestScope(port).request(request, successType, timeoutMs);
 }

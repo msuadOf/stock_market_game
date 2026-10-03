@@ -17,12 +17,12 @@ fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
     let validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     let initial = IntentCandidateBatch::new(vec![
         IntentCandidate::new(
             IntentCandidateKey::npc(AccountId(1), 0),
@@ -76,12 +76,12 @@ fn continuous_initial_round_batches_independent_accounts_and_stocks() {
             (
                 IntentCandidateKey::npc(AccountId(1), 0),
                 0,
-                Some(crate::OrderId(session.next_order_id))
+                Some(crate::OrderId(session.state.next_order_id))
             ),
             (
                 IntentCandidateKey::player(0),
                 1,
-                Some(crate::OrderId(session.next_order_id + 1))
+                Some(crate::OrderId(session.state.next_order_id + 1))
             ),
         ]
     );
@@ -96,9 +96,9 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
             .unwrap()
             .install(|| {
                 let (mut session, _, initial) = fixture();
-                session.setup.auction_ticks = 900;
-                session.setup.ticks_per_day = 15_300;
-                session.tick = 600;
+                session.state.setup.auction_ticks = 900;
+                session.state.setup.ticks_per_day = 15_300;
+                session.state.tick = 600;
                 assert_eq!(session.phase(), crate::TradingPhase::PreOpen);
                 let mut validator = build_validator(&session);
                 let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
@@ -138,13 +138,13 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
 #[test]
 fn initial_order_id_overflow_does_not_leave_partial_account_validation_or_matching_work() {
     let (mut session, _, initial) = fixture();
-    session.next_order_id = u64::MAX - 1;
+    session.state.next_order_id = u64::MAX - 1;
     let plan = plan_tick(PhaseInput { session: &session }).unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
@@ -172,8 +172,8 @@ fn initial_order_id_overflow_does_not_leave_partial_account_validation_or_matchi
 #[test]
 fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
     let (mut session, _, initial) = fixture();
-    session.setup.auction_ticks = 900;
-    session.setup.ticks_per_day = 15_300;
+    session.state.setup.auction_ticks = 900;
+    session.state.setup.ticks_per_day = 15_300;
     let mut validator = build_validator(&session);
     let mut stock_execution = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
@@ -202,8 +202,8 @@ fn build_validator(session: &GameSession) -> AccountValidatorDriver {
     AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(session).unwrap(),
     )
     .unwrap()
@@ -221,7 +221,7 @@ fn independent_funded_accounts_accept_orders_without_count_policy() {
         .all(|outcome| matches!(outcome.result(), CandidateValidationResult::Accepted { .. })));
     assert_eq!(
         validator.output().next_order_id_after(),
-        session.next_order_id + 2
+        session.state.next_order_id + 2
     );
 
     let mut split = build_validator(&session);
@@ -247,7 +247,7 @@ fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: session.markets.keys().next().unwrap().clone(),
+            code: session.state.markets.keys().next().unwrap().clone(),
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(i64::MAX)),
             qty: 100,
@@ -265,7 +265,7 @@ fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
     );
     let checkpoint = validator.checkpoint();
 
-    // Account 0 is visited before 9 by the shard map, but NPC 9 is earlier canonically.
+    // shard map 先遍历 Account 0；原候选身份布局中的首错来自 NPC 9。
     assert_eq!(
         validator.consume_round([first, second]).unwrap_err(),
         expected
@@ -285,6 +285,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     setup.push_execution(request);
     commit_injected_plan_roots_for_test(&mut session, setup);
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
@@ -322,7 +323,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
         ),
     ])
     .unwrap();
-    let cash_before = session.accounts[&AccountId(1)].cash;
+    let cash_before = session.state.accounts[&AccountId(1)].cash();
 
     let mut rounds =
         apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
@@ -332,26 +333,27 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
         .project_execution_round(&mut session, &mut rounds[0])
         .unwrap();
 
-    assert!(session.plans.plan(plan_id).unwrap().is_terminal());
-    assert!(!session.parent_orders.contains_key(&AccountId(1)));
-    assert!(session.pending_plan_events.is_empty());
-    assert_eq!(session.markets[&code].resting_order_count(), 1);
+    assert!(session.state.plans.plan(plan_id).unwrap().is_terminal());
+    assert!(!session.state.parent_orders.contains_key(&AccountId(1)));
+    assert!(session.state.pending_plan_events.is_empty());
+    assert_eq!(session.state.markets[&code].resting_order_count(), 1);
     assert_eq!(
-        session.accounts[&AccountId(1)].cash,
+        session.state.accounts[&AccountId(1)].cash(),
         cash_before,
         "projection does not settle cash"
     );
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     let completion = chain.finish().unwrap();
-    assert_eq!(completion.consumed.operations.len(), 2);
-    assert_eq!(completion.consumed.receipts.len(), 2);
+    assert_eq!(completion.consumed.operation_count(), 2);
+    assert_eq!(completion.consumed.receipt_count(), 2);
 }
 
 #[test]
 fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
     let (mut session, _, _) = fixture();
-    let code = session.markets.keys().next().unwrap().clone();
+    let code = session.state.markets.keys().next().unwrap().clone();
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
@@ -411,17 +413,20 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
         vec![0, 2]
     );
     let first = &projection.acceptance_quotes[&0];
-    assert_eq!(first.order.id, crate::OrderId(session.next_order_id));
+    assert_eq!(first.order.id, crate::OrderId(session.state.next_order_id));
     assert_eq!(first.order.qty, 100);
     assert_eq!(first.last_price, Money::from_cents(1_000));
     assert_eq!(first.best_bid, Some(Money::from_cents(990)));
     assert_eq!(first.best_ask, None);
     let last = &projection.acceptance_quotes[&2];
-    assert_eq!(last.order.id, crate::OrderId(session.next_order_id + 2));
+    assert_eq!(
+        last.order.id,
+        crate::OrderId(session.state.next_order_id + 2)
+    );
     assert_eq!(last.last_price, Money::from_cents(990));
     assert_eq!(last.best_bid, Some(Money::from_cents(980)));
     assert_eq!(last.best_ask, None);
-    let mut projected_market = session.markets[&code].clone();
+    let mut projected_market = session.state.markets[&code].clone();
     projected_market
         .apply_changed_orders(projection.market_delta.as_ref().unwrap().clone())
         .unwrap();
@@ -435,14 +440,19 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
 fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids() {
     let (mut session, _, initial) = fixture();
     let required = crate::session::buy_order_reservation(
-        &session.setup.config,
+        &session.state.setup.config,
         Money::from_cents(990),
         100,
         Money::ZERO,
     )
     .unwrap();
-    session.accounts.get_mut(&AccountId(1)).unwrap().cash = required;
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    session
+        .state
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_cash(required);
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     let npc_second = IntentCandidate::new(
         IntentCandidateKey::npc(AccountId(1), 1),
         AccountId(1),
@@ -498,7 +508,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
     assert_eq!(continuation.sealed_index(), 3);
     assert_eq!(
         continuation.allocated_order_id(),
-        Some(crate::OrderId(session.next_order_id + 2))
+        Some(crate::OrderId(session.state.next_order_id + 2))
     );
 }
 
@@ -531,12 +541,12 @@ fn continuous_execution_accepts_independent_stock_facts_in_another_output_order(
 fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
     for auction in [false, true] {
         let (mut authority, _, _) = fixture();
-        authority.attention_queue.clear();
+        authority.state.attention_scheduler.clear();
         if auction {
-            authority.setup.auction_ticks = 900;
-            authority.setup.ticks_per_day = 15_300;
+            authority.state.setup.auction_ticks = 900;
+            authority.state.setup.ticks_per_day = 15_300;
         }
-        let codes = authority.markets.keys().cloned().collect::<Vec<_>>();
+        let codes = authority.state.markets.keys().cloned().collect::<Vec<_>>();
         for code in codes {
             authority
                 .enqueue_player_intent(
@@ -560,7 +570,7 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
         .unwrap();
         plan.state
             .execute(|candidate| {
-                candidate.next_receipt_base = 1;
+                candidate.state.next_receipt_base = 1;
                 Ok(())
             })
             .unwrap();

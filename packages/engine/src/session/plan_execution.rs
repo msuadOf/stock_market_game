@@ -32,18 +32,19 @@ impl GameSession {
         if matches!(
             request.decision.action,
             QuoteAction::Submit { .. } | QuoteAction::Replace { .. }
-        ) && plan.status != PlanStatus::Active
+        ) && plan.status() != PlanStatus::Active
         {
-            if plan.status == PlanStatus::Completed {
-                if plan.active_child_order_id.is_some()
+            if plan.status() == PlanStatus::Completed {
+                if plan.active_child_order_id().is_some()
                     || self
+                        .state
                         .parent_orders
-                        .get(&plan.account)
-                        .and_then(|parents| parents.get(&plan.code))
-                        .is_some_and(|parent| parent.linked_plan_id == Some(plan.plan_id))
+                        .get(&plan.account())
+                        .and_then(|parents| parents.get(plan.code()))
+                        .is_some_and(|parent| parent.linked_plan_id() == Some(plan.plan_id()))
                 {
                     return Err(PlanExecutionError::IncompatibleExecutionState {
-                        plan_id: plan.plan_id,
+                        plan_id: plan.plan_id(),
                     });
                 }
                 return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
@@ -53,14 +54,14 @@ impl GameSession {
                 }));
             }
             return Err(PlanExecutionError::PlanCannotSubmit {
-                plan_id: plan.plan_id,
-                status: plan.status,
+                plan_id: plan.plan_id(),
+                status: plan.status(),
             });
         }
         let remaining =
             plan.remaining_share_qty()
                 .ok_or(PlanExecutionError::UnconvertedFractionTarget {
-                    plan_id: plan.plan_id,
+                    plan_id: plan.plan_id(),
                 })?;
         match request.decision.action {
             QuoteAction::Wait => Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
@@ -69,7 +70,7 @@ impl GameSession {
                 },
             })),
             QuoteAction::Keep { order_id } => {
-                self.require_active_child(plan.plan_id, &plan.code, order_id)?;
+                self.require_active_child(plan.plan_id(), plan.code(), order_id)?;
                 Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Kept {
                         order_id,
@@ -112,7 +113,7 @@ impl GameSession {
                 if let Some(progress) = self.active_plan_child_feedback(&plan)? {
                     return Ok(progress);
                 }
-                if plan.direction == Side::Buy && remaining < self.setup.config.lot_size {
+                if plan.direction() == Side::Buy && remaining < self.state.setup.config.lot_size {
                     return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                         disposition: PlanExecutionDisposition::RemainingBelowBoardLot {
                             remaining_qty: remaining,
@@ -136,29 +137,29 @@ impl GameSession {
         plan: &crate::plans::TradingPlan,
         request: &PlanExecutionRequest,
     ) -> Result<(), PlanExecutionError> {
-        if !self.accounts.contains_key(&plan.account) {
+        if !self.state.accounts.contains_key(&plan.account()) {
             return Err(PlanExecutionError::UnknownAccount {
-                plan_id: plan.plan_id,
-                account: plan.account,
+                plan_id: plan.plan_id(),
+                account: plan.account(),
             });
         }
-        if !self.markets.contains_key(&plan.code) {
+        if !self.state.markets.contains_key(plan.code()) {
             return Err(PlanExecutionError::UnknownStock {
-                plan_id: plan.plan_id,
-                code: plan.code.clone(),
+                plan_id: plan.plan_id(),
+                code: plan.code().clone(),
             });
         }
-        let session_day = u64::from(self.day);
+        let session_day = u64::from(self.state.day);
         if request.trading_day != session_day {
             return Err(PlanExecutionError::TradingDayMismatch {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 session_day,
                 request_day: request.trading_day,
             });
         }
-        if request.allocation.plan_id != plan.plan_id || request.allocation.code != plan.code {
+        if request.allocation.plan_id != plan.plan_id() || request.allocation.code != *plan.code() {
             return Err(PlanExecutionError::AllocationMismatch {
-                plan_id: plan.plan_id,
+                plan_id: plan.plan_id(),
                 allocation_plan_id: request.allocation.plan_id,
                 allocation_code: request.allocation.code.clone(),
             });

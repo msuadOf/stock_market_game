@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
-import type { WorkerRequestPort } from "./worker-request.ts";
+import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -47,7 +47,7 @@ test("Worker save pins candidate generation and rejects an old saved response af
 
 test("Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract", async () => {
   const worker = new FakeWorker();
-  const pending = readWorkerSpeedMetrics(worker, 1, 2);
+  const pending = readWorkerSpeedMetrics(new WorkerRequestScope(worker), 1, 2);
   worker.emit({ type: "speedMetrics", requestId: 1, generation: 2, metrics: {
     requested: { mode: "fixed", multiplier: 60 }, actual_multiplier: 60, sample_duration_ms: 1_000, sample_ticks: 60, running: true,
   } });
@@ -56,7 +56,7 @@ test("Given a generation-correlated Worker metrics response, when read, then it 
 
 test("Given a generation-correlated Worker order response, when read, then it preserves Money cents", async () => {
   const worker = new FakeWorker();
-  const pending = readWorkerPlayerWorkingOrders(worker, 5, 2);
+  const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
     id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
   }] });
@@ -67,7 +67,7 @@ test("Given a generation-correlated Worker order response, when read, then it pr
 
 test("Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects", async () => {
   const worker = new FakeWorker();
-  const pending = requestWorkerIndicators(worker, 6, 2, { prices: [10] });
+  const pending = requestWorkerIndicators(new WorkerRequestScope(worker), 6, 2, { prices: [10] });
   worker.emit({ type: "operationError", requestId: 6, generation: 2, message: "non-finite price at index 0" });
   await assert.rejects(pending, /non-finite price at index 0/);
 });
@@ -96,7 +96,7 @@ test("Given an enriched Worker failure, when parsed, then cause and recovery act
 
 test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
   const worker = new FakeWorker();
-  const pending = restoreWorkerSlot(worker, { valid: "already-parsed" }, 2, 1);
+  const pending = restoreWorkerSlot(new WorkerRequestScope(worker), { valid: "already-parsed" }, 2, 1);
   worker.emit({
     type: "restored",
     requestId: 2,
@@ -114,7 +114,7 @@ test("Given a restore response from the old request generation, when read, then 
 test("Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot", async () => {
   const worker = new FakeWorker();
   const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-  const pending = refreshWorkerBaseline(worker, 12, 4);
+  const pending = refreshWorkerBaseline(new WorkerRequestScope(worker), 12, 4);
   worker.emit({ type: "refreshed", requestId: 12, generation: 4, snapshot: restoredSnapshot });
   assert.deepEqual(await pending, parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"));
   assert.deepEqual(worker.sent, [{ type: "refreshBaseline", requestId: 12, generation: 4 }]);
@@ -134,7 +134,7 @@ test("Given local pause preferences, when sent across the Worker boundary, then 
 
 test("Given a paused Worker, the correlated single-step response exposes its committed tick", async () => {
   const worker = new FakeWorker();
-  const pending = stepWorkerOnce(worker, 10, 3);
+  const pending = stepWorkerOnce(new WorkerRequestScope(worker), 10, 3);
   worker.emit({ type: "stepped", requestId: 10, generation: 3, tick: 8 });
   assert.equal(await pending, 8);
   assert.deepEqual(worker.sent, [{ type: "stepOnce", requestId: 10, generation: 3 }]);
@@ -214,6 +214,49 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
     await rejected;
   } finally {
     host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker dispose 与 fatal 保留在途请求原 timeout，后续请求 ID 不与旧请求复用", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class PendingWorker extends EventTarget {
+    static current: PendingWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); PendingWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations += 1; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: PendingWorker });
+  try {
+    for (const reason of ["dispose", "fatal"]) {
+      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const worker = PendingWorker.current;
+      const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+      worker.emit({ type: "baseline", generation: 1, snapshot });
+      const host = await creating;
+      const date = host.civilDate!();
+      const preferences = host.setPausePreferences({ pause_after_close: true, pause_before_open: false });
+      assert.deepEqual(worker.sent.slice(-2).map((request) => request.requestId), [1, 2]);
+      worker.emit({ type: "pausePreferencesSet", requestId: 2, generation: 1 });
+      await preferences;
+      let settled = false;
+      const dateAssertion = assert.rejects(date, /Worker civilDate 操作超时（10000ms）/);
+      void date.then(() => { settled = true; }, () => { settled = true; });
+      if (reason === "dispose") host.dispose();
+      else worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+      await Promise.resolve();
+      assert.equal(settled, false);
+      assert.equal(worker.terminations, 1);
+      context.mock.timers.tick(10_000);
+      await dateAssertion;
+      host.dispose();
+    }
+  } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }

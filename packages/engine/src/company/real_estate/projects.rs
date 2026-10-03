@@ -110,6 +110,95 @@ impl ProjectState {
         self.completed_on
     }
 
+    /// 校验项目自身的 incur_development 前置条件，保留现有首错顺序。
+    pub(super) fn validate_development(
+        &self,
+        project: &ProjectId,
+        amount: AccountingAmount,
+    ) -> Result<(), RealEstateError> {
+        if self.completed_on().is_some() {
+            return Err(RealEstateError::DevelopmentAfterCompletion {
+                project: project.clone(),
+            });
+        }
+        if self.interrupted_on().is_some() {
+            return Err(RealEstateError::DevelopmentWhileSuspended {
+                project: project.clone(),
+            });
+        }
+        if !amount.is_positive() {
+            return Err(RealEstateError::NonPositiveAmount {
+                what: "development cost",
+                amount,
+            });
+        }
+        Ok(())
+    }
+
+    /// 校验项目自身的 suspend_development 前置条件，保留现有首错顺序。
+    pub(super) fn validate_suspend(&self, project: &ProjectId) -> Result<(), RealEstateError> {
+        if self.dev_started_on().is_none() {
+            return Err(RealEstateError::SuspensionBeforeDevelopment {
+                project: project.clone(),
+            });
+        }
+        if self.completed_on().is_some() {
+            return Err(RealEstateError::SuspensionAfterCompletion {
+                project: project.clone(),
+            });
+        }
+        if self.interrupted_on().is_some() {
+            return Err(RealEstateError::AlreadySuspended {
+                project: project.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    /// 校验项目自身的 resume_development 前置条件，保留现有首错顺序。
+    pub(super) fn preview_resume(
+        &self,
+        project: &ProjectId,
+        date: CivilDate,
+    ) -> Result<Interruption, RealEstateError> {
+        let Some(suspended_on) = self.interrupted_on() else {
+            return Err(RealEstateError::NotSuspended {
+                project: project.clone(),
+            });
+        };
+        if date <= suspended_on {
+            return Err(RealEstateError::ResumeNotForward {
+                project: project.clone(),
+                suspended_on,
+                resume_on: date,
+            });
+        }
+        Ok(Interruption {
+            start: suspended_on,
+            end: date,
+        })
+    }
+
+    /// 校验项目自身的 complete_project 前置条件，保留现有首错顺序。
+    pub(super) fn validate_complete(&self, project: &ProjectId) -> Result<(), RealEstateError> {
+        if self.dev_started_on().is_none() {
+            return Err(RealEstateError::CompleteBeforeDevelopment {
+                project: project.clone(),
+            });
+        }
+        if self.interrupted_on().is_some() {
+            return Err(RealEstateError::CompleteWhileSuspended {
+                project: project.clone(),
+            });
+        }
+        if self.completed_on().is_some() {
+            return Err(RealEstateError::AlreadyCompleted {
+                project: project.clone(),
+            });
+        }
+        Ok(())
+    }
+
     /// 追加开发投入（过账成功后调用；首笔同时开启资本化窗口）。
     pub(super) fn add_development(&mut self, amount: AccountingAmount, date: CivilDate) {
         if self.dev_started_on.is_none() {

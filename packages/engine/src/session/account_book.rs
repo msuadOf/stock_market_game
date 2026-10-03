@@ -40,7 +40,7 @@ impl AccountPage {
         self.validated
             .get_or_init(|| {
                 for account in self.accounts.values() {
-                    if let Some(strategy) = &account.strategy {
+                    if let Some(strategy) = account.strategy() {
                         strategy.validate_for_shadow()?;
                     }
                 }
@@ -141,9 +141,9 @@ impl AccountBook {
             .iter()
             .filter_map(|(id, account)| {
                 account
-                    .positions
+                    .positions()
                     .values()
-                    .any(|position| position.t1_locked > 0)
+                    .any(|position| position.t1_locked() > 0)
                     .then_some(*id)
             })
             .collect::<Vec<_>>();
@@ -247,7 +247,10 @@ mod tests {
         assert!(authority.page_arc(0).unwrap().validated.get().is_some());
         assert!(authority.page_arc(1).unwrap().validated.get().is_some());
 
-        shadow.get_mut(&AccountId(1)).unwrap().cash = Money::from_cents(100);
+        shadow
+            .get_mut(&AccountId(1))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(100));
         assert!(!Arc::ptr_eq(
             authority.page_arc(0).unwrap(),
             shadow.page_arc(0).unwrap()
@@ -262,8 +265,8 @@ mod tests {
         assert!(shadow.page_arc(1).unwrap().validated.get().is_some());
         let next = shadow.clone_for_shadow().unwrap();
         assert!(next.page_arc(0).unwrap().validated.get().is_some());
-        assert_eq!(authority[&AccountId(1)].cash, Money::ZERO);
-        assert_eq!(shadow[&AccountId(1)].cash, Money::from_cents(100));
+        assert_eq!(authority[&AccountId(1)].cash(), Money::ZERO);
+        assert_eq!(shadow[&AccountId(1)].cash(), Money::from_cents(100));
         assert_eq!(
             shadow.keys().copied().collect::<Vec<_>>(),
             [0, 1, 32, 33, 512].map(AccountId)
@@ -309,13 +312,17 @@ mod tests {
                 .unwrap();
             authority.insert(AccountId(id), account);
         }
+        let position = authority[&AccountId(1)].position(&code).unwrap();
+        let locked = crate::Position::from_restored_parts(
+            position.qty(),
+            100,
+            position.invested_cents(),
+            position.recovered_cents(),
+        );
         authority
             .get_mut(&AccountId(1))
             .unwrap()
-            .positions
-            .get_mut(&code)
-            .unwrap()
-            .t1_locked = 100;
+            .fixture_insert_position(code.clone(), locked);
         let mut shadow = authority.clone_for_shadow().unwrap();
 
         shadow.unlock_t1_positions();
@@ -328,8 +335,8 @@ mod tests {
             authority.page_arc(1).unwrap(),
             shadow.page_arc(1).unwrap()
         ));
-        assert_eq!(authority[&AccountId(1)].positions[&code].t1_locked, 100);
-        assert_eq!(shadow[&AccountId(1)].positions[&code].t1_locked, 0);
-        assert_eq!(shadow[&AccountId(32)].positions[&code].t1_locked, 0);
+        assert_eq!(authority[&AccountId(1)].positions()[&code].t1_locked(), 100);
+        assert_eq!(shadow[&AccountId(1)].positions()[&code].t1_locked(), 0);
+        assert_eq!(shadow[&AccountId(32)].positions()[&code].t1_locked(), 0);
     }
 }

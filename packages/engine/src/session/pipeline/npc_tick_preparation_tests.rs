@@ -13,23 +13,23 @@ fn due_retail(seed: u64, order_size: u32) -> (GameSession, AccountId) {
     let mut strategy = crate::strategy::StrategyState::ZiNoise(
         ZiNoiseStrategy::new(1.0, order_size, 0.5).unwrap(),
     );
-    strategy.set_base_observation_probability(session.npc_attention[&account].base_probability);
+    strategy
+        .set_base_observation_probability(session.state.npc_attention[&account].base_probability);
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
         .set_strategy(strategy.into_strategy().unwrap());
-    let tick = session.tick;
+    let tick = session.state.tick;
     // Preserve the real profile so this fixture can also be saved and restored.
     // Choose an attention-stream position that accepts even a quiet market.
-    let attention = session.npc_attention.get_mut(&account).unwrap();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
     attention.next_attention_candidate_tick = tick;
     attention.rng_state = 3;
     let mut quiet_probe = attention.clone();
     assert!(quiet_probe.evaluate_candidate_with_signal(crate::AccountKind::Retail, 0.0, tick));
-    session
-        .attention_queue
-        .push(std::cmp::Reverse((tick, account)));
+    session.state.attention_scheduler.enqueue(tick, account);
     (session, account)
 }
 
@@ -40,26 +40,33 @@ fn no_due_npc_queues_an_empty_batch_without_building_a_market_view() {
         42,
     )
     .unwrap();
-    let future_tick = session.tick + 10;
-    session.pending_npc = None;
-    session.attention_queue.clear();
-    let accounts = session.npc_attention.keys().copied().collect::<Vec<_>>();
+    let future_tick = session.state.tick + 10;
+    session.state.pending_npc = None;
+    session.state.attention_scheduler.clear();
+    let accounts = session
+        .state
+        .npc_attention
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
     for account in accounts {
         session
+            .state
             .npc_attention
             .get_mut(&account)
             .unwrap()
             .next_attention_candidate_tick = future_tick;
         session
-            .attention_queue
-            .push(std::cmp::Reverse((future_tick, account)));
+            .state
+            .attention_scheduler
+            .enqueue(future_tick, account);
     }
-    let code = session.markets.keys().next().unwrap().clone();
-    session.market_minute_closes.remove(&code);
+    let code = session.state.markets.keys().next().unwrap().clone();
+    session.state.market_minute_closes.remove(&code);
 
     super::queue_npc_for_next_tick(&mut session).unwrap();
-    let ready = session.pending_npc.as_ref().unwrap();
-    assert_eq!(ready.observed_tick, session.tick);
+    let ready = session.state.pending_npc.as_ref().unwrap();
+    assert_eq!(ready.observed_tick, session.state.tick);
     assert!(ready.observed_accounts.is_empty());
     assert!(ready.intents.is_empty());
     assert!(ready.dependencies.is_empty());
@@ -124,10 +131,10 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
 #[test]
 fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
     let (mut session, npc) = due_retail(41, 100);
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let mut save = session.save().unwrap();
     save.pending_npc = Some(crate::session::PendingNpcBatch {
-        observed_tick: session.tick,
+        observed_tick: session.state.tick,
         observed_accounts: vec![npc],
         intents: vec![
             (
@@ -156,7 +163,7 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
         GameSession::restore(&save),
         Err(crate::SessionError::InvalidSave(message)) if message.contains("pending NPC dependency")
     ));
-    session.pending_npc = save.pending_npc;
+    session.state.pending_npc = save.pending_npc;
     assert!(matches!(
         super::npc_tick_preparation::take_ready_npc_batch(&mut session),
         Err(StepFatal::InvariantViolation { description, .. })
@@ -207,10 +214,15 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
 fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
     let (mut session, npc) = due_retail(8, 2_000_000);
     // 7% 的试买目标足以提出 200 万股，由下一 tick 的 P3 执行单笔数量规则。
-    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(30_000_000_000);
-    session.pending_npc = None;
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_cash(Money::from_cents(30_000_000_000));
+    session.state.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
-    let before_order_id = session.next_order_id;
+    let before_order_id = session.state.next_order_id;
 
     let committed = super::continuous_tick_transaction::prepare_continuous_tick(&mut session)
         .unwrap()
@@ -240,7 +252,7 @@ fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
             .count(),
         1
     );
-    assert_eq!(session.next_order_id, before_order_id);
+    assert_eq!(session.state.next_order_id, before_order_id);
 }
 
 #[test]
@@ -261,7 +273,7 @@ fn downstream_failure_discards_npc_decision_and_authority_state() {
     .unwrap();
     plan.state
         .execute(|candidate| {
-            candidate.next_receipt_base = 1;
+            candidate.state.next_receipt_base = 1;
             Ok(())
         })
         .unwrap();
@@ -281,7 +293,12 @@ fn downstream_failure_discards_npc_decision_and_authority_state() {
 #[test]
 fn intent_candidates_failure_discards_the_whole_tick_candidate() {
     let (mut authority, npc) = due_retail(8, 100);
-    authority.accounts.get_mut(&npc).unwrap().strategy = None;
+    authority
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_strategy(None);
     let before = authority.business_state_hash().unwrap();
 
     let error = super::continuous_tick_transaction::prepare_continuous_tick(&mut authority)
@@ -300,10 +317,20 @@ fn intent_candidates_failure_discards_the_whole_tick_candidate() {
 #[test]
 fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() {
     let (mut session, npc) = due_retail(41, 100);
-    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(10_000_000);
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_cash(Money::from_cents(10_000_000));
     // Seed two pre-existing quotes without reconciling the first one.
-    session.accounts.get_mut(&npc).unwrap().kind = crate::AccountKind::Player;
-    let code = session.setup.stocks[0].code.clone();
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_kind(crate::AccountKind::Player);
+    let code = session.state.setup.stocks[0].code.clone();
     for price in [900, 901] {
         session.seed_order_for_test(
             npc,
@@ -316,8 +343,13 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
             &mut Vec::new(),
         );
     }
-    session.accounts.get_mut(&npc).unwrap().kind = crate::AccountKind::Retail;
-    let mut old_ids: Vec<_> = session.markets[&code]
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_kind(crate::AccountKind::Retail);
+    let mut old_ids: Vec<_> = session.state.markets[&code]
         .resting_orders_for(npc)
         .iter()
         .map(|order| order.id)
@@ -330,7 +362,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .unwrap()
         .clone();
     let mut queued_session = session.clone_for_tick_shadow().unwrap();
-    queued_session.pending_npc = None;
+    queued_session.state.pending_npc = None;
     let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert!(prepared.projection.reconciliation_decisions().iter().all(|decision| matches!(
         decision,
@@ -368,7 +400,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .map(|candidate| (candidate.owner(), candidate.intent().clone()))
         .collect::<Vec<_>>();
     assert_eq!(
-        serde_json::to_value(&queued_session.pending_npc.as_ref().unwrap().intents).unwrap(),
+        serde_json::to_value(&queued_session.state.pending_npc.as_ref().unwrap().intents).unwrap(),
         serde_json::to_value(expected).unwrap()
     );
     let encoded = serde_json::to_value(queued_session.save().unwrap()).unwrap();
@@ -392,9 +424,9 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
 
     let mut validator = AccountValidatorDriver::new(
         resources,
-        session.envelope_ledger.clone(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.envelope_ledger.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         super::account_validation_context::build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
@@ -414,7 +446,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         rounds.iter().map(|round| round.facts.len()).sum::<usize>(),
         3
     );
-    let mut final_book = session.markets[&code].clone();
+    let mut final_book = session.state.markets[&code].clone();
     for round in &rounds {
         if let Some(projection) = round.projections.get(&code) {
             final_book
@@ -432,7 +464,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
 #[test]
 fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     let (mut session, npc) = due_retail(41, 100);
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
@@ -444,7 +476,13 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
         },
         &mut Vec::new(),
     );
-    session.accounts.get_mut(&npc).unwrap().cash = session.reserved_cash_for_account(npc).unwrap();
+    let reserved = session.reserved_cash_for_account(npc).unwrap();
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_cash(reserved);
     let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert_eq!(prepared.candidates.candidates().len(), 2);
     assert!(matches!(
@@ -465,7 +503,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
 #[test]
 fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     let (mut session, npc) = due_retail(8, 100);
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
@@ -476,13 +514,14 @@ fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
         },
         &mut Vec::new(),
     );
-    let old_id = session.npc_order_lifecycles[0].order_id;
+    let old_id = session.state.npc_order_lifecycles[0].order_id;
     session
+        .state
         .accounts
         .get_mut(&npc)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
-    session.pending_npc = None;
+    session.state.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let result = super::continuous_tick_transaction::prepare_continuous_tick(&mut session)
         .unwrap()
@@ -492,8 +531,10 @@ fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
         matches!(result.output.candidates.candidates()[0].intent(), Intent::Cancel { id, .. } if *id == old_id)
     );
     assert!(result.output.events.iter().any(|event| matches!(event, Event::OrderCanceled { id, account, .. } if *id == old_id && *account == npc)));
-    assert!(session.npc_order_lifecycles.is_empty());
-    assert!(session.markets[&code].resting_orders_for(npc).is_empty());
+    assert!(session.state.npc_order_lifecycles.is_empty());
+    assert!(session.state.markets[&code]
+        .resting_orders_for(npc)
+        .is_empty());
 }
 
 #[test]
@@ -501,9 +542,10 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
     let mut session = GameSession::new(setup, 8).unwrap();
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     for npc in [AccountId(2), AccountId(1)] {
         session
+            .state
             .accounts
             .get_mut(&npc)
             .unwrap()

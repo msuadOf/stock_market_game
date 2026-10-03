@@ -52,9 +52,9 @@ fn prepared_commit_rebases_live_ledger_then_commits_without_a_fallible_tail() {
     let mut authority = game();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     let (ledger, audit) = ledger_with_live_audit_and_tick_local_evidence();
-    candidate.envelope_ledger = ledger;
-    candidate.next_receipt_base = 8;
-    candidate.seq = candidate.seq.checked_add(3).unwrap();
+    candidate.state.envelope_ledger = ledger;
+    candidate.state.next_receipt_base = 8;
+    candidate.state.seq = candidate.state.seq.checked_add(3).unwrap();
 
     let prepared = prepare_candidate_commit(&mut authority, candidate).unwrap();
     let committed = prepared.commit();
@@ -68,13 +68,13 @@ fn prepared_commit_rebases_live_ledger_then_commits_without_a_fallible_tail() {
         committed.session_hash()
     );
     assert_eq!(committed.next_receipt_base(), 8);
-    assert_eq!(authority.next_receipt_base, 8);
-    assert_eq!(authority.envelope_ledger.next_receipt_index(), 8);
-    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
-    assert!(authority.envelope_ledger.seen_local_keys.is_empty());
-    assert_eq!(authority.envelope_ledger.audits.len(), 1);
-    assert_eq!(authority.envelope_ledger.conservation.len(), 1);
-    let live = authority.envelope_ledger.get(&second_key()).unwrap();
+    assert_eq!(authority.state.next_receipt_base, 8);
+    assert_eq!(authority.state.envelope_ledger.next_receipt_index(), 8);
+    assert_eq!(authority.state.envelope_ledger.terminal_count(), 0);
+    assert!(authority.state.envelope_ledger.seen_local_keys.is_empty());
+    assert_eq!(authority.state.envelope_ledger.audits.len(), 1);
+    assert_eq!(authority.state.envelope_ledger.conservation.len(), 1);
+    let live = authority.state.envelope_ledger.get(&second_key()).unwrap();
     assert_eq!(live.origin(), EnvelopeOrigin::TickStart);
     assert_eq!(live.audit(), audit);
     assert_eq!(live.basis(), ResVec::new(Money::ZERO, 2));
@@ -86,9 +86,10 @@ fn prepared_commit_rebases_live_ledger_then_commits_without_a_fallible_tail() {
 fn rebase_failure_discards_the_candidate_without_touching_authority() {
     let mut authority = game();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
-    candidate.envelope_ledger = created_ledger();
-    candidate.next_receipt_base = candidate.envelope_ledger.next_receipt_index();
+    candidate.state.envelope_ledger = created_ledger();
+    candidate.state.next_receipt_base = candidate.state.envelope_ledger.next_receipt_index();
     candidate
+        .state
         .envelope_ledger
         .audits
         .get_mut(&key())
@@ -108,7 +109,7 @@ fn dropping_a_prepared_candidate_does_not_change_authority() {
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
-    candidate.seq = candidate.seq.checked_add(1).unwrap();
+    candidate.state.seq = candidate.state.seq.checked_add(1).unwrap();
 
     let prepared = prepare_candidate_commit(&mut authority, candidate).unwrap();
     drop(prepared);
@@ -120,7 +121,7 @@ fn dropping_a_prepared_candidate_does_not_change_authority() {
 fn split_candidate_receipt_cursor_is_rejected_before_commit() {
     let mut authority = game();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
-    candidate.next_receipt_base = 1;
+    candidate.state.next_receipt_base = 1;
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 

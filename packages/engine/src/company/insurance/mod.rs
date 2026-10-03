@@ -35,6 +35,9 @@ mod premium;
 mod remeasure;
 mod service_release;
 
+#[cfg(test)]
+mod behavior_tests;
+
 pub use chart::insurance_chart_v4;
 pub use claims::{ClaimId, ClaimState};
 pub use config::{DiscountAssumption, InsuranceConfig};
@@ -100,7 +103,7 @@ impl InsuranceBooks {
     /// 对手方登记。任一步失败 ⇒ 不产生半构造账套。
     pub fn new(config: InsuranceConfig) -> Result<Self, InsuranceError> {
         config.discount.validate()?;
-        config::check_opening_lines(&config.opening_lines)?;
+        config.check_opening_lines()?;
         let mut books = Books::new(config.chart);
         books.post_batch(vec![crate::accounting::JournalEntry {
             source: opening_event_id(),

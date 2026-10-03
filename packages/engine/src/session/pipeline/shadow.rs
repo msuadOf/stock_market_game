@@ -51,6 +51,7 @@ impl TickShadow {
             .session
             .as_ref()
             .ok_or_else(consumed_shadow)?
+            .state
             .envelope_ledger
             .clone())
     }
@@ -67,9 +68,10 @@ impl TickShadow {
         self.session
             .as_ref()
             .ok_or_else(consumed_shadow)?
+            .state
             .accounts
             .get(&account)
-            .and_then(|account| account.strategy.as_ref())
+            .and_then(|account| account.strategy())
             .ok_or_else(|| StepFatal::InvariantViolation {
                 description: format!("shadow strategy missing for account {}", account.0),
                 location: "TickShadow::strategy_state".to_owned(),

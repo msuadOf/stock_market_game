@@ -6,21 +6,22 @@ use crate::diagnostics::causal::{
 
 impl GameSession {
     pub fn causal_facts(&self) -> &[CausalFact] {
-        &self.causal.facts
+        self.state.causal.facts()
     }
 
     pub fn causal_diagnostics(&self) -> Result<CausalReport, CausalError> {
-        CausalReport::from_facts(self.seed, &self.causal.facts)
+        CausalReport::from_facts(self.state.seed, self.state.causal.facts())
     }
 
     pub(super) fn causal_time(&self) -> FactTime {
-        let day_tick = self.tick - u64::from(self.day) * self.setup.ticks_per_day;
-        let continuous =
-            self.setup.ticks_per_day - self.setup.auction_ticks - self.setup.closing_auction_ticks;
+        let day_tick = self.state.tick - u64::from(self.state.day) * self.state.setup.ticks_per_day;
+        let continuous = self.state.setup.ticks_per_day
+            - self.state.setup.auction_ticks
+            - self.state.setup.closing_auction_ticks;
         let elapsed = day_tick
-            .saturating_sub(self.setup.auction_ticks)
+            .saturating_sub(self.state.setup.auction_ticks)
             .min(continuous);
-        let market_minute = u64::from(self.day) * 240 + elapsed * 240 / continuous;
+        let market_minute = u64::from(self.state.day) * 240 + elapsed * 240 / continuous;
         FactTime {
             phase: self.phase(),
             market_minute,
@@ -33,11 +34,11 @@ impl GameSession {
     }
 
     pub(super) fn causal_record_at(&mut self, time: FactTime, kind: CausalFactKind) {
-        self.causal.record(time, kind);
+        self.state.causal.record(time, kind);
     }
 
     pub(super) fn causal_quote(&self, code: &StockCode) -> Quote {
-        let market = &self.markets[code];
+        let market = &self.state.markets[code];
         Quote {
             code: code.clone(),
             bid_cents: market.best_bid().map(|price| price.cents()),
@@ -72,18 +73,19 @@ impl GameSession {
     ) {
         self.causal_record(CausalFactKind::Quote(quote));
         let plan = self
+            .state
             .parent_orders
             .get(&account)
             .and_then(|plans| plans.get(code))
-            .filter(|plan| plan.side == side)
-            .and_then(|plan| plan.linked_plan_id);
+            .filter(|plan| plan.side() == side)
+            .and_then(|plan| plan.linked_plan_id());
         self.causal_record(CausalFactKind::Submitted(OrderOrigin {
             order,
             account,
             code: code.clone(),
-            company: self.company_registry.issuer_of(code).cloned(),
+            company: self.state.company_registry.issuer_of(code).cloned(),
             plan,
-            decision: self.causal.decision.get(&account).copied(),
+            decision: self.state.causal.decision_for(account),
             side,
             qty,
         }));

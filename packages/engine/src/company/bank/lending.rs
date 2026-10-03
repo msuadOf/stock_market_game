@@ -5,7 +5,6 @@ use crate::accounting::{
     AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, PostingSide,
 };
 use crate::calendar::CivilDate;
-use crate::company::bank::ecl::ecl_allowance_target;
 use crate::company::bank::loans::{validate_terms, BankLoanState};
 use crate::company::bank::{chart, BankBooks, BankError, BankProductKind};
 use crate::company::contracts::ContractId;
@@ -34,7 +33,7 @@ impl BankBooks {
         if self.loans.contains_key(&loan) || self.deposits.contains_key(&loan) {
             return Err(BankError::DuplicateContract { contract: loan });
         }
-        let day_one = ecl_allowance_target(principal, &self.ecl_policy.stage1_default.clone())?;
+        let day_one = self.ecl_policy.initial_allowance_target(principal)?;
         let base = self.next_event_id;
         let disbursement = BusinessEventId::new(base);
         let mut events = vec![disbursement];
@@ -63,8 +62,7 @@ impl BankBooks {
             });
         }
         self.post_with_commit(base + events.len() as u64, entries)?;
-        let mut state = BankLoanState::new(principal, annual_rate_bp, borrower.clone(), start);
-        state.allowance = day_one;
+        let state = BankLoanState::new(principal, annual_rate_bp, borrower.clone(), start, day_one);
         self.loans.insert(loan.clone(), state);
         self.record_flow(
             start,
@@ -86,24 +84,7 @@ impl BankBooks {
         let state = self.loan(loan).ok_or(BankError::UnknownLoan {
             contract: loan.clone(),
         })?;
-        if state.is_written_off() {
-            return Err(BankError::LoanAlreadyWrittenOff {
-                contract: loan.clone(),
-            });
-        }
-        if !amount.is_positive() {
-            return Err(BankError::NonPositiveAmount {
-                what: "principal collection",
-                amount,
-            });
-        }
-        if amount > state.principal() {
-            return Err(BankError::PrincipalBeyondOutstanding {
-                contract: loan.clone(),
-                requested: amount,
-                outstanding: state.principal(),
-            });
-        }
+        state.validate_principal_collection(amount, loan)?;
         let event = BusinessEventId::new(self.next_event_id);
         self.post_with_commit(
             self.next_event_id + 1,
@@ -135,7 +116,7 @@ impl BankBooks {
     pub(super) fn loan_counterparty(&self, loan: &ContractId) -> Result<CounterpartyId, BankError> {
         self.loans
             .get(loan)
-            .map(|state| state.counterparty.clone())
+            .map(|state| state.counterparty().clone())
             .ok_or(BankError::UnknownLoan {
                 contract: loan.clone(),
             })

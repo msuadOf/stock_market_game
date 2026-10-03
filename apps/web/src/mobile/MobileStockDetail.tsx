@@ -7,7 +7,7 @@ import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { KlineViewportControls } from "./KlineViewportControls.tsx";
-import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
+import { aggregateCandles, buildFiveLevelBook, formatTradeLots, intradayChartX, MOBILE_KLINE_DEFAULT_CAPACITY, MobileIntradayProjection, MobileKlineProjection, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -78,88 +78,31 @@ function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "
   const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
   const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
   if (allCandles.length === 0) return <section className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
-  const window = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
-  const candles = allCandles.slice(window.start, window.end);
-  const values = candles.flatMap((candle) => [candle.high, candle.low]);
-  const max = Math.max(...values); const min = Math.min(...values); const range = Math.max(.01, max - min);
-  const y = (value: number) => 8 + (max - value) / range * 166;
-  const slotFor = (index: number) => chartSlotGeometry(index, candles.length, 390, viewport.capacity);
-  const movingAverage = (days: number) => allCandles.map((_, index) => allCandles.slice(Math.max(0, index - days + 1), index + 1).reduce((sum, c) => sum + c.close, 0) / Math.min(days, index + 1)).slice(window.start, window.end);
-  const ma5 = movingAverage(5); const ma10 = movingAverage(10); const ma20 = movingAverage(20);
-  const line = (series: number[]) => series.map((value, index) => `${slotFor(index).center},${y(value)}`).join(" ");
-  const completeKdj = indicatorResult.kind === "ready" ? indicatorResult.value.candleKdj : null;
-  const kdj = completeKdj === null ? null : {
-    k: completeKdj.k.slice(window.start, window.end),
-    d: completeKdj.d.slice(window.start, window.end),
-    j: completeKdj.j.slice(window.start, window.end),
-  };
-  const indicatorMin = kdj === null ? 0 : Math.min(0, ...kdj.j); const indicatorMax = kdj === null ? 100 : Math.max(100, ...kdj.j); const indicatorRange = Math.max(1, indicatorMax - indicatorMin);
-  const indicatorLine = (series: number[]) => series.map((value, index) => `${slotFor(index).center},${68 - (value - indicatorMin) / indicatorRange * 64}`).join(" ");
-  const volumes = candles.map(candle => candle.volume ?? 0); const maxVolume = Math.max(1, ...volumes);
+  const projection = MobileKlineProjection.fromInputs(allCandles, viewport, indicatorResult);
+  const candles = projection.visibleCandles;
+  const ma5 = projection.movingAverage(5); const ma10 = projection.movingAverage(10); const ma20 = projection.movingAverage(20);
+  const kdj = projection.kdj;
+  const volumes = projection.volumes;
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
-  const latestCandle = allCandles.at(-1);
-  const klineSignature = latestCandle
-    ? `${latestCandle.time}:${latestCandle.open}:${latestCandle.high}:${latestCandle.low}:${latestCandle.close}:${latestCandle.volume ?? 0}`
-    : "empty";
   return <section
     className="msd-kline"
     aria-label={`${period}图`}
     data-kline-count={allCandles.length}
-    data-kline-signature={klineSignature}
+    data-kline-signature={projection.latestSignature}
   >
     <div className="msd-kline-meta"><button type="button" title="均线设置尚未开放" disabled>均线⌄</button><b>{period}</b><span>M5:{ma5.at(-1)?.toFixed(2)}</span><span>M10:{ma10.at(-1)?.toFixed(2)}</span><span>M20:{ma20.at(-1)?.toFixed(2)}</span></div>
-    <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const slot=slotFor(index); const rise=c.close>=c.open; const body=candleBodyPrices(c); const wick=candleWickPrices(c); const bodyTop=y(body.top); const bodyBottom=y(body.bottom); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={y(wick.upper.start)} y2={y(wick.upper.end)}/><rect x={slot.center-slot.markWidth/2} y={bodyTop} width={slot.markWidth} height={Math.max(1,bodyBottom-bodyTop)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={y(wick.lower.start)} y2={y(wick.lower.end)}/></g>; })}<polyline className="ma5" points={line(ma5)}/><polyline className="ma10" points={line(ma10)}/><polyline className="ma20" points={line(ma20)}/></svg>
+    <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}<polyline className="ma5" points={projection.movingAverageLine(5)}/><polyline className="ma10" points={projection.movingAverageLine(10)}/><polyline className="ma20" points={projection.movingAverageLine(20)}/></svg>
     <KlineViewportControls total={allCandles.length} viewport={viewport} onAction={act} />
-    <div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes.at(-1) ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{volumes.map((volume,index)=>{const slot=slotFor(index); const height=Math.max(1,volume/maxVolume*66); return <rect key={index} className={candles[index].close>=candles[index].open?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>;})}</svg>
-    {kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k.at(-1)?.toFixed(2)}　<span>D:{kdj.d.at(-1)?.toFixed(2)}</span>　<em>J:{kdj.j.at(-1)?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={indicatorLine(kdj.k)}/><polyline className="orange" points={indicatorLine(kdj.d)}/><polyline className="pink" points={indicatorLine(kdj.j)}/></svg></>}
+    <div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes.at(-1) ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{projection.volumeMarks().map(({ slot, height, rise }, index) => <rect key={index} className={rise?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>)}</svg>
+    {kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k.at(-1)?.toFixed(2)}　<span>D:{kdj.d.at(-1)?.toFixed(2)}</span>　<em>J:{kdj.j.at(-1)?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={projection.indicatorLine(kdj.k)}/><polyline className="orange" points={projection.indicatorLine(kdj.d)}/><polyline className="pink" points={projection.indicatorLine(kdj.j)}/></svg></>}
   </section>;
 }
 
 function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
-  const visiblePoints = minutePoints.slice(-totalMinutes);
-  const visibleAuctionPoints = auctionPoints.slice(-CALL_AUCTION_ENTRY_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
-  const visibleAuctionPricePoints = visibleAuctionPoints.filter(
-    (point): point is AuctionPoint & { value: number } => point.value !== null,
-  );
-  const lastClose = market.last_close / 100;
-  const scale = symmetricIntradayScale([...visibleAuctionPricePoints, ...visiblePoints].map((point) => point.value), lastClose);
-  const y = (value: number) => 8 + ((scale.top - value) / (scale.top - scale.bottom)) * 84;
-  const auctionLinePoints = visibleAuctionPricePoints
-    .map((point) => `${intradayChartX({ phase: "auction", minute: point.time })},${y(point.value)}`)
-    .join(" ");
-  const linePoints = visiblePoints
-    .map((point) => `${intradayChartX({ phase: "continuous", minute: point.time })},${y(point.value)}`)
-    .join(" ");
-  const averagePoints = visiblePoints
-    .map((point, index) => {
-      const average = visiblePoints.slice(0, index + 1).reduce((sum, point) => sum + point.value, 0) / (index + 1);
-      return `${intradayChartX({ phase: "continuous", minute: point.time })},${y(average)}`;
-    })
-    .join(" ");
-  const progress = tradingDayProgress(
-    visibleAuctionPoints.length / AUCTION_VOLUME_LINES_PER_MINUTE + elapsedMinutes,
-    CALL_AUCTION_ENTRY_MINUTES + totalMinutes,
-  );
-  const averageSource = visiblePoints.length > 0 ? visiblePoints : visibleAuctionPricePoints;
-  const displayedAverage = averageSource.length > 0
-    ? averageSource.reduce((sum, point) => sum + point.value, 0) / averageSource.length
-    : lastClose;
-  const allVolumePoints = [
-    ...visibleAuctionPoints.map((point) => ({ ...point, phase: "auction" as const, x: intradayChartX({ phase: "auction", minute: point.time }) })),
-    ...visiblePoints.map((point) => ({ ...point, phase: "continuous" as const, x: intradayChartX({ phase: "continuous", minute: point.time }) })),
-  ];
-  const volumeScale = intradayVolumeScale(
-    visibleAuctionPoints.map((point) => point.volume ?? 0),
-    visiblePoints.map((point) => point.volume ?? 0),
-  );
-  const recentTrades = trades.slice(-7).reverse();
+  const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
+  const { visiblePoints, visibleAuctionPoints, visibleAuctionPricePoints, scale, displayedAverage, progress, recentTrades } = projection;
   const latestPoint = visiblePoints.at(-1);
-  const latestAuctionPoint = visibleAuctionPoints.at(-1);
-  const intradaySignature = latestPoint
-    ? `${gameDay}:continuous:${latestPoint.time}:${latestPoint.value}:${latestPoint.volume ?? 0}`
-    : latestAuctionPoint
-      ? `${gameDay}:auction:${latestAuctionPoint.time}:${latestAuctionPoint.value}:${latestAuctionPoint.volume ?? 0}`
-      : `${gameDay}:empty`;
+  const volumeMarks = projection.volumeMarks();
 
   return (
     <section
@@ -168,7 +111,7 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
       data-intraday-count={visiblePoints.length}
       data-intraday-latest-minute={latestPoint?.time ?? -1}
       data-auction-count={visibleAuctionPoints.length}
-      data-intraday-signature={intradaySignature}
+      data-intraday-signature={projection.signature}
     >
       <div className="msd-intraday-main">
         <div className="msd-chart-meta">
@@ -187,17 +130,17 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
             <line className="msd-session-line" x1="37" x2="37" y1="0" y2="100" />
             <line className="msd-session-line" x1="58" x2="58" y1="0" y2="100" />
             <line className="msd-session-line" x1="79" x2="79" y1="0" y2="100" />
-            <polyline className="msd-auction-line" points={auctionLinePoints} />
-            {visibleAuctionPricePoints.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: visibleAuctionPricePoints[0].time })} cy={y(visibleAuctionPricePoints[0].value)} r="0.8" />}
-            <polyline className="msd-average-line" points={averagePoints} />
-            <polyline className="msd-price-line" points={linePoints} />
+            <polyline className="msd-auction-line" points={projection.auctionLine()} />
+            {visibleAuctionPricePoints.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: visibleAuctionPricePoints[0].time })} cy={projection.priceY(visibleAuctionPricePoints[0].value)} r="0.8" />}
+            <polyline className="msd-average-line" points={projection.averageLine()} />
+            <polyline className="msd-price-line" points={projection.continuousLine()} />
           </svg>
           <div className="msd-time-axis" aria-hidden="true"><span style={{ left: "0%" }}>09:15</span><span className="after-auction" style={{ left: "16%" }}>09:30</span><span style={{ left: "37%" }}>10:30</span><span className="lunch-turn" style={{ left: "58%" }}>11:30/13:00</span><span style={{ left: "79%" }}>14:00</span><span className="market-close">15:00</span></div>
         </div>
       </div>
       <FiveLevelBook market={market} />
       <div className="msd-minute-volume">
-        <div className="msd-volume-meta"><b>分时量（手）⌄</b><span>量:{formatTradeLots(allVolumePoints.at(-1)?.volume ?? 0)}手</span><small>{formatGameClock(gameTick).slice(0, 5)}</small></div>
+        <div className="msd-volume-meta"><b>分时量（手）⌄</b><span>量:{formatTradeLots(volumeMarks.at(-1)?.volume ?? 0)}手</span><small>{projection.clockTime}</small></div>
         <div
           className="msd-minute-bars"
           aria-label="集合竞价累计量细线及连续竞价一分钟成交量细线"
@@ -207,17 +150,13 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
           <span className="msd-volume-guide" style={{ left: "37%" }} />
           <span className="msd-volume-guide" style={{ left: "58%" }} />
           <span className="msd-volume-guide" style={{ left: "79%" }} />
-          {allVolumePoints.map((point, index) => {
-            const phaseMaximum = point.phase === "auction" ? volumeScale.auctionMax : volumeScale.continuousMax;
-            const height = Math.max(1, ((point.volume ?? 0) / phaseMaximum) * 100);
-            return <i key={`${point.x}-${index}`} className={point.buy ? "rise" : "fall"} style={{ left: `${point.x}%`, height: `${height}%` }} />;
-          })}
+          {volumeMarks.map((point, index) => <i key={`${point.x}-${index}`} className={point.buy ? "rise" : "fall"} style={{ left: `${point.x}%`, height: `${point.height}%` }} />)}
         </div>
       </div>
       <div className="msd-ticks" aria-label="逐笔成交">
         <div className="msd-ticks-head">明细⌃</div>
         {recentTrades.length === 0 ? <p>等待成交…</p> : recentTrades.map((trade) => (
-          <div className="msd-tick-row" key={trade.seq}><span>{formatTradingMinute(Math.max(0, elapsedMinutes - 1))}</span><b className={tone(trade.price - market.last_close)}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
+          <div className="msd-tick-row" key={trade.seq}><span>{projection.tradeTime}</span><b className={tone(trade.price - market.last_close)}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
         ))}
       </div>
     </section>

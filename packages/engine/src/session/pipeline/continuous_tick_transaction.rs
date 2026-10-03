@@ -194,9 +194,9 @@ fn apply_session_continuous_transaction(
         || -> Result<_, StepFatal> {
             let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_continuous_inputs(frozen_candidate)?;
-            let ledger = frozen_candidate.envelope_ledger.clone();
-            let next_order_id = frozen_candidate.next_order_id;
-            let config = frozen_candidate.setup.config.clone();
+            let ledger = frozen_candidate.state.envelope_ledger.clone();
+            let next_order_id = frozen_candidate.state.next_order_id;
+            let config = frozen_candidate.state.setup.config.clone();
             Ok((context, stock_inputs, ledger, next_order_id, config))
         },
     );
@@ -269,7 +269,7 @@ fn apply_session_continuous_transaction(
             },
         },
     )?;
-    candidate.next_order_id = validation.next_order_id_after();
+    candidate.state.next_order_id = validation.next_order_id_after();
 
     Ok(ContinuousTransactionOutput {
         #[cfg(test)]

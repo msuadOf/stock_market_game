@@ -100,3 +100,113 @@ it("terminates a real child and reports a streaming callback failure", async () 
     onStdout: () => { throw null; },
   }), /stdout callback failed: null/);
 });
+
+it("rejects an already aborted signal before spawning a child", async () => {
+  const controller = new AbortController();
+  const reason = new Error("sibling failed before start");
+  controller.abort(reason);
+  let spawns = 0;
+  await assert.rejects(runBoundedCommand({
+    command: "must-not-start", timeoutMs: 100,
+    signal: controller.signal,
+    spawnProcess: () => { spawns += 1; },
+  }), (error) => error === reason);
+  assert.equal(spawns, 0);
+});
+
+it("waits for child close after abort and removes the signal listener on settlement", async () => {
+  const child = new EventEmitter();
+  const controller = new AbortController();
+  const reason = new Error("sibling failed during execution");
+  let settled = false;
+  const result = runBoundedCommand({
+    command: "in-flight", timeoutMs: 200,
+    signal: controller.signal, spawnProcess: () => child,
+  });
+  const rejection = assert.rejects(result, (error) => {
+    assert.match(error.message, /was aborted because a sibling command failed/);
+    assert.equal(error.cause, reason);
+    return true;
+  }).then(() => { settled = true; });
+  controller.abort(reason);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  child.emit("close", null, "SIGKILL");
+  await rejection;
+});
+
+it("settles once when close, error and a later abort repeat completion events", async () => {
+  const child = new EventEmitter();
+  const controller = new AbortController();
+  let listenerRemovals = 0;
+  const originalRemove = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.removeEventListener = (...args) => {
+    listenerRemovals += 1;
+    return originalRemove(...args);
+  };
+  const result = runBoundedCommand({
+    command: "repeat-events", timeoutMs: 200,
+    signal: controller.signal, spawnProcess: () => child,
+  });
+  child.emit("close", 0, null);
+  child.emit("error", new Error("late error"));
+  controller.abort(new Error("late sibling failure"));
+  child.emit("close", 2, null);
+  assert.deepEqual(await result, { stdout: "", stderr: "" });
+  assert.equal(listenerRemovals, 1);
+});
+
+it("preserves a spawn error when close and abort arrive after rejection", async () => {
+  const child = new EventEmitter();
+  const controller = new AbortController();
+  const result = runBoundedCommand({
+    command: "missing-command", timeoutMs: 200,
+    signal: controller.signal, spawnProcess: () => child,
+  });
+  const rejection = assert.rejects(result, /cannot start ordinary test command missing-command: injected spawn failure/);
+  child.emit("error", new Error("injected spawn failure"));
+  child.emit("close", 0, null);
+  controller.abort(new Error("late sibling failure"));
+  await rejection;
+});
+
+it("keeps a streaming callback error ahead of a sibling abort on close", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const controller = new AbortController();
+  const result = runBoundedCommand({
+    command: "stream-failure", timeoutMs: 200,
+    signal: controller.signal, spawnProcess: () => child,
+    captureOutput: true,
+    onStderr: () => { throw new Error("injected callback failure"); },
+  });
+  const rejection = assert.rejects(result, /stderr callback failed: injected callback failure/);
+  child.stderr.emit("data", Buffer.from("diagnostic"));
+  controller.abort(new Error("sibling failure"));
+  child.emit("close", null, "SIGKILL");
+  await rejection;
+});
+
+it("accumulates captured streams and passes their original chunks to callbacks", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const chunks = [Buffer.from("artifact"), Buffer.from("\n"), Buffer.from("diagnostic")];
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const result = runBoundedCommand({
+    command: "captured-streams", timeoutMs: 200, captureOutput: true,
+    spawnProcess: () => child,
+    onStdout: (chunk) => stdoutChunks.push(chunk),
+    onStderr: (chunk) => stderrChunks.push(chunk),
+  });
+  child.stdout.emit("data", chunks[0]);
+  child.stdout.emit("data", chunks[1]);
+  child.stderr.emit("data", chunks[2]);
+  child.emit("close", 0, null);
+  assert.deepEqual(await result, { stdout: "artifact\n", stderr: "diagnostic" });
+  assert.equal(stdoutChunks[0], chunks[0]);
+  assert.equal(stdoutChunks[1], chunks[1]);
+  assert.equal(stderrChunks[0], chunks[2]);
+});

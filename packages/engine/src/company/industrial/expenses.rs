@@ -8,8 +8,9 @@
 //! 标签映射：缴税 = TaxPayment/Operating；所得税计提 = TaxAccrual/NonCash。
 
 use crate::accounting::{
-    compute_income_tax, AccountElement, AccountingAmount, AccountingPeriod, BusinessEventId,
-    BusinessKind, CashFlowClass, JournalEntry, PostingSide,
+    AccountElement, AccountingAmount, AccountingPeriod, Books, BusinessEventId, BusinessKind,
+    CashFlowClass, IncomeTaxComputation, IncomeTaxPolicy, JournalEntry, LedgerAccountId, LossEntry,
+    PostingSide,
 };
 use crate::calendar::CivilDate;
 use crate::company::industrial::{chart, IndustrialBooks, IndustrialError};
@@ -127,12 +128,14 @@ impl IndustrialBooks {
         &mut self,
         date: CivilDate,
     ) -> Result<IncomeTaxOutcome, IndustrialError> {
-        let year = date.year();
-        let pretax = self.year_pretax(year)?;
-        let computation =
-            compute_income_tax(pretax, year, &self.loss_pool, &self.tax_policy().income_tax)?;
-        let posted_dta = self.net_of(chart::acct::DTA)?;
-        let deferred_delta = computation.deferred_tax_asset.sub(posted_dta)?;
+        let preview = self.income_tax_position.preview_income_tax(
+            date.year(),
+            self.books(),
+            &self.tax_policy().income_tax,
+        )?;
+        let computation = preview.computation;
+        let pretax = computation.pretax;
+        let deferred_delta = preview.deferred_delta;
 
         let mut entries = Vec::new();
         let mut lines = Vec::new();
@@ -185,7 +188,8 @@ impl IndustrialBooks {
             self.post_with_commit(base + 1, entries)?;
             Some(event)
         };
-        self.loss_pool = computation.ending_pool.clone();
+        self.income_tax_position
+            .commit_loss_pool(computation.ending_pool.clone());
         Ok(IncomeTaxOutcome {
             event,
             pretax,
@@ -233,16 +237,57 @@ impl IndustrialBooks {
         )?;
         Ok(event)
     }
+}
+
+/// 跨年亏损池的唯一 owner；IncomeTaxPolicy 借用自账套，税款余额仍由 Books 持有。
+/// transparent 保持原 loss_pool 数组及原反序列化接受集。
+#[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub(super) struct IncomeTaxPosition {
+    loss_pool: Vec<LossEntry>,
+}
+
+struct IncomeTaxPreview {
+    computation: IncomeTaxComputation,
+    deferred_delta: AccountingAmount,
+}
+
+impl IncomeTaxPosition {
+    pub(super) fn loss_pool(&self) -> &[LossEntry] {
+        &self.loss_pool
+    }
+
+    fn preview_income_tax(
+        &self,
+        year: i32,
+        books: &Books,
+        policy: &IncomeTaxPolicy,
+    ) -> Result<IncomeTaxPreview, IndustrialError> {
+        let pretax = self.year_pretax(year, books)?;
+        let computation = policy.compute(pretax, year, &self.loss_pool)?;
+        let posted_dta = books
+            .ledger()
+            .account_net_debit(&LedgerAccountId(chart::acct::DTA.to_string()))?;
+        let deferred_delta = computation.deferred_tax_asset.sub(posted_dta)?;
+        Ok(IncomeTaxPreview {
+            computation,
+            deferred_delta,
+        })
+    }
+
+    /// 原成功点提交；零分录路径也照旧提交 ending_pool，不新增幂等语义。
+    fn commit_loss_pool(&mut self, ending_pool: Vec<LossEntry>) {
+        self.loss_pool = ending_pool;
+    }
 
     /// 年度税前利润 = 全年（1–12 月）收入净贷方 − 费用净借方（总账期间索引派生）。
-    fn year_pretax(&self, year: i32) -> Result<AccountingAmount, IndustrialError> {
+    fn year_pretax(&self, year: i32, books: &Books) -> Result<AccountingAmount, IndustrialError> {
         let mut revenue = AccountingAmount::ZERO;
         let mut expense = AccountingAmount::ZERO;
         for month in 1..=12u8 {
             let period = AccountingPeriod::from_ymd(year, month)?;
-            for (id, def) in self.books().ledger().chart().iter() {
-                let balance = self
-                    .books()
+            for (id, def) in books.ledger().chart().iter() {
+                let balance = books
                     .ledger()
                     .account_period_balance(id, period)
                     .net_debit()?;

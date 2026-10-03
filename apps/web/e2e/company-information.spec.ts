@@ -64,12 +64,16 @@ test("平板端以真实 WASM 切换公司和报告期间并保持规范公开�
   await expect(panel.getByRole("list", { name: "公开报告列表" })).toBeVisible();
   await expect(panel).toContainText("芯片科技股份有限公司");
   await expect(panel).toContainText("季度报告 · 2028-03-31");
-  await panel.getByRole("listitem").filter({ hasText: "半年度报告 · 2028-06-30" }).click();
+  const semiannualReport = panel.getByRole("button", { name: "半年度报告 · 2028-06-30 2028-08-21 18:00 发布 · 版本 1", exact: true });
+  await semiannualReport.click();
+  await expect(semiannualReport).toHaveAttribute("aria-pressed", "true");
   await expect(panel).toContainText("公开编号 9 · 版本 1");
   await expect(panel).toContainText("半年度报告 · 期间 2028-06-30");
   await panel.getByRole("tab", { name: "资产负债表", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   await expect(panel.getByRole("tab", { name: "利润表", exact: true })).toBeFocused();
+  await expect(semiannualReport).toHaveAttribute("aria-pressed", "true");
+  await expect(panel).toContainText("半年度报告 · 期间 2028-06-30");
   expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/tablet-768.png" });
 });

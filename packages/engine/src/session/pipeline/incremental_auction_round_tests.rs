@@ -24,8 +24,8 @@ fn prepare(session: &GameSession, intents: Vec<(AccountId, Intent)>) -> AccountV
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(session).unwrap(),
     )
     .unwrap()
@@ -40,7 +40,7 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
         42,
     )
     .unwrap();
-    let code = session.markets.keys().next().unwrap().clone();
+    let code = session.state.markets.keys().next().unwrap().clone();
     let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
@@ -75,7 +75,7 @@ fn incremental_auction_does_not_order_stocks_by_sealed_identity() {
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
     let session = GameSession::new(setup, 42).unwrap();
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
@@ -144,7 +144,7 @@ fn incremental_auction_worker_failure_keeps_stock_and_detached_facts_retryable()
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
     let session = GameSession::new(setup, 42).unwrap();
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     let validation = prepare(
         &session,
         codes
@@ -231,7 +231,7 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
     let session = GameSession::new(setup, 42).unwrap();
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     assert_eq!(codes.len(), 2);
     let validation = prepare(
         &session,
@@ -275,20 +275,16 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
         .completion
         .price_tick = Money::ZERO;
 
-    let first_error = apply_auction_stock_round(
-        codes[0].clone(),
-        coordinator.stocks[&codes[0]].clone(),
-        vec![operations[0].clone()],
-    )
-    .err()
-    .expect("first stock must reject a duplicate envelope");
-    let second_error = apply_auction_stock_round(
-        codes[1].clone(),
-        coordinator.stocks[&codes[1]].clone(),
-        vec![operations[1].clone()],
-    )
-    .err()
-    .expect("second stock must reject an invalid price tick");
+    let first_error = coordinator.stocks[&codes[0]]
+        .clone()
+        .apply_round(vec![operations[0].clone()])
+        .err()
+        .expect("first stock must reject a duplicate envelope");
+    let second_error = coordinator.stocks[&codes[1]]
+        .clone()
+        .apply_round(vec![operations[1].clone()])
+        .err()
+        .expect("second stock must reject an invalid price tick");
     assert_ne!(first_error, second_error);
 
     let perturbation = ExecutorPerturbation {

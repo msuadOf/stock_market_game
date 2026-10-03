@@ -1,8 +1,8 @@
-//! Joint incremental call-auction transaction.
+//! 增量集合竞价事务。
 //!
-//! P3 and stock-owned P4 alternate at every continuation edge. The auction coordinator is
-//! initialized once from post-P0 state; only after all commands have drained does its consuming
-//! finish seam run AuctionTick, completion, DayEnd and ReceiptAggregation-Projection once.
+//! P3 与股票拥有的 P4 在 continuation 边界交替推进；coordinator 从 post-P0 初始化一次。
+//! 请求按每股实际局部受理与适用价格时间规则执行，sealed identity 只用于事实关联。
+//! stream 排空后，consuming finish 恰一次执行 AuctionTick、completion、DayEnd 与统一结算投影。
 
 use super::{
     account_validation_context::build_account_validation_context,
@@ -12,8 +12,8 @@ use super::{
     ready_stock_stream::ReadyStockStream,
     session_fact_producers::adapt_account_validation_rejection_facts,
     stock_auction::auction_day_end::{
-        apply_incremental_auction_finish_with_prepared_facts_and_receipts, auction_tail_boundaries,
-        AuctionDayEndError, AuctionDayEndOutput, AuctionExecutionRound,
+        apply_incremental_auction_finish_with_prepared_facts_and_receipts, AuctionDayEndError,
+        AuctionDayEndOutput, AuctionExecutionRound, AuctionTickBoundary,
         PreparedAuctionFinishContext,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
@@ -74,10 +74,8 @@ pub(super) struct AuctionTickResult {
     pub(super) output: AuctionTransactionOutput,
 }
 
-/// Builds the auction candidate selected by the authoritative phase dispatcher.
-///
-/// Opening and closing auctions share the same prepared P0-P9 transaction; phase-specific
-/// completion and day-end work remain inside the candidate before the infallible P9 swap.
+/// 构建 phase dispatcher 选定的竞价 candidate；开盘与收盘共享 P0–P9 事务。
+/// 各阶段的 completion 与 DayEnd 均在无失败点的 P9 安装之前完成。
 #[cfg(test)]
 pub(super) fn prepare_auction_tick(
     authority: &mut GameSession,
@@ -173,17 +171,16 @@ fn apply_session_auction_transaction(
         return Err(invariant("incremental B2 requires an auction phase").into());
     }
     let sources = ReadyIngress::capture_sources(candidate)?;
-    // Root observation and stock/account setup share post-P0 facts. No plan
-    // action mutates the discardable candidate until both branches finish.
+    // 根观察与股票/账户准备共享 post-P0 事实；两个分支完成后才允许计划变更 candidate。
     let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
             let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_auction_inputs(frozen_candidate)?;
-            let ledger = frozen_candidate.envelope_ledger.clone();
-            let next_order_id = frozen_candidate.next_order_id;
-            let config = frozen_candidate.setup.config.clone();
+            let ledger = frozen_candidate.state.envelope_ledger.clone();
+            let next_order_id = frozen_candidate.state.next_order_id;
+            let config = frozen_candidate.state.setup.config.clone();
             Ok((context, stock_inputs, ledger, next_order_id, config))
         },
     );
@@ -230,12 +227,13 @@ fn apply_session_auction_transaction(
     let preceding_facts =
         adapt_account_validation_rejection_facts(&candidates, validation.results())?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(candidate)?;
-    let finish = finish_auction_shards(stock_execution, tick_after, finish_auction, finish_day)
-        .map_err(|source| AuctionDayEndError::Worker {
+    let boundary = AuctionTickBoundary::capture(candidate)?;
+    let finish = finish_auction_shards(stock_execution, boundary).map_err(|source| {
+        AuctionDayEndError::Worker {
             code: crate::StockCode("<incremental>".to_owned()),
             source,
-        })?;
+        }
+    })?;
     let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         candidate,
         &candidates,

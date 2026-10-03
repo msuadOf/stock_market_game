@@ -1,17 +1,17 @@
 # ─────────────────────────────────────────────────────────────
-# Dependencies
+# 依赖目录
 # ─────────────────────────────────────────────────────────────
 node_modules/
 .pnp
 .pnp.js
 
 # ─────────────────────────────────────────────────────────────
-# Build outputs
+# 编译产物
 # ─────────────────────────────────────────────────────────────
 dist/
 build/
 out/
-# Rust / Tauri build artifacts
+# Rust / Tauri 编译产物
 target/
 *.tsbuildinfo
 
@@ -20,7 +20,7 @@ src-tauri/target/
 src-tauri/gen/schemas/
 
 # ─────────────────────────────────────────────────────────────
-# Environment & secrets — NEVER commit
+# 环境配置与密钥，禁止提交
 # ─────────────────────────────────────────────────────────────
 .env
 .env.*
@@ -30,7 +30,7 @@ src-tauri/gen/schemas/
 *.key
 
 # ─────────────────────────────────────────────────────────────
-# Test & coverage
+# 测试产物与覆盖率
 # ─────────────────────────────────────────────────────────────
 coverage/
 .nyc_output/
@@ -39,7 +39,7 @@ playwright-report/
 test-results/
 
 # ─────────────────────────────────────────────────────────────
-# Logs & caches
+# 日志与缓存
 # ─────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*
@@ -51,7 +51,7 @@ pnpm-debug.log*
 .turbo/
 
 # ─────────────────────────────────────────────────────────────
-# Editor / OS
+# 编辑器与操作系统文件
 # ─────────────────────────────────────────────────────────────
 .vscode/*
 !.vscode/extensions.json
@@ -63,18 +63,18 @@ Thumbs.db
 desktop.ini
 
 # ─────────────────────────────────────────────────────────────
-# Generated game data / local saves
+# 游戏生成数据与本地存档
 # ─────────────────────────────────────────────────────────────
 *.local-save
 
 # ─────────────────────────────────────────────────────────────
-# Local-only reference material (not part of the codebase)
+# 仅供本地参考的材料，不属于项目源码
 # ─────────────────────────────────────────────────────────────
 # 第三方参考游戏源码，仅供本地参考，不入库
 /ref/
 
 # ─────────────────────────────────────────────────────────────
-# WASM / wasm-pack build artifacts (ADR-0005 三端之一)
+# WASM / wasm-pack 编译产物（ADR-0005 三端之一）
 # ─────────────────────────────────────────────────────────────
 pkg/
 **/pkg/
@@ -84,14 +84,14 @@ apps/web/wasm-diagnostics-pkg/
 apps/web-wasm/target/
 
 # ─────────────────────────────────────────────────────────────
-# Frontend build outputs (ADR-0007 三端前端框架)
+# 前端编译产物（ADR-0007 三端前端框架）
 # ─────────────────────────────────────────────────────────────
 apps/*/dist/
 apps/web/dist-pages/
 apps/*/build/
 
 # ─────────────────────────────────────────────────────────────
-# Tauri desktop artifacts (ADR-0007)
+# Tauri 桌面编译产物（ADR-0007）
 # ─────────────────────────────────────────────────────────────
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/schemas/
@@ -101,20 +101,29 @@ apps/desktop/src-tauri/gen/schemas/
 # ─────────────────────────────────────────────────────────────
 .pnpm-store/
 
+# 本地 agent 配置与工作树，避免嵌套检出和临时状态入库
+/.worktree/
+/.worktrees/
 .codex/
 .codex-*/
 
-# Generated UI performance reports (HTML, JSON, screenshots)
+# UI 性能报告（HTML、JSON、截图）
 artifacts/market-ui-performance/
 .VSCodeCounter/
 
-# OpenCode transient session state (plans/notepads/evidence/boulder ARE tracked)
+# OpenCode 临时会话状态（plans/notepads/evidence/boulder 仍纳入版本管理）
 .omo/run-continuation/
 .omo/drafts/
 .omo/t14-*.txt
 
-# Incomplete local K7 run and privacy-unreviewed Playwright output only.
+# 仅忽略未完成的本地 K7 运行及未经隐私复核的 Playwright 输出。
 /.omo/evidence/company-information-npc-intentions/after/primary-b1-e1-c1/seed-1.json
 /.omo/evidence/company-information-npc-intentions/task-34-failure/playwright-results/
 .tmp/
 /bindings/
+
+# OOP 重构调查工作目录仅在本地保留，不纳入版本管理
+/agents/oop-refactor-audit/
+
+# Agent 机器生成的 JSON 记录；其他中文 Markdown 审计文档仍纳入版本管理
+/agents/**/*.json

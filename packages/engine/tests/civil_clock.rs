@@ -81,29 +81,52 @@ fn civil_setup(start: &str) -> SessionSetup {
     }
 }
 
-/// 春节场景：周五开局并注册整段窗口的到期业务，返回 (session, 注册清单)。
+/// 模拟春节场景持有会话及其自注册到期清单。
 /// 注册顺序刻意与日期顺序不同，证明派发按日期而非注册顺序。
-fn spring_festival_session() -> (GameSession, Vec<DueBusiness>) {
-    let mut session = GameSession::new(civil_setup(PRE_HOLIDAY_FRIDAY), 42)
-        .expect("spring festival setup must be valid");
-    let mut registered = Vec::new();
-    for (due_date, kind) in [
-        (POST_HOLIDAY_WEDNESDAY, DueKind::InterestAccrual),
-        (SPRING_FESTIVAL_CLOSED[2], DueKind::InterestAccrual),
-        (SPRING_FESTIVAL_CLOSED[0], DueKind::InterestAccrual),
-        (PRE_HOLIDAY_FRIDAY, DueKind::InterestAccrual),
-        (SPRING_FESTIVAL_CLOSED[3], DueKind::InterestAccrual),
-        (SPRING_FESTIVAL_CLOSED[1], DueKind::ContractMaturity),
-        (SPRING_FESTIVAL_CLOSED[1], DueKind::InterestAccrual),
-    ] {
-        registered.push(
-            session
-                .civil_clock_mut()
-                .register_due(date(due_date), kind)
-                .expect("scenario due registration must be valid"),
-        );
+struct SpringFestivalScenario {
+    session: GameSession,
+    registered_due: Vec<DueBusiness>,
+}
+
+impl SpringFestivalScenario {
+    fn new_spring_festival() -> Self {
+        let mut session = GameSession::new(civil_setup(PRE_HOLIDAY_FRIDAY), 42)
+            .expect("spring festival setup must be valid");
+        let mut registered = Vec::new();
+        for (due_date, kind) in [
+            (POST_HOLIDAY_WEDNESDAY, DueKind::InterestAccrual),
+            (SPRING_FESTIVAL_CLOSED[2], DueKind::InterestAccrual),
+            (SPRING_FESTIVAL_CLOSED[0], DueKind::InterestAccrual),
+            (PRE_HOLIDAY_FRIDAY, DueKind::InterestAccrual),
+            (SPRING_FESTIVAL_CLOSED[3], DueKind::InterestAccrual),
+            (SPRING_FESTIVAL_CLOSED[1], DueKind::ContractMaturity),
+            (SPRING_FESTIVAL_CLOSED[1], DueKind::InterestAccrual),
+        ] {
+            registered.push(
+                session
+                    .civil_clock_mut()
+                    .register_due(date(due_date), kind)
+                    .expect("scenario due registration must be valid"),
+            );
+        }
+        Self {
+            session,
+            registered_due: registered,
+        }
     }
-    (session, registered)
+
+    /// 任务 26 起会话自带公司经营 dues（滚动利息等）；时钟断言只看测试自注册的到期项。
+    fn own_due(&self, items: impl IntoIterator<Item = DueBusiness>) -> Vec<DueBusiness> {
+        let ids: std::collections::BTreeSet<u32> = self
+            .registered_due
+            .iter()
+            .map(|due| due.id.value())
+            .collect();
+        items
+            .into_iter()
+            .filter(|due| ids.contains(&due.id.value()))
+            .collect()
+    }
 }
 
 /// 跑完一个完整交易日会话（ticks_per_day 个 step）。
@@ -111,19 +134,6 @@ fn run_full_trading_session(session: &mut GameSession) {
     for _ in 0..TICKS_PER_DAY {
         session.step().expect("healthy step");
     }
-}
-
-/// 任务 26 起会话自带公司经营 dues（滚动利息等）；时钟断言只看测试自注册的到期项。
-fn own(
-    items: impl IntoIterator<Item = DueBusiness>,
-    registered: &[DueBusiness],
-) -> Vec<DueBusiness> {
-    let ids: std::collections::BTreeSet<u32> =
-        registered.iter().map(|due| due.id.value()).collect();
-    items
-        .into_iter()
-        .filter(|due| ids.contains(&due.id.value()))
-        .collect()
 }
 
 fn assert_fired_once_each(reports: &[CivilDayEndReport], registered: &[DueBusiness]) {
@@ -145,17 +155,21 @@ fn assert_fired_once_each(reports: &[CivilDayEndReport], registered: &[DueBusine
 
 #[test]
 fn closed_days_accrue_without_trading() {
-    let (mut session, registered) = spring_festival_session();
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
     let code = StockCode("600101".to_string());
     let player = AccountId(0);
 
     // 休市起点不挪日期：开局 civil 日期就是 setup 声明的周五。
-    assert_eq!(session.civil_date(), date(PRE_HOLIDAY_FRIDAY));
-    assert_eq!(session.civil_clock().phase(), CivilPhase::IntradayTrading);
+    assert_eq!(scenario.session.civil_date(), date(PRE_HOLIDAY_FRIDAY));
+    assert_eq!(
+        scenario.session.civil_clock().phase(),
+        CivilPhase::IntradayTrading
+    );
 
     // 周五盘中买入。价格必须在连续竞价价格笼子内（基准价 102%/98% 与十个
     // 最小价位孰宽）；1005 恰好会在前几个 tick 与 NPC 卖方报价交叉成交。
-    session
+    scenario
+        .session
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
@@ -168,15 +182,23 @@ fn closed_days_accrue_without_trading() {
         .expect("player buy intent must enqueue");
     let mut filled = false;
     for _ in 0..TICKS_PER_DAY {
-        session.step().expect("healthy step");
-        if let Some(position) = session.account(player).and_then(|a| a.positions.get(&code)) {
-            if position.qty > 0 {
+        scenario.session.step().expect("healthy step");
+        if let Some(position) = scenario
+            .session
+            .account(player)
+            .and_then(|a| a.position(&code))
+        {
+            if position.qty() > 0 {
                 assert!(
-                    position.t1_locked > 0,
+                    position.t1_locked() > 0,
                     "today's buy must be T+1 locked on the buy day"
                 );
                 assert_eq!(
-                    session.account(player).unwrap().sellable_qty(&code),
+                    scenario
+                        .session
+                        .account(player)
+                        .unwrap()
+                        .sellable_qty(&code),
                     0,
                     "shares bought today are not sellable today (T+1)"
                 );
@@ -188,7 +210,8 @@ fn closed_days_accrue_without_trading() {
     assert!(filled, "the seeded Friday buy must fill within the session");
 
     // 当日卖出被 T+1 拒绝（卖出价同样保持在价格笼子内，避免先撞笼子）。
-    session
+    scenario
+        .session
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
@@ -201,7 +224,7 @@ fn closed_days_accrue_without_trading() {
         .expect("player sell intent must enqueue");
     let mut rejected_same_day = false;
     for _ in 0..TICKS_PER_DAY {
-        let events = session.step().expect("healthy step");
+        let events = scenario.session.step().expect("healthy step");
         if events.iter().any(|event| {
             matches!(
                 event,
@@ -222,21 +245,32 @@ fn closed_days_accrue_without_trading() {
     );
 
     // 跑完周五会话（日界解锁 T+1）。
-    while session.tick() < TICKS_PER_DAY {
-        session.step().expect("healthy step");
+    while scenario.session.tick() < TICKS_PER_DAY {
+        scenario.session.step().expect("healthy step");
     }
-    assert_eq!(session.day(), 1, "Friday session completed exactly once");
-    let bought_qty = session.account(player).unwrap().sellable_qty(&code);
+    assert_eq!(
+        scenario.session.day(),
+        1,
+        "Friday session completed exactly once"
+    );
+    let bought_qty = scenario
+        .session
+        .account(player)
+        .unwrap()
+        .sellable_qty(&code);
     assert!(bought_qty > 0, "day boundary unlocks the Friday buy");
 
     // 周五日结：经营终局 + 18:00 披露 + 前进到休市日。
-    let before_weekend = session.save().expect("healthy save");
-    let friday_report = session
+    let before_weekend = scenario.session.save().expect("healthy save");
+    let friday_report = scenario
+        .session
         .end_civil_day()
         .expect("Friday day-end must succeed");
     assert_eq!(friday_report.settled_date, date(PRE_HOLIDAY_FRIDAY));
     assert_eq!(
-        own(friday_report.dispatched_due.iter().cloned(), &registered).len(),
+        scenario
+            .own_due(friday_report.dispatched_due.iter().cloned())
+            .len(),
         1
     );
     assert_eq!(
@@ -254,32 +288,43 @@ fn closed_days_accrue_without_trading() {
         "2030-02-02 is CNY eve and a Saturday; weekend reason takes priority over holiday kind"
     );
     assert_eq!(friday_report.next_date, date(SPRING_FESTIVAL_CLOSED[0]));
-    assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
+    assert_eq!(
+        scenario.session.civil_clock().phase(),
+        CivilPhase::ClosedDay
+    );
 
     // 四个休市自然日逐日推进：无 tick、无成交、无注意力/主 RNG 消费，当日
     // 到期业务恰好一次，按日期顺序派发。
     let mut closed_day_reports = Vec::new();
     for iso in SPRING_FESTIVAL_CLOSED {
-        assert_eq!(session.civil_date(), date(iso));
-        let report = session
+        assert_eq!(scenario.session.civil_date(), date(iso));
+        let report = scenario
+            .session
             .end_civil_day()
             .unwrap_or_else(|e| panic!("closed day {iso} must advance: {e}"));
         assert_eq!(report.settled_date, date(iso));
         closed_day_reports.push(report);
         // 市场时间整体冻结在周五收盘。
         assert_eq!(
-            session.tick(),
+            scenario.session.tick(),
             TICKS_PER_DAY,
             "no ticks on closed civil days"
         );
-        assert_eq!(session.day(), 1, "no market day boundary on closed days");
+        assert_eq!(
+            scenario.session.day(),
+            1,
+            "no market day boundary on closed days"
+        );
     }
     assert_eq!(
-        session.civil_date(),
+        scenario.session.civil_date(),
         date(POST_HOLIDAY_WEDNESDAY),
         "after the closed weekend the clock is at the next trading day"
     );
-    assert_eq!(session.civil_clock().phase(), CivilPhase::IntradayTrading);
+    assert_eq!(
+        scenario.session.civil_clock().phase(),
+        CivilPhase::IntradayTrading
+    );
 
     // 节内工作日以模拟假日标注休市（周末优先标注 Weekend，两者都不交易）。
     assert_eq!(
@@ -315,7 +360,8 @@ fn closed_days_accrue_without_trading() {
         (SPRING_FESTIVAL_CLOSED[3], vec![DueKind::InterestAccrual]),
     ];
     for (report, (iso, mut kinds)) in closed_day_reports.iter().zip(expected_daily) {
-        let mut fired_kinds: Vec<DueKind> = own(report.dispatched_due.iter().cloned(), &registered)
+        let mut fired_kinds: Vec<DueKind> = scenario
+            .own_due(report.dispatched_due.iter().cloned())
             .iter()
             .map(|due| due.kind)
             .collect();
@@ -325,13 +371,13 @@ fn closed_days_accrue_without_trading() {
             fired_kinds, kinds,
             "closed day {iso} dispatches exactly its own dues"
         );
-        for due in own(report.dispatched_due.iter().cloned(), &registered) {
+        for due in scenario.own_due(report.dispatched_due.iter().cloned()) {
             assert_eq!(due.due_date, date(iso));
         }
     }
 
     // RNG/市场状态字节级不变：主 RNG、每 NPC 注意力流、tick/日计数、分钟收盘。
-    let after_weekend = session.save().expect("healthy save");
+    let after_weekend = scenario.session.save().expect("healthy save");
     assert_eq!(
         before_weekend.rng_state, after_weekend.rng_state,
         "closed days must not consume the session RNG"
@@ -349,17 +395,22 @@ fn closed_days_accrue_without_trading() {
         "closed days produce no price ticks"
     );
     assert_eq!(after_weekend.snapshot.tick, TICKS_PER_DAY);
-    assert_eq!(session.day(), 1);
+    assert_eq!(scenario.session.day(), 1);
 
     // 跨休市边界 T+1 正确：周五买入在下一个交易时点可卖。
     assert_eq!(
-        session.account(player).unwrap().sellable_qty(&code),
+        scenario
+            .session
+            .account(player)
+            .unwrap()
+            .sellable_qty(&code),
         bought_qty,
         "the weekend must not disturb T+1 availability"
     );
-    run_full_trading_session(&mut session);
-    assert_eq!(session.day(), 2);
-    let wednesday = session
+    run_full_trading_session(&mut scenario.session);
+    assert_eq!(scenario.session.day(), 2);
+    let wednesday = scenario
+        .session
         .end_civil_day()
         .expect("Wednesday day-end must succeed");
     assert_eq!(wednesday.settled_date, date(POST_HOLIDAY_WEDNESDAY));
@@ -369,25 +420,28 @@ fn closed_days_accrue_without_trading() {
     let mut all_reports = vec![friday_report];
     all_reports.extend(closed_day_reports);
     all_reports.push(wednesday);
-    assert_fired_once_each(&all_reports, &registered);
+    assert_fired_once_each(&all_reports, &scenario.registered_due);
 }
 
 #[test]
 fn restored_period_boundary_is_exactly_once() {
-    let (mut session, registered) = spring_festival_session();
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
 
     // 周五会话完成后、日结前先存档 A。
-    run_full_trading_session(&mut session);
-    let save_before_day_end = session.save().expect("healthy save");
+    run_full_trading_session(&mut scenario.session);
+    let save_before_day_end = scenario.session.save().expect("healthy save");
 
-    let friday_report = session
+    let friday_report = scenario
+        .session
         .end_civil_day()
         .expect("Friday day-end must succeed");
     assert_eq!(
-        own(friday_report.dispatched_due.iter().cloned(), &registered).len(),
+        scenario
+            .own_due(friday_report.dispatched_due.iter().cloned())
+            .len(),
         1
     );
-    let save_after_friday = session.save().expect("healthy save");
+    let save_after_friday = scenario.session.save().expect("healthy save");
     assert_eq!(
         save_after_friday.civil_clock.settled_through,
         Some(date(PRE_HOLIDAY_FRIDAY))
@@ -399,11 +453,12 @@ fn restored_period_boundary_is_exactly_once() {
 
     // 原始会话推进整个休市窗口到周三开盘前。
     for _ in 0..4 {
-        session
+        scenario
+            .session
             .end_civil_day()
             .expect("closed days advance one by one");
     }
-    assert_eq!(session.civil_date(), date(POST_HOLIDAY_WEDNESDAY));
+    assert_eq!(scenario.session.civil_date(), date(POST_HOLIDAY_WEDNESDAY));
 
     // 从"周五已日结"存档恢复：不得重复结算周五，剩余 dues 各恰好一次。
     let mut restored =
@@ -426,7 +481,8 @@ fn restored_period_boundary_is_exactly_once() {
         "a rejected duplicate day-end must leave the clock untouched"
     );
 
-    let remaining: Vec<DueBusiness> = registered
+    let remaining: Vec<DueBusiness> = scenario
+        .registered_due
         .iter()
         .filter(|due| due.due_date != date(PRE_HOLIDAY_FRIDAY))
         .cloned()
@@ -443,7 +499,7 @@ fn restored_period_boundary_is_exactly_once() {
     );
     assert_fired_once_each(&restored_reports, &remaining);
     let friday_own: Vec<DueBusiness> =
-        own(friday_report.dispatched_due.iter().cloned(), &registered);
+        scenario.own_due(friday_report.dispatched_due.iter().cloned());
     assert!(
         !restored_reports.iter().any(|report| report
             .dispatched_due
@@ -471,7 +527,7 @@ fn restored_period_boundary_is_exactly_once() {
             .end_civil_day()
             .expect("restored replay Wednesday"),
     );
-    assert_fired_once_each(&pre_reports, &registered);
+    assert_fired_once_each(&pre_reports, &scenario.registered_due);
 }
 
 #[test]
@@ -577,12 +633,18 @@ fn disclosure_phase_runs_at_18_for_every_civil_day() {
             .push(instant.date().to_iso());
     }
 
-    let (mut session, _registered) = spring_festival_session();
-    session.civil_clock_mut().add_disclosure_observer(record);
-    run_full_trading_session(&mut session);
-    session.end_civil_day().expect("Friday day-end");
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
+    scenario
+        .session
+        .civil_clock_mut()
+        .add_disclosure_observer(record);
+    run_full_trading_session(&mut scenario.session);
+    scenario.session.end_civil_day().expect("Friday day-end");
     for _ in 0..4 {
-        session.end_civil_day().expect("closed day advance");
+        scenario
+            .session
+            .end_civil_day()
+            .expect("closed day advance");
     }
     let observed = OBSERVED.lock().unwrap().clone();
     assert_eq!(
@@ -600,12 +662,16 @@ fn disclosure_phase_runs_at_18_for_every_civil_day() {
 
 #[test]
 fn duplicate_day_end_is_rejected_atomically() {
-    let (mut session, _registered) = spring_festival_session();
-    run_full_trading_session(&mut session);
-    session.end_civil_day().expect("first day-end succeeds");
-    let before = session.save().expect("healthy save");
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
+    run_full_trading_session(&mut scenario.session);
+    scenario
+        .session
+        .end_civil_day()
+        .expect("first day-end succeeds");
+    let before = scenario.session.save().expect("healthy save");
 
-    let error = session
+    let error = scenario
+        .session
         .civil_clock_mut()
         .end_day(date(PRE_HOLIDAY_FRIDAY))
         .expect_err("settling the same civil date twice must fail");
@@ -618,7 +684,7 @@ fn duplicate_day_end_is_rejected_atomically() {
         "{error:?}"
     );
 
-    let after = session.save().expect("healthy save");
+    let after = scenario.session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap(),
@@ -628,13 +694,14 @@ fn duplicate_day_end_is_rejected_atomically() {
 
 #[test]
 fn out_of_order_day_end_is_rejected() {
-    let (mut session, _registered) = spring_festival_session();
-    run_full_trading_session(&mut session);
-    session.end_civil_day().expect("Friday settled");
-    session.end_civil_day().expect("Saturday settled");
-    let before = session.save().expect("healthy save");
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
+    run_full_trading_session(&mut scenario.session);
+    scenario.session.end_civil_day().expect("Friday settled");
+    scenario.session.end_civil_day().expect("Saturday settled");
+    let before = scenario.session.save().expect("healthy save");
 
-    let error = session
+    let error = scenario
+        .session
         .civil_clock_mut()
         .end_day(date(PRE_HOLIDAY_FRIDAY))
         .expect_err("ending an already-passed earlier date must fail");
@@ -644,7 +711,7 @@ fn out_of_order_day_end_is_rejected() {
                 && current == date(SPRING_FESTIVAL_CLOSED[1])),
         "{error:?}"
     );
-    let after = session.save().expect("healthy save");
+    let after = scenario.session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap()
@@ -653,11 +720,12 @@ fn out_of_order_day_end_is_rejected() {
 
 #[test]
 fn skipping_a_day_with_unprocessed_dues_is_rejected() {
-    let (mut session, registered) = spring_festival_session();
-    run_full_trading_session(&mut session);
-    session.end_civil_day().expect("Friday settled");
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
+    run_full_trading_session(&mut scenario.session);
+    scenario.session.end_civil_day().expect("Friday settled");
 
-    let error = session
+    let error = scenario
+        .session
         .civil_clock_mut()
         .end_day(date(SPRING_FESTIVAL_CLOSED[2]))
         .expect_err("jumping across closed days with pending dues must fail");
@@ -669,7 +737,7 @@ fn skipping_a_day_with_unprocessed_dues_is_rejected() {
         } => {
             assert_eq!(from, date(SPRING_FESTIVAL_CLOSED[0]));
             assert_eq!(to, date(SPRING_FESTIVAL_CLOSED[2]));
-            let own_unprocessed = own(unprocessed.iter().cloned(), &registered);
+            let own_unprocessed = scenario.own_due(unprocessed.iter().cloned());
             assert_eq!(
                 own_unprocessed.len(),
                 3,
@@ -679,13 +747,11 @@ fn skipping_a_day_with_unprocessed_dues_is_rejected() {
         other => panic!("expected SkippedCivilDays, got {other:?}"),
     }
     // 被拒绝的跳日不得吞掉或提前派发任何到期业务。
-    let pending: Vec<CivilDate> = own(
-        session.civil_clock().pending_due().iter().cloned(),
-        &registered,
-    )
-    .iter()
-    .map(|due| due.due_date)
-    .collect();
+    let pending: Vec<CivilDate> = scenario
+        .own_due(scenario.session.civil_clock().pending_due().iter().cloned())
+        .iter()
+        .map(|due| due.due_date)
+        .collect();
     assert_eq!(
         pending,
         vec![
@@ -735,23 +801,25 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
     assert_eq!(session.civil_date(), date("2099-12-31"));
     assert_eq!(session.civil_clock().settled_through(), None);
     assert_eq!(
-        own(
-            session.civil_clock().pending_due().iter().cloned(),
-            &[final_due]
-        )
-        .len(),
+        session
+            .civil_clock()
+            .pending_due()
+            .iter()
+            .filter(|due| due.id == final_due.id)
+            .count(),
         1
     );
 }
 
 #[test]
 fn ending_a_civil_day_requires_the_market_session_to_be_complete() {
-    let (mut session, _registered) = spring_festival_session();
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
     for _ in 0..4 {
-        session.step().expect("healthy step");
+        scenario.session.step().expect("healthy step");
     }
-    let before = session.save().expect("healthy save");
-    let error = session
+    let before = scenario.session.save().expect("healthy save");
+    let error = scenario
+        .session
         .end_civil_day()
         .expect_err("ending a trading civil day before its session completed must fail");
     assert!(
@@ -762,16 +830,16 @@ fn ending_a_civil_day_requires_the_market_session_to_be_complete() {
         }) if rejected_date == date(PRE_HOLIDAY_FRIDAY)),
         "{error:?}"
     );
-    let after = session.save().expect("healthy save");
+    let after = scenario.session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap()
     );
     // 补完会话后同一调用必须成功（守卫不堵死成功路径）。
-    while session.tick() < TICKS_PER_DAY {
-        session.step().expect("healthy step");
+    while scenario.session.tick() < TICKS_PER_DAY {
+        scenario.session.step().expect("healthy step");
     }
-    assert!(session.end_civil_day().is_ok());
+    assert!(scenario.session.end_civil_day().is_ok());
 }
 
 #[test]
@@ -784,28 +852,32 @@ fn rejected_day_end_preserves_disclosure_observer_for_retry() {
             .push(instant.date().to_iso());
     }
 
-    // Given: a trading day with a custom process-local observer and an incomplete market session.
-    let (mut session, _) = spring_festival_session();
-    session.civil_clock_mut().add_disclosure_observer(record);
+    // 交易日已注册进程内 disclosure observer，但市场会话尚未完成。
+    let mut scenario = SpringFestivalScenario::new_spring_festival();
+    scenario
+        .session
+        .civil_clock_mut()
+        .add_disclosure_observer(record);
     for _ in 0..4 {
-        session.step().expect("healthy step");
+        scenario.session.step().expect("healthy step");
     }
-    let before = session.save().expect("healthy save");
+    let before = scenario.session.save().expect("healthy save");
 
-    // When: day end is rejected, then retried after the market session completes.
-    assert!(session.end_civil_day().is_err());
+    // 日结先被拒绝；补完市场会话后，对同一天重新执行日结。
+    assert!(scenario.session.end_civil_day().is_err());
     assert_eq!(
-        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&scenario.session.save().expect("healthy save")).unwrap(),
         serde_json::to_vec(&before).unwrap()
     );
-    while session.tick() < TICKS_PER_DAY {
-        session.step().expect("healthy step");
+    while scenario.session.tick() < TICKS_PER_DAY {
+        scenario.session.step().expect("healthy step");
     }
-    session
+    scenario
+        .session
         .end_civil_day()
         .expect("retry must settle the same day");
 
-    // Then: rollback retained the observer and the successful retry calls it exactly once.
+    // rollback 保留了 observer，成功重试只调用它一次。
     assert_eq!(
         OBSERVED
             .lock()

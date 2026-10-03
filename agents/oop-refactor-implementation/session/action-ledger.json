@@ -1,0 +1,3622 @@
+[
+  {
+    "id": "engine-session-01-A01",
+    "title": "替换 GameSession 可转移字段的私有 CommittableSessionState",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "CommittableSessionState"
+        ],
+        "owned_methods": [
+          "clone_for_shadow",
+          "commit_from",
+          "clone_for_tick_shadow",
+          "commit_tick_shadow"
+        ],
+        "production_callers": [
+          "TickShadow::capture",
+          "pipeline P9 commit",
+          "GameSession::end_civil_day",
+          "enqueue_player_intent",
+          "civil_clock_mut"
+        ],
+        "coverage_statement": "全转移字段同一值 owner；poison/injected_failure/post_shadow_failure 留 facade；AccountBook 校验与原分页并行释放不变；无 Deref/DerefMut"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session.rs",
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "method_definitions": [
+          {
+            "method": "clone_for_shadow",
+            "line": 4075
+          },
+          {
+            "method": "commit_from",
+            "line": 4169
+          },
+          {
+            "method": "clone_for_tick_shadow",
+            "line": 1328
+          },
+          {
+            "method": "commit_tick_shadow",
+            "line": 1339
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "committable_state_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/core-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R037",
+          "exact_filter": "session::committable_state_tests::shadow_keeps_the_complete_save_projection_and_resets_facade_hooks",
+          "passed": true,
+          "seconds": 0.1903
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R038",
+          "exact_filter": "session::committable_state_tests::state_commit_installs_candidate_facts_and_keeps_authority_hooks",
+          "passed": true,
+          "seconds": 0.1912
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "engine-session-02-A03",
+    "title": "DailyCandleHistory 加上负责活动/历史 maps 的窄职责 SessionCandleBook",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "SessionCandleBook",
+          "DailyCandleHistory"
+        ],
+        "owned_methods": [
+          "record_trade_or_mark",
+          "commit_active",
+          "histories",
+          "active",
+          "replace_histories",
+          "replace_active"
+        ],
+        "production_callers": [
+          "continuous_tick_finalizer",
+          "auction_day_end",
+          "snapshot_inner",
+          "save_snapshot_projection",
+          "restore"
+        ],
+        "coverage_statement": "可选 CandleBook 已实施；histories/active 唯一存储，完整历史/COW 不截断，serde继续投影两个旧字段"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/candles.rs",
+        "sha256": "01eaa497889978a3dd11cca1f428b772de851e97fd5374e1c29a3b21d0302bd4",
+        "method_definitions": [
+          {
+            "method": "record_trade_or_mark",
+            "line": 132
+          },
+          {
+            "method": "commit_active",
+            "line": 181
+          },
+          {
+            "method": "histories",
+            "line": 105
+          },
+          {
+            "method": "active",
+            "line": 108
+          },
+          {
+            "method": "replace_histories",
+            "line": 117
+          },
+          {
+            "method": "replace_active",
+            "line": 121
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session.rs",
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/hash.rs",
+        "sha256": "d171f00dc61d0e847c59daf647c42d2fafb8dbc43995fe0b0e11c1c70658da13",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/views.rs",
+        "sha256": "f4df3b745f6aa229a8b84c930a5266725c39d0a148e8c88d02168473534a58e0",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/snapshot.rs",
+        "sha256": "b14b7b6b614561f5942d5ec793a18e0077f8b2c510c02bac5fbd1d565a05d17e",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "candle_book_tests",
+      "shared_daily_history_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R041",
+          "exact_filter": "session::candles::candle_book_tests::no_trade_day_is_archived_without_becoming_a_traded_sample",
+          "passed": true,
+          "seconds": 0.0067
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R042",
+          "exact_filter": "session::candles::candle_book_tests::active_candle_volume_overflow_stays_explicit",
+          "passed": true,
+          "seconds": 0.0062
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R043",
+          "exact_filter": "session::candles::candle_book_tests::active_candle_trade_statistics_overflow_stays_explicit",
+          "passed": true,
+          "seconds": 0.0063
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R044",
+          "exact_filter": "session::candles::candle_book_tests::first_trade_replaces_mark_and_commit_archives_once",
+          "passed": true,
+          "seconds": 0.0065
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "engine-session-03-A01",
+    "title": "DecisionChainObservation + RootReadContext（不可变共享 root 输入）+ InstitutionDecisionRoot（单账户暂存工作）",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "DecisionChainObservation",
+          "RootReadContext",
+          "InstitutionDecisionRoot"
+        ],
+        "owned_methods": [
+          "capture_for_roots",
+          "capture",
+          "observe",
+          "observe_personal"
+        ],
+        "production_callers": [
+          "capture_decision_chain_roots",
+          "capture_ready_decision_chain_roots",
+          "PlanRootCoordinator::start_ready_accounts",
+          "run_decision_chain"
+        ],
+        "coverage_statement": "三子对象均实施；窄 root 输入替代 partial GameSession，root 仅读封存事实与本人 PlanPersonalState，输出 typed operation additions，不收集生命周期动作/不 router"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/decision_chain.rs",
+        "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+        "method_definitions": [
+          {
+            "method": "capture_for_roots",
+            "line": 73
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/decision_chain/roots.rs",
+        "sha256": "e9c03356cd80cc7da54e6e4c82b5aee3a848754c7bb8a35bbaf8e407abbd3a8d",
+        "method_definitions": [
+          {
+            "method": "capture",
+            "line": 18
+          },
+          {
+            "method": "observe",
+            "line": 198
+          },
+          {
+            "method": "observe_personal",
+            "line": 225
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/plan_chain_candidates.rs",
+        "sha256": "7eff20608f6b3642144a6e82cf1718f50a78982f8228dac2788fe6365e4fa48b",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "root_observation_rejects_tick_minute_and_phase_clock_mismatches",
+      "shared_root_context_keeps_own_facts_when_account_execution_order_changes"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/decision-chain-short-final-result.json",
+          "case_id": "R048",
+          "exact_filter": "session::decision_chain::chain_restructure_tests::root_observation_rejects_tick_minute_and_phase_clock_mismatches",
+          "passed": true,
+          "seconds": 0.6011,
+          "source_sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+          "replaces_same_case_old_evidence": true
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/decision-chain-short-final-result.json",
+          "case_id": "R049",
+          "exact_filter": "session::decision_chain::chain_restructure_tests::shared_root_context_keeps_own_facts_when_account_execution_order_changes",
+          "passed": true,
+          "seconds": 1.778,
+          "source_sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+          "replaces_same_case_old_evidence": true
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    },
+    "source_revision": {
+      "reason": "root批准删除无 production/test caller 的 run_chain_for_account 迁移过渡wrapper；真实 InstitutionDecisionRoot 入口与全部 case 不变",
+      "file": "packages/engine/src/session/decision_chain.rs",
+      "previous_sha256": "a24654a76aff7302916d9f36e41f01e7c7b0d29b45abc6604555c0ed104e6fb9",
+      "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+      "validation": "engine-final-build-10与features/default all-targets check11/12通过，零warning；原同源decision_chain.rs 2case在decision-chain-short-final-result.json按exact重跑全通过，绑定新source SHA b6696ad；旧case记录已替换，不增加278唯一case计数",
+      "independent_review_result": "原roots reviewer独立读取该文件完整baseline diff，删除29行重插对照前次签署SHA一致，其他9file无漂移；三门静态通过，R04已关闭",
+      "validation_result_files": [
+        "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+        "agents/oop-refactor-implementation/validation/decision-chain-short-final-result.json"
+      ]
+    }
+  },
+  {
+    "id": "engine-strategy-01-A01",
+    "title": "TradingPlan 私有生命周期字段与 receiver transitions",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "TradingPlan"
+        ],
+        "owned_methods": [
+          "review_preview",
+          "apply_revision",
+          "resume",
+          "record_child_order_accepted",
+          "record_real_fill",
+          "terminate",
+          "pause",
+          "expire",
+          "end_of_trading_day",
+          "record_review",
+          "record_resource_review"
+        ],
+        "production_callers": [
+          "PlanBook transitions/review",
+          "decision_chain lifecycle",
+          "plan_execution/pipeline readers"
+        ],
+        "coverage_statement": "生命周期状态仅 plans 内可写，现有 transitions receiver 化，外部 getter 与候选 review_preview，serde不变"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/plans/state.rs",
+        "sha256": "c601a22b188540e021c90e2ec03195fb048369f36526a556854fe2e938e9439c",
+        "method_definitions": [
+          {
+            "method": "review_preview",
+            "line": 267
+          },
+          {
+            "method": "terminate",
+            "line": 357
+          },
+          {
+            "method": "record_review",
+            "line": 280
+          },
+          {
+            "method": "record_resource_review",
+            "line": 275
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/plans/revision.rs",
+        "sha256": "c55e1cd4b157777a17f8520c1d6619f83e9380144e5638a541fad821422ca23c",
+        "method_definitions": [
+          {
+            "method": "apply_revision",
+            "line": 216
+          },
+          {
+            "method": "resume",
+            "line": 279
+          },
+          {
+            "method": "record_child_order_accepted",
+            "line": 98
+          },
+          {
+            "method": "record_real_fill",
+            "line": 134
+          },
+          {
+            "method": "pause",
+            "line": 262
+          },
+          {
+            "method": "expire",
+            "line": 300
+          },
+          {
+            "method": "end_of_trading_day",
+            "line": 320
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/plans/mod.rs",
+        "sha256": "b2ab5492ff8e2e74bec5c7dfb292f544ab950dc78a994b1f1fa0d070e7e6186b",
+        "method_definitions": [
+          {
+            "method": "record_review",
+            "line": 201
+          },
+          {
+            "method": "record_resource_review",
+            "line": 183
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "plans::state::owner_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R159",
+          "exact_filter": "plans::state::owner_tests::review_preview_preserves_authoritative_plan_and_wire_facts",
+          "passed": true,
+          "seconds": 0.0064
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "engine-strategy-03-A01",
+    "title": "ZiNoiseStrategy",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "ZiNoiseStrategy"
+        ],
+        "owned_methods": [
+          "strategy_data",
+          "validate_state",
+          "decide"
+        ],
+        "production_callers": [
+          "Strategy::decide",
+          "StrategyState validation"
+        ],
+        "coverage_statement": "strategy_data 完整投影实例本人参数，不造共享默认政策；所有阈值/步幅/观察概率以非默认完整参数测试固定"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/strategy/zi_noise.rs",
+        "sha256": "b56bfa63fdd714345ae67e836cb2e45bd1bc2ad71eeae03b25b1f6e623861db1",
+        "method_definitions": [
+          {
+            "method": "strategy_data",
+            "line": 42
+          },
+          {
+            "method": "validate_state",
+            "line": 54
+          },
+          {
+            "method": "decide",
+            "line": 225
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "strategy::zi_noise::projection_tests",
+      "strategy::retail::decision_context_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R014",
+          "exact_filter": "strategy::retail::decision_context_tests::chase_profit_takes_only_sellable_shares_and_invalid_cost_keeps_buy_signal",
+          "passed": true,
+          "seconds": 0.0082
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R015",
+          "exact_filter": "strategy::retail::decision_context_tests::falling_chase_preserves_stop_dip_and_zero_stop_boundaries",
+          "passed": true,
+          "seconds": 0.0074
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R016",
+          "exact_filter": "strategy::retail::decision_context_tests::incomplete_minute_history_keeps_noise_branch_and_draw_order",
+          "passed": true,
+          "seconds": 0.0076
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R017",
+          "exact_filter": "strategy::retail::decision_context_tests::noise_sell_reselects_its_own_stock_view_and_position",
+          "passed": true,
+          "seconds": 0.0068
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R018",
+          "exact_filter": "strategy::zi_noise::projection_tests::strategy_data_projects_all_individual_retail_parameters",
+          "passed": true,
+          "seconds": 0.0051
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-N01",
+    "title": "ParentOrderPlan 聚合真实 child 转换与续发判断",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "ParentOrderPlan",
+          "ParentFillTransition"
+        ],
+        "owned_methods": [
+          "record_submission",
+          "record_fill_after_settlement",
+          "clear_matching_child",
+          "checked_record_submission",
+          "checked_record_fill",
+          "checked_clear_matching_child",
+          "restore_active_child_remaining_qty",
+          "desired_child_intent",
+          "revise_same_side_limit"
+        ],
+        "production_callers": [
+          "materialize_parent_order_intents",
+          "record_parent_order_submitted/filled/canceled",
+          "auction_day_end",
+          "PlanExecutionRoute"
+        ],
+        "coverage_statement": "同向 limit 修订/真实 submission fill cancel/续发买入整手 owner；checked竞价保持原 StepFatal 顺序；父 facade只查账户清理/日期事件"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/execution.rs",
+        "sha256": "754cfdddc552344cc44d0108a294d94eb14546b5060f88a7ce5051bb17f34495",
+        "method_definitions": [
+          {
+            "method": "record_submission",
+            "line": 163
+          },
+          {
+            "method": "record_fill_after_settlement",
+            "line": 180
+          },
+          {
+            "method": "clear_matching_child",
+            "line": 217
+          },
+          {
+            "method": "checked_record_submission",
+            "line": 225
+          },
+          {
+            "method": "checked_record_fill",
+            "line": 241
+          },
+          {
+            "method": "checked_clear_matching_child",
+            "line": 268
+          },
+          {
+            "method": "restore_active_child_remaining_qty",
+            "line": 145
+          },
+          {
+            "method": "revise_same_side_limit",
+            "line": 283
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/execution/orders.rs",
+        "sha256": "05a4e3fce6fea325b76ed04c5f57fdd44a4839feec2b1bd4089857d1c60ee7b3",
+        "method_definitions": [
+          {
+            "method": "desired_child_intent",
+            "line": 210
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/execution/records.rs",
+        "sha256": "2006786b472c23e7d904e560c489f4962cd7d4c974d2761b75fe5ed4149301f7",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/plan_execution/routing.rs",
+        "sha256": "71bec4082b73092b487b5a43a2e0fcb4bc4da6514eeff05cf8bf93abb7f1fbdb",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session.rs",
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "parent_transition_tests",
+      "continuation_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R055",
+          "exact_filter": "session::execution::parent_transition_tests::only_matching_settled_child_advances_and_completion_retains_linked_parent",
+          "passed": true,
+          "seconds": 0.006
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R056",
+          "exact_filter": "session::execution::parent_transition_tests::auction_invalid_transitions_preserve_candidate_parent",
+          "passed": true,
+          "seconds": 0.0055
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R057",
+          "exact_filter": "session::execution::parent_transition_tests::continuous_assert_and_auction_checked_fill_keep_distinct_failure_boundaries",
+          "passed": true,
+          "seconds": 0.0067
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R058",
+          "exact_filter": "session::execution::parent_transition_tests::closing_auction_never_duplicates_a_live_continuous_child_and_expiry_stops_intents",
+          "passed": true,
+          "seconds": 0.0052
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R059",
+          "exact_filter": "session::execution::parent_transition_tests::same_side_revision_keeps_target_and_sub_lot_buy_remaining_unsubmitted",
+          "passed": true,
+          "seconds": 0.0053
+        }
+      ],
+      "incremental_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+          "case_id": "R062",
+          "exact_filter": "session::execution::parent_transition_tests::unlinked_parent_reverse_rebuilds_execution_from_the_new_target",
+          "passed": true,
+          "seconds": 0.1381
+        }
+      ],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-N02",
+    "title": "ProtocolState 统一 Session 与 Checkpoint 配对状态",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "ProtocolState",
+          "PublicationFactCursor"
+        ],
+        "owned_methods": [
+          "try_clone_for_checkpoint",
+          "checkpoint",
+          "rollback",
+          "begin_tick",
+          "append_committed_facts",
+          "attach_after"
+        ],
+        "production_callers": [
+          "ProtocolSession::step_frame/end_civil_day_update",
+          "ProtocolSession::checkpoint/rollback"
+        ],
+        "coverage_statement": "Session/Checkpoint 共享唯一完整回滚 owner；可选 PublicationFactCursor 也实现，同tick facts续接与新stream reset，test flags留 facade"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/protocol/civil/session.rs",
+        "sha256": "abf6bacb61b218c147bd8f5de9855ae1b0363a98bffe8865eac4187ea749491a",
+        "method_definitions": [
+          {
+            "method": "try_clone_for_checkpoint",
+            "line": 19
+          },
+          {
+            "method": "checkpoint",
+            "line": 73
+          },
+          {
+            "method": "rollback",
+            "line": 79
+          },
+          {
+            "method": "begin_tick",
+            "line": 40
+          },
+          {
+            "method": "append_committed_facts",
+            "line": 47
+          },
+          {
+            "method": "attach_after",
+            "line": 51
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "rollback_tests",
+      "publication_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+    "extension_actions": [
+      {
+        "id": "session-R2-E01",
+        "owner": "PublicationFactCursor",
+        "state": "已实施",
+        "methods": [
+          "begin_tick",
+          "append_committed_facts",
+          "attach_after"
+        ],
+        "production_callers": [
+          "ProtocolSession::prepare_fact_tick",
+          "step_frame",
+          "step_frame_with_commit_evidence",
+          "end_civil_day_update"
+        ],
+        "review": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+        "runtime_evidence": [
+          {
+            "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+            "case_id": "R132",
+            "exact_filter": "session::protocol::civil::session::rollback_tests::publication_cursor_appends_at_same_tick_and_resets_on_next_tick",
+            "passed": true,
+            "seconds": 0.008
+          },
+          {
+            "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+            "case_id": "R133",
+            "exact_filter": "session::protocol::civil::session::rollback_tests::checkpoint_restores_published_runtime_after_a_successful_batch",
+            "passed": true,
+            "seconds": 0.1816
+          },
+          {
+            "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+            "case_id": "R134",
+            "exact_filter": "session::protocol::civil::session::rollback_tests::checkpoint_restores_prior_candidates_and_frozen_save_after_two_civil_updates",
+            "passed": true,
+            "seconds": 0.259
+          }
+        ]
+      }
+    ],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R132",
+          "exact_filter": "session::protocol::civil::session::rollback_tests::publication_cursor_appends_at_same_tick_and_resets_on_next_tick",
+          "passed": true,
+          "seconds": 0.008
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R133",
+          "exact_filter": "session::protocol::civil::session::rollback_tests::checkpoint_restores_published_runtime_after_a_successful_batch",
+          "passed": true,
+          "seconds": 0.1816
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R134",
+          "exact_filter": "session::protocol::civil::session::rollback_tests::checkpoint_restores_prior_candidates_and_frozen_save_after_two_civil_updates",
+          "passed": true,
+          "seconds": 0.259
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N01",
+    "title": "NpcAttentionScheduler 候选堆生命周期",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "NpcAttentionScheduler"
+        ],
+        "owned_methods": [
+          "enqueue",
+          "pop_due",
+          "next_scheduled_tick",
+          "iter"
+        ],
+        "production_callers": [
+          "NPC construction/restore",
+          "sample attention ready accounts",
+          "queue_npc_for_next_tick",
+          "business_state_hash"
+        ],
+        "coverage_statement": "可选候选heap owner已实施；stale过滤/排序去重/重建/hash tuple顺序保持"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/attention.rs",
+        "sha256": "eb31033e2ff7a030fd4a220247ce9c8bebde964ce8a0ef3ce506c8d19d974266",
+        "method_definitions": [
+          {
+            "method": "enqueue",
+            "line": 268
+          },
+          {
+            "method": "pop_due",
+            "line": 295
+          },
+          {
+            "method": "next_scheduled_tick",
+            "line": 272
+          },
+          {
+            "method": "iter",
+            "line": 281
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session.rs",
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/hash.rs",
+        "sha256": "d171f00dc61d0e847c59daf647c42d2fafb8dbc43995fe0b0e11c1c70658da13",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "scheduler_tests",
+      "attention_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R039",
+          "exact_filter": "session::attention::scheduler_tests::insertion_order_does_not_change_due_ids_or_popped_entries",
+          "passed": true,
+          "seconds": 0.006
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R040",
+          "exact_filter": "session::attention::scheduler_tests::stale_due_entries_are_returned_but_only_current_ids_wake_once",
+          "passed": true,
+          "seconds": 0.0069
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N02",
+    "title": "OpeningFigures 的双账套投影",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "OpeningFigures"
+        ],
+        "owned_methods": [
+          "for_stock",
+          "from_total_shares",
+          "from_default_row",
+          "registry_opening_lines",
+          "industrial_opening_lines"
+        ],
+        "production_callers": [
+          "assemble_companies opening balance assembly"
+        ],
+        "coverage_statement": "双账套现有default code/shares判定移入同一投影 owner，两份开局账同源事实，其他样本错误顺序不变"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/company_assembly.rs",
+        "sha256": "843667970a1a890e5572aeff915015f18b1fd70aeca59180a069b4070fa2e47c",
+        "method_definitions": [
+          {
+            "method": "for_stock",
+            "line": 141
+          },
+          {
+            "method": "from_total_shares",
+            "line": 155
+          },
+          {
+            "method": "from_default_row",
+            "line": 168
+          },
+          {
+            "method": "registry_opening_lines",
+            "line": 196
+          },
+          {
+            "method": "industrial_opening_lines",
+            "line": 219
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "opening_figures_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R045",
+          "exact_filter": "session::company_assembly::tests::opening_figures_preserve_both_account_orders_and_yuan_units",
+          "passed": true,
+          "seconds": 0.0055
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R046",
+          "exact_filter": "session::company_assembly::tests::opening_figures_default_selection_requires_stock_code_and_share_count",
+          "passed": true,
+          "seconds": 0.0068
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R047",
+          "exact_filter": "session::company_assembly::tests::opening_figures_default_row_and_tiny_share_failure_remain_explicit",
+          "passed": true,
+          "seconds": 0.0076
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N03",
+    "title": "PlanLifecycleReview 当前候选的单账户复核",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "PlanLifecycleReview"
+        ],
+        "owned_methods": [
+          "capture",
+          "collect",
+          "compute_target_qty",
+          "assess_one"
+        ],
+        "production_callers": [
+          "collect_plan_lifecycle_actions",
+          "typed route outcome continuation"
+        ],
+        "coverage_statement": "可选当前candidate单账户复核已实施；Account/Market固定观察与当前PlanBook读取边界分开，typed outcome后重收集，不移动进root"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/decision_chain/lifecycle.rs",
+        "sha256": "3d400b95ce0d698f26f57fae0b77f2fb09a9e827e6415393d169ccdea44d0f4d",
+        "method_definitions": [
+          {
+            "method": "capture",
+            "line": 20
+          },
+          {
+            "method": "collect",
+            "line": 60
+          },
+          {
+            "method": "compute_target_qty",
+            "line": 74
+          },
+          {
+            "method": "assess_one",
+            "line": 112
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/decision_chain.rs",
+        "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+        "sha256": "6fae566e176b623f579cb67e16afbc4fe80c3b3837bf8e3c3849e2587081855f",
+        "method_definitions": [
+          {
+            "method": "capture",
+            "line": 18
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "lifecycle_uses_fixed_account_resources_and_current_plan_after_outcome"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R131",
+          "exact_filter": "session::plan_chain_candidates::adaptive::tests::lifecycle_uses_fixed_account_resources_and_current_plan_after_outcome",
+          "passed": true,
+          "seconds": 0.1385
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    },
+    "source_revision": {
+      "reason": "root批准删除无 production/test caller 的 run_chain_for_account 迁移过渡wrapper；真实 InstitutionDecisionRoot 入口与全部 case 不变",
+      "file": "packages/engine/src/session/decision_chain.rs",
+      "previous_sha256": "a24654a76aff7302916d9f36e41f01e7c7b0d29b45abc6604555c0ed104e6fb9",
+      "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+      "validation": "engine-final-build-10与features/default all-targets check11/12通过，零warning；原同源decision_chain.rs 2case在decision-chain-short-final-result.json按exact重跑全通过，绑定新source SHA b6696ad；旧case记录已替换，不增加278唯一case计数",
+      "independent_review_result": "原roots reviewer独立读取该文件完整baseline diff，删除29行重插对照前次签署SHA一致，其他9file无漂移；三门静态通过，R04已关闭",
+      "validation_result_files": [
+        "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+        "agents/oop-refactor-implementation/validation/decision-chain-short-final-result.json"
+      ]
+    }
+  },
+  {
+    "id": "session-R2-N04",
+    "title": "BeliefParticipantState 同账户四组个人状态",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "BeliefParticipantState",
+          "PlanPersonalState"
+        ],
+        "owned_methods": [
+          "new",
+          "belief",
+          "belief_mut",
+          "information",
+          "information_mut",
+          "watchlist",
+          "watchlist_mut",
+          "price_memory",
+          "price_memory_mut",
+          "take",
+          "install"
+        ],
+        "production_callers": [
+          "populate_npcs",
+          "save_projection/restore",
+          "PlanRootCoordinator root take/install",
+          "Settlement belief patches"
+        ],
+        "coverage_statement": "可选四成员同账户唯一entry实施；按root裁定AccountPagedMap保COW，不机械回退BTreeMap；attention独立；SaveSlot四map/hash顺序不变；duplicate原部分写入边界显式保留"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/decision_chain/personal_state.rs",
+        "sha256": "f523212df76d13a7d253df349d318828d0f115afb59efc440dd1f6f61f3d5caa",
+        "method_definitions": [
+          {
+            "method": "new",
+            "line": 18
+          },
+          {
+            "method": "belief",
+            "line": 31
+          },
+          {
+            "method": "belief_mut",
+            "line": 34
+          },
+          {
+            "method": "information",
+            "line": 37
+          },
+          {
+            "method": "information_mut",
+            "line": 41
+          },
+          {
+            "method": "watchlist",
+            "line": 44
+          },
+          {
+            "method": "watchlist_mut",
+            "line": 48
+          },
+          {
+            "method": "price_memory",
+            "line": 51
+          },
+          {
+            "method": "price_memory_mut",
+            "line": 55
+          },
+          {
+            "method": "take",
+            "line": 69
+          },
+          {
+            "method": "install",
+            "line": 90
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session.rs",
+        "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+        "method_definitions": [
+          {
+            "method": "new",
+            "line": 134
+          },
+          {
+            "method": "new",
+            "line": 1348
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/hash.rs",
+        "sha256": "d171f00dc61d0e847c59daf647c42d2fafb8dbc43995fe0b0e11c1c70658da13",
+        "method_definitions": []
+      },
+      {
+        "file": "packages/engine/src/session/decision_chain.rs",
+        "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "participant_owner_tests",
+      "duplicate_install_state_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/core-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R050",
+          "exact_filter": "session::decision_chain::personal_state::participant_owner_tests::moving_one_participant_keeps_its_four_fields_and_other_accounts_isolated",
+          "passed": true,
+          "seconds": 0.2509
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R051",
+          "exact_filter": "session::decision_chain::personal_state::participant_owner_tests::aggregate_preserves_the_four_independent_save_maps_after_restore",
+          "passed": true,
+          "seconds": 0.5948
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R052",
+          "exact_filter": "session::decision_chain::personal_state::participant_owner_tests::duplicate_personal_install_still_checks_attention_first",
+          "passed": true,
+          "seconds": 0.2525
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R053",
+          "exact_filter": "session::decision_chain::personal_state::participant_owner_tests::duplicate_participant_install_still_reports_watchlist_after_attention",
+          "passed": true,
+          "seconds": 0.2494
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R054",
+          "exact_filter": "session::decision_chain::personal_state::duplicate_install_state_tests::duplicate_participant_install_keeps_the_original_partial_write_boundary",
+          "passed": true,
+          "seconds": 0.1401
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    },
+    "source_revision": {
+      "reason": "root批准删除无 production/test caller 的 run_chain_for_account 迁移过渡wrapper；真实 InstitutionDecisionRoot 入口与全部 case 不变",
+      "file": "packages/engine/src/session/decision_chain.rs",
+      "previous_sha256": "a24654a76aff7302916d9f36e41f01e7c7b0d29b45abc6604555c0ed104e6fb9",
+      "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+      "validation": "engine-final-build-10与features/default all-targets check11/12通过，零warning；原同源decision_chain.rs 2case在decision-chain-short-final-result.json按exact重跑全通过，绑定新source SHA b6696ad；旧case记录已替换，不增加278唯一case计数",
+      "independent_review_result": "原roots reviewer独立读取该文件完整baseline diff，删除29行重插对照前次签署SHA一致，其他9file无漂移；三门静态通过，R04已关闭",
+      "validation_result_files": [
+        "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+        "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+        "agents/oop-refactor-implementation/validation/decision-chain-short-final-result.json"
+      ]
+    }
+  },
+  {
+    "id": "session-R2-N05",
+    "title": "BeliefBook 账户风险 latch 的 owner 行为",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "BeliefBook"
+        ],
+        "owned_methods": [
+          "observe_institution_account_risk",
+          "institution_account_risk_paused"
+        ],
+        "production_callers": [
+          "InstitutionDecisionRoot::observe_personal",
+          "institution account risk adapter"
+        ],
+        "coverage_statement": "可选risk latch owner receiver已实施，equity与跨日/step阈值与Option恢复语义原样"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/strategy/beliefs.rs",
+        "sha256": "e43b10b3bf3b56fc983e6739a3142b277fb573af42ba6e963b661bf2b4a5f5d4",
+        "method_definitions": [
+          {
+            "method": "observe_institution_account_risk",
+            "line": 161
+          },
+          {
+            "method": "institution_account_risk_paused",
+            "line": 156
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/institutional_behavior.rs",
+        "sha256": "8a7d64484bd128421af125d91129276ca42a7a37be79b1b6e58518d0640a8649",
+        "method_definitions": [
+          {
+            "method": "observe_institution_account_risk",
+            "line": 8
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/decision_chain/roots.rs",
+        "sha256": "e9c03356cd80cc7da54e6e4c82b5aee3a848754c7bb8a35bbaf8e407abbd3a8d",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "risk_owner_tests",
+      "institutional_behavior::tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R011",
+          "exact_filter": "strategy::beliefs::risk_owner_tests::risk_latch_without_peak_preserves_memory_but_real_failures_can_pause",
+          "passed": true,
+          "seconds": 0.0072
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R012",
+          "exact_filter": "strategy::beliefs::risk_owner_tests::risk_latch_trigger_and_recovery_keep_distinct_equality_boundaries",
+          "passed": true,
+          "seconds": 0.0084
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R013",
+          "exact_filter": "strategy::beliefs::risk_owner_tests::risk_latch_invalid_facts_preserve_memory_and_error_order",
+          "passed": true,
+          "seconds": 0.0068
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N06",
+    "title": "SaveValidationContext 共享恢复校验上下文",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "SaveValidationContext"
+        ],
+        "owned_methods": [
+          "new",
+          "validate_personal_states",
+          "validate_plan_contract"
+        ],
+        "production_callers": [
+          "validate_save_slot"
+        ],
+        "coverage_statement": "可选共享只读恢复校验context已实施，checked clock派生保持原时点，后续company/person/plan复用，不提前计算后段失败"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/persistence.rs",
+        "sha256": "41754f6014a909ce9ae1666869291d0a5c00c7c5bd145c462016d27f40f40da9",
+        "method_definitions": [
+          {
+            "method": "new",
+            "line": 204
+          },
+          {
+            "method": "validate_personal_states",
+            "line": 1101
+          },
+          {
+            "method": "validate_plan_contract",
+            "line": 1409
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "save_validation_context_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R060",
+          "exact_filter": "session::persistence::save_validation_context_preserves_phase_boundaries_and_shared_domain_facts",
+          "passed": true,
+          "seconds": 0.1498
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R061",
+          "exact_filter": "session::persistence::save_validation_context_preserves_first_error_before_domain_checks",
+          "passed": true,
+          "seconds": 0.1494
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N07",
+    "title": "CumulativeFeeAuditV2 累计收费审计值",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "CumulativeFeeAuditV2",
+          "FeeComponentsV2"
+        ],
+        "owned_methods": [
+          "nominal",
+          "validate",
+          "total",
+          "validate_nonnegative"
+        ],
+        "production_callers": [
+          "validate_live_envelopes_against_orders"
+        ],
+        "coverage_statement": "可选累计收费audit已实施；validate返回Result<bool>保外层key原错误最小身份依赖（正文Result<()>为拟议）；已有FeeComponents total/nonnegative复用，不改seller gross cap"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/persistence/v2.rs",
+        "sha256": "328aae85f4a346fa596418ddca7b3b190ed20516828b4f9304c2ccc3143684e3",
+        "method_definitions": [
+          {
+            "method": "nominal",
+            "line": 653
+          },
+          {
+            "method": "validate",
+            "line": 679
+          },
+          {
+            "method": "total",
+            "line": 585
+          },
+          {
+            "method": "validate_nonnegative",
+            "line": 592
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "cumulative_fee_audit_v2_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R062",
+          "exact_filter": "session::persistence::v2_tests::cumulative_fee_audit_v2_buyer_requires_every_nominal_component",
+          "passed": true,
+          "seconds": 0.0066
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R063",
+          "exact_filter": "session::persistence::v2_tests::cumulative_fee_audit_v2_zero_and_negative_gross_keep_existing_boundaries",
+          "passed": true,
+          "seconds": 0.0073
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N08",
+    "title": "PlanRootCoordinator 异步 root 计算生命周期",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "PlanRootCoordinator"
+        ],
+        "owned_methods": [
+          "accounts",
+          "set_completion_sender",
+          "start_ready_accounts",
+          "prepare_ready_accounts",
+          "is_empty"
+        ],
+        "production_callers": [
+          "PlanChainOperationBatch delegation",
+          "ready_ingress/adaptive_plan_chain",
+          "run_decision_chain"
+        ],
+        "coverage_statement": "可选root async lifecycle独立owner已实施；先capture窄readonly输入再take personal，send成功才notify，single worker yield/disconnect显式错误"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/plan_chain_candidates.rs",
+        "sha256": "7eff20608f6b3642144a6e82cf1718f50a78982f8228dac2788fe6365e4fa48b",
+        "method_definitions": [
+          {
+            "method": "accounts",
+            "line": 269
+          },
+          {
+            "method": "accounts",
+            "line": 407
+          },
+          {
+            "method": "set_completion_sender",
+            "line": 278
+          },
+          {
+            "method": "set_completion_sender",
+            "line": 438
+          },
+          {
+            "method": "start_ready_accounts",
+            "line": 290
+          },
+          {
+            "method": "prepare_ready_accounts",
+            "line": 342
+          },
+          {
+            "method": "prepare_ready_accounts",
+            "line": 453
+          },
+          {
+            "method": "is_empty",
+            "line": 262
+          },
+          {
+            "method": "is_empty",
+            "line": 388
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "root_coordinator_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R127",
+          "exact_filter": "session::plan_chain_candidates::adaptive::tests::root_coordinator_empty_poll_does_not_take_personal_state",
+          "passed": true,
+          "seconds": 0.1564
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R128",
+          "exact_filter": "session::plan_chain_candidates::adaptive::tests::root_coordinator_disconnected_worker_is_explicit_failure",
+          "passed": true,
+          "seconds": 0.1392
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N09",
+    "title": "StockRouteCoordination 批次内延迟续作状态",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "StockRouteCoordination"
+        ],
+        "owned_methods": [
+          "has_pending",
+          "is_blocked",
+          "install_pending",
+          "pending_for_outcome",
+          "take_pending",
+          "remember_retry",
+          "remember_reconsideration",
+          "take_follow_up"
+        ],
+        "production_callers": [
+          "operation_blocked",
+          "yield_adaptive_candidates_with_root_wait",
+          "resume_adaptive_candidates"
+        ],
+        "coverage_statement": "可选延迟续作owner已实施；按正文允许备选保留三独立maps在同owner，不强迫同生同灭；reconsideration优先消费不清retry，generation与fatal原context保留"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/plan_chain_candidates.rs",
+        "sha256": "7eff20608f6b3642144a6e82cf1718f50a78982f8228dac2788fe6365e4fa48b",
+        "method_definitions": [
+          {
+            "method": "has_pending",
+            "line": 114
+          },
+          {
+            "method": "is_blocked",
+            "line": 120
+          },
+          {
+            "method": "install_pending",
+            "line": 127
+          },
+          {
+            "method": "pending_for_outcome",
+            "line": 138
+          },
+          {
+            "method": "take_pending",
+            "line": 154
+          },
+          {
+            "method": "remember_retry",
+            "line": 166
+          },
+          {
+            "method": "remember_reconsideration",
+            "line": 169
+          },
+          {
+            "method": "take_follow_up",
+            "line": 177
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+        "sha256": "6fae566e176b623f579cb67e16afbc4fe80c3b3837bf8e3c3849e2587081855f",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "stock_route_",
+      "same_plan_cannot_yield_again_until_its_typed_result_arrives"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R129",
+          "exact_filter": "session::plan_chain_candidates::adaptive::tests::stock_route_followups_consume_reconsideration_before_retry_without_erasing_it",
+          "passed": true,
+          "seconds": 0.1369
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R130",
+          "exact_filter": "session::plan_chain_candidates::adaptive::tests::stock_route_wrong_generation_does_not_consume_pending_route",
+          "passed": true,
+          "seconds": 0.1352
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N10",
+    "title": "LiveOrderReservations 快照预留汇总",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "LiveOrderReservations"
+        ],
+        "owned_methods": [
+          "record_order",
+          "take_for"
+        ],
+        "production_callers": [
+          "snapshot_inner continuous and auction orders"
+        ],
+        "coverage_statement": "可选汇总owner已实施；剩余数量与partial filled_value、真实fee reservation保持checked累加，派生结果不持久化"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/session/snapshot.rs",
+        "sha256": "b14b7b6b614561f5942d5ec793a18e0077f8b2c510c02bac5fbd1d565a05d17e",
+        "method_definitions": [
+          {
+            "method": "record_order",
+            "line": 73
+          },
+          {
+            "method": "take_for",
+            "line": 102
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "snapshot_reservations_",
+      "live_order_reservations_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R135",
+          "exact_filter": "session::snapshot::tests::snapshot_reservations_combine_continuous_auction_and_partial_orders",
+          "passed": true,
+          "seconds": 0.252
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R136",
+          "exact_filter": "session::snapshot::tests::live_order_reservations_take_is_isolated_and_empty_accounts_have_zero",
+          "passed": true,
+          "seconds": 0.0071
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R137",
+          "exact_filter": "session::snapshot::tests::live_order_reservations_sell_overflow_is_explicit",
+          "passed": true,
+          "seconds": 0.0072
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R138",
+          "exact_filter": "session::snapshot::tests::live_order_reservations_cash_overflow_is_explicit",
+          "passed": true,
+          "seconds": 0.0087
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N11",
+    "title": "CandidateTargetProposal 权重到数量的共同转换",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "CandidateTargetProposal"
+        ],
+        "owned_methods": [
+          "from_score"
+        ],
+        "production_callers": [
+          "PlanLifecycleReview::compute_target_qty"
+        ],
+        "coverage_statement": "可选纯组合value已实施；weight→股本/u32clamp→100股整手target转换及原错误context不变，意向不冒充可受理订单"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/plans/candidates/targets.rs",
+        "sha256": "dbc5238a44bf26c7047aa232713bd68c632d40bff043c302b5c065fa5e5564f1",
+        "method_definitions": [
+          {
+            "method": "from_score",
+            "line": 89
+          }
+        ]
+      },
+      {
+        "file": "packages/engine/src/session/decision_chain/lifecycle.rs",
+        "sha256": "3d400b95ce0d698f26f57fae0b77f2fb09a9e827e6415393d169ccdea44d0f4d",
+        "method_definitions": []
+      }
+    ],
+    "short_test_filters": [
+      "proposal_"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/roots-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R156",
+          "exact_filter": "plans::candidates::targets::proposal_tests::proposal_caps_non_board_lot_share_limit_before_rounding",
+          "passed": true,
+          "seconds": 0.0055
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R157",
+          "exact_filter": "plans::candidates::targets::proposal_tests::proposal_preserves_cash_and_exact_board_lot_targets",
+          "passed": true,
+          "seconds": 0.0054
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R158",
+          "exact_filter": "plans::candidates::targets::proposal_tests::proposal_rejects_invalid_weight_before_invalid_quantity_inputs",
+          "passed": true,
+          "seconds": 0.0052
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  },
+  {
+    "id": "session-R2-N12",
+    "title": "RetailDecisionContext 单股行情与个人收益事实",
+    "state": "源码已实施；完整所属 diff 独立三门静态复核通过；本项代表性短 case 与集中编译/类型检查已通过",
+    "requirements": [
+      {
+        "owned_objects": [
+          "RetailDecisionContext",
+          "RetailSignal"
+        ],
+        "owned_methods": [
+          "from_selected_stock",
+          "classify_chase",
+          "sellable_qty"
+        ],
+        "production_callers": [
+          "StrategyData::decide retail",
+          "ZiNoiseStrategy::decide"
+        ],
+        "coverage_statement": "可选单股事实context已实施；抽样/条件进入顺序、zero stop loss、无cost/lunch分钟不足策略与noise重选股票保持"
+      }
+    ],
+    "source_files": [
+      {
+        "file": "packages/engine/src/strategy/retail.rs",
+        "sha256": "c9cfb56ca5a80afd5d1b84c733593d22d2cd8682624bc4a5f63cf8f3cf290e66",
+        "method_definitions": [
+          {
+            "method": "from_selected_stock",
+            "line": 160
+          },
+          {
+            "method": "classify_chase",
+            "line": 192
+          },
+          {
+            "method": "sellable_qty",
+            "line": 218
+          }
+        ]
+      }
+    ],
+    "short_test_filters": [
+      "decision_context_tests"
+    ],
+    "independent_review": "agents/oop-refactor-implementation/session/leaf-review.md",
+    "extension_actions": [],
+    "test_evidence": "root 集中执行的实际通过结果；不宣称实际 TDD 红灯或完整回归。逐 case 和整命令硬上限 10000ms；8 个测试进程并行，每进程 Rayon 4。",
+    "unimplemented": [],
+    "additional_caller_review": "agents/oop-refactor-implementation/session/caller-review.md",
+    "compile_evidence": "末次仅删无caller wrapper后 engine-final-build-10受影响engine testlib编译通过；rust-final-features-check-11四包diagnostic/host features和rust-final-default-check-12四包default features all-targets检查全部通过，均零warning；build07已有16integration target编译证据继续保留，不表示运行全部targets。",
+    "runtime_evidence": {
+      "selected_owner_cases": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R014",
+          "exact_filter": "strategy::retail::decision_context_tests::chase_profit_takes_only_sellable_shares_and_invalid_cost_keeps_buy_signal",
+          "passed": true,
+          "seconds": 0.0082
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R015",
+          "exact_filter": "strategy::retail::decision_context_tests::falling_chase_preserves_stop_dip_and_zero_stop_boundaries",
+          "passed": true,
+          "seconds": 0.0074
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R016",
+          "exact_filter": "strategy::retail::decision_context_tests::incomplete_minute_history_keeps_noise_branch_and_draw_order",
+          "passed": true,
+          "seconds": 0.0076
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+          "case_id": "R017",
+          "exact_filter": "strategy::retail::decision_context_tests::noise_sell_reselects_its_own_stock_view_and_position",
+          "passed": true,
+          "seconds": 0.0068
+        }
+      ],
+      "incremental_owner_cases": [],
+      "case_and_command_deadline_ms": 10000,
+      "initial_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "total": 232,
+        "passed": 232,
+        "failed": 0,
+        "parallel_processes": 8,
+        "rayon_per_process": 4
+      },
+      "incremental_batch": {
+        "result_file": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "total": 41,
+        "passed": 39,
+        "failed": 2,
+        "meaning": "5 个追加 owner case（含本组母单反向）与 36 个最小 integration case；2 个 WS listener case 初次因沙箱 EPERM 失败，其原断言在沙箱外逐 case 重跑通过，见独立结果",
+        "ws_retry_result_file": "agents/oop-refactor-implementation/validation/ws-fixture-short-final-result.json"
+      },
+      "final_source_compile_checks": [
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/engine-final-build-10-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "test",
+            "-p",
+            "engine",
+            "--lib",
+            "--features",
+            "simulation-diagnostics,verification-harness",
+            "--no-run",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-features-check-11-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--features",
+            "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        },
+        {
+          "result_file": "agents/oop-refactor-implementation/validation/rust-final-default-check-12-result.json",
+          "exit_code": 0,
+          "meaning": "仅编译或类型检查，不运行测试",
+          "command": [
+            "cargo",
+            "check",
+            "-p",
+            "engine",
+            "-p",
+            "server",
+            "-p",
+            "web-wasm",
+            "-p",
+            "stock-market-game",
+            "--all-targets",
+            "--message-format=json",
+            "-j",
+            "32"
+          ],
+          "warning_count": 0
+        }
+      ],
+      "unique_case_count_boundary": {
+        "global_unique_cases": 278,
+        "final_validation_file": "agents/oop-refactor-implementation/validation/final-validation.json",
+        "meaning": "本组同源2case只替换旧执行记录，不新增唯一case；动作间可共享case，不按台账交叉记录相加"
+      }
+    }
+  }
+]

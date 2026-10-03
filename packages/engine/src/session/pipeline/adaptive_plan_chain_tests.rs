@@ -25,17 +25,17 @@ fn seal(
     AccountValidatorDriver,
     IncrementalContinuousStockCoordinator,
 ) {
-    session.envelope_ledger = EnvelopeLedger::new(
-        session.next_receipt_base,
+    session.state.envelope_ledger = EnvelopeLedger::new(
+        session.state.next_receipt_base,
         session.project_live_envelopes().unwrap(),
     )
     .unwrap();
     let resources = DecisionResourceSnapshot::seal(session).unwrap();
     let validator = AccountValidatorDriver::new(
         resources,
-        session.envelope_ledger.clone(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.envelope_ledger.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(session).unwrap(),
     )
     .unwrap();
@@ -139,7 +139,12 @@ fn execute(
 
 fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
     let code = StockCode("600888".to_owned());
-    session.accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Player;
+    session
+        .state
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_kind(AccountKind::Player);
     let mut events = Vec::new();
     for price in prices {
         session.seed_order_for_test(
@@ -170,7 +175,7 @@ fn adaptive_real_validation_and_matching_two_cancels_then_new_order_complete_in_
     let ids = working_orders(&mut session, &[901, 902]);
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
-    let cash = session.accounts[&AccountId(1)].cash;
+    let cash = session.state.accounts[&AccountId(1)].cash();
     let mut candidates = Vec::new();
     while let Some((candidate, _, _)) = execute(
         &mut session,
@@ -201,13 +206,17 @@ fn adaptive_real_validation_and_matching_two_cancels_then_new_order_complete_in_
         complete.reports[0].disposition,
         PlanExecutionDisposition::Submitted { .. }
     ));
-    assert_eq!(complete.consumed.operations.len(), 3);
+    assert_eq!(complete.consumed.operation_count(), 3);
     assert_eq!(
-        session.markets[&request.allocation.code].resting_order_count(),
+        session.state.markets[&request.allocation.code].resting_order_count(),
         1
     );
-    assert_eq!(session.accounts[&AccountId(1)].cash, cash, "P6 has not run");
-    assert!(session.pending_plan_events.is_empty());
+    assert_eq!(
+        session.state.accounts[&AccountId(1)].cash(),
+        cash,
+        "P6 has not run"
+    );
+    assert!(session.state.pending_plan_events.is_empty());
 }
 
 #[test]
@@ -217,10 +226,11 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
     old.push_execution(request.clone());
     commit_injected_plan_roots_for_test(&mut session, old);
     let old_id = session
+        .state
         .plans
         .plan(request.plan_id)
         .unwrap()
-        .active_child_order_id
+        .active_child_order_id()
         .unwrap();
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
@@ -272,14 +282,16 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
     assert_ne!(order_id, old_id);
     assert_eq!(
         session
+            .state
             .plans
             .plan(request.plan_id)
             .unwrap()
-            .active_child_order_id,
+            .active_child_order_id(),
         Some(order_id)
     );
     assert_eq!(
-        session.parent_orders[&AccountId(1)][&request.allocation.code].active_child_order_id,
+        session.state.parent_orders[&AccountId(1)][&request.allocation.code]
+            .active_child_order_id(),
         Some(order_id)
     );
 }
@@ -292,10 +304,11 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
     old.push_execution(request.clone());
     commit_injected_plan_roots_for_test(&mut session, old);
     let old_id = session
+        .state
         .plans
         .plan(request.plan_id)
         .unwrap()
-        .active_child_order_id
+        .active_child_order_id()
         .unwrap();
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
@@ -303,18 +316,13 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         qty: 100,
     };
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
-        .positions
-        .insert(
+        .fixture_insert_position(
             code.clone(),
-            crate::account::Position {
-                qty: 50,
-                t1_locked: 0,
-                invested_cents: 0,
-                recovered_cents: 0,
-            },
+            crate::account::Position::from_restored_parts(50, 0, 0, 0),
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
@@ -339,7 +347,15 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
     chain
         .project_execution_round(&mut session, &mut seller_round)
         .unwrap();
-    assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
+    assert_eq!(
+        session
+            .state
+            .plans
+            .plan(request.plan_id)
+            .unwrap()
+            .filled_qty(),
+        50
+    );
 
     let cancel_step = validator.consume(pending_cancel[0].clone()).unwrap();
     let mut cancel_round = stock_execution
@@ -352,8 +368,16 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         chain.next_ready_batch(&mut session).unwrap().is_empty(),
         "the remaining 50 shares cannot produce another 100-share buy request"
     );
-    assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
-    assert!(session.markets[&code]
+    assert_eq!(
+        session
+            .state
+            .plans
+            .plan(request.plan_id)
+            .unwrap()
+            .filled_qty(),
+        50
+    );
+    assert!(session.state.markets[&code]
         .resting_orders_for(AccountId(1))
         .is_empty());
     assert!(matches!(
@@ -371,18 +395,13 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let code = request.allocation.code.clone();
     let ids = working_orders(&mut session, &[901, 902]);
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
-        .positions
-        .insert(
+        .fixture_insert_position(
             code.clone(),
-            crate::account::Position {
-                qty: 100,
-                t1_locked: 0,
-                invested_cents: 0,
-                recovered_cents: 0,
-            },
+            crate::account::Position::from_restored_parts(100, 0, 0, 0),
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request);
@@ -417,7 +436,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     chain
         .project_execution_round(&mut session, &mut seller_round)
         .unwrap();
-    assert!(session.markets[&code]
+    assert!(session.state.markets[&code]
         .resting_orders_for(AccountId(1))
         .iter()
         .all(|order| order.id != ids[1]));
@@ -433,7 +452,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let next = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(next.len(), 1);
     assert!(matches!(next[0].intent(), Intent::PlaceLimit { .. }));
-    assert!(session.markets[&code]
+    assert!(session.state.markets[&code]
         .resting_orders_for(AccountId(1))
         .is_empty());
     let submit_step = validator.consume(next[0].clone()).unwrap();
@@ -449,23 +468,29 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     else {
         panic!("the replacement child must be submitted");
     };
-    let working = session.markets[&code].resting_orders_for(AccountId(1));
+    let working = session.state.markets[&code].resting_orders_for(AccountId(1));
     assert_eq!(working.len(), 1);
     assert_eq!(working[0].id, order_id);
     assert_eq!(
-        session.plans.plan(plan_id).unwrap().active_child_order_id,
+        session
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
         Some(order_id)
     );
     assert_eq!(
-        session.parent_orders[&AccountId(1)][&code].active_child_order_id,
+        session.state.parent_orders[&AccountId(1)][&code].active_child_order_id(),
         Some(order_id)
     );
     assert_eq!(
         session
+            .state
             .plans
             .active_plan(AccountId(1), &code)
             .unwrap()
-            .filled_qty,
+            .filled_qty(),
         0
     );
 }
@@ -492,7 +517,12 @@ fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followu
     let (mut session, request) = fixture();
     working_orders(&mut session, &[901, 902]);
     let cash = session.reserved_cash_for_account(AccountId(1)).unwrap();
-    session.accounts.get_mut(&AccountId(1)).unwrap().cash = cash;
+    session
+        .state
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_cash(cash);
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request);
     execute(
@@ -537,7 +567,7 @@ fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followu
             reason: RejectionReason::InsufficientCash
         }
     ));
-    assert_eq!(session.accounts[&AccountId(1)].cash, cash);
+    assert_eq!(session.state.accounts[&AccountId(1)].cash(), cash);
 }
 
 fn fill_case(resting_sell_qty: u32) {
@@ -548,6 +578,7 @@ fn fill_case(resting_sell_qty: u32) {
         qty: 100,
     };
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
@@ -574,10 +605,15 @@ fn fill_case(resting_sell_qty: u32) {
     .unwrap();
     let mut round = round.unwrap();
     assert_eq!(
-        session.plans.plan(request.plan_id).unwrap().filled_qty,
+        session
+            .state
+            .plans
+            .plan(request.plan_id)
+            .unwrap()
+            .filled_qty(),
         resting_sell_qty
     );
-    assert!(session.pending_plan_events.is_empty());
+    assert!(session.state.pending_plan_events.is_empty());
     if resting_sell_qty == 100 {
         assert!(matches!(
             round.facts[0].outcome,
@@ -587,27 +623,28 @@ fn fill_case(resting_sell_qty: u32) {
             }
         ));
         assert!(!session
+            .state
             .parent_orders
             .get(&AccountId(1))
             .is_some_and(|parents| parents.contains_key(&code)));
     } else {
         assert_eq!(
-            session.parent_orders[&AccountId(1)][&code].filled_qty,
+            session.state.parent_orders[&AccountId(1)][&code].filled_qty(),
             resting_sell_qty
         );
         assert_eq!(
-            session.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
+            session.state.parent_orders[&AccountId(1)][&code].active_child_remaining_qty(),
             Some(100 - resting_sell_qty)
         );
     }
-    let before = serde_json::to_value(&session.plans).unwrap();
+    let before = serde_json::to_value(&session.state.plans).unwrap();
     assert!(
         chain
             .project_execution_round(&mut session, &mut round)
             .is_err(),
         "same facts must not be applied twice"
     );
-    assert_eq!(serde_json::to_value(&session.plans).unwrap(), before);
+    assert_eq!(serde_json::to_value(&session.state.plans).unwrap(), before);
 }
 
 #[test]
@@ -641,8 +678,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
         let Intent::Cancel { code, id } = candidate.intent() else {
             panic!("expected conflict cancel");
         };
-        // This unit fixture supplies an explicit negative P4 result at each continuation edge.
-        // The success cases above exercise real P4 cancellation; no public events are involved.
+        // 每个 continuation 边界提供显式 P4 拒绝事实；成功用例仍执行真实 P4 撤单。
         let mut rejected = ContinuousExecutionRound {
             facts: vec![ContinuousExecutionFact {
                 candidate_key: candidate.key().clone(),
@@ -714,6 +750,7 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
 
     let (mut authority, first) = fixture();
     let second_id = authority
+        .state
         .plans
         .create(PlanOpen {
             account: AccountId(0),
@@ -797,6 +834,7 @@ fn run_independent_stock_round(
         (second_account, StockCode("600889".to_owned())),
     ] {
         let plan_id = session
+            .state
             .plans
             .create(PlanOpen {
                 account,
@@ -860,10 +898,11 @@ fn run_independent_stock_round(
     assert_eq!(chain.finish().unwrap().reports.len(), plan_ids.len());
     for plan_id in plan_ids {
         assert!(session
+            .state
             .plans
             .plan(plan_id)
             .unwrap()
-            .active_child_order_id
+            .active_child_order_id()
             .is_some());
     }
 }
@@ -878,7 +917,12 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
     )
     .unwrap();
     let owner = AccountId(1);
-    session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(10_000_000);
+    session
+        .state
+        .accounts
+        .get_mut(&owner)
+        .unwrap()
+        .fixture_set_cash(Money::from_cents(10_000_000));
     let codes = [
         StockCode("600888".to_owned()),
         StockCode("600889".to_owned()),
@@ -887,6 +931,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
         .iter()
         .map(|code| {
             session
+                .state
                 .plans
                 .create(PlanOpen {
                     account: owner,
@@ -939,10 +984,11 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
     assert_eq!(chain.finish().unwrap().reports.len(), 2);
     for plan_id in plan_ids {
         assert!(session
+            .state
             .plans
             .plan(plan_id)
             .unwrap()
-            .active_child_order_id
+            .active_child_order_id()
             .is_some());
     }
 }
@@ -1052,6 +1098,7 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
     assert_eq!(authority.business_state_hash().unwrap(), before);
     assert_eq!(
         authority
+            .state
             .markets
             .values()
             .map(|market| market.resting_order_count())
@@ -1066,6 +1113,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
     let (mut session, _) = fixture();
     let code = StockCode("600888".to_owned());
     session
+        .state
         .accounts
         .get_mut(&AccountId(1))
         .unwrap()
@@ -1110,7 +1158,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
         .project_execution_round(&mut session, &mut round)
         .unwrap();
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
-    assert_eq!(chain.finish().unwrap().consumed.operations.len(), 1);
+    assert_eq!(chain.finish().unwrap().consumed.operation_count(), 1);
 }
 
 #[test]
@@ -1131,26 +1179,42 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     setup.npcs.inst_count = 2;
     let mut session = GameSession::new(setup, 42).unwrap();
     for id in [AccountId(1), AccountId(2)] {
-        let strategy = template.accounts[&AccountId(1)]
-            .strategy
-            .as_ref()
+        let strategy = template.state.accounts[&AccountId(1)]
+            .strategy()
             .unwrap()
             .production_state()
             .unwrap()
             .into_strategy()
             .unwrap();
-        session.accounts.get_mut(&id).unwrap().strategy =
-            Some(crate::account::StoredStrategy::production(strategy));
         session
-            .belief_books
-            .insert(id, template.belief_books[&AccountId(1)].clone());
-        session.accounts.get_mut(&id).unwrap().cash = template.accounts[&AccountId(1)].cash;
-        session.accounts.get_mut(&id).unwrap().positions =
-            template.accounts[&AccountId(1)].positions.clone();
+            .state
+            .accounts
+            .get_mut(&id)
+            .unwrap()
+            .fixture_set_strategy(Some(crate::account::StoredStrategy::production(strategy)));
+        *session
+            .state
+            .belief_participants
+            .get_mut(&id)
+            .unwrap()
+            .belief_mut() = template.state.belief_participants[&AccountId(1)]
+            .belief()
+            .clone();
+        session
+            .state
+            .accounts
+            .get_mut(&id)
+            .unwrap()
+            .fixture_set_cash(template.state.accounts[&AccountId(1)].cash());
+        session
+            .state
+            .accounts
+            .get_mut(&id)
+            .unwrap()
+            .fixture_set_positions(template.state.accounts[&AccountId(1)].positions().clone());
         crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, id, 0);
-        assert!(session.accounts[&id]
-            .strategy
-            .as_ref()
+        assert!(session.state.accounts[&id]
+            .strategy()
             .unwrap()
             .belief_chain_params()
             .is_some());
@@ -1205,6 +1269,6 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     );
     let completion = chain.finish().unwrap();
     assert_eq!(completion.reports.len(), 2);
-    assert_eq!(completion.consumed.operations.len(), 2);
-    assert_eq!(session.plans.plan_ids().count(), 2);
+    assert_eq!(completion.consumed.operation_count(), 2);
+    assert_eq!(session.state.plans.plan_ids().count(), 2);
 }

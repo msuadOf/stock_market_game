@@ -10,69 +10,7 @@ pub(super) fn observe_institution_account_risk(
     equity: Money,
     moment: ExperienceMoment,
 ) -> Result<(), crate::experience::ExperienceError> {
-    let policy = belief
-        .institution_policy()
-        .expect("institution observation has a frozen policy");
-    let assessed = assess_institution_account_risk(
-        policy,
-        belief.experience(),
-        equity,
-        moment,
-        belief.institution_account_risk_paused(),
-    )?;
-    if let Some(paused) = assessed {
-        belief.set_institution_account_risk_paused(paused);
-    }
-    Ok(())
-}
-
-fn assess_institution_account_risk(
-    policy: &InstitutionExperiencePolicy,
-    experience: &RetailExperienceState,
-    equity: Money,
-    moment: ExperienceMoment,
-    paused: bool,
-) -> Result<Option<bool>, crate::experience::ExperienceError> {
-    if equity.cents() < 0 {
-        return Err(crate::experience::ExperienceError::NonPositiveMoney {
-            field: "institution equity",
-            cents: equity.cents(),
-        });
-    }
-    if let Some(peak) = experience.peak_equity.filter(|peak| peak.cents() <= 0) {
-        return Err(crate::experience::ExperienceError::NonPositiveMoney {
-            field: "institution equity peak",
-            cents: peak.cents(),
-        });
-    }
-    experience.feedback.ensure_as_of_reached(&moment)?;
-    let failure_decay = experience
-        .feedback
-        .failure_events
-        .last()
-        .map_or(0, |event| {
-            (moment.trading_day - event.moment.trading_day)
-                / crate::experience::FAILURE_DECAY_TRADING_DAYS
-        });
-    let failure_influence =
-        (experience.feedback.failure_events.len() as u64).saturating_sub(failure_decay);
-    if failure_influence >= u64::from(policy.risk_pause_failed_buys()) {
-        return Ok(Some(true));
-    }
-    let threshold = if paused {
-        policy.risk_resume_drawdown_bp()
-    } else {
-        policy.risk_pause_drawdown_bp()
-    };
-    Ok(experience.peak_equity.map(|peak| {
-        let decline = i128::from(peak.cents()) - i128::from(equity.cents());
-        let boundary = i128::from(peak.cents()) * i128::from(threshold);
-        if paused {
-            decline * 10_000 > boundary
-        } else {
-            decline * 10_000 >= boundary
-        }
-    }))
+    belief.observe_institution_account_risk(equity, moment)
 }
 
 pub(super) fn observe_institution_position(
@@ -82,62 +20,12 @@ pub(super) fn observe_institution_position(
     moment: ExperienceMoment,
     policy: &InstitutionExperiencePolicy,
 ) -> Result<(), crate::experience::ExperienceError> {
-    if price.cents() <= 0 {
-        return Err(crate::experience::ExperienceError::NonPositiveMoney {
-            field: "observed institution position price",
-            cents: price.cents(),
-        });
-    }
-    experience.feedback.ensure_moment_forward(moment)?;
-    if !experience.feedback.stocks.contains_key(code) || !experience.stocks.contains_key(code) {
-        return Err(crate::experience::ExperienceError::NoActiveEntry {
-            code: code.0.clone(),
-        });
-    }
-
-    let stock = experience.stocks.get(code);
-    let confirms_failure = stock.is_some_and(|stock| {
-        !stock.adverse_move_recorded
-            && stock.last_buy_order_id.is_some()
-            && stock.last_buy_price.is_some_and(|buy| {
-                (i128::from(buy.cents()) - i128::from(price.cents())) * 10_000
-                    >= i128::from(buy.cents()) * i128::from(policy.adverse_move_threshold_bp())
-            })
-    });
-    let order_id = stock.and_then(|stock| stock.last_buy_order_id);
-
-    let stock = experience
-        .stocks
-        .get_mut(code)
-        .expect("stock experience checked above");
-    stock.last_observed_market_minute = moment.market_minute;
-    stock.peak_price_since_entry = Some(
-        stock
-            .peak_price_since_entry
-            .map_or(price, |peak| peak.max(price)),
-    );
-    if confirms_failure {
-        stock.adverse_move_recorded = true;
-    }
-
-    experience.feedback.advance_clocks(moment);
-    experience
-        .feedback
-        .stocks
-        .get_mut(code)
-        .expect("active holding epoch checked above")
-        .last_own_observation = Some(crate::experience::OwnObservation { price, moment });
-    if confirms_failure {
-        experience
-            .feedback
-            .failure_events
-            .push(crate::experience::FailureEventRecord {
-                code: code.clone(),
-                order_id,
-                moment,
-            });
-    }
-    Ok(())
+    experience.observe_institution_position_dated(
+        code,
+        price,
+        moment,
+        policy.adverse_move_threshold_bp(),
+    )
 }
 
 impl crate::GameSession {
@@ -149,7 +37,7 @@ impl crate::GameSession {
         view: &crate::strategy::MarketView,
         paused: Option<PauseReason>,
     ) -> InstitutionBehavior {
-        let own = &self.accounts[&account];
+        let own = &self.state.accounts[&account];
         let policy = belief
             .institution_policy()
             .expect("institution book has its frozen behavior policy");
@@ -157,14 +45,14 @@ impl crate::GameSession {
             policy,
             belief.experience(),
             code,
-            own.positions
+            own.positions()
                 .get(code)
                 .and_then(crate::Position::cost_price),
             view.stocks[code].last_price,
             ExperienceMoment {
                 civil_date: self.civil_date(),
                 market_minute: self.current_market_minute(),
-                trading_day: u64::from(self.day),
+                trading_day: u64::from(self.state.day),
             },
             paused,
             if belief.institution_account_risk_paused() {
@@ -184,7 +72,7 @@ pub(super) struct InstitutionBehavior {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn assess_institution_behavior(
+pub(in crate::session) fn assess_institution_behavior(
     policy: &InstitutionExperiencePolicy,
     experience: &RetailExperienceState,
     code: &StockCode,
@@ -276,6 +164,35 @@ mod tests {
         InstitutionExperiencePolicy::new(1, response, 800, 1200, 3000, 1500, 3, 500).unwrap()
     }
 
+    fn account_risk(
+        policy: &InstitutionExperiencePolicy,
+        experience: &RetailExperienceState,
+        equity: Money,
+        moment: crate::experience::ExperienceMoment,
+        paused: bool,
+    ) -> Result<Option<bool>, crate::experience::ExperienceError> {
+        let profile = crate::strategy::StrategyProfile::Institution(
+            crate::strategy::InstitutionStyle::DeepValue,
+        );
+        let mut rng = crate::session::SplitMix64::new(42);
+        let analysis =
+            crate::strategy::derive_analysis_profile(&profile, crate::AccountId(1), &mut rng)
+                .unwrap();
+        let mut belief =
+            crate::strategy::BeliefBook::new(crate::AccountId(1), profile, analysis, &mut rng);
+        *belief.experience_mut() = experience.clone();
+        belief.set_institution_policy(*policy);
+        let mut encoded = serde_json::to_value(&belief).unwrap();
+        encoded["institution_account_risk_paused"] = serde_json::json!(paused);
+        let mut belief: crate::strategy::BeliefBook = serde_json::from_value(encoded).unwrap();
+        super::observe_institution_account_risk(&mut belief, equity, moment)?;
+        Ok(if belief.institution_account_risk_paused() {
+            Some(true)
+        } else {
+            experience.peak_equity.map(|_| false)
+        })
+    }
+
     fn observe(
         response: InstitutionLossResponse,
         price: i64,
@@ -300,7 +217,7 @@ mod tests {
             market_minute: 2,
             trading_day: 0,
         };
-        let account_risk = super::assess_institution_account_risk(
+        let account_risk = account_risk(
             &policy(response),
             &experience,
             Money::from_cents(equity),
@@ -409,7 +326,7 @@ mod tests {
                 trading_day: day,
                 ..moment(4)
             };
-            let account_risk = super::assess_institution_account_risk(
+            let account_risk = account_risk(
                 &policy(InstitutionLossResponse::HoldOrAdd),
                 &experience,
                 Money::from_cents(10_000),

@@ -1,0 +1,338 @@
+{
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "groups": [
+    {
+      "group": "actors",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "apps/desktop/src-tauri/src/actor.rs",
+          "sha256": "de9537f90e887de7c167489391fb8ffb912b00547098b4499d5c2092a805e64e"
+        },
+        {
+          "file": "apps/desktop/src-tauri/src/actor/failure.rs",
+          "sha256": "85923c1ecd302efe69e315774105108d8d53c10ebaa018485aea3bef37cc9ff9"
+        },
+        {
+          "file": "apps/desktop/src-tauri/src/actor/fatal_tests.rs",
+          "sha256": "4105d14b3d31e7cb9ec200c4662a7e8a74c80a222bb92ebfee0abdf8f77d9221"
+        },
+        {
+          "file": "apps/desktop/src-tauri/src/actor/protocol_tests.rs",
+          "sha256": "edd912fade4421a8fda7f5c294c21f6f4dd8d57c733290384d72b95f7cb3a82c"
+        },
+        {
+          "file": "apps/server/src/actor.rs",
+          "sha256": "89f89674f29080c9f68ea6623cb28b11bee7986c7d3a5d05f7efe211231e2005"
+        },
+        {
+          "file": "apps/server/src/actor/fatal_tests.rs",
+          "sha256": "1e8cd0d02b2c6c573657b04722e17f701c6213fc0f5285bab175801b28edc4a7"
+        },
+        {
+          "file": "apps/server/src/routes.rs",
+          "sha256": "fbddfd6e20ebb7f734eaa2ebc87150c207ec3df3de9aff69a554ae1544668c7e"
+        },
+        {
+          "file": "apps/server/tests/actor.rs",
+          "sha256": "1ddaf7f3da6b734e2af5c27086851a05a7a3cd9140ededf3b3ad87489b44cff1"
+        },
+        {
+          "file": "apps/server/tests/protocol_updates.rs",
+          "sha256": "7fad05dca4192027ad20ad4f9000565b991ad2cd4d8af5c545065a2686264cdf"
+        }
+      ]
+    },
+    {
+      "group": "server",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-server.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "apps/server/src/routes.rs",
+          "sha256": "fbddfd6e20ebb7f734eaa2ebc87150c207ec3df3de9aff69a554ae1544668c7e"
+        },
+        {
+          "file": "apps/server/src/web_ui.rs",
+          "sha256": "46f5f422a52ac454fc5e272998232d7e9165e6542912d8cbd411ed5b7b1b11e8"
+        },
+        {
+          "file": "apps/server/tests/api_contract.rs",
+          "sha256": "85718282ca733ca915d7e1c4efcbd2d5cd3092b381b9e906fe505790dd55c7b8"
+        },
+        {
+          "file": "apps/server/tests/deployment_cli.rs",
+          "sha256": "2eb3ab29c85d58d479ad0954dec78472baf866f22891bf296bb962f7fb59e549"
+        },
+        {
+          "file": "apps/server/tests/ws.rs",
+          "sha256": "1df145ed37a6670dbefeb00d7875734589dd0e67ef1e44e9ab48083c71314dce"
+        },
+        {
+          "file": "apps/web-wasm/src/lib.rs",
+          "sha256": "e60cc2ffb199438a7418af8f6864b15947c145751ba2c2be87c5dae900004914"
+        },
+        {
+          "file": "apps/web-wasm/src/protocol_tests.rs",
+          "sha256": "b2387d8b8f91991a807bfee3d3f560b7b1da00273fa5a6bd5f07d0ce6e000bdb"
+        }
+      ]
+    },
+    {
+      "group": "fixtures1",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "packages/engine/tests/attention_discovery/exposure.rs",
+          "sha256": "82e43ee8a67922ea6856555ec6035d7c0e85e3fa84d11ce154d47987af6346e5"
+        },
+        {
+          "file": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+          "sha256": "1f18c77cc73af9e621f874ecaefb95f829cf18c73a278d34064b5f19271a4df7"
+        },
+        {
+          "file": "packages/engine/tests/auction.rs",
+          "sha256": "b06572d1b65a4f0bf5060439e686196989a4884992650baa3676b1e9d259ea3f"
+        },
+        {
+          "file": "packages/engine/tests/behavior.rs",
+          "sha256": "6b5556e0f6f89cab1737749d737e53390a821665c67a08f609905a3b38564e87"
+        },
+        {
+          "file": "packages/engine/tests/information_acquisition/acquisition_gold.rs",
+          "sha256": "4885655e3a8874d0acdc277801b102481cc4fcdc5b36833d72ad8df3fd08ea63"
+        },
+        {
+          "file": "packages/engine/tests/information_acquisition/failures.rs",
+          "sha256": "9931e4fe69909595139e8fa132e34a2ecf70e5d3aa8a08ed90d0cee44f2a9269"
+        },
+        {
+          "file": "packages/engine/tests/information_acquisition/fixture.rs",
+          "sha256": "b1ba50f808d1c9eef78902bb8c65ac5e7f63ef14cf67da18392d69eb029daf07"
+        },
+        {
+          "file": "packages/engine/tests/information_acquisition/view_gold.rs",
+          "sha256": "d88e3a1e386c38c26cd763ec099c2cc716b2038f7561f7a828548c0c1db7456a"
+        },
+        {
+          "file": "packages/engine/tests/publications/weekend_publish.rs",
+          "sha256": "b3b53905e915a1719ac40d03e36fddf5ffa11685da014ab35b3aa956bce30279"
+        },
+        {
+          "file": "packages/engine/tests/save_contract/failures.rs",
+          "sha256": "0067fc91e96bf67f2e80e067270d05ab1a59a3efbd7c6b75fdfb225970d9a51f"
+        },
+        {
+          "file": "packages/engine/tests/save_contract/main.rs",
+          "sha256": "a613dd823200e69e8135b6376ce68a8e6429a9cfc57cd70f4202b6f14707e454"
+        }
+      ]
+    },
+    {
+      "group": "fixtures2",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-fixtures2.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "packages/engine/tests/civil_clock.rs",
+          "sha256": "38e7dc68d583b6f11d8e1d0edae73af1dfb04825a73872736a117762b98e7a5e"
+        },
+        {
+          "file": "packages/engine/tests/fundamental_beliefs/centers.rs",
+          "sha256": "ff991da87927ddbc39277c5aff5a6ece7f90f01a26cdc3d607e566c72ad706dc"
+        },
+        {
+          "file": "packages/engine/tests/fundamental_beliefs/failures/mod.rs",
+          "sha256": "5638530b8c806892b3519d0c62d5fb3bc083fcf566d52f7d4fbcbb1f586fb2bc"
+        },
+        {
+          "file": "packages/engine/tests/fundamental_beliefs/gold.rs",
+          "sha256": "22654726f120b7b21ba3242b3f2391e3796e99cea1995896748c1bbddd6aeaca"
+        },
+        {
+          "file": "packages/engine/tests/fundamental_beliefs/main.rs",
+          "sha256": "59ba7ffcfe5b53e685b98751c00884fab4ce01c15e4f5c07d9df0c8134bda50f"
+        },
+        {
+          "file": "packages/engine/tests/fundamental_beliefs/per_share.rs",
+          "sha256": "debf98d195c32d60b8b099a128ffcb1a9adc856dab77b3902bd83b96c3663701"
+        },
+        {
+          "file": "packages/engine/tests/industry_reports/correction_restatement.rs",
+          "sha256": "68d98b78d840cff1ad6fdf0dbf6d0ce8d7aafdc43a69aff5487db25931af269e"
+        },
+        {
+          "file": "packages/engine/tests/plans.rs",
+          "sha256": "e3453beb9b7096404575c8e091ee8b0dbdbcd54f804a378dc55e8875dac831ad"
+        },
+        {
+          "file": "packages/engine/tests/publications/failures/announcement_failures.rs",
+          "sha256": "86a374765a0326ad10615640b16805072d4832b13241effe6e6ed13ba29e60f2"
+        },
+        {
+          "file": "packages/engine/tests/publications/failures/mod.rs",
+          "sha256": "754513a44bd39cfdf0f68a45239560b00a14c750026251092fdcd23874b771f0"
+        },
+        {
+          "file": "packages/engine/tests/publications/failures/publication_failures.rs",
+          "sha256": "81073be3733d21bb59d96f11546d57325edad16ee8089cb0cca589fc9c3557d6"
+        },
+        {
+          "file": "packages/engine/tests/session.rs",
+          "sha256": "64005cb861f40666d7948c971ba9a8783702a852a58610e90c75823f5b80ba1d"
+        }
+      ]
+    },
+    {
+      "group": "build",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-build.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "packages/engine/examples/escrow_verification_harness/committed.rs",
+          "sha256": "43e8e3c7b90e7d12f5d219961e35b412472bc9082612810adab091e5f3e42f44"
+        },
+        {
+          "file": "packages/engine/examples/escrow_verification_harness/runtime.rs",
+          "sha256": "c82e88edca6e4e2a50be8de7e9cc2091fe7a54fff3c700903f830ddf0a26e95a"
+        },
+        {
+          "file": "scripts/build-targets.mjs",
+          "sha256": "c24c2a0b1dd32f20e144b0ad6f750909c7116c2fdcd7df939919f9b6d329607d"
+        },
+        {
+          "file": "scripts/desktop/build-matrix.mjs",
+          "sha256": "c8c9f5dc8b0e0362da2a58be612e3915734bd17f1eb66ecc8e1a7c94e130c0a5"
+        },
+        {
+          "file": "scripts/desktop/build-matrix.test.mjs",
+          "sha256": "d7505427b688464f5803cf5b3cab3ad3f5fa256158e4750f9566e22cd9a8bb27"
+        },
+        {
+          "file": "scripts/simulation/audit-diagnostic-divergence.test.mjs",
+          "sha256": "0afdaf64ac355eb46f80e2d933293ecc5a35182130b8ee518b898d77223ac37d"
+        },
+        {
+          "file": "scripts/simulation/baseline-run.mjs",
+          "sha256": "7c554df1538e797920ab2f6f537e477d9f46a63fc3aea66f88f07ed80f4c9041"
+        },
+        {
+          "file": "scripts/simulation/run-escrow-verification-matrix.mjs",
+          "sha256": "8488754fa80a5ac32496f143f361adc0f6af0ff2035ce39663011f8920701b8b"
+        },
+        {
+          "file": "scripts/simulation/run-escrow-verification-matrix.test.mjs",
+          "sha256": "cd8d8ecb51cab50dc7ff810a12495f4e4b49f69a7707b6f77aa162dc0f0a5340"
+        }
+      ]
+    },
+    {
+      "group": "deadline",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-deadline.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "scripts/run-full-regression.mjs",
+          "sha256": "ef0e0fc588793a7348844c302acb0236e33b9ea7172f70f02a519d02a6753482"
+        },
+        {
+          "file": "scripts/run-full-regression.test.mjs",
+          "sha256": "22de264fe416ebf7718e5e00daf6fc35cfa6638c505d1a7709f706bdef926f00"
+        },
+        {
+          "file": "scripts/run-with-deadline.mjs",
+          "sha256": "4767d2338543956d3a7c77b7b842cb4f79ceb34774e1867ed5268c9a93e23e3b"
+        },
+        {
+          "file": "scripts/run-with-deadline.test.mjs",
+          "sha256": "fe20d4fae53f727cc816bbe4bd6bb9e26cd0e04dd69e098682f067f96155da94"
+        }
+      ]
+    },
+    {
+      "group": "performance",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-performance.md",
+      "scope": "所属文件完整 diff 与源文件全文，见复核记录中的真实读取范围",
+      "source_files": [
+        {
+          "file": "scripts/performance/market-ui-report.mjs",
+          "sha256": "98ced04a7c2f178085765aae293e0281cf347eabc1db9b05c1bbfc734ae280cf"
+        },
+        {
+          "file": "scripts/performance/market-ui-report.test.mjs",
+          "sha256": "0bf9c8afa1501f0ff5b40eb179634c4a82c9b524ce8e5ec22a177eec3761b98d"
+        },
+        {
+          "file": "scripts/simulation/escrow-performance-harness.mjs",
+          "sha256": "425d472abcb3adfe75a8a024e0f06b555b4a943baa9cc8280501088bcd8cd7ca"
+        },
+        {
+          "file": "scripts/simulation/escrow-performance-harness.test.mjs",
+          "sha256": "c5c89deb7c1d112599b6adce3a44f452341ad969eab5ba061586ec5d0af58804"
+        },
+        {
+          "file": "scripts/simulation/escrow-verification-contracts.mjs",
+          "sha256": "766ad3da1008067801ffaf539de6ef8fcc939e7723584d3bad6ec88346f6fea3"
+        },
+        {
+          "file": "scripts/simulation/escrow-verification-contracts.test.mjs",
+          "sha256": "559135a9fe2d532d793d3dfb623ad2e8d6d9913ae3a0e6ac6b9222f49e62dcae"
+        }
+      ]
+    },
+    {
+      "group": "account-callers",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-account.md",
+      "scope": "四个必要 integration caller 完整 diff 与源文件全文；market 故意非法 fixture 转移另由 domain reviewer 核对",
+      "source_files": [
+        {
+          "file": "packages/engine/tests/account.rs",
+          "sha256": "ce1d8a0c78419cca409f638f473e57438d8a0fed19ffa2cc7b5a59ebe65dd4c6"
+        },
+        {
+          "file": "packages/engine/tests/strategy_state.rs",
+          "sha256": "00015946426523303fa372e9a62d7e564c1119c63190f93c4aed2d245056ddb2"
+        },
+        {
+          "file": "packages/engine/tests/company_opening/isolation.rs",
+          "sha256": "718be88ea7639e018b4a62e240b4e18384dd3715a3a80a05b4ac8c86f36b7066"
+        },
+        {
+          "file": "packages/engine/tests/company_scenarios/controlled_experience.rs",
+          "sha256": "fefef52a815a21aba4ee10b5e9b974c19b7e48246e73123440156bf5ea4a0ef2"
+        }
+      ]
+    },
+    {
+      "group": "market-fixture-relocation",
+      "independent_review": "agents/oop-refactor-implementation/domain/orderbook-review.md",
+      "scope": "三个故意非法内部 state 用例的完整搬移，helpers与正文归一化仅setter名称与空白；lib3+integration7各一次",
+      "source_files": [
+        {
+          "file": "packages/engine/tests/market/price_limits.rs",
+          "sha256": "90d6a89eed8532ed08ca42292047252e9b7fe12df45c27cfc7866797114a0d5e"
+        },
+        {
+          "file": "packages/engine/src/market.rs",
+          "sha256": "00e2ccdb609e4d38c4b879b20580dfe56886030b9802fb545437b622bd8518c9"
+        }
+      ],
+      "runtime_validation": "root待执行 lib filter market::price_limit_state_tests"
+    },
+    {
+      "group": "production-entry-caller",
+      "independent_review": "agents/oop-refactor-implementation/hosts/review-production-entry-caller.md",
+      "scope": "整文件全文与baseline完整2行diff；3getter归一化后逐字一致",
+      "source_files": [
+        {
+          "file": "packages/engine/examples/production_entry_performance.rs",
+          "sha256": "003bf62d67b6ccff1ead8e528ca943afb5048f2d14529c8e9e69eab932370a85"
+        }
+      ],
+      "runtime_validation": "root all-targets check再次编译，未执行性能example"
+    }
+  ],
+  "runtime_validation": "root build07 选定 integration+lib 编译通过；check08 四包 all-targets 既定 features 类型检查通过；232个 lib 短case全过，追加41case中39过、2个WS bind沙箱限制经原断言沙箱外2/2过核销；Writer5/5及桌面CLI5/5通过。逐动作按真实case/source映射见status.json；未选旧case/完整回归/E2E/性能未执行。"
+}

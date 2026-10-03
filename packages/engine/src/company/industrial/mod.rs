@@ -24,6 +24,8 @@ mod error;
 mod expenses;
 mod interest;
 mod loans;
+#[cfg(test)]
+mod ownership_tests;
 mod production;
 mod purchasing;
 mod repayment;
@@ -37,8 +39,6 @@ pub use purchasing::{PurchaseOutcome, Settlement};
 
 pub use chart::industrial_chart_v2;
 
-use std::collections::BTreeMap;
-
 use crate::accounting::{
     AccountingAmount, Books, BusinessKind, CashFlowClass, FixedAssetRegister, InventoryLedger,
     JournalEntry, JournalLine, LedgerAccountId, LossEntry, PostingSide, TaxPolicy, TradeOpenLedger,
@@ -49,6 +49,8 @@ use crate::company::counterparty::{
 };
 use crate::company::opening::opening_event_id;
 use error::map_post_error;
+use expenses::IncomeTaxPosition;
+use loans::LoanPortfolio;
 
 /// 工商账套：Books + 子账 + 税务/借款状态（全部随存档序列化；`Books` 恢复走
 /// 重放路径，其余结构体 serde 直存）。
@@ -63,8 +65,9 @@ pub struct IndustrialBooks {
     counterparties: CounterpartyLedger,
     budget: OperatingBudget,
     tax_policy: TaxPolicy,
-    loss_pool: Vec<LossEntry>,
-    loans: BTreeMap<ContractId, LoanState>,
+    #[serde(rename = "loss_pool")]
+    income_tax_position: IncomeTaxPosition,
+    loans: LoanPortfolio,
     next_event_id: u64,
 }
 
@@ -83,23 +86,21 @@ impl IndustrialBooks {
             lines: config.opening_lines,
         }])?;
 
-        let inventory = config::seed_inventory(books.ledger(), &config.opening_inventory)?;
-        let assets = config::seed_assets(books.ledger(), &config.opening_assets)?;
+        let reconciliation = config::IndustrialOpeningReconciliation {
+            ledger: books.ledger(),
+            as_of: config.as_of,
+            inventory_seeds: &config.opening_inventory,
+            asset_seeds: &config.opening_assets,
+            debt_terms: config.opening_debt.as_ref(),
+        };
+        let (inventory, assets) = reconciliation.seed_inventory_and_assets()?;
 
         let mut counterparties = CounterpartyLedger::new();
         for counterparty in config.counterparties {
             counterparties.register(counterparty)?;
         }
 
-        let (contracts, loans) = match &config.opening_debt {
-            Some(terms) => config::seed_opening_debt(
-                books.ledger(),
-                config.as_of,
-                terms,
-                counterparties.get(&terms.lender).is_some(),
-            )?,
-            None => (ContractBook::new(), BTreeMap::new()),
-        };
+        let (contracts, loans) = reconciliation.seed_debt_after_counterparties(&counterparties)?;
 
         Ok(Self {
             books,
@@ -111,7 +112,7 @@ impl IndustrialBooks {
             counterparties,
             budget: config.budget,
             tax_policy: config.tax_policy,
-            loss_pool: Vec::new(),
+            income_tax_position: IncomeTaxPosition::default(),
             loans,
             next_event_id: 2,
         })
@@ -162,7 +163,7 @@ impl IndustrialBooks {
     }
 
     pub fn loss_pool(&self) -> &[LossEntry] {
-        &self.loss_pool
+        self.income_tax_position.loss_pool()
     }
 
     pub fn loan(&self, contract: &ContractId) -> Option<&LoanState> {
@@ -176,13 +177,7 @@ impl IndustrialBooks {
     /// 某贷款人剩余授信 = 限额 − Σ未偿本金（含开局隐式合同）；无授信 = None。
     pub fn available_credit(&self, lender: &CounterpartyId) -> Option<AccountingAmount> {
         let limit = self.budget.credit_line(lender)?;
-        let outstanding = self
-            .loans
-            .values()
-            .try_fold(AccountingAmount::ZERO, |acc, loan| {
-                acc.add(loan.outstanding())
-            })
-            .ok()?;
+        let outstanding = self.loans.outstanding_total().ok()?;
         limit.sub(outstanding).ok()
     }
 
@@ -209,15 +204,6 @@ impl IndustrialBooks {
             .account_net_debit(&LedgerAccountId(code.to_string()))?)
     }
 
-    /// Σ未偿借款本金（含开局隐式合同；授信占用口径）。
-    pub(super) fn loans_outstanding_total(&self) -> Result<AccountingAmount, IndustrialError> {
-        let mut total = AccountingAmount::ZERO;
-        for loan in self.loans.values() {
-            total = total.add(loan.outstanding())?;
-        }
-        Ok(total)
-    }
-
     pub(super) fn inventory_mut(&mut self) -> &mut InventoryLedger {
         &mut self.inventory
     }
@@ -240,10 +226,6 @@ impl IndustrialBooks {
 
     pub(super) fn contracts_mut(&mut self) -> &mut ContractBook {
         &mut self.contracts
-    }
-
-    pub(super) fn loans_mut(&mut self) -> &mut BTreeMap<ContractId, LoanState> {
-        &mut self.loans
     }
 }
 

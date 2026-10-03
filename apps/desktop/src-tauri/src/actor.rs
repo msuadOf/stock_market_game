@@ -138,6 +138,101 @@ impl SpeedMeter {
     }
 }
 
+/// actor 独占的宿主节奏状态；引擎事务与调度资源仍归 SessionActor。
+struct DesktopPacing {
+    running: bool,
+    fastest: bool,
+    requested_speed: RequestedSpeed,
+    tick_interval: Duration,
+    base_ms: u64,
+    speed_meter: SpeedMeter,
+}
+
+impl DesktopPacing {
+    fn new(base_ms: u64, tick: u64) -> Self {
+        let mut speed_meter = SpeedMeter::new(tick);
+        speed_meter.mark_paused(tick);
+        Self {
+            running: false,
+            fastest: false,
+            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+            tick_interval: Duration::from_millis(base_ms),
+            base_ms,
+            speed_meter,
+        }
+    }
+
+    fn apply_speed(&mut self, speed: f64, tick: u64) -> bool {
+        if speed == f64::INFINITY {
+            self.fastest = true;
+            self.requested_speed = RequestedSpeed::Fastest;
+            self.reset_speed_meter(tick);
+            return true;
+        }
+        // 非法内部值由 actor 显式记录；节奏对象保持原状态。
+        if !speed.is_finite() || speed <= 0.0 {
+            return false;
+        }
+        self.fastest = false;
+        self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
+        self.reset_speed_meter(tick);
+        self.tick_interval = fixed_tick_interval(self.base_ms, speed);
+        true
+    }
+
+    fn set_running(&mut self, running: bool, tick: u64) {
+        if self.running != running {
+            self.running = running;
+            self.reset_speed_meter(tick);
+        }
+    }
+
+    fn pause_at_civil_boundary(&mut self, tick: u64) {
+        self.running = false;
+        self.reset_speed_meter(tick);
+    }
+
+    // fatal 停止保留已有采样，避免改变原先只写 running 的故障语义。
+    fn stop_after_failure(&mut self) {
+        self.running = false;
+    }
+
+    fn reset_after_restore(&mut self, tick: u64) {
+        self.reset_speed_meter(tick);
+    }
+
+    fn reset_speed_meter(&mut self, tick: u64) {
+        if self.running {
+            self.speed_meter.reset(tick);
+        } else {
+            self.speed_meter.mark_paused(tick);
+        }
+    }
+
+    fn refresh_metrics(&mut self, tick: u64) -> SpeedMetrics {
+        self.speed_meter.refresh(tick);
+        SpeedMetrics {
+            requested: self.requested_speed.clone(),
+            actual_multiplier: self.speed_meter.actual_multiplier,
+            sample_duration_ms: self.speed_meter.sample_duration_ms,
+            sample_ticks: self.speed_meter.sample_ticks,
+            running: self.running,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.running
+    }
+
+    fn is_fastest(&self) -> bool {
+        self.fastest
+    }
+
+    fn tick_interval(&self) -> Duration {
+        self.tick_interval
+    }
+}
+
 /// 发给 actor 的命令。每条都自带 `oneshot` 回执（`SetSpeed` 除外：fire-and-forget）。
 ///
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
@@ -229,9 +324,15 @@ pub enum SessionCommand {
 
 /// 一个 session 的对外句柄：命令发送端（克隆廉价）。
 /// `SessionManager` 持 `Arc<SessionHandles>`，Tauri command 经 manager 取克隆与 actor 通信。
+/// 原始命令发送端不可由外部访问，命令必须通过受控方法提交。
+/// ```compile_fail,E0616
+/// fn bypass(handles: &stock_market_game_lib::actor::SessionHandles) {
+///     let _ = handles.cmd_tx.clone();
+/// }
+/// ```
 #[derive(Clone)]
 pub struct SessionHandles {
-    pub cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
 }
 
 impl SessionHandles {
@@ -532,21 +633,14 @@ impl SessionManager {
             .await
             .insert(session_id.clone(), handles.clone());
 
-        let mut speed_meter = SpeedMeter::new(game.tick());
-        speed_meter.mark_paused(game.tick());
         let actor = SessionActor {
             #[cfg(test)]
             injected_step_failure: None,
-            speed_meter,
+            pacing: DesktopPacing::new(self.base_ms, game.tick()),
             game,
             cmd_rx,
-            tick_interval: Duration::from_millis(self.base_ms),
-            base_ms: self.base_ms,
             session_id: session_id.clone(),
             app,
-            running: false,
-            fastest: false,
-            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
             pending_fixed_events: Vec::new(),
             last_fixed_publish: Instant::now(),
             timeline_id: session_id.clone(),
@@ -578,18 +672,12 @@ impl Default for SessionManager {
 struct SessionActor<R: Runtime> {
     #[cfg(test)]
     injected_step_failure: Option<(usize, engine::session::StepFatal)>,
-    speed_meter: SpeedMeter,
+    pacing: DesktopPacing,
     game: ProtocolSession,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
-    /// 固定倍率的精确 tick 周期；使用 Duration 避免 60x/180x 等被整数毫秒截断。
-    tick_interval: Duration,
-    base_ms: u64,
     session_id: String,
     /// Tauri 应用句柄：emit 事件给前端窗口。
     app: AppHandle<R>,
-    running: bool,
-    fastest: bool,
-    requested_speed: RequestedSpeed,
     /// 固定高倍速在 Rust 侧聚合到 16ms 再跨 IPC，避免每 tick 唤醒 WebView。
     pending_fixed_events: Vec<engine::Event>,
     last_fixed_publish: Instant,
@@ -597,6 +685,84 @@ struct SessionActor<R: Runtime> {
     timeline_id: String,
     generation: u64,
     pause_preferences: PausePreferences,
+}
+
+#[cfg(test)]
+struct ActorHarness {
+    app: tauri::App<tauri::test::MockRuntime>,
+    actor: SessionActor<tauri::test::MockRuntime>,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    events_rx: Option<mpsc::UnboundedReceiver<String>>,
+    failures_rx: Option<mpsc::UnboundedReceiver<String>>,
+}
+
+#[cfg(test)]
+impl ActorHarness {
+    fn new_protocol_actor(
+        game: ProtocolSession,
+        fastest: bool,
+        pause_preferences: PausePreferences,
+        session_id: &str,
+        timeline_id: &str,
+    ) -> Self {
+        let app = tauri::test::mock_app();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let actor = SessionActor {
+            injected_step_failure: None,
+            pacing: DesktopPacing {
+                running: true,
+                fastest,
+                requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+                tick_interval: Duration::from_millis(1),
+                base_ms: 1,
+                speed_meter: SpeedMeter::new(game.tick()),
+            },
+            game,
+            cmd_rx,
+            session_id: session_id.to_owned(),
+            app: app.handle().clone(),
+            pending_fixed_events: Vec::new(),
+            last_fixed_publish: Instant::now(),
+            timeline_id: timeline_id.to_owned(),
+            generation: 1,
+            pause_preferences,
+        };
+        Self {
+            app,
+            actor,
+            cmd_tx,
+            events_rx: None,
+            failures_rx: None,
+        }
+    }
+
+    fn subscribe_engine_events(&mut self) -> &mut mpsc::UnboundedReceiver<String> {
+        if self.events_rx.is_none() {
+            self.events_rx = Some(self.subscribe(crate::ENGINE_EVENT_NAME));
+        }
+        self.events_rx
+            .as_mut()
+            .expect("engine-event 订阅必须已建立")
+    }
+
+    fn subscribe_failures(&mut self) -> &mut mpsc::UnboundedReceiver<String> {
+        if self.failures_rx.is_none() {
+            self.failures_rx = Some(self.subscribe("engine-failure"));
+        }
+        self.failures_rx
+            .as_mut()
+            .expect("engine-failure 订阅必须已建立")
+    }
+
+    fn subscribe(&self, event_name: &str) -> mpsc::UnboundedReceiver<String> {
+        use tauri::Listener;
+
+        let (sender, receiver) = mpsc::unbounded_channel();
+        self.app.listen(event_name, move |event| {
+            sender.send(event.payload().to_owned()).unwrap();
+        });
+        receiver
+    }
 }
 
 impl<R: Runtime> SessionActor<R> {
@@ -644,11 +810,11 @@ impl<R: Runtime> SessionActor<R> {
                         None => break,
                     }
                 }
-                _ = interval.tick(), if !self.fastest && self.running => {
+                _ = interval.tick(), if !self.pacing.is_fastest() && self.pacing.is_running() => {
                     self.tick_and_emit().await;
                     if self.cmd_rx.is_closed() { break; }
                 }
-                _ = tokio::task::yield_now(), if self.fastest && self.running => {
+                _ = tokio::task::yield_now(), if self.pacing.is_fastest() && self.pacing.is_running() => {
                     self.run_fastest_batch().await;
                     if self.cmd_rx.is_closed() { break; }
                 }
@@ -658,7 +824,7 @@ impl<R: Runtime> SessionActor<R> {
 
     /// 构造固定倍率计时器（Skip 积压补发）。
     fn fresh_interval(&self) -> tokio::time::Interval {
-        let mut i = tokio::time::interval(self.tick_interval);
+        let mut i = tokio::time::interval(self.pacing.tick_interval());
         i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         i
     }
@@ -718,7 +884,7 @@ impl<R: Runtime> SessionActor<R> {
             self.rollback_cycle(checkpoint, error);
             return;
         }
-        self.speed_meter.refresh(self.game.tick());
+        self.pacing.refresh_metrics(self.game.tick());
     }
 
     async fn run_fastest_batch(&mut self) {
@@ -752,8 +918,7 @@ impl<R: Runtime> SessionActor<R> {
             let pause = self.pause_preferences.pauses(&update);
             self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
             if pause {
-                self.running = false;
-                self.reset_speed_meter();
+                self.pacing.pause_at_civil_boundary(self.game.tick());
             }
         }
         Ok(())
@@ -856,14 +1021,8 @@ impl<R: Runtime> SessionActor<R> {
                 ));
             }
             SessionCommand::SpeedMetrics { reply } => {
-                self.speed_meter.refresh(self.game.tick());
-                let _ = reply.send(SpeedMetrics {
-                    requested: self.requested_speed.clone(),
-                    actual_multiplier: self.speed_meter.actual_multiplier,
-                    sample_duration_ms: self.speed_meter.sample_duration_ms,
-                    sample_ticks: self.speed_meter.sample_ticks,
-                    running: self.running,
-                });
+                let metrics = self.pacing.refresh_metrics(self.game.tick());
+                let _ = reply.send(metrics);
             }
             SessionCommand::Save {
                 generation,
@@ -900,8 +1059,7 @@ impl<R: Runtime> SessionActor<R> {
                 if let Ok(report) = &result {
                     self.emit_update(EngineUpdate::CivilUpdate(Box::new(report.clone())));
                     if self.pause_preferences.pauses(report) {
-                        self.running = false;
-                        self.reset_speed_meter();
+                        self.pacing.pause_at_civil_boundary(self.game.tick());
                     }
                 }
                 if let Err(SessionError::Step(fatal)) = &result {
@@ -938,10 +1096,7 @@ impl<R: Runtime> SessionActor<R> {
                 self.apply_speed(speed);
             }
             SessionCommand::SetRunning { running } => {
-                if self.running != running {
-                    self.running = running;
-                    self.reset_speed_meter();
-                }
+                self.pacing.set_running(running, self.game.tick());
             }
             SessionCommand::SetPausePreferences { preferences } => {
                 self.pause_preferences = preferences;
@@ -952,32 +1107,15 @@ impl<R: Runtime> SessionActor<R> {
 
     /// 应用新倍速：固定倍率使用精确 Duration；Fastest 切到 CPU 时间片 tight-loop。
     fn apply_speed(&mut self, speed: f64) {
-        if speed == f64::INFINITY {
-            self.fastest = true;
-            self.requested_speed = RequestedSpeed::Fastest;
-            self.reset_speed_meter();
-            return;
-        }
-        // 防御：除专用 Fastest 哨兵外，非正/非有限值一律拒绝。
-        if !speed.is_finite() || speed <= 0.0 {
+        if !self.pacing.apply_speed(speed, self.game.tick()) {
             eprintln!(
                 "[session {}] 非法速度被忽略（须为有限正数）：{speed}",
                 self.session_id
             );
             return;
         }
-        self.fastest = false;
-        self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
-        self.reset_speed_meter();
-        self.tick_interval = fixed_tick_interval(self.base_ms, speed);
-        self.last_fixed_publish = Instant::now();
-    }
-
-    fn reset_speed_meter(&mut self) {
-        if self.running {
-            self.speed_meter.reset(self.game.tick());
-        } else {
-            self.speed_meter.mark_paused(self.game.tick());
+        if !self.pacing.is_fastest() {
+            self.last_fixed_publish = Instant::now();
         }
     }
 
@@ -1014,7 +1152,7 @@ impl<R: Runtime> SessionActor<R> {
         self.game.prepare_public_baseline();
         self.timeline_id = uuid::Uuid::new_v4().to_string();
         self.generation = next_generation;
-        self.reset_speed_meter();
+        self.pacing.reset_after_restore(self.game.tick());
         Ok(RestoreResult {
             snapshot: self.game.snapshot(),
             timeline_id: self.timeline_id.clone(),
@@ -1278,6 +1416,81 @@ mod tests {
             (actual - 1.0).abs() < 0.01,
             "实际倍率应约为 1x，收到 {actual}"
         );
+    }
+
+    #[test]
+    fn pacing_keeps_speed_mode_interval_and_pause_metrics_consistent() {
+        let mut pacing = super::DesktopPacing::new(1_000, 10);
+        assert!(!pacing.is_running());
+        assert_eq!(pacing.refresh_metrics(10).actual_multiplier, Some(0.0));
+
+        pacing.set_running(true, 10);
+        pacing.apply_speed(60.0, 10);
+        let fixed_interval = pacing.tick_interval();
+        assert!(!pacing.is_fastest());
+        assert_eq!(
+            pacing.refresh_metrics(10).requested,
+            super::RequestedSpeed::Fixed { multiplier: 60.0 }
+        );
+        pacing.apply_speed(f64::INFINITY, 11);
+        assert!(pacing.is_fastest());
+        assert_eq!(pacing.tick_interval(), fixed_interval);
+        assert_eq!(
+            pacing.refresh_metrics(11).requested,
+            super::RequestedSpeed::Fastest
+        );
+        pacing.apply_speed(2.0, 12);
+        assert!(!pacing.is_fastest());
+        assert_eq!(pacing.tick_interval(), Duration::from_millis(500));
+
+        pacing.speed_meter.started_at -= Duration::from_secs(2);
+        let sampled = pacing.refresh_metrics(16);
+        assert_eq!(sampled.sample_ticks, 4);
+        pacing.set_running(true, 16);
+        assert_eq!(pacing.refresh_metrics(16), sampled);
+        pacing.set_running(false, 16);
+        let paused = pacing.refresh_metrics(16);
+        assert!(!paused.running);
+        assert_eq!(paused.actual_multiplier, Some(0.0));
+        assert_eq!(paused.sample_ticks, 0);
+        pacing.set_running(true, 16);
+        assert_eq!(pacing.refresh_metrics(16).actual_multiplier, None);
+    }
+
+    #[test]
+    fn pacing_restore_resets_sampling_but_fatal_stop_preserves_it() {
+        let mut pacing = super::DesktopPacing::new(1_000, 10);
+        pacing.set_running(true, 10);
+        pacing.speed_meter.started_at -= Duration::from_secs(2);
+        let sampled = pacing.refresh_metrics(14);
+        pacing.stop_after_failure();
+        let stopped = pacing.refresh_metrics(14);
+        assert!(!stopped.running);
+        assert_eq!(stopped.actual_multiplier, sampled.actual_multiplier);
+        assert_eq!(stopped.sample_ticks, sampled.sample_ticks);
+        pacing.reset_after_restore(3);
+        let restored = pacing.refresh_metrics(3);
+        assert_eq!(restored.actual_multiplier, Some(0.0));
+        assert_eq!(restored.sample_ticks, 0);
+        pacing.set_running(true, 3);
+        pacing.reset_after_restore(1);
+        assert_eq!(pacing.refresh_metrics(1).actual_multiplier, None);
+        assert_eq!(pacing.speed_meter.started_tick, 1);
+    }
+
+    #[test]
+    fn desktop_pacing_rejects_invalid_internal_speed_without_changing_state() {
+        let mut pacing = super::DesktopPacing::new(1_000, 10);
+        pacing.set_running(true, 10);
+        pacing.apply_speed(2.0, 10);
+        let before = pacing.refresh_metrics(10);
+        for invalid in [0.0, -1.0, f64::NAN, f64::NEG_INFINITY] {
+            assert!(!pacing.apply_speed(invalid, 11));
+            assert_eq!(pacing.refresh_metrics(10), before);
+            assert_eq!(pacing.tick_interval(), Duration::from_millis(500));
+        }
+        pacing.apply_speed(1e12, 10);
+        assert_eq!(pacing.tick_interval(), Duration::from_micros(1));
     }
 
     #[test]

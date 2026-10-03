@@ -23,28 +23,30 @@ pub struct BankConfig {
     pub ecl_policy: EclPolicy,
 }
 
-/// 开局行子账种子守卫：触碰任何银行子账/损益科目（贷款/存款/准备/应收
-/// 应付利息/利息收支/手续费/减值损失）→ `OpeningBankBooksSeeded`。
-/// 现金（1003）与权益（4001/4103）是开局唯一合法落点。
-pub(super) fn check_opening_lines(lines: &[JournalLine]) -> Result<(), BankError> {
-    const SEEDED_ACCOUNTS: [&str; 10] = [
-        codes::LOAN_INT_RCV,
-        codes::LOAN_PRINCIPAL,
-        codes::LOAN_ALLOWANCE,
-        codes::ST_DEPOSIT,
-        codes::LT_DEPOSIT,
-        codes::DEP_INT_PAYABLE,
-        codes::INTEREST_INCOME,
-        codes::FEE_INCOME,
-        codes::INTEREST_EXPENSE,
-        codes::CREDIT_IMPAIR,
-    ];
-    for line in lines {
-        if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
-            return Err(BankError::OpeningBankBooksSeeded {
-                account: LedgerAccountId(line.account.0.clone()),
-            });
+impl BankConfig {
+    /// 开局行子账种子守卫：触碰银行子账/损益科目（贷款/存款/准备/应收
+    /// 应付利息/利息收支/手续费/减值损失）→ `OpeningBankBooksSeeded`。
+    /// 按现有禁止科目清单检查，保留首个非法科目和其余科目的接受集合。
+    pub(super) fn check_opening_lines(&self) -> Result<(), BankError> {
+        const SEEDED_ACCOUNTS: [&str; 10] = [
+            codes::LOAN_INT_RCV,
+            codes::LOAN_PRINCIPAL,
+            codes::LOAN_ALLOWANCE,
+            codes::ST_DEPOSIT,
+            codes::LT_DEPOSIT,
+            codes::DEP_INT_PAYABLE,
+            codes::INTEREST_INCOME,
+            codes::FEE_INCOME,
+            codes::INTEREST_EXPENSE,
+            codes::CREDIT_IMPAIR,
+        ];
+        for line in &self.opening_lines {
+            if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {
+                return Err(BankError::OpeningBankBooksSeeded {
+                    account: LedgerAccountId(line.account.0.clone()),
+                });
+            }
         }
+        Ok(())
     }
-    Ok(())
 }

@@ -3,9 +3,7 @@
 //! `acquisition_gold`（同一测试 crate 内复用）。
 
 use crate::acquisition_gold::{build_ctx, judgment_projection, state_bytes};
-use crate::fixture::{
-    hour_after, minute_before, npc_a, npc_b, publish_correction, scenario, FixtureMarket,
-};
+use crate::fixture::{hour_after, minute_before, npc_a, npc_b, FixtureMarket, Scenario};
 use engine::accounting::reports::ReportKind;
 use engine::accounting::AccountingPeriod;
 use engine::information::{
@@ -16,7 +14,7 @@ use engine::information::{
 /// 暴露获知时的 v1（内容逐字节不变）；v2 只有经新的获知事件才可读。
 #[test]
 fn acquired_version_pinned_across_later_correction() {
-    let mut sc = scenario();
+    let mut sc = Scenario::new();
     let a = npc_a();
     let mut state = NpcInformationState::new(a);
     let market = FixtureMarket::quiet();
@@ -37,7 +35,7 @@ fn acquired_version_pinned_across_later_correction() {
     .expect("v1 serializes");
     let projection_before = judgment_projection(&build_ctx(a, &state, &sc.library, &market));
 
-    let v2_id = publish_correction(&mut sc);
+    let v2_id = sc.publish_correction();
 
     // 更正公开本身不移动甲的判断输入；v1 内容按获知时点钉死（字节不变）。
     let ctx = build_ctx(a, &state, &sc.library, &market);
@@ -75,7 +73,7 @@ fn acquired_version_pinned_across_later_correction() {
 /// 只读 &self）不写入任何 NPC 的信息状态（字节对比），也不产生幻影获知。
 #[test]
 fn dev_reads_leave_every_npc_state_unchanged() {
-    let mut sc = scenario();
+    let mut sc = Scenario::new();
     let (a, b) = (npc_a(), npc_b());
     let mut state_a = NpcInformationState::new(a);
     let mut state_b = NpcInformationState::new(b);
@@ -96,7 +94,7 @@ fn dev_reads_leave_every_npc_state_unchanged() {
             hour_after(sc.announcement_instant),
         )
         .expect("b reads announcement");
-    let v2_id = publish_correction(&mut sc);
+    let v2_id = sc.publish_correction();
 
     let (bytes_a, bytes_b) = (state_bytes(&state_a), state_bytes(&state_b));
     let (proj_a, proj_b) = (
@@ -147,7 +145,7 @@ fn dev_reads_leave_every_npc_state_unchanged() {
 /// 公开索引（id 序确定性），且候选**不构成阅读**（状态仍空、上下文不可读）。
 #[test]
 fn discovery_candidates_index_publications_without_reading() {
-    let mut sc = scenario();
+    let mut sc = Scenario::new();
     let a = npc_a();
     let market = FixtureMarket::quiet();
 
@@ -164,7 +162,7 @@ fn discovery_candidates_index_publications_without_reading() {
     );
 
     // 公告与更正都公开后：三条候选、id 序。
-    let v2_id = publish_correction(&mut sc);
+    let v2_id = sc.publish_correction();
     let far_future = hour_after(sc.correction_instant);
     let mut expected = vec![sc.annual_v1_id, sc.announcement_id, v2_id];
     expected.sort_unstable_by_key(|id| id.value());

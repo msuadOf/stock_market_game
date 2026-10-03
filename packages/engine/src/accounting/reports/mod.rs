@@ -91,7 +91,7 @@ impl ReportKind {
                 return Err(ReportError::InvalidReportKind {
                     period,
                     reason: "half-year must land on June; annual must land on December",
-                })
+                });
             }
         };
         let shift = |p: AccountingPeriod| {
@@ -195,7 +195,8 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
         } => {
             let windows =
                 window::standalone(books, (first, last), prior_window, request.adjustments)?;
-            let classification = notes::classification(&windows.defs, &[industry])?;
+            let classification =
+                notes::ReportClassification::from_industries(&windows.defs, &[industry])?;
             (ScopeId::Standalone(id), windows, classification)
         }
         ReportSource::Consolidated {
@@ -210,8 +211,10 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
             }
             let windows =
                 consolidated_window::consolidated(group_request, (first, last), prior_window)?;
-            let classification =
-                notes::classification(&windows.defs, &industries.into_iter().collect::<Vec<_>>())?;
+            let classification = notes::ReportClassification::from_industries(
+                &windows.defs,
+                &industries.into_iter().collect::<Vec<_>>(),
+            )?;
             let root = windows
                 .consolidation
                 .as_ref()

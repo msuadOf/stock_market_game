@@ -1,0 +1,43 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "--lib",
+    "--features",
+    "simulation-diagnostics,verification-harness",
+    "--no-run",
+    "--message-format=json",
+    "-j",
+    "32"
+  ],
+  "environment": {
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0"
+  },
+  "exit_code": 101,
+  "timed_out": false,
+  "seconds": 20.275,
+  "samples": [
+    {
+      "seconds": 0.0,
+      "processes": 1,
+      "threads": 1,
+      "cpu": 0.0
+    },
+    {
+      "seconds": 10.01,
+      "processes": 2,
+      "threads": 7,
+      "cpu": 101.1
+    },
+    {
+      "seconds": 20.02,
+      "processes": 1,
+      "threads": 1,
+      "cpu": 1.4
+    }
+  ],
+  "meaning": "仅编译，不运行测试"
+}

@@ -23,7 +23,7 @@ fn saved_fee_components(fees: FeeComponents) -> FeeComponentsV2 {
 #[test]
 fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     let mut session = session_with_runtime_state();
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let institution = AccountId(1);
     let mut events = Vec::new();
     session.seed_order_for_test(
@@ -44,23 +44,24 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
         })
         .expect("fixture player order must be accepted");
     session
+        .state
         .parent_orders
         .entry(institution)
         .or_default()
         .insert(
             code.clone(),
-            ParentOrderPlan {
-                code: code.clone(),
-                side: Side::Buy,
-                target_qty: 100,
-                filled_qty: 0,
-                child_qty: 100,
-                active_child_order_id: None,
-                active_child_remaining_qty: None,
-                linked_plan_id: None,
-                limit_price: Money::from_cents(1_000),
-                expires_market_minute: 480,
-            },
+            ParentOrderPlan::from_saved_facts(
+                code.clone(),
+                Side::Buy,
+                100,
+                0,
+                100,
+                None,
+                None,
+                None,
+                Money::from_cents(1_000),
+                480,
+            ),
         );
     let mut forged = session
         .save()
@@ -95,7 +96,7 @@ fn gross_capped_fee_session() -> GameSession {
 }
 
 fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -103,6 +104,7 @@ fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
         side: Side::Buy,
     };
     let result = session
+        .state
         .markets
         .get_mut(&code)
         .expect("fixture market must exist")
@@ -120,7 +122,7 @@ fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
         .expect("fixture order must be accepted");
     assert!(result.trades.is_empty());
     assert!(result.resting.is_some());
-    session.next_order_id = 2;
+    session.state.next_order_id = 2;
     session
         .hydrate_or_validate_envelope_ledger()
         .expect("fixture ledger must hydrate");
@@ -138,11 +140,12 @@ fn install_receipt_prefix(session: &mut GameSession, envelope: EnvelopeKey) {
     )
     .expect("fixture receipt identity must be valid");
     session
+        .state
         .retail_projection_seen
         .insert_test_identity(0, local_key);
-    session.next_receipt_base = 1;
-    session.envelope_ledger = EnvelopeLedger::new(
-        session.next_receipt_base,
+    session.state.next_receipt_base = 1;
+    session.state.envelope_ledger = EnvelopeLedger::new(
+        session.state.next_receipt_base,
         session
             .project_live_envelopes()
             .expect("fixture live envelope projection must succeed"),
@@ -151,7 +154,7 @@ fn install_receipt_prefix(session: &mut GameSession, envelope: EnvelopeKey) {
 }
 
 fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -160,12 +163,14 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(50_001);
     session
+        .state
         .accounts
         .get_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
+        .state
         .markets
         .get_mut(&code)
         .expect("fixture market must exist")
@@ -183,18 +188,23 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
         .expect("fixture partially-filled order must rest");
     assert!(result.trades.is_empty());
     assert!(result.resting.is_some());
-    session.next_order_id = 2;
+    session.state.next_order_id = 2;
     let nominal = FeeComponents {
-        commission: session.setup.config.commission(filled_value).unwrap(),
-        stamp_tax: session.setup.config.stamp_tax(filled_value).unwrap(),
-        transfer_fee: session.setup.config.transfer_fee(filled_value).unwrap(),
+        commission: session.state.setup.config.commission(filled_value).unwrap(),
+        stamp_tax: session.state.setup.config.stamp_tax(filled_value).unwrap(),
+        transfer_fee: session
+            .state
+            .setup
+            .config
+            .transfer_fee(filled_value)
+            .unwrap(),
     };
     let charged = FeeComponents {
         commission: Money::from_cents(13),
         stamp_tax: Money::from_cents(25),
         transfer_fee: Money::ZERO,
     };
-    session.envelope_ledger = EnvelopeLedger::new(
+    session.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             key.clone(),
@@ -215,7 +225,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -224,12 +234,14 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(100);
     session
+        .state
         .accounts
         .get_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
+        .state
         .markets
         .get_mut(&code)
         .expect("fixture market must exist")
@@ -247,14 +259,19 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
         .expect("fixture partially-filled order must rest");
     assert!(result.trades.is_empty());
     assert!(result.resting.is_some());
-    session.next_order_id = 2;
+    session.state.next_order_id = 2;
     let nominal = FeeComponents {
-        commission: session.setup.config.commission(filled_value).unwrap(),
-        stamp_tax: session.setup.config.stamp_tax(filled_value).unwrap(),
-        transfer_fee: session.setup.config.transfer_fee(filled_value).unwrap(),
+        commission: session.state.setup.config.commission(filled_value).unwrap(),
+        stamp_tax: session.state.setup.config.stamp_tax(filled_value).unwrap(),
+        transfer_fee: session
+            .state
+            .setup
+            .config
+            .transfer_fee(filled_value)
+            .unwrap(),
     };
     assert!(nominal.commission > filled_value);
-    session.envelope_ledger = EnvelopeLedger::new(
+    session.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             key.clone(),
@@ -279,7 +296,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -287,12 +304,14 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
         side: Side::Sell,
     };
     session
+        .state
         .accounts
         .get_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 2, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
+        .state
         .markets
         .get_mut(&code)
         .expect("fixture market must exist")
@@ -310,7 +329,7 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
         .expect("fixture sell must rest");
     assert!(result.trades.is_empty());
     assert!(result.resting.is_some());
-    session.next_order_id = 2;
+    session.state.next_order_id = 2;
     session
         .hydrate_or_validate_envelope_ledger()
         .expect("fixture ledger must hydrate");
@@ -374,7 +393,9 @@ fn fresh_session_strategy_and_attention_share_exact_canonical_probability() {
     for (account, strategy) in state.strategy_states {
         assert_eq!(
             strategy.base_observation_probability().to_bits(),
-            session.npc_attention[&account].base_probability.to_bits(),
+            session.state.npc_attention[&account]
+                .base_probability
+                .to_bits(),
         );
     }
 }
@@ -410,8 +431,8 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
     let mut restored = session_with_runtime_state();
     install_live_buy(&mut restored);
     restore_runtime_v2(&mut restored, &state).expect("non-empty v2 state must restore");
-    assert_eq!(restored.next_receipt_base, 1);
-    assert_eq!(restored.envelope_ledger.next_receipt_index(), 1);
+    assert_eq!(restored.state.next_receipt_base, 1);
+    assert_eq!(restored.state.envelope_ledger.next_receipt_index(), 1);
     assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
 }
 
@@ -434,6 +455,7 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
     assert_eq!(
         envelope["charged"]["commission"],
         serde_json::json!(source
+            .state
             .setup
             .config
             .commission(Money::from_cents(50_001))
@@ -492,21 +514,26 @@ fn runtime_envelope_rejects_injected_derived_fields() {
 fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     let mut source = low_price_session();
     let key = install_partially_filled_sell(&mut source);
-    source.parent_orders.entry(key.account).or_default().insert(
-        key.stock.clone(),
-        ParentOrderPlan {
-            code: key.stock.clone(),
-            side: key.side,
-            target_qty: 50_100,
-            filled_qty: 50_001,
-            child_qty: 50_100,
-            active_child_order_id: Some(key.order),
-            active_child_remaining_qty: Some(1),
-            linked_plan_id: None,
-            limit_price: Money::from_cents(1),
-            expires_market_minute: 480,
-        },
-    );
+    source
+        .state
+        .parent_orders
+        .entry(key.account)
+        .or_default()
+        .insert(
+            key.stock.clone(),
+            ParentOrderPlan::from_saved_facts(
+                key.stock.clone(),
+                key.side,
+                50_100,
+                50_001,
+                50_100,
+                Some(key.order),
+                Some(1),
+                None,
+                Money::from_cents(1),
+                480,
+            ),
+        );
     let saved = source.save().expect("partially filled parent must save");
     let encoded = serde_json::to_value(&saved).unwrap();
     assert!(
@@ -515,17 +542,17 @@ fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history()
             .is_none()
     );
     let restored = GameSession::restore(&saved).expect("parent must rebuild from its live child");
-    let parent = &restored.parent_orders[&key.account][&key.stock];
-    assert_eq!(parent.active_child_remaining_qty, Some(1));
-    assert_eq!(parent.target_qty, 50_100);
-    assert_eq!(parent.filled_qty, 50_001);
+    let parent = &restored.state.parent_orders[&key.account][&key.stock];
+    assert_eq!(parent.active_child_remaining_qty(), Some(1));
+    assert_eq!(parent.target_qty(), 50_100);
+    assert_eq!(parent.filled_qty(), 50_001);
     assert_eq!(
-        restored.markets[&key.stock].resting_orders_for(key.account)[0].qty,
+        restored.state.markets[&key.stock].resting_orders_for(key.account)[0].qty,
         1
     );
     assert_eq!(
-        restored.envelope_ledger.get(&key).unwrap().audit(),
-        source.envelope_ledger.get(&key).unwrap().audit()
+        restored.state.envelope_ledger.get(&key).unwrap().audit(),
+        source.state.envelope_ledger.get(&key).unwrap().audit()
     );
 }
 
@@ -563,7 +590,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     setup.config.commission_min = Money::ZERO;
     setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
     let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
-    let code = source.setup.stocks[0].code.clone();
+    let code = source.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -572,12 +599,17 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     };
     let before_value = Money::from_cents(50_999);
     let nominal_before = FeeComponents {
-        commission: source.setup.config.commission(before_value).unwrap(),
-        stamp_tax: source.setup.config.stamp_tax(before_value).unwrap(),
-        transfer_fee: source.setup.config.transfer_fee(before_value).unwrap(),
+        commission: source.state.setup.config.commission(before_value).unwrap(),
+        stamp_tax: source.state.setup.config.stamp_tax(before_value).unwrap(),
+        transfer_fee: source
+            .state
+            .setup
+            .config
+            .transfer_fee(before_value)
+            .unwrap(),
     };
     let transition = FillTransition::sell(SellFillInput {
-        config: &source.setup.config,
+        config: &source.state.setup.config,
         fill_qty: 1,
         remaining_qty_after: 1,
         filled_value_before: before_value,
@@ -594,12 +626,14 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     assert_eq!(transition.charged_after.transfer_fee, Money::from_cents(1));
 
     source
+        .state
         .accounts
         .get_mut(&key.account)
         .unwrap()
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .unwrap();
     source
+        .state
         .markets
         .get_mut(&code)
         .unwrap()
@@ -615,8 +649,8 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
             seq: 1,
         })
         .unwrap();
-    source.next_order_id = 2;
-    source.envelope_ledger = EnvelopeLedger::new(
+    source.state.next_order_id = 2;
+    source.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::tick_start_existing(
             key,
@@ -700,6 +734,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     let code = setup.stocks[0].code.clone();
     let mut session = GameSession::new(setup, 42).expect("v2 fixture must be valid");
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .expect("player must exist")
@@ -719,7 +754,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         .unwrap();
     session.step().expect("buyer order tick must commit");
 
-    let cash_before_fill = session.accounts[&AccountId(0)].cash;
+    let cash_before_fill = session.state.accounts[&AccountId(0)].cash();
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -734,12 +769,12 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     session.step().expect("partial-fill tick must commit");
     let gross = Money::from_cents(100);
     let expected_buy_cost = gross
-        .add(session.setup.config.commission(gross).unwrap())
+        .add(session.state.setup.config.commission(gross).unwrap())
         .unwrap()
-        .add(session.setup.config.transfer_fee(gross).unwrap())
+        .add(session.state.setup.config.transfer_fee(gross).unwrap())
         .unwrap();
     assert_eq!(
-        session.accounts[&AccountId(0)].cash,
+        session.state.accounts[&AccountId(0)].cash(),
         cash_before_fill.sub(expected_buy_cost).unwrap(),
         "seller receives gross minus the capped charge, which is zero for this one-yuan leg",
     );
@@ -800,6 +835,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     let code = setup.stocks[0].code.clone();
     let mut session = GameSession::new(setup, 43).expect("v2 fixture must be valid");
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .expect("player must exist")
@@ -856,7 +892,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         .find(|envelope| envelope.key.side == Side::Sell)
         .expect("the seller must remain partially live");
     let first_gross = Money::from_cents(100);
-    let first_nominal = session.setup.config.commission(first_gross).unwrap();
+    let first_nominal = session.state.setup.config.commission(first_gross).unwrap();
     assert!(
         first_nominal > first_gross,
         "the first leg must create minimum-commission debt",
@@ -884,6 +920,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let code = setup.stocks[0].code.clone();
     let mut session = GameSession::new(setup, 44).expect("v2 fixture must be valid");
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .expect("player must exist")
@@ -1059,7 +1096,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .local_key
         .transition
         .envelope
-        .order = OrderId(session.next_order_id);
+        .order = OrderId(session.state.next_order_id);
     assert_invalid_save(
         validate_runtime_v2(&session, &future_order).unwrap_err(),
         "invalid order",
@@ -1270,4 +1307,69 @@ fn capture_rejects_poisoned_session_without_emitting_a_dto() {
     session.poison = Some(fatal.clone());
 
     assert_eq!(capture_runtime_v2(&session).unwrap_err(), fatal);
+}
+
+#[test]
+fn cumulative_fee_audit_v2_buyer_requires_every_nominal_component() {
+    let config = GameConfig::proposed_defaults();
+    let gross = Money::from_cents(100_000);
+    let nominal = CumulativeFeeAuditV2 {
+        side: Side::Buy,
+        filled_value: gross,
+        charged: FeeComponentsV2::default(),
+    }
+    .nominal(&config)
+    .unwrap();
+    assert!(CumulativeFeeAuditV2 {
+        side: Side::Buy,
+        filled_value: gross,
+        charged: nominal
+    }
+    .validate(&config)
+    .unwrap());
+    for charged in [
+        FeeComponentsV2 {
+            commission: nominal.commission.sub(Money::from_cents(1)).unwrap(),
+            ..nominal
+        },
+        FeeComponentsV2 {
+            transfer_fee: Money::ZERO,
+            ..nominal
+        },
+        FeeComponentsV2 {
+            stamp_tax: Money::from_cents(1),
+            ..nominal
+        },
+    ] {
+        assert!(!CumulativeFeeAuditV2 {
+            side: Side::Buy,
+            filled_value: gross,
+            charged
+        }
+        .validate(&config)
+        .unwrap());
+    }
+}
+
+#[test]
+fn cumulative_fee_audit_v2_zero_and_negative_gross_keep_existing_boundaries() {
+    let config = GameConfig::proposed_defaults();
+    for side in [Side::Buy, Side::Sell] {
+        let zero = CumulativeFeeAuditV2 {
+            side,
+            filled_value: Money::ZERO,
+            charged: FeeComponentsV2::default(),
+        };
+        assert_eq!(zero.nominal(&config).unwrap(), FeeComponentsV2::default());
+        assert!(zero.validate(&config).unwrap());
+        let negative = CumulativeFeeAuditV2 {
+            side,
+            filled_value: Money::from_cents(-1),
+            charged: FeeComponentsV2::default(),
+        };
+        assert_invalid_save(
+            negative.nominal(&config).unwrap_err(),
+            "saved filled value cannot be negative",
+        );
+    }
 }

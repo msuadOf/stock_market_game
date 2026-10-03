@@ -22,9 +22,9 @@ use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, RejectionReas
 
 fn fixture() -> (GameSession, PlanExecutionRequest) {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    session.setup.auction_ticks = 900;
-    session.setup.ticks_per_day = 15_300;
-    session.tick = 0;
+    session.state.setup.auction_ticks = 900;
+    session.state.setup.ticks_per_day = 15_300;
+    session.state.tick = 0;
     assert_eq!(session.phase(), crate::TradingPhase::CallAuction);
     (session, request)
 }
@@ -42,8 +42,9 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
     setup.ticks_per_day = 15_300;
     let mut authority = GameSession::new(setup, 41).unwrap();
     let retail = AccountId(1);
-    let code = authority.setup.stocks[0].code.clone();
+    let code = authority.state.setup.stocks[0].code.clone();
     authority
+        .state
         .accounts
         .get_mut(&retail)
         .unwrap()
@@ -67,13 +68,13 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         })
         .expect("fixture old auction quote must be accepted");
     authority.hydrate_or_validate_envelope_ledger().unwrap();
-    let tick = authority.tick;
+    let tick = authority.state.tick;
     crate::session::npc_working_quote_tests::force_attention_candidate(
         &mut authority,
         retail,
         tick,
     );
-    authority.pending_npc = None;
+    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
 
     let committed = prepare_auction_tick(&mut authority)
@@ -110,7 +111,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
 
     assert_eq!(accept_seq, cancel_seq + 1);
     assert_ne!(new_price, Money::from_cents(900));
-    let own_orders = authority.auction_orders[&code]
+    let own_orders = authority.state.auction_orders[&code]
         .iter()
         .filter(|order| order.owner == retail)
         .collect::<Vec<_>>();
@@ -123,15 +124,20 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
 fn production_market_rejection_consumes_id_and_does_not_refund_account_validation_budget() {
     let mut authority = player_only_auction_session();
     let code = request_code(&authority);
-    let protective_price = authority.markets[&code].up_stop().unwrap();
+    let protective_price = authority.state.markets[&code].up_stop().unwrap();
     let one_order_cash = crate::session::buy_order_reservation(
-        &authority.setup.config,
+        &authority.state.setup.config,
         protective_price,
         100,
         Money::ZERO,
     )
     .unwrap();
-    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+    authority
+        .state
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .fixture_set_cash(one_order_cash);
     for _ in 0..2 {
         authority
             .enqueue_player_intent(
@@ -144,7 +150,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
             )
             .unwrap();
     }
-    let rejected_id = OrderId(authority.next_order_id);
+    let rejected_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
         .expect("market rejection is an ordinary P4 outcome")
@@ -160,7 +166,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
             }
         ]
     ));
-    assert_eq!(authority.next_order_id, rejected_id.0 + 1);
+    assert_eq!(authority.state.next_order_id, rejected_id.0 + 1);
     assert_eq!(committed.output.auction.receipts.len(), 1);
     assert_eq!(
         committed.output.auction.receipts[0].kind,
@@ -184,7 +190,10 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
             ..
         }
     )));
-    assert_eq!(authority.accounts[&AccountId(0)].cash, one_order_cash);
+    assert_eq!(
+        authority.state.accounts[&AccountId(0)].cash(),
+        one_order_cash
+    );
     assert_eq!(
         authority.snapshot().accounts[&AccountId(0)].reserved_cash,
         Money::ZERO
@@ -196,15 +205,20 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
 {
     let mut authority = player_only_auction_session();
     let code = request_code(&authority);
-    let protective_price = authority.markets[&code].up_stop().unwrap();
+    let protective_price = authority.state.markets[&code].up_stop().unwrap();
     let one_order_cash = crate::session::buy_order_reservation(
-        &authority.setup.config,
+        &authority.state.setup.config,
         protective_price,
         100,
         Money::ZERO,
     )
     .unwrap();
-    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+    authority
+        .state
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .fixture_set_cash(one_order_cash);
     authority
         .enqueue_player_intent(
             AccountId(0),
@@ -226,15 +240,14 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
             },
         )
         .unwrap();
-    let rejected_market_id = OrderId(authority.next_order_id);
+    let rejected_market_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
         .expect("auction market rejection is an ordinary P4 outcome")
         .commit();
 
-    // P3 accepts the market request using its protective-price budget. P4 then rejects it
-    // because an A-share call auction accepts limit orders only. That P4 rejection consumes the
-    // preallocated ID, and neither its ID nor its P3 budget is refunded to the later limit.
+    // P3 按 protective price 预算受理市价请求；A 股集合竞价仅允许限价，P4 随后拒绝。
+    // 已分配 identity 与 P3 预算均不退还给后续限价请求。
     assert!(matches!(
         committed.output.validation.results(),
         [
@@ -245,7 +258,7 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
             }
         ]
     ));
-    assert_eq!(authority.next_order_id, rejected_market_id.0 + 1);
+    assert_eq!(authority.state.next_order_id, rejected_market_id.0 + 1);
     assert_eq!(committed.output.auction.receipts.len(), 1);
     assert_eq!(
         committed.output.auction.receipts[0].envelope.order,
@@ -292,7 +305,7 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
             .enqueue_player_intent(AccountId(0), intent)
             .unwrap();
     }
-    let rejected_id = OrderId(authority.next_order_id);
+    let rejected_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
         .expect("P3 business rejections and P4 market rejection commit atomically")
@@ -324,8 +337,7 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
         result_for(2),
         CandidateValidationResult::Accepted { .. }
     ));
-    // Cash orders retain receipt order; the sell request uses an independent
-    // shares budget and can appear before or after either buy.
+    // 现金请求保持账户局部受理先后；卖单使用独立股份预算，可位于任一买单前后。
     let result_position = |index| {
         results
             .iter()
@@ -343,7 +355,7 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
             .unwrap();
         assert_eq!(identity.2, expected_id);
     }
-    assert_eq!(authority.next_order_id, rejected_id.0 + 1);
+    assert_eq!(authority.state.next_order_id, rejected_id.0 + 1);
     assert_eq!(committed.output.auction.receipts.len(), 1);
     assert_eq!(
         committed.output.auction.receipts[0].kind,
@@ -364,9 +376,10 @@ fn opening_completion_fixture(
         47,
     )
     .unwrap();
-    session.tick = 599;
+    session.state.tick = 599;
     let code = request_code(&session);
     let plan_id = session
+        .state
         .plans
         .create(PlanOpen {
             account: AccountId(1),
@@ -384,12 +397,13 @@ fn opening_completion_fixture(
         })
         .unwrap();
     session
+        .state
         .accounts
         .get_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), seller_qty, Money::from_cents(900))
         .unwrap();
-    session.auction_orders.insert(
+    session.state.auction_orders.insert(
         code.clone(),
         vec![crate::AuctionOrderSnap {
             owner: AccountId(0),
@@ -399,7 +413,7 @@ fn opening_completion_fixture(
             order_id: 30,
         }],
     );
-    session.next_order_id = 31;
+    session.state.next_order_id = 31;
     session.hydrate_or_validate_envelope_ledger().unwrap();
     (
         session,
@@ -424,7 +438,7 @@ fn opening_completion_fixture(
 }
 
 fn commit_with_roots(authority: &mut GameSession, request: PlanExecutionRequest) {
-    authority.pending_npc = None;
+    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(authority).unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
@@ -440,9 +454,9 @@ fn seal(session: &mut GameSession) -> (AccountValidatorDriver, IncrementalAuctio
     let resources = DecisionResourceSnapshot::seal(session).unwrap();
     let validator = AccountValidatorDriver::new(
         resources,
-        session.envelope_ledger.clone(),
-        session.next_order_id,
-        session.setup.config.clone(),
+        session.state.envelope_ledger.clone(),
+        session.state.next_order_id,
+        session.state.setup.config.clone(),
         build_account_validation_context(session).unwrap(),
     )
     .unwrap();
@@ -499,7 +513,7 @@ fn auction_round_validation_accepts_cross_stock_fact_reordering() {
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
     let mut session = GameSession::new(setup, 42).unwrap();
-    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
     let (mut validator, mut stock_execution) = seal(&mut session);
     let candidates = codes
         .iter()
@@ -539,6 +553,7 @@ fn auction_plan_chain_accepts_cross_stock_fact_reordering() {
         (AccountId(0), crate::StockCode("600889".to_owned())),
     ] {
         let plan_id = session
+            .state
             .plans
             .create(PlanOpen {
                 account,
@@ -585,9 +600,13 @@ fn auction_plan_chain_accepts_cross_stock_fact_reordering() {
 fn auction_plan_projection_keeps_cancel_before_replace_with_reverse_sealed_ids() {
     let (mut session, request) = fixture();
     let old_id = install_original_child(&mut session, &request);
-    session.envelope_ledger.rebase_live_for_next_tick().unwrap();
+    session
+        .state
+        .envelope_ledger
+        .rebase_live_for_next_tick()
+        .unwrap();
     let code = request.allocation.code.clone();
-    let account = session.plans.plan(request.plan_id).unwrap().account;
+    let account = session.state.plans.plan(request.plan_id).unwrap().account();
     let (mut validator, mut stock_execution) = seal(&mut session);
     let candidates = [
         IntentCandidate::new(
@@ -640,11 +659,11 @@ fn auction_plan_projection_keeps_cancel_before_replace_with_reverse_sealed_ids()
         .project_auction_execution_round(&mut session, &round)
         .unwrap();
     assert_eq!(
-        session.parent_orders[&account][&code].active_child_order_id,
+        session.state.parent_orders[&account][&code].active_child_order_id(),
         Some(new_id)
     );
-    assert_eq!(session.auction_orders[&code].len(), 1);
-    assert_eq!(session.auction_orders[&code][0].order_id, new_id.0);
+    assert_eq!(session.state.auction_orders[&code].len(), 1);
+    assert_eq!(session.state.auction_orders[&code][0].order_id, new_id.0);
 }
 
 fn install_original_child(session: &mut GameSession, request: &PlanExecutionRequest) -> OrderId {
@@ -666,7 +685,11 @@ fn install_original_child(session: &mut GameSession, request: &PlanExecutionRequ
 fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() {
     let (mut session, mut request) = fixture();
     let old_id = install_original_child(&mut session, &request);
-    session.envelope_ledger.rebase_live_for_next_tick().unwrap();
+    session
+        .state
+        .envelope_ledger
+        .rebase_live_for_next_tick()
+        .unwrap();
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
         price: Money::from_cents(901),
@@ -722,23 +745,28 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
         1
     );
     let active = session
+        .state
         .plans
         .plan(request.plan_id)
         .unwrap()
-        .active_child_order_id;
+        .active_child_order_id();
     assert!(active.is_some_and(|order_id| order_id != old_id));
-    assert_eq!(session.auction_orders[&request.allocation.code].len(), 1);
     assert_eq!(
-        session.auction_orders[&request.allocation.code][0].order_id,
+        session.state.auction_orders[&request.allocation.code].len(),
+        1
+    );
+    assert_eq!(
+        session.state.auction_orders[&request.allocation.code][0].order_id,
         active.unwrap().0
     );
     assert!(
-        session.pending_plan_events.is_empty(),
+        session.state.pending_plan_events.is_empty(),
         "continuation-consumed cancel/accept facts must not be projected again in P7"
     );
-    let plan_account = session.plans.plan(request.plan_id).unwrap().account;
+    let plan_account = session.state.plans.plan(request.plan_id).unwrap().account();
     assert_eq!(
-        session.parent_orders[&plan_account][&request.allocation.code].active_child_order_id,
+        session.state.parent_orders[&plan_account][&request.allocation.code]
+            .active_child_order_id(),
         active
     );
 }
@@ -747,16 +775,21 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
 fn auction_cancel_rejection_stops_replace_before_illegal_successor() {
     let (mut session, mut request) = fixture();
     let old_id = install_original_child(&mut session, &request);
-    session.envelope_ledger.rebase_live_for_next_tick().unwrap();
+    session
+        .state
+        .envelope_ledger
+        .rebase_live_for_next_tick()
+        .unwrap();
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
         price: Money::from_cents(901),
         qty: 100,
     };
-    let next_order_id = session.next_order_id;
+    let next_order_id = session.state.next_order_id;
     let mut chain = coordinator(&session, request);
-    session.auction_orders.clear();
-    session.envelope_ledger = EnvelopeLedger::new(session.next_receipt_base, Vec::new()).unwrap();
+    session.state.auction_orders.clear();
+    session.state.envelope_ledger =
+        EnvelopeLedger::new(session.state.next_receipt_base, Vec::new()).unwrap();
     let (mut validator, mut stock_execution) = seal(&mut session);
 
     let (candidate, _, round) = execute(
@@ -790,10 +823,11 @@ fn later_auction_round_typed_failure_discards_private_tick_progress() {
     let (mut authority, mut request) = fixture();
     let old_id = install_original_child(&mut authority, &request);
     authority
+        .state
         .envelope_ledger
         .rebase_live_for_next_tick()
         .unwrap();
-    authority.next_order_id = crate::orderbook::js_safe_u64::MAX;
+    authority.state.next_order_id = crate::orderbook::js_safe_u64::MAX;
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
         price: Money::from_cents(901),
@@ -820,8 +854,11 @@ fn later_auction_round_typed_failure_discards_private_tick_progress() {
 
     assert!(matches!(error, StepFatal::InvariantViolation { .. }));
     assert_eq!(authority.business_state_hash().unwrap(), before);
-    assert_eq!(authority.auction_orders[&request_code(&authority)].len(), 1);
-    assert!(candidate.auction_orders.is_empty());
+    assert_eq!(
+        authority.state.auction_orders[&request_code(&authority)].len(),
+        1
+    );
+    assert!(candidate.state.auction_orders.is_empty());
 }
 
 #[test]
@@ -829,10 +866,11 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     let (mut authority, mut request) = fixture();
     let old_id = install_original_child(&mut authority, &request);
     authority
+        .state
         .envelope_ledger
         .rebase_live_for_next_tick()
         .unwrap();
-    authority.next_order_id = crate::orderbook::js_safe_u64::MAX;
+    authority.state.next_order_id = crate::orderbook::js_safe_u64::MAX;
     request.decision.action = QuoteAction::Replace {
         order_id: old_id,
         price: Money::from_cents(901),
@@ -842,11 +880,11 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     roots.push_execution(request);
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
-    let next_order_before = authority.next_order_id;
-    let queue_before = serde_json::to_value(&authority.auction_orders).unwrap();
-    let ledger_before = authority.envelope_ledger.clone();
-    let plans_before = serde_json::to_value(&authority.plans).unwrap();
-    let parent_before = serde_json::to_value(&authority.parent_orders).unwrap();
+    let next_order_before = authority.state.next_order_id;
+    let queue_before = serde_json::to_value(&authority.state.auction_orders).unwrap();
+    let ledger_before = authority.state.envelope_ledger.clone();
+    let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
+    let parent_before = serde_json::to_value(&authority.state.parent_orders).unwrap();
     let mut plan = plan_tick(PhaseInput {
         session: &authority,
     })
@@ -865,18 +903,18 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     assert!(plan.state.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
-    assert_eq!(authority.next_order_id, next_order_before);
+    assert_eq!(authority.state.next_order_id, next_order_before);
     assert_eq!(
-        serde_json::to_value(&authority.auction_orders).unwrap(),
+        serde_json::to_value(&authority.state.auction_orders).unwrap(),
         queue_before
     );
-    assert_eq!(authority.envelope_ledger, ledger_before);
+    assert_eq!(authority.state.envelope_ledger, ledger_before);
     assert_eq!(
-        serde_json::to_value(&authority.plans).unwrap(),
+        serde_json::to_value(&authority.state.plans).unwrap(),
         plans_before
     );
     assert_eq!(
-        serde_json::to_value(&authority.parent_orders).unwrap(),
+        serde_json::to_value(&authority.state.parent_orders).unwrap(),
         parent_before
     );
 }
@@ -924,8 +962,8 @@ fn prepared_parent_auction_seam_commits_one_complete_tick() {
             .count(),
         1
     );
-    assert!(authority.pending_player.is_empty());
-    assert_eq!(authority.auction_orders[&code].len(), 1);
+    assert!(authority.state.pending_player.is_empty());
+    assert_eq!(authority.state.auction_orders[&code].len(), 1);
     assert_eq!(
         authority.business_state_hash().unwrap(),
         committed.commit.receipt.business_hash()
@@ -939,11 +977,11 @@ fn parent_transaction_applies_opening_completion_full_fill_once() {
 
     commit_with_roots(&mut authority, request);
 
-    let plan = authority.plans.plan(plan_id).unwrap();
-    assert_eq!(plan.filled_qty, 100);
-    assert_eq!(plan.status, PlanStatus::Completed);
-    assert!(authority.pending_plan_events.is_empty());
-    assert!(authority.parent_orders.is_empty());
+    let plan = authority.state.plans.plan(plan_id).unwrap();
+    assert_eq!(plan.filled_qty(), 100);
+    assert_eq!(plan.status(), PlanStatus::Completed);
+    assert!(authority.state.pending_plan_events.is_empty());
+    assert!(authority.state.parent_orders.is_empty());
 }
 
 #[test]
@@ -954,19 +992,19 @@ fn parent_transaction_applies_opening_completion_partial_fill_once() {
 
     commit_with_roots(&mut authority, request);
 
-    let plan = authority.plans.plan(plan_id).unwrap();
-    assert_eq!(plan.filled_qty, 100);
-    assert_eq!(plan.status, PlanStatus::Active);
+    let plan = authority.state.plans.plan(plan_id).unwrap();
+    assert_eq!(plan.filled_qty(), 100);
+    assert_eq!(plan.status(), PlanStatus::Active);
     let child_id = plan
-        .active_child_order_id
+        .active_child_order_id()
         .expect("partial child remains active");
-    let parent = &authority.parent_orders[&AccountId(1)][&code];
-    assert_eq!(parent.filled_qty, 100);
-    assert_eq!(parent.active_child_order_id, Some(child_id));
-    assert_eq!(parent.active_child_remaining_qty, Some(100));
-    assert!(authority.pending_plan_events.is_empty());
+    let parent = &authority.state.parent_orders[&AccountId(1)][&code];
+    assert_eq!(parent.filled_qty(), 100);
+    assert_eq!(parent.active_child_order_id(), Some(child_id));
+    assert_eq!(parent.active_child_remaining_qty(), Some(100));
+    assert!(authority.state.pending_plan_events.is_empty());
 }
 
 fn request_code(session: &GameSession) -> crate::StockCode {
-    session.markets.keys().next().unwrap().clone()
+    session.state.markets.keys().next().unwrap().clone()
 }

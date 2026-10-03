@@ -45,7 +45,9 @@ const candle: KlinePoint = {
 
 const trade: TradeEvent = { seq: 1, code: "600101", price: 1_000, qty: 100, maker: 1, taker: 2 };
 
-function renderDetail(period: "分时" | "日K", infoTab: "盘口" | "资金"): string {
+type DetailProps = Parameters<typeof DetailComponent>[0];
+
+function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘口" | "资金", overrides: Partial<DetailProps> = {}): string {
   return renderToStaticMarkup(createElement(MobileStockDetail, {
     code: "600101",
     name: "测试股份",
@@ -75,6 +77,7 @@ function renderDetail(period: "分时" | "日K", infoTab: "盘口" | "资金"): 
     onPrevious() {},
     onNext() {},
     companyContent: null,
+    ...overrides,
   }));
 }
 
@@ -109,4 +112,34 @@ test("分时图真实渲染压缩午休后的统一时间轴和权威时间槽",
   assert.match(html, /data-intraday-latest-minute="120"/);
   assert.match(html, /data-intraday-count="1"/);
   assert.match(html, /data-auction-volume-line-count="1"/);
+});
+
+
+test("分时 projection 经真实组件保留 null 竞价量、阶段独立高度与算术均价", () => {
+  const html = renderDetail("分时", "盘口", {
+    auctionPoints: [{ time: 0, value: null, volume: 100_000, buy: false }, { time: 99, value: 12, volume: 50_000, buy: true }],
+    minutePoints: [{ time: 119, value: 10, volume: 100, buy: false }, { time: 120, value: 8, volume: 200, buy: true }],
+    gameDay: 3,
+  });
+  assert.match(html, /均价:9\.00/);
+  assert.match(html, /data-intraday-signature="3:continuous:120:8:200"/);
+  assert.match(html, /data-auction-count="2"/);
+  const heights = [...html.matchAll(/<i[^>]*style="left:[^;]+;height:([^%]+)%"/g)].map(match => Number(match[1]));
+  assert.deepEqual(heights, [100, 50, 50, 100]);
+  assert.match(html, /msd-auction-dot/);
+});
+
+test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
+  const html = renderDetail("日K", "盘口");
+  assert.match(html, /data-kline-signature="0:10:10\.2:9\.8:10\.1:250"/);
+  const upper = html.match(/class="upper-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
+  const lower = html.match(/class="lower-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
+  assert.ok(upper); assert.ok(lower);
+  assert.equal(Number(upper[1]), 390 / 72 / 2);
+  assert.equal(Number(upper[1]), Number(lower[1]));
+  assert.ok(Math.abs(Number(upper[3]) - 8) < 1e-10);
+  assert.ok(Math.abs(Number(upper[4]) - 49.5) < 1e-10);
+  assert.ok(Math.abs(Number(lower[3]) - 91) < 1e-10);
+  assert.ok(Math.abs(Number(lower[4]) - 174) < 1e-10);
+  assert.match(html, /class="msd-k-volume"[^>]*>[\s\S]*?y="9"/);
 });

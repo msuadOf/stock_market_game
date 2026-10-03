@@ -1,10 +1,8 @@
 import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
-import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
-import { UI_TARGET_HZ } from "./host-update.ts";
-import { restoreWasmSession } from "./wasm-restore-transaction.ts";
+import { WasmSessionSlot } from "./wasm-session-slot.ts";
+import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
-import { inspectWasmUpdateDelivery } from "./wasm-update-delivery.ts";
 import { resolveThreadCount } from "./thread-count.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
@@ -27,8 +25,6 @@ type WorkerPort = {
 };
 
 const ctx: WorkerPort = self;
-const TICK_MS = 1_000;
-const FRAME_MS = 16;
 
 export function isE2EStepMode(mode: unknown): boolean {
   return mode === "e2e";
@@ -37,15 +33,15 @@ export function isE2EStepMode(mode: unknown): boolean {
 const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
 
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
-let handle: number | null = null;
-let timer: ReturnType<typeof setTimeout> | null = null;
-let running = false;
-let speed = 1;
-let generation = 0;
-let flushMs = 1_000 / UI_TARGET_HZ;
-let lastStepAt = 0;
-let pausePreferences = { pause_after_close: false, pause_before_open: false };
-const speedMeter = new HostSpeedMeter(() => performance.now());
+const slot = new WasmSessionSlot(() => wasmModule);
+const loop = new WasmTickLoop({
+  slot,
+  now: () => performance.now(),
+  schedule: (callback, delay) => setTimeout(callback, delay),
+  cancel: (timer) => clearTimeout(timer),
+  post: (message) => ctx.postMessage(message),
+  failure: postFailure,
+});
 
 type WorkerFailureDetails = HostFailure;
 
@@ -75,24 +71,6 @@ function requireRecord(value: unknown, label: string): Readonly<Record<string, u
   return value as Readonly<Record<string, unknown>>;
 }
 
-function requestGeneration(message: WorkerMessage): number {
-  if (!Number.isSafeInteger(message.generation) || message.generation !== generation) {
-    throw new Error("Worker 请求属于已过期会话");
-  }
-  return generation;
-}
-
-function requireHandle(): [number, typeof import("../../wasm-pkg/web_wasm.js")] {
-  if (handle === null || wasmModule === null) throw new Error("Worker 会话尚未就绪");
-  return [handle, wasmModule];
-}
-
-function requirePreparePublicBaseline(wasm: typeof import("../../wasm-pkg/web_wasm.js")) {
-  const prepare = (wasm as WasmTransportExtensions).prepare_public_baseline;
-  if (prepare === undefined) throw new Error("当前 WASM bindings 缺少公开基线准备接口，请重建 bindings");
-  return prepare;
-}
-
 function readWasmCapabilities(wasm: typeof import("../../wasm-pkg/web_wasm.js")) {
   const capabilities = (wasm as WasmTransportExtensions).host_capabilities;
   return capabilities?.() ?? { npcDecisionDiagnostics: false };
@@ -108,75 +86,17 @@ export function postFailure(where: string, error: unknown): void {
 }
 
 function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
-  ctx.postMessage({ type: "failure", generation, ...failure, where: failure.where || where });
+  ctx.postMessage({ type: "failure", generation: slot.readGeneration(), ...failure, where: failure.where || where });
 }
 
 function postBaseline(): void {
-  const [session, wasm] = requireHandle();
-  requirePreparePublicBaseline(wasm)(session);
+  const [session, wasm] = slot.requireHandle();
+  slot.prepareBaseline();
   ctx.postMessage({
     type: "baseline",
-    generation,
+    generation: slot.readGeneration(),
     snapshot: wasm.snapshot(session),
   });
-}
-
-function publish(rawUpdate: unknown): boolean {
-  const delivery = inspectWasmUpdateDelivery(rawUpdate, pausePreferences);
-  ctx.postMessage({ type: "protocol", generation, update: rawUpdate, civilDate: null, revision: null });
-  if (delivery.pausesAtBarrier) {
-    stopLoop();
-    ctx.postMessage({ type: "barrierPaused", generation });
-  }
-  return delivery.recordsMarketTick;
-}
-
-function stepOnce(): boolean {
-  try {
-    const [session, wasm] = requireHandle();
-    const rawUpdate = wasm.step(session);
-    if (publish(rawUpdate)) speedMeter.recordTicks();
-    return true;
-  } catch (error) {
-    stopLoop();
-    postFailure("wasm-worker.step", error);
-    return false;
-  }
-}
-
-function frameLoop(): void {
-  if (!running) return;
-  const now = performance.now();
-  if (speed === Infinity) {
-    // A Worker message can only be handled between tasks. Yield after each
-    // market tick so an arriving request is queued before the next tick.
-    if (!stepOnce()) return;
-  } else {
-    const interval = TICK_MS / speed;
-    if (lastStepAt + interval <= now) {
-      lastStepAt += interval;
-      if (!stepOnce()) return;
-    }
-  }
-  if (!running) return;
-  const untilNextTick = speed === Infinity ? 0 : lastStepAt + TICK_MS / speed - performance.now();
-  const delay = Math.max(0, Math.min(FRAME_MS, flushMs, untilNextTick));
-  timer = setTimeout(frameLoop, delay);
-}
-
-function startLoop(): void {
-  if (running) return;
-  running = true;
-  speedMeter.setRunning(true);
-  lastStepAt = performance.now();
-  timer = setTimeout(frameLoop, FRAME_MS);
-}
-
-function stopLoop(): void {
-  running = false;
-  speedMeter.setRunning(false);
-  if (timer !== null) clearTimeout(timer);
-  timer = null;
 }
 
 function respondOperationError(message: WorkerMessage, error: unknown): void {
@@ -219,73 +139,67 @@ ctx.addEventListener("message", (event) => {
           await initialize(message.threads);
           return;
         case "create": {
-          if (wasmModule === null) throw new Error("wasm 未初始化");
-          if (typeof message.seed !== "bigint") throw new Error("seed 必须是 bigint");
-          handle = wasmModule.create_session(message.setup, message.seed);
-          generation += 1;
-          const capabilities = readWasmCapabilities(wasmModule);
-          ctx.postMessage({ type: "created", generation, capabilities: {
+          slot.create(message.setup, message.seed);
+          const [, wasm] = slot.requireHandle();
+          const capabilities = readWasmCapabilities(wasm);
+          ctx.postMessage({ type: "created", generation: slot.readGeneration(), capabilities: {
             ...capabilities,
-            npcDecisionDiagnostics: capabilities.npcDecisionDiagnostics && optionalNpcDecisionTrace(wasmModule) !== undefined,
+            npcDecisionDiagnostics: capabilities.npcDecisionDiagnostics && optionalNpcDecisionTrace(wasm) !== undefined,
           } });
           postBaseline();
           return;
         }
         case "start":
-          startLoop();
+          loop.start();
           return;
         case "stop":
-          stopLoop();
+          loop.stop();
           return;
         case "stepOnce": {
           if (!E2E_STEP_ENABLED) throw new Error("Worker 受控单步只允许在 E2E 构建中调用");
-          const requestedGeneration = requestGeneration(message);
-          if (running) throw new Error("Worker 受控单步只允许在暂停状态执行");
-          if (!stepOnce()) throw new Error("Worker 受控单步失败");
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (loop.isRunning()) throw new Error("Worker 受控单步只允许在暂停状态执行");
+          if (!loop.stepOnce()) throw new Error("Worker 受控单步失败");
+          const [session, wasm] = slot.requireHandle();
           const committedTick = wasm.tick(session);
           if (committedTick > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Worker 单步 tick 超出安全整数范围");
           ctx.postMessage({ type: "stepped", requestId: message.requestId, generation: requestedGeneration, tick: Number(committedTick) });
           return;
         }
         case "setSpeed":
-          assertValidSpeedMultiplier(Number(message.speed));
-          speed = Number(message.speed);
-          speedMeter.setSpeed(speed);
-          lastStepAt = performance.now();
+          loop.setSpeed(Number(message.speed));
           return;
         case "setFrameRate":
-          if (!Number.isFinite(message.fps) || Number(message.fps) <= 0) throw new Error("帧率必须是正有限数");
-          flushMs = 1_000 / Number(message.fps);
+          loop.setFrameRate(message.fps);
           return;
         case "setPausePreferences": {
-          const requestedGeneration = requestGeneration(message);
+          const requestedGeneration = slot.requireGeneration(message.generation);
           const preferences = requireRecord(message.preferences, "暂停偏好");
           if (typeof preferences.pause_after_close !== "boolean" || typeof preferences.pause_before_open !== "boolean") {
             throw new Error("暂停偏好必须包含布尔值");
           }
-          pausePreferences = {
+          loop.setPausePreferences({
             pause_after_close: preferences.pause_after_close,
             pause_before_open: preferences.pause_before_open,
-          };
+          });
           ctx.postMessage({ type: "pausePreferencesSet", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
         case "speedMetrics": {
-          const requestedGeneration = requestGeneration(message);
-          ctx.postMessage({ type: "speedMetrics", requestId: message.requestId, generation: requestedGeneration, metrics: speedMeter.read() });
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          ctx.postMessage({ type: "speedMetrics", requestId: message.requestId, generation: requestedGeneration, metrics: loop.readSpeedMetrics() });
           return;
         }
         case "enqueue": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           wasm.enqueue(session, message.intent);
           ctx.postMessage({ type: "enqueued", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
         case "save": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           const key = message.candidate;
           let saved: unknown;
           if (key === undefined) saved = wasm.save(session);
@@ -294,14 +208,14 @@ ctx.addEventListener("message", (event) => {
             if (saveCandidate === undefined) throw new Error("当前 WASM binding 不支持按日终候选保存，请重建 bindings");
             saved = saveCandidate(session, key as { readonly seq: number; readonly settledDate: string });
           }
-          const slot = parseSaveSlot(normalizeSerdeMaps(saved));
-          ctx.postMessage({ type: "saved", requestId: message.requestId, generation: requestedGeneration, slot });
+          const savedSlot = parseSaveSlot(normalizeSerdeMaps(saved));
+          ctx.postMessage({ type: "saved", requestId: message.requestId, generation: requestedGeneration, slot: savedSlot });
           return;
         }
         case "refreshBaseline": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
-          requirePreparePublicBaseline(wasm)(session);
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          slot.prepareBaseline();
           ctx.postMessage({
             type: "refreshed",
             requestId: message.requestId,
@@ -311,55 +225,45 @@ ctx.addEventListener("message", (event) => {
           return;
         }
         case "restore": {
-          const requestedGeneration = requestGeneration(message);
+          const requestedGeneration = slot.requireGeneration(message.generation);
           const parsed = parseSaveSlot(message.slot);
-          const [_, wasm] = requireHandle();
-          const wasRunning = running;
-          const restoredSnapshot = restoreWasmSession({
-            currentHandle: () => handle,
-            replaceHandle: (restoredHandle) => { handle = restoredHandle; },
-            restore: () => wasm.restore_json(JSON.stringify(parsed)),
-            snapshot: wasm.snapshot,
-            drop: wasm.drop_session,
-            wasRunning,
-            stop: stopLoop,
-            restart: () => { queueMicrotask(startLoop); },
+          const restoredSnapshot = slot.restore(parsed, {
+            wasRunning: loop.isRunning(),
+            stop: () => loop.stop(),
+            restart: () => { queueMicrotask(() => loop.start()); },
           });
-          generation += 1;
-          if (handle === null) throw new Error("WASM restore 没有安装新会话句柄");
-          requirePreparePublicBaseline(wasm)(handle);
           ctx.postMessage({
             type: "restored",
             requestId: message.requestId,
             generation: requestedGeneration,
-            nextGeneration: generation,
+            nextGeneration: slot.readGeneration(),
             snapshot: restoredSnapshot,
           });
-          ctx.postMessage({ type: "baseline", generation, snapshot: restoredSnapshot });
+          ctx.postMessage({ type: "baseline", generation: slot.readGeneration(), snapshot: restoredSnapshot });
           return;
         }
         case "civilDate": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           ctx.postMessage({ type: "civilDate", requestId: message.requestId, generation: requestedGeneration, date: wasm.civil_date(session) });
           return;
         }
         case "endCivilDay": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
-          publish(wasm.end_civil_day(session));
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          loop.publish(wasm.end_civil_day(session));
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
         case "publicReports": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           ctx.postMessage({ type: "publicReports", requestId: message.requestId, generation: requestedGeneration, page: normalizePublicReportPage(wasm.public_report_page(session, message.query) ) });
           return;
         }
         case "playerWorkingOrders": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           const readOrders = (wasm as WasmTransportExtensions).player_working_orders;
           if (readOrders === undefined) throw new Error("当前 WASM bindings 不支持玩家活动委托查询，请重建 bindings");
           ctx.postMessage({
@@ -371,9 +275,9 @@ ctx.addEventListener("message", (event) => {
           return;
         }
         case "npcDecisionTrace": {
-          const requestedGeneration = requestGeneration(message);
+          const requestedGeneration = slot.requireGeneration(message.generation);
           if (!Number.isSafeInteger(message.account) || Number(message.account) < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
-          const [session, wasm] = requireHandle();
+          const [session, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           const trace = optionalNpcDecisionTrace(wasm);
           if (!capabilities.npcDecisionDiagnostics || trace === undefined) throw new Error("当前 WASM 构建未启用 NPC 决策诊断");
@@ -386,7 +290,7 @@ ctx.addEventListener("message", (event) => {
           return;
         }
         case "calculateIndicators": {
-          const requestedGeneration = requestGeneration(message);
+          const requestedGeneration = slot.requireGeneration(message.generation);
           if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("指标请求 ID 无效");
           const prices = message.prices;
           const candles = message.candles;
@@ -400,7 +304,7 @@ ctx.addEventListener("message", (event) => {
             const bar = candle as Record<string, number>;
             return bar.high >= bar.low && bar.close >= bar.low && bar.close <= bar.high;
           })) throw new Error("指标 candles 必须满足 low ≤ close ≤ high");
-          const [, wasm] = requireHandle();
+          const [, wasm] = slot.requireHandle();
           const calculateIndicators = (wasm as WasmTransportExtensions).calculate_indicators;
           if (calculateIndicators === undefined) throw new Error("当前 WASM bindings 不支持指标计算，请重建 bindings");
           const result = calculateIndicators(prices, candles);
@@ -408,15 +312,14 @@ ctx.addEventListener("message", (event) => {
           return;
         }
         case "publicReportById": {
-          const requestedGeneration = requestGeneration(message);
-          const [session, wasm] = requireHandle();
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
           ctx.postMessage({ type: "publicReportById", requestId: message.requestId, generation: requestedGeneration, report: normalizePublicReportById(wasm.public_report_by_id(session, String(message.id))) });
           return;
         }
         case "drop": {
-          stopLoop();
-          if (handle !== null && wasmModule !== null) wasmModule.drop_session(handle);
-          handle = null;
+          loop.stop();
+          slot.drop();
           return;
         }
         default:
@@ -425,7 +328,7 @@ ctx.addEventListener("message", (event) => {
     } catch (error) {
       const structuredFailure = structuredHostFailure(error, `wasm-worker.${message.type}`);
       if (structuredFailure !== null) {
-        stopLoop();
+        loop.stop();
         postFailureDetails(`wasm-worker.${message.type}`, structuredFailure);
       } else if (typeof message.requestId === "number") {
         respondOperationError(message, error);

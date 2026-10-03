@@ -1,0 +1,125 @@
+[
+  {
+    "id": "account-position-callers",
+    "files": [
+      "packages/engine/tests/account.rs",
+      "packages/engine/tests/strategy_state.rs",
+      "packages/engine/tests/company_opening/isolation.rs",
+      "packages/engine/tests/company_scenarios/controlled_experience.rs"
+    ],
+    "methods": [
+      "Account::cash/positions/strategy",
+      "Position::qty/t1_locked/invested_cents/recovered_cents/from_restored_parts",
+      "Account::grant_position"
+    ],
+    "review": "agents/oop-refactor-implementation/hosts/review-account.md",
+    "status": "必要caller迁移与独立复核通过；root既定features all-targets check08通过；选定短case结果单独记录，未运行性能example",
+    "final_compilation_evidence": [
+      "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+      "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json"
+    ],
+    "selected_short_cases": [
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "id": "R256",
+        "filter": "account_new_player_has_no_strategy",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "id": "R257",
+        "filter": "buy_position_overflow_is_rejected_without_debiting_cash",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "id": "R258",
+        "filter": "grant_position_sets_cost_basis",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "id": "R259",
+        "filter": "derived_values_and_grants_report_overflow",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-short-increment-02-result.json",
+        "id": "R260",
+        "filter": "strategy_state_round_trip_preserves_concrete_parameters",
+        "passed": true
+      }
+    ]
+  },
+  {
+    "id": "market-invalid-fixture-relocation",
+    "files": [
+      "packages/engine/tests/market/price_limits.rs",
+      "packages/engine/src/market.rs"
+    ],
+    "methods": [
+      "Market::fixture_set_last_close（仅cfg(test)）"
+    ],
+    "review": "agents/oop-refactor-implementation/domain/orderbook-review.md",
+    "status": "必要caller迁移与独立复核通过；root既定features all-targets check08通过；选定短case结果单独记录，未运行性能example",
+    "final_compilation_evidence": [
+      "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+      "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json"
+    ],
+    "selected_short_cases": [
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "id": "R030",
+        "filter": "market::price_limit_state_tests::symbolic_limit_prices_resolve_at_the_current_authoritative_boundary",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "id": "R031",
+        "filter": "market::price_limit_state_tests::price_limit_overflow_is_an_explicit_error_not_a_panic",
+        "passed": true
+      },
+      {
+        "evidence": "agents/oop-refactor-implementation/validation/rust-lib-short-01-result.json",
+        "id": "R032",
+        "filter": "market::price_limit_state_tests::legal_limit_order_prices_keep_the_wider_ten_tick_cage_and_propagate_errors",
+        "passed": true
+      }
+    ]
+  },
+  {
+    "id": "production-entry-plan-readers",
+    "files": [
+      "packages/engine/examples/production_entry_performance.rs"
+    ],
+    "methods": [
+      "TradingPlan::account",
+      "TradingPlan::active_child_order_id",
+      "TradingPlan::filled_qty"
+    ],
+    "review": "agents/oop-refactor-implementation/hosts/review-production-entry-caller.md",
+    "status": "必要caller迁移与独立复核通过；root既定features all-targets check08通过；选定短case结果单独记录，未运行性能example",
+    "final_compilation_evidence": [
+      "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+      "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json"
+    ],
+    "selected_short_cases": []
+  },
+  {
+    "id": "server-subscription-callers",
+    "files": [
+      "apps/server/tests/actor.rs",
+      "apps/server/tests/protocol_updates.rs"
+    ],
+    "methods": [
+      "SessionHandles::subscribe_events"
+    ],
+    "review": "agents/oop-refactor-implementation/hosts/review-actors.md",
+    "status": "必要caller迁移与独立复核通过；root既定features all-targets check08通过；选定短case结果单独记录，未运行性能example",
+    "final_compilation_evidence": [
+      "agents/oop-refactor-implementation/validation/targeted-tests-build-07-result.json",
+      "agents/oop-refactor-implementation/validation/rust-all-targets-check-08-result.json"
+    ],
+    "selected_short_cases": []
+  }
+]

@@ -142,9 +142,9 @@ pub(in crate::session) fn project_npc_state(
     source: &mut NpcDecisionSourceOutput,
 ) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
     let snapshot = &captured.snapshot;
-    if shadow.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
+    if shadow.state.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
         return Err(NpcDecisionProjectionError::ClockMismatch {
-            shadow_tick: shadow.tick,
+            shadow_tick: shadow.state.tick,
             shadow_phase: shadow.phase(),
             snapshot_tick: snapshot.tick(),
             snapshot_phase: snapshot.phase(),
@@ -184,10 +184,11 @@ fn project_npc_state_in_place(
             .account(account)
             .map_err(|_| NpcDecisionProjectionError::MissingAccount(account))?;
         let entry = shadow
+            .state
             .accounts
             .get(&account)
             .ok_or(NpcDecisionProjectionError::MissingAccount(account))?;
-        let account_kind = entry.kind;
+        let account_kind = entry.kind();
         if account_kind != sealed.kind() {
             return Err(NpcDecisionProjectionError::AccountKindMismatch(account));
         }
@@ -198,19 +199,23 @@ fn project_npc_state_in_place(
             NpcStrategyUpdate::Unchanged => {}
             NpcStrategyUpdate::Replace(next_strategy) => {
                 shadow
+                    .state
                     .accounts
                     .get_mut(&account)
                     .expect("the account was checked above")
-                    .strategy = Some(next_strategy);
+                    .restore_strategy(Some(next_strategy));
             }
         }
         if account_kind == AccountKind::Retail {
             if let Some(position_decision) = account_output.position_decision() {
-                shadow.last_retail_decisions.push(RetailDecisionTrace {
-                    account,
-                    decision: position_decision.clone(),
-                    execution_urgency: account_output.execution_urgency().clone(),
-                });
+                shadow
+                    .state
+                    .last_retail_decisions
+                    .push(RetailDecisionTrace {
+                        account,
+                        decision: position_decision.clone(),
+                        execution_urgency: account_output.execution_urgency().clone(),
+                    });
             }
             retail_reviews.push((account, account_output.reviewed_stocks().clone()));
         }
@@ -285,15 +290,15 @@ fn project_npc_state_in_place(
     let reviews = retail_reviews
         .into_iter()
         .collect::<std::collections::BTreeMap<_, _>>();
-    let accounts = &shadow.accounts;
-    shadow.retail_experience.mutate_existing_parallel(
+    let accounts = &shadow.state.accounts;
+    shadow.state.retail_experience.mutate_existing_parallel(
         &review_ids,
         NpcDecisionProjectionError::MissingRetailExperience,
         |account, experience| {
             for code in &reviews[&account] {
                 experience.observe_stock(code, market_minute);
             }
-            let held: BTreeSet<_> = accounts[&account].positions.keys().cloned().collect();
+            let held: BTreeSet<_> = accounts[&account].positions().keys().cloned().collect();
             experience.prune_watchlist(&held);
             Ok(())
         },
@@ -361,34 +366,46 @@ fn validate_parent_order_materialization(
 ) -> Result<(), NpcDecisionProjectionError> {
     if desired
         .iter()
-        .any(|intent| matches!(intent, Intent::PlaceLimit { qty, .. } if *qty > 0 && qty.is_multiple_of(session.setup.config.lot_size)))
+        .any(|intent| matches!(intent, Intent::PlaceLimit { qty, .. } if *qty > 0 && qty.is_multiple_of(session.state.setup.config.lot_size)))
         && market_minute
             .checked_add(crate::session::PARENT_ORDER_HORIZON_MINUTES)
             .is_none()
     {
         return Err(NpcDecisionProjectionError::ParentOrderHorizonOverflow(account));
     }
-    for (code, plan) in session.parent_orders.get(&account).into_iter().flatten() {
-        if &plan.code != code {
+    for (code, plan) in session
+        .state
+        .parent_orders
+        .get(&account)
+        .into_iter()
+        .flatten()
+    {
+        if plan.code() != code {
             return Err(NpcDecisionProjectionError::InvalidParentOrder {
                 account,
                 reason: format!(
                     "map key {} does not match plan code {}",
-                    code.0, plan.code.0
+                    code.0,
+                    plan.code().0
                 ),
             });
         }
         let remaining = plan
-            .target_qty
-            .checked_sub(plan.filled_qty)
+            .target_qty()
+            .checked_sub(plan.filled_qty())
             .ok_or_else(|| NpcDecisionProjectionError::InvalidParentOrder {
                 account,
                 reason: format!(
                     "{} filled quantity {} exceeds target {}",
-                    code.0, plan.filled_qty, plan.target_qty
+                    code.0,
+                    plan.filled_qty(),
+                    plan.target_qty()
                 ),
             })?;
-        match (plan.active_child_order_id, plan.active_child_remaining_qty) {
+        match (
+            plan.active_child_order_id(),
+            plan.active_child_remaining_qty(),
+        ) {
             (None, None) => {}
             (Some(_), Some(quantity)) if quantity > 0 && quantity <= remaining => {}
             _ => {

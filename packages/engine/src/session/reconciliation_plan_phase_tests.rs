@@ -70,6 +70,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
     let mut events = Vec::new();
     session.seed_order_for_test(account, buy(&code, 900), &mut events);
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
@@ -85,7 +86,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
         },
         &mut events,
     );
-    let ids: Vec<_> = session.markets[&code]
+    let ids: Vec<_> = session.state.markets[&code]
         .resting_orders_for(account)
         .iter()
         .map(|order| order.id)
@@ -136,7 +137,7 @@ fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
         let account = AccountId(1);
         let code = StockCode("600888".to_owned());
         let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 93).unwrap();
-        session.tick = 300;
+        session.state.tick = 300;
         session.seed_auction_order_for_test(
             account,
             Intent::PlaceLimit {
@@ -175,9 +176,9 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
         .expect("player fixture accepts pending intent");
     let business_before = session.business_state_hash().unwrap();
     let seq_before = session.seq();
-    let auction_before = session.auction_orders.clone();
-    let lifecycle_before = session.npc_order_lifecycles.clone();
-    let pending_before = session.pending_player.len();
+    let auction_before = session.state.auction_orders.clone();
+    let lifecycle_before = session.state.npc_order_lifecycles.clone();
+    let pending_before = session.state.pending_player.len();
 
     let plan = working_orders_plan(
         &session,
@@ -189,7 +190,7 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
     assert_eq!(plan.decisions.len(), 1);
     assert_eq!(session.business_state_hash().unwrap(), business_before);
     assert_eq!(session.seq(), seq_before);
-    assert_eq!(session.auction_orders, auction_before);
-    assert_eq!(session.npc_order_lifecycles, lifecycle_before);
-    assert_eq!(session.pending_player.len(), pending_before);
+    assert_eq!(session.state.auction_orders, auction_before);
+    assert_eq!(session.state.npc_order_lifecycles, lifecycle_before);
+    assert_eq!(session.state.pending_player.len(), pending_before);
 }

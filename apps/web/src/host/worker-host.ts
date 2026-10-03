@@ -18,7 +18,7 @@ import { parseNpcDecisionTrace, type NpcDecisionTraceRecord } from "./npc-decisi
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 import { createWorkerLifecycle } from "./worker-lifecycle.ts";
-import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
+import { WorkerRequestScope } from "./worker-request.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -52,24 +52,24 @@ export function parseWorkerFailure(value: unknown): HostFailure {
   return parseHostFailure(fields, "worker-host.message");
 }
 
-export async function readWorkerSpeedMetrics(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<SpeedMetrics> {
-  const response = await requestWorker(worker, { type: "speedMetrics", requestId, generation: currentGeneration }, "speedMetrics");
+export async function readWorkerSpeedMetrics(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<SpeedMetrics> {
+  const response = await requests.request({ type: "speedMetrics", requestId, generation: currentGeneration }, "speedMetrics");
   return parseSpeedMetrics(response.metrics);
 }
 
-export async function readWorkerPlayerWorkingOrders(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<readonly PlayerWorkingOrder[]> {
-  const response = await requestWorker(worker, { type: "playerWorkingOrders", requestId, generation: currentGeneration }, "playerWorkingOrders");
+export async function readWorkerPlayerWorkingOrders(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<readonly PlayerWorkingOrder[]> {
+  const response = await requests.request({ type: "playerWorkingOrders", requestId, generation: currentGeneration }, "playerWorkingOrders");
   return normalizePlayerWorkingOrders(response.orders);
 }
 
-export async function requestWorkerIndicators(worker: WorkerRequestPort, requestId: number, currentGeneration: number, input: IndicatorInput): Promise<IndicatorResults> {
+export async function requestWorkerIndicators(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IndicatorInput): Promise<IndicatorResults> {
   const normalized = normalizeIndicatorInput(input);
-  const response = await requestWorker(worker, { type: "calculateIndicators", requestId, generation: currentGeneration, ...normalized }, "indicatorsCalculated");
+  const response = await requests.request({ type: "calculateIndicators", requestId, generation: currentGeneration, ...normalized }, "indicatorsCalculated");
   return normalizeIndicatorResults(response.result, normalized);
 }
 
-export async function stepWorkerOnce(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<number> {
-  const response = await requestWorker(worker, { type: "stepOnce", requestId, generation: currentGeneration }, "stepped");
+export async function stepWorkerOnce(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<number> {
+  const response = await requests.request({ type: "stepOnce", requestId, generation: currentGeneration }, "stepped");
   if (!Number.isSafeInteger(response.tick) || Number(response.tick) < 0) {
     throw new Error("Worker 单步响应的 tick 无效");
   }
@@ -77,12 +77,12 @@ export async function stepWorkerOnce(worker: WorkerRequestPort, requestId: numbe
 }
 
 export async function restoreWorkerSlot(
-  worker: WorkerRequestPort,
+  requests: WorkerRequestScope,
   slot: unknown,
   requestId: number,
   currentGeneration: number,
 ): Promise<{ readonly snapshot: Snapshot; readonly nextGeneration: number }> {
-  const response = await requestWorker(worker, {
+  const response = await requests.request({
     type: "restore",
     requestId,
     generation: currentGeneration,
@@ -94,8 +94,8 @@ export async function restoreWorkerSlot(
   };
 }
 
-export async function refreshWorkerBaseline(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<Snapshot> {
-  const response = await requestWorker(worker, { type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
+export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<Snapshot> {
+  const response = await requests.request({ type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
   return parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot");
 }
 
@@ -118,7 +118,7 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 
 interface WorkerHostOptions {
   readonly enableE2EStepping?: boolean;
-  /** Optional Rayon pool size. It does not cap market requests or tasks. */
+  /** 可选 Rayon pool 大小，不限制市场请求或任务数量。 */
   readonly threadCount?: number;
 }
 
@@ -130,6 +130,7 @@ export function createWorkerHost(
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
+    const requests = new WorkerRequestScope(worker);
     let callback: ((update: HostUpdate) => void) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
@@ -139,7 +140,6 @@ export function createWorkerHost(
     let disposed = false;
     let currentGeneration = 0;
     let npcDecisionDiagnostics = false;
-    let requestSequence = 0;
     let pendingFailure: HostFailure | null = null;
     const timeout = setTimeout(() => {
       if (!initialized) {
@@ -279,38 +279,38 @@ export function createWorkerHost(
           worker.postMessage({ type: "setSpeed", speed: multiplier });
         },
         async setPausePreferences(preferences: PausePreferences) {
-          const requestId = ++requestSequence;
-          await requestWorker(worker, workerPausePreferenceRequest(requestId, currentGeneration, preferences), "pausePreferencesSet");
+          const requestId = requests.nextRequestId();
+          await requests.request(workerPausePreferenceRequest(requestId, currentGeneration, preferences), "pausePreferencesSet");
         },
         setFrameRate(fps) {
           worker.postMessage({ type: "setFrameRate", fps });
         },
         async readSpeedMetrics() {
-          return readWorkerSpeedMetrics(worker, ++requestSequence, currentGeneration);
+          return readWorkerSpeedMetrics(requests, requests.nextRequestId(), currentGeneration);
         },
         async playerWorkingOrders() {
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询玩家活动委托");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const orders = await readWorkerPlayerWorkingOrders(worker, ++requestSequence, queryGeneration);
+          const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
           return orders;
         },
         async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
           if (!npcDecisionDiagnostics) throw new Error("当前 WASM 后端未协商启用 NPC 决策诊断");
           if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
-          const response = await requestWorker(worker, { type: "npcDecisionTrace", requestId: ++requestSequence, generation: currentGeneration, account }, "npcDecisionTrace");
+          const response = await requests.request({ type: "npcDecisionTrace", requestId: requests.nextRequestId(), generation: currentGeneration, account }, "npcDecisionTrace");
           return parseNpcDecisionTrace(response.records);
         },
         async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
-          return requestWorkerIndicators(worker, ++requestSequence, currentGeneration, input);
+          return requestWorkerIndicators(requests, requests.nextRequestId(), currentGeneration, input);
         },
         async stepOnceForE2E() {
           assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);
-          return stepWorkerOnce(worker, ++requestSequence, currentGeneration);
+          return stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration);
         },
         async submitIntent(intent) {
-          await requestWorker(worker, { type: "enqueue", requestId: ++requestSequence, generation: currentGeneration, intent }, "enqueued");
+          await requests.request({ type: "enqueue", requestId: requests.nextRequestId(), generation: currentGeneration, intent }, "enqueued");
         },
         snapshot() {
           if (cachedBaseline === null) throw new Error("快照尚未就绪");
@@ -325,24 +325,24 @@ export function createWorkerHost(
           return cachedBaseline.snapshot.day;
         },
         async civilDate() {
-          const response = await requestWorker(worker, { type: "civilDate", requestId: ++requestSequence, generation: currentGeneration }, "civilDate");
+          const response = await requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: currentGeneration }, "civilDate");
           if (typeof response.date !== "string") throw new Error("Worker 返回的自然日无效");
           return response.date;
         },
         async endCivilDay() {
-          await requestWorker(worker, { type: "endCivilDay", requestId: ++requestSequence, generation: currentGeneration }, "civilDayEnded");
+          await requests.request({ type: "endCivilDay", requestId: requests.nextRequestId(), generation: currentGeneration }, "civilDayEnded");
         },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
           const queryGeneration = currentGeneration;
-          const response = await requestWorker(worker, candidate === undefined
-            ? { type: "save", requestId: ++requestSequence, generation: queryGeneration }
-            : { type: "save", requestId: ++requestSequence, generation: queryGeneration, candidate }, "saved");
+          const response = await requests.request(candidate === undefined
+            ? { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration }
+            : { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration, candidate }, "saved");
           if (disposed || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
           return response.slot;
         },
         async refreshBaseline() {
           const requestedGeneration = currentGeneration;
-          const snapshot = await refreshWorkerBaseline(worker, ++requestSequence, requestedGeneration);
+          const snapshot = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
           if (currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
           const baseline = createBaselineUpdate(String(requestedGeneration), snapshot);
           baselineEpoch += 1;
@@ -352,7 +352,7 @@ export function createWorkerHost(
         },
         async load(slot) {
           const parsedSlot = parseSaveSlot(slot);
-          const restored = await restoreWorkerSlot(worker, parsedSlot, ++requestSequence, currentGeneration);
+          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), currentGeneration);
           currentGeneration = restored.nextGeneration;
           const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
           baselineEpoch += 1;
@@ -363,11 +363,11 @@ export function createWorkerHost(
           }
         },
         async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
-          const response = await requestWorker(worker, { type: "publicReports", requestId: ++requestSequence, generation: currentGeneration, query }, "publicReports");
+          const response = await requests.request({ type: "publicReports", requestId: requests.nextRequestId(), generation: currentGeneration, query }, "publicReports");
           return normalizePublicReportPage(response.page);
         },
         async publicReportById(id: string): Promise<PublicReportSummary> {
-          const response = await requestWorker(worker, { type: "publicReportById", requestId: ++requestSequence, generation: currentGeneration, id }, "publicReportById");
+          const response = await requests.request({ type: "publicReportById", requestId: requests.nextRequestId(), generation: currentGeneration, id }, "publicReportById");
           return normalizePublicReportById(response.report);
         },
       };

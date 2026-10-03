@@ -1,0 +1,22 @@
+{
+  "registration": "scripts/workspace-paths.mjs::prepareWorkspacePaths({sourceRoot:process.cwd(),scope:\"oop-host-writer-short\"})",
+  "environment": {
+    "ESCROW_WORKSPACE_ROOT": "/data1/baiyifan/workplace/stock_market_game",
+    "CARGO_TARGET_DIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/build-cache/oop-host-writer-short",
+    "TMPDIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/process-tmp/oop-host-writer-short",
+    "TMP": "/data1/baiyifan/workplace/stock_market_game/.tmp/process-tmp/oop-host-writer-short",
+    "TEMP": "/data1/baiyifan/workplace/stock_market_game/.tmp/process-tmp/oop-host-writer-short"
+  },
+  "requirements": [
+    "现有绝对 canonical 目录",
+    "CARGO_TARGET_DIR 与 TMPDIR/TMP/TEMP 严格在同一 workspace/.tmp 后代",
+    "预编译 binary 执行只需设置运行环境，无须重编译"
+  ],
+  "result": {
+    "registration": "成功",
+    "root_runtime_result": "注册环境重跑5/5通过",
+    "duration_seconds": "0.007–0.017",
+    "evidence": "agents/oop-refactor-implementation/validation/writer-short-final-result.json",
+    "prior_environment_failure": "agents/oop-refactor-implementation/validation/writer-short-result.json"
+  }
+}

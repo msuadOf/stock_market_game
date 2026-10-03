@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
@@ -16,7 +16,7 @@ const REPO_TMP_ROOT = path.resolve(
   process.env.TASK_TMP_ROOT
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".tmp"),
 );
-const tempDirs = [];
+const fixtures = [];
 
 function diffFor(replacement, file = "packages/engine/src/diagnostics.rs") {
   return [
@@ -42,8 +42,77 @@ function git(root, args) {
   });
 }
 
+class DiagnosticAuditRepositoryFixture {
+  constructor(root, gitRunner) {
+    this.root = root;
+    this.diagnosticsPath = path.join(root, "packages", "engine", "src", "diagnostics.rs");
+    this.evidencePath = path.join(root, EVIDENCE);
+    this.gitRunner = gitRunner;
+    this.baseSha = undefined;
+    this.headSha = undefined;
+    // 目录创建后立即登记，初始化失败也有明确的清理 owner。
+    fixtures.push(this);
+  }
+
+  static async create({ gitRunner = git } = {}) {
+    await mkdir(REPO_TMP_ROOT, { recursive: true });
+    const root = await mkdtemp(path.join(REPO_TMP_ROOT, "diagnostic-audit-test-"));
+    const fixture = new DiagnosticAuditRepositoryFixture(root, gitRunner);
+    try {
+      await mkdir(path.dirname(fixture.diagnosticsPath), { recursive: true });
+      await gitRunner(root, ["init", "--quiet"]);
+      await gitRunner(root, ["config", "user.email", "audit@example.test"]);
+      await gitRunner(root, ["config", "user.name", "Audit Test"]);
+      return fixture;
+    } catch (error) {
+      try { await fixture.dispose(); } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "DiagnosticAuditRepositoryFixture 初始化与清理均失败");
+      }
+      throw error;
+    }
+  }
+
+  async writeEvidence() {
+    await mkdir(path.dirname(this.evidencePath), { recursive: true });
+    await writeFile(this.evidencePath, EVIDENCE_FILES[EVIDENCE]);
+  }
+
+  async commit(label) {
+    await this.gitRunner(this.root, ["add", "."]);
+    await this.gitRunner(this.root, ["commit", "--quiet", "-m", label]);
+    return this.gitRunner(this.root, ["rev-parse", "HEAD"]);
+  }
+
+  async commitBase(source) {
+    await writeFile(this.diagnosticsPath, source);
+    await this.writeEvidence();
+    this.baseSha = await this.commit("base");
+    return this.baseSha;
+  }
+
+  async commitHead(source) {
+    await writeFile(this.diagnosticsPath, source);
+    this.headSha = await this.commit("head");
+    return this.headSha;
+  }
+
+  dispose() {
+    return rm(this.root, { recursive: true, force: true });
+  }
+}
+
 after(async () => {
-  await Promise.all(tempDirs.map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(fixtures.map((fixture) => fixture.dispose()));
+});
+
+it("cleans a registered fixture when repository initialization fails", async () => {
+  let createdRoot;
+  await assert.rejects(() => DiagnosticAuditRepositoryFixture.create({ gitRunner: async (root) => {
+    createdRoot = root;
+    throw new Error("fixture initialization failure");
+  } }), /fixture initialization failure/);
+  assert.ok(createdRoot);
+  await assert.rejects(lstat(createdRoot), { code: "ENOENT" });
 });
 
 describe("fixed-range diagnostic divergence audit", () => {
@@ -126,26 +195,10 @@ describe("fixed-range diagnostic divergence audit", () => {
   });
 
   it("reads two exact committed SHAs instead of auditing the mutable working tree", async () => {
-    await mkdir(REPO_TMP_ROOT, { recursive: true });
-    const root = await mkdtemp(path.join(REPO_TMP_ROOT, "diagnostic-audit-test-"));
-    tempDirs.push(root);
-    const sourceDir = path.join(root, "packages", "engine", "src");
-    await mkdir(sourceDir, { recursive: true });
-    const file = path.join(sourceDir, "diagnostics.rs");
-    await writeFile(file, "fn diagnostic_expectation() {\n    let report = run();\n    assert_eq!(report.engine_error_events, 55);\n}\n");
-    const evidenceFile = path.join(root, EVIDENCE);
-    await mkdir(path.dirname(evidenceFile), { recursive: true });
-    await writeFile(evidenceFile, EVIDENCE_FILES[EVIDENCE]);
-    await git(root, ["init", "--quiet"]);
-    await git(root, ["config", "user.email", "audit@example.test"]);
-    await git(root, ["config", "user.name", "Audit Test"]);
-    await git(root, ["add", "."]);
-    await git(root, ["commit", "--quiet", "-m", "base"]);
-    const base = await git(root, ["rev-parse", "HEAD"]);
-    await writeFile(file, `fn diagnostic_expectation() {\n    let report = run();\n    assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ${EVIDENCE}\n}\n`);
-    await git(root, ["add", "."]);
-    await git(root, ["commit", "--quiet", "-m", "head"]);
-    const head = await git(root, ["rev-parse", "HEAD"]);
+    const fixture = await DiagnosticAuditRepositoryFixture.create();
+    const { root, diagnosticsPath: file } = fixture;
+    const base = await fixture.commitBase("fn diagnostic_expectation() {\n    let report = run();\n    assert_eq!(report.engine_error_events, 55);\n}\n");
+    const head = await fixture.commitHead(`fn diagnostic_expectation() {\n    let report = run();\n    assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ${EVIDENCE}\n}\n`);
 
     const audit = await auditDiagnosticRange(root, base, head);
     assert.equal(audit.base_sha, base);
@@ -167,28 +220,12 @@ describe("fixed-range diagnostic divergence audit", () => {
   });
 
   it("rejects an invalid SHA and any committed path outside the fixed audit boundary", async () => {
-    await mkdir(REPO_TMP_ROOT, { recursive: true });
-    const root = await mkdtemp(path.join(REPO_TMP_ROOT, "diagnostic-audit-scope-test-"));
-    tempDirs.push(root);
-    const sourceDir = path.join(root, "packages", "engine", "src");
-    await mkdir(sourceDir, { recursive: true });
-    const file = path.join(sourceDir, "diagnostics.rs");
-    await writeFile(file, "fn diagnostic_expectation() {\n    assert_eq!(report.engine_error_events, 55);\n}\n");
-    const evidenceFile = path.join(root, EVIDENCE);
-    await mkdir(path.dirname(evidenceFile), { recursive: true });
-    await writeFile(evidenceFile, EVIDENCE_FILES[EVIDENCE]);
-    await git(root, ["init", "--quiet"]);
-    await git(root, ["config", "user.email", "audit@example.test"]);
-    await git(root, ["config", "user.name", "Audit Test"]);
-    await git(root, ["add", "."]);
-    await git(root, ["commit", "--quiet", "-m", "base"]);
-    const base = await git(root, ["rev-parse", "HEAD"]);
+    const fixture = await DiagnosticAuditRepositoryFixture.create();
+    const { root } = fixture;
+    const base = await fixture.commitBase("fn diagnostic_expectation() {\n    assert_eq!(report.engine_error_events, 55);\n}\n");
 
-    await writeFile(file, `fn diagnostic_expectation() {\n    assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ${EVIDENCE}\n}\n`);
     await writeFile(path.join(root, "README.md"), "out-of-scope committed change\n");
-    await git(root, ["add", "."]);
-    await git(root, ["commit", "--quiet", "-m", "head"]);
-    const head = await git(root, ["rev-parse", "HEAD"]);
+    const head = await fixture.commitHead(`fn diagnostic_expectation() {\n    assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ${EVIDENCE}\n}\n`);
 
     await assert.rejects(() => auditDiagnosticRange(root, "not-a-full-sha", head), /base SHA must be a full object id/);
     await assert.rejects(() => auditDiagnosticRange(root, base, head), /escaped its allowlist: README\.md/);

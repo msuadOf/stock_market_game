@@ -12,9 +12,10 @@ fn expiring_npc_order(
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.attention_queue.clear();
+    game.state.attention_scheduler.clear();
     if side == crate::Side::Sell {
-        game.accounts
+        game.state
+            .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
@@ -38,7 +39,7 @@ fn expiring_npc_order(
             _ => None,
         })
         .expect("fixture must accept NPC quote");
-    game.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
+    game.state.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
     (game, code, account, order_id)
 }
 
@@ -55,7 +56,7 @@ fn expiring_retail_order() -> (
         42,
     )
     .unwrap();
-    game.attention_queue.clear();
+    game.state.attention_scheduler.clear();
     let mut events = Vec::new();
     game.seed_order_for_test(
         account,
@@ -74,7 +75,7 @@ fn expiring_retail_order() -> (
             _ => None,
         })
         .expect("fixture must accept the retail quote");
-    game.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
+    game.state.npc_order_lifecycles[0].expires_market_minute = game.current_market_minute();
     (game, code, account, order_id)
 }
 
@@ -95,11 +96,14 @@ fn quote_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
 fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
     let (mut game, code, account, order_id) = expiring_npc_order(crate::Side::Buy);
     let before = game.business_state_hash().unwrap();
-    let cash_before = game.accounts[&account].cash;
+    let cash_before = game.state.accounts[&account].cash();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
     assert_eq!(game.business_state_hash().unwrap(), before);
-    assert_eq!(game.markets[&code].resting_orders_for(account).len(), 1);
+    assert_eq!(
+        game.state.markets[&code].resting_orders_for(account).len(),
+        1
+    );
     assert_eq!(plan.expiry().releases.len(), 1);
     assert_eq!(plan.expiry().releases[0].receipt_index, 0);
     assert_eq!(plan.expiry().releases[0].stock, code);
@@ -119,9 +123,11 @@ fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
         [crate::Event::OrderCanceled { account: event_account, code: event_code, id, remaining_qty: 100, .. }, _]
             if *event_account == account && event_code == &code && *id == order_id
     ));
-    assert!(game.markets[&code].resting_orders_for(account).is_empty());
-    assert!(game.npc_order_lifecycles.is_empty());
-    assert_eq!(game.accounts[&account].cash, cash_before);
+    assert!(game.state.markets[&code]
+        .resting_orders_for(account)
+        .is_empty());
+    assert!(game.state.npc_order_lifecycles.is_empty());
+    assert_eq!(game.state.accounts[&account].cash(), cash_before);
     game.hydrate_or_validate_envelope_ledger().unwrap();
 }
 
@@ -172,7 +178,7 @@ fn quote_expiry_retail_cancellation_diagnostic_survives_commit() {
 #[test]
 fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
     let (mut game, code, account, expired_order_id) = expiring_retail_order();
-    game.pending_player.push((
+    game.state.pending_player.push((
         account,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -245,7 +251,7 @@ fn quote_expiry_leaves_auction_and_player_orders_unaffected() {
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
     assert!(plan.expiry().releases.is_empty());
-    assert_eq!(game.auction_orders[&code].len(), 1);
+    assert_eq!(game.state.auction_orders[&code].len(), 1);
 }
 
 #[test]
@@ -288,7 +294,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
     second_spec.code = second.clone();
     setup.stocks.push(second_spec);
     let mut game = GameSession::new(setup, 42).unwrap();
-    game.attention_queue.clear();
+    game.state.attention_scheduler.clear();
     let mut events = Vec::new();
     for (code, price) in [(&second, 980), (&first, 990)] {
         game.seed_order_for_test(
@@ -303,7 +309,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
         );
     }
     let expiry_minute = game.current_market_minute();
-    for lifecycle in &mut game.npc_order_lifecycles {
+    for lifecycle in &mut game.state.npc_order_lifecycles {
         lifecycle.expires_market_minute = expiry_minute;
     }
 
@@ -324,7 +330,7 @@ fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
     let mut game = GameSession::new(setup, 42).unwrap();
     let first = crate::AccountId(1);
     let second = crate::AccountId(2);
-    game.attention_queue.clear();
+    game.state.attention_scheduler.clear();
     let mut events = Vec::new();
     for (account, price) in [(second, 980), (first, 990)] {
         game.seed_order_for_test(
@@ -339,7 +345,7 @@ fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
         );
     }
     let expiry_minute = game.current_market_minute();
-    for lifecycle in &mut game.npc_order_lifecycles {
+    for lifecycle in &mut game.state.npc_order_lifecycles {
         lifecycle.expires_market_minute = expiry_minute;
     }
 
@@ -379,6 +385,9 @@ fn quote_expiry_post_shadow_failure_discards_order_receipt_and_event() {
     assert_eq!(game.step().unwrap_err(), fatal);
     assert_eq!(game.business_state_hash().unwrap(), before_business);
     assert_eq!(game.seq(), before_seq);
-    assert_eq!(game.markets[&code].resting_orders_for(account).len(), 1);
-    assert_eq!(game.npc_order_lifecycles.len(), 1);
+    assert_eq!(
+        game.state.markets[&code].resting_orders_for(account).len(),
+        1
+    );
+    assert_eq!(game.state.npc_order_lifecycles.len(), 1);
 }

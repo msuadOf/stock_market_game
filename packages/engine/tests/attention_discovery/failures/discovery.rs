@@ -15,9 +15,7 @@ use engine::session::{
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 use engine::CivilDate;
 
-use crate::exposure::{
-    exposed_codes, library_with_announcement, post_undisclosed_fact, private_books, quiet_market,
-};
+use crate::exposure::{post_undisclosed_fact, private_books, AnnouncementExposureFixture};
 use crate::{attention, code};
 
 fn discovery_setup() -> SessionSetup {
@@ -95,20 +93,18 @@ fn session_bytes() -> Vec<u8> {
 
 #[test]
 fn mutating_only_private_operating_facts_changes_no_candidate_and_no_order() {
-    let (library, published) = library_with_announcement();
-    let market = quiet_market();
-    let all_codes = vec![code("600101"), code("600102")];
-    let exposed = exposed_codes(&library, &all_codes, published);
+    let fixture = AnnouncementExposureFixture::new();
+    let exposed = fixture.exposed_at(fixture.published);
     assert_eq!(exposed.len(), 1, "前置：公告确实带来一处公共曝光");
 
     let books_before = private_books();
-    let weights_before = NpcAttentionState::discovery_weights(&market, &exposed);
+    let weights_before = NpcAttentionState::discovery_weights(fixture.market(), &exposed);
     let orders_before = session_bytes();
     let mut state = attention(321);
     let candidates_before: Vec<_> = (0..200)
         .map(|_| {
             state.sample_discovery_stock(
-                &market,
+                fixture.market(),
                 &BTreeSet::new(),
                 &PersonalWatchlist::new(),
                 &exposed,
@@ -125,13 +121,13 @@ fn mutating_only_private_operating_facts_changes_no_candidate_and_no_order() {
         "前置：私有总账事实确实改变了"
     );
 
-    let weights_after = NpcAttentionState::discovery_weights(&market, &exposed);
+    let weights_after = NpcAttentionState::discovery_weights(fixture.market(), &exposed);
     let orders_after = session_bytes();
     let mut state = attention(321);
     let candidates_after: Vec<_> = (0..200)
         .map(|_| {
             state.sample_discovery_stock(
-                &market,
+                fixture.market(),
                 &BTreeSet::new(),
                 &PersonalWatchlist::new(),
                 &exposed,
@@ -154,10 +150,8 @@ fn mutating_only_private_operating_facts_changes_no_candidate_and_no_order() {
 fn discovery_sampling_never_writes_into_information_state() {
     // 新曝光不等于已读：抽样 1000 次只产生候选代码，个人信息集字节不变
     // （获知只能经 record_acquisition 显式登记——任务 16 语义）。
-    let (library, published) = library_with_announcement();
-    let market = quiet_market();
-    let all_codes = vec![code("600101"), code("600102")];
-    let exposed = exposed_codes(&library, &all_codes, published);
+    let fixture = AnnouncementExposureFixture::new();
+    let exposed = fixture.exposed_at(fixture.published);
 
     let npc = AccountId(11);
     let info = NpcInformationState::new(npc);
@@ -166,13 +160,16 @@ fn discovery_sampling_never_writes_into_information_state() {
     for _ in 0..1000 {
         let picked = state
             .sample_discovery_stock(
-                &market,
+                fixture.market(),
                 &BTreeSet::new(),
                 &PersonalWatchlist::new(),
                 &exposed,
             )
             .expect("candidate");
-        assert!(all_codes.contains(&picked), "候选必须落在市场股票集合内");
+        assert!(
+            fixture.codes().contains(&picked),
+            "候选必须落在市场股票集合内"
+        );
     }
     let after = serde_json::to_string(&info).expect("serialize info state");
     assert_eq!(

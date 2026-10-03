@@ -129,6 +129,7 @@ fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
@@ -195,6 +196,7 @@ fn reconciliation_plan_links_replace_without_consuming_residual_target() {
 fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
     let (mut session, account, code, order_id) = resting_buy();
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
@@ -258,7 +260,7 @@ fn reconciliation_plan_keeps_identical_auction_quote() {
 #[test]
 fn reconciliation_plan_locked_reviewed_auction_suppresses_opposite_target() {
     let (mut session, account, code, _order_id) = resting_auction_buy();
-    session.tick = 300;
+    session.state.tick = 300;
     let plan = auction_plan(
         &session,
         account,
@@ -278,7 +280,7 @@ fn reconciliation_plan_locked_reviewed_auction_suppresses_opposite_target() {
 #[test]
 fn reconciliation_plan_locked_auction_suppresses_same_side_and_crossing_targets() {
     let (mut session, account, code, _order_id) = resting_auction_buy();
-    session.tick = 300;
+    session.state.tick = 300;
     let crossing = Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Sell,
@@ -300,7 +302,7 @@ fn reconciliation_plan_locked_auction_suppresses_same_side_and_crossing_targets(
 fn reconciliation_plan_locked_reviewed_auction_suppresses_only_reviewed_stock() {
     let (mut session, account, code, _order_id) = resting_auction_buy();
     let other = StockCode("600889".to_owned());
-    session.tick = 300;
+    session.state.tick = 300;
     let plan = auction_plan(
         &session,
         account,

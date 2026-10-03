@@ -1,0 +1,551 @@
+[
+  {
+    "action_id": "hosts-N08",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "BoundedCommandRun；实施代理 /root/implement_hosts/deadline",
+    "methods": [
+      "start()",
+      "#onOutput()",
+      "#abort()",
+      "#onError()",
+      "#onClose()",
+      "#settleOnce()",
+      "#cleanup()"
+    ],
+    "callers": [
+      "runBoundedCommand()",
+      "runWithDeadline()",
+      "scripts/run-long-validation.mjs",
+      "scripts/run-web-tests.mjs",
+      "scripts/run-full-regression.mjs"
+    ],
+    "files": [
+      "scripts/run-with-deadline.mjs",
+      "scripts/run-with-deadline.test.mjs"
+    ],
+    "test_filters_or_results": [
+      {
+        "scope": "四脚本短测试，深层 JSON 修正前",
+        "result": "root 在 sandbox 外执行，54/54 通过，0 fail，2741.378114ms",
+        "evidence": "agents/oop-refactor-implementation/validation/deadline-short-test-result.json",
+        "deadline": "runner 10000ms、Node case 10000ms、timeout -k 1 9",
+        "concurrency": 4
+      },
+      {
+        "scope": "包含 facade、abort、single-settlement 和库存边界的定向短测试",
+        "result": "34/34 通过",
+        "evidence": "agents/oop-refactor-implementation/hosts/deadline/targeted-tests.log"
+      },
+      {
+        "scope": "深层 JSON 修正后当前 55 case 四脚本整套",
+        "result": "未重跑；BoundedCommandRun 在修正时未改变，不把修正前 54/54 冒称为当前整套结果"
+      }
+    ],
+    "review": "agents/oop-refactor-implementation/hosts/review-deadline.md",
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "聚合一次 bounded command 的持有字段，形成 single-settlement 资源 owner；不是薄包装。",
+        "implemented_by": {
+          "owner": "私有 BoundedCommandRun；#options/#child/#stdout/#stderr/#outputCallbackError/#timedOut/#abortReason/#settled/#executionTimer/#hardTimer/#abortListener/#resolve/#reject",
+          "methods": [
+            "constructor(options)",
+            "start()",
+            "#onOutput(stream, chunk)",
+            "#abort()",
+            "#onError(error)",
+            "#onClose(code, signal)",
+            "#settleOnce(complete)",
+            "#cleanup()"
+          ],
+          "callers": [
+            "runBoundedCommand()",
+            "runWithDeadline()",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-with-deadline.test.mjs"
+          ]
+        },
+        "validation": "完整 diff 独立复核确认状态与生命周期归属；新增 injected child 双流/原 chunk、spawn error、重复完成事件覆盖。agents/oop-refactor-implementation/hosts/review-deadline.md",
+        "limit": "BoundedCommandRun 为私有实现，每次 facade 调用创建一个实例；没有继承、全局 registry 或额外公开生命周期 API。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 runBoundedCommand/runWithDeadline 的 args/options/Promise 结果与真正 caller，parseArgs 和 deadline validation 继续为函数。",
+        "implemented_by": {
+          "owner": "runBoundedCommand()/runWithDeadline()/parseArgs() 与 BoundedCommandRun",
+          "methods": [
+            "runBoundedCommand(options)",
+            "runWithDeadline(options)",
+            "parseArgs(argv)",
+            "BoundedCommandRun.start()"
+          ],
+          "callers": [
+            "runBoundedCommand()",
+            "runWithDeadline()",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ]
+        },
+        "validation": "修正前同一四脚本短测54/54通过；long-validation、Web shard/full-regression fake run 参数与 sibling abort 契约覆盖。agents/oop-refactor-implementation/validation/deadline-short-test-result.json",
+        "limit": "run-long-validation/run-web-tests 无源码修改；没有重新定义调用方或把 facade 结果替换为实例。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "补 pre-aborted signal、运行中 abort，以及重复 close/error/abort 的 once-only 边界，终止后仍等待 close 或 hard cutoff。",
+        "implemented_by": {
+          "owner": "runBoundedCommand() 前置 signal 检查与 BoundedCommandRun 完成态",
+          "methods": [
+            "runBoundedCommand(options)",
+            "#abort()",
+            "#onClose(code, signal)",
+            "#onError(error)",
+            "#settleOnce(complete)"
+          ],
+          "callers": [
+            "runBoundedCommand()",
+            "runWithDeadline()",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-with-deadline.test.mjs"
+          ]
+        },
+        "validation": "rejects an already aborted signal、waits for child close、settles once、preserves a spawn error 四个新增 case；修正前54/54与targeted-tests.log证明通过。",
+        "limit": "injected spawn 内同步触发 abort 的既有竞态未修复；未声称消除所有 signal 竞态。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 streaming callback 异常记录后 terminate，以及 close 的 callback error→abort→timeout→非零 exit 错误优先级。",
+        "implemented_by": {
+          "owner": "BoundedCommandRun.#outputCallbackError/#abortReason/#timedOut 与双流",
+          "methods": [
+            "#onOutput(stream, chunk)",
+            "#abort()",
+            "#onClose(code, signal)"
+          ],
+          "callers": [
+            "runBoundedCommand()",
+            "runWithDeadline()",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-with-deadline.test.mjs"
+          ]
+        },
+        "validation": "新增 keeps a streaming callback error ahead of a sibling abort 与原 callback failure/失败诊断/timeout case；54/54与独立源码复核确认错误优先级。agents/oop-refactor-implementation/validation/deadline-short-test-result.json",
+        "limit": "保留原 error 事件启动错误行为；未改变 settlement 后仍保留 output listener 的既有行为。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留 child/listener/timer 注册与 cleanup 顺序：settled 标记→clear execution/hard timers→remove abort listener→resolve/reject。",
+        "implemented_by": {
+          "owner": "BoundedCommandRun 的 timers、signal listener 和完成态",
+          "methods": [
+            "start()",
+            "#settleOnce(complete)",
+            "#cleanup()"
+          ],
+          "callers": [
+            "runBoundedCommand()"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-with-deadline.test.mjs"
+          ]
+        },
+        "validation": "重复完成测试检查 listener 仅移除一次；hard-cutoff 短fixture与独立完整diff核对注册和cleanup顺序。agents/oop-refactor-implementation/hosts/review-deadline.md",
+        "limit": "纯资源 owner 迁移，不新增 close/tree 确认协议或补偿逻辑。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保持普通10000ms、长300000ms上限及 execution/hard 两个 cutoff 与 cleanup reserve，不新增超时制度。",
+        "implemented_by": {
+          "owner": "ORDINARY_TEST_MAX_MS/LONG_VALIDATION_MAX_MS/COMMAND_CLEANUP_RESERVE_MAX_MS、facade validation 与 BoundedCommandRun timers",
+          "methods": [
+            "runBoundedCommand(options)",
+            "runWithDeadline(options)",
+            "BoundedCommandRun.start()"
+          ],
+          "callers": [
+            "runBoundedCommand()",
+            "runWithDeadline()",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs",
+            "scripts/run-with-deadline.test.mjs",
+            "scripts/run-long-validation.mjs",
+            "scripts/run-long-validation.test.mjs",
+            "scripts/run-web-tests.mjs",
+            "scripts/run-full-regression.mjs"
+          ]
+        },
+        "validation": "普通上限拒绝、50ms hard cutoff、300000ms配置和1000ms reserve fake run 覆盖；独立复核确认常量/预算与原行为一致。",
+        "limit": "本次没有运行真实长验收；修正后当前55case整套未重跑，修正仅inventory的4相关case已验证。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "正文明确 Windows taskkill await/injected terminator 属另批增强，server-build 超时制度不混入本次纯对象化。",
+        "implemented_by": {
+          "owner": "既有 terminateTree(child)；本批未实施行为增强",
+          "methods": [
+            "terminateTree(child)"
+          ],
+          "callers": [
+            "BoundedCommandRun.start()",
+            "BoundedCommandRun.#onOutput()",
+            "BoundedCommandRun.#abort()"
+          ],
+          "files": [
+            "scripts/run-with-deadline.mjs"
+          ]
+        },
+        "validation": "独立复核确认 Windows taskkill unref/fire-and-forget 与 POSIX ESRCH 策略原样保留。agents/oop-refactor-implementation/hosts/review-deadline.md",
+        "limit": "未添加 await/injected terminator、Windows成功/失败/超时新测试或tree已确认关闭保证；未修改server-build。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "deadline",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/deadline/status.md"
+  },
+  {
+    "action_id": "hosts-R2-N19",
+    "status": "已实施；独立复核通过；授权范围的编译与代表性短验证已收口",
+    "owner": "ArtifactInventory；实施代理 /root/implement_hosts/deadline",
+    "methods": [
+      "fromBuild()",
+      "fromDecodedInventory()",
+      "toJson()",
+      "artifactDescriptors()",
+      "validateArtifactDescriptor()",
+      "validateArtifactMetadata()",
+      "validateArtifactDigest()"
+    ],
+    "callers": [
+      "buildFullRegressionArtifacts()",
+      "readAndValidateInventory()",
+      "executeFullRegression()"
+    ],
+    "files": [
+      "scripts/run-full-regression.mjs",
+      "scripts/run-full-regression.test.mjs"
+    ],
+    "test_filters_or_results": [
+      {
+        "scope": "四脚本短测试，深层 JSON 修正前",
+        "result": "root 在 sandbox 外执行，54/54 通过，0 fail，2741.378114ms",
+        "evidence": "agents/oop-refactor-implementation/validation/deadline-short-test-result.json",
+        "deadline": "runner 10000ms、Node case 10000ms、timeout -k 1 9",
+        "concurrency": 4
+      },
+      {
+        "scope": "深层 JSON 修正红灯",
+        "filter": "deeply nested JSON extras",
+        "result": "新增 depth 2000 fixture 复现 structuredClone RangeError",
+        "evidence": "agents/oop-refactor-implementation/hosts/deadline/deep-json-red.log"
+      },
+      {
+        "scope": "深层 JSON 修正后相关短测试",
+        "filter": "deeply nested JSON extras|owns an immutable inventory|accepts a correctly sealed reordered|rejects missing identity",
+        "result": "4/4 通过，0 fail，138.790248ms；覆盖 JSON 深层/null 链、输入输出隔离、字段顺序、extra、duplicate 与身份/seal 拒绝",
+        "evidence": "agents/oop-refactor-implementation/hosts/deadline/deep-json-green.log",
+        "deadline": "runner 10000ms、Node case 10000ms",
+        "concurrency": 4
+      },
+      {
+        "scope": "修正后当前 55 case 四脚本整套",
+        "result": "未重跑；相关 4 case 证据满足本次修正范围，不冒称当前整套通过"
+      }
+    ],
+    "review": "agents/oop-refactor-implementation/hosts/review-deadline.md",
+    "remaining": [],
+    "requirement_checks": [
+      {
+        "requirement": "将 build/execute 之间的 schema、来源/workspace/target/temp、source_fingerprint、build argv/CPU/wall、artifact seals 与 identity_digest 收敛为唯一不可变原 record。",
+        "implemented_by": {
+          "owner": "ArtifactInventory.#record；freezeInventoryRecord(value)",
+          "methods": [
+            "constructor(record)",
+            "fromBuild(record)",
+            "fromDecodedInventory(decoded, expectedIdentity)",
+            "toJson()",
+            "artifactDescriptors()"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "immutable测试证明修改decoded/toJson输出不影响owner，artifactDescriptors自身不可变；原atomic inventory seal测试与独立复核通过。",
+        "limit": "保持原build/source_fingerprint字段结构接受规则，仅既有fingerprint.digest参与身份匹配；不新增字段配额、规范化record或额外校验政策。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "输入身份校验必须先对原 decoded record 去掉 identity_digest 后按现有 JSON.stringify 顺序实算并比对传入摘要；只在 build 创建新 inventory 时生成摘要。",
+        "implemented_by": {
+          "owner": "ArtifactInventory 的输入校验与静态摘要算法",
+          "methods": [
+            "static #computeIdentityDigest(record)",
+            "fromDecodedInventory(decoded, expectedIdentity)",
+            "fromBuild(record)"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "旧摘要配reorder/extra拒绝，正确实算摘要的重排记录接受；缺身份字段及source/workspace/fingerprint漂移在任何test启动前拒绝，相关4case通过。agents/oop-refactor-implementation/hosts/deadline/deep-json-green.log",
+        "limit": "没有重算替换输入摘要，也没有宣称source_fingerprint内部任意内容额外验证；source fingerprint收集算法保持原样。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "toJson 保留原字段插入顺序、extra字段和duplicate artifact；不排序/删extra/去重或新增重复拒绝政策。",
+        "implemented_by": {
+          "owner": "ArtifactInventory.#record 与 JSON兼容复制",
+          "methods": [
+            "constructor(record)",
+            "toJson()",
+            "artifactDescriptors()"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "JSON.stringify输出与原输入一致；duplicate保留两个ordinary执行，并维持required long target resolved to 2的既有后续失败；修正后相关4/4通过。agents/oop-refactor-implementation/hosts/deadline/deep-json-green.log",
+        "limit": "库存仍为JSON wire record；没有新 canonical serialization 或另一份权威规范化副本。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "保留合法深层 extra JSON 接受边界，复制与 deep freeze 不新增 structuredClone/recursive freeze 的栈深限制。",
+        "implemented_by": {
+          "owner": "ArtifactInventory constructor/toJson 的 JSON.parse(JSON.stringify) 与 iterative freezeInventoryRecord",
+          "methods": [
+            "constructor(record)",
+            "toJson()",
+            "freezeInventoryRecord(value)"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "R1 depth2000每层null fixture先红RangeError再绿；fromDecoded/toJson与输入输出深层叶子修改隔离、文件执行acceptance通过；reviewer复审R1关闭。agents/oop-refactor-implementation/hosts/deadline/deep-json-green.log",
+        "limit": "使用原JSON.parse/JSON.stringify接受边界，未新增深度配额；不声称可处理原JSON算法自身无法序列化的数据。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "迁移 descriptor 字段合法性及 seal 一致性到 owner，外部adapter实测metadata/digest后与owner私有record对应index比较，保持逐条失败优先级。",
+        "implemented_by": {
+          "owner": "ArtifactInventory 字段/seal 不变量与 readAndValidateInventory adapter",
+          "methods": [
+            "validateArtifactDescriptor(index)",
+            "validateArtifactMetadata(index, observed)",
+            "validateArtifactDigest(index, observed)",
+            "readAndValidateInventory(inventoryPath, sourceRoot, workspacePaths, fingerprint)"
+          ],
+          "callers": [
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "invalid label/bytes/hash/path、byte/hash seal改变在启动前拒绝；独立复核确认descriptor与filesystem交替次序，前条filesystem错误不被后条descriptor错误抢先。",
+        "limit": "descriptor按原顺序逐条验证；未把全部descriptor前置扫描为新增错误优先级；不接受caller自选seal作为比较权威。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "filesystem I/O、原子发布与workspace路径验证留在adapter；对象不持全局filesystem或进程权限，真实build/execute caller完成接线。",
+        "implemented_by": {
+          "owner": "buildFullRegressionArtifacts/readAndValidateInventory/sealTestArtifacts/writeJsonAtomically/prepareInventoryPath adapters 与 ArtifactInventory",
+          "methods": [
+            "buildFullRegressionArtifacts(options)",
+            "readAndValidateInventory(inventoryPath, sourceRoot, workspacePaths, fingerprint)",
+            "sealTestArtifacts(artifacts, workspacePaths)",
+            "writeJsonAtomically(filePath, value)",
+            "prepareInventoryPath(workspaceRoot, inventoryPath)",
+            "ArtifactInventory.fromBuild(record)",
+            "ArtifactInventory.fromDecodedInventory(decoded, expectedIdentity)",
+            "ArtifactInventory.toJson()"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs",
+            "scripts/workspace-paths.mjs"
+          ]
+        },
+        "validation": "原atomic inventory生命周期、跨workspace/source拒绝、escaped/symlink target拒绝、source build/execution漂移与fake run执行接线覆盖；workspace-paths调用无变化。agents/oop-refactor-implementation/hosts/review-deadline.md",
+        "limit": "workspace-paths无源码修改；build public result中的inventory仍是plain record，execute仍使用实测验证后的executable descriptors。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      },
+      {
+        "requirement": "缺失字段、旧/错/跨source/workspace身份、artifact byte/hash改变必须继续拒绝；本动作低优先级可选已实际实施，竞态增强另批。",
+        "implemented_by": {
+          "owner": "ArtifactInventory 与既有 filesystem/source fingerprint adapters",
+          "methods": [
+            "fromDecodedInventory(decoded, expectedIdentity)",
+            "validateArtifactDescriptor(index)",
+            "validateArtifactMetadata(index, observed)",
+            "validateArtifactDigest(index, observed)"
+          ],
+          "callers": [
+            "buildFullRegressionArtifacts()",
+            "readAndValidateInventory()",
+            "executeFullRegression()"
+          ],
+          "files": [
+            "scripts/run-full-regression.mjs",
+            "scripts/run-full-regression.test.mjs"
+          ]
+        },
+        "validation": "修正前54/54短测证据；修正后只重跑deep/order/extra/duplicate/identity/seal相关4case，4/4通过，独立三门复审关闭R1。agents/oop-refactor-implementation/validation/deadline-short-test-result.json；agents/oop-refactor-implementation/hosts/deadline/deep-json-green.log",
+        "limit": "最新55case整套未重跑；本地测试库存不是Release manifest，不代表可信/可移植；未规避文件替换竞态，不新增相应保证。",
+        "final_validation": {
+          "independent_review": "通过，无未关闭有效发现",
+          "compilation": [],
+          "selected_rust_cases": [],
+          "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+        }
+      }
+    ],
+    "final_validation": {
+      "independent_review": "通过，无未关闭有效发现",
+      "compilation": [],
+      "selected_rust_cases": [],
+      "scope": "授权范围的代表性短 case 与编译/类型检查；未选中的旧场景/整个 suite/性能矩阵/E2E 不记作已执行"
+    },
+    "validation_limits": [
+      "没有执行完整回归、E2E、真实性能或 escrow matrix。",
+      "仅上述选定 Rust case 已执行；静态复核、编译与未运行 case 的 filter 分别记证据。",
+      "worker 历史未运行记录与失败日志保留，最终 root 运行结果以上述 evidence 为准。"
+    ],
+    "implementation_group": "deadline",
+    "independent_review_status": "通过",
+    "evidence_record": "agents/oop-refactor-implementation/hosts/deadline/status.md"
+  }
+]

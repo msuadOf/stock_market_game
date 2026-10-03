@@ -1,0 +1,185 @@
+{
+  "phase": "中间态；待最终冻结刷新",
+  "reviews": [
+    {
+      "path": "agents/oop-refactor-implementation/domain/accounting-review.md",
+      "sha256": "1e7b155e696f104a0e7e36f437c704932545c400f5c8cb3fd8a05cd5ddbd43a1",
+      "size_bytes": 12000,
+      "reviewer_mentions": [
+        "/root/implement_domain/review_accounting"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/bank-review.md",
+      "sha256": "5bdc6980906d6d0dde62aa28ece5a70edbc6a32d153f8c78d4becfe723614482",
+      "size_bytes": 6398,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/diagnostics-review.md",
+      "sha256": "8e0c674fb817aef1bf66b6c63a55ef98fd8c5971809f2d5ccdf46ec7c863e8b1",
+      "size_bytes": 7331,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/experience-review.md",
+      "sha256": "a1b830d392a2916e6955953beaa72a85e2fef35c64900bebec2dadc991944a7f",
+      "size_bytes": 8243,
+      "reviewer_mentions": [
+        "review_experience"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/industrial-review.md",
+      "sha256": "78bd0645d6eadd81ad1d2d0ecd4036ec1bd5775209950b6afe4ab162445e520d",
+      "size_bytes": 7778,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/insurance-review.md",
+      "sha256": "1b65382c36272356fd8367c72d78b2d822bca333e980404d9c001d8a2102f0db",
+      "size_bytes": 6782,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/operations-review.md",
+      "sha256": "643e7a01e406ff4c4cd7ee66491cf98872acaa5a9a29993ab6459a043166fb20",
+      "size_bytes": 5550,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/orderbook-review.md",
+      "sha256": "08db5266e6924e974e93d141de73f271ff8a8ec5124480707e28b784049d2430",
+      "size_bytes": 12167,
+      "reviewer_mentions": [
+        "/root/implement_domain/review_orderbook"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/domain/real-estate-review.md",
+      "sha256": "b40bad22013fec14e81cc37ac940e39d93aac81053eb2d5858e9483c3dd63e59",
+      "size_bytes": 8781,
+      "reviewer_mentions": [
+        "/root/implement_domain/review_real_estate"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/frontend/review.md",
+      "sha256": "83b5d98f45ed29ce9535a1bc49a54ae6d0a58ea4dd5030c08382cecef2a10b02",
+      "size_bytes": 21862,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-account.md",
+      "sha256": "be21d609de03b3bf0b76439d9860a5ab9693ca1a1a50c0807a793aad51835771",
+      "size_bytes": 5467,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "sha256": "f34266ec20379374b3a81579462e2e6c712b3bd1cf7772b79bb3cbef48efa8aa",
+      "size_bytes": 7098,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-build.md",
+      "sha256": "8384fcfdef250375b188b14b49f40220c74a2c3542adf956bd963b8e3b522902",
+      "size_bytes": 6318,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-deadline.md",
+      "sha256": "05de9e1e33769eb0906de0baef3ee463a4055f79bce6f2bf6fec76ac0ef23be2",
+      "size_bytes": 8414,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures1.md",
+      "sha256": "9c0c234406ff8ead0707109e0326796fedb0df2b8bff95f412b0938a8c290f13",
+      "size_bytes": 11243,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-fixtures2.md",
+      "sha256": "967baa569d2838c896b8bada7647c674f389d665b57b61532304f20d86c5313a",
+      "size_bytes": 7362,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-performance.md",
+      "sha256": "8cf0cda34a0b99022ec7214e80059ce75d94a26d1d31c3e38ffa86ad6741409e",
+      "size_bytes": 8790,
+      "reviewer_mentions": [
+        "/root/implement_hosts/review_performance"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/hosts/review-server.md",
+      "sha256": "93e611d3cbeb374bd4268b385f7ee74d04cf3c81280041a07ac0458572497e67",
+      "size_bytes": 5256,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-auction.md",
+      "sha256": "895681f4655144352caf10420b50b42f4978cf673009affa4ef29120417e9125",
+      "size_bytes": 7600,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-resources-projections.md",
+      "sha256": "4e39cf6137f3fc39880a0e5224731f0865d301871d9ca430ea98a4e605168557",
+      "size_bytes": 7033,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/pipeline/review-stream-callers.md",
+      "sha256": "c452539804cbf9386ad7f5fecc2279041923ccb87ffd0db06ad99791152a866a",
+      "size_bytes": 8509,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/session/core-review.md",
+      "sha256": "007135d0bed7615634b4de9766f8508d221a26e030cd2d714c52976b6fc3caf2",
+      "size_bytes": 8745,
+      "reviewer_mentions": [
+        "/root/implement_session/review_core"
+      ],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/session/leaf-review.md",
+      "sha256": "6e7cb67f968c44916ebe17f1be548f05f061b0806ca7af9e0ccb26f1da543f68",
+      "size_bytes": 5496,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    },
+    {
+      "path": "agents/oop-refactor-implementation/session/lifecycle-review.md",
+      "sha256": "66ad0aeefbaa77b7c56aa291df7bedb3d6c944720450eca69abc3db14d416bc7",
+      "size_bytes": 5287,
+      "reviewer_mentions": [],
+      "meaning": "机械记录当前报告版本，不等于亲读全文或审查通过"
+    }
+  ]
+}

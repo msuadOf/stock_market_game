@@ -253,15 +253,26 @@ impl Market {
         &self.code
     }
 
-    // ── 存档恢复用 setter（仅 restore 调用）──
+    // ── 经过上层校验的恢复事实与竞价结果写入口 ──
 
-    /// 设置最新成交价（存档恢复用）。
-    pub fn set_last_price(&mut self, price: Money) {
+    /// 完整 save slot 校验后同时恢复两项权威价格事实。
+    pub(crate) fn restore_prices(&mut self, last_price: Money, last_close: Money) {
+        self.last_price = last_price;
+        self.last_close = last_close;
+    }
+
+    /// 竞价 caller 在完成撮合后应用其 clearing price，不重新改变输入接受集。
+    pub(crate) fn apply_auction_price(&mut self, price: Money) {
         self.last_price = price;
     }
 
-    /// 设置昨收价（存档恢复用）。
-    pub fn set_last_close(&mut self, price: Money) {
+    #[cfg(test)]
+    pub(crate) fn fixture_set_last_price(&mut self, price: Money) {
+        self.last_price = price;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_last_close(&mut self, price: Money) {
         self.last_close = price;
     }
 
@@ -397,7 +408,7 @@ impl Market {
         self.book.filled_orders()
     }
 
-    pub fn restore_filled_orders(
+    pub(crate) fn restore_filled_orders(
         &mut self,
         entries: impl IntoIterator<Item = (OrderId, AccountId)>,
     ) -> Result<(), MarketError> {
@@ -405,7 +416,7 @@ impl Market {
         Ok(())
     }
 
-    pub fn record_filled_order(
+    pub(crate) fn record_filled_order(
         &mut self,
         id: OrderId,
         owner: AccountId,
@@ -455,5 +466,108 @@ impl Market {
 
     pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.book.bid_depth_limited(max_levels)
+    }
+}
+
+#[cfg(test)]
+mod price_limit_state_tests {
+    use super::*;
+    use crate::LimitPrice;
+
+    fn mk_market() -> Market {
+        // last_close=last_price=10.00，limit=0.10，tick=0.01
+        Market::new(
+            StockCode("600101".to_string()),
+            Money::from_cents(1000),
+            0.10,
+            Money::from_cents(1),
+        )
+        .unwrap()
+    }
+
+    fn sell(id: u64, price_cents: i64, qty: u32) -> Order {
+        Order {
+            id: OrderId(id),
+            side: Side::Sell,
+            price: Money::from_cents(price_cents),
+            qty,
+            original_qty: qty,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(2),
+            seq: 0,
+        }
+    }
+
+    #[test]
+    fn symbolic_limit_prices_resolve_at_the_current_authoritative_boundary() {
+        let mut market = mk_market();
+        for (side, price, caged, uncaged) in [
+            (Side::Buy, LimitPrice::Highest, 1020, 1100),
+            (Side::Sell, LimitPrice::Lowest, 980, 900),
+            (Side::Sell, LimitPrice::Highest, 1100, 1100),
+            (Side::Buy, LimitPrice::Lowest, 900, 900),
+        ] {
+            assert_eq!(
+                market.resolve_limit_price(side, price, true).unwrap(),
+                Money::from_cents(caged)
+            );
+            assert_eq!(
+                market.resolve_limit_price(side, price, false).unwrap(),
+                Money::from_cents(uncaged)
+            );
+        }
+        assert_eq!(
+            market
+                .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
+                .unwrap(),
+            Money::from_cents(1_007)
+        );
+        market.place(sell(1, 1_050, 100)).unwrap();
+        assert_eq!(
+            market
+                .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
+                .unwrap(),
+            Money::from_cents(1_071)
+        );
+        market.fixture_set_last_close(Money::from_cents(i64::MAX));
+        assert!(market
+            .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
+            .is_err());
+        assert_eq!(
+            market
+                .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
+                .unwrap(),
+            Money::from_cents(1_007)
+        );
+    }
+
+    #[test]
+    fn price_limit_overflow_is_an_explicit_error_not_a_panic() {
+        let mut market = mk_market();
+        market.fixture_set_last_close(Money::from_cents(i64::MAX));
+        assert!(market.up_stop().is_err());
+    }
+
+    #[test]
+    fn legal_limit_order_prices_keep_the_wider_ten_tick_cage_and_propagate_errors() {
+        let mut market = Market::new(
+            StockCode("LOW_PRICE".to_string()),
+            Money::from_cents(285),
+            0.10,
+            Money::from_cents(1),
+        )
+        .unwrap();
+        assert_eq!(
+            market.limit_order_price_bound(Side::Buy, true).unwrap(),
+            Money::from_cents(295)
+        );
+        assert_eq!(
+            market.limit_order_price_bound(Side::Sell, true).unwrap(),
+            Money::from_cents(275)
+        );
+        market.fixture_set_last_close(Money::from_cents(i64::MAX));
+        assert!(market.limit_order_price_bound(Side::Buy, true).is_err());
+        assert!(market.limit_order_price_bound(Side::Buy, false).is_err());
     }
 }

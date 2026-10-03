@@ -8,7 +8,9 @@
 //! 全部原有公共路径不变。
 
 mod feedback;
+mod position_transition;
 mod price_memory;
+mod retention;
 mod shared_history;
 mod watchlist;
 
@@ -24,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::calendar::CivilDate;
 use crate::{Money, Side, StockCode};
+use position_transition::PositionExperienceTransition;
 
 pub const POST_EXIT_COOLDOWN_MINUTES: u64 = 120;
 pub const MAX_UNHELD_WATCHLIST_STOCKS: usize = 8;
@@ -172,25 +175,8 @@ impl RetailExperienceState {
         market_minute: u64,
     ) -> Result<(), ExperienceError> {
         require_positive("observed position price", price)?;
-        let stock = self.stocks.entry(code.clone()).or_default();
-        stock.last_observed_market_minute = market_minute;
-        if stock.entry_reference_price.is_some() {
-            stock.peak_price_since_entry = Some(
-                stock
-                    .peak_price_since_entry
-                    .map_or(price, |peak| peak.max(price)),
-            );
-        }
-        let adverse = stock.last_buy_price.is_some_and(|buy_price| {
-            i128::from(price.cents()) * 100 <= i128::from(buy_price.cents()) * 95
-        });
-        if adverse && !stock.adverse_move_recorded {
-            self.consecutive_failed_buys = self
-                .consecutive_failed_buys
-                .checked_add(1)
-                .ok_or(ExperienceError::CounterOverflow)?;
-            stock.adverse_move_recorded = true;
-        }
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .observe_retail_position(price, market_minute, &mut self.consecutive_failed_buys)?;
         Ok(())
     }
 
@@ -254,64 +240,17 @@ impl RetailExperienceState {
             });
         }
 
-        let stock = self.stocks.entry(code.clone()).or_default();
-        stock.last_trade_market_minute = market_minute;
-        stock.last_observed_market_minute = market_minute;
-        match side {
-            Side::Buy => {
-                stock.last_buy_price = Some(price);
-                if order_id.is_none_or(|id| stock.last_buy_order_id != Some(id)) {
-                    stock.adverse_move_recorded = false;
-                }
-                stock.last_buy_order_id = order_id;
-                stock.cooldown_until_market_minute = None;
-                if before_qty == 0 {
-                    stock.entry_reference_price = Some(price);
-                    stock.peak_price_since_entry = Some(price);
-                } else {
-                    stock.peak_price_since_entry = Some(
-                        stock
-                            .peak_price_since_entry
-                            .map_or(price, |peak| peak.max(price)),
-                    );
-                }
-            }
-            Side::Sell => {
-                let has_buy_experience = stock.last_buy_price.is_some();
-                if has_buy_experience
-                    && order_id.is_none_or(|id| stock.last_sell_order_id != Some(id))
-                {
-                    if let Some(cost) = cost_before {
-                        if price > cost {
-                            self.consecutive_failed_buys =
-                                self.consecutive_failed_buys.saturating_sub(1);
-                        } else if price < cost && !stock.adverse_move_recorded {
-                            self.consecutive_failed_buys = self
-                                .consecutive_failed_buys
-                                .checked_add(1)
-                                .ok_or(ExperienceError::CounterOverflow)?;
-                            stock.adverse_move_recorded = true;
-                        }
-                    }
-                }
-                stock.last_sell_order_id = order_id;
-                if after_qty == 0 {
-                    stock.entry_reference_price = None;
-                    stock.peak_price_since_entry = None;
-                    stock.last_buy_price = None;
-                    stock.last_buy_order_id = None;
-                    stock.adverse_move_recorded = false;
-                    stock.cooldown_until_market_minute = Some(
-                        market_minute
-                            .checked_add(POST_EXIT_COOLDOWN_MINUTES)
-                            .ok_or(ExperienceError::MarketMinuteOverflow {
-                                minute: market_minute,
-                                increment: POST_EXIT_COOLDOWN_MINUTES,
-                            })?,
-                    );
-                }
-            }
-        }
+        PositionExperienceTransition::from_maps(&mut self.stocks, &mut self.feedback.stocks, code)
+            .record_retail_fill(
+                side,
+                price,
+                before_qty,
+                after_qty,
+                cost_before,
+                market_minute,
+                order_id,
+                &mut self.consecutive_failed_buys,
+            )?;
         Ok(())
     }
 

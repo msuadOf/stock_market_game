@@ -9,8 +9,8 @@ pub use signals::{
     price_volume_signal, technical_signal, trend_signal,
 };
 pub use targets::{
-    eligible_candidates, target_position_weight_bp, target_share_quantity, QuantityRounding,
-    TargetShareQuantity,
+    eligible_candidates, target_position_weight_bp, target_share_quantity, CandidateTargetProposal,
+    QuantityRounding, TargetShareQuantity,
 };
 pub use types::{
     CandidateAssessment, CandidateError, CandidateSignals, ExcludedSignal, SignalComponent,

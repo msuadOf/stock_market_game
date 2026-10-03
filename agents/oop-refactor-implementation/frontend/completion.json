@@ -1,0 +1,1528 @@
+{
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "assigned_sha256": "c07864f8749deb4f31de58ea8ac8d8e00965f0b5756e01facf9b41f28fffe7ba",
+  "action_count": 16,
+  "extension_count": 3,
+  "requirement_count": 39,
+  "status": "implemented-reviewed",
+  "actions": [
+    {
+      "id": "web-01-A06",
+      "title": "AppShell 组合的 SessionHostLifecycle 闭包对象、SaveCommands 门面与 TradingCommands hook 返回对象（候选）；AppShell 保留 JSX 与 ProtocolCoordinator 接线",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#web-01-A06",
+      "requirements": [
+        {
+          "requirement": "单次 effect 的 cancelled/ownedHost/unsetIndicatorCalculator 聚合并保留异步启动、stop/release/dispose 顺序",
+          "owner": "createSessionHostLifecycle/useSessionHostLifecycle",
+          "methods": [
+            "start",
+            "stopCurrentSession",
+            "releaseOwnedHost",
+            "dispose"
+          ],
+          "production_callers": [
+            "AppShell.useSessionHostLifecycle",
+            "AppShell.stopStartupRef",
+            "effect cleanup"
+          ],
+          "files": [
+            "apps/web/src/App.tsx",
+            "apps/web/src/app/useSessionHostLifecycle.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "六个存档命令使用同一 source/persistence/gates/文件目标，逐 handler 原写集保持",
+          "owner": "createSaveCommands/useSaveCommands",
+          "methods": [
+            "recoverFromFile",
+            "noticeSavePolicy",
+            "load",
+            "selectFile",
+            "loadFile",
+            "newGame"
+          ],
+          "production_callers": [
+            "AppShell recover/load/save/file/newGame UI handlers"
+          ],
+          "files": [
+            "apps/web/src/App.tsx",
+            "apps/web/src/app/useSaveCommands.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "交易表单/查询列表/取消集合与行为聚合，返回同一 form、窄 setters 和稳定清空 callback",
+          "owner": "useTradingCommands",
+          "methods": [
+            "buildIntent",
+            "submit",
+            "cancelPlayerOrder",
+            "addAuto",
+            "refreshPlayerOrders",
+            "clearPlayerOrders",
+            "clearCancelingOrderIds"
+          ],
+          "production_callers": [
+            "AppShell 交易/条件单/选股 JSX",
+            "ProtocolCoordinator.onBaseline/onApplied",
+            "SaveCommands"
+          ],
+          "files": [
+            "apps/web/src/App.tsx",
+            "apps/web/src/app/useTradingCommands.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "App/Shell 的 setup/source/persistence、Redux 与 coordinator/ref/显示状态保持唯一权威；默认factory直接返回原Promise",
+          "owner": "App/AppShell",
+          "methods": [
+            "connectProtocol",
+            "disconnectProtocol"
+          ],
+          "production_callers": [
+            "App composition",
+            "SessionHostLifecycle borrowed ports",
+            "SaveCommands borrowed ports"
+          ],
+          "files": [
+            "apps/web/src/App.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "callback_bridges": [
+            "hostUpdateRef.current",
+            "ProtocolCoordinator.onBaseline",
+            "ProtocolCoordinator.onApplied",
+            "ProtocolCoordinator.onFailure"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/app.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/app.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "web-01-A27",
+      "title": "MarketChartProjection（候选）+ useMarketChartRuntime React适配hook",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#web-01-A27",
+      "requirements": [
+        {
+          "requirement": "五组 prices/auctions/volume/completed/active 缓存和 mutation 迁到单一可重建 owner，hook 不保留旧写 refs",
+          "owner": "MarketChartProjection",
+          "methods": [
+            "upsertFrames",
+            "rebuildHistory",
+            "replaceSnapshot",
+            "replaceActiveCandles",
+            "installBaseline",
+            "reset"
+          ],
+          "production_callers": [
+            "useMarketChartRuntime.installBaseline/acceptReduction/resetMarketHistory"
+          ],
+          "files": [
+            "apps/web/src/app/market-chart-projection.ts",
+            "apps/web/src/app/useMarketChartRuntime.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "只读 history/active getters 和三输出数组保持点/历史引用复用，Provider/caller全部迁移",
+          "owner": "MarketChartProjection/useMarketChartRuntime/MarketRuntimeProvider",
+          "methods": [
+            "pricePointsFor",
+            "auctionPointsFor",
+            "candlesFor",
+            "history",
+            "activeCandles",
+            "getPriceHistory",
+            "getActiveDailyCandles"
+          ],
+          "production_callers": [
+            "MarketRuntimeProvider",
+            "ConnectedMarketPanel",
+            "ConnectedMobileDetail"
+          ],
+          "files": [
+            "apps/web/src/app/MarketRuntimeProvider.tsx",
+            "apps/web/src/app/LocalRefreshViews.tsx",
+            "apps/web/src/app/useMarketChartRuntime.ts"
+          ],
+          "status": "implemented-reviewed",
+          "test_callers": [
+            "MarketChartRuntimeProbe"
+          ]
+        },
+        {
+          "requirement": "ProtocolReduction/Redux/effects/chartCode 与指标 registration 继续由原 React/Provider owner 编排",
+          "owner": "useMarketChartRuntime/MarketRuntimeProvider",
+          "methods": [
+            "acceptReduction",
+            "installBaseline",
+            "selectChart",
+            "resetMarketHistory",
+            "refreshDailyChart",
+            "setIndicatorCalculator"
+          ],
+          "production_callers": [
+            "AppShell protocol callbacks",
+            "ConnectedChartPanel",
+            "ConnectedMobileDetail"
+          ],
+          "files": [
+            "apps/web/src/app/useMarketChartRuntime.ts",
+            "apps/web/src/app/MarketRuntimeProvider.tsx"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/chart.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/chart.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "web-08-A01",
+      "title": "MobileTradingConceptController（原型交互，可选）",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#web-08-A01",
+      "requirements": [
+        {
+          "requirement": "页面 root/panels/p/r/d/o/按钮及事件方法聚合，DOM 继续唯一保存视图状态",
+          "owner": "MobileTradingConceptController",
+          "methods": [
+            "bindEvents",
+            "selectChartView",
+            "navigateTo",
+            "renderProgress"
+          ],
+          "production_callers": [
+            "静态原型页面一次 controller 构造",
+            "[data-v]图表按钮 onclick",
+            "[data-p]底栏按钮 onclick",
+            "#p进度 oninput"
+          ],
+          "files": [
+            "design/ui/mobile/mobile-trading-concept.html"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "初始绘制、DOM 搬移、底栏与图表按钮引用身份保持；底栏[data-p=book]派发图表[data-v=book].click；不接生产EngineHost",
+          "owner": "MobileTradingConceptController",
+          "methods": [
+            "bindEvents",
+            "navigateTo",
+            "renderProgress"
+          ],
+          "production_callers": [
+            "原型 inline script composition",
+            "[data-p=book] onclick",
+            "[data-v=book] click"
+          ],
+          "files": [
+            "design/ui/mobile/mobile-trading-concept.html"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/mobile.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/mobile.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N01",
+      "title": "Remote 报告查询时间线与归属索引",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N01",
+      "requirements": [
+        {
+          "requirement": "report epoch与ID/company索引唯一拥有；跨generation/显式load失效及opaque字符串契约保持",
+          "owner": "ReportQueryContext",
+          "methods": [
+            "captureEpoch",
+            "invalidate",
+            "acceptPage",
+            "companyFor",
+            "assertCurrent",
+            "validateReport"
+          ],
+          "production_callers": [
+            "RemoteHost.queryPublicReports/publicReportById",
+            "handle Baseline",
+            "load"
+          ],
+          "files": [
+            "apps/web/src/host/report-query-context.ts",
+            "apps/web/src/host/remote-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "页全部校验后登记，by-id按公司路由并检查原identity与epoch，不把报告索引并入其他宿主",
+          "owner": "ReportQueryContext",
+          "methods": [
+            "acceptPage",
+            "companyFor",
+            "assertCurrent",
+            "validateReport"
+          ],
+          "production_callers": [
+            "CompanyQueryCoordinator经RemoteHost查询接口"
+          ],
+          "files": [
+            "apps/web/src/host/report-query-context.ts",
+            "apps/web/src/host/remote-company-reports.test.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/remote.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/remote.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N02",
+      "title": "命令式图表资源所有权",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N02",
+      "requirements": [
+        {
+          "requirement": "主副chart、price/candle/volume/MACD/KDJ series和observer/listener资源唯一拥有",
+          "owner": "PriceChartRuntime",
+          "methods": [
+            "create",
+            "resize",
+            "dispose"
+          ],
+          "production_callers": [
+            "PriceChart mount effect/cleanup",
+            "ResizeObserver/window listener"
+          ],
+          "files": [
+            "apps/web/src/components/price-chart-runtime.ts",
+            "apps/web/src/components/PriceChart.tsx"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "价格模式清空/裁窗/fit及单活动指标创建删除与pending/error清旧数据完整迁移",
+          "owner": "PriceChartRuntime",
+          "methods": [
+            "updatePrice",
+            "updateIndicator",
+            "removeIndicatorSeries"
+          ],
+          "production_callers": [
+            "PriceChart price/indicator effects"
+          ],
+          "files": [
+            "apps/web/src/components/price-chart-runtime.ts",
+            "apps/web/src/components/PriceChart.tsx"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "series逐项remove成功后立即清字段，保留第2项失败部分状态，FR01修复后retry不重删首项",
+          "owner": "PriceChartRuntime",
+          "methods": [
+            "removeIndicatorSeries",
+            "updateIndicator"
+          ],
+          "production_callers": [
+            "PriceChart indicator effect"
+          ],
+          "files": [
+            "apps/web/src/components/price-chart-runtime.ts",
+            "apps/web/src/components/price-chart-runtime.test.ts"
+          ],
+          "status": "implemented-reviewed",
+          "test_callers": [
+            "fake chart failure/retry test"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/chart.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/chart.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N03",
+      "title": "AG Grid 行提交同步所有权",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N03",
+      "requirements": [
+        {
+          "requirement": "GridApi借用和latest/submitted行记账唯一拥有，render登记而effect/ready提交",
+          "owner": "MarketGridRowSynchronizer",
+          "methods": [
+            "recordLatest",
+            "updateLatest",
+            "attach"
+          ],
+          "production_callers": [
+            "MarketGrid render/allRowData effect/onGridReady"
+          ],
+          "files": [
+            "apps/web/src/components/market-grid-row-synchronizer.ts",
+            "apps/web/src/components/MarketGrid.tsx"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "applyTransactionAsync成功调用后前移submitted，不冒充实际执行完成；reattach基准与解绑明确",
+          "owner": "MarketGridRowSynchronizer",
+          "methods": [
+            "attach",
+            "updateLatest",
+            "dispose"
+          ],
+          "production_callers": [
+            "MarketGrid onGridReady/onGridPreDestroyed"
+          ],
+          "files": [
+            "apps/web/src/components/market-grid-row-synchronizer.ts",
+            "apps/web/src/components/MarketGrid.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "callees_or_related_owners": [
+            "diffMarketRows"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/chart.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/chart.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N04",
+      "title": "WASM 会话槽资源所有权",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N04",
+      "requirements": [
+        {
+          "requirement": "handle/generation唯一拥有，bindings只借用，全部session caller移除旧globals",
+          "owner": "WasmSessionSlot",
+          "methods": [
+            "requireHandle",
+            "requireGeneration",
+            "readGeneration",
+            "create",
+            "drop",
+            "prepareBaseline"
+          ],
+          "production_callers": [
+            "wasm-worker message switch 全session命令",
+            "postBaseline/failure"
+          ],
+          "files": [
+            "apps/web/src/host/wasm-session-slot.ts",
+            "apps/web/src/host/wasm-worker.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "restore继续原helper与loop hooks，候选校验/交换/旧drop/prepare失败及microtask顺序保持",
+          "owner": "WasmSessionSlot",
+          "methods": [
+            "restore"
+          ],
+          "production_callers": [
+            "wasm-worker restore"
+          ],
+          "files": [
+            "apps/web/src/host/wasm-session-slot.ts",
+            "apps/web/src/host/wasm-worker.ts",
+            "apps/web/src/host/wasm-restore-transaction.ts"
+          ],
+          "status": "implemented-reviewed",
+          "callees_or_related_owners": [
+            "restoreWasmSession",
+            "WasmTickLoop stop/restart"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/wasm.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/wasm.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N05",
+      "title": "WASM tick 调度循环所有权",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N05",
+      "requirements": [
+        {
+          "requirement": "timer/running/speed/flushMs/lastStepAt/pausePreferences/meter由唯一loop持有",
+          "owner": "WasmTickLoop",
+          "methods": [
+            "start",
+            "stop",
+            "setSpeed",
+            "setFrameRate",
+            "setPausePreferences",
+            "isRunning",
+            "readSpeedMetrics"
+          ],
+          "production_callers": [
+            "wasm-worker start/stop/speed/frameRate/preferences/speedMetrics/drop/restore"
+          ],
+          "files": [
+            "apps/web/src/host/wasm-tick-loop.ts",
+            "apps/web/src/host/wasm-worker.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "finite/Infinity调度、slot step/yield、protocol后barrier暂停、CivilUpdate不计市场tick保持",
+          "owner": "WasmTickLoop",
+          "methods": [
+            "frame",
+            "stepOnce",
+            "publish"
+          ],
+          "production_callers": [
+            "wasm-worker stepOnce/endCivilDay",
+            "loop timer",
+            "restore microtask restart"
+          ],
+          "files": [
+            "apps/web/src/host/wasm-tick-loop.ts",
+            "apps/web/src/host/wasm-worker.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/wasm.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/wasm.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N06",
+      "title": "Worker 请求资源范围与序号分配",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N06",
+      "requirements": [
+        {
+          "requirement": "sequence与逐请求pending/listener/timeout/settle资源绑定唯一Worker port；可选nextRequestId已实现",
+          "owner": "WorkerRequestScope",
+          "methods": [
+            "nextRequestId",
+            "request"
+          ],
+          "production_callers": [
+            "createWorkerHost 全14类命令",
+            "六worker helper"
+          ],
+          "files": [
+            "apps/web/src/host/worker-request.ts",
+            "apps/web/src/host/worker-host.ts"
+          ],
+          "status": "implemented-reviewed",
+          "test_observations": [
+            "pendingCount"
+          ]
+        },
+        {
+          "requirement": "requestId+本次generation匹配与原success/error/timeout清理保持；generation/epoch/disposed仍由host校验",
+          "owner": "WorkerRequestScope/WorkerHost",
+          "methods": [
+            "request"
+          ],
+          "production_callers": [
+            "readWorkerSpeedMetrics/readWorkerPlayerWorkingOrders/requestWorkerIndicators/stepWorkerOnce/restoreWorkerSlot/refreshWorkerBaseline",
+            "WorkerHost controls"
+          ],
+          "files": [
+            "apps/web/src/host/worker-request.ts",
+            "apps/web/src/host/worker-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/host.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/host.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N07",
+      "title": "Remote 写命令关联登记",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N07",
+      "requirements": [
+        {
+          "requirement": "command sequence/waiter map唯一拥有，安装先于send，先删后resolve/reject，未知ID显式失败",
+          "owner": "RemoteCommandRegistry",
+          "methods": [
+            "next",
+            "register",
+            "resolveQueued",
+            "rejectGateway",
+            "rejectAll"
+          ],
+          "production_callers": [
+            "RemoteHost.submitIntent/handle CommandQueued/handle GatewayError/fail"
+          ],
+          "files": [
+            "apps/web/src/host/remote-command-registry.ts",
+            "apps/web/src/host/remote-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "CommandQueued仅入队，socket/send/dispose仍由adapter，未新增timeout/retry/立即reject",
+          "owner": "RemoteHost/RemoteCommandRegistry",
+          "methods": [
+            "register",
+            "rejectAll"
+          ],
+          "production_callers": [
+            "RemoteHost.fail",
+            "RemoteHost.submitIntent"
+          ],
+          "files": [
+            "apps/web/src/host/remote-command-registry.ts",
+            "apps/web/src/host/remote-host.ts"
+          ],
+          "status": "implemented-reviewed",
+          "related_owners": [
+            "RemoteHost.dispose（按旧行为不settle pending registry）"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/remote.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/remote.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N08",
+      "title": "移动分时视图投影值",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N08",
+      "requirements": [
+        {
+          "requirement": "visible连续/竞价/null有效价、价格scale、phase volume、elapsed与signature聚为本render不可变值",
+          "owner": "MobileIntradayProjection",
+          "methods": [
+            "fromInputs",
+            "priceY",
+            "auctionLine",
+            "continuousLine",
+            "averageLine",
+            "volumeMarks"
+          ],
+          "production_callers": [
+            "MobileStockDetail.IntradayPanel"
+          ],
+          "files": [
+            "apps/web/src/mobile/market-model.ts",
+            "apps/web/src/mobile/MobileStockDetail.tsx"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "均价/progress/recentTrades/date时钟读取同一投影；累计竞价量与连续增量、算术均价简化保持",
+          "owner": "MobileIntradayProjection",
+          "methods": [
+            "fromInputs",
+            "averageLine",
+            "volumeMarks"
+          ],
+          "production_callers": [
+            "IntradayPanel SVG/metadata/recent trade JSX"
+          ],
+          "files": [
+            "apps/web/src/mobile/market-model.ts",
+            "apps/web/src/mobile/MobileStockDetail.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "observations": [
+            "displayedAverage",
+            "progress",
+            "signature",
+            "recentTrades",
+            "tradeTime",
+            "clockTime"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/mobile.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/mobile.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-N09",
+      "title": "移动 K 线窗口投影值",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-N09",
+      "requirements": [
+        {
+          "requirement": "完整candles/normalized window/visible/domain/shared slots/MA/KDJ/volume聚为本render不可变值",
+          "owner": "MobileKlineProjection",
+          "methods": [
+            "fromInputs",
+            "priceY",
+            "slotFor",
+            "candleBodyAndWick",
+            "movingAverage",
+            "movingAverageLine",
+            "indicatorLine",
+            "volumeMarks"
+          ],
+          "production_callers": [
+            "MobileStockDetail.KlinePanel"
+          ],
+          "files": [
+            "apps/web/src/mobile/market-model.ts",
+            "apps/web/src/mobile/MobileStockDetail.tsx"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "全历史先MA/指标后切窗，5/20游戏交易日分组及code-period viewport reset保持；React拥有query/viewport",
+          "owner": "MobileKlineProjection/KlinePanel",
+          "methods": [
+            "fromInputs",
+            "movingAverage",
+            "movingAverageLine",
+            "indicatorLine"
+          ],
+          "production_callers": [
+            "KlinePanel viewport actions/useIndicatorResults"
+          ],
+          "files": [
+            "apps/web/src/mobile/market-model.ts",
+            "apps/web/src/mobile/MobileStockDetail.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "observations": [
+            "visibleWindow",
+            "latestSignature"
+          ],
+          "callees_or_related_owners": [
+            "aggregateCandles"
+          ]
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/mobile.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/mobile.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-R2-N01",
+      "title": "IndicatorResultRequest：可选聚合请求身份与结果转换",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-R2-N01",
+      "requirements": [
+        {
+          "requirement": "每effect ticket/calculator/input引用与转换资格聚合，挂载gate与React结果state不复制",
+          "owner": "IndicatorResultRequest",
+          "methods": [
+            "capture",
+            "matches",
+            "pendingRecord",
+            "resolveRecord",
+            "rejectRecord"
+          ],
+          "production_callers": [
+            "useIndicatorResults effect/return identity branch",
+            "PriceChart",
+            "MobileStockDetail.KlinePanel"
+          ],
+          "files": [
+            "apps/web/src/components/indicator-results.ts",
+            "apps/web/src/components/useIndicatorResults.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "pending同步、calculator调用microtask、旧结果忽略、parse/reject显错与disabled优先顺序保持",
+          "owner": "useIndicatorResults/IndicatorResultRequest",
+          "methods": [
+            "pendingRecord",
+            "resolveRecord",
+            "rejectRecord",
+            "matches"
+          ],
+          "production_callers": [
+            "useIndicatorResults Promise handlers/cleanup/render"
+          ],
+          "files": [
+            "apps/web/src/components/useIndicatorResults.ts",
+            "apps/web/src/components/use-indicator-results.test.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/request-owners.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/request-owners.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-R2-N02",
+      "title": "RemotePublisherState：消费端连接与基线同步状态",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-R2-N02",
+      "requirements": [
+        {
+          "requirement": "socket/connection identity/awaiting/waiter/cache/epoch六字段唯一拥有，单槽覆盖与fail缓存保持",
+          "owner": "RemotePublisherState",
+          "methods": [
+            "attachSocket",
+            "detachSocket",
+            "invalidateConnection",
+            "isCurrentConnection",
+            "clearSocketIfCurrent",
+            "beginBaselineWait",
+            "takeBaselineWaiter",
+            "installBaseline"
+          ],
+          "production_callers": [
+            "RemoteHost.connect/fail/dispose/setDeliveryMode/handle Baseline"
+          ],
+          "files": [
+            "apps/web/src/host/remote-publisher-state.ts",
+            "apps/web/src/host/remote-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "baseline同步、deliverability和query pinning窄检查保持，WS/HTTP/callback时序仍adapter编排",
+          "owner": "RemotePublisherState",
+          "methods": [
+            "beginResync",
+            "baselineForRead",
+            "captureQueryCursor",
+            "assertQueryCursor",
+            "isProtocolDeliverable",
+            "hasGeneration",
+            "resolveBaselineWaiter",
+            "rejectBaselineWaiter"
+          ],
+          "production_callers": [
+            "RemoteHost.start/resync/load/save/orders/NPC/handle protocol"
+          ],
+          "files": [
+            "apps/web/src/host/remote-publisher-state.ts",
+            "apps/web/src/host/remote-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/remote.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/remote.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-R2-N03",
+      "title": "TauriTimelineState：缩小会话时间线与查询游标 owner",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-R2-N03",
+      "requirements": [
+        {
+          "requirement": "timeline/generation/cache/epoch四字段唯一拥有，init/refresh/restore各自校验与parse部分写入保持",
+          "owner": "TauriTimelineState",
+          "methods": [
+            "setInitialTimeline",
+            "installInitialBaseline",
+            "replaceRefreshedBaseline",
+            "replaceRestoredBaseline"
+          ],
+          "production_callers": [
+            "createTauriHost initialization/refreshBaseline/load"
+          ],
+          "files": [
+            "apps/web/src/host/tauri-timeline-state.ts",
+            "apps/web/src/host/tauri-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "save只pin generation、orders/NPC额外epoch，event timeline过滤与dispose只清timeline/cache保持",
+          "owner": "TauriTimelineState",
+          "methods": [
+            "matchesTimeline",
+            "currentGeneration",
+            "baselineForRead",
+            "baselineForDelivery",
+            "captureGeneration",
+            "captureQueryCursor",
+            "assertGeneration",
+            "assertQueryCursor",
+            "clearForDispose"
+          ],
+          "production_callers": [
+            "Tauri listeners/start/snapshot/tick/day/save/playerWorkingOrders/npcDecisionTrace/dispose"
+          ],
+          "files": [
+            "apps/web/src/host/tauri-timeline-state.ts",
+            "apps/web/src/host/tauri-host.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/host.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/host.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    },
+    {
+      "id": "frontend-R2-N04",
+      "title": "CompanyRequestRegistry：可选聚合页查询与 by-id 请求 ticket",
+      "status": "implemented-reviewed",
+      "definition": "agents/oop-refactor-implementation/frontend/assigned-actions.json#frontend-R2-N04",
+      "requirements": [
+        {
+          "requirement": "sequence/map私有登记，非force去重、force替换、旧finally不删新ticket，clear不reset sequence",
+          "owner": "CompanyRequestRegistry",
+          "methods": [
+            "begin",
+            "matches",
+            "finishIfCurrent",
+            "clear"
+          ],
+          "production_callers": [
+            "CompanyQueryCoordinator.query/queryReportById/installBaseline/dispose/isCurrentRequest"
+          ],
+          "files": [
+            "apps/web/src/host/company-request-registry.ts",
+            "apps/web/src/host/company-query-coordinator.ts"
+          ],
+          "status": "implemented-reviewed"
+        },
+        {
+          "requirement": "page/by-id不同key/capability/dispatch保持，generation/disposed/cache/DTO/event coverage继续coordinator权威",
+          "owner": "CompanyQueryCoordinator",
+          "methods": [
+            "query",
+            "queryReportById",
+            "isCurrentRequest",
+            "installBaseline",
+            "dispose"
+          ],
+          "production_callers": [
+            "AppShell CompanyQueryCoordinator",
+            "company panel query callers"
+          ],
+          "files": [
+            "apps/web/src/host/company-query-coordinator.ts",
+            "apps/web/src/host/company-query-coordinator.test.ts"
+          ],
+          "status": "implemented-reviewed"
+        }
+      ],
+      "implementation_record": "agents/oop-refactor-implementation/frontend/request-owners.md",
+      "review": "agents/oop-refactor-implementation/frontend/review.md",
+      "tests": {
+        "status": "passed",
+        "evidence": "agents/oop-refactor-implementation/frontend/request-owners.md",
+        "version": "final-source-version",
+        "historical_passes": "分片记录保留修前通过和红灯历史，不把历史版本当最终验证；最终差异相关复测见verification.md。",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md",
+        "unchanged_suites": "未受后续修正影响的分片用例保留其稳定版本通过证据；修改后的fixture/依赖相关suite已单独重跑，不汇总重复case。"
+      },
+      "unimplemented": []
+    }
+  ],
+  "extensions": [
+    {
+      "id": "frontend-E01",
+      "extends": "web-01-A06",
+      "requirements": [
+        {
+          "requirement": "每effect polling取消/timer与立即采样/1000ms重试聚合，App显示state与load共享gate保持",
+          "owner": "createSpeedMetricsPolling/useSpeedMetricsPolling",
+          "methods": [
+            "start",
+            "poll",
+            "dispose"
+          ],
+          "production_callers": [
+            "AppShell.useSpeedMetricsPolling"
+          ],
+          "files": [
+            "apps/web/src/app/useSpeedMetricsPolling.ts",
+            "apps/web/src/App.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "related_owners": [
+            "SaveCommands.load/loadFile共享gate"
+          ]
+        }
+      ],
+      "tests": {
+        "files": [
+          "apps/web/src/app/speed-metrics-polling.test.ts"
+        ],
+        "status": "passed",
+        "version": "final-stable-extension-source",
+        "evidence": "agents/oop-refactor-implementation/frontend/app.md",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md"
+      },
+      "status": "implemented-reviewed",
+      "review": "agents/oop-refactor-implementation/frontend/review.md"
+    },
+    {
+      "id": "frontend-E02",
+      "extends": "web-01-A06",
+      "requirements": [
+        {
+          "requirement": "首次loaded与偏好adapter同步生命周期聚合，Redux值/App ready/latest barrier ref唯一，storage getter错误与host-first顺序保持",
+          "owner": "createPausePreferencesLifecycle/usePausePreferences",
+          "methods": [
+            "loadOnce",
+            "synchronize"
+          ],
+          "production_callers": [
+            "AppShell.usePausePreferences"
+          ],
+          "files": [
+            "apps/web/src/app/usePausePreferences.ts",
+            "apps/web/src/App.tsx"
+          ],
+          "status": "implemented-reviewed",
+          "related_owners": [
+            "SessionHostLifecycle初始setPausePreferences",
+            "ProtocolCoordinator barrier读取Shell latest偏好ref"
+          ]
+        }
+      ],
+      "tests": {
+        "files": [
+          "apps/web/src/app/pause-preferences-runtime.test.ts"
+        ],
+        "status": "passed",
+        "version": "final-stable-extension-source",
+        "evidence": "agents/oop-refactor-implementation/frontend/app.md",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md"
+      },
+      "status": "implemented-reviewed",
+      "review": "agents/oop-refactor-implementation/frontend/review.md"
+    },
+    {
+      "id": "frontend-E03",
+      "extends": "web-08-A01",
+      "requirements": [
+        {
+          "requirement": "可选原型detail/watch/ttl三个导航节点ref随controller迁移，按钮identity及初绘顺序保持",
+          "owner": "MobileTradingConceptController",
+          "methods": [
+            "navigateTo"
+          ],
+          "production_callers": [
+            "prototype [data-p]底栏 onclick"
+          ],
+          "files": [
+            "design/ui/mobile/mobile-trading-concept.html"
+          ],
+          "status": "implemented-reviewed",
+          "scope_note": "原候选提到返回按钮，但旧原型 header 返回按钮并未绑定 controller；本次不新增该行为。"
+        }
+      ],
+      "tests": {
+        "files": [
+          "apps/web/src/mobile/mobile-trading-concept.test.ts"
+        ],
+        "status": "passed",
+        "version": "final-stable-extension-source",
+        "evidence": "agents/oop-refactor-implementation/frontend/mobile.md",
+        "final_verification_evidence": "agents/oop-refactor-implementation/frontend/verification.md"
+      },
+      "status": "implemented-reviewed",
+      "review": "agents/oop-refactor-implementation/frontend/review.md"
+    }
+  ],
+  "files": [
+    {
+      "path": "apps/web/src/App.tsx",
+      "sha256": "3d84652a168d94c4b37b276830a04316befe2cb17ce7153e8c45ff40b9fa6b92"
+    },
+    {
+      "path": "apps/web/src/app/LocalRefreshViews.tsx",
+      "sha256": "9a3ad9a4ff97b7bbdc349e4d2609b03f29101f1816c5a69c3a1cdd1c4b558f3e"
+    },
+    {
+      "path": "apps/web/src/app/MarketRuntimeProvider.tsx",
+      "sha256": "15ad134ae9915934c3d36c3fc0df210f02b4c5bc65ba3c1e0fa8e12418c9106d"
+    },
+    {
+      "path": "apps/web/src/app/app-persistence-wiring.test.ts",
+      "sha256": "340647679377bb83a4676fd3ba7ec6686baa750a9ddbd3d7e30729805a21ee80"
+    },
+    {
+      "path": "apps/web/src/app/app-startup-wiring.test.ts",
+      "sha256": "9ed8b0909289f946d02522c6f0c4b680c210a0c3b1089dd0b103777a0b7b1bdf"
+    },
+    {
+      "path": "apps/web/src/app/command-host-test-fixture.ts",
+      "sha256": "5ce29e0860dbf4463aea28730133e9908d1049a6b9582e506776451450a8136f"
+    },
+    {
+      "path": "apps/web/src/app/hook-test-runtime.ts",
+      "sha256": "5aabe94acc18938b593e7755ba7e1a0fd348558ec85a8530854e12c42858f360"
+    },
+    {
+      "path": "apps/web/src/app/market-chart-projection.test.ts",
+      "sha256": "ca17f272d8f7170564653a143671895ce31378e71bcec72d4cb0e617feea3137"
+    },
+    {
+      "path": "apps/web/src/app/market-chart-projection.ts",
+      "sha256": "878f5ecbcbd20e20191725c04021033ceef88888cafe66ba763b761a3e16efab"
+    },
+    {
+      "path": "apps/web/src/app/market-chart-runtime.test-support.tsx",
+      "sha256": "c81d084248875fdb0dc179cf966daa0190b8838f4313677623e0a5cd1630eb31"
+    },
+    {
+      "path": "apps/web/src/app/market-chart-runtime.test.ts",
+      "sha256": "4dfd7dcc07dc6f8111fae2dfa7ac6f11acccd8f430f9b868ea941e255c464330"
+    },
+    {
+      "path": "apps/web/src/app/pause-preferences-runtime.test.ts",
+      "sha256": "fa724889142314fd50293749e5c7a738f2b0defeb88f2c383b5cb799fc1c31e5"
+    },
+    {
+      "path": "apps/web/src/app/save-commands.test.ts",
+      "sha256": "04013b4a9cddd9c278654b2586dfd85598962d37718a2a8b2b7e2477716acbfe"
+    },
+    {
+      "path": "apps/web/src/app/session-host-lifecycle.test.ts",
+      "sha256": "b0da1d9ab569149a02c1384cdc5e5bb865fff8d2614cd542942074de0c01f4e8"
+    },
+    {
+      "path": "apps/web/src/app/speed-metrics-polling.test.ts",
+      "sha256": "758dacb029778a95fa92ffd2a230ad30ef354314f691686a3ff7b3bc0006a292"
+    },
+    {
+      "path": "apps/web/src/app/trading-commands.test.ts",
+      "sha256": "489d36f571a3c6f23490de9965807e269de7c4e5f4554a5a23f2314a0556b9c0"
+    },
+    {
+      "path": "apps/web/src/app/useMarketChartRuntime.ts",
+      "sha256": "166db8e85a19a5e1bf6977d633c7822d3a5a6b77793504f3c7b46901147da07b"
+    },
+    {
+      "path": "apps/web/src/app/usePausePreferences.ts",
+      "sha256": "56620b5c9c2e4cfda41bfed008913faaec5dc8d758b7b26bdd624b3ad8887687"
+    },
+    {
+      "path": "apps/web/src/app/useSaveCommands.ts",
+      "sha256": "ce6d3ad6e7ff901ea6342b1b31b483e5e9eeddb4808a20502a1dd4aa03a0a795"
+    },
+    {
+      "path": "apps/web/src/app/useSessionHostLifecycle.ts",
+      "sha256": "b74b23deddf1782050c3fd6e95534dc6aa1e7d166a515ed0aedbac6e7e589eb2"
+    },
+    {
+      "path": "apps/web/src/app/useSpeedMetricsPolling.ts",
+      "sha256": "c6fd5c2cde9062166fb358975195bd2e173b3d1ea37d1be693566dcce1f323df"
+    },
+    {
+      "path": "apps/web/src/app/useTradingCommands.ts",
+      "sha256": "4458169a3debc5f4abe6e406f0995545d05cafd4dff7ce7d890d02073943cfd2"
+    },
+    {
+      "path": "apps/web/src/components/MarketGrid.tsx",
+      "sha256": "ba4d75c85ecc7cd55798c4c1d461530ed664140ca1eff2a6b2c18af466f6275b"
+    },
+    {
+      "path": "apps/web/src/components/PriceChart.tsx",
+      "sha256": "2bdb388cfe2d9f46e32c045f0eec715f74c70cb3ef254e0f68dd59f2a6880a8b"
+    },
+    {
+      "path": "apps/web/src/components/indicator-results.test.ts",
+      "sha256": "117ee311e578a67470c902a2b21ed2515609aa8bce70c36cf4ae169301db4e27"
+    },
+    {
+      "path": "apps/web/src/components/indicator-results.ts",
+      "sha256": "934e5d0d5ff68e6863077ee8c111429353e59cd1405cf879fd66fe3a1c58e108"
+    },
+    {
+      "path": "apps/web/src/components/local-refresh-boundaries.test.ts",
+      "sha256": "65e71e18a1a9f383828c96d1a7fef52fa078acff35503d10d1699b8209fecec9"
+    },
+    {
+      "path": "apps/web/src/components/market-grid-row-synchronizer.test.ts",
+      "sha256": "a574956628e65de65ece5254c67c787c04e35253ec127b1452c3b387f0fb7a1e"
+    },
+    {
+      "path": "apps/web/src/components/market-grid-row-synchronizer.ts",
+      "sha256": "87939159e366760f7c34cc0bda31515b8349e1043ad002c870f629efbf0dca28"
+    },
+    {
+      "path": "apps/web/src/components/price-chart-runtime.test.ts",
+      "sha256": "b7b5cb74420d3d27507f51c1727a28abe8a26032a3d7ea10a52b8b7d22e5fd6c"
+    },
+    {
+      "path": "apps/web/src/components/price-chart-runtime.ts",
+      "sha256": "839962174d7d17a350f92de9f96b2609d235fafaa9c44715557ddabcdf349c8a"
+    },
+    {
+      "path": "apps/web/src/components/use-indicator-results.test.ts",
+      "sha256": "b1de0402044e7ee74c625eb7345799ea5daa5343e1d98d06bce9318ba9cbefa3"
+    },
+    {
+      "path": "apps/web/src/components/useIndicatorResults.ts",
+      "sha256": "29f03aafa5c176905e08e8836be83405693897f7d157de329dbf7f0e0615bba2"
+    },
+    {
+      "path": "apps/web/src/dev/npc-decision-inspector.test.ts",
+      "sha256": "2f6c9d3bc6682df82d2c2d1bd84c0b1b8819c83ac5f58b15e8226ace6914ce5d"
+    },
+    {
+      "path": "apps/web/src/host/company-query-coordinator.test.ts",
+      "sha256": "42662e54bfca81b8e11e4ba41e6a80fb4b5ed3760610c2b9b413307d3b671446"
+    },
+    {
+      "path": "apps/web/src/host/company-query-coordinator.ts",
+      "sha256": "733e770c13e633f20b33fb318776b2c403ae93df0a005fb892275a71c1f1936c"
+    },
+    {
+      "path": "apps/web/src/host/company-request-registry.ts",
+      "sha256": "6d77620e4f8d2a001aabf4d6020191baeb24d59f70cdba577bfdbc5b48f2636b"
+    },
+    {
+      "path": "apps/web/src/host/remote-command-registry.test.ts",
+      "sha256": "afe5f14f14e006b7bb5cacaf31108101f52391eea8a8c180b9a8e87659a5ddbd"
+    },
+    {
+      "path": "apps/web/src/host/remote-command-registry.ts",
+      "sha256": "13078e0c46f18bf956df2e2ffcf3b429919113446e3bf9dd6ec6101b25409d90"
+    },
+    {
+      "path": "apps/web/src/host/remote-company-reports.test.ts",
+      "sha256": "9c2c3f38505ce7813a4e0d958a7f4a304a0fcd509cdb4c24639a2f69894068bf"
+    },
+    {
+      "path": "apps/web/src/host/remote-host.ts",
+      "sha256": "a3a32aa2eeac33ce4c8f65837fb3a14cd6609bb85ae2d437b20825c38ab913af"
+    },
+    {
+      "path": "apps/web/src/host/remote-publisher-state.test.ts",
+      "sha256": "cebf8df9b16eac3900d238fbc9ee0627fb882cc475db84c904bcc37dc0da999d"
+    },
+    {
+      "path": "apps/web/src/host/remote-publisher-state.ts",
+      "sha256": "2893b9f5b5ee7ada9ea747b424c3c9d4babff82607027b8e625fa9a3c4ea7add"
+    },
+    {
+      "path": "apps/web/src/host/remote-state-contract.test.ts",
+      "sha256": "6528de90b58949e88b5130f73da3f7fb46f7651c782cbc5a2c52b6ecd3682506"
+    },
+    {
+      "path": "apps/web/src/host/report-query-context.test.ts",
+      "sha256": "6668ca8d1f1e6c2b638789bf134b0e2c8daa084b1ceac313e96e66b70ad58182"
+    },
+    {
+      "path": "apps/web/src/host/report-query-context.ts",
+      "sha256": "e54fc63389d196fa42646027169ec25e6179834f53ebec0f7acea82d37474fd3"
+    },
+    {
+      "path": "apps/web/src/host/tauri-host.test.ts",
+      "sha256": "817a606812e21d7c159d90d47e58998c2de0e9b15ce36ae52dd151a91978d190"
+    },
+    {
+      "path": "apps/web/src/host/tauri-host.ts",
+      "sha256": "1c0a31ad3d3dea667fbe74a979f9866a878b19d9885eae94c0d0f670e49f022b"
+    },
+    {
+      "path": "apps/web/src/host/tauri-startup-contract.test.ts",
+      "sha256": "c004eb73b19ce280c221d487f4e952e16af22404ccf501fccce1c83e625ce2e3"
+    },
+    {
+      "path": "apps/web/src/host/tauri-timeline-state.test.ts",
+      "sha256": "666f911f08f6ece026e5f87ccaa031bde6b91a8ab484b0d8b7f4f0b139f16c41"
+    },
+    {
+      "path": "apps/web/src/host/tauri-timeline-state.ts",
+      "sha256": "90c671a14585f035f333f7a6decef47cf6629a5226080313c24a26153ef1a68d"
+    },
+    {
+      "path": "apps/web/src/host/wasm-session-slot.test.ts",
+      "sha256": "414c080122cc4090c061aaf7f8080a57216d109918ba34ef20b1b0e34d4ad298"
+    },
+    {
+      "path": "apps/web/src/host/wasm-session-slot.ts",
+      "sha256": "f4cd028d99bc944392e45e41f3a99583878c71a897366245ecb52e1b24ca67a9"
+    },
+    {
+      "path": "apps/web/src/host/wasm-tick-loop.test.ts",
+      "sha256": "9147fa6f4bb6be25de2a5546767f2fbcf07e82d45879c239267f3d4b8fe81d4a"
+    },
+    {
+      "path": "apps/web/src/host/wasm-tick-loop.ts",
+      "sha256": "62e9f8fb145d8907cf446c6ed02b9d29787ba0561cd4d2532cac485a015ae089"
+    },
+    {
+      "path": "apps/web/src/host/wasm-worker-ownership.test.ts",
+      "sha256": "1d75c371870defe61e9aabba8009196dfcd60cce165b65a202e629c2ec7324e5"
+    },
+    {
+      "path": "apps/web/src/host/wasm-worker.ts",
+      "sha256": "b52692d191a0efedacd3c719229ec3e412d7fee3c8cf53b0e59ba638abbca754"
+    },
+    {
+      "path": "apps/web/src/host/worker-host.test.ts",
+      "sha256": "cecd53e906f5b7fd2e663ce93767ccdaa94a0356152d9c6860019330b63fed70"
+    },
+    {
+      "path": "apps/web/src/host/worker-host.ts",
+      "sha256": "11139fec6a2a7c104816a6ef7812e49677a47fb032c8281c222de4d4a9988e72"
+    },
+    {
+      "path": "apps/web/src/host/worker-request-scope.test.ts",
+      "sha256": "1df10b97d9527e877cac14335f8d69a5d821be78f80ebe9acba5a0cc07451990"
+    },
+    {
+      "path": "apps/web/src/host/worker-request.ts",
+      "sha256": "963bb337403726de4338b9e8a5473e17b11b218491e98da4edc7a0e2131ff8fd"
+    },
+    {
+      "path": "apps/web/src/mobile/MobileStockDetail.tsx",
+      "sha256": "77b666477d51c29b18bb2728ca571824b76ac3eec57b161aa765d47ba52e2f40"
+    },
+    {
+      "path": "apps/web/src/mobile/market-model.ts",
+      "sha256": "8b04e3b448bb29148b401f3de7360ceafb2aa621e28694676ed81cf9320cdaeb"
+    },
+    {
+      "path": "apps/web/src/mobile/mobile-component-render.test.ts",
+      "sha256": "1e341489f57178e201c2966c7828241c63552364a8ac1131416e89c4607b0617"
+    },
+    {
+      "path": "apps/web/src/mobile/mobile-intraday-projection.test.ts",
+      "sha256": "de7139ffc70d355dd242efeca3455edf3b8c2070b9638f0a5677061eda011efd"
+    },
+    {
+      "path": "apps/web/src/mobile/mobile-kline-projection.test.ts",
+      "sha256": "c6cdd4cecdbbd872d1f43f6c2cc02bb6fdd7f8fffaa4d8075a33f7e1ddb13685"
+    },
+    {
+      "path": "apps/web/src/mobile/mobile-trading-concept.test.ts",
+      "sha256": "a68c26c250264c3b760ffd0a1edf92d03c81cbf8516256ca7f2821b559e4122d"
+    },
+    {
+      "path": "apps/web/src/utils/symbolic-limit-order.test.ts",
+      "sha256": "73c13dd9066ac5c86b0ea483530fd5a36bdb9709b2ca545a4ba0e603e3d0aec3"
+    },
+    {
+      "path": "apps/web/src/utils/trade-input.test.ts",
+      "sha256": "af1331277ba3765fb32c4cca2d87283ebad9b107d14394ea3e0e62fd2eb5a988"
+    },
+    {
+      "path": "design/ui/mobile/mobile-trading-concept.html",
+      "sha256": "0665fbe6caf7dfb96c8d98dc9a8cc31b0b94a6618c79c4a8c16c978f79150ba9"
+    }
+  ],
+  "review": "agents/oop-refactor-implementation/frontend/review.md",
+  "typechecks": {
+    "projects": [
+      "app",
+      "node",
+      "inspector"
+    ],
+    "status": "passed",
+    "parallel_processes": 3,
+    "command": "node scripts/run-with-deadline.mjs 10000 -- node apps/web/node_modules/typescript/bin/tsc --project apps/web/tsconfig.<project>.json --noEmit",
+    "wall_seconds": {
+      "app": 6.369,
+      "node": 1.093,
+      "inspector": 1.489
+    },
+    "final_version_notes": "node/inspector在末次生产依赖增量前已通过且其项目源/配置无后续变化；app在trading依赖与身份断言最终版本后再次通过。"
+  },
+  "lint": {
+    "status": "passed",
+    "file_count": 69,
+    "threads": 4,
+    "warning_resolution": "useTradingCommands.refreshPlayerOrders依赖补两个AppShell同挂载稳定ref对象（不依赖.current），实际callback identity与lifecycle effect触发频率不变；新增form/ref.current变化身份稳定断言。最终命令见verification.md。",
+    "wall_seconds": 0.299
+  },
+  "scope_exclusions": [
+    {
+      "name": "WorkerRequestScope.dispose/fatal立即reject、postMessage同步throw立即清理",
+      "disposition": "动作原文明示另批行为修复，本次精确保留原timeout与拒绝时机，不作为未实施OOP子目标。"
+    },
+    {
+      "name": "RemoteCommandRegistry.dispose取消与sync send登记清理",
+      "disposition": "动作原文明示另批行为修复，本次不改变pending策略。"
+    },
+    {
+      "name": "PriceChartRuntime.create半初始化rollback",
+      "disposition": "动作原文明示另批行为修复，本次保留原资源失败面；FR01仅恢复原remove部分写入。"
+    },
+    {
+      "name": "原型 header 返回与quick订单按钮",
+      "disposition": "候选文案提到返回，但旧源码没有这两个真实caller；controller只接[data-v]/[data-p]/#p。本批保留旧行为，不宣称添加返回/订单接线。"
+    }
+  ],
+  "additional_typecheck_fix": {
+    "file": "apps/web/src/dev/npc-decision-inspector.test.ts",
+    "reason": "inspector检查发现既有React createElement默认props泛型推断失败，单行显式使用真实组件props泛型；原component/断言/运行行为不变。",
+    "tests": "dev inspector/gate 2文件并发2，0.76s通过；inspector tsc 1.53s通过；已纳入独立全文复核。"
+  },
+  "not_run": [
+    "完整回归",
+    "build",
+    "E2E",
+    "浏览器/三宿主全矩阵"
+  ],
+  "git_writes": false,
+  "unimplemented": [],
+  "review_manifest_hash": "abe7a5142fa745d38e066cc1eda6b97448d9cdc17c986a1825027660395adeaa",
+  "final_version_runs": [
+    {
+      "purpose": "修复trading稳定ref依赖及身份断言",
+      "files": [
+        "apps/web/src/app/trading-commands.test.ts",
+        "apps/web/src/app/app-startup-wiring.test.ts"
+      ],
+      "case_count": 11,
+      "status": "passed",
+      "wall_seconds": 0.46,
+      "case_timeout_ms": 10000,
+      "process_tree_deadline_ms": 10000,
+      "concurrency": 2
+    },
+    {
+      "purpose": "最终app类型检查",
+      "project": "apps/web/tsconfig.app.json",
+      "status": "passed",
+      "wall_seconds": 6.369,
+      "process_tree_deadline_ms": 10000
+    },
+    {
+      "purpose": "全部69个最终改动TS文件精确lint",
+      "status": "passed",
+      "warnings": 0,
+      "threads": 4,
+      "wall_seconds": 0.299,
+      "process_tree_deadline_ms": 10000
+    }
+  ],
+  "historical_validation_notes": [
+    "修前红灯、首轮app/inspector tsc失败、FR01修前失败与修前分片通过均保留原分片记录，不称为最终版本门禁。",
+    "各分片稳定版本的未变文件用例通过仍是有效证据；后续改动相关suite/类型/lint已精确重测。"
+  ]
+}

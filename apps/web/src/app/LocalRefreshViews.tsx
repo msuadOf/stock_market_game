@@ -84,9 +84,9 @@ export function ConnectedMarketPanel({ onSelect }: MarketPanelProps) {
   const markets = useSelector((state: RootState) => state.snapshot.snapshot?.markets ?? {});
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
   const chartCode = useMarketRuntimeSelection();
-  const { priceHistoryByCodeRef } = useMarketRuntimeActions();
+  const { getPriceHistory } = useMarketRuntimeActions();
   const heldCodes = useMemo(() => new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code)), [account]);
-  return <MarketGrid markets={markets} selectedCode={chartCode} onSelect={onSelect} heldCodes={heldCodes} priceHistoryByCode={priceHistoryByCodeRef.current} />;
+  return <MarketGrid markets={markets} selectedCode={chartCode} onSelect={onSelect} heldCodes={heldCodes} priceHistoryByCode={getPriceHistory()} />;
 }
 
 interface ChartPanelProps {
@@ -170,7 +170,7 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions) {
 export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
   const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
-  const { activeDailyCandlesRef } = useMarketRuntimeActions();
+  const { getActiveDailyCandles } = useMarketRuntimeActions();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const marketCodes = useSelector((state: RootState) => Object.keys(state.snapshot.snapshot?.markets ?? {}));
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
@@ -184,5 +184,5 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const index = orderedCodes.indexOf(chartCode);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={activeDailyCandlesRef.current[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

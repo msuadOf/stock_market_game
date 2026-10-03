@@ -23,8 +23,8 @@ pub use candidates::{
     blend_candidate, eligible_candidates, experience_cost_signal, fundamental_range_signal,
     fundamental_signal, normalized_score, price_volume_signal, target_position_weight_bp,
     target_share_quantity, technical_signal, trend_signal, CandidateAssessment, CandidateError,
-    CandidateSignals, ExcludedSignal, QuantityRounding, SignalComponent, SignalContribution,
-    SignalScore, SignalUnavailableReason, TargetShareQuantity,
+    CandidateSignals, CandidateTargetProposal, ExcludedSignal, QuantityRounding, SignalComponent,
+    SignalContribution, SignalScore, SignalUnavailableReason, TargetShareQuantity,
 };
 pub use quote_policy::{
     decide_quote, ActiveQuote, BookTop, QuoteAction, QuoteDecision, QuoteDecisionInputs,
@@ -193,8 +193,7 @@ impl PlanBook {
         self.plans
             .get_mut(&plan_id)
             .ok_or(PlanError::UnknownPlan { plan_id })?
-            .review
-            .last_review_resources = Some(resources);
+            .record_resource_review(resources);
         Ok(())
     }
 
@@ -210,17 +209,7 @@ impl PlanBook {
             .plans
             .get_mut(&plan_id)
             .ok_or(PlanError::UnknownPlan { plan_id })?;
-        plan.ensure_event_allowed("review", trading_day, false)?;
-        if price.cents() <= 0 {
-            return Err(PlanError::SaveInconsistent {
-                detail: format!("plan {plan_id:?} reviewed a nonpositive price"),
-            });
-        }
-        plan.review.last_review_trading_day = trading_day;
-        plan.review.last_review_price = Some(price);
-        plan.review.last_review_acquired_count = acquired_count;
-        plan.last_event_trading_day = trading_day;
-        Ok(())
+        plan.record_review(trading_day, price, acquired_count)
     }
 
     /// Only live plans participate in decision roots. Historical plan records stay
@@ -260,24 +249,24 @@ impl PlanBook {
         validate_policy(&policy)?;
         let mut by_account_stock = BTreeMap::new();
         for (plan_id, plan) in &plans {
-            if plan.plan_id != *plan_id {
+            if plan.plan_id() != *plan_id {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!(
                         "plan entry key {plan_id:?} does not match its id {:?}",
-                        plan.plan_id
+                        plan.plan_id()
                     ),
                 });
             }
             if plan
-                .review
+                .review()
                 .last_review_price
                 .is_some_and(|price| price.cents() <= 0)
                 || plan
-                    .review
+                    .review()
                     .last_review_resources
                     .is_some_and(|resources| !resources.is_valid())
-                || plan.review.last_review_trading_day < plan.created_trading_day
-                || plan.review.last_review_trading_day > plan.last_event_trading_day
+                || plan.review().last_review_trading_day < plan.created_trading_day()
+                || plan.review().last_review_trading_day > plan.last_event_trading_day()
             {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!("plan {plan_id:?} has an invalid review baseline"),
@@ -292,15 +281,16 @@ impl PlanBook {
             }
             if !plan.is_terminal()
                 && by_account_stock
-                    .entry(plan.account)
+                    .entry(plan.account())
                     .or_insert_with(BTreeMap::new)
-                    .insert(plan.code.clone(), *plan_id)
+                    .insert(plan.code().clone(), *plan_id)
                     .is_some()
             {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!(
                         "two non-terminal plans for account {:?} stock {:?}",
-                        plan.account, plan.code
+                        plan.account(),
+                        plan.code()
                     ),
                 });
             }
@@ -337,9 +327,9 @@ impl PlanBook {
             .ok_or(PlanError::PlanSequenceExhausted)?;
         let plan = TradingPlan::from_open(plan_id, open, &self.policy)?;
         self.by_account_stock
-            .entry(plan.account)
+            .entry(plan.account())
             .or_default()
-            .insert(plan.code.clone(), plan_id);
+            .insert(plan.code().clone(), plan_id);
         self.plans.insert(plan_id, plan);
         Ok(plan_id)
     }
@@ -392,7 +382,7 @@ impl PlanBook {
             .plans
             .get_mut(&plan_id)
             .ok_or(PlanError::UnknownPlan { plan_id })?;
-        let key = (plan.account, plan.code.clone());
+        let key = (plan.account(), plan.code().clone());
         let status = Self::apply_to_plan(plan, event, &self.policy)?;
         if plan.is_terminal() {
             self.remove_active_index(key.0, &key.1);
@@ -419,7 +409,7 @@ impl PlanBook {
                 if plan.is_terminal() {
                     return Err(PlanError::InvalidTransition {
                         plan_id: *plan_id,
-                        from: plan.status,
+                        from: plan.status(),
                         event: "pending routed fact",
                     });
                 }
@@ -440,7 +430,7 @@ impl PlanBook {
         }
         for (plan_id, plan) in staged {
             if plan.is_terminal() {
-                self.remove_active_index(plan.account, &plan.code);
+                self.remove_active_index(plan.account(), plan.code());
             }
             self.plans.insert(plan_id, plan);
         }
@@ -482,25 +472,23 @@ impl PlanBook {
                 qty,
                 trading_day,
             } => plan.record_excess_fill(order_id, qty, trading_day)?,
-            PlanEvent::Revised { revision } => revision::apply_revision(plan, &revision, policy)?,
+            PlanEvent::Revised { revision } => plan.apply_revision(&revision, policy)?,
             PlanEvent::Paused {
                 reason,
                 trading_day,
-            } => revision::pause(plan, reason, trading_day)?,
+            } => plan.pause(reason, trading_day)?,
             PlanEvent::Resumed {
                 reason,
                 trading_day,
-            } => revision::resume(plan, reason, trading_day)?,
+            } => plan.resume(reason, trading_day)?,
             PlanEvent::Terminated {
                 reason,
                 trading_day,
             } => plan.terminate(reason, trading_day)?,
-            PlanEvent::Expired { trading_day } => revision::expire(plan, trading_day)?,
-            PlanEvent::TradingDayEnded { trading_day } => {
-                revision::end_of_trading_day(plan, trading_day)?
-            }
+            PlanEvent::Expired { trading_day } => plan.expire(trading_day)?,
+            PlanEvent::TradingDayEnded { trading_day } => plan.end_of_trading_day(trading_day)?,
         }
-        Ok(plan.status)
+        Ok(plan.status())
     }
 }
 
@@ -611,7 +599,7 @@ mod atomic_event_tests {
             restored
                 .active_plan(AccountId(1), &StockCode("600101".into()))
                 .unwrap()
-                .plan_id,
+                .plan_id(),
             successor
         );
     }
@@ -649,6 +637,6 @@ mod atomic_event_tests {
             .apply_active_events_atomically(&[(first, accepted), (first, filled)])
             .unwrap();
         assert_eq!(plans.active_plan_ids(), vec![second]);
-        assert_eq!(plans.plan(first).unwrap().status, PlanStatus::Completed);
+        assert_eq!(plans.plan(first).unwrap().status(), PlanStatus::Completed);
     }
 }

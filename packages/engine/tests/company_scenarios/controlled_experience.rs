@@ -92,8 +92,8 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
 
     // Then: equal account P&L but distinct owned histories produce distinct decision traces.
     assert_eq!(
-        fresh_game.account(account).unwrap().cash,
-        scarred_game.account(account).unwrap().cash
+        fresh_game.account(account).unwrap().cash(),
+        scarred_game.account(account).unwrap().cash()
     );
     assert_ne!(
         fresh_game.last_retail_decisions(),

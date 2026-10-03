@@ -4,6 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
+import * as performanceHarness from "./escrow-performance-harness.mjs";
+
 import {
   main,
   reportPathForOutputDirectory,
@@ -381,5 +383,90 @@ describe("performance harness", () => {
       /conditions differ/,
     );
     assert.equal(runs, 1);
+  });
+});
+
+
+describe("PerformanceComparisonRun 生命周期", () => {
+  it("配置快照与不同 run 的样本独立，失败不能形成 PASS 报告", async () => {
+    assert.equal(typeof performanceHarness.PerformanceComparisonRun, "function");
+    const configuration = config();
+    const first = new performanceHarness.PerformanceComparisonRun(configuration);
+    const second = new performanceHarness.PerformanceComparisonRun(config());
+    configuration.workload.profile = "changed";
+    const dependencies = { runSample: async (_endpoint, context) => measured(context.side, context.index), sourceManifest };
+    await first.measure(dependencies);
+    assert.throws(() => second.buildReport({ fixture: true }, "2030-01-02"), /incomplete/);
+    await assert.rejects(second.measure({ ...dependencies, runSample: async () => { throw new Error("fixture failure"); } }), /fixture failure/);
+    assert.throws(() => second.buildReport({ fixture: true }, "2030-01-02"), /incomplete|failed/);
+    assert.equal(first.buildReport({ fixture: true }, "2030-01-02").before.samples.length, 2);
+  });
+});
+
+describe("ProcessSampleRun 失败边界", () => {
+  it("spawn 失败显式传播，零 RSS 样本不生成测量结果", async () => {
+    await assert.rejects(runProcessSample({ command: ["/fixture/missing-executable"], cwd: process.cwd() }, { rssSampleIntervalMs: 1 }), /ENOENT/);
+    await assert.rejects(runProcessSample({ command: [process.execPath, "-e", "setTimeout(() => {}, 20)"], cwd: process.cwd() }, {
+      rssSampleIntervalMs: 1,
+      sampleTree: async () => ({ rss_bytes: 0, total_threads: 0, runnable_threads: 0, process_count: 1 }),
+    }), /positive process-tree RSS sample/);
+  });
+});
+
+describe("PerformanceComparisonRun report reuse", () => {
+  it("所有已有 comparison key、endpoint 和测量条件变化均拒绝复用", async () => {
+    const run = new performanceHarness.PerformanceComparisonRun(config());
+    await run.measure({ runSample: async (_endpoint, context) => measured(context.side, context.index), sourceManifest });
+    const environment = { fixture: true };
+    const report = run.buildReport(environment, "2030-01-02");
+    assert.equal(run.matchesReusableReport(report, environment), true);
+    const mutations = [
+      (r) => { r.schema = "unsupported"; },
+      (r) => { r.status = "FAIL"; },
+      ...Object.keys(report.workload).map((field) => (r) => { r.workload[field] = "changed"; }),
+      ...Object.keys(report.environment_contract).map((field) => (r) => { r.environment_contract[field] = "changed"; }),
+      (r) => { r.environment_manifest.fixture = false; },
+      ...["warmup_runs", "sample_count", "same_machine_for_both_sides", "source_manifest_verified_before_and_after_every_invocation"].map((field) => (r) => { r.measurement_contract[field] = null; }),
+      ...Object.keys(report.comparison).map((field) => (r) => { r.comparison[field] = null; }),
+      ...["before", "after"].flatMap((side) => ["source_fingerprint", "command", "cwd", "samples"].map((field) => (r) => { r[side][field] = null; })),
+    ];
+    for (const mutate of mutations) {
+      const changed = structuredClone(report);
+      mutate(changed);
+      assert.throws(() => run.matchesReusableReport(changed, environment), /reusable PASS|conditions differ|endpoint or sample count differs/);
+    }
+  });
+});
+
+describe("PerformanceComparisonRun 证据所有权", () => {
+  it("外部 sample 不能绕过成功的配对测量生成 PASS", () => {
+    const run = new performanceHarness.PerformanceComparisonRun({ ...config(), warmup_runs: 0, sample_count: 1 });
+    const fabricated = { ticks_per_second: 1, peak_process_tree_rss_bytes: 1 };
+    assert.throws(() => run.appendSample("before", fabricated), TypeError);
+    assert.throws(() => run.buildReport({ fixture: true }, "2030-01-02"), /incomplete/);
+  });
+
+  it("消费者修改报告的嵌套证据不会污染 run 后续报告", async () => {
+    const run = new performanceHarness.PerformanceComparisonRun(config());
+    await run.measure({ runSample: async (_endpoint, context) => measured(context.side, context.index), sourceManifest });
+    const environment = { fixture: { machine: "original" } };
+    const expected = structuredClone(run.buildReport(environment, "2030-01-02"));
+    const report = run.buildReport(environment, "2030-01-02");
+    report.after.samples[0].ticks_per_second = 100;
+    report.after.samples[0].process_tree_thread_state.runnable_threads.histogram["1"] = 100;
+    report.before.samples.splice(0);
+    assert.deepEqual(run.buildReport(environment, "2030-01-02"), expected);
+    report.workload.profile = "modified";
+    report.before.command.push("modified");
+    report.environment_manifest.fixture.machine = "modified";
+    assert.deepEqual(run.buildReport(environment, "2030-01-02"), expected);
+  });
+});
+
+describe("runProcessSample 异步 facade", () => {
+  it("缺少或空 options 仍返回 rejected Promise", async () => {
+    const endpoint = { command: ["/fixture/missing-executable"], cwd: process.cwd() };
+    await assert.rejects(runProcessSample(endpoint), TypeError);
+    await assert.rejects(runProcessSample(endpoint, null), TypeError);
   });
 });

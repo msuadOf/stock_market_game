@@ -12,9 +12,7 @@ use crate::accounting::{
 use crate::calendar::CivilDate;
 use crate::company::contracts::{ContractId, DayCountBasis, OperatingContract};
 use crate::company::counterparty::{CounterpartyId, FlowDirection};
-use crate::company::industrial::loans::{
-    apply_accrual, loan_account, InterestAccrualItem, LoanState,
-};
+use crate::company::industrial::loans::{loan_account, InterestAccrualItem};
 use crate::company::industrial::{chart, IndustrialBooks, IndustrialError};
 
 impl IndustrialBooks {
@@ -55,7 +53,7 @@ impl IndustrialBooks {
                 },
             ));
         }
-        let outstanding = self.loans_outstanding_total()?;
+        let outstanding = self.loans.outstanding_total()?;
         if let Some(limit) = self.budget().credit_line(lender) {
             let projected = outstanding.add(principal)?;
             if projected > limit {
@@ -90,8 +88,8 @@ impl IndustrialBooks {
             }],
         )?;
         self.contracts_mut().register(contract)?;
-        self.loans_mut()
-            .insert(contract_id, LoanState::new(principal, start));
+        self.loans
+            .insert_registered_loan(contract_id, principal, start);
         self.counterparties_mut().record_flow(super::flow(
             start,
             lender,
@@ -112,14 +110,8 @@ impl IndustrialBooks {
         let base = self.next_event_id;
         let mut items = Vec::new();
         let mut entries = Vec::new();
-        let loans: Vec<(ContractId, LoanState)> = self
-            .loans()
-            .map(|(id, state)| (id.clone(), state.clone()))
-            .collect();
-        for (contract_id, state) in loans {
-            let Some(item) = self.accrue_loan(&contract_id, &state, through)? else {
-                continue;
-            };
+        for item in self.loans.preview_accruals(self.contracts(), through) {
+            let item = item?;
             let event = BusinessEventId::new(base + items.len() as u64);
             if item.amount.is_positive() {
                 entries.push(JournalEntry {
@@ -136,9 +128,7 @@ impl IndustrialBooks {
             items.push(item);
         }
         self.post_with_commit(base + items.len() as u64, entries)?;
-        for item in &items {
-            apply_accrual(self.loans_mut(), item, through)?;
-        }
+        self.loans.apply_posted_accruals(&items, through)?;
         Ok(items)
     }
 }

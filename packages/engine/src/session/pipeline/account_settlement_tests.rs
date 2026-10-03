@@ -9,6 +9,7 @@ use super::{
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
+use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
     Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockCode,
@@ -21,9 +22,9 @@ fn retail_session(cash: i64) -> crate::GameSession {
         42,
     )
     .unwrap();
-    game.accounts = accounts(cash);
-    game.retail_experience = retail();
-    game.retail_projection_seen = RetailProjectionSeen::default();
+    game.state.accounts = accounts(cash);
+    game.state.retail_experience = retail();
+    game.state.retail_projection_seen = RetailProjectionSeen::default();
     game
 }
 
@@ -227,6 +228,33 @@ fn institutional_belief(account: AccountId) -> crate::strategy::BeliefBook {
     )
 }
 
+fn institutional_participant(account: AccountId) -> BeliefParticipantState {
+    BeliefParticipantState::new(
+        crate::experience::PersonalWatchlist::default(),
+        crate::experience::PersonalPriceMemory::default(),
+        crate::information::NpcInformationState::new(account),
+        institutional_belief(account),
+    )
+}
+
+fn participant_values(participants: &AccountPagedMap<BeliefParticipantState>) -> serde_json::Value {
+    let values: BTreeMap<_, _> = participants
+        .iter()
+        .map(|(account, participant)| {
+            (
+                account.0.to_string(),
+                (
+                    participant.watchlist(),
+                    participant.price_memory(),
+                    participant.information(),
+                    participant.belief(),
+                ),
+            )
+        })
+        .collect();
+    serde_json::to_value(values).unwrap()
+}
+
 #[test]
 fn institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically() {
     let mut experience = RetailExperienceState::without_equity_reference();
@@ -322,12 +350,12 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let account = AccountId(1);
     let mut accounts = accounts(200_000);
     let institutional = accounts.get_mut(&account).unwrap();
-    institutional.kind = AccountKind::Inst;
+    institutional.fixture_set_kind(AccountKind::Inst);
     institutional.set_strategy(Box::new(
         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
     ));
-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
-        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut books: AccountPagedMap<BeliefParticipantState> =
+        BTreeMap::from([(account, institutional_participant(account))]).into();
     let mut retail_experience = AccountPagedMap::default();
     let mut seen = RetailProjectionSeen::default();
     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
@@ -347,7 +375,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     )
     .unwrap();
 
-    let experience = books.get(&account).unwrap().experience();
+    let experience = books.get(&account).unwrap().belief().experience();
     let traded = experience.stocks.get(&stock()).unwrap();
     assert_eq!(traded.last_trade_market_minute, 10);
     assert_eq!(traded.last_buy_order_id, Some(10));
@@ -378,7 +406,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
         false,
     )
     .unwrap();
-    let experience = books.get(&account).unwrap().experience();
+    let experience = books.get(&account).unwrap().belief().experience();
     assert!(experience.feedback.stocks.is_empty());
     assert_eq!(experience.feedback.exit_records.len(), 1);
     assert!(
@@ -403,7 +431,10 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
         false,
     )
     .unwrap();
-    assert_eq!(books.get(&account).unwrap().experience(), &before_replay);
+    assert_eq!(
+        books.get(&account).unwrap().belief().experience(),
+        &before_replay
+    );
     assert!(retail_experience.is_empty());
 }
 
@@ -412,12 +443,12 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
     let account = AccountId(1);
     let mut accounts = accounts(200_000);
     let institutional = accounts.get_mut(&account).unwrap();
-    institutional.kind = AccountKind::Inst;
+    institutional.fixture_set_kind(AccountKind::Inst);
     institutional.set_strategy(Box::new(
         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
     ));
-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
-        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut books: AccountPagedMap<BeliefParticipantState> =
+        BTreeMap::from([(account, institutional_participant(account))]).into();
     let mut retail_experience = AccountPagedMap::default();
     let mut seen = RetailProjectionSeen::default();
     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
@@ -442,14 +473,14 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
         .unwrap();
     }
 
-    let experience = books.get(&account).unwrap().experience();
+    let experience = books.get(&account).unwrap().belief().experience();
     assert_eq!(experience.feedback.exit_records.len(), 1);
     assert!(
         matches!(experience.feedback.exit_records.last(), Some(record)
         if record.order_id == Some(12) && !record.realized_profit)
     );
     assert_eq!(
-        accounts.get(&account).unwrap().cash,
+        accounts.get(&account).unwrap().cash(),
         Money::from_cents(200_000 - 10_100 + 6_020 + 3_980)
     );
     assert_eq!(experience.consecutive_failed_buys, 0);
@@ -461,12 +492,12 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     let account = AccountId(1);
     let mut accounts = accounts(200_000);
     let institutional = accounts.get_mut(&account).unwrap();
-    institutional.kind = AccountKind::Inst;
+    institutional.fixture_set_kind(AccountKind::Inst);
     institutional.set_strategy(Box::new(
         crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
     ));
-    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
-        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut books: AccountPagedMap<BeliefParticipantState> =
+        BTreeMap::from([(account, institutional_participant(account))]).into();
     let mut retail_experience = AccountPagedMap::default();
     let mut seen = RetailProjectionSeen::default();
     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
@@ -503,10 +534,10 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     .unwrap();
 
     assert_eq!(
-        accounts.get(&account).unwrap().cash,
+        accounts.get(&account).unwrap().cash(),
         Money::from_cents(99_801)
     );
-    let experience = books.get(&account).unwrap().experience();
+    let experience = books.get(&account).unwrap().belief().experience();
     let exit = experience.feedback.exit_records.last().unwrap();
     assert_eq!(exit.order_id, Some(11));
     assert!(!exit.realized_profit);
@@ -516,7 +547,10 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
 #[test]
 fn non_belief_institution_account_does_not_require_a_belief_book() {
     let mut accounts = accounts(200_000);
-    accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Inst;
+    accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .fixture_set_kind(AccountKind::Inst);
     let mut experience = AccountPagedMap::default();
     let mut seen = RetailProjectionSeen::default();
 
@@ -551,7 +585,7 @@ fn settlement_without_new_fills_prepares_no_account_or_retail_state_patch() {
     assert!(prepared.retail_patch.is_empty());
     assert!(prepared.output.events.is_empty());
     assert_eq!(prepared.seen, seen);
-    assert_eq!(accounts[&AccountId(1)].cash, Money::from_cents(200_000));
+    assert_eq!(accounts[&AccountId(1)].cash(), Money::from_cents(200_000));
     assert_eq!(experience, retail());
 }
 
@@ -625,7 +659,7 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     .unwrap();
 
     assert_eq!(result.settlement.applied_receipts, 1);
-    assert!(!accounts[&AccountId(1)].positions.contains_key(&stock()));
+    assert!(!accounts[&AccountId(1)].positions().contains_key(&stock()));
     assert_eq!(experience[&AccountId(1)].stocks.len(), 8);
     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
     assert!(!experience[&AccountId(1)]
@@ -647,7 +681,7 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    let before_cash = accounts[&AccountId(1)].cash;
+    let before_cash = accounts[&AccountId(1)].cash();
     let before_experience = experience.clone();
 
     for _ in 0..2 {
@@ -663,8 +697,8 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
         assert_eq!(result.settlement.applied_receipts, 0);
         assert!(result.events.is_empty());
         assert_eq!(seen.len(), 1);
-        assert_eq!(accounts[&AccountId(1)].cash, before_cash);
-        assert!(accounts[&AccountId(1)].positions.is_empty());
+        assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
+        assert!(accounts[&AccountId(1)].positions().is_empty());
         assert_eq!(experience, before_experience);
     }
 }
@@ -701,28 +735,28 @@ fn session_settlement_failure_keeps_all_authoritative_containers_unchanged() {
 fn session_settlement_uses_the_sessions_t1_policy() {
     for (t1_enabled, expected_locked) in [(false, 0), (true, 100)] {
         let mut game = retail_session(200_000);
-        game.setup.t1_enabled = t1_enabled;
+        game.state.setup.t1_enabled = t1_enabled;
 
         apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
             .unwrap();
 
-        let position = &game.accounts[&AccountId(1)].positions[&stock()];
-        assert_eq!(position.qty, 100);
-        assert_eq!(position.t1_locked, expected_locked);
+        let position = &game.state.accounts[&AccountId(1)].positions()[&stock()];
+        assert_eq!(position.qty(), 100);
+        assert_eq!(position.t1_locked(), expected_locked);
     }
 }
 
 #[test]
 fn session_settlement_records_the_sessions_nonzero_market_minute() {
     let mut game = retail_session(200_000);
-    game.tick = 1;
+    game.state.tick = 1;
     let market_minute = game.current_market_minute();
     assert!(market_minute > 0);
 
     apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
         .unwrap();
 
-    let experience = &game.retail_experience[&AccountId(1)].stocks[&stock()];
+    let experience = &game.state.retail_experience[&AccountId(1)].stocks[&stock()];
     assert_eq!(experience.last_trade_market_minute, market_minute);
     assert_eq!(experience.last_observed_market_minute, market_minute);
 }
@@ -742,7 +776,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
         true,
     )
     .unwrap();
-    let cash_after_first = accounts[&AccountId(1)].cash;
+    let cash_after_first = accounts[&AccountId(1)].cash();
     let experience_after_first = experience.clone();
     let second = apply_settlement_transaction(
         &mut accounts,
@@ -756,7 +790,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
     assert_eq!(first.settlement.applied_receipts, 1);
     assert_eq!(second.settlement.applied_receipts, 0);
     assert!(second.events.is_empty());
-    assert_eq!(accounts[&AccountId(1)].cash, cash_after_first);
+    assert_eq!(accounts[&AccountId(1)].cash(), cash_after_first);
     assert_eq!(experience, experience_after_first);
 }
 
@@ -767,7 +801,7 @@ fn projection_failure_rolls_back_successful_settlement() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    let before_cash = accounts[&AccountId(1)].cash;
+    let before_cash = accounts[&AccountId(1)].cash();
     let before_experience = experience.clone();
     assert!(apply_settlement_transaction(
         &mut accounts,
@@ -778,7 +812,7 @@ fn projection_failure_rolls_back_successful_settlement() {
         true
     )
     .is_err());
-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
+    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
     assert_eq!(experience, before_experience);
     assert!(seen.is_empty());
 }
@@ -802,7 +836,7 @@ fn same_order_multi_leg_receipts_settle_once_and_project_one_event() {
     .unwrap();
     assert_eq!(result.settlement.applied_receipts, 2);
     assert_eq!(result.events.len(), 1);
-    assert_eq!(accounts[&AccountId(1)].positions[&stock()].qty, 100);
+    assert_eq!(accounts[&AccountId(1)].positions()[&stock()].qty(), 100);
 }
 
 #[test]
@@ -827,9 +861,9 @@ fn same_account_buy_then_sell_preserves_the_buy_before_sell_lifecycle() {
         true,
     )
     .unwrap();
-    let position = &accounts[&AccountId(1)].positions[&stock()];
-    assert_eq!(position.qty, 100);
-    assert_eq!(position.t1_locked, 100);
+    let position = &accounts[&AccountId(1)].positions()[&stock()];
+    assert_eq!(position.qty(), 100);
+    assert_eq!(position.t1_locked(), 100);
 }
 
 #[test]
@@ -870,7 +904,7 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
     .into();
     let mut experience = AccountPagedMap::<crate::RetailExperienceState>::default();
     let mut seen = RetailProjectionSeen::default();
-    let before_cash = accounts[&AccountId(1)].cash;
+    let before_cash = accounts[&AccountId(1)].cash();
 
     let error = apply_settlement_transaction(
         &mut accounts,
@@ -888,8 +922,8 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
             account: AccountId(1),
         })
     ));
-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
-    assert!(accounts[&AccountId(1)].positions.is_empty());
+    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
+    assert!(accounts[&AccountId(1)].positions().is_empty());
     assert!(experience.is_empty());
     assert!(seen.is_empty());
 }
@@ -949,8 +983,8 @@ fn later_retail_account_failure_does_not_commit_an_earlier_accounts_settlement()
         })
     ));
     for account in accounts.values() {
-        assert_eq!(account.cash, Money::from_cents(200_000));
-        assert!(account.positions.is_empty());
+        assert_eq!(account.cash(), Money::from_cents(200_000));
+        assert!(account.positions().is_empty());
     }
     assert_eq!(experience, experience_before);
     assert_eq!(seen, seen_before);
@@ -984,7 +1018,7 @@ fn non_retail_fill_settles_without_projecting_even_if_an_experience_entry_exists
 
     assert_eq!(result.settlement.applied_receipts, 1);
     assert!(result.events.is_empty());
-    assert_eq!(accounts[&AccountId(1)].positions[&stock()].qty, 100);
+    assert_eq!(accounts[&AccountId(1)].positions()[&stock()].qty(), 100);
     assert_eq!(experience, before_experience);
     assert_eq!(seen.len(), 1);
 }
@@ -1013,7 +1047,7 @@ fn settlement_overflow_rolls_back_every_container() {
     let mut accounts = accounts(i64::MAX);
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    let before_cash = accounts[&AccountId(1)].cash;
+    let before_cash = accounts[&AccountId(1)].cash();
     let before_experience = experience.clone();
     assert!(apply_settlement_transaction(
         &mut accounts,
@@ -1024,7 +1058,61 @@ fn settlement_overflow_rolls_back_every_container() {
         true
     )
     .is_err());
-    assert_eq!(accounts[&AccountId(1)].cash, before_cash);
+    assert_eq!(accounts[&AccountId(1)].cash(), before_cash);
     assert_eq!(experience, before_experience);
     assert!(seen.is_empty());
+}
+
+#[test]
+fn settlement_plan_account_failure_preserves_all_four_transaction_containers() {
+    let first = AccountId(1);
+    let second = AccountId(2);
+    let mut accounts = accounts(200_000);
+    accounts.insert(
+        second,
+        Account::new(second, AccountKind::Inst, Money::from_cents(200_000)),
+    );
+    let mut experience = retail();
+    let mut books: AccountPagedMap<BeliefParticipantState> =
+        [(second, institutional_participant(second))]
+            .into_iter()
+            .collect();
+    let mut seen = RetailProjectionSeen::default();
+    let experience_before = experience.clone();
+    let books_before = participant_values(&books);
+    let seen_before = seen.clone();
+    let buy = fill(1, Side::Buy, 10, 100, 100_000);
+    let mut sell = fill(2, Side::Sell, 11, 100, 100_000);
+    sell.envelope.account = second;
+    sell.local_key = ReceiptLocalKey::new(
+        JournalRank::SealedBatch,
+        ReceiptSource::SealedIntent(2),
+        ReceiptTransition {
+            envelope: sell.envelope.clone(),
+            ordinal: 0,
+        },
+    )
+    .unwrap();
+    let error = apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            market_minute: 10,
+            trading_day: 0,
+        },
+        &[buy, sell],
+        true,
+    )
+    .unwrap_err();
+    assert!(matches!(error, SettlementTransactionError::Settlement(_)));
+    for account in [first, second] {
+        assert_eq!(accounts[&account].cash(), Money::from_cents(200_000));
+        assert!(accounts[&account].positions().is_empty());
+    }
+    assert_eq!(experience, experience_before);
+    assert_eq!(participant_values(&books), books_before);
+    assert_eq!(seen, seen_before);
 }

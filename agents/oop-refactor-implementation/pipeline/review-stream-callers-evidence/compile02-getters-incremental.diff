@@ -1,0 +1,159 @@
+--- initial-reviewed/packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs
++++ final-reviewed/packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs
+@@ -80,7 +80,7 @@
+             .plans
+             .plan(plan_id)
+             .unwrap()
+-            .active_child_order_id,
++            .active_child_order_id(),
+         Some(existing_id)
+     );
+     assert_eq!(
+@@ -159,7 +159,7 @@
+             .plans
+             .plan(plan_id)
+             .unwrap()
+-            .active_child_order_id,
++            .active_child_order_id(),
+         Some(plan_order)
+     );
+     assert_eq!(
+@@ -248,7 +248,7 @@
+             .plans
+             .plan(plan_id)
+             .unwrap()
+-            .active_child_order_id,
++            .active_child_order_id(),
+         Some(new_id)
+     );
+     assert_eq!(
+@@ -293,7 +293,7 @@
+         .plans
+         .plan(request.plan_id)
+         .unwrap()
+-        .active_child_order_id
++        .active_child_order_id()
+         .unwrap();
+     let parent_before = authority.state.parent_orders[&owner][&code].clone();
+     let reserved_before = authority.reserved_cash_for_account(owner).unwrap();
+@@ -342,7 +342,7 @@
+             .plans
+             .plan(parent_before.linked_plan_id().unwrap())
+             .unwrap()
+-            .active_child_order_id,
++            .active_child_order_id(),
+         Some(old_id)
+     );
+     assert_eq!(
+@@ -508,8 +508,8 @@
+         .unwrap()
+         .commit();
+     let plan = authority.state.plans.plan(plan_id).unwrap();
+-    assert_eq!(plan.filled_qty, 100);
+-    assert!(matches!(plan.status, crate::plans::PlanStatus::Completed));
++    assert_eq!(plan.filled_qty(), 100);
++    assert!(matches!(plan.status(), crate::plans::PlanStatus::Completed));
+     assert!(authority
+         .state
+         .parent_orders
+@@ -521,12 +521,12 @@
+ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
+     let (mut uninterrupted, plan_id, code) = live_buy_plan_case(100, 200);
+     let first = uninterrupted.save().unwrap();
+-    assert_eq!(first.plans.plan(plan_id).unwrap().filled_qty, 100);
++    assert_eq!(first.plans.plan(plan_id).unwrap().filled_qty(), 100);
+     let child_id = first
+         .plans
+         .plan(plan_id)
+         .unwrap()
+-        .active_child_order_id
++        .active_child_order_id()
+         .unwrap();
+     let first_restored = GameSession::restore(&first).unwrap();
+     assert_eq!(
+@@ -557,9 +557,9 @@
+         let saved = session.save().unwrap();
+         let restored_saved = GameSession::restore(&saved).unwrap();
+         let saved_snapshot = restored_saved.snapshot_inner(true, true);
+-        assert_eq!(saved.plans.plan(plan_id).unwrap().filled_qty, 200);
++        assert_eq!(saved.plans.plan(plan_id).unwrap().filled_qty(), 200);
+         assert_eq!(
+-            saved.plans.plan(plan_id).unwrap().active_child_order_id,
++            saved.plans.plan(plan_id).unwrap().active_child_order_id(),
+             Some(child_id),
+             "the same partly filled child must survive restore and fill again"
+         );
+@@ -606,9 +606,12 @@
+         .plans
+         .plan(plan_id)
+         .unwrap()
+-        .active_child_order_id
+-        .unwrap();
+-    assert_eq!(authority.state.plans.plan(plan_id).unwrap().filled_qty, 350);
++        .active_child_order_id()
++        .unwrap();
++    assert_eq!(
++        authority.state.plans.plan(plan_id).unwrap().filled_qty(),
++        350
++    );
+     let (_, mut request) = crate::session::plan_chain_candidates_tests::execution_fixture();
+     request.plan_id = plan_id;
+     request.allocation.plan_id = plan_id;
+@@ -654,7 +657,10 @@
+     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
+         .unwrap()
+         .commit();
+-    assert_eq!(authority.state.plans.plan(plan_id).unwrap().filled_qty, 350);
++    assert_eq!(
++        authority.state.plans.plan(plan_id).unwrap().filled_qty(),
++        350
++    );
+     assert_eq!(authority.state.next_order_id, next_order_id);
+     assert!(authority.state.markets[&code]
+         .resting_orders_for(AccountId(1))
+@@ -992,14 +998,14 @@
+         .plans
+         .plan(first.plan_id)
+         .unwrap()
+-        .active_child_order_id
++        .active_child_order_id()
+         .unwrap();
+     let second_old = authority
+         .state
+         .plans
+         .plan(second.plan_id)
+         .unwrap()
+-        .active_child_order_id
++        .active_child_order_id()
+         .unwrap();
+     first_replace(&mut second, second_old);
+     let mut first = first;
+@@ -1150,7 +1156,7 @@
+                 .plans
+                 .plan(request.plan_id)
+                 .unwrap()
+-                .active_child_order_id
++                .active_child_order_id()
+                 .unwrap()
+         })
+         .collect::<Vec<_>>();
+@@ -1199,7 +1205,7 @@
+             .plans
+             .plan(request.plan_id)
+             .unwrap()
+-            .active_child_order_id
++            .active_child_order_id()
+             .unwrap();
+         assert_ne!(active, old_id);
+         assert_eq!(
+--- initial-reviewed/packages/engine/src/session/pipeline/pre_open_transaction_tests.rs
++++ final-reviewed/packages/engine/src/session/pipeline/pre_open_transaction_tests.rs
+@@ -402,7 +402,7 @@
+             .plans
+             .plan(plan_id)
+             .unwrap()
+-            .active_child_order_id,
++            .active_child_order_id(),
+         None,
+     );
+     assert!(authority.state.parent_orders.is_empty());

@@ -21,12 +21,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownLoan {
                 contract: contract.clone(),
             })?;
-        let accrued = state.accrued_unpaid();
-        if accrued.is_zero() {
-            return Err(RealEstateError::NothingAccrued {
-                contract: contract.clone(),
-            });
-        }
+        let accrued = state.preview_interest_payment(contract)?;
         let lender = state.lender().clone();
 
         let base = self.next_event_id;
@@ -70,20 +65,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownLoan {
                 contract: contract.clone(),
             })?;
-        if !amount.is_positive() {
-            return Err(RealEstateError::NonPositiveAmount {
-                what: "principal repayment",
-                amount,
-            });
-        }
-        let outstanding = state.outstanding();
-        if amount > outstanding {
-            return Err(RealEstateError::PrincipalBeyondOutstanding {
-                contract: contract.clone(),
-                requested: amount,
-                outstanding,
-            });
-        }
+        state.validate_repayment(contract, amount)?;
         let account = state.debt_account();
         let lender = state.lender().clone();
 

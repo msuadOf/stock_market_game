@@ -1,0 +1,52 @@
+{
+  "meaning": "删除无caller的cfg(test)过渡wrapper后，仅重跑同源文件原有两个精确case；不增加唯一case数量。",
+  "parallel_processes": 2,
+  "rayon_per_process": 4,
+  "case_and_command_deadline_ms": 10000,
+  "tests": [
+    {
+      "key": [
+        "engine",
+        "lib",
+        "engine",
+        "session::decision_chain::chain_restructure_tests::root_observation_rejects_tick_minute_and_phase_clock_mismatches"
+      ],
+      "source": "packages/engine/src/session/decision_chain.rs",
+      "source_sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/engine-5fb4ee8613b56f76",
+        "--exact",
+        "session::decision_chain::chain_restructure_tests::root_observation_rejects_tick_minute_and_phase_clock_mismatches",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "seconds": 0.6011,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest session::decision_chain::chain_restructure_tests::root_observation_rejects_tick_minute_and_phase_clock_mismatches ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1090 filtered out; finished in 0.59s\n\n"
+    },
+    {
+      "key": [
+        "engine",
+        "lib",
+        "engine",
+        "session::decision_chain::chain_restructure_tests::shared_root_context_keeps_own_facts_when_account_execution_order_changes"
+      ],
+      "source": "packages/engine/src/session/decision_chain.rs",
+      "source_sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/target/debug/deps/engine-5fb4ee8613b56f76",
+        "--exact",
+        "session::decision_chain::chain_restructure_tests::shared_root_context_keeps_own_facts_when_account_execution_order_changes",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "seconds": 1.778,
+      "timed_out": false,
+      "passed": true,
+      "output": "\nrunning 1 test\ntest session::decision_chain::chain_restructure_tests::shared_root_context_keeps_own_facts_when_account_execution_order_changes ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1090 filtered out; finished in 1.77s\n\n"
+    }
+  ]
+}

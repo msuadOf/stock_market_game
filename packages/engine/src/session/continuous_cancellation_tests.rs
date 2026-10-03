@@ -5,7 +5,12 @@ fn session_with_resting_npc_order() -> (GameSession, StockCode, AccountId, Order
     let code = StockCode("600888".to_string());
     let account = AccountId(1);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 7).unwrap();
-    session.accounts.get_mut(&account).unwrap().strategy = None;
+    session
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
     let mut events = Vec::new();
     session.seed_order_for_test(
         account,
@@ -47,10 +52,10 @@ fn state_only_continuous_cancellation_returns_fact_without_consuming_seq() {
     assert_eq!(fact.side, Side::Buy);
     assert_eq!(fact.remaining_qty, 100);
     assert_eq!(session.seq(), seq_before);
-    assert!(session.markets[&code]
+    assert!(session.state.markets[&code]
         .resting_orders_for(account)
         .is_empty());
-    assert!(session.npc_order_lifecycles.is_empty());
+    assert!(session.state.npc_order_lifecycles.is_empty());
 }
 
 #[test]
@@ -76,7 +81,12 @@ fn state_only_continuous_cancellation_rejects_wrong_owner_without_mutation() {
     assert_eq!(session.business_state_hash().unwrap(), before_business);
     assert_eq!(session.session_state_hash().unwrap(), before_session);
     assert_eq!(session.seq(), before_seq);
-    assert_eq!(session.markets[&code].resting_orders_for(account).len(), 1);
+    assert_eq!(
+        session.state.markets[&code]
+            .resting_orders_for(account)
+            .len(),
+        1
+    );
 
     let fact = session
         .cancel_continuous_order_state_only(

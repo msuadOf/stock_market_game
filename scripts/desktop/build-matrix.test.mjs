@@ -254,3 +254,39 @@ test("Given Corepack is unavailable when normal preflight runs then cargo Tauri 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+
+test("route check descriptions and execution consume the same ordered prerequisites", async () => {
+  const api = await import("./build-matrix.mjs");
+  assert.equal(typeof api.verifyPrerequisites, "function");
+  assert.equal(typeof api.describeChecks, "function");
+  const statuses = { linux: { linux: "supported", macos: "unsupported", windows: "constrained" }, macos: { linux: "unsupported", macos: "supported", windows: "constrained" }, windows: { linux: "unsupported", macos: "unsupported", windows: "supported" } };
+  const native = ["frontend-wasm", "node-modules", "corepack", "cargo", "cargo-tauri"];
+  for (const host of ["linux", "macos", "windows"]) {
+    for (const target of ["linux", "macos", "windows"]) {
+      const route = api.planCell(host, target);
+      assert.equal(route.status, statuses[host][target]);
+      const expected = route.status === "unsupported" ? [] : route.status === "supported"
+        ? native : [...native, "cargo-xwin", "nsis", "msvc-target", "llvm-linker", "llvm-resource-compiler"];
+      assert.deepEqual(route.preflightChecks, expected);
+      const calls = [];
+      const cargo = api.verifyPrerequisites(route, Object.fromEntries(expected.map((id) => [id, () => {
+        calls.push(id);
+        return id === "cargo" ? "fixture-cargo" : undefined;
+      }])));
+      assert.deepEqual(calls, expected);
+      assert.equal(cargo, expected.length === 0 ? undefined : "fixture-cargo");
+      assert.equal(api.describeChecks(route).split("; ").length, Math.max(1, expected.length));
+      for (const failedId of expected) {
+        const visited = [];
+        assert.throws(() => api.verifyPrerequisites(route, Object.fromEntries(expected.map((id) => [id, () => {
+          visited.push(id);
+          if (id === failedId) throw new Error(`missing ${id}`);
+          return id === "cargo" ? "fixture-cargo" : undefined;
+        }]))), new RegExp(`missing ${failedId}`));
+        assert.deepEqual(visited, expected.slice(0, expected.indexOf(failedId) + 1));
+      }
+
+    }
+  }
+});

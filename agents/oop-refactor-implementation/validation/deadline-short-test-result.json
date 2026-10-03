@@ -1,0 +1,11 @@
+{
+  "meaning": "沙箱外原命令短单元测试；没有执行完整回归，回归执行器测试使用短fixture与模拟执行依赖。",
+  "command": "timeout -k 1 9 node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none --test-concurrency=4 scripts/run-with-deadline.test.mjs scripts/run-long-validation.test.mjs scripts/run-web-tests.test.mjs scripts/run-full-regression.test.mjs",
+  "exit_code": 0,
+  "tests": 54,
+  "passed": 54,
+  "failed": 0,
+  "duration_ms": 2741.378114,
+  "concurrency": 4,
+  "note": "原沙箱8项失败由旧实现复现；扩大执行权限后相同断言全部通过。"
+}

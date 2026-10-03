@@ -614,7 +614,8 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
     let code = StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(1000))
@@ -1613,12 +1614,12 @@ fn validated_operations_in_session(
         ),
     )])
     .unwrap();
-    let config = game.setup.config.clone();
+    let config = game.state.setup.config.clone();
     let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
+        game.state.next_order_id,
         config.clone(),
         context,
     )
@@ -1730,4 +1731,71 @@ fn validate_worker_receipts(
     ledger.apply(&mut receipts).unwrap();
     ledger.remove_terminal(&output.terminal_keys).unwrap();
     assert_eq!(ledger.next_receipt_index(), 100 + receipts.len() as u64);
+}
+
+#[test]
+fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
+    let code = StockCode("600888".to_owned());
+    let mut market = empty_market(&code);
+    let initial = (0..2)
+        .map(|index| {
+            add_resting_snapshot(
+                &mut market,
+                &code,
+                AccountId(1 + index),
+                OrderId(100 + index),
+                Side::Sell,
+                Money::from_cents(1_000),
+                100,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
+        code,
+        side: Side::Buy,
+        price: LimitPrice::Highest,
+        qty: 200,
+    }]);
+    let draft = place_draft(&operations[0]).clone();
+    let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
+    let output = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market,
+        envelopes: initial.clone(),
+        operations,
+        config,
+    })
+    .unwrap();
+    let incoming = output
+        .receipts
+        .iter()
+        .filter(|receipt| &receipt.envelope == draft.key())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        incoming
+            .iter()
+            .map(|receipt| receipt.local_key.transition_ordinal())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        incoming[0].kind,
+        ReceiptKind::PriceResolved {
+            requested: LimitPrice::Highest,
+            before: draft.limit(),
+            after: resolved
+        }
+    );
+    assert_eq!((incoming[1].qty_before, incoming[1].qty_after), (200, 100));
+    assert_eq!((incoming[2].qty_before, incoming[2].qty_after), (100, 0));
+    for maker in &initial {
+        let receipt = output
+            .receipts
+            .iter()
+            .find(|receipt| &receipt.envelope == maker.envelope.key())
+            .unwrap();
+        assert_eq!(receipt.local_key.transition_ordinal(), 0);
+        assert_eq!((receipt.qty_before, receipt.qty_after), (100, 0));
+    }
+    validate_worker_receipts(&initial, &output);
 }

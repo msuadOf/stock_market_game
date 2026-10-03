@@ -18,7 +18,6 @@ use crate::accounting::Books;
 use super::aggregate::AggregatedBalances;
 use super::error::{ConsolidationError, DeclaredSide};
 use super::group::{MemberId, ValidatedGroup};
-use super::sale::eliminate_sale;
 use super::worksheet::{
     IntercompanyBalance, IntercompanySale, WorksheetEntry, WorksheetLine, WorksheetReason,
 };
@@ -77,7 +76,7 @@ pub(crate) fn build_worksheet(
         worksheet.push(balance_entry(members, decl, &balances[mirror_index])?);
     }
     for sale in sales {
-        worksheet.push(eliminate_sale(group, members, sale)?);
+        worksheet.push(sale.validate_for(group, members)?.to_worksheet_entry()?);
     }
     Ok(worksheet)
 }

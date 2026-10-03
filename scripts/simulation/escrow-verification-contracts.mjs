@@ -238,21 +238,33 @@ function compareBigInt(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function resource(value, label) {
-  exactKeys(value, ["cash_cents", "shares"], label);
-  return { cash: decimal(value.cash_cents, `${label}.cash_cents`), shares: decimal(value.shares, `${label}.shares`) };
-}
+class Resource {
+  constructor(cash = 0n, shares = 0n) {
+    this.cash = cash;
+    this.shares = shares;
+    Object.freeze(this);
+  }
 
-function add(left, right) {
-  return { cash: left.cash + right.cash, shares: left.shares + right.shares };
-}
+  static fromJson(value, label) {
+    exactKeys(value, ["cash_cents", "shares"], label);
+    return new Resource(decimal(value.cash_cents, `${label}.cash_cents`), decimal(value.shares, `${label}.shares`));
+  }
 
-function equalResource(left, right) {
-  return left.cash === right.cash && left.shares === right.shares;
-}
+  toJson() {
+    return { cash_cents: String(this.cash), shares: String(this.shares) };
+  }
 
-function requireResourceEqual(left, right, label) {
-  if (!equalResource(left, right)) fail(`${label} mismatch: cash ${left.cash}/${right.cash}, shares ${left.shares}/${right.shares}`);
+  add(other) {
+    return new Resource(this.cash + other.cash, this.shares + other.shares);
+  }
+
+  equals(other) {
+    return this.cash === other.cash && this.shares === other.shares;
+  }
+
+  assertEquals(other, label) {
+    if (!this.equals(other)) fail(`${label} mismatch: cash ${this.cash}/${other.cash}, shares ${this.shares}/${other.shares}`);
+  }
 }
 
 function envelopeKey(key, label) {
@@ -264,14 +276,98 @@ function envelopeKey(key, label) {
   return JSON.stringify(key);
 }
 
-function emptyResource() {
-  return { cash: 0n, shares: 0n };
+function accumulateAccount(map, account, side, value) {
+  const row = map.get(account) ?? { left: new Resource(), right: new Resource() };
+  row[side] = row[side].add(value);
+  map.set(account, row);
 }
 
-function accumulateAccount(map, account, side, value) {
-  const row = map.get(account) ?? { left: emptyResource(), right: emptyResource() };
-  row[side] = add(row[side], value);
-  map.set(account, row);
+class EnvelopeConservation {
+  constructor(row, rowIndex) {
+    this.row = row;
+    this.rowIndex = rowIndex;
+    if (!new Set(["existing", "created"]).has(row.origin)) fail(`envelope row ${rowIndex}.origin is invalid`);
+    this.commitLive = Resource.fromJson(row.commit_live, `envelope row ${rowIndex}.commit_live`);
+    if (!Array.isArray(row.receipts)) fail(`envelope row ${rowIndex}.receipts must be an array`);
+    if (row.origin === "existing") {
+      exactKeys(row.basis, ["tick_start_live", "p1_live"], `envelope row ${rowIndex}.basis`);
+      this.live = Resource.fromJson(row.basis.tick_start_live, `envelope row ${rowIndex}.basis.tick_start_live`);
+      this.allocationLive = Resource.fromJson(row.basis.p1_live, `envelope row ${rowIndex}.basis.p1_live`);
+      this.left = this.live;
+    } else {
+      exactKeys(row.basis, ["created"], `envelope row ${rowIndex}.basis`);
+      this.live = Resource.fromJson(row.basis.created, `envelope row ${rowIndex}.basis.created`);
+      this.left = this.live;
+    }
+    if (row.key.side === "Sell" && this.live.cash !== 0n) fail(`envelope row ${rowIndex} Sell basis cash escrow must be zero`);
+    if (row.key.side === "Sell" && this.commitLive.cash !== 0n) fail(`envelope row ${rowIndex} Sell commit cash escrow must be zero`);
+    if (row.key.side === "Buy" && this.live.shares !== 0n) fail(`envelope row ${rowIndex} Buy basis shares escrow must be zero`);
+    if (row.key.side === "Buy" && row.origin === "existing" && this.allocationLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
+    if (row.key.side === "Buy" && this.commitLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy commit shares escrow must be zero`);
+    this.expiryReleased = new Resource();
+    this.sealedSpent = new Resource();
+    this.sealedReleased = new Resource();
+    this.reachedSealed = false;
+  }
+
+  assertP1Boundary() {
+    if (this.row.origin === "existing") this.live.assertEquals(this.allocationLive, `envelope row ${this.rowIndex} P1 boundary`);
+  }
+
+  applyReceipt(receipt, receiptIndex) {
+    const row = this.row;
+    const rowIndex = this.rowIndex;
+    if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
+    if (this.reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
+    if (receipt.journal === "SealedBatch" && !this.reachedSealed) {
+      this.assertP1Boundary();
+      this.reachedSealed = true;
+    }
+    const before = Resource.fromJson(receipt.live_before, `envelope row ${rowIndex} receipt ${receiptIndex}.live_before`);
+    const spent = Resource.fromJson(receipt.spent, `envelope row ${rowIndex} receipt ${receiptIndex}.spent`);
+    const released = Resource.fromJson(receipt.released, `envelope row ${rowIndex} receipt ${receiptIndex}.released`);
+    const after = Resource.fromJson(receipt.live_after, `envelope row ${rowIndex} receipt ${receiptIndex}.live_after`);
+    if (receipt.kind !== "Fill") spent.assertEquals(new Resource(), `envelope row ${rowIndex} non-Fill spent ${receiptIndex}`);
+    if (receipt.kind === "Fill" && row.key.side === "Buy" && spent.cash === 0n) {
+      fail(`envelope row ${rowIndex} receipt ${receiptIndex} Buy Fill must spend positive cash`);
+    }
+    if (receipt.kind === "Fill" && row.key.side === "Sell" && spent.shares === 0n) {
+      fail(`envelope row ${rowIndex} receipt ${receiptIndex} Sell Fill must spend positive shares`);
+    }
+    if (row.key.side === "Sell" && (before.cash !== 0n || spent.cash !== 0n || released.cash !== 0n || after.cash !== 0n)) {
+      fail(`envelope row ${rowIndex} Sell receipt ${receiptIndex} cash escrow/spent/released/live must all be zero`);
+    }
+    if (row.key.side === "Buy" && (before.shares !== 0n || spent.shares !== 0n || released.shares !== 0n || after.shares !== 0n)) {
+      fail(`envelope row ${rowIndex} Buy receipt ${receiptIndex} shares escrow/spent/released/live must all be zero`);
+    }
+    before.assertEquals(this.live, `envelope row ${rowIndex} receipt chain ${receiptIndex}`);
+    before.assertEquals(spent.add(released).add(after), `envelope row ${rowIndex} receipt equation ${receiptIndex}`);
+    if (receipt.journal === "PreSeal") {
+      spent.assertEquals(new Resource(), `envelope row ${rowIndex} PreSeal spent ${receiptIndex}`);
+      this.expiryReleased = this.expiryReleased.add(released);
+    } else {
+      this.sealedSpent = this.sealedSpent.add(spent);
+      this.sealedReleased = this.sealedReleased.add(released);
+    }
+    this.live = after;
+  }
+
+  assertCommitAndConservation() {
+    const row = this.row;
+    const rowIndex = this.rowIndex;
+    if (!this.reachedSealed) this.assertP1Boundary();
+    this.live.assertEquals(this.commitLive, `envelope row ${rowIndex} commit live`);
+    const sealedTotal = this.sealedSpent.add(this.sealedReleased).add(this.commitLive);
+    if (row.origin === "existing") {
+      this.left.assertEquals(this.expiryReleased.add(this.allocationLive), `envelope row ${rowIndex} preseal conservation`);
+      this.allocationLive.assertEquals(sealedTotal, `envelope row ${rowIndex} sealed conservation`);
+    } else {
+      this.left.assertEquals(sealedTotal, `envelope row ${rowIndex} created conservation`);
+    }
+    const right = this.expiryReleased.add(this.sealedSpent).add(this.sealedReleased.add(this.commitLive));
+    this.left.assertEquals(right, `envelope row ${rowIndex} combined conservation`);
+    return { left: this.left, right };
+  }
 }
 
 export function verifyConservationSnapshot(snapshot) {
@@ -292,31 +388,7 @@ export function verifyConservationSnapshot(snapshot) {
     const serializedKey = envelopeKey(row.key, `envelope row ${rowIndex}.key`);
     if (keys.has(serializedKey)) fail(`duplicate envelope key at row ${rowIndex}`);
     keys.add(serializedKey);
-    if (!new Set(["existing", "created"]).has(row.origin)) fail(`envelope row ${rowIndex}.origin is invalid`);
-    const commitLive = resource(row.commit_live, `envelope row ${rowIndex}.commit_live`);
-    if (!Array.isArray(row.receipts)) fail(`envelope row ${rowIndex}.receipts must be an array`);
-    let live;
-    let left;
-    let allocationLive;
-    if (row.origin === "existing") {
-      exactKeys(row.basis, ["tick_start_live", "p1_live"], `envelope row ${rowIndex}.basis`);
-      live = resource(row.basis.tick_start_live, `envelope row ${rowIndex}.basis.tick_start_live`);
-      allocationLive = resource(row.basis.p1_live, `envelope row ${rowIndex}.basis.p1_live`);
-      left = live;
-    } else {
-      exactKeys(row.basis, ["created"], `envelope row ${rowIndex}.basis`);
-      live = resource(row.basis.created, `envelope row ${rowIndex}.basis.created`);
-      left = live;
-    }
-    if (row.key.side === "Sell" && live.cash !== 0n) fail(`envelope row ${rowIndex} Sell basis cash escrow must be zero`);
-    if (row.key.side === "Sell" && commitLive.cash !== 0n) fail(`envelope row ${rowIndex} Sell commit cash escrow must be zero`);
-    if (row.key.side === "Buy" && live.shares !== 0n) fail(`envelope row ${rowIndex} Buy basis shares escrow must be zero`);
-    if (row.key.side === "Buy" && row.origin === "existing" && allocationLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
-    if (row.key.side === "Buy" && commitLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy commit shares escrow must be zero`);
-    let expiryReleased = emptyResource();
-    let sealedSpent = emptyResource();
-    let sealedReleased = emptyResource();
-    let reachedSealed = false;
+    const envelope = new EnvelopeConservation(row, rowIndex);
     for (const [receiptIndex, receipt] of row.receipts.entries()) {
       const receiptLabel = `envelope row ${rowIndex} receipt ${receiptIndex}`;
       exactKeys(receipt, ["receipt_index", "journal", "source", "transition_ordinal_within_source", "kind", "live_before", "spent", "released", "live_after"], receiptLabel);
@@ -337,51 +409,9 @@ export function verifyConservationSnapshot(snapshot) {
         ordinalScope,
         ordinal,
       });
-      if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
-      if (reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
-      if (receipt.journal === "SealedBatch" && !reachedSealed) {
-        if (row.origin === "existing") requireResourceEqual(live, allocationLive, `envelope row ${rowIndex} P1 boundary`);
-        reachedSealed = true;
-      }
-      const before = resource(receipt.live_before, `envelope row ${rowIndex} receipt ${receiptIndex}.live_before`);
-      const spent = resource(receipt.spent, `envelope row ${rowIndex} receipt ${receiptIndex}.spent`);
-      const released = resource(receipt.released, `envelope row ${rowIndex} receipt ${receiptIndex}.released`);
-      const after = resource(receipt.live_after, `envelope row ${rowIndex} receipt ${receiptIndex}.live_after`);
-      if (receipt.kind !== "Fill") requireResourceEqual(spent, emptyResource(), `envelope row ${rowIndex} non-Fill spent ${receiptIndex}`);
-      if (receipt.kind === "Fill" && row.key.side === "Buy" && spent.cash === 0n) {
-        fail(`envelope row ${rowIndex} receipt ${receiptIndex} Buy Fill must spend positive cash`);
-      }
-      if (receipt.kind === "Fill" && row.key.side === "Sell" && spent.shares === 0n) {
-        fail(`envelope row ${rowIndex} receipt ${receiptIndex} Sell Fill must spend positive shares`);
-      }
-      if (row.key.side === "Sell" && (before.cash !== 0n || spent.cash !== 0n || released.cash !== 0n || after.cash !== 0n)) {
-        fail(`envelope row ${rowIndex} Sell receipt ${receiptIndex} cash escrow/spent/released/live must all be zero`);
-      }
-      if (row.key.side === "Buy" && (before.shares !== 0n || spent.shares !== 0n || released.shares !== 0n || after.shares !== 0n)) {
-        fail(`envelope row ${rowIndex} Buy receipt ${receiptIndex} shares escrow/spent/released/live must all be zero`);
-      }
-      requireResourceEqual(before, live, `envelope row ${rowIndex} receipt chain ${receiptIndex}`);
-      requireResourceEqual(before, add(add(spent, released), after), `envelope row ${rowIndex} receipt equation ${receiptIndex}`);
-      if (receipt.journal === "PreSeal") {
-        requireResourceEqual(spent, emptyResource(), `envelope row ${rowIndex} PreSeal spent ${receiptIndex}`);
-        expiryReleased = add(expiryReleased, released);
-      } else {
-        sealedSpent = add(sealedSpent, spent);
-        sealedReleased = add(sealedReleased, released);
-      }
-      live = after;
+      envelope.applyReceipt(receipt, receiptIndex);
     }
-    if (row.origin === "existing" && !reachedSealed) requireResourceEqual(live, allocationLive, `envelope row ${rowIndex} P1 boundary`);
-    requireResourceEqual(live, commitLive, `envelope row ${rowIndex} commit live`);
-    const sealedTotal = add(add(sealedSpent, sealedReleased), commitLive);
-    if (row.origin === "existing") {
-      requireResourceEqual(left, add(expiryReleased, allocationLive), `envelope row ${rowIndex} preseal conservation`);
-      requireResourceEqual(allocationLive, sealedTotal, `envelope row ${rowIndex} sealed conservation`);
-    } else {
-      requireResourceEqual(left, sealedTotal, `envelope row ${rowIndex} created conservation`);
-    }
-    const right = add(add(expiryReleased, sealedSpent), add(sealedReleased, commitLive));
-    requireResourceEqual(left, right, `envelope row ${rowIndex} combined conservation`);
+    const { left, right } = envelope.assertCommitAndConservation();
     accumulateAccount(aggregates, row.key.account_id, "left", left);
     accumulateAccount(aggregates, row.key.account_id, "right", right);
   }
@@ -421,13 +451,13 @@ export function verifyConservationSnapshot(snapshot) {
     }
     exactKeys(account.aggregate, ["left", "right"], `conservation account ${index}.aggregate`);
     const claimed = {
-      left: resource(account.aggregate.left, `conservation account ${index}.aggregate.left`),
-      right: resource(account.aggregate.right, `conservation account ${index}.aggregate.right`),
+      left: Resource.fromJson(account.aggregate.left, `conservation account ${index}.aggregate.left`),
+      right: Resource.fromJson(account.aggregate.right, `conservation account ${index}.aggregate.right`),
     };
-    const computed = aggregates.get(account.account_id) ?? { left: emptyResource(), right: emptyResource() };
-    requireResourceEqual(claimed.left, computed.left, `conservation account ${index} claimed left aggregate`);
-    requireResourceEqual(claimed.right, computed.right, `conservation account ${index} claimed right aggregate`);
-    requireResourceEqual(claimed.left, claimed.right, `conservation account ${index} aggregate conservation`);
+    const computed = aggregates.get(account.account_id) ?? { left: new Resource(), right: new Resource() };
+    claimed.left.assertEquals(computed.left, `conservation account ${index} claimed left aggregate`);
+    claimed.right.assertEquals(computed.right, `conservation account ${index} claimed right aggregate`);
+    claimed.left.assertEquals(claimed.right, `conservation account ${index} aggregate conservation`);
   }
   for (const accountId of aggregates.keys()) if (!accountIds.has(accountId)) fail(`missing account aggregate for envelope owner ${accountId}`);
   return { scenario: snapshot.scenario, seed: snapshot.seed, tick: snapshot.tick, envelope_rows: snapshot.envelopes.length, account_rows: snapshot.accounts.length, receipt_rows: receiptIndices.length };

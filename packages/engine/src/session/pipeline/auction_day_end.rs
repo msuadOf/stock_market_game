@@ -1,11 +1,9 @@
-//! Auction call-auction and trading-day-boundary transaction.
+//! 集合竞价与交易日日终事务。
 //!
-//! The stock worker drains its sealed operation stream before running the
-//! indicative/final auction tail.  Closing-auction completion and DayEnd then
-//! share one stock-local receipt batch.  The session adapter executes ReceiptAggregation, Settlement,
-//! event collection, and all boundary state changes on a private candidate;
-//! the caller-provided session is replaced only after every fallible step has
-//! succeeded.
+//! stock worker 按每股实际局部受理事实处理请求，再执行 indicative/completion tail。
+//! sealed identity 仅关联 typed facts，不决定跨实体或同股的受理先后。
+//! 收盘 completion 与 DayEnd 共用股票局部 receipt batch；ReceiptAggregation、Settlement、
+//! 事件收集与边界变更均作用于 private candidate，全部成功后才安装到会话。
 
 #[cfg(test)]
 use super::super::{
@@ -117,9 +115,7 @@ impl AuctionLifecycleFact {
     }
 }
 
-/// Detached stock-local result.  Main can merge these containers with other
-/// P4 producers before its single ReceiptAggregation/Settlement pass; no session authority is hidden in
-/// this value.
+/// 脱离权威状态的股票局部结果；由 Main 与其他 P4 结果组合后统一结算。
 pub(in crate::session::pipeline) struct AuctionStockOutput {
     pub(in crate::session::pipeline) code: StockCode,
     pub(in crate::session::pipeline) market: Market,
@@ -146,8 +142,7 @@ pub(in crate::session::pipeline) struct AuctionDayEndOutput {
     pub(in crate::session::pipeline) finalizer_executions: Vec<AuctionFinalizerExecution>,
 }
 
-/// One continuation-facing auction P4 result. Identity is carried explicitly; callers must not
-/// infer it from the eventual Projection event order.
+/// 面向 continuation 的竞价 P4 结果；显式携带 identity，不从 Projection 排列推断因果。
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::session::pipeline) struct AuctionExecutionFact {
     pub(in crate::session::pipeline) candidate_key: IntentCandidateKey,
@@ -161,8 +156,7 @@ pub(in crate::session::pipeline) struct AuctionStockProjection {
     pub(in crate::session::pipeline) orders: Vec<AuctionOrderSnap>,
 }
 
-/// Only the operation facts produced by one `apply_round` call. AuctionTick, completion and
-/// DayEnd facts cannot appear until the consuming `finish` boundary.
+/// 一次 apply_round 的操作事实；AuctionTick、completion 与 DayEnd 只在 consuming finish 产生。
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct AuctionExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<AuctionExecutionFact>,
@@ -176,9 +170,7 @@ pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
     pub(in crate::session::pipeline) detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
 }
 
-/// Tick-private per-stock auction state. It is initialized exactly once from post-P0 authority,
-/// survives every P3/P4 continuation boundary, and exposes the tail only through consuming
-/// `finish`.
+/// tick 私有股票竞价状态；从 post-P0 初始化一次，跨 continuation 保存，consuming finish 执行尾部。
 #[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     stocks: BTreeMap<StockCode, AuctionStockShadow>,
@@ -191,7 +183,7 @@ pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     pub(in crate::session::pipeline) finish_probe: Option<AuctionFinishProbe>,
 }
 
-/// Bound to a particular test-owned shard; no process-global scheduling state.
+/// 绑定测试独占 shard 的探针，避免进程全局调度状态。
 #[cfg(test)]
 pub(in crate::session::pipeline) struct AuctionFinishProbe(
     pub(in crate::session::pipeline) std::sync::Arc<dyn Fn() + Send + Sync>,
@@ -226,6 +218,39 @@ struct AuctionStockRoundResult {
 }
 
 impl IncrementalAuctionStockCoordinator {
+    fn validate_identities(&self, operations: &[ValidatedOperation]) -> Result<(), StepFatal> {
+        let mut new_candidate_keys = BTreeSet::new();
+        let mut new_sealed_indices = BTreeSet::new();
+        for operation in operations {
+            if self.seen_candidate_keys.contains(operation.candidate_key())
+                || !new_candidate_keys.insert(operation.candidate_key())
+                || self.seen_sealed_indices.contains(&operation.sealed_index())
+                || !new_sealed_indices.insert(operation.sealed_index())
+            {
+                return Err(invariant(
+                    "incremental auction operation identity was replayed",
+                ));
+            }
+            let order_id = match operation {
+                ValidatedOperation::Place(draft) => draft.order_id(),
+                ValidatedOperation::Cancel { order_id, .. } => *order_id,
+            };
+            if matches!(operation, ValidatedOperation::Place(_))
+                && order_id.0 >= crate::orderbook::js_safe_u64::MAX
+            {
+                return Err(invariant(
+                    "incremental auction place cannot preserve a serializable next order id",
+                ));
+            }
+            if order_id.0 > crate::orderbook::js_safe_u64::MAX {
+                return Err(invariant(
+                    "incremental auction operation order id exceeds serializable authority",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub(in crate::session::pipeline) fn detached() -> Self {
         Self {
             stocks: BTreeMap::new(),
@@ -272,13 +297,12 @@ impl IncrementalAuctionStockCoordinator {
         })
     }
 
-    /// Applies one route round atomically. Only touched stock shadows are copied; a typed
-    /// error leaves every queue, receipt outbox, and coordinator identity at the prior boundary.
+    /// 只复制被触及的 stock shadow；本轮全部成功后统一安装，typed error 保留上一边界的状态。
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
         operations: Vec<ValidatedOperation>,
     ) -> Result<AuctionExecutionRound, StepFatal> {
-        validate_incremental_operation_identities(self, &operations)?;
+        self.validate_identities(&operations)?;
         let next_operation_count = self
             .applied_operation_count
             .checked_add(operations.len())
@@ -357,7 +381,7 @@ impl IncrementalAuctionStockCoordinator {
             .into_par_iter()
             .map(|(code, shadow, operations)| {
                 let identity = code.clone();
-                let result = apply_auction_stock_round(code, shadow, operations);
+                let result = shadow.apply_round(operations);
                 (identity, result)
             })
             .collect::<Vec<_>>();
@@ -377,7 +401,7 @@ impl IncrementalAuctionStockCoordinator {
             results
         };
 
-        // A worker failure must identify the same stock regardless of result delivery order.
+        // 保留按 stock identity 选择首错的契约，与结果交付排列无关。
         let mut results = results;
         results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached_facts;
@@ -433,7 +457,7 @@ impl IncrementalAuctionStockCoordinator {
             fact_count = fact_count
                 .checked_add(shadow.lifecycle_facts.len())
                 .ok_or_else(|| invariant("incremental auction fact count overflow"))?;
-            let worker = finish_auction_stock(shadow, tick_after, finish_auction, finish_day)?;
+            let worker = shadow.finish(tick_after, finish_auction, finish_day)?;
             if workers.insert(code, worker).is_some() {
                 return Err(invariant("incremental auction finish duplicated a stock"));
             }
@@ -452,6 +476,252 @@ impl IncrementalAuctionStockCoordinator {
 }
 
 impl AuctionStockShadow {
+    fn apply_round(
+        mut self,
+        operations: Vec<ValidatedOperation>,
+    ) -> Result<AuctionStockRoundResult, StepFatal> {
+        let receipt_start = self.receipts.len();
+        let fact_start = self.lifecycle_facts.len();
+        let mut facts = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let fact = self.apply_operation(operation)?;
+            facts.push(fact);
+        }
+        if self.lifecycle_facts.len().saturating_sub(fact_start) != facts.len() {
+            return Err(invariant(
+                "auction round lifecycle fact count disagrees with operation count",
+            ));
+        }
+        let receipts = self.receipts[receipt_start..].to_vec();
+        Ok(AuctionStockRoundResult {
+            code: self.code.clone(),
+            shadow: self,
+            facts,
+            receipts,
+        })
+    }
+    fn finish(
+        mut self,
+        tick_after: u64,
+        finish_auction: bool,
+        finish_day: bool,
+    ) -> Result<AuctionStockOutput, StepFatal> {
+        let input = AuctionStockInput {
+            code: self.code.clone(),
+            market: self.market,
+            completion: self.completion,
+            continuous_envelopes: self.continuous_envelopes,
+            operations: Vec::new(),
+        };
+        let mut tail = process_auction_stock(input, tick_after, finish_auction, finish_day)?;
+        self.created_envelopes.append(&mut tail.created_envelopes);
+        self.receipts.append(&mut tail.receipts);
+        self.terminal_keys.append(&mut tail.terminal_keys);
+        self.event_facts.append(&mut tail.event_facts);
+        self.lifecycle_facts.append(&mut tail.lifecycle_facts);
+        self.created_envelopes
+            .sort_by(|left, right| left.key().cmp(right.key()));
+        self.terminal_keys.sort();
+        Ok(AuctionStockOutput {
+            code: tail.code,
+            market: tail.market,
+            auction_orders: tail.auction_orders,
+            created_envelopes: self.created_envelopes,
+            receipts: self.receipts,
+            terminal_keys: self.terminal_keys,
+            event_facts: self.event_facts,
+            lifecycle_facts: self.lifecycle_facts,
+            day_end_cancellations: tail.day_end_cancellations,
+            matches: tail.matches,
+            clearing_price: tail.clearing_price,
+            finalizer: tail.finalizer,
+        })
+    }
+    fn apply_operation(
+        &mut self,
+        operation: ValidatedOperation,
+    ) -> Result<AuctionExecutionFact, StepFatal> {
+        let candidate_key = operation.candidate_key().clone();
+        let sealed_index = operation.sealed_index();
+        let (allocated_order_id, lifecycle, event) = match operation {
+            ValidatedOperation::Place(draft) => {
+                let envelope = draft.materialize_envelope();
+                envelope.validate()?;
+                self.ledger.insert_created([envelope.clone()])?;
+                self.created_envelopes.push(envelope.clone());
+                let mut order = AuctionOrder {
+                    envelope,
+                    arrival_seq: 0,
+                };
+                let (price, resolution) = super::super::price_resolution::resolve_draft(
+                    &draft,
+                    &order.envelope,
+                    &self.market,
+                    &self.completion.config,
+                    false,
+                )?;
+                if let Some(reason) =
+                    place_rejection(&self.market, &self.completion, &draft, price)?
+                {
+                    let receipt = reject_receipt(&order, sealed_index)?;
+                    apply_local(
+                        &mut self.ledger,
+                        std::slice::from_ref(&receipt),
+                        std::slice::from_ref(draft.key()),
+                    )?;
+                    self.receipts.push(receipt);
+                    self.terminal_keys.push(draft.key().clone());
+                    (
+                        Some(draft.order_id()),
+                        AuctionLifecycleFact::Rejected {
+                            candidate_key: candidate_key.clone(),
+                            sealed_index,
+                            account: draft.owner(),
+                            code: draft.code().clone(),
+                            order_id: Some(draft.order_id()),
+                            reason: reason.clone(),
+                        },
+                        Event::IntentRejected {
+                            seq: 0,
+                            account: draft.owner(),
+                            code: draft.code().clone(),
+                            reason,
+                        },
+                    )
+                } else {
+                    if let Some(receipt) = resolution {
+                        apply_local(&mut self.ledger, std::slice::from_ref(&receipt), &[])?;
+                        super::super::price_resolution::apply_to_auction_order(
+                            &mut order.envelope,
+                            &receipt,
+                        )?;
+                        self.receipts.push(receipt);
+                    }
+                    validate_auction_reservation(&order, &self.completion.config)?;
+                    let output = self
+                        .completion
+                        .state
+                        .apply_operation(self.completion.phase, AuctionOperation::Place(order))?;
+                    if output.receipt.is_some() || output.terminal_key.is_some() {
+                        return Err(invariant(
+                            "accepted auction placement produced a terminal transition",
+                        ));
+                    }
+                    (
+                        Some(draft.order_id()),
+                        AuctionLifecycleFact::Accepted {
+                            candidate_key: candidate_key.clone(),
+                            sealed_index,
+                            account: draft.owner(),
+                            code: draft.code().clone(),
+                            order_id: draft.order_id(),
+                            side: draft.side(),
+                            qty: draft.qty(),
+                        },
+                        Event::OrderAccepted {
+                            seq: 0,
+                            account: draft.owner(),
+                            code: draft.code().clone(),
+                            id: draft.order_id(),
+                            side: draft.side(),
+                            price,
+                            remaining_qty: draft.qty(),
+                        },
+                    )
+                }
+            }
+            ValidatedOperation::Cancel {
+                account,
+                code,
+                order_id,
+                ..
+            } => {
+                let output = self.completion.state.apply_operation(
+                    self.completion.phase,
+                    AuctionOperation::Cancel {
+                        sealed_index,
+                        account,
+                        order_id,
+                    },
+                )?;
+                if let Some(receipt) = output.receipt {
+                    let terminal = output.terminal_key.ok_or_else(|| {
+                        invariant("auction cancellation receipt has no terminal envelope")
+                    })?;
+                    apply_local(
+                        &mut self.ledger,
+                        std::slice::from_ref(&receipt),
+                        std::slice::from_ref(&terminal),
+                    )?;
+                    self.receipts.push(receipt);
+                    self.terminal_keys.push(terminal);
+                } else if output.terminal_key.is_some() {
+                    return Err(invariant(
+                        "rejected auction cancellation exposed a terminal envelope",
+                    ));
+                }
+                let (lifecycle, event) = match output.fact {
+                    AuctionOperationFact::Canceled {
+                        account,
+                        order_id,
+                        remaining_qty,
+                    } => (
+                        AuctionLifecycleFact::Canceled {
+                            candidate_key: candidate_key.clone(),
+                            sealed_index,
+                            account,
+                            code: code.clone(),
+                            order_id,
+                            remaining_qty,
+                        },
+                        Event::OrderCanceled {
+                            seq: 0,
+                            account,
+                            code,
+                            id: order_id,
+                            remaining_qty,
+                        },
+                    ),
+                    AuctionOperationFact::Rejected {
+                        account, reason, ..
+                    } => {
+                        let reason = cancel_rejection(reason);
+                        (
+                            AuctionLifecycleFact::Rejected {
+                                candidate_key: candidate_key.clone(),
+                                sealed_index,
+                                account,
+                                code: code.clone(),
+                                order_id: Some(order_id),
+                                reason: reason.clone(),
+                            },
+                            Event::IntentRejected {
+                                seq: 0,
+                                account,
+                                code,
+                                reason,
+                            },
+                        )
+                    }
+                    AuctionOperationFact::Placed { .. } => {
+                        return Err(invariant(
+                            "auction cancel operation unexpectedly produced a placement fact",
+                        ));
+                    }
+                };
+                (None, lifecycle, event)
+            }
+        };
+        self.event_facts.push(owned_event(event, sealed_index));
+        self.lifecycle_facts.push(lifecycle.clone());
+        Ok(AuctionExecutionFact {
+            candidate_key,
+            sealed_index,
+            allocated_order_id,
+            outcome: lifecycle,
+        })
+    }
+
     fn from_post_expiry(input: AuctionStockInput) -> Result<Self, StepFatal> {
         let existing = input
             .completion
@@ -474,296 +744,6 @@ impl AuctionStockShadow {
             lifecycle_facts: Vec::new(),
         })
     }
-}
-
-fn apply_auction_stock_round(
-    code: StockCode,
-    mut shadow: AuctionStockShadow,
-    operations: Vec<ValidatedOperation>,
-) -> Result<AuctionStockRoundResult, StepFatal> {
-    let receipt_start = shadow.receipts.len();
-    let fact_start = shadow.lifecycle_facts.len();
-    let mut facts = Vec::with_capacity(operations.len());
-    for operation in operations {
-        let fact = apply_auction_operation(&mut shadow, operation)?;
-        facts.push(fact);
-    }
-    if shadow.lifecycle_facts.len().saturating_sub(fact_start) != facts.len() {
-        return Err(invariant(
-            "auction round lifecycle fact count disagrees with operation count",
-        ));
-    }
-    let receipts = shadow.receipts[receipt_start..].to_vec();
-    Ok(AuctionStockRoundResult {
-        code,
-        shadow,
-        facts,
-        receipts,
-    })
-}
-
-fn finish_auction_stock(
-    mut shadow: AuctionStockShadow,
-    tick_after: u64,
-    finish_auction: bool,
-    finish_day: bool,
-) -> Result<AuctionStockOutput, StepFatal> {
-    let input = AuctionStockInput {
-        code: shadow.code.clone(),
-        market: shadow.market,
-        completion: shadow.completion,
-        continuous_envelopes: shadow.continuous_envelopes,
-        operations: Vec::new(),
-    };
-    let mut tail = process_auction_stock(input, tick_after, finish_auction, finish_day)?;
-    shadow.created_envelopes.append(&mut tail.created_envelopes);
-    shadow.receipts.append(&mut tail.receipts);
-    shadow.terminal_keys.append(&mut tail.terminal_keys);
-    shadow.event_facts.append(&mut tail.event_facts);
-    shadow.lifecycle_facts.append(&mut tail.lifecycle_facts);
-    shadow
-        .created_envelopes
-        .sort_by(|left, right| left.key().cmp(right.key()));
-    shadow.terminal_keys.sort();
-    Ok(AuctionStockOutput {
-        code: tail.code,
-        market: tail.market,
-        auction_orders: tail.auction_orders,
-        created_envelopes: shadow.created_envelopes,
-        receipts: shadow.receipts,
-        terminal_keys: shadow.terminal_keys,
-        event_facts: shadow.event_facts,
-        lifecycle_facts: shadow.lifecycle_facts,
-        day_end_cancellations: tail.day_end_cancellations,
-        matches: tail.matches,
-        clearing_price: tail.clearing_price,
-        finalizer: tail.finalizer,
-    })
-}
-
-fn apply_auction_operation(
-    shadow: &mut AuctionStockShadow,
-    operation: ValidatedOperation,
-) -> Result<AuctionExecutionFact, StepFatal> {
-    let candidate_key = operation.candidate_key().clone();
-    let sealed_index = operation.sealed_index();
-    let (allocated_order_id, lifecycle, event) = match operation {
-        ValidatedOperation::Place(draft) => {
-            let envelope = draft.materialize_envelope();
-            envelope.validate()?;
-            shadow.ledger.insert_created([envelope.clone()])?;
-            shadow.created_envelopes.push(envelope.clone());
-            let mut order = AuctionOrder {
-                envelope,
-                arrival_seq: 0,
-            };
-            let (price, resolution) = super::super::price_resolution::resolve_draft(
-                &draft,
-                &order.envelope,
-                &shadow.market,
-                &shadow.completion.config,
-                false,
-            )?;
-            if let Some(reason) =
-                place_rejection(&shadow.market, &shadow.completion, &draft, price)?
-            {
-                let receipt = reject_receipt(&order, sealed_index)?;
-                apply_local(
-                    &mut shadow.ledger,
-                    std::slice::from_ref(&receipt),
-                    std::slice::from_ref(draft.key()),
-                )?;
-                shadow.receipts.push(receipt);
-                shadow.terminal_keys.push(draft.key().clone());
-                (
-                    Some(draft.order_id()),
-                    AuctionLifecycleFact::Rejected {
-                        candidate_key: candidate_key.clone(),
-                        sealed_index,
-                        account: draft.owner(),
-                        code: draft.code().clone(),
-                        order_id: Some(draft.order_id()),
-                        reason: reason.clone(),
-                    },
-                    Event::IntentRejected {
-                        seq: 0,
-                        account: draft.owner(),
-                        code: draft.code().clone(),
-                        reason,
-                    },
-                )
-            } else {
-                if let Some(receipt) = resolution {
-                    apply_local(&mut shadow.ledger, std::slice::from_ref(&receipt), &[])?;
-                    super::super::price_resolution::apply_to_auction_order(
-                        &mut order.envelope,
-                        &receipt,
-                    )?;
-                    shadow.receipts.push(receipt);
-                }
-                validate_auction_reservation(&order, &shadow.completion.config)?;
-                let output = shadow
-                    .completion
-                    .state
-                    .apply_operation(shadow.completion.phase, AuctionOperation::Place(order))?;
-                if output.receipt.is_some() || output.terminal_key.is_some() {
-                    return Err(invariant(
-                        "accepted auction placement produced a terminal transition",
-                    ));
-                }
-                (
-                    Some(draft.order_id()),
-                    AuctionLifecycleFact::Accepted {
-                        candidate_key: candidate_key.clone(),
-                        sealed_index,
-                        account: draft.owner(),
-                        code: draft.code().clone(),
-                        order_id: draft.order_id(),
-                        side: draft.side(),
-                        qty: draft.qty(),
-                    },
-                    Event::OrderAccepted {
-                        seq: 0,
-                        account: draft.owner(),
-                        code: draft.code().clone(),
-                        id: draft.order_id(),
-                        side: draft.side(),
-                        price,
-                        remaining_qty: draft.qty(),
-                    },
-                )
-            }
-        }
-        ValidatedOperation::Cancel {
-            account,
-            code,
-            order_id,
-            ..
-        } => {
-            let output = shadow.completion.state.apply_operation(
-                shadow.completion.phase,
-                AuctionOperation::Cancel {
-                    sealed_index,
-                    account,
-                    order_id,
-                },
-            )?;
-            if let Some(receipt) = output.receipt {
-                let terminal = output.terminal_key.ok_or_else(|| {
-                    invariant("auction cancellation receipt has no terminal envelope")
-                })?;
-                apply_local(
-                    &mut shadow.ledger,
-                    std::slice::from_ref(&receipt),
-                    std::slice::from_ref(&terminal),
-                )?;
-                shadow.receipts.push(receipt);
-                shadow.terminal_keys.push(terminal);
-            } else if output.terminal_key.is_some() {
-                return Err(invariant(
-                    "rejected auction cancellation exposed a terminal envelope",
-                ));
-            }
-            let (lifecycle, event) = match output.fact {
-                AuctionOperationFact::Canceled {
-                    account,
-                    order_id,
-                    remaining_qty,
-                } => (
-                    AuctionLifecycleFact::Canceled {
-                        candidate_key: candidate_key.clone(),
-                        sealed_index,
-                        account,
-                        code: code.clone(),
-                        order_id,
-                        remaining_qty,
-                    },
-                    Event::OrderCanceled {
-                        seq: 0,
-                        account,
-                        code,
-                        id: order_id,
-                        remaining_qty,
-                    },
-                ),
-                AuctionOperationFact::Rejected {
-                    account, reason, ..
-                } => {
-                    let reason = cancel_rejection(reason);
-                    (
-                        AuctionLifecycleFact::Rejected {
-                            candidate_key: candidate_key.clone(),
-                            sealed_index,
-                            account,
-                            code: code.clone(),
-                            order_id: Some(order_id),
-                            reason: reason.clone(),
-                        },
-                        Event::IntentRejected {
-                            seq: 0,
-                            account,
-                            code,
-                            reason,
-                        },
-                    )
-                }
-                AuctionOperationFact::Placed { .. } => {
-                    return Err(invariant(
-                        "auction cancel operation unexpectedly produced a placement fact",
-                    ));
-                }
-            };
-            (None, lifecycle, event)
-        }
-    };
-    shadow.event_facts.push(owned_event(event, sealed_index));
-    shadow.lifecycle_facts.push(lifecycle.clone());
-    Ok(AuctionExecutionFact {
-        candidate_key,
-        sealed_index,
-        allocated_order_id,
-        outcome: lifecycle,
-    })
-}
-
-fn validate_incremental_operation_identities(
-    coordinator: &IncrementalAuctionStockCoordinator,
-    operations: &[ValidatedOperation],
-) -> Result<(), StepFatal> {
-    let mut new_candidate_keys = BTreeSet::new();
-    let mut new_sealed_indices = BTreeSet::new();
-    for operation in operations {
-        if coordinator
-            .seen_candidate_keys
-            .contains(operation.candidate_key())
-            || !new_candidate_keys.insert(operation.candidate_key())
-            || coordinator
-                .seen_sealed_indices
-                .contains(&operation.sealed_index())
-            || !new_sealed_indices.insert(operation.sealed_index())
-        {
-            return Err(invariant(
-                "incremental auction operation identity was replayed",
-            ));
-        }
-        let order_id = match operation {
-            ValidatedOperation::Place(draft) => draft.order_id(),
-            ValidatedOperation::Cancel { order_id, .. } => *order_id,
-        };
-        if matches!(operation, ValidatedOperation::Place(_))
-            && order_id.0 >= crate::orderbook::js_safe_u64::MAX
-        {
-            return Err(invariant(
-                "incremental auction place cannot preserve a serializable next order id",
-            ));
-        }
-        if order_id.0 > crate::orderbook::js_safe_u64::MAX {
-            return Err(invariant(
-                "incremental auction operation order id exceeds serializable authority",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn validate_auction_round_identities(
@@ -791,12 +771,7 @@ fn operation_code(operation: &ValidatedOperation) -> &StockCode {
     }
 }
 
-/// Applies Auction to a prospective session atomically.
-///
-/// This is deliberately a candidate seam, not a `GameSession::step` cutover.
-/// Main may call it on its full-tick shadow after the operation stream has
-/// drained, or consume [`process_auction_stock`] directly when composing a
-/// joint Continuous/Auction ReceiptAggregation batch.
+/// 在 prospective session 上原子应用 Auction 的测试 seam；仅成功时安装 private candidate。
 #[cfg(test)]
 pub(super) fn apply_session_auction_day_end_transaction(
     session: &mut GameSession,
@@ -818,38 +793,7 @@ fn apply_candidate(
     validation: &AccountValidationOutput,
 ) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     validate_order_cursor(session, validation)?;
-    let phase = session.phase();
-    if !matches!(
-        phase,
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction
-    ) {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "B2 auction transaction requires an opening or closing auction phase",
-        )));
-    }
-    let tick_after = session
-        .tick
-        .checked_add(1)
-        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("tick overflow")))?;
-    let finish_auction = match phase {
-        TradingPhase::CallAuction => {
-            tick_after % session.setup.ticks_per_day == session.auction_entry_ticks()
-        }
-        TradingPhase::ClosingAuction => tick_after.is_multiple_of(session.setup.ticks_per_day),
-        TradingPhase::PreOpen | TradingPhase::Continuous => false,
-    };
-    let finish_day =
-        session.setup.ticks_per_day > 0 && tick_after.is_multiple_of(session.setup.ticks_per_day);
-    if finish_day && !finish_auction {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "auction day boundary did not coincide with auction completion",
-        )));
-    }
-    if finish_day && session.day == u32::MAX {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "auction trading day overflow",
-        )));
-    }
+    let boundary = AuctionTickBoundary::capture(session)?;
 
     let facts = adapt_account_validation_rejection_facts(candidates, validation.results())
         .map_err(AuctionDayEndError::Adapter)?;
@@ -866,7 +810,11 @@ fn apply_candidate(
             source,
         })?;
     let finish = coordinator
-        .finish(tick_after, finish_auction, finish_day)
+        .finish(
+            boundary.tick_after(),
+            boundary.finish_auction(),
+            boundary.finish_day(),
+        )
         .map_err(|source| AuctionDayEndError::Worker {
             code: StockCode("<incremental>".to_owned()),
             source,
@@ -878,9 +826,7 @@ fn apply_candidate(
         facts,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
-            tick_after,
-            finish_auction,
-            finish_day,
+            boundary,
             consumed: None,
             preceding_receipts: &[],
         },
@@ -954,7 +900,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
         preceding_receipts,
     } = context;
     validate_order_cursor(session, validation)?;
-    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
+    let boundary = AuctionTickBoundary::capture(session)?;
     let coordinator_lifecycle_facts =
         rejection_lifecycle_facts(candidates, validation).map_err(AuctionDayEndError::Adapter)?;
     apply_finished_candidate(
@@ -964,9 +910,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
         preceding_facts,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
-            tick_after,
-            finish_auction,
-            finish_day,
+            boundary,
             consumed: Some(consumed),
             preceding_receipts,
         },
@@ -978,19 +922,100 @@ pub(in crate::session::pipeline) fn finish_incremental_auction_coordinator(
     session: &GameSession,
     coordinator: IncrementalAuctionStockCoordinator,
 ) -> Result<IncrementalAuctionFinish, AuctionDayEndError> {
-    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
+    let boundary = AuctionTickBoundary::capture(session)?;
     coordinator
-        .finish(tick_after, finish_auction, finish_day)
+        .finish(
+            boundary.tick_after(),
+            boundary.finish_auction(),
+            boundary.finish_day(),
+        )
         .map_err(|source| AuctionDayEndError::Worker {
             code: StockCode("<incremental>".to_owned()),
             source,
         })
 }
 
-struct AuctionFinishContext<'context> {
+/// 经 checked capture 得到的本 tick 竞价收尾事实；不拥有时钟或股票状态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::session::pipeline) struct AuctionTickBoundary {
     tick_after: u64,
     finish_auction: bool,
     finish_day: bool,
+}
+
+impl AuctionTickBoundary {
+    pub(in crate::session::pipeline) fn capture(
+        session: &GameSession,
+    ) -> Result<Self, AuctionDayEndError> {
+        let phase = session.phase();
+        if !matches!(
+            phase,
+            TradingPhase::CallAuction | TradingPhase::ClosingAuction
+        ) {
+            return Err(AuctionDayEndError::Precondition(invariant(
+                "B2 auction transaction requires an opening or closing auction phase",
+            )));
+        }
+        let tick_after = session
+            .state
+            .tick
+            .checked_add(1)
+            .ok_or_else(|| AuctionDayEndError::Precondition(invariant("tick overflow")))?;
+        let finish_auction = match phase {
+            TradingPhase::CallAuction => {
+                tick_after % session.state.setup.ticks_per_day == session.auction_entry_ticks()
+            }
+            TradingPhase::ClosingAuction => {
+                tick_after.is_multiple_of(session.state.setup.ticks_per_day)
+            }
+            TradingPhase::PreOpen | TradingPhase::Continuous => false,
+        };
+        let finish_day = session.state.setup.ticks_per_day > 0
+            && tick_after.is_multiple_of(session.state.setup.ticks_per_day);
+        if finish_day && !finish_auction {
+            return Err(AuctionDayEndError::Precondition(invariant(
+                "auction day boundary did not coincide with auction completion",
+            )));
+        }
+        if finish_day && session.state.day == u32::MAX {
+            return Err(AuctionDayEndError::Precondition(invariant(
+                "auction trading day overflow",
+            )));
+        }
+        Ok(Self {
+            tick_after,
+            finish_auction,
+            finish_day,
+        })
+    }
+
+    pub(in crate::session::pipeline) const fn tick_after(self) -> u64 {
+        self.tick_after
+    }
+    pub(in crate::session::pipeline) const fn finish_auction(self) -> bool {
+        self.finish_auction
+    }
+    pub(in crate::session::pipeline) const fn finish_day(self) -> bool {
+        self.finish_day
+    }
+
+    #[cfg(test)]
+    pub(in crate::session::pipeline) fn for_test(
+        tick_after: u64,
+        finish_auction: bool,
+        finish_day: bool,
+    ) -> Self {
+        assert!(!finish_day || finish_auction);
+        Self {
+            tick_after,
+            finish_auction,
+            finish_day,
+        }
+    }
+}
+
+struct AuctionFinishContext<'context> {
+    boundary: AuctionTickBoundary,
     consumed: Option<&'context super::super::adaptive_plan_chain::PlanChainFactConsumption>,
     preceding_receipts: &'context [EnvelopeReceipt],
 }
@@ -1011,8 +1036,11 @@ fn apply_finished_candidate(
     facts.extend(finish.detached_event_facts);
     coordinator_lifecycle_facts.extend(finish.detached_lifecycle_facts);
     let mut workers = finish.workers;
-    let (_finalizer, finalizer_executions) =
-        validate_worker_finalizers(&workers, context.finish_auction, context.finish_day)?;
+    let (_finalizer, finalizer_executions) = validate_worker_finalizers(
+        &workers,
+        context.boundary.finish_auction(),
+        context.boundary.finish_day(),
+    )?;
 
     let mut day_end_cancellations = workers
         .values()
@@ -1073,19 +1101,20 @@ fn apply_finished_candidate(
     let _settlement = apply_session_settlement_transaction(session, &settlement_receipts)
         .map_err(AuctionDayEndError::Settlement)?;
     crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
-    apply_auction_lifecycle_projection(
-        session,
-        workers.values(),
-        &coordinator_lifecycle_facts,
-        &receipts,
-        context.finish_day,
-        context.consumed,
-    )
-    .map_err(AuctionDayEndError::Lifecycle)?;
-    if !context.finish_day {
-        let mut plans = std::mem::take(&mut session.plans);
+    AuctionLifecycleProjector::new(session)
+        .apply(
+            session,
+            workers.values(),
+            &coordinator_lifecycle_facts,
+            &receipts,
+            context.boundary.finish_day(),
+            context.consumed,
+        )
+        .map_err(AuctionDayEndError::Lifecycle)?;
+    if !context.boundary.finish_day() {
+        let mut plans = std::mem::take(&mut session.state.plans);
         let synchronized = session.synchronize_owned_plan_execution(&mut plans);
-        session.plans = plans;
+        session.state.plans = plans;
         synchronized.map_err(|error| {
             AuctionDayEndError::Lifecycle(lifecycle_invariant(&format!(
                 "final auction plan synchronization failed: {error}"
@@ -1094,8 +1123,11 @@ fn apply_finished_candidate(
     }
 
     for (code, worker) in &workers {
-        session.markets.insert(code.clone(), worker.market.clone());
-        if context.finish_auction {
+        session
+            .state
+            .markets
+            .insert(code.clone(), worker.market.clone());
+        if context.boundary.finish_auction() {
             if worker.matches.is_empty() {
                 let last = worker.market.last_price();
                 session.update_active_daily_candle(code, last, 0);
@@ -1106,21 +1138,21 @@ fn apply_finished_candidate(
             }
         }
         #[cfg(feature = "simulation-diagnostics")]
-        if context.finish_auction {
+        if context.boundary.finish_auction() {
             session.causal_snapshot(code);
         }
     }
-    session.auction_orders = workers
+    session.state.auction_orders = workers
         .iter()
         .filter_map(|(code, worker)| {
             (!worker.auction_orders.is_empty())
                 .then_some((code.clone(), worker.auction_orders.clone()))
         })
         .collect();
-    session.next_order_id = validation.next_order_id_after();
-    session.tick = context.tick_after;
+    session.state.next_order_id = validation.next_order_id_after();
+    session.state.tick = context.boundary.tick_after();
 
-    if context.finish_day {
+    if context.boundary.finish_day() {
         #[cfg(feature = "simulation-diagnostics")]
         {
             let mut day_end_time = session.causal_time();
@@ -1143,11 +1175,12 @@ fn apply_finished_candidate(
                 session.causal_snapshot_at(day_end_time, &code);
             }
         }
-        let mut boundary_facts = finalize_trading_day(session)?;
+        let mut boundary_facts = TradingDayEndTransition::new(session).apply()?;
         facts.append(&mut boundary_facts);
     }
-    let collected = collect_events(facts, session.seq).map_err(AuctionDayEndError::Projection)?;
-    session.seq = collected.next_seq;
+    let collected =
+        collect_events(facts, session.state.seq).map_err(AuctionDayEndError::Projection)?;
+    session.state.seq = collected.next_seq;
 
     Ok(AuctionDayEndOutput {
         events: collected.events,
@@ -1161,46 +1194,7 @@ fn apply_finished_candidate(
     })
 }
 
-pub(in crate::session::pipeline) fn auction_tail_boundaries(
-    session: &GameSession,
-) -> Result<(u64, bool, bool), AuctionDayEndError> {
-    let phase = session.phase();
-    if !matches!(
-        phase,
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction
-    ) {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "B2 auction transaction requires an opening or closing auction phase",
-        )));
-    }
-    let tick_after = session
-        .tick
-        .checked_add(1)
-        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("tick overflow")))?;
-    let finish_auction = match phase {
-        TradingPhase::CallAuction => {
-            tick_after % session.setup.ticks_per_day == session.auction_entry_ticks()
-        }
-        TradingPhase::ClosingAuction => tick_after.is_multiple_of(session.setup.ticks_per_day),
-        TradingPhase::PreOpen | TradingPhase::Continuous => false,
-    };
-    let finish_day =
-        session.setup.ticks_per_day > 0 && tick_after.is_multiple_of(session.setup.ticks_per_day);
-    if finish_day && !finish_auction {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "auction day boundary did not coincide with auction completion",
-        )));
-    }
-    if finish_day && session.day == u32::MAX {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "auction trading day overflow",
-        )));
-    }
-    Ok((tick_after, finish_auction, finish_day))
-}
-
-/// Drains one stock's already-sealed auction operations, then executes its
-/// indicative/completion/day-end tail exactly once.
+/// 按本股局部受理事实处理操作，再恰一次执行 indicative/completion/DayEnd tail。
 pub(super) fn process_auction_stock(
     mut input: AuctionStockInput,
     tick_after: u64,
@@ -1427,7 +1421,7 @@ pub(super) fn process_auction_stock(
             .ok_or_else(|| invariant("B2 auction-completion execution count overflow"))?;
         clearing_price = completion.clearing.map(|selection| selection.price);
         if let Some(price) = clearing_price {
-            market.set_last_price(price);
+            market.apply_auction_price(price);
         }
         apply_local(
             &mut local_ledger,
@@ -1781,299 +1775,308 @@ fn validate_worker_finalizers(
     Ok((observed, executions))
 }
 
-fn apply_auction_lifecycle_projection<'a>(
-    session: &mut GameSession,
-    workers: impl IntoIterator<Item = &'a AuctionStockOutput>,
-    coordinator_facts: &[AuctionLifecycleFact],
-    receipts: &[EnvelopeReceipt],
-    finish_day: bool,
-    consumed: Option<&super::super::adaptive_plan_chain::PlanChainFactConsumption>,
-) -> Result<bool, StepFatal> {
-    let workers = workers.into_iter().collect::<Vec<_>>();
-    let mut operation_facts = coordinator_facts.to_vec();
-    operation_facts.extend(
-        workers
-            .iter()
-            .flat_map(|worker| worker.lifecycle_facts.iter().cloned()),
-    );
-    let mut seen_sealed = BTreeSet::new();
-    if operation_facts
-        .iter()
-        .any(|fact| !seen_sealed.insert(fact.sealed_index()))
-    {
-        return Err(lifecycle_invariant(
-            "auction lifecycle facts contain duplicate sealed identity",
-        ));
-    }
+/// 暂存 parent、plan 与 retail 投影；所有 lifecycle 检查成功后统一安装。
+struct AuctionLifecycleProjector {
+    parents: BTreeMap<crate::AccountId, BTreeMap<StockCode, crate::session::ParentOrderPlan>>,
+    pending: Vec<PendingPlanEvent>,
+    retail_events: Vec<RetailOrderDiagnosticEvent>,
+}
 
-    let mut parents = session.parent_orders.clone();
-    let mut pending = Vec::new();
-    let mut retail_events = Vec::new();
-    for fact in operation_facts {
-        let already_projected = consumed.is_some_and(|consumed| {
-            consumed
-                .operations
-                .contains(&(fact.candidate_key().clone(), fact.sealed_index()))
-        });
-        match fact {
-            AuctionLifecycleFact::Accepted {
-                account,
-                code,
-                order_id,
-                side,
-                qty,
-                ..
-            } => {
-                #[cfg(feature = "simulation-diagnostics")]
-                if !already_projected {
-                    let quote = session.causal_quote(&code);
-                    session.causal_submitted_with_quote(account, order_id, &code, side, qty, quote);
-                }
-                if !already_projected {
-                    if let Some(parent) = parents
-                        .get_mut(&account)
-                        .and_then(|plans| plans.get_mut(&code))
-                        .filter(|parent| parent.side == side)
-                    {
-                        if parent.active_child_order_id.is_some()
-                            || parent.active_child_remaining_qty.is_some()
-                        {
-                            return Err(lifecycle_invariant(
-                                "linked parent accepted a second active auction child",
-                            ));
-                        }
-                        parent.active_child_order_id = Some(order_id);
-                        parent.active_child_remaining_qty = Some(qty);
-                        if let Some(plan_id) = parent.linked_plan_id {
-                            push_pending_plan_event(
-                                session,
-                                &mut pending,
-                                PendingPlanEvent::Accepted {
-                                    plan_id,
-                                    order_id,
-                                    trading_day: u64::from(session.day),
-                                },
-                            )?;
-                        }
-                    }
-                }
-                if session.retail_experience.contains_key(&account) {
-                    retail_events.push(RetailOrderDiagnosticEvent::Submitted {
-                        account,
-                        code,
-                        side,
-                        order_id,
-                        qty,
-                    });
-                }
-            }
-            AuctionLifecycleFact::Canceled {
-                account,
-                code,
-                order_id,
-                remaining_qty,
-                ..
-            } => {
-                #[cfg(feature = "simulation-diagnostics")]
-                if !already_projected {
-                    session.causal_terminated(
-                        (account, order_id, remaining_qty),
-                        &code,
-                        crate::diagnostics::causal::Termination::Voluntary,
-                    );
-                }
-                if !already_projected {
-                    clear_parent_child(&mut parents, account, &code, order_id, remaining_qty)?;
-                }
-                if session.retail_experience.contains_key(&account) {
-                    retail_events.push(RetailOrderDiagnosticEvent::Canceled {
-                        account,
-                        code,
-                        order_id,
-                        remaining_qty,
-                    });
-                }
-            }
-            AuctionLifecycleFact::Rejected {
-                account,
-                code,
-                reason,
-                ..
-            } => {
-                if session.retail_experience.contains_key(&account) {
-                    retail_events.push(RetailOrderDiagnosticEvent::Rejected {
-                        account,
-                        code,
-                        reason,
-                    });
-                }
-            }
+impl AuctionLifecycleProjector {
+    fn new(session: &GameSession) -> Self {
+        Self {
+            parents: session.state.parent_orders.clone(),
+            pending: Vec::new(),
+            retail_events: Vec::new(),
         }
     }
-
-    for receipt in receipts
-        .iter()
-        .filter(|receipt| receipt.kind == ReceiptKind::Fill)
-    {
-        let qty = receipt
-            .qty_before
-            .checked_sub(receipt.qty_after)
-            .ok_or_else(|| {
-                lifecycle_invariant("auction fill receipt has a regressing quantity chain")
-            })?;
-        if qty == 0 {
+    fn apply<'a>(
+        mut self,
+        session: &mut GameSession,
+        workers: impl IntoIterator<Item = &'a AuctionStockOutput>,
+        coordinator_facts: &[AuctionLifecycleFact],
+        receipts: &[EnvelopeReceipt],
+        finish_day: bool,
+        consumed: Option<&super::super::adaptive_plan_chain::PlanChainFactConsumption>,
+    ) -> Result<bool, StepFatal> {
+        let workers = workers.into_iter().collect::<Vec<_>>();
+        let mut operation_facts = coordinator_facts.to_vec();
+        operation_facts.extend(
+            workers
+                .iter()
+                .flat_map(|worker| worker.lifecycle_facts.iter().cloned()),
+        );
+        let mut seen_sealed = BTreeSet::new();
+        if operation_facts
+            .iter()
+            .any(|fact| !seen_sealed.insert(fact.sealed_index()))
+        {
             return Err(lifecycle_invariant(
-                "auction lifecycle received a zero-quantity fill",
+                "auction lifecycle facts contain duplicate sealed identity",
             ));
         }
-        let key = &receipt.envelope;
-        #[cfg(feature = "simulation-diagnostics")]
-        {
-            let value_before = receipt.value_before.cents();
-            let value_after = receipt.value_after.cents();
-            let gross = value_after
-                .checked_sub(value_before)
-                .ok_or_else(|| lifecycle_invariant("auction causal fill value regressed"))?;
-            let tracked = session.causal.filled_values.entry(key.order).or_insert(0);
-            if *tracked != value_before {
-                return Err(lifecycle_invariant(
-                    "auction causal fill value disagrees with the receipt chain",
-                ));
-            }
-            *tracked = value_after;
-            session.causal_record(crate::diagnostics::causal::CausalFactKind::Filled {
-                order: key.order,
-                account: key.account,
-                code: key.stock.clone(),
-                qty,
-                value_before,
-                gross,
+
+        for fact in operation_facts {
+            let already_projected = consumed.is_some_and(|consumed| {
+                consumed.contains_operation(fact.candidate_key(), fact.sealed_index())
             });
+            match fact {
+                AuctionLifecycleFact::Accepted {
+                    account,
+                    code,
+                    order_id,
+                    side,
+                    qty,
+                    ..
+                } => {
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if !already_projected {
+                        let quote = session.causal_quote(&code);
+                        session.causal_submitted_with_quote(
+                            account, order_id, &code, side, qty, quote,
+                        );
+                    }
+                    if !already_projected {
+                        if let Some(parent) = self
+                            .parents
+                            .get_mut(&account)
+                            .and_then(|plans| plans.get_mut(&code))
+                            .filter(|parent| parent.side() == side)
+                        {
+                            parent
+                                .checked_record_submission(side, order_id, qty)
+                                .map_err(lifecycle_invariant)?;
+                            if let Some(plan_id) = parent.linked_plan_id() {
+                                self.pending.push(PendingPlanEvent::Accepted {
+                                    plan_id,
+                                    order_id,
+                                    trading_day: u64::from(session.state.day),
+                                });
+                            }
+                        }
+                    }
+                    if session.state.retail_experience.contains_key(&account) {
+                        self.retail_events
+                            .push(RetailOrderDiagnosticEvent::Submitted {
+                                account,
+                                code,
+                                side,
+                                order_id,
+                                qty,
+                            });
+                    }
+                }
+                AuctionLifecycleFact::Canceled {
+                    account,
+                    code,
+                    order_id,
+                    remaining_qty,
+                    ..
+                } => {
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if !already_projected {
+                        session.causal_terminated(
+                            (account, order_id, remaining_qty),
+                            &code,
+                            crate::diagnostics::causal::Termination::Voluntary,
+                        );
+                    }
+                    if !already_projected {
+                        self.clear_child(account, &code, order_id, remaining_qty)?;
+                    }
+                    if session.state.retail_experience.contains_key(&account) {
+                        self.retail_events
+                            .push(RetailOrderDiagnosticEvent::Canceled {
+                                account,
+                                code,
+                                order_id,
+                                remaining_qty,
+                            });
+                    }
+                }
+                AuctionLifecycleFact::Rejected {
+                    account,
+                    code,
+                    reason,
+                    ..
+                } => {
+                    if session.state.retail_experience.contains_key(&account) {
+                        self.retail_events
+                            .push(RetailOrderDiagnosticEvent::Rejected {
+                                account,
+                                code,
+                                reason,
+                            });
+                    }
+                }
+            }
         }
-        if let Some(parent) = parents
-            .get_mut(&key.account)
-            .and_then(|plans| plans.get_mut(&key.stock))
-            .filter(|parent| {
-                parent.side == key.side && parent.active_child_order_id == Some(key.order)
-            })
+
+        for receipt in receipts
+            .iter()
+            .filter(|receipt| receipt.kind == ReceiptKind::Fill)
         {
-            let child_before = parent.active_child_remaining_qty.ok_or_else(|| {
-                lifecycle_invariant("linked parent active child has no remaining quantity")
-            })?;
-            let child_after = child_before.checked_sub(qty).ok_or_else(|| {
-                lifecycle_invariant("auction fill exceeds linked parent child quantity")
-            })?;
-            let filled_after = parent.filled_qty.checked_add(qty).ok_or_else(|| {
-                lifecycle_invariant("linked parent auction fill quantity overflow")
-            })?;
-            if filled_after > parent.target_qty {
+            let qty = receipt
+                .qty_before
+                .checked_sub(receipt.qty_after)
+                .ok_or_else(|| {
+                    lifecycle_invariant("auction fill receipt has a regressing quantity chain")
+                })?;
+            if qty == 0 {
                 return Err(lifecycle_invariant(
-                    "linked parent auction fill exceeds its target quantity",
+                    "auction lifecycle received a zero-quantity fill",
                 ));
             }
-            parent.filled_qty = filled_after;
-            if child_after == 0 {
-                parent.active_child_order_id = None;
-                parent.active_child_remaining_qty = None;
-            } else {
-                parent.active_child_remaining_qty = Some(child_after);
+            let key = &receipt.envelope;
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                let time = session.causal_time();
+                session
+                    .state
+                    .causal
+                    .record_auction_fill(
+                        time,
+                        key.order,
+                        key.account,
+                        &key.stock,
+                        qty,
+                        receipt.value_before.cents(),
+                        receipt.value_after.cents(),
+                    )
+                    .map_err(lifecycle_invariant)?;
             }
-            if let Some(plan_id) = parent.linked_plan_id {
-                push_pending_plan_event(
-                    session,
-                    &mut pending,
-                    PendingPlanEvent::Filled {
+            if let Some(parent) = self
+                .parents
+                .get_mut(&key.account)
+                .and_then(|plans| plans.get_mut(&key.stock))
+                .filter(|parent| {
+                    parent.side() == key.side && parent.active_child_order_id() == Some(key.order)
+                })
+            {
+                let transition = parent
+                    .checked_record_fill(key.side, key.order, qty)
+                    .map_err(lifecycle_invariant)?
+                    .ok_or_else(|| {
+                        lifecycle_invariant("matching parent child must produce a fill transition")
+                    })?;
+                if let Some(plan_id) = parent.linked_plan_id() {
+                    self.pending.push(PendingPlanEvent::Filled {
                         plan_id,
                         order_id: key.order,
                         qty,
-                        child_complete: child_after == 0,
-                        trading_day: u64::from(session.day),
-                    },
-                )?;
+                        child_complete: transition.child_complete,
+                        trading_day: u64::from(session.state.day),
+                    });
+                }
+            }
+            if session.state.retail_experience.contains_key(&key.account) {
+                self.retail_events.push(RetailOrderDiagnosticEvent::Filled {
+                    account: key.account,
+                    code: key.stock.clone(),
+                    side: key.side,
+                    order_id: key.order,
+                    qty,
+                });
             }
         }
-        if session.retail_experience.contains_key(&key.account) {
-            retail_events.push(RetailOrderDiagnosticEvent::Filled {
-                account: key.account,
-                code: key.stock.clone(),
-                side: key.side,
-                order_id: key.order,
-                qty,
-            });
+
+        #[cfg(feature = "simulation-diagnostics")]
+        for worker in &workers {
+            let before = session.causal_quote(&worker.code);
+            for matched in &worker.matches {
+                let (maker, taker) = if matched.maker_is_buy {
+                    (matched.buy.order, matched.sell.order)
+                } else {
+                    (matched.sell.order, matched.buy.order)
+                };
+                session.causal_record(crate::diagnostics::causal::CausalFactKind::Execution {
+                    code: worker.code.clone(),
+                    maker,
+                    taker,
+                    side: None,
+                    qty: matched.qty,
+                    price_cents: matched.price.cents(),
+                    before: before.clone(),
+                });
+            }
         }
-    }
 
-    #[cfg(feature = "simulation-diagnostics")]
-    for worker in &workers {
-        let before = session.causal_quote(&worker.code);
-        for matched in &worker.matches {
-            let (maker, taker) = if matched.maker_is_buy {
-                (matched.buy.order, matched.sell.order)
-            } else {
-                (matched.sell.order, matched.buy.order)
-            };
-            session.causal_record(crate::diagnostics::causal::CausalFactKind::Execution {
-                code: worker.code.clone(),
-                maker,
-                taker,
-                side: None,
-                qty: matched.qty,
-                price_cents: matched.price.cents(),
-                before: before.clone(),
-            });
-        }
-    }
-
-    let mut day_end_cancellations = workers
-        .iter()
-        .flat_map(|worker| worker.day_end_cancellations.iter().cloned())
-        .collect::<Vec<_>>();
-    day_end_cancellations.sort_by(|left, right| left.key.cmp(&right.key));
-    for cancellation in day_end_cancellations {
-        clear_parent_child(
-            &mut parents,
-            cancellation.key.account,
-            &cancellation.key.stock,
-            cancellation.key.order,
-            cancellation.remaining_qty,
-        )?;
-        if session
-            .retail_experience
-            .contains_key(&cancellation.key.account)
-        {
-            retail_events.push(RetailOrderDiagnosticEvent::Canceled {
-                account: cancellation.key.account,
-                code: cancellation.key.stock,
-                order_id: cancellation.key.order,
-                remaining_qty: cancellation.remaining_qty,
-            });
-        }
-    }
-
-    for plans in parents.values_mut() {
-        plans.retain(|_, parent| {
-            parent.linked_plan_id.is_some() || parent.filled_qty < parent.target_qty
-        });
-    }
-    parents.retain(|_, plans| !plans.is_empty());
-
-    if finish_day {
-        let ended = parents
-            .values()
-            .flat_map(|plans| plans.values())
-            .filter(|parent| parent.filled_qty < parent.target_qty)
-            .filter_map(|parent| parent.linked_plan_id)
+        let mut day_end_cancellations = workers
+            .iter()
+            .flat_map(|worker| worker.day_end_cancellations.iter().cloned())
             .collect::<Vec<_>>();
-        pending.extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-            plan_id,
-            trading_day: u64::from(session.day),
-        }));
-    }
+        day_end_cancellations.sort_by(|left, right| left.key.cmp(&right.key));
+        for cancellation in day_end_cancellations {
+            self.clear_child(
+                cancellation.key.account,
+                &cancellation.key.stock,
+                cancellation.key.order,
+                cancellation.remaining_qty,
+            )?;
+            if session
+                .state
+                .retail_experience
+                .contains_key(&cancellation.key.account)
+            {
+                self.retail_events
+                    .push(RetailOrderDiagnosticEvent::Canceled {
+                        account: cancellation.key.account,
+                        code: cancellation.key.stock,
+                        order_id: cancellation.key.order,
+                        remaining_qty: cancellation.remaining_qty,
+                    });
+            }
+        }
 
-    session.parent_orders = parents;
-    session.pending_plan_events.extend(pending);
-    session.last_retail_order_events.extend(retail_events);
-    Ok(false)
+        for plans in self.parents.values_mut() {
+            plans.retain(|_, parent| {
+                parent.linked_plan_id().is_some() || parent.filled_qty() < parent.target_qty()
+            });
+        }
+        self.parents.retain(|_, plans| !plans.is_empty());
+
+        if finish_day {
+            let ended = self
+                .parents
+                .values()
+                .flat_map(|plans| plans.values())
+                .filter(|parent| parent.filled_qty() < parent.target_qty())
+                .filter_map(|parent| parent.linked_plan_id())
+                .collect::<Vec<_>>();
+            self.pending
+                .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
+                    plan_id,
+                    trading_day: u64::from(session.state.day),
+                }));
+        }
+
+        session.state.parent_orders = self.parents;
+        session.state.pending_plan_events.extend(self.pending);
+        session
+            .state
+            .last_retail_order_events
+            .extend(self.retail_events);
+        Ok(false)
+    }
+    fn clear_child(
+        &mut self,
+        account: crate::AccountId,
+        code: &StockCode,
+        order_id: OrderId,
+        remaining_qty: u32,
+    ) -> Result<(), StepFatal> {
+        let Some(parent) = self
+            .parents
+            .get_mut(&account)
+            .and_then(|plans| plans.get_mut(code))
+        else {
+            return Ok(());
+        };
+        parent
+            .checked_clear_matching_child(order_id, remaining_qty)
+            .map_err(lifecycle_invariant)?;
+        Ok(())
+    }
 }
 
 fn rejection_lifecycle_facts(
@@ -2120,98 +2123,87 @@ fn rejection_lifecycle_facts(
         .collect()
 }
 
-fn push_pending_plan_event(
-    _session: &GameSession,
-    pending: &mut Vec<PendingPlanEvent>,
-    event: PendingPlanEvent,
-) -> Result<(), StepFatal> {
-    pending.push(event);
-    Ok(())
+/// 一次交易日日终迁移；失败时由调用方丢弃 candidate，保留原先局部修改顺序。
+pub(in crate::session::pipeline) struct TradingDayEndTransition<'candidate> {
+    candidate: &'candidate mut GameSession,
+    trading_day: u64,
 }
 
-fn clear_parent_child(
-    parents: &mut BTreeMap<crate::AccountId, BTreeMap<StockCode, crate::session::ParentOrderPlan>>,
-    account: crate::AccountId,
-    code: &StockCode,
-    order_id: OrderId,
-    remaining_qty: u32,
-) -> Result<(), StepFatal> {
-    let Some(parent) = parents
-        .get_mut(&account)
-        .and_then(|plans| plans.get_mut(code))
-    else {
-        return Ok(());
-    };
-    if parent.active_child_order_id != Some(order_id) {
-        return Ok(());
+impl<'candidate> TradingDayEndTransition<'candidate> {
+    pub(in crate::session::pipeline) fn new(candidate: &'candidate mut GameSession) -> Self {
+        let trading_day = u64::from(candidate.state.day);
+        Self {
+            candidate,
+            trading_day,
+        }
     }
-    if parent.active_child_remaining_qty != Some(remaining_qty) {
-        return Err(lifecycle_invariant(
-            "auction cancellation disagrees with linked parent child quantity",
-        ));
-    }
-    parent.active_child_order_id = None;
-    parent.active_child_remaining_qty = None;
-    Ok(())
-}
-
-pub(in crate::session::pipeline) fn finalize_trading_day(
-    session: &mut GameSession,
-) -> Result<Vec<OwnedEventFact>, AuctionDayEndError> {
-    if session
-        .markets
-        .values()
-        .any(|market| market.resting_order_count() != 0)
-        || !session.auction_orders.is_empty()
-        || session.envelope_ledger.iter().next().is_some()
-    {
-        return Err(AuctionDayEndError::Precondition(invariant(
-            "DayEnd finalizer retained a live order or envelope",
-        )));
-    }
-    if session.setup.t1_enabled {
-        session.accounts.unlock_t1_positions();
-    }
-    checked_sweep_decision_chain_day_end(session).map_err(AuctionDayEndError::Lifecycle)?;
-    session.parent_orders.clear();
-    session.npc_order_lifecycles.clear();
-    let closed_daily_candles = session.commit_active_daily_candles();
-    session.day = session
-        .day
-        .checked_add(1)
-        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("trading day overflow")))?;
-    for history in session.market_minute_closes.values_mut() {
-        history.clear();
-    }
-    let facts = vec![owned_event(
-        Event::DayBoundary {
-            seq: 0,
-            day: session.day,
-            closed_daily_candles,
-        },
-        0,
-    )];
-    Ok(facts)
-}
-
-fn checked_sweep_decision_chain_day_end(session: &mut GameSession) -> Result<(), StepFatal> {
-    let trading_day = u64::from(session.day);
-    let mut plans = std::mem::take(&mut session.plans);
-    session
-        .synchronize_owned_plan_execution(&mut plans)
-        .map_err(|error| lifecycle_invariant(&format!("plan synchronization failed: {error}")))?;
-    let plan_ids = plans.active_plan_ids();
-    for plan_id in plan_ids {
-        plans
-            .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
-            .map_err(|error| {
-                lifecycle_invariant(&format!(
-                    "day-end plan sweep failed for {plan_id:?}: {error}"
-                ))
+    pub(in crate::session::pipeline) fn apply(
+        mut self,
+    ) -> Result<Vec<OwnedEventFact>, AuctionDayEndError> {
+        let session = &mut *self.candidate;
+        if session
+            .state
+            .markets
+            .values()
+            .any(|market| market.resting_order_count() != 0)
+            || !session.state.auction_orders.is_empty()
+            || session.state.envelope_ledger.iter().next().is_some()
+        {
+            return Err(AuctionDayEndError::Precondition(invariant(
+                "DayEnd finalizer retained a live order or envelope",
+            )));
+        }
+        if session.state.setup.t1_enabled {
+            session.state.accounts.unlock_t1_positions();
+        }
+        self.sweep_owned_plans()
+            .map_err(AuctionDayEndError::Lifecycle)?;
+        let session = &mut *self.candidate;
+        session.state.parent_orders.clear();
+        super::super::quote_expiry::NpcOrderLifecycleBook::new(
+            &mut session.state.npc_order_lifecycles,
+        )
+        .clear();
+        let closed_daily_candles = session.commit_active_daily_candles();
+        session.state.day =
+            session.state.day.checked_add(1).ok_or_else(|| {
+                AuctionDayEndError::Precondition(invariant("trading day overflow"))
             })?;
+        for history in session.state.market_minute_closes.values_mut() {
+            history.clear();
+        }
+        let facts = vec![owned_event(
+            Event::DayBoundary {
+                seq: 0,
+                day: session.state.day,
+                closed_daily_candles,
+            },
+            0,
+        )];
+        Ok(facts)
     }
-    session.plans = plans;
-    Ok(())
+    fn sweep_owned_plans(&mut self) -> Result<(), StepFatal> {
+        let trading_day = self.trading_day;
+        let session = &mut *self.candidate;
+        let mut plans = std::mem::take(&mut session.state.plans);
+        session
+            .synchronize_owned_plan_execution(&mut plans)
+            .map_err(|error| {
+                lifecycle_invariant(&format!("plan synchronization failed: {error}"))
+            })?;
+        let plan_ids = plans.active_plan_ids();
+        for plan_id in plan_ids {
+            plans
+                .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
+                .map_err(|error| {
+                    lifecycle_invariant(&format!(
+                        "day-end plan sweep failed for {plan_id:?}: {error}"
+                    ))
+                })?;
+        }
+        session.state.plans = plans;
+        Ok(())
+    }
 }
 
 fn lifecycle_invariant(description: &str) -> StepFatal {
@@ -2231,6 +2223,7 @@ fn validate_order_cursor(
         ))
     })?;
     let expected = session
+        .state
         .next_order_id
         .checked_add(draft_count)
         .ok_or_else(|| {
@@ -2247,9 +2240,13 @@ fn validate_order_cursor(
                 "P3 draft ordinal exceeds the order identity domain",
             ))
         })?;
-        let expected_id = session.next_order_id.checked_add(ordinal).ok_or_else(|| {
-            AuctionDayEndError::Precondition(invariant("B2 draft order identity overflow"))
-        })?;
+        let expected_id = session
+            .state
+            .next_order_id
+            .checked_add(ordinal)
+            .ok_or_else(|| {
+                AuctionDayEndError::Precondition(invariant("B2 draft order identity overflow"))
+            })?;
         if draft.order_id() != OrderId(expected_id) {
             return Err(AuctionDayEndError::Precondition(invariant(
                 "P3 draft identity disagrees with the B2 session cursor",
@@ -2280,3 +2277,7 @@ fn invariant(description: &str) -> StepFatal {
 #[cfg(test)]
 #[path = "incremental_auction_round_tests.rs"]
 mod incremental_auction_round_tests;
+
+#[cfg(test)]
+#[path = "auction_refactor_tests.rs"]
+mod auction_refactor_tests;

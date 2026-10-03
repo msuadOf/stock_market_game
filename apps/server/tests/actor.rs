@@ -294,7 +294,7 @@ async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
         .await
         .expect("baseline command must succeed");
     let slot = handles.save(2, None).await.expect("save must succeed");
-    let mut updates = handles.event_tx.subscribe();
+    let mut updates = handles.subscribe_events();
 
     // When: the actor atomically restores the save.
     handles.restore(slot).await.expect("restore must succeed");
@@ -317,7 +317,7 @@ async fn actor_broadcasts_events_with_seq() {
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
     // 订阅事件流（必须在 step 前 subscribe，否则丢历史；连接先发快照对齐基线的设计见 ws 路由）。
-    let mut rx = handles.event_tx.subscribe();
+    let mut rx = handles.subscribe_events();
     handles.set_running(true).await.expect("应能启动会话");
 
     // 等收到至少一个事件（PriceTick 每 step 一定出）。
@@ -353,7 +353,7 @@ async fn actor_settles_a_market_day_without_a_host_failure() {
         .new_session(sample_setup(), 47)
         .expect("fixture session must start");
     let handles = manager.lookup(&id).expect("fixture handles must exist");
-    let mut updates = handles.event_tx.subscribe();
+    let mut updates = handles.subscribe_events();
     handles.set_running(true).await.expect("session must start");
 
     // When: the actor advances through one market day.
@@ -503,7 +503,7 @@ async fn actor_market_goes_live_produces_trade_events() {
         .expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
-    let mut rx = handles.event_tx.subscribe();
+    let mut rx = handles.subscribe_events();
     handles
         .set_speed(f64::INFINITY)
         .await
@@ -598,7 +598,7 @@ async fn actor_fastest_yields_after_its_slice_and_services_commands() {
         .await
         .expect("Fastest 应切换为无固定周期的推进模式");
     handles.set_running(true).await.expect("应能启动会话");
-    let mut events = handles.event_tx.subscribe();
+    let mut events = handles.subscribe_events();
     tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
         .await
         .expect("Fastest 应持续推进并产生事件")

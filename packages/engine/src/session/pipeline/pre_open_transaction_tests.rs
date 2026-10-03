@@ -18,8 +18,8 @@ fn player_only_pre_open_session() -> GameSession {
 }
 
 fn complete_opening_auction(session: &mut GameSession) {
-    session.tick = 599;
-    session.pending_npc = None;
+    session.state.tick = 599;
+    session.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(session).unwrap();
     assert_eq!(session.phase(), TradingPhase::CallAuction);
     super::auction_tick_transaction::prepare_auction_tick(session)
@@ -27,7 +27,7 @@ fn complete_opening_auction(session: &mut GameSession) {
         .commit();
     assert_eq!(session.tick(), 600);
     assert_eq!(session.phase(), TradingPhase::PreOpen);
-    assert!(session.auction_orders.values().all(Vec::is_empty));
+    assert!(session.state.auction_orders.values().all(Vec::is_empty));
 }
 
 fn due_retail_pre_open_session() -> (GameSession, AccountId) {
@@ -38,12 +38,13 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
     let mut session = GameSession::new(setup, 8).unwrap();
     complete_opening_auction(&mut session);
     session
+        .state
         .accounts
         .get_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
-    session.pending_npc = None;
+    session.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut session).unwrap();
     assert_eq!(session.phase(), TradingPhase::PreOpen);
     (session, account)
@@ -55,10 +56,10 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
     let tick_before = authority.tick();
     let seq_before = authority.seq();
     let histories_before = serde_json::to_value((
-        &authority.price_history,
-        &authority.market_minute_closes,
-        &authority.daily_candles,
-        &authority.active_daily_candles,
+        &authority.state.price_history,
+        &authority.state.market_minute_closes,
+        authority.state.candle_book.histories(),
+        authority.state.candle_book.active(),
     ))
     .unwrap();
 
@@ -75,10 +76,10 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
     assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
     assert_eq!(
         serde_json::to_value((
-            &authority.price_history,
-            &authority.market_minute_closes,
-            &authority.daily_candles,
-            &authority.active_daily_candles,
+            &authority.state.price_history,
+            &authority.state.market_minute_closes,
+            authority.state.candle_book.histories(),
+            authority.state.candle_book.active(),
         ))
         .unwrap(),
         histories_before,
@@ -97,8 +98,8 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
 fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_receipt() {
     let mut authority = player_only_pre_open_session();
     let player = AccountId(0);
-    let code = authority.setup.stocks[0].code.clone();
-    let next_order_before = authority.next_order_id;
+    let code = authority.state.setup.stocks[0].code.clone();
+    let next_order_before = authority.state.next_order_id;
     let seq_before = authority.seq();
     authority
         .enqueue_player_intent(
@@ -126,9 +127,9 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
         .commit();
 
     assert_eq!(authority.tick(), 601);
-    assert_eq!(authority.next_order_id, next_order_before + 1);
-    assert!(authority.pending_player.is_empty());
-    assert!(authority.markets[&code].resting_orders().is_empty());
+    assert_eq!(authority.state.next_order_id, next_order_before + 1);
+    assert!(authority.state.pending_player.is_empty());
+    assert!(authority.state.markets[&code].resting_orders().is_empty());
     assert_eq!(committed.output.receipts.len(), 1);
     assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
     assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
@@ -161,7 +162,7 @@ fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
     let mut authority = player_only_pre_open_session();
     let player = AccountId(0);
     let unknown = crate::StockCode("999999".to_owned());
-    let next_order_before = authority.next_order_id;
+    let next_order_before = authority.state.next_order_id;
     authority
         .enqueue_player_intent(
             player,
@@ -176,7 +177,7 @@ fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
         .unwrap()
         .commit();
 
-    assert_eq!(authority.next_order_id, next_order_before);
+    assert_eq!(authority.state.next_order_id, next_order_before);
     assert!(committed.output.receipts.is_empty());
     assert!(matches!(
         committed.commit.tick.events.as_slice(),
@@ -192,14 +193,14 @@ fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
 #[test]
 fn final_pre_open_tick_enters_continuous_without_publishing_market_data() {
     let mut authority = player_only_pre_open_session();
-    authority.tick = 899;
-    authority.pending_npc = None;
+    authority.state.tick = 899;
+    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let history_before = serde_json::to_value((
-        &authority.price_history,
-        &authority.market_minute_closes,
-        &authority.daily_candles,
-        &authority.active_daily_candles,
+        &authority.state.price_history,
+        &authority.state.market_minute_closes,
+        authority.state.candle_book.histories(),
+        authority.state.candle_book.active(),
     ))
     .unwrap();
 
@@ -213,10 +214,10 @@ fn final_pre_open_tick_enters_continuous_without_publishing_market_data() {
     assert!(events.is_empty());
     assert_eq!(
         serde_json::to_value((
-            &authority.price_history,
-            &authority.market_minute_closes,
-            &authority.daily_candles,
-            &authority.active_daily_candles,
+            &authority.state.price_history,
+            &authority.state.market_minute_closes,
+            authority.state.candle_book.histories(),
+            authority.state.candle_book.active(),
         ))
         .unwrap(),
         history_before,
@@ -228,11 +229,11 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(900);
     setup.npcs.inst_count = 0;
     let mut authority = GameSession::new(setup, 43).unwrap();
-    authority.tick = 599;
-    authority.pending_npc = None;
+    authority.state.tick = 599;
+    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let player = AccountId(0);
-    let code = authority.setup.stocks[0].code.clone();
+    let code = authority.state.setup.stocks[0].code.clone();
     authority
         .enqueue_player_intent(
             player,
@@ -249,14 +250,16 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
         .unwrap()
         .commit();
     assert_eq!(authority.phase(), TradingPhase::PreOpen);
-    assert!(authority.auction_orders.values().all(Vec::is_empty));
-    assert_eq!(authority.markets[&code].resting_order_count(), 1);
+    assert!(authority.state.auction_orders.values().all(Vec::is_empty));
+    assert_eq!(authority.state.markets[&code].resting_order_count(), 1);
 
-    let orders_before = serde_json::to_value(authority.markets[&code].resting_orders()).unwrap();
-    let ledger_before = serde_json::to_value(authority.envelope_ledger.hash_projection()).unwrap();
+    let orders_before =
+        serde_json::to_value(authority.state.markets[&code].resting_orders()).unwrap();
+    let ledger_before =
+        serde_json::to_value(authority.state.envelope_ledger.hash_projection()).unwrap();
     let reserved_before = authority.reserved_cash_for_account(player).unwrap();
     let seq_before = authority.seq();
-    let next_order_before = authority.next_order_id;
+    let next_order_before = authority.state.next_order_id;
 
     let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
         .unwrap()
@@ -264,13 +267,13 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
 
     assert!(committed.commit.tick.events.is_empty());
     assert_eq!(authority.seq(), seq_before);
-    assert_eq!(authority.next_order_id, next_order_before);
+    assert_eq!(authority.state.next_order_id, next_order_before);
     assert_eq!(
-        serde_json::to_value(authority.markets[&code].resting_orders()).unwrap(),
+        serde_json::to_value(authority.state.markets[&code].resting_orders()).unwrap(),
         orders_before,
     );
     assert_eq!(
-        serde_json::to_value(authority.envelope_ledger.hash_projection()).unwrap(),
+        serde_json::to_value(authority.state.envelope_ledger.hash_projection()).unwrap(),
         ledger_before,
     );
     assert_eq!(
@@ -291,7 +294,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
 fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_state() {
     let (mut authority, npc) = due_retail_pre_open_session();
     let player = AccountId(0);
-    let code = authority.setup.stocks[0].code.clone();
+    let code = authority.state.setup.stocks[0].code.clone();
     authority
         .enqueue_player_intent(
             player,
@@ -303,14 +306,13 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
             },
         )
         .unwrap();
-    let strategy_before = authority.accounts[&npc]
-        .strategy
-        .as_ref()
+    let strategy_before = authority.state.accounts[&npc]
+        .strategy()
         .unwrap()
         .production_state()
         .unwrap();
-    let attention_before = authority.npc_attention[&npc].next_attention_candidate_tick;
-    let rng_before = authority.rng.state;
+    let attention_before = authority.state.npc_attention[&npc].next_attention_candidate_tick;
+    let rng_before = authority.state.rng.state;
 
     let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
         .unwrap()
@@ -336,17 +338,16 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
         }
     )));
     assert_ne!(
-        authority.npc_attention[&npc].next_attention_candidate_tick, attention_before,
+        authority.state.npc_attention[&npc].next_attention_candidate_tick, attention_before,
         "the accepted NPC attention schedule must advance on the committed shadow",
     );
     assert_eq!(
-        authority.rng.state, rng_before,
+        authority.state.rng.state, rng_before,
         "NPC decisions use their derived RNG stream"
     );
     assert_eq!(
-        authority.accounts[&npc]
-            .strategy
-            .as_ref()
+        authority.state.accounts[&npc]
+            .strategy()
             .unwrap()
             .production_state()
             .unwrap(),
@@ -358,13 +359,13 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
 #[test]
 fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a_child() {
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    authority.setup.auction_ticks = 900;
-    authority.setup.ticks_per_day = 15_300;
-    authority.tick = 600;
-    authority.pending_npc = None;
+    authority.state.setup.auction_ticks = 900;
+    authority.state.setup.ticks_per_day = 15_300;
+    authority.state.tick = 600;
+    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let plan_id = request.plan_id;
-    let next_order_before = authority.next_order_id;
+    let next_order_before = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
     let mut plan = plan_tick(PhaseInput {
@@ -393,19 +394,24 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
             ..
         }]
     ));
-    assert_eq!(authority.next_order_id, next_order_before + 1);
+    assert_eq!(authority.state.next_order_id, next_order_before + 1);
     assert_eq!(authority.tick(), 601);
     assert_eq!(
-        authority.plans.plan(plan_id).unwrap().active_child_order_id,
+        authority
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
         None,
     );
-    assert!(authority.parent_orders.is_empty());
+    assert!(authority.state.parent_orders.is_empty());
 }
 
 #[test]
 fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and_events() {
     let (mut authority, npc) = due_retail_pre_open_session();
-    let code = authority.setup.stocks[0].code.clone();
+    let code = authority.state.setup.stocks[0].code.clone();
     authority
         .enqueue_player_intent(
             AccountId(0),
@@ -420,10 +426,9 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
     let seq_before = authority.seq();
-    let queue_before = serde_json::to_vec(&authority.pending_player).unwrap();
-    let strategy_before = authority.accounts[&npc]
-        .strategy
-        .as_ref()
+    let queue_before = serde_json::to_vec(&authority.state.pending_player).unwrap();
+    let strategy_before = authority.state.accounts[&npc]
+        .strategy()
         .unwrap()
         .production_state()
         .unwrap();
@@ -433,7 +438,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     .unwrap();
     plan.state
         .execute(|candidate| {
-            candidate.next_receipt_base = 1;
+            candidate.state.next_receipt_base = 1;
             Ok(())
         })
         .unwrap();
@@ -449,16 +454,15 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
     assert_eq!(
-        serde_json::to_vec(&authority.pending_player).unwrap(),
+        serde_json::to_vec(&authority.state.pending_player).unwrap(),
         queue_before
     );
     assert_eq!(authority.tick(), 600);
     assert_eq!(authority.seq(), seq_before);
-    assert_eq!(authority.next_receipt_base, 0);
+    assert_eq!(authority.state.next_receipt_base, 0);
     assert_eq!(
-        authority.accounts[&npc]
-            .strategy
-            .as_ref()
+        authority.state.accounts[&npc]
+            .strategy()
             .unwrap()
             .production_state()
             .unwrap(),

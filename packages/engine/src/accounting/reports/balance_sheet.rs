@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::ledger::LedgerAccountId;
 
-use super::notes::NoteTarget;
+use super::notes::{NoteTarget, ReportClassification};
 use super::window::{net_income_of, StatementWindows};
 use super::{Comparative, ReportError, UnavailableReason};
 
@@ -134,22 +134,20 @@ pub struct BalanceSheet {
     pub prior_year_end: Comparative<Vec<(BsLine, AccountingAmount)>>,
 }
 
-type Classification = BTreeMap<LedgerAccountId, NoteTarget>;
-
-fn has_line(classification: &Classification, line: BsLine) -> bool {
+fn has_line(classification: &ReportClassification, line: BsLine) -> bool {
     classification
-        .values()
-        .any(|target| matches!(target, NoteTarget::BalanceSheet(l) if *l == line))
+        .iter()
+        .any(|(_, target)| matches!(target, NoteTarget::BalanceSheet(l) if *l == line))
 }
 
 /// 行值 = 归类科目净借方按正常方向折算（备抵自然冲减）。
 pub(crate) fn signed_sum(
     map: &BTreeMap<LedgerAccountId, AccountingAmount>,
-    classification: &Classification,
+    classification: &ReportClassification,
     line: BsLine,
 ) -> Result<AccountingAmount, ReportError> {
     let mut total = AccountingAmount::ZERO;
-    for (code, target) in classification {
+    for (code, target) in classification.iter() {
         if matches!(target, NoteTarget::BalanceSheet(l) if *l == line) {
             let value = map.get(code).copied().unwrap_or(AccountingAmount::ZERO);
             let signed = if line.credit_positive() {
@@ -166,7 +164,7 @@ pub(crate) fn signed_sum(
 /// 生成资产负债表（期末 + 比较项）。
 pub(crate) fn generate(
     windows: &StatementWindows,
-    classification: &Classification,
+    classification: &ReportClassification,
 ) -> Result<BalanceSheet, ReportError> {
     let facts = windows.consolidation.as_ref();
     let mut asset_lines = Vec::new();
@@ -186,40 +184,10 @@ pub(crate) fn generate(
             liability_lines.push((*line, value));
         }
     }
-    // 实收资本：合并口径 = Σ成员 − 非根成员贡献（根成员 4001）。
-    let mut paid_in = signed_sum(&windows.closing, classification, BsLine::PaidInCapital)?;
-    if let Some(facts) = facts {
-        for (code, credit) in &facts.non_root_equity {
-            if matches!(
-                classification.get(code),
-                Some(NoteTarget::BalanceSheet(BsLine::PaidInCapital))
-            ) {
-                paid_in = paid_in.sub(*credit)?;
-            }
-        }
-    }
-    let retained = match facts {
-        Some(facts) => facts.equity_to_parent.sub(paid_in)?,
-        None => net_income_of(&windows.closing, &windows.defs)?.add(signed_sum(
-            &windows.closing,
-            classification,
-            BsLine::RetainedEarnings,
-        )?)?,
-    };
-    let minority = facts.map(|facts| facts.minority_equity);
-    let mut equity_lines = vec![
-        (BsLine::PaidInCapital, paid_in),
-        (BsLine::RetainedEarnings, retained),
-    ];
-    let mut total_equity = paid_in.add(retained)?;
-    if let Some(minority) = minority {
-        equity_lines.push((BsLine::MinorityEquity, minority));
-        total_equity = total_equity.add(minority)?;
-    }
-    let equity_to_parent = match minority {
-        Some(minority) => total_equity.sub(minority)?,
-        None => total_equity,
-    };
+    let equity = EquityPresentation::from_closing(windows, classification)?;
+    let equity_lines = equity.lines();
+    let total_equity = equity.total_equity()?;
+    let equity_to_parent = equity.equity_to_parent(total_equity)?;
     let mut closing_cash = AccountingAmount::ZERO;
     for (code, def) in &windows.defs {
         if def.is_cash {
@@ -255,7 +223,7 @@ pub(crate) fn generate(
 /// 上年年末比较项行。
 fn prior_lines(
     prior: &BTreeMap<LedgerAccountId, AccountingAmount>,
-    classification: &Classification,
+    classification: &ReportClassification,
     windows: &StatementWindows,
     facts: Option<&super::consolidated_window::ConsolidationFacts>,
 ) -> Result<Vec<(BsLine, AccountingAmount)>, ReportError> {
@@ -266,29 +234,223 @@ fn prior_lines(
         }
         lines.push((*line, signed_sum(prior, classification, *line)?));
     }
-    let (paid_in, retained, minority) = match facts {
-        None => {
-            let paid_in = signed_sum(prior, classification, BsLine::PaidInCapital)?;
-            let retained = net_income_of(prior, &windows.defs)?.add(signed_sum(
-                prior,
-                classification,
-                BsLine::RetainedEarnings,
-            )?)?;
-            (paid_in, retained, None)
-        }
-        Some(facts) => match &facts.prior_split {
-            None => return Ok(lines),
-            Some(split) => (
-                split.root_capital,
-                split.parent.sub(split.root_capital)?,
-                Some(split.minority),
-            ),
-        },
-    };
-    lines.push((BsLine::PaidInCapital, paid_in));
-    lines.push((BsLine::RetainedEarnings, retained));
-    if let Some(minority) = minority {
-        lines.push((BsLine::MinorityEquity, minority));
+    if let Some(equity) = EquityPresentation::from_prior(prior, classification, windows, facts)? {
+        lines.extend(equity.lines());
     }
     Ok(lines)
+}
+
+/// 本次列报的权益行值；比较期路径不额外计算原先未校验的总额。
+struct EquityPresentation {
+    paid_in: AccountingAmount,
+    retained: AccountingAmount,
+    minority: Option<AccountingAmount>,
+}
+
+impl EquityPresentation {
+    fn from_closing(
+        windows: &StatementWindows,
+        classification: &ReportClassification,
+    ) -> Result<Self, ReportError> {
+        let facts = windows.consolidation.as_ref();
+        // 实收资本：合并口径 = Σ成员 − 非根成员贡献（根成员 4001）。
+        let mut paid_in = signed_sum(&windows.closing, classification, BsLine::PaidInCapital)?;
+        if let Some(facts) = facts {
+            for (code, credit) in &facts.non_root_equity {
+                if matches!(
+                    classification.target_for(code),
+                    Some(NoteTarget::BalanceSheet(BsLine::PaidInCapital))
+                ) {
+                    paid_in = paid_in.sub(*credit)?;
+                }
+            }
+        }
+        let retained = match facts {
+            Some(facts) => facts.equity_to_parent.sub(paid_in)?,
+            None => net_income_of(&windows.closing, &windows.defs)?.add(signed_sum(
+                &windows.closing,
+                classification,
+                BsLine::RetainedEarnings,
+            )?)?,
+        };
+        let minority = facts.map(|facts| facts.minority_equity);
+        Ok(Self {
+            paid_in,
+            retained,
+            minority,
+        })
+    }
+
+    fn from_prior(
+        prior: &BTreeMap<LedgerAccountId, AccountingAmount>,
+        classification: &ReportClassification,
+        windows: &StatementWindows,
+        facts: Option<&super::consolidated_window::ConsolidationFacts>,
+    ) -> Result<Option<Self>, ReportError> {
+        let (paid_in, retained, minority) = match facts {
+            None => {
+                let paid_in = signed_sum(prior, classification, BsLine::PaidInCapital)?;
+                let retained = net_income_of(prior, &windows.defs)?.add(signed_sum(
+                    prior,
+                    classification,
+                    BsLine::RetainedEarnings,
+                )?)?;
+                (paid_in, retained, None)
+            }
+            Some(facts) => match &facts.prior_split {
+                None => return Ok(None),
+                Some(split) => (
+                    split.root_capital,
+                    split.parent.sub(split.root_capital)?,
+                    Some(split.minority),
+                ),
+            },
+        };
+        Ok(Some(Self {
+            paid_in,
+            retained,
+            minority,
+        }))
+    }
+
+    fn lines(&self) -> Vec<(BsLine, AccountingAmount)> {
+        let mut lines = vec![
+            (BsLine::PaidInCapital, self.paid_in),
+            (BsLine::RetainedEarnings, self.retained),
+        ];
+        if let Some(minority) = self.minority {
+            lines.push((BsLine::MinorityEquity, minority));
+        }
+        lines
+    }
+
+    fn total_equity(&self) -> Result<AccountingAmount, ReportError> {
+        let mut total = self.paid_in.add(self.retained)?;
+        if let Some(minority) = self.minority {
+            total = total.add(minority)?;
+        }
+        Ok(total)
+    }
+
+    fn equity_to_parent(&self, total: AccountingAmount) -> Result<AccountingAmount, ReportError> {
+        Ok(match self.minority {
+            Some(minority) => total.sub(minority)?,
+            None => total,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::consolidated_window::{ConsolidationFacts, PriorSplit};
+    use super::super::window::Accumulator;
+    use super::super::IndustryPresentation;
+    use super::*;
+    use crate::accounting::consolidation::MemberId;
+    use crate::accounting::ledger::AccountChart;
+    use crate::accounting::period::AccountingPeriod;
+
+    fn windows() -> StatementWindows {
+        let current = AccountingPeriod::from_ymd(2030, 1).unwrap();
+        let prior = AccountingPeriod::from_ymd(2029, 1).unwrap();
+        let defs = AccountChart::generic_v1()
+            .iter()
+            .map(|(code, def)| (code.clone(), def.clone()))
+            .collect();
+        Accumulator::new((current, current), (prior, prior))
+            .unwrap()
+            .finish(defs, None)
+    }
+
+    fn cents(value: i128) -> AccountingAmount {
+        AccountingAmount::from_cents(value)
+    }
+
+    fn facts() -> ConsolidationFacts {
+        ConsolidationFacts {
+            root: MemberId("root".into()),
+            minority_equity: cents(5),
+            equity_to_parent: cents(30),
+            minority_ni: cents(0),
+            ni_to_parent: cents(0),
+            consolidated_ni: cents(0),
+            non_root_equity: BTreeMap::from([(LedgerAccountId("4001".into()), cents(40))]),
+            prior_split: None,
+        }
+    }
+
+    #[test]
+    fn equity_presentation_keeps_standalone_negative_retained() {
+        let mut windows = windows();
+        windows.closing = BTreeMap::from([
+            (LedgerAccountId("4001".into()), cents(-10)),
+            (LedgerAccountId("4103".into()), cents(2)),
+            (LedgerAccountId("6602".into()), cents(5)),
+        ]);
+        let classification = ReportClassification::from_industries(
+            &windows.defs,
+            &[IndustryPresentation::Industrial],
+        )
+        .unwrap();
+        let sheet = generate(&windows, &classification).unwrap();
+        assert_eq!(
+            sheet.equity_lines,
+            vec![
+                (BsLine::PaidInCapital, cents(10)),
+                (BsLine::RetainedEarnings, cents(-7))
+            ]
+        );
+        assert_eq!(sheet.total_equity, cents(3));
+        let prior = prior_lines(&windows.closing, &classification, &windows, None).unwrap();
+        assert!(prior.contains(&(BsLine::RetainedEarnings, cents(-7))));
+    }
+
+    #[test]
+    fn equity_presentation_keeps_consolidated_split_and_missing_prior_equity() {
+        let mut windows = windows();
+        windows
+            .closing
+            .insert(LedgerAccountId("4001".into()), cents(-50));
+        windows.consolidation = Some(facts());
+        let classification = ReportClassification::from_industries(
+            &windows.defs,
+            &[IndustryPresentation::Industrial],
+        )
+        .unwrap();
+        let sheet = generate(&windows, &classification).unwrap();
+        assert_eq!(
+            sheet.equity_lines,
+            vec![
+                (BsLine::PaidInCapital, cents(10)),
+                (BsLine::RetainedEarnings, cents(20)),
+                (BsLine::MinorityEquity, cents(5))
+            ]
+        );
+        assert_eq!(sheet.total_equity, cents(35));
+        assert_eq!(sheet.equity_to_parent, cents(30));
+        let prior = BTreeMap::from([(LedgerAccountId("1001".into()), cents(7))]);
+        let lines = prior_lines(
+            &prior,
+            &classification,
+            &windows,
+            windows.consolidation.as_ref(),
+        )
+        .unwrap();
+        assert!(lines.contains(&(BsLine::CashFunds, cents(7))));
+        assert!(!lines.iter().any(|(line, _)| line.is_equity()));
+        windows.consolidation.as_mut().unwrap().prior_split = Some(PriorSplit {
+            minority: cents(4),
+            parent: cents(12),
+            root_capital: cents(10),
+        });
+        let lines = prior_lines(
+            &prior,
+            &classification,
+            &windows,
+            windows.consolidation.as_ref(),
+        )
+        .unwrap();
+        assert!(lines.contains(&(BsLine::RetainedEarnings, cents(2))));
+        assert!(lines.contains(&(BsLine::MinorityEquity, cents(4))));
+    }
 }

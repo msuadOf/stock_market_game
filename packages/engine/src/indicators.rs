@@ -112,38 +112,58 @@ fn validate_results(results: &IndicatorResults) -> Result<(), IndicatorInputErro
     Ok(())
 }
 
-fn macd(prices: &[f64]) -> Macd {
-    let ema = |period: usize| {
-        let smoothing = 2.0 / (period as f64 + 1.0);
-        let mut values = Vec::with_capacity(prices.len());
-        let mut previous = prices.first().copied().unwrap_or(0.0);
-        for (index, price) in prices.iter().copied().enumerate() {
-            previous = if index == 0 {
-                price
-            } else {
-                price * smoothing + previous * (1.0 - smoothing)
-            };
-            values.push(previous);
+/// 单条 EMA 的短暂递推状态；各序列显式传入自己的两个系数。
+struct EmaSmoother {
+    previous: Option<f64>,
+    current_weight: f64,
+    previous_weight: f64,
+}
+
+impl EmaSmoother {
+    fn new(current_weight: f64, previous_weight: f64) -> Self {
+        Self {
+            previous: None,
+            current_weight,
+            previous_weight,
         }
-        values
-    };
-    let fast = ema(12);
-    let slow = ema(26);
+    }
+
+    fn advance(&mut self, value: f64) -> f64 {
+        let current = match self.previous {
+            None => value,
+            Some(previous) => value * self.current_weight + previous * self.previous_weight,
+        };
+        self.previous = Some(current);
+        current
+    }
+}
+
+fn macd(prices: &[f64]) -> Macd {
+    let fast_weight = 2.0 / (12.0 + 1.0);
+    let slow_weight = 2.0 / (26.0 + 1.0);
+    let mut fast_smoother = EmaSmoother::new(fast_weight, 1.0 - fast_weight);
+    let mut slow_smoother = EmaSmoother::new(slow_weight, 1.0 - slow_weight);
+    let fast: Vec<_> = prices
+        .iter()
+        .copied()
+        .map(|price| fast_smoother.advance(price))
+        .collect();
+    let slow: Vec<_> = prices
+        .iter()
+        .copied()
+        .map(|price| slow_smoother.advance(price))
+        .collect();
     let dif: Vec<f64> = fast
         .iter()
         .zip(slow)
         .map(|(fast, slow)| fast - slow)
         .collect();
-    let mut dea = Vec::with_capacity(dif.len());
-    let mut previous = dif.first().copied().unwrap_or(0.0);
-    for (index, value) in dif.iter().copied().enumerate() {
-        previous = if index == 0 {
-            value
-        } else {
-            value * 0.2 + previous * 0.8
-        };
-        dea.push(previous);
-    }
+    let mut signal_smoother = EmaSmoother::new(0.2, 0.8);
+    let dea: Vec<_> = dif
+        .iter()
+        .copied()
+        .map(|value| signal_smoother.advance(value))
+        .collect();
     let histogram = dif
         .iter()
         .zip(&dea)
@@ -156,16 +176,47 @@ fn macd(prices: &[f64]) -> Macd {
     }
 }
 
+/// K/D 递推与输出序列共同推进，窗口 RSV 仍由各输入路径计算。
+struct KdjAccumulator {
+    previous_k: f64,
+    previous_d: f64,
+    series: Kdj,
+}
+
+impl KdjAccumulator {
+    fn new(capacity: usize) -> Self {
+        Self {
+            previous_k: 50.0,
+            previous_d: 50.0,
+            series: Kdj {
+                k: Vec::with_capacity(capacity),
+                d: Vec::with_capacity(capacity),
+                j: Vec::with_capacity(capacity),
+            },
+        }
+    }
+
+    fn push_rsv(&mut self, rsv: f64) {
+        self.previous_k = self.previous_k * 2.0 / 3.0 + rsv / 3.0;
+        self.previous_d = self.previous_d * 2.0 / 3.0 + self.previous_k / 3.0;
+        self.series.k.push(self.previous_k);
+        self.series.d.push(self.previous_d);
+        self.series
+            .j
+            .push(3.0 * self.previous_k - 2.0 * self.previous_d);
+    }
+
+    fn finish(self) -> Kdj {
+        self.series
+    }
+}
+
 fn kdj(prices: &[f64]) -> Kdj {
     kdj_from_values(prices, prices, prices)
 }
 
 fn kdj_ohlc(bars: &[OhlcBar]) -> Kdj {
-    let mut k = Vec::with_capacity(bars.len());
-    let mut d = Vec::with_capacity(bars.len());
-    let mut j = Vec::with_capacity(bars.len());
-    let mut previous_k = 50.0;
-    let mut previous_d = 50.0;
+    let mut accumulator = KdjAccumulator::new(bars.len());
     for (index, bar) in bars.iter().enumerate() {
         let start = index.saturating_sub(8);
         let window = &bars[start..=index];
@@ -178,16 +229,9 @@ fn kdj_ohlc(bars: &[OhlcBar]) -> Kdj {
             .map(|item| item.low)
             .fold(f64::INFINITY, f64::min);
         let rsv = rsv(bar.close, high, low);
-        push_kdj(
-            rsv,
-            &mut previous_k,
-            &mut previous_d,
-            &mut k,
-            &mut d,
-            &mut j,
-        );
+        accumulator.push_rsv(rsv);
     }
-    Kdj { k, d, j }
+    accumulator.finish()
 }
 
 pub fn calculate_indicators(
@@ -225,11 +269,7 @@ pub fn calculate_indicators_batch(
 }
 
 fn kdj_from_values(highs: &[f64], lows: &[f64], closes: &[f64]) -> Kdj {
-    let mut k = Vec::with_capacity(closes.len());
-    let mut d = Vec::with_capacity(closes.len());
-    let mut j = Vec::with_capacity(closes.len());
-    let mut previous_k = 50.0;
-    let mut previous_d = 50.0;
+    let mut accumulator = KdjAccumulator::new(closes.len());
     for (index, close) in closes.iter().copied().enumerate() {
         let start = index.saturating_sub(8);
         let high = highs[start..=index]
@@ -240,16 +280,9 @@ fn kdj_from_values(highs: &[f64], lows: &[f64], closes: &[f64]) -> Kdj {
             .iter()
             .copied()
             .fold(f64::INFINITY, f64::min);
-        push_kdj(
-            rsv(close, high, low),
-            &mut previous_k,
-            &mut previous_d,
-            &mut k,
-            &mut d,
-            &mut j,
-        );
+        accumulator.push_rsv(rsv(close, high, low));
     }
-    Kdj { k, d, j }
+    accumulator.finish()
 }
 
 fn rsv(close: f64, high: f64, low: f64) -> f64 {
@@ -260,24 +293,54 @@ fn rsv(close: f64, high: f64, low: f64) -> f64 {
     }
 }
 
-fn push_kdj(
-    rsv: f64,
-    previous_k: &mut f64,
-    previous_d: &mut f64,
-    k: &mut Vec<f64>,
-    d: &mut Vec<f64>,
-    j: &mut Vec<f64>,
-) {
-    *previous_k = *previous_k * 2.0 / 3.0 + rsv / 3.0;
-    *previous_d = *previous_d * 2.0 / 3.0 + *previous_k / 3.0;
-    k.push(*previous_k);
-    d.push(*previous_d);
-    j.push(3.0 * *previous_k - 2.0 * *previous_d);
-}
-
 #[cfg(test)]
 mod tests {
     use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+
+    #[test]
+    fn recurrence_protection_spans_ema_period_and_kdj_window_rollover() {
+        let prices: Vec<_> = (0..32)
+            .map(|index| 100.0 + ((index * 7) % 19) as f64)
+            .collect();
+        let actual = macd(&prices);
+        let (mut fast, mut slow, mut signal) = (prices[0], prices[0], 0.0);
+        for (index, price) in prices.iter().copied().enumerate() {
+            if index > 0 {
+                fast = price * (2.0 / 13.0) + fast * (1.0 - 2.0 / 13.0);
+                slow = price * (2.0 / 27.0) + slow * (1.0 - 2.0 / 27.0);
+                signal = (fast - slow) * 0.2 + signal * 0.8;
+            }
+            assert_eq!(actual.dif[index].to_bits(), (fast - slow).to_bits());
+            assert_eq!(actual.dea[index].to_bits(), signal.to_bits());
+            assert_eq!(
+                actual.histogram[index].to_bits(),
+                ((fast - slow - signal) * 2.0).to_bits()
+            );
+        }
+        let closes = [1.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 10.0];
+        let close_result = kdj(&closes);
+        let bars: Vec<_> = closes
+            .iter()
+            .map(|&close| OhlcBar {
+                high: close,
+                low: close,
+                close,
+            })
+            .collect();
+        let candle_result = kdj_ohlc(&bars);
+        assert_eq!(close_result, candle_result);
+        // 第十个样本使首次低点滚出九样本窗口，RSV 回到零。
+        let expected_k = close_result.k[8] * 2.0 / 3.0;
+        assert_eq!(close_result.k[9].to_bits(), expected_k.to_bits());
+        assert_eq!(
+            macd(&[5.0]),
+            super::Macd {
+                dif: vec![0.0],
+                dea: vec![0.0],
+                histogram: vec![0.0]
+            }
+        );
+    }
 
     fn assert_close(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-10, "{actual} != {expected}");

@@ -5,7 +5,8 @@
 //! 不建模增值税（K3 地产行未列税项；任务 13 报表税务口径另议）。
 
 use crate::accounting::{
-    AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, PostingSide,
+    AccountingAmount, AccountingError, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry,
+    PostingSide,
 };
 use crate::calendar::CivilDate;
 use crate::company::contracts::ContractId;
@@ -47,6 +48,51 @@ impl PresaleContract {
 
     pub fn delivered(&self) -> bool {
         self.delivered
+    }
+
+    /// 合同未收余额；沿用已收金额不超过总价的 checked sub 断言。
+    pub(super) fn remaining_payment(&self) -> Result<AccountingAmount, AccountingError> {
+        self.price_total.sub(self.collected)
+    }
+
+    /// 收款的合同局部 guard：交付标记 → 正金额 → 合同余额。
+    pub(super) fn validate_collection(
+        &self,
+        contract: &ContractId,
+        amount: AccountingAmount,
+    ) -> Result<(), RealEstateError> {
+        if self.delivered() {
+            return Err(RealEstateError::CollectionAfterDelivery {
+                contract: contract.clone(),
+            });
+        }
+        if !amount.is_positive() {
+            return Err(RealEstateError::NonPositiveAmount {
+                what: "presale collection",
+                amount,
+            });
+        }
+        let remaining = self
+            .remaining_payment()
+            .expect("collected never exceeds price");
+        if amount > remaining {
+            return Err(RealEstateError::PresaleBeyondContract {
+                contract: contract.clone(),
+                requested: amount,
+                remaining,
+            });
+        }
+        Ok(())
+    }
+
+    /// 重复交付 guard；项目完工性仍由跨项目协调方检查。
+    pub(super) fn validate_delivery(&self, contract: &ContractId) -> Result<(), RealEstateError> {
+        if self.delivered {
+            return Err(RealEstateError::PresaleAlreadyDelivered {
+                contract: contract.clone(),
+            });
+        }
+        Ok(())
     }
 
     pub(super) fn collect(&mut self, amount: AccountingAmount) {
@@ -126,28 +172,7 @@ impl RealEstateBooks {
             .ok_or_else(|| RealEstateError::UnknownPresale {
                 contract: contract.clone(),
             })?;
-        if presale.delivered() {
-            return Err(RealEstateError::CollectionAfterDelivery {
-                contract: contract.clone(),
-            });
-        }
-        if !amount.is_positive() {
-            return Err(RealEstateError::NonPositiveAmount {
-                what: "presale collection",
-                amount,
-            });
-        }
-        let remaining = presale
-            .price_total()
-            .sub(presale.collected())
-            .expect("collected never exceeds price");
-        if amount > remaining {
-            return Err(RealEstateError::PresaleBeyondContract {
-                contract: contract.clone(),
-                requested: amount,
-                remaining,
-            });
-        }
+        presale.validate_collection(contract, amount)?;
         let buyer = presale.buyer().clone();
 
         let base = self.next_event_id;

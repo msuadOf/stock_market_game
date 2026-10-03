@@ -171,3 +171,46 @@ test("remote exposes network, JSON and DTO failures instead of returning empty r
     await assert.rejects(query({ company_id: report.company_id, cursor: null, page_size: null }), [/network offline/, /不是合法 JSON/, /精确十进制字符串/][index]);
   }
 });
+
+for (const queryKind of ["page", "by-id"] as const) {
+  test(`remote ${queryKind} response cannot cross a baseline timeline change`, { concurrency: true, timeout: 10000 }, async () => {
+    const report = reportFixture();
+    let delayed = false;
+    let finish: ((response: Response) => void) | null = null;
+    const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+    const host = await createRemoteHost({} as SessionSetup, 1n, {
+      baseUrl: "https://reports.example",
+      webSocketFactory: () => socket,
+      fetchFn: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/api/new") return json({ session_id: "session", session_token: "token" });
+        if (path === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false });
+        if (path.includes("/reports")) {
+          if (delayed) return new Promise<Response>((resolve) => { finish = resolve; });
+          return json({ reports: [report], next_cursor: null });
+        }
+        return json({});
+      },
+    });
+    const publishBaseline = (generation: number) => socket.onmessage!({ data: JSON.stringify({ Baseline: {
+      timeline_generation: generation,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
+      civil_date: "2030-01-02", public_revision: 0, public_report_ids: [],
+    } }) } as MessageEvent);
+    host.start(() => {});
+    publishBaseline(1);
+    const query = { company_id: report.company_id, cursor: null, page_size: null };
+    await host.queryPublicReports!(query);
+    publishBaseline(1);
+    delayed = true;
+    const pending = queryKind === "page" ? host.queryPublicReports!(query) : host.publicReportById!(report.id);
+    const rejected = assert.rejects(pending, /时间线变更失效/);
+    publishBaseline(2);
+    finish!(json(queryKind === "page" ? { reports: [report], next_cursor: null } : report));
+    await rejected;
+    await assert.rejects(host.publicReportById!(report.id), /公司.*先查询/);
+    delayed = false;
+    assert.deepEqual((await host.queryPublicReports!(query)).reports, [report]);
+    host.dispose();
+  });
+}

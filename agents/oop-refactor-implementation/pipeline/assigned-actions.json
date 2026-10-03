@@ -1,0 +1,1369 @@
+[
+  {
+    "id": "engine-pipeline-01-A01",
+    "title": "AccountBudget 快照加载 / apply_update / lane 补丁采纳 API",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/account_validation.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-01-A01",
+      "target": "AccountBudget 快照加载 / apply_update / lane 补丁采纳 API",
+      "status": "proposed",
+      "owned_state": [
+        "P1 快照中该账户可用的现金",
+        "同一快照中按 StockCode 区分的可卖股份",
+        "由 AccountBudget 管理的初始化、预留更新和成功 worker 合并产生的 lane 补丁，须保持现金与股份数量相互独立",
+        "预算是每轮、每账户私有的shadow，不会修改 DecisionResourceSnapshot"
+      ],
+      "moves": [
+        {
+          "from": "AccountValidationState::ensure_account_budget",
+          "to": "AccountBudget::ensure_from_snapshot",
+          "reason": "延迟物化账户现金及其缺失条目不变量，应由拥有可变预算的资源值负责。"
+        },
+        {
+          "from": "AccountValidationState::ensure_sellable_budget",
+          "to": "AccountBudget::ensure_sellable_from_snapshot",
+          "reason": "延迟物化逐股票股份是预算不变量，且必须继续使用不可变的 P1 来源。"
+        },
+        {
+          "from": "AccountValidationState::apply_budget_update",
+          "to": "AccountBudget::apply_update",
+          "reason": "预留更新应归预算结构体所有并保持现金与股份分离；该更新不会失败，因为 BudgetUpdate 携带已计算完成的值。"
+        },
+        {
+          "from": "AccountValidationState::prepare_account_round worker merge",
+          "to": "AccountBudget lane-patch adoption API",
+          "reason": "成功的 Cash worker 只补丁账户现金，Shares worker 只补丁该股票的可卖数量；AccountBudget 应负责这些字段写入，状态协调器则保留 lane 选择和采纳时机。"
+        }
+      ],
+      "api_boundary": "方法保留在 account_validation.rs 私有。快照延迟加载方法接收 AccountId/StockCode 和 &DecisionResourceSnapshot，并维持 available_cash/available_sell_qty 原有的 Result<(), StepFatal> 错误传播。apply_update 不会失败：BudgetUpdate 是 validate_place 已计算并 checked 过的值，当前行为没有额外校验或错误来源。lane 补丁采纳方法负责写入 Cash/Share 字段，状态协调器决定 lane 身份和采纳时机；不得暴露可变映射，也不得允许 P0/P4 释放改动密封的 P1 快照。快照读取和候选计算仍须遵守现有 StepFatal 契约。",
+      "composition": "在现有 AccountBudget 上使用 struct + impl，并将其组合在 AccountValidationState 的 BTreeMap<AccountId, AccountBudget> 中。不需要 trait 或继承：预算只有一种表示形式，资源来源也只有一个不可变快照。",
+      "callers_and_contracts": [
+        "AccountValidationState::prepare_account_round 扫描 worker 结果时，会将 Cash/Share lane 补丁合并到可丢弃的轮次局部暂存状态，然后才返回最早错误；Cancel lane 不补丁预算。prepare_round 遇到 Err 时丢弃该暂存状态。只有整轮成功后，commit_round 才将其采纳到累计校验器中。",
+        "AccountValidationState::prepare_place 和 validate_place 当前使用 ensure_account_budget/ensure_sellable_budget/apply_budget_update。",
+        "AccountValidatorDriver::consume_round 暂存该轮，并且只在校验成功后提交已见候选键。",
+        "P3 使用 P0 之后的 DecisionResourceSnapshot；买入预留包括已配置费用；卖出预留消耗股份，预留现金为零。",
+        "同一账户跨股票的现金竞争，以及同一账户/股票的股份竞争，均保持给定的本地请求顺序；无关账户和 lane 可以并行校验。",
+        "SecurityCategory 提供不同板块/类别的单笔订单限额；不得按代码前缀推断，也不得新增 A 股类别或默认值。"
+      ],
+      "steps": [
+        "为 AccountBudget 添加私有 API，用于快照延迟加载、预留应用及成功 worker lane 补丁采纳，不改变字段或快照表示。",
+        "将 AccountValidationState 的三个预算 helper 改为委托调用，并让 prepare_account_round 的成功 worker 合并经由 AccountBudget 自有的 Cash/Share lane 补丁方法；lane 调度和采纳时机仍由协调器负责。",
+        "保持 lane worker 克隆、two-pass（两遍）OrderId 分配、逐候选结果顺序和轮次提交边界不变。",
+        "通过现有 checkpoint/output 契约比较新旧预算快照；不得新增持久化预算状态。"
+      ],
+      "validation": [
+        "现有 account_validation_tests.rs：account_validation_cash_budget_contends_across_stocks_in_account_receipt_order 与 account_validation_sell_candidates_compete_for_one_private_same_batch_share_budget。",
+        "现有 account_validation_driver_tests.rs：account_validation_independent_share_reservations_of_one_account_use_two_workers 与 account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried。",
+        "现有拒绝用例覆盖被拒数量不消耗资源、精确单笔限额、symbolic 保护价和 P1 快照不可变性。",
+        "保留快照读取失败和checked 候选计算失败时现有的 StepFatal 传播。没有真实错误来源时，不要让 apply_update 增加失败可能：BudgetUpdate 携带已计算的 Money/u32 值，当前应用过程不会失败。检查现有现金竞争、逐股票股份竞争、独立 worker lane、fatal 重试以及拒绝时不消耗预算的覆盖，确保 lane 补丁和不同资源单位保持不变。未运行测试。"
+      ],
+      "dependencies": [
+        "DecisionResourceSnapshot 与 ResVec 不变量",
+        "AccountValidationState 轮次暂存",
+        "AccountValidatorDriver checkpoint 与候选身份原子追踪"
+      ]
+    },
+    "batch": "engine-pipeline-01",
+    "extensions": []
+  },
+  {
+    "id": "engine-pipeline-03-A02",
+    "title": "AuctionStockShadow 和 IncrementalAuctionStockCoordinator",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/auction_day_end.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-03-A02",
+      "target": "AuctionStockShadow 和 IncrementalAuctionStockCoordinator",
+      "status": "proposed",
+      "owned_state": [
+        "stock shadow 中的 Market、完成状态、连续交易 envelope 和局部 EnvelopeLedger。",
+        "本轮创建的 envelope、receipt、终态键、事件／lifecycle 事实；coordinator 的股票映射、detached 的事实、已见 candidate／sealed identity，以及经校验的操作计数。",
+        "原子性不变量：一轮失败时，coordinator 的所有状态保持在上一 continuation 边界；finish 消耗状态并执行一次尾部。"
+      ],
+      "moves": [
+        {
+          "from": "AuctionStockShadow::from_post_expiry",
+          "to": "AuctionStockShadow::from_post_expiry",
+          "reason": "已正确负责从经校验的 P0 后股票输入构造状态；保留现有封装。"
+        },
+        {
+          "from": "apply_auction_stock_round",
+          "to": "AuctionStockShadow::apply_round",
+          "reason": "轮次状态变更和 lifecycle 计数校验仅操作一个 shadow。"
+        },
+        {
+          "from": "apply_auction_operation",
+          "to": "AuctionStockShadow::apply_operation",
+          "reason": "下单／撤单处理将该股票的订单簿、envelope ledger、receipt 和事实作为一个内聚的状态转换进行变更。"
+        },
+        {
+          "from": "finish_auction_stock",
+          "to": "AuctionStockShadow::finish",
+          "reason": "消耗自身的股票尾部执行负责股票局部 candidate 上的竞价完成和日界转换。"
+        },
+        {
+          "from": "validate_incremental_operation_identities",
+          "to": "IncrementalAuctionStockCoordinator::validate_identities",
+          "reason": "重放和订单 ID 可序列化校验以 coordinator 拥有的身份集合为依据。"
+        }
+      ],
+      "api_boundary": "coordinator 保持脱离权威状态，并仅在 crate 内可见。apply_round 接收拥有所有权的已校验操作，返回事实／receipt／投影；finish 消耗 self。局部 shadow 方法可返回 StepFatal，但不得修改 GameSession 或暴露 live ledger。保留 BTreeMap 的身份排序和确定性的错误选择。",
+      "composition": "使用现有由各 stock shadow 组成的 coordinator。它已体现所有权边界，并避免建立单体步进对象；将方法提取到 state owner 上，不改变 Rayon shard 执行或同股FIFO顺序。",
+      "callers_and_contracts": [
+        "auction_tick_transaction.rs::apply_session_auction_transaction 创建 shard，并通过 auction_shards／drive_stock_stream／finish_auction_shards 驱动 ReadyStockStream。",
+        "auction_tick_transaction.rs::validate_execution_round 精确核对 P3 已受理身份与 P4 事实身份的对应关系。",
+        "ADR-0017：同股受理的 sealed order 为权威顺序；不设来源／订单 ID 优先级；命令流排空后才完成竞价；receipt／结算只有一条路径。",
+        "交易规则：开盘余单保留按到达顺序的FIFO顺序；收盘竞价完成后执行 DayEnd 到期处理；集合竞价拒绝市价单；收盘竞价拒绝撤单。"
+      ],
+      "steps": [
+        "将操作执行和轮次结果组装移入 AuctionStockShadow 方法，coordinator 继续负责分区、并行执行、worker 错误排序，以及原子安装成功的 shadow。",
+        "暂存的 candidate 集合保持局部，直到所有 worker 均成功且 validate_auction_round_identities 校验通过；随后一起更新映射、身份和计数。",
+        "未知股票撤单的 detached 拒单继续作为 coordinator 级行为保留，因为没有 stock shadow 拥有该操作。",
+        "仅在 worker 输入／finalizer 校验仍独立且纯粹的地方，将其移至股票完成操作旁；不要将通用 envelope receipt 运算移出账本。"
+      ],
+      "validation": [
+        "auction_day_end_tests.rs::opening_completion_preserves_partial_remainder_fifo_when_order_ids_are_reversed.",
+        "auction_day_end_tests.rs::closing_boundary_canonicalizes_sealed_auction_and_day_end_receipts.",
+        "auction_day_end_tests.rs::opening_0920_boundary_and_every_closing_tick_reject_cancellation 和 opening_before_0920_cancels_existing_envelope_through_sealed_receipt。",
+        "auction_day_end_tests.rs::worker_failure_keeps_the_authoritative_session_byte_identical.",
+        "在增量 coordinator 测试中新增／保留轮次级重复身份、一个 worker 成功后另一个失败，以及重复完成／轮次操作被拒绝的行为检查；测试未运行。"
+      ],
+      "dependencies": [
+        "AuctionOperation 状态机和 EnvelopeLedger",
+        "auction_tick_transaction.rs 流驱动器"
+      ]
+    },
+    "batch": "engine-pipeline-03",
+    "extensions": [
+      {
+        "id": "pipeline-R2-E01",
+        "kind": "extension",
+        "extends": "engine-pipeline-03-A02",
+        "title": "纠正既有动作的局部受理语义说明",
+        "files": [
+          "packages/engine/src/session/pipeline/auction_day_end.rs"
+        ],
+        "report_anchor": "pipeline-r2-e01",
+        "priority": "说明增强",
+        "optional": false,
+        "group": "pipeline",
+        "source_candidates": [
+          "manager:old-action-semantic-countercheck"
+        ],
+        "fields": [
+          "沿用旧动作 owned_state，不增加对象。"
+        ],
+        "methods": [
+          "沿用旧 receiver 迁移，不改算法。"
+        ],
+        "production_callers": [
+          "沿用旧动作 production caller。"
+        ],
+        "data_owner": "沿用旧 stock worker/shadow owner。",
+        "composition": "不追加实施范围或改变现有状态。",
+        "migration_steps": [
+          "正式后续方案引用 ADR-0017 顶部修订与 ADR-0018 §7 明确决定；当前冻结旧文不修改。"
+        ],
+        "existing_tests": [
+          "旧动作已列同股 FIFO、typed identity 与 rollback 测试，本轮没有执行。"
+        ],
+        "missing_tests": [
+          "不因文字更正追加产品断言或更改现有测试。"
+        ],
+        "semantic_boundaries": [
+          "输出排序/编号不是跨实体交易优先级；真实冲突约束保持。"
+        ],
+        "necessity": "旧动作将同股 sealed order 写成权威顺序容易把输出身份误当受理时点；须改成每股实际局部受理/适用价格时间规则，sealed identity 只关联 typed facts。",
+        "evidence": [
+          "docs/decisions/0017-escrow-parallel-tick.md:7–18 顶部修订",
+          "docs/decisions/0018-long-running-immutable-timeline.md:752–800 §7"
+        ],
+        "details_markdown": "分类：extension；优先级：说明增强；extends：engine-pipeline-03-A02；尚未实施。\n\n**源码证据：**\n\n- docs/decisions/0017-escrow-parallel-tick.md:7–18 顶部修订\n- docs/decisions/0018-long-running-immutable-timeline.md:752–800 §7\n\n**字段与单位：**\n\n- 沿用旧动作 owned_state，不增加对象。\n\n**方法与失败契约：**\n\n- 沿用旧 receiver 迁移，不改算法。\n\n**生产调用方：**\n\n- 沿用旧动作 production caller。\n\n**数据owner：**\n\n沿用旧 stock worker/shadow owner。\n\n**组合关系：**\n\n不追加实施范围或改变现有状态。\n\n**最小迁移步骤：**\n\n- 正式后续方案引用 ADR-0017 顶部修订与 ADR-0018 §7 明确决定；当前冻结旧文不修改。\n\n**现有静态测试证据：**\n\n- 旧动作已列同股 FIFO、typed identity 与 rollback 测试，本轮没有执行。\n\n**待补边界：**\n\n- 不因文字更正追加产品断言或更改现有测试。\n\n**语义边界：**\n\n- 输出排序/编号不是跨实体交易优先级；真实冲突约束保持。\n\n**必要性判断：**\n\n旧动作将同股 sealed order 写成权威顺序容易把输出身份误当受理时点；须改成每股实际局部受理/适用价格时间规则，sealed identity 只关联 typed facts。"
+      }
+    ]
+  },
+  {
+    "id": "engine-pipeline-03-A03",
+    "title": "AuctionLifecycleProjector（私有投影辅助对象，拥有 parent order 与 retail lifecycle 投影）",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/auction_day_end.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-03-A03",
+      "target": "AuctionLifecycleProjector（私有投影辅助对象，拥有 parent order 与 retail lifecycle 投影）",
+      "status": "proposed",
+      "owned_state": [
+        "parent_orders 的临时克隆，以及局部待处理 PlanEvent 和 RetailOrderDiagnosticEvent 缓冲区；全部 lifecycle 一致性校验成功后才写入 GameSession。",
+        "每个操作的 candidate／sealed identity 唯一性、已消费事实的抑制、成交 receipt 数量连续性、活动 child order 身份／剩余数量，以及 DayEnd 清理规则。"
+      ],
+      "moves": [
+        {
+          "from": "apply_auction_lifecycle_projection",
+          "to": "AuctionLifecycleProjector::apply",
+          "reason": "这段较长的投影负责由类型化操作事实和 receipt 驱动的内聚 parent-child 及 retail 事件状态转换。"
+        },
+        {
+          "from": "clear_parent_child",
+          "to": "AuctionLifecycleProjector::clear_child",
+          "reason": "该函数强制维护 projector 的活动 child order 身份和剩余数量不变量。"
+        },
+        {
+          "from": "push_pending_plan_event",
+          "to": "移除，或在 AuctionLifecycleProjector 中直接追加到缓冲区",
+          "reason": "当前辅助函数只向调用方拥有的 Vec 追加值，没有独立领域行为或状态。"
+        }
+      ],
+      "api_boundary": "输入借用的 GameSession 视图、股票 lifecycle 事实、coordinator 事实、receipt、finish_day 及可选的已消费身份；输出完整投影增量或 StepFatal。最后一起提交 parent_orders、pending_plan_events 和 last_retail_order_events。诊断仍由对应特性开关控制。",
+      "composition": "多来源事实及克隆的 candidate 状态使小型私有 projector struct 或 associated pure method 具有合理性；不要赋予其持久权威状态，也不要把策略／计划的权威状态移出 GameSession／PlanBook。",
+      "callers_and_contracts": [
+        "apply_finished_candidate 是唯一生产调用方，在私有 candidate 上完成 receipt 聚合和结算后调用它。",
+        "ADR-0017：类型化计划 continuation 事实恰好消费一次；不要从输出向量顺序重建事件因果关系；成交和撤单事实保留 envelope 身份。",
+        "DayEnd 在结算后清除活动订单投影，并为未完成的关联计划记录 DayEnded 计划事件；在现有日 finalizer 处，交易股份仍遵守 T+1。"
+      ],
+      "steps": [
+        "将事实规范化／身份校验与投影变更分离，同时保留输入来源事实和已消费操作检查。",
+        "为已受理／已撤销／已拒绝操作、成交和日界释放构造完整的局部投影增量。",
+        "所有经校验的数量及活动 child order 校验通过后，将增量原子应用到 candidate 会话。",
+        "因果诊断记录的语义保持不变，仍受 simulation-diagnostics 控制；不要从已排序事件推断业务顺序。"
+      ],
+      "validation": [
+        "auction_day_end_tests.rs::opening_completion_applies_same_tick_accept_and_fill_to_linked_plan.",
+        "auction_day_end_tests.rs::opening_accept_and_cancel_synchronize_the_linked_parent_before_commit 和 opening_accept_and_cancel_preserve_retail_order_lifecycle_identity。",
+        "auction_day_end_tests.rs::retail_rejections_and_successes_keep_exact_sealed_lifecycle_order.",
+        "auction_day_end_tests.rs::closing_partial_fill_reaches_linked_plan_before_day_end_cleanup、closing_partial_fill_is_applied_to_the_session_plan_before_checked_day_end 和 closing_partial_fill_and_release_preserve_retail_order_lifecycle。",
+        "如果相邻投影测试套件未覆盖，则补充格式错误的重复事实、成交数量倒退／零成交，以及 parent order 活动 child order 不匹配时的回滚检查；测试未运行。"
+      ],
+      "dependencies": [
+        "AuctionLifecycleFact 和 EnvelopeReceipt",
+        "PlanBook 事件契约"
+      ]
+    },
+    "batch": "engine-pipeline-03",
+    "extensions": []
+  },
+  {
+    "id": "engine-pipeline-05-A01",
+    "title": "private ContinuousStockRoundProcessor",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/continuous_matching.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-05-A01",
+      "target": "private ContinuousStockRoundProcessor",
+      "status": "proposed",
+      "owned_state": [
+        "单轮的 Market shadow",
+        "EnvelopeLedger",
+        "收据和终止日志",
+        "执行、下单、撤单和成交事实",
+        "受理报价及可选诊断报价",
+        "股票本地成交事件游标",
+        "原始订单差量基准",
+        "将 ContinuousStockInput 中不可变的阶段和 GameConfig 保留为每轮上下文，或显式传给 run/辅助方法；与可变轮次状态分离"
+      ],
+      "moves": [
+        {
+          "from": "process_continuous_stock_step_inner 的局部状态和操作循环",
+          "to": "ContinuousStockRoundProcessor::run",
+          "reason": "这些值的生命周期仅限一个股票轮次，并会在按序应用操作时一并变化。"
+        },
+        {
+          "from": "reject_place and push_place_execution_fact",
+          "to": "ContinuousStockRoundProcessor::reject_place / record_place_fact",
+          "reason": "二者都会更新同一组由账本支撑的轮次日志，必须保持为单个原子操作结果。"
+        },
+        {
+          "from": "fill_receipts and fill_receipt",
+          "to": "private ContinuousStockRoundProcessor receipt methods",
+          "reason": "持续演进的 envelope 审计/序号状态属于该轮；费用转换运算仍交由 FillTransition 处理。"
+        },
+        {
+          "from": "validate_and_apply",
+          "to": "ContinuousStockRoundProcessor::apply_receipts",
+          "reason": "收据校验和终止项移除作为一个操作修改处理器持有的账本。"
+        },
+        {
+          "from": "独立/初始工作线程路径中的 validate_private_market_ledger",
+          "to": "ContinuousStockRoundProcessor 轮次结束（仅针对该已完成的工作线程候选状态）",
+          "reason": "初始或独立 worker 持有本边界所校验的 Market 和 EnvelopeLedger；这不涵盖之后的跨轮最终状态。"
+        },
+        {
+          "from": "validate_private_market_ledger in IncrementalContinuousStockCoordinator::finish_for_tick",
+          "to": "保留在协调器消费式 finish_for_tick 边界上",
+          "reason": "这是所有轮次和 continuation 均已排空后的跨轮最终状态检查。轮次局部处理器已返回其 Market 和 EnvelopeLedger，无法持有最终累计状态。"
+        }
+      ],
+      "api_boundary": "构造函数和处理器仅在 pipeline 内私有。按值接收 ContinuousStockInput 并返回 ContinuousStockStepOutput；不得暴露可变的 Market/Ledger 引用。任何 StepFatal 都会丢弃处理器候选状态。保留模块可见的 worker 入口和 cfg(test) 独立撤单辅助函数。轮次处理器可以校验自身已完成的独立/初始 worker 状态；它不得负责跨轮最终检查，该检查仍由所有轮次排空后的 IncrementalContinuousStockCoordinator::finish_for_tick 执行。",
+      "composition": "使用带 impl 方法的私有 Rust 结构体；不设 trait 层级。append_trade_facts、身份校验器、阶段映射及纯费用/转换运算没有自身生命周期时，继续作为自由私有函数。",
+      "callers_and_contracts": [
+        "continuous_matching_adapter::prepare_incremental_continuous_inputs 构造脱离原状态的股票输入",
+        "incremental_continuous_stock_shadow 协调器持有依次执行的私有轮次",
+        "continuous_tick_finalizer 消费 IncrementalContinuousStockFinish",
+        "continuous_matching_tests 覆盖独立 worker/撤单路径",
+        "ADR-0017 固定 escrow 资源守恒、P3/P4 顺序、same-tick cancel eligibility、typed failure 和 receipt identity。",
+        "ADR-0018 §7 描述事务顺序/受理时点，但仍属提案；不得据此悄然改变已实现的顺序"
+      ],
+      "steps": [
+        "引入处理器，以已校验的输入和可选的先前账本初始化。",
+        "将轮次持有的局部变量移入字段，不改变操作遍历顺序或阶段检查。",
+        "将会修改多份轮次日志的辅助函数改为方法；纯校验器除非需要私有状态，否则仍保留为函数。",
+        "保留轮次收尾时的执行身份校验以及相同的 MarketDelta/输出。在独立/初始 worker 边界保留订单簿与账本校验；跨轮最终 Market/EnvelopeLedger 校验仍放在协调器消费式 finish_for_tick 中，此时累计状态才真正最终确定。",
+        "只有在保持行为不变的迁移完成后，才考虑拆分撮合机制与账本转换机制；不要创建 session 范围的可变协调器。"
+      ],
+      "validation": [
+        "现有 continuous_matching_tests.rs 覆盖收据时点的价格解析、撤单权限与已成交委托失败、成交后撤单的审计链、价格笼子和限价拒绝、市价单部分成交/无流动性、逐 envelope 序号、接收委托优先顺序、股票本地成交身份及溢出原子性。",
+        "补充/保留以下边界：订单簿变更后、轮次输出前发生失败；私有的连续轮次账本插入；启用诊断时的操作快照。仅在后续实现批次运行。"
+      ],
+      "dependencies": [
+        "EnvelopeLedger 和 EnvelopeReceipt 转换校验器",
+        "transition::FillTransition",
+        "incremental_continuous_stock_shadow::IncrementalContinuousStockCoordinator"
+      ]
+    },
+    "batch": "engine-pipeline-05",
+    "extensions": [
+      {
+        "id": "pipeline-R2-E03",
+        "title": "ContinuousFillReceiptProjection 聚合逐成交腿累积状态",
+        "priority": "P2 可选",
+        "files": [
+          "packages/engine/src/session/pipeline/continuous_matching.rs"
+        ],
+        "evidence": [
+          "packages/engine/src/session/pipeline/continuous_matching.rs:1001 `fill_receipts` 为一张 incoming order 初始化 `states` 与 `ordinals`，再逐 trade leg 更新。",
+          "packages/engine/src/session/pipeline/continuous_matching.rs:1065 `fill_receipt` 校验 ledger audit 与 trade 累计金额连续，推进 `EnvelopeAudit` 和 ordinal。",
+          "packages/engine/src/session/pipeline/continuous_matching.rs:501 `process_continuous_stock_step_inner` 调用 builder，并将结果应用到 worker-owned `EnvelopeLedger`。"
+        ],
+        "fields": [
+          "states: BTreeMap<EnvelopeKey, Envelope>，本次 incoming 委托与实际成交 makers 的局部审计状态；cash 为 Money 分，shares/qty 为股。",
+          "ordinals: BTreeMap<EnvelopeKey,u64>；resolution 后 incoming 起始 ordinal 仍为 1，其他依旧为 0。",
+          "receipts: Vec<EnvelopeReceipt>；每 trade leg 保持先买方后卖方；borrowed ledger/config/draft 是构造上下文，不能持有 authority。"
+        ],
+        "methods": [
+          "capture 初始化 incoming 并在原位置应用可选 resolution；record_trade 原样计算 gross、buyer/seller key 与各自 filled_value_before，再依次调用 record_fill。",
+          "record_fill / take_ordinal 管理 states 和 ordinals 的联合迁移，保留 filled_value 对照、数量/金额运算、费用计算、ordinal 递增、ReceiptLocalKey 构造、filled_qty 运算与 Envelope::apply 的原顺序。",
+          "finish 消耗自身返回原 receipts/states/ordinals 三元结果，后续市价单余量释放和私有 ledger 验证仍在既有 caller。"
+        ],
+        "production_callers": [
+          "已核实 `process_continuous_stock_step_inner` 调 `fill_receipts`，由 `IncrementalContinuousStockCoordinator::apply_round` 经 `apply_stock_round` 生产调用；同一股票的每轮操作处理由 `stock_stream::drive_stock_stream` 调度。"
+        ],
+        "data_owner": "对象若成立，仅拥有单次触发 Place 的临时 Envelope 累计副本和 receipts；初始状态来自该 stock shadow 的 `EnvelopeLedger`，最终仍由 ledger 的 `apply_private_for_stock_round` 接受。Market 仍拥有订单簿及撮合；该对象不拥有账户权威现金/持仓。",
+        "composition": "旧 engine-pipeline-05-A01 的 ContinuousStockRoundProcessor 可以调用这一单 Place 专用 builder，但不将 builder 跨操作累积为另一个 ledger。真实入口 process_continuous_stock_step_inner 内的 fill_receipts；stock worker 与 coordinator 的生命周期不变。",
+        "migration_steps": [
+          "固定 maker-only 按需加载、symbolic resolution ordinal、多 leg、seller cap、market remainder 及 mixed error 顺序。",
+          "仅移动 fill_receipts 的 states/ordinals/receipts 到私有一次性 owner，并将 fill_receipt/take_ordinal 改为其 receiver。",
+          "保持原三元输出 adapter；Error 时丢弃 builder，不新增单方法可重试或先算后写保证。"
+        ],
+        "existing_tests": [
+          "packages/engine/src/session/pipeline/continuous_matching_tests.rs：`fill_receipts_loads_only_the_incoming_order_and_traded_maker` 断言只加载 incoming 与实际成交 maker、双腿 ordinal/fee/audit 连续。",
+          "packages/engine/src/session/pipeline/continuous_matching_tests.rs：`continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts`、`continuous_market_partial_fill_releases_remainder_with_the_next_ordinal`、`partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit`。"
+        ],
+        "missing_tests": [
+          "未来建议：同一 incoming Place 先触发 `PriceResolved` 再跨两个 makers 产生多腿时，incoming ordinal 应从 resolution 后连续递增，maker 各自从零起；验证 EnvelopeLedger 接受完整投影。",
+          "未来建议：买方/卖方方向各有多腿时核对 `Trade::*_filled_value_before` 与对应买卖 Envelope 的累计值映射；测试尚未运行。"
+        ],
+        "semantic_boundaries": [
+          "P4：只产生成交和 envelope 收据，不执行账户 Settlement；P9 才提交权威状态。",
+          "收据 local identity/ordinal 是审计连续性，不得变成跨委托交易优先级；同股实际操作顺序由本地受理事实及适用价格—时间规则决定。",
+          "金额使用 `Money` 的分，数量单位为股；费用应计/实收沿用 `FillTransition` 既有名义函数，不在重构中更改。",
+          "卖单 envelope 的 live cash 恒为零、冻结剩余股份；本对象只投影既有资源 delta，不重算 P1 预算或在同 tick 释放时回补预算。",
+          "遵循 ADR-0017 的 P0/P1 与 P4/P9 边界及 ADR-0018 §7 局部冲突顺序；没有查询或引入新的官方交易规则。"
+        ],
+        "necessity": "旧A01已经明确fill_receipts/fill_receipt迁到processor receipt methods，不能将同样迁移再次计新动作。本增强仅给出可选的single-Place局部states/ordinals/receipts builder组合细节：比整股round receiver更窄的作用域，是否采用由实施者按可读性收益判断；不重计已承诺的方法迁移。",
+        "optional": true,
+        "kind": "extension",
+        "extends": "engine-pipeline-05-A01",
+        "report_anchor": "pipeline-r2-e03",
+        "group": "pipeline",
+        "source_candidates": [
+          "r12:r12-fill-projection",
+          "r14:r14-c1"
+        ],
+        "details_markdown": "分类：extension；优先级：P2 可选；extends：engine-pipeline-05-A01；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/continuous_matching.rs:1001 `fill_receipts` 为一张 incoming order 初始化 `states` 与 `ordinals`，再逐 trade leg 更新。\n- packages/engine/src/session/pipeline/continuous_matching.rs:1065 `fill_receipt` 校验 ledger audit 与 trade 累计金额连续，推进 `EnvelopeAudit` 和 ordinal。\n- packages/engine/src/session/pipeline/continuous_matching.rs:501 `process_continuous_stock_step_inner` 调用 builder，并将结果应用到 worker-owned `EnvelopeLedger`。\n\n**字段与单位：**\n\n- states: BTreeMap<EnvelopeKey, Envelope>，本次 incoming 委托与实际成交 makers 的局部审计状态；cash 为 Money 分，shares/qty 为股。\n- ordinals: BTreeMap<EnvelopeKey,u64>；resolution 后 incoming 起始 ordinal 仍为 1，其他依旧为 0。\n- receipts: Vec<EnvelopeReceipt>；每 trade leg 保持先买方后卖方；borrowed ledger/config/draft 是构造上下文，不能持有 authority。\n\n**方法与失败契约：**\n\n- capture 初始化 incoming 并在原位置应用可选 resolution；record_trade 原样计算 gross、buyer/seller key 与各自 filled_value_before，再依次调用 record_fill。\n- record_fill / take_ordinal 管理 states 和 ordinals 的联合迁移，保留 filled_value 对照、数量/金额运算、费用计算、ordinal 递增、ReceiptLocalKey 构造、filled_qty 运算与 Envelope::apply 的原顺序。\n- finish 消耗自身返回原 receipts/states/ordinals 三元结果，后续市价单余量释放和私有 ledger 验证仍在既有 caller。\n\n**生产调用方：**\n\n- 已核实 `process_continuous_stock_step_inner` 调 `fill_receipts`，由 `IncrementalContinuousStockCoordinator::apply_round` 经 `apply_stock_round` 生产调用；同一股票的每轮操作处理由 `stock_stream::drive_stock_stream` 调度。\n\n**数据owner：**\n\n对象若成立，仅拥有单次触发 Place 的临时 Envelope 累计副本和 receipts；初始状态来自该 stock shadow 的 `EnvelopeLedger`，最终仍由 ledger 的 `apply_private_for_stock_round` 接受。Market 仍拥有订单簿及撮合；该对象不拥有账户权威现金/持仓。\n\n**组合关系：**\n\n旧 engine-pipeline-05-A01 的 ContinuousStockRoundProcessor 可以调用这一单 Place 专用 builder，但不将 builder 跨操作累积为另一个 ledger。真实入口 process_continuous_stock_step_inner 内的 fill_receipts；stock worker 与 coordinator 的生命周期不变。\n\n**最小迁移步骤：**\n\n- 固定 maker-only 按需加载、symbolic resolution ordinal、多 leg、seller cap、market remainder 及 mixed error 顺序。\n- 仅移动 fill_receipts 的 states/ordinals/receipts 到私有一次性 owner，并将 fill_receipt/take_ordinal 改为其 receiver。\n- 保持原三元输出 adapter；Error 时丢弃 builder，不新增单方法可重试或先算后写保证。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/continuous_matching_tests.rs：`fill_receipts_loads_only_the_incoming_order_and_traded_maker` 断言只加载 incoming 与实际成交 maker、双腿 ordinal/fee/audit 连续。\n- packages/engine/src/session/pipeline/continuous_matching_tests.rs：`continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts`、`continuous_market_partial_fill_releases_remainder_with_the_next_ordinal`、`partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit`。\n\n**待补边界：**\n\n- 未来建议：同一 incoming Place 先触发 `PriceResolved` 再跨两个 makers 产生多腿时，incoming ordinal 应从 resolution 后连续递增，maker 各自从零起；验证 EnvelopeLedger 接受完整投影。\n- 未来建议：买方/卖方方向各有多腿时核对 `Trade::*_filled_value_before` 与对应买卖 Envelope 的累计值映射；测试尚未运行。\n\n**语义边界：**\n\n- P4：只产生成交和 envelope 收据，不执行账户 Settlement；P9 才提交权威状态。\n- 收据 local identity/ordinal 是审计连续性，不得变成跨委托交易优先级；同股实际操作顺序由本地受理事实及适用价格—时间规则决定。\n- 金额使用 `Money` 的分，数量单位为股；费用应计/实收沿用 `FillTransition` 既有名义函数，不在重构中更改。\n- 卖单 envelope 的 live cash 恒为零、冻结剩余股份；本对象只投影既有资源 delta，不重算 P1 预算或在同 tick 释放时回补预算。\n- 遵循 ADR-0017 的 P0/P1 与 P4/P9 边界及 ADR-0018 §7 局部冲突顺序；没有查询或引入新的官方交易规则。\n\n**必要性判断：**\n\n旧A01已经明确fill_receipts/fill_receipt迁到processor receipt methods，不能将同样迁移再次计新动作。本增强仅给出可选的single-Place局部states/ordinals/receipts builder组合细节：比整股round receiver更窄的作用域，是否采用由实施者按可读性收益判断；不重计已承诺的方法迁移。"
+      },
+      {
+        "id": "pipeline-R2-E02",
+        "kind": "extension",
+        "extends": "engine-pipeline-05-A01",
+        "title": "纠正既有动作的局部受理语义说明",
+        "files": [
+          "packages/engine/src/session/pipeline/continuous_matching.rs"
+        ],
+        "report_anchor": "pipeline-r2-e02",
+        "priority": "说明增强",
+        "optional": false,
+        "group": "pipeline",
+        "source_candidates": [
+          "manager:old-action-semantic-countercheck"
+        ],
+        "fields": [
+          "沿用旧动作 owned_state，不增加对象。"
+        ],
+        "methods": [
+          "沿用旧 receiver 迁移，不改算法。"
+        ],
+        "production_callers": [
+          "沿用旧动作 production caller。"
+        ],
+        "data_owner": "沿用旧 stock worker/shadow owner。",
+        "composition": "不追加实施范围或改变现有状态。",
+        "migration_steps": [
+          "正式后续方案引用 ADR-0017 顶部修订与 ADR-0018 §7 明确决定；当前冻结旧文不修改。"
+        ],
+        "existing_tests": [
+          "旧动作已列同股 FIFO、typed identity 与 rollback 测试，本轮没有执行。"
+        ],
+        "missing_tests": [
+          "不因文字更正追加产品断言或更改现有测试。"
+        ],
+        "semantic_boundaries": [
+          "输出排序/编号不是跨实体交易优先级；真实冲突约束保持。"
+        ],
+        "necessity": "旧动作称 ADR-0018 §7 仍属提案，忽略该节2026-09-24/25已明确用户决定；须区分全文尚未实施架构与已接受局部受理规则，receiver迁移保留当前算法，不许可全局序优先。",
+        "evidence": [
+          "docs/decisions/0017-escrow-parallel-tick.md:7–18 顶部修订",
+          "docs/decisions/0018-long-running-immutable-timeline.md:752–800 §7"
+        ],
+        "details_markdown": "分类：extension；优先级：说明增强；extends：engine-pipeline-05-A01；尚未实施。\n\n**源码证据：**\n\n- docs/decisions/0017-escrow-parallel-tick.md:7–18 顶部修订\n- docs/decisions/0018-long-running-immutable-timeline.md:752–800 §7\n\n**字段与单位：**\n\n- 沿用旧动作 owned_state，不增加对象。\n\n**方法与失败契约：**\n\n- 沿用旧 receiver 迁移，不改算法。\n\n**生产调用方：**\n\n- 沿用旧动作 production caller。\n\n**数据owner：**\n\n沿用旧 stock worker/shadow owner。\n\n**组合关系：**\n\n不追加实施范围或改变现有状态。\n\n**最小迁移步骤：**\n\n- 正式后续方案引用 ADR-0017 顶部修订与 ADR-0018 §7 明确决定；当前冻结旧文不修改。\n\n**现有静态测试证据：**\n\n- 旧动作已列同股 FIFO、typed identity 与 rollback 测试，本轮没有执行。\n\n**待补边界：**\n\n- 不因文字更正追加产品断言或更改现有测试。\n\n**语义边界：**\n\n- 输出排序/编号不是跨实体交易优先级；真实冲突约束保持。\n\n**必要性判断：**\n\n旧动作称 ADR-0018 §7 仍属提案，忽略该节2026-09-24/25已明确用户决定；须区分全文尚未实施架构与已接受局部受理规则，receiver迁移保留当前算法，不许可全局序优先。"
+      }
+    ]
+  },
+  {
+    "id": "engine-pipeline-10-A01",
+    "title": "ExperienceUpdateMode（封闭参数枚举）",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/retail_projection.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-10-A01",
+      "target": "ExperienceUpdateMode（封闭参数枚举）",
+      "status": "proposed",
+      "owned_state": [
+        "投影分支及机构模式必需的 ExperienceMoment；不持有体验/账户/seen 权威数据"
+      ],
+      "moves": [
+        {
+          "from": "enum ExperienceUpdateMode { Retail, InstitutionalFacts } + project_receipts(mode, Option<ExperienceMoment>)",
+          "to": "enum ExperienceUpdateMode { Retail, InstitutionalFacts(ExperienceMoment) }",
+          "reason": "机构时间是该分支的必需输入，零售分支不应能携带/缺失它；消除非法的 InstitutionalFacts + None 组合。"
+        },
+        {
+          "from": "project_retail_account(..., mode, moment) 中 mode match 与 moment.expect(...)；project_receipts 两个入口",
+          "to": "project_retail_account(..., mode)，按模式变体取得 ExperienceMoment；两个入口构造各自变体",
+          "reason": "让领域模式与其数据一起传递，避免内部 panic 和重复的分离参数。"
+        }
+      ],
+      "api_boundary": "保持 pub(super) 两个投影入口签名与 typed RetailProjectionError；ExperienceUpdateMode 私有。没有回退默认值；错误仍由 account_settlement 转为事务错误，candidate 失败整体丢弃。",
+      "composition": "Rust enum + struct 方法/纯函数组合；不建立持有 Session 或共享可变状态的 RetailProjectionService。",
+      "callers_and_contracts": [
+        "account_settlement::apply_session_settlement_transaction 从同一 session 快照构造 ExperienceMoment，依次传给 apply_settlement_transaction_with_beliefs / prepare_settlement_transaction_with_beliefs；prepare 函数准备 settlement shadow 与 positions_before/positions_after 后直接调用 institutional_experience_projection::project_institutional_experience",
+        "institutional_experience_projection::project_institutional_experience 只选择 Fill、AccountKind::Inst 且策略含 belief_chain_params 的账户，从对应 BeliefBook 读取 experience，并将传入 moment 原样传给 project_institutional_receipts；account_settlement 同时派生 retail_accounts 并传 settlement 前后持仓",
+        "ADR-0017 P5/P6：只消费已验证收据，实际费用取 charged，成交体验在 shadow 中与 settlement 原子提交",
+        "存档的 RetailProjectionSeen 必须是 [0,next_receipt_base) 完整前缀；新收据 index 只由 ReceiptAggregation 分配"
+      ],
+      "steps": [
+        "将私有模式枚举改为 Retail 与 InstitutionalFacts(ExperienceMoment)",
+        "更新两个入口与 project_receipts/project_retail_account 的参数传递及 match",
+        "删除 Option 参数和 expect；保持每个分支的既有顺序/数据",
+        "检查 institutional-only positions 累进、fees 和退出收益判断仍只在带 moment 的分支执行"
+      ],
+      "validation": [
+        "现有 retail_projection_tests.rs：部分成交重放、单批多腿聚合、Buy-before-Sell、非 Fill、损坏收据、持仓对账和单/多 worker",
+        "现有 retail_projection_persistence_tests.rs：保存恢复、完整前缀、重复消费幂等",
+        "account_settlement_tests.rs 的 institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent：经 settlement 调用链验证显式 moment 的 market_minute 到达机构投影、买卖事实/退出记录及 replay 后 BeliefBook 不变；institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically 覆盖 dated-fill 调用路径和错误原子性",
+        "不提出 enum boundary test：私有 ExperienceUpdateMode 的非法 InstitutionalFacts + None 状态无法从外部测试模块构造；以上是现有行为覆盖，本轮未运行"
+      ],
+      "dependencies": [
+        "account_settlement::apply_session_settlement_transaction / prepare_settlement_transaction_with_beliefs",
+        "institutional_experience_projection::project_institutional_experience",
+        "ExperienceMoment",
+        "EnvelopeReceipt/ReceiptKind",
+        "RetailProjectionSeen 的存档恢复边界"
+      ]
+    },
+    "batch": "engine-pipeline-10",
+    "extensions": []
+  },
+  {
+    "id": "engine-pipeline-11-A01",
+    "title": "StockStreamCoordinator<S>（从 drive_stock_stream 提取的私有 per-tick owner）",
+    "group": "pipeline",
+    "origin": "baseline",
+    "files": [
+      "packages/engine/src/session/pipeline/stock_stream.rs"
+    ],
+    "details": {
+      "id": "engine-pipeline-11-A01",
+      "target": "StockStreamCoordinator<S>（从 drive_stock_stream 提取的私有 per-tick owner）",
+      "status": "proposed",
+      "owned_state": [
+        "按 StockCode 组织的 available stock shards",
+        "每股 pending operation vectors",
+        "in-flight stock 集合",
+        "completion payload receiver 和 plan/stock notification receiver",
+        "调用方提供的 detached factory 和 progress callback 仍在每次驱动调用内借用／拥有"
+      ],
+      "moves": [
+        {
+          "from": "drive_stock_stream 内局部 pending/in_flight/dispatch 循环",
+          "to": "StockStreamCoordinator::enqueue_ready / dispatch_ready / receive_completion / return_idle",
+          "reason": "per-tick 协调状态与 transitions 形成一个显式 lifecycle；命名可显露 invariants，同时不使其成为持久 session authority。"
+        },
+        {
+          "from": "drive_stock_stream 的 notification 和 stock payload 接收分支",
+          "to": "StockStreamCoordinator::poll_progress",
+          "reason": "typed readiness 与 payload ownership 保持区别，并集中维护 stock notification 位于其 payload 之后的不变量。"
+        },
+        {
+          "from": "drive_stock_stream 的 rayon::in_place_scope caller-thread wrapper",
+          "to": "StockStreamCoordinator::drive",
+          "reason": "coordinator 必须留在调用方线程，以免宿主 coordinators 等待时占用 Rayon pool。"
+        }
+      ],
+      "api_boundary": "私有泛型 per-tick coordinator 消耗拥有所有权的 operations/notifications，绝不修改 authority 或分配优先级。Drop 放弃私有 tick 工作。worker 的 payload send 返回 Err 表示 receiver/coordinator 已被 drop；无法经已关闭的 channel 传递新的 fatal。payload 成功存储后，有意忽略 notification-send 失败。notification 接收／断开和缺少 payload 的 Stock 唤醒返回显式 invariants；过时 PlanRoot 唤醒不消费 stock payload。",
+      "composition": "Rust struct+impl，使用泛型 S: StockShard 和范围有限的 callback 参数；不建 trait-object 层次、actor、常驻 worker 或共享可变 authority。保留既有 StockShard 作为最小能力边界。",
+      "callers_and_contracts": [
+        "pipeline tick 编排为 continuous/auction ready rounds 调用 drive_stock_stream",
+        "continuous_shards 创建 P0 后 continuous stock shadows；auction_shards 创建 auction stock shadows",
+        "ADR-0017 要求临时非阻塞 notifications、单一 stock-owned shadow/outbox、单次最终 aggregation/settlement/P9，且不从 source/identity 派生优先级",
+        "ADR-0018 §7 仅要求局部冲突顺序和及时的 per-stock continuation；调用方线程协调避免 pool starvation",
+        "TradingPhase、同股受理顺序、P3 account resource 顺序及 settlement 的金额／股份单位仍由既有领域组件拥有"
+      ],
+      "steps": [
+        "引入私有泛型 coordinator，仅包含当前在 drive_stock_stream 中初始化的局部状态。",
+        "每次移动 enqueue 和一个 dispatch/poll transition，保留各股初始与 continuation 操作顺序。",
+        "Rayon scope 保持在原调用方线程，保留单线程行为和 StockShard 验证扰动 hooks。",
+        "输出 finish 函数和 transaction authorities 保持在 coordinator 之外；不要让其拥有 GameSession、accounts、market history 或 receipt settlement。",
+        "审查 notification/payload 竞态，使 PlanRootReady 允许过时而 stock payload 仍可用，并确认结果不丢失、不重复处理。"
+      ],
+      "validation": [
+        "保留 stock_stream.rs 测试 completed_stock_starts_its_followup_while_another_stock_is_running、one_worker_runs_a_stock_job_without_blocking_itself、concurrent_external_coordinators_leave_workers_available_for_stock_jobs。还须保留 parallel_stock_initialization_reports_the_first_stock_error，用于按 stock-key 顺序选择初始化首错（合计四个内联测试）。",
+        "保留 stock_stream/root_ready_tests.rs 中 root 在无关 stock 完成前唤醒，以及已消费 notification 处理的测试。",
+        "保留 stock_stream/auction_tests.rs 的执行重叠和确定性首错测试。",
+        "若提取改变 completion-channel 处理，则补充聚焦的 Stock 唤醒无 payload、receiver 断开及 coordinator drop 后放弃工作的覆盖；保留每股操作顺序。不得要求 worker 经已关闭的 receiver 返回新错误。测试未运行。"
+      ],
+      "dependencies": [
+        "StockShard 和 typed round 实现",
+        "StockStreamNotifications / TickWorkReady",
+        "continuous 和 auction per-stock coordinators",
+        "外层 tick transaction 拥有最终 receipt、settlement、projection 和 commit"
+      ]
+    },
+    "batch": "engine-pipeline-11",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-N01",
+    "title": "聚合同订单连续交易诊断的临时依赖状态",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs"
+    ],
+    "objects": [
+      "ContinuousLifecycleEventBatch"
+    ],
+    "report_anchor": "pipeline-n01",
+    "group": "pipeline",
+    "details_markdown": "**新增，原 engine-pipeline-04 的 retain 未覆盖。** `order_lifecycle_events` 一次调用内共同维护 `submitted_this_tick`、`published`、`remaining_fills`、`pending_fills`、`pending_terminal`、`ordered`。`push_fill_and_terminal` 目前同时接收三组关联的可变容器；最后一笔 fill 递减计数并释放 terminal 的联合状态转换是具体聚合收益。生命周期只在本次函数调用内并不能排除对象化，也无需创建跨 tick 的 projector。\n\n现有对象是 `RetailOrderDiagnosticEvent` 与 P2/P3/P4/receipt 输入值；本文件没有拥有上述依赖状态的 struct。建议新增私有一次性 `ContinuousLifecycleEventBatch`，拥有上述六项字段。数量链归组、排序的 `fills_by_order` / `sorted_fills` 和原始 `fill_quantities` 可继续留在构造阶段的纯 helper 中，避免把所有临时值机械变成长期字段。\n\n拟议 API 为 checked `from_events(events, fill_quantities)`、`emit_event(event)`、`emit_fill(order_id, fill)`、消耗自身的 `finish() -> Result<Vec<RetailOrderDiagnosticEvent>, StepFatal>`；具体名称属于候选设计。`from_events` 内部先完成原数量链和 Submitted 防重检查，再初始化六项状态并按原循环逐项调用 `emit_event`，原始事件不成为跨调用的第二份状态。`emit_fill` 承接现有 `push_fill_and_terminal`；`emit_event` 原样承接已有事件循环，不增加新的终止合法性政策。`finish` 只做原有 pending 空检查后交出 owned `ordered`。`project_continuous_retail_lifecycle`、P2/P3/P4 身份及 payload 核对、拒绝原因映射和错误构造继续保留为函数。\n\n真实链为 `continuous_tick_transaction::apply_session_continuous_transaction` → `continuous_tick_finalizer::finalize_continuous_tick` → `project_continuous_retail_lifecycle` → `order_lifecycle_events` / `push_fill_and_terminal`。对象仅拥有局部诊断缓冲，不持有 GameSession、账户、簿、PlanBook 或 receipt authority；构造/推进/finish 任一失败时缓冲丢弃。调用方仍只在排序成功后一次 `session.last_retail_order_events.extend(...)`，不能逐方法写 session。\n\n与原 engine-pipeline-03-A03 的 `AuctionLifecycleProjector` 是不同职责：竞价 projector 同时准备 parent orders、PendingPlanEvent、retail events 并消费竞价/DayEnd receipts；本候选只组装连续交易零售诊断的同 OrderId 依赖，不修改 parent/plan。二者没有共同的同订单排序算法，不能为复用把它们合成统一 manager。\n\n迁移顺序：先保留四项 inline 行为测试及补足真实错误分支；创建只包含共同状态的私有 owner；将 fill/terminal 联合更新逐步移为方法；保持构造数量链、Submitted 防重、循环内检查、finish unresolved 检查的原顺序；最后让原函数委托并保持唯一 append。无需改变 DTO 或存档。\n\n既有测试在 `continuous_lifecycle_projection.rs::tests`：`independent_results_need_unique_identities_but_no_global_position_order`、`fill_waits_for_its_own_new_submission_without_sorting_unrelated_orders`、`one_order_keeps_receipt_fill_order_when_results_arrive_reversed`、`old_order_fill_precedes_its_cancel_even_when_results_are_reversed`。实施时补 source quantity 映射缺项/多项、broken qty chain、duplicate Submitted、缓冲中的双 terminal、unresolved dependency 的明确 StepFatal/location；多种错误同时存在时保持原 first error。数量链的 before/after 连接、Submitted→本单 Fill→本单 terminal 及当前无关订单输出处理须逐项保持，不能把 BTreeMap 全局排序改成交易先后。本轮未运行或新增测试。\n\n必要性判断：这是低风险、可独立评审的职责聚合候选，未宣称业务 bug 或性能收益。原报告保留所有函数的结论漏掉了共同可变依赖状态，故计为新增；不把“短期”作为 retain 的决定性理由。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-N02",
+    "title": "以 AuctionTickBoundary value object 表达 checked 收尾边界",
+    "kind": "new",
+    "extends": null,
+    "files": [
+      "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "packages/engine/src/session/pipeline/auction_tick_transaction.rs",
+      "packages/engine/src/session/pipeline/stock_stream.rs"
+    ],
+    "objects": [
+      "AuctionTickBoundary",
+      "AuctionFinishContext"
+    ],
+    "report_anchor": "pipeline-n02",
+    "group": "pipeline",
+    "details_markdown": "**新增，原 engine-pipeline-03 的 retain 理由只排除了无状态 service。** `auction_tail_boundaries` 返回 `(u64, bool, bool)`；`AuctionFinishContext` 重复存 `tick_after`、`finish_auction`、`finish_day`；测试 seam `apply_candidate` 另写一遍同构边界计算。它们表达同一个 checked 派生事实：next tick、开/收盘竞价是否结束、是否同时结束交易日，并维护 `finish_day ⇒ finish_auction` 和 phase/tick/day 的既有边界。现有 `ContinuousTickBoundary` 展示同类命名值的可行性，不构成必须复用连续交易类型的理由。\n\n建议在 auction_day_end 增加私有不可变 `AuctionTickBoundary { tick_after, finish_auction, finish_day }`，checked `capture(&GameSession)` 和只读访问；构造器或纯函数封装现有公式，字段私有。它拥有三个派生事实，具有不变量，是 value object；不因不持有 mutable session 而排除。`AuctionFinishContext` 组合该值与 consumed/preceding_receipts，候选 `finish_auction_shards` 接收命名值以避免两个布尔量的位置混淆；必要时最底层 shard.finish 的旧参数继续由 adapter 拆解，避免扩张整个 worker API。\n\n真实调用方均已全文核实：`auction_tick_transaction::apply_session_auction_transaction` 在 stream 排空后 capture，并调用 `stock_stream::finish_auction_shards`；后者按股票并行调用现有 `IncrementalAuctionStockCoordinator::finish`。`apply_incremental_auction_finish_with_prepared_facts_and_receipts` 再次检查 boundary，并构造 `AuctionFinishContext`；cfg(test) 的 `finish_incremental_auction_coordinator` 和 `apply_candidate` 也使用相同事实。构造值借用 candidate/session 而不保留引用，值可在独立股票任务间复制，不拥有时钟、订单簿或最终化输出。\n\n迁移顺序：先在当前 `auction_tail_boundaries` 的检查位置构造命名值，逐分支保留完全相同的 error 类型、文字及 location；测试 seam 在当前位置调用同一公式；然后将 transaction、finish_shards、AuctionFinishContext 的 tuple/字段传递接入命名值。**保留生产调用方和 finish seam 当前的两次 checked capture，不以“去重”删除第二次边界检查，也不提前 capture 或删除 worker guards。** `validate_order_cursor`、`validate_worker_input`、`validate_worker_finalizers`、`apply_finished_candidate` 仍分别承担原职责，后者继续使用借用的 discardable candidate，不并入 value object。仍在 ready/in-flight 排空后恰一次运行每股 tail。\n\n测试位置为 `auction_day_end_tests.rs`、`auction_tick_transaction_tests.rs`、`stock_stream/auction_tests.rs`，以及原 helper 的相关边界 seam。维持非最终开盘 tick、开盘完成仅 rollover、收盘完成与 DayEnd 对齐、tick/day overflow、非竞价 phase、finalizer 数不符的行为与回滚验证；构造 value 时先写失败测试固定这些已存在的边界，不能新增市场时段或修改 T+1。stock order 首错选择、各股并行清算和余单 FIFO 保持。候选边界值不包含 exchange/category，沪深清算差异继续在现有股票配置/算法中表达。\n\n必要性判断：优先级低于 N01；收益为派生事实的命名、受控构造和 typed 参数传递。原动作03-A02拥有单股可变状态，03-A03拥有投影暂存，11-A01拥有调度状态；三者均未涵盖此值。只提消除重复公式已在原说明中出现，因此“复用 helper”不计新增收益；真正新增的是 checked value 的所有权和方法边界。没有性能承诺。",
+    "origin": "new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N01",
+    "title": "PlanChainFactConsumption 拥有跨轮查重与消费登记",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs",
+      "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "packages/engine/src/session/pipeline/auction_day_end.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:47 `PlanChainFactConsumption` 持有 operations/receipts/candidate_keys/sealed_indices 去重集合。",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:59 `AdaptivePlanChainCoordinator` 持有消耗状态并在连续/竞价投影中检验重复身份、投影后登记。",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:817 `finish` 返回消费证据；`continuous_tick_transaction.rs:268`、`auction_tick_transaction.rs:246` 将其交给最终投影。",
+      "测试：`adaptive_plan_chain_tests.rs:950`、`:991` 检查复用 candidate/sealed identity；`:1031` 检查后续 generation overflow 时权威状态不变。"
+    ],
+    "fields": [
+      "operations: BTreeSet<(IntentCandidateKey, u64)>，candidate 与 sealed operation identity，无金额单位。",
+      "receipts: BTreeSet<ReceiptLocalKey>，收据来源内局部身份。",
+      "candidate_keys: BTreeSet<IntentCandidateKey>；sealed_indices: BTreeSet<u64>，跨轮唯一性索引。"
+    ],
+    "methods": [
+      "在既有 PlanChainFactConsumption 增加 prepare_continuous_round / prepare_auction_round，构造轮次局部 operations/receipts/candidate_keys/sealed_indices 增量；保持每个 fact 的四项身份检查、payload 检查及每个 receipt 检查原先交错顺序。",
+      "commit_round 增量仅在所有私有 market/parent/plan 投影及同步成功后登记；contains_operation / contains_receipt 为 finalizer 提供只读查询。coordinator 的 pending、roots、failed 和 session 投影仍保留。"
+    ],
+    "production_callers": [
+      "continuous_tick_transaction::apply_session_continuous_transaction / auction_tick_transaction::apply_session_auction_transaction 构造coordinator并将ReadyStockStream的continuous_progress/auction_progress与typed outcome接线。",
+      "AdaptivePlanChainCoordinator::project_round / project_auction_round在同一consumed上准备/登记，finish交出消费证据；最终Continuous/Auction projection据此跳过已投影事实。"
+    ],
+    "data_owner": "当前由 `AdaptivePlanChainCoordinator` 拥有；事实消费追踪候选只能是内部子对象，最终 P9 shadow 与权威状态仍由 tick transaction/commit 管理。",
+    "composition": "既有 AdaptivePlanChainCoordinator 组合既有 PlanChainFactConsumption；新 receiver 只拥有查重集合及一个可丢弃的轮次增量，不形成第二份业务账本。连续/竞价的 payload 检查可作为显式 callback 或在原循环调用，不能先统一查重后再全部校验 payload。",
+    "migration_steps": [
+      "固定重复 candidate/sealed/receipt 及混合 payload 错误的先后；将四集合读取与轮次暂存逐步收拢到既有对象。",
+      "coordinator 在原 projection 成功尾部调用 commit_round，所有错误仍令 coordinator failed；不提前标记消费。",
+      "finalizer 改用只读查询，不改变 ReceiptAggregation/Settlement 仍消费全部收据一次的独立职责。"
+    ],
+    "existing_tests": [
+      "`adaptive_plan_chain_tests.rs` 已读取：重复 continuous/auction candidate 或 sealed identity 会失败；晚到坏 fact 不能提交权威状态；同一事实不能重复投影。",
+      "`npc_lifecycle_projection_tests.rs` 由本测试模块显式 path 加载，覆盖生命周期投影不重复登记 plan facts。",
+      "源码已读取 `continuous_lifecycle_projection.rs`、`continuous_tick_finalizer.rs`、`auction_day_end.rs` 的消费接口及 continuous/auction transaction caller；没有运行测试。"
+    ],
+    "missing_tests": [
+      "同一 ReceiptLocalKey 在同一 round 重复，以及已消费 receipt 在后续 round 重放时，分别验证错误与 authority rollback。",
+      "continuous/auction 中操作身份新但 sealed index 旧、或反向冲突的完整组合，并检查所有四组索引一致。",
+      "投影在已修改 shadow market 后发生身份校验/receipt 校验错误时，验证失败 coordinator 不可继续且整个 tick shadow 不提交。"
+    ],
+    "semantic_boundaries": [
+      "P3/P4 continuation 只消费 typed candidate/sealed facts；OrderId/编号身份不能定义互不冲突请求的优先级。",
+      "P1 快照不可因撤单释放或成交后现金变化重建；当前用例明确验证撤单不回补本轮 P3 cash budget。",
+      "P4 receipts 仍全部进入唯一 ReceiptAggregation/Settlement 路径；投影追踪不得跳过或重复结算金额/费用。",
+      "订单 qty 以股计、Money 以分计；测试中的 100/50 均为股数，金额由 Money::from_cents 构造。",
+      "A 股交易规则、T+1 与现有简化边界保持不变；此候选不提出规则变更。"
+    ],
+    "necessity": "低优先级但具体可行：同一 operation 的组合身份、candidate 唯一性、sealed 唯一性和 receipt 唯一性目前在连续/竞价两段重复管理，四组集合有共同提交时点。已有 coordinator 并不能替代其内部数据 owner 的方法边界。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n01",
+    "group": "pipeline",
+    "source_candidates": [
+      "r06:r06-c1"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/adaptive_plan_chain.rs:47 `PlanChainFactConsumption` 持有 operations/receipts/candidate_keys/sealed_indices 去重集合。\n- packages/engine/src/session/pipeline/adaptive_plan_chain.rs:59 `AdaptivePlanChainCoordinator` 持有消耗状态并在连续/竞价投影中检验重复身份、投影后登记。\n- packages/engine/src/session/pipeline/adaptive_plan_chain.rs:817 `finish` 返回消费证据；`continuous_tick_transaction.rs:268`、`auction_tick_transaction.rs:246` 将其交给最终投影。\n- 测试：`adaptive_plan_chain_tests.rs:950`、`:991` 检查复用 candidate/sealed identity；`:1031` 检查后续 generation overflow 时权威状态不变。\n\n**字段与单位：**\n\n- operations: BTreeSet<(IntentCandidateKey, u64)>，candidate 与 sealed operation identity，无金额单位。\n- receipts: BTreeSet<ReceiptLocalKey>，收据来源内局部身份。\n- candidate_keys: BTreeSet<IntentCandidateKey>；sealed_indices: BTreeSet<u64>，跨轮唯一性索引。\n\n**方法与失败契约：**\n\n- 在既有 PlanChainFactConsumption 增加 prepare_continuous_round / prepare_auction_round，构造轮次局部 operations/receipts/candidate_keys/sealed_indices 增量；保持每个 fact 的四项身份检查、payload 检查及每个 receipt 检查原先交错顺序。\n- commit_round 增量仅在所有私有 market/parent/plan 投影及同步成功后登记；contains_operation / contains_receipt 为 finalizer 提供只读查询。coordinator 的 pending、roots、failed 和 session 投影仍保留。\n\n**生产调用方：**\n\n- continuous_tick_transaction::apply_session_continuous_transaction / auction_tick_transaction::apply_session_auction_transaction 构造coordinator并将ReadyStockStream的continuous_progress/auction_progress与typed outcome接线。\n- AdaptivePlanChainCoordinator::project_round / project_auction_round在同一consumed上准备/登记，finish交出消费证据；最终Continuous/Auction projection据此跳过已投影事实。\n\n**数据owner：**\n\n当前由 `AdaptivePlanChainCoordinator` 拥有；事实消费追踪候选只能是内部子对象，最终 P9 shadow 与权威状态仍由 tick transaction/commit 管理。\n\n**组合关系：**\n\n既有 AdaptivePlanChainCoordinator 组合既有 PlanChainFactConsumption；新 receiver 只拥有查重集合及一个可丢弃的轮次增量，不形成第二份业务账本。连续/竞价的 payload 检查可作为显式 callback 或在原循环调用，不能先统一查重后再全部校验 payload。\n\n**最小迁移步骤：**\n\n- 固定重复 candidate/sealed/receipt 及混合 payload 错误的先后；将四集合读取与轮次暂存逐步收拢到既有对象。\n- coordinator 在原 projection 成功尾部调用 commit_round，所有错误仍令 coordinator failed；不提前标记消费。\n- finalizer 改用只读查询，不改变 ReceiptAggregation/Settlement 仍消费全部收据一次的独立职责。\n\n**现有静态测试证据：**\n\n- `adaptive_plan_chain_tests.rs` 已读取：重复 continuous/auction candidate 或 sealed identity 会失败；晚到坏 fact 不能提交权威状态；同一事实不能重复投影。\n- `npc_lifecycle_projection_tests.rs` 由本测试模块显式 path 加载，覆盖生命周期投影不重复登记 plan facts。\n- 源码已读取 `continuous_lifecycle_projection.rs`、`continuous_tick_finalizer.rs`、`auction_day_end.rs` 的消费接口及 continuous/auction transaction caller；没有运行测试。\n\n**待补边界：**\n\n- 同一 ReceiptLocalKey 在同一 round 重复，以及已消费 receipt 在后续 round 重放时，分别验证错误与 authority rollback。\n- continuous/auction 中操作身份新但 sealed index 旧、或反向冲突的完整组合，并检查所有四组索引一致。\n- 投影在已修改 shadow market 后发生身份校验/receipt 校验错误时，验证失败 coordinator 不可继续且整个 tick shadow 不提交。\n\n**语义边界：**\n\n- P3/P4 continuation 只消费 typed candidate/sealed facts；OrderId/编号身份不能定义互不冲突请求的优先级。\n- P1 快照不可因撤单释放或成交后现金变化重建；当前用例明确验证撤单不回补本轮 P3 cash budget。\n- P4 receipts 仍全部进入唯一 ReceiptAggregation/Settlement 路径；投影追踪不得跳过或重复结算金额/费用。\n- 订单 qty 以股计、Money 以分计；测试中的 100/50 均为股数，金额由 Money::from_cents 构造。\n- A 股交易规则、T+1 与现有简化边界保持不变；此候选不提出规则变更。\n\n**必要性判断：**\n\n低优先级但具体可行：同一 operation 的组合身份、candidate 唯一性、sealed 唯一性和 receipt 唯一性目前在连续/竞价两段重复管理，四组集合有共同提交时点。已有 coordinator 并不能替代其内部数据 owner 的方法边界。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N02",
+    "title": "TradingDayEndTransition 组织共用日终状态迁移",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/auction_day_end.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/auction_day_end.rs:2158 finalize_trading_day",
+      "packages/engine/src/session/pipeline/auction_day_end.rs:1129-1150 Auction 结束日调用",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:198-270 Continuous 日终先投影释放，再调用 finalize_trading_day"
+    ],
+    "fields": [
+      "borrowed candidate: &mut GameSession；仅当前调用借用，权威数据继续属于 candidate，不复制账户、计划或行情。",
+      "transition 内只保存当前旧 trading_day 与最终 DayBoundary facts；不缓存另一个账户/PlanBook/candle 状态，也不预先计算 next_day。"
+    ],
+    "methods": [
+      "consuming apply 依次承接现有 finalize_trading_day：清簿/envelope 前置检查→按既有 setup 解锁 T+1→checked_sweep_decision_chain_day_end→清除 parent/NPC lifecycle→commit_active_daily_candles→checked day+1→清 minute history→产生 DayBoundary。",
+      "sweep_owned_plans 组织原 mem::take、synchronize_owned_plan_execution、active_plan_ids 遍历与写回；失败位置、原候选局部修改/丢弃方式均保持。"
+    ],
+    "production_callers": [
+      "auction_day_end::apply_finished_candidate -> finalize_trading_day (auction_day_end.rs:1146)",
+      "continuous_tick_finalizer::finalize_continuous_tick -> finalize_trading_day (continuous_tick_finalizer.rs:270)",
+      "continuous_tick_finalizer 上游由 ContinuousTickBoundary::capture 和连续交易 P4 finish 调用"
+    ],
+    "data_owner": "只拥有一次 transition 的已验证输入/输出，不拥有 session 权威；实际写入由 Auction 或 Continuous 的私有 GameSession candidate 承担，最终仍由外层 P9 commit。",
+    "composition": "Auction 与 Continuous finalizer 仍各自产生适用的 DayEnd cancellation/retail/pending facts，随后在原位置组合一次短命 transition。它可作为借用 aggregate 的私有 receiver，保留原 finalize_trading_day 委托入口；不创建持久 session service。",
+    "migration_steps": [
+      "先固定 live order 前置错误、计划同步/日终错误、day overflow 以及 DayBoundary 内容；原行为不是逐阶段自身回滚，失败由外层丢弃 candidate。",
+      "将现有迁移原样放入借用 candidate 的 receiver，保留每一步原顺序和 AuctionDayEndError 分类。",
+      "两个 production caller 保留原调用点；不新增 prepare 预校验，不提前 day+1 检查，不改变 T+1 解锁相对 Settlement 和计划 sweep 的位置。"
+    ],
+    "existing_tests": [
+      "auction_day_end_tests.rs 已由r08全轮全文读：boundary只在适用tick出现；worker/receipt cursor/settlement/projection/day finalizer失败均断言authority hash不变（见r08第924–1012行证据）。",
+      "continuous_tick_finalizer_tests.rs 已由r15全文读：日终释放、trade/candle/T+1及部分成交后日终；不把这些断言冒充 transition 内部原子性。"
+    ],
+    "missing_tests": [
+      "两种 phase 路径共用 transition 后，输入一致时新日 day、DayBoundary 与 closed_daily_candles 完全一致。",
+      "T+1 启用时仅在日终解锁；非日终拍卖 finish 或连续 tick 不得触发解锁。",
+      "清簿检查分别覆盖 resting order、auction_orders、envelope_ledger 非空，并确认调用候选状态保持原样。",
+      "交易日 u32::MAX 与交易日推进错误的原子性；active candle 溢出/缺失规则保持显式失败。",
+      "计划 sweep 失败时，不将部分 day、账户或市场变更泄漏到 authority；DayEnded 事件只出现一次。"
+    ],
+    "semantic_boundaries": [
+      "日终发生在 applicable P4 tail 与统一 Settlement/Projection 之后，T+1 解锁仍按当前 setup 分支执行；不改变现行 A 股规则/简化。",
+      "自然日 CivilUpdate 与此市场交易日日终不是同一事务，不移入 Civil 更新或改变日期推进。",
+      "已有函数在失败前可能修改 discardable candidate；不能误称内部全部先校验后原子应用，更不能通过预校验改 first error。"
+    ],
+    "necessity": "可选 aggregate transition。账户锁定、活跃计划、parent/NPC 生命周期、日 K、交易日和分钟历史共同形成一个明确日终迁移，在两个 production finalizer 共用；对象化收益是命名状态迁移和收窄其专用方法，并非消除已经共用的函数重复。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n02",
+    "group": "pipeline",
+    "source_candidates": [
+      "r07:r07-day-end-transition"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/auction_day_end.rs:2158 finalize_trading_day\n- packages/engine/src/session/pipeline/auction_day_end.rs:1129-1150 Auction 结束日调用\n- packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:198-270 Continuous 日终先投影释放，再调用 finalize_trading_day\n\n**字段与单位：**\n\n- borrowed candidate: &mut GameSession；仅当前调用借用，权威数据继续属于 candidate，不复制账户、计划或行情。\n- transition 内只保存当前旧 trading_day 与最终 DayBoundary facts；不缓存另一个账户/PlanBook/candle 状态，也不预先计算 next_day。\n\n**方法与失败契约：**\n\n- consuming apply 依次承接现有 finalize_trading_day：清簿/envelope 前置检查→按既有 setup 解锁 T+1→checked_sweep_decision_chain_day_end→清除 parent/NPC lifecycle→commit_active_daily_candles→checked day+1→清 minute history→产生 DayBoundary。\n- sweep_owned_plans 组织原 mem::take、synchronize_owned_plan_execution、active_plan_ids 遍历与写回；失败位置、原候选局部修改/丢弃方式均保持。\n\n**生产调用方：**\n\n- auction_day_end::apply_finished_candidate -> finalize_trading_day (auction_day_end.rs:1146)\n- continuous_tick_finalizer::finalize_continuous_tick -> finalize_trading_day (continuous_tick_finalizer.rs:270)\n- continuous_tick_finalizer 上游由 ContinuousTickBoundary::capture 和连续交易 P4 finish 调用\n\n**数据owner：**\n\n只拥有一次 transition 的已验证输入/输出，不拥有 session 权威；实际写入由 Auction 或 Continuous 的私有 GameSession candidate 承担，最终仍由外层 P9 commit。\n\n**组合关系：**\n\nAuction 与 Continuous finalizer 仍各自产生适用的 DayEnd cancellation/retail/pending facts，随后在原位置组合一次短命 transition。它可作为借用 aggregate 的私有 receiver，保留原 finalize_trading_day 委托入口；不创建持久 session service。\n\n**最小迁移步骤：**\n\n- 先固定 live order 前置错误、计划同步/日终错误、day overflow 以及 DayBoundary 内容；原行为不是逐阶段自身回滚，失败由外层丢弃 candidate。\n- 将现有迁移原样放入借用 candidate 的 receiver，保留每一步原顺序和 AuctionDayEndError 分类。\n- 两个 production caller 保留原调用点；不新增 prepare 预校验，不提前 day+1 检查，不改变 T+1 解锁相对 Settlement 和计划 sweep 的位置。\n\n**现有静态测试证据：**\n\n- auction_day_end_tests.rs 已由r08全轮全文读：boundary只在适用tick出现；worker/receipt cursor/settlement/projection/day finalizer失败均断言authority hash不变（见r08第924–1012行证据）。\n- continuous_tick_finalizer_tests.rs 已由r15全文读：日终释放、trade/candle/T+1及部分成交后日终；不把这些断言冒充 transition 内部原子性。\n\n**待补边界：**\n\n- 两种 phase 路径共用 transition 后，输入一致时新日 day、DayBoundary 与 closed_daily_candles 完全一致。\n- T+1 启用时仅在日终解锁；非日终拍卖 finish 或连续 tick 不得触发解锁。\n- 清簿检查分别覆盖 resting order、auction_orders、envelope_ledger 非空，并确认调用候选状态保持原样。\n- 交易日 u32::MAX 与交易日推进错误的原子性；active candle 溢出/缺失规则保持显式失败。\n- 计划 sweep 失败时，不将部分 day、账户或市场变更泄漏到 authority；DayEnded 事件只出现一次。\n\n**语义边界：**\n\n- 日终发生在 applicable P4 tail 与统一 Settlement/Projection 之后，T+1 解锁仍按当前 setup 分支执行；不改变现行 A 股规则/简化。\n- 自然日 CivilUpdate 与此市场交易日日终不是同一事务，不移入 Civil 更新或改变日期推进。\n- 已有函数在失败前可能修改 discardable candidate；不能误称内部全部先校验后原子应用，更不能通过预校验改 first error。\n\n**必要性判断：**\n\n可选 aggregate transition。账户锁定、活跃计划、parent/NPC 生命周期、日 K、交易日和分钟历史共同形成一个明确日终迁移，在两个 production finalizer 共用；对象化收益是命名状态迁移和收窄其专用方法，并非消除已经共用的函数重复。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N04",
+    "title": "ContinuousDayEndLifecycleProjection 收拢日终取消投影",
+    "priority": "P3 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:198-270 boundary.ends_day 分支筛选并排序 DayEnd receipt，更新 parent/NPC/retail 生命周期、生成 OrderCanceled fact，并派生 PendingPlanEvent::DayEnded。",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:81-87 production 函数接收 candidate session、finish 和一次性 context；packages/engine/src/session/pipeline/continuous_tick_transaction.rs:256-271 是其生产 caller。",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs:64-115、307-347、461-557 覆盖日终释放、清簿、trade/candle/T+1 及部分成交后日终。"
+    ],
+    "fields": [
+      "candidate: 当前 Continuous tick candidate 的短借用；day_end_receipts: 当前批只读 DayEnd 收据集合。",
+      "day_end_event_base: u64 与本地 facts: Vec<OwnedEventFact>；诊断启用时的同次 causal_time/cleared_quote_codes。"
+    ],
+    "methods": [
+      "apply_release 按现有排序依次执行 causal termination、parent cancellation、NPC lifecycle removal、retail canceled 事件、checked local index 与 Event::OrderCanceled。",
+      "finish 仍在 releases 完毕后产生 causal snapshot、收集未完成 parent 的 linked plan 并追加 DayEnded；外层随后调用共同 TradingDayEndTransition。"
+    ],
+    "production_callers": [
+      "continuous_tick_finalizer::finalize_continuous_tick 日终分支（唯一已核实调用点）；该函数由 continuous_tick_transaction::apply_session_continuous_transaction 调用，再经 authoritative_tick::execute_authoritative_tick 提交。"
+    ],
+    "data_owner": "GameSession candidate 及 Settlement receipts；建议候选仅以借用输入写回同一 candidate，不新建第二份 lifecycle authority。",
+    "composition": "Continuous finalizer 内短命借用 projector，保留 AuctionLifecycleProjector 独立职责与不同事实输入；ParentOrderPlan 的单对象 child receiver 属旧 session-N01，不被本项再实现。",
+    "migration_steps": [
+      "固定 partial fill→release 的 diagnostics、pending plan、身份基址溢出和最先错误；保持是否启用 simulation-diagnostics 的分支。",
+      "原 ends_day 分支原样委托；仍先修改候选的 parent/NPC/retail 后计算 index，不新增内部全有或全无。",
+      "统一 Settlement 和交易日日终留在外层，禁止日终 projector 自动调用 P9 或回补 P1。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs: no_closing_auction_finishes_day_and_releases_new_orders_once 检查 DayEnd receipt、撤单、清簿、账本清空和 DayBoundary 一次。",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs: partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quantity 检查 fill 后剩余数量、DayEnd release、ReceiptAggregation 与 T+1 解锁。",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs 的 diagnostics 条件用例检查 causal termination、清簿 quote 与 completed Continuous phase。"
+    ],
+    "missing_tests": [
+      "若提取，直接测试无释放收据时不产生订单生命周期变更或事件。",
+      "多个 DayEnd receipts 的 envelope 次序、相同 stock 多 account 和 event index 边界下事件身份唯一。",
+      "parent、NPC lifecycle、retail diagnostic 对同一 release 分别恰一次清理，且失败时候选整体不提交。"
+    ],
+    "semantic_boundaries": [
+      "P4：只能消费当日连续撮合后生成的 DayEnd receipt；不得改变成交/挂单/撤单受理顺序或价格时间优先。",
+      "P7/P8/P9：Settlement 与派生投影仍在私有 candidate 中完成，任何失败不泄漏局部状态；event identity 不成为交易排序。",
+      "A 股 T+1：结算使用当前 tick 原 market_minute，日终后才按既有日边界规则解锁；本候选不修改该语义。",
+      "Money/股：只处理 receipt 中既有 qty_before 与生命周期事实，不重算费用或 cash/share envelope；P0/P1 预留规则不受影响。"
+    ],
+    "necessity": "低优先可选：同一组 DayEnd release 同时投影四种生命周期与事件身份；一次调用仍有共同 mutable 工作状态，不因短期或函数内而排除。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n04",
+    "group": "pipeline",
+    "source_candidates": [
+      "r15:r15-c01"
+    ],
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:198-270 boundary.ends_day 分支筛选并排序 DayEnd receipt，更新 parent/NPC/retail 生命周期、生成 OrderCanceled fact，并派生 PendingPlanEvent::DayEnded。\n- packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:81-87 production 函数接收 candidate session、finish 和一次性 context；packages/engine/src/session/pipeline/continuous_tick_transaction.rs:256-271 是其生产 caller。\n- packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs:64-115、307-347、461-557 覆盖日终释放、清簿、trade/candle/T+1 及部分成交后日终。\n\n**字段与单位：**\n\n- candidate: 当前 Continuous tick candidate 的短借用；day_end_receipts: 当前批只读 DayEnd 收据集合。\n- day_end_event_base: u64 与本地 facts: Vec<OwnedEventFact>；诊断启用时的同次 causal_time/cleared_quote_codes。\n\n**方法与失败契约：**\n\n- apply_release 按现有排序依次执行 causal termination、parent cancellation、NPC lifecycle removal、retail canceled 事件、checked local index 与 Event::OrderCanceled。\n- finish 仍在 releases 完毕后产生 causal snapshot、收集未完成 parent 的 linked plan 并追加 DayEnded；外层随后调用共同 TradingDayEndTransition。\n\n**生产调用方：**\n\n- continuous_tick_finalizer::finalize_continuous_tick 日终分支（唯一已核实调用点）；该函数由 continuous_tick_transaction::apply_session_continuous_transaction 调用，再经 authoritative_tick::execute_authoritative_tick 提交。\n\n**数据owner：**\n\nGameSession candidate 及 Settlement receipts；建议候选仅以借用输入写回同一 candidate，不新建第二份 lifecycle authority。\n\n**组合关系：**\n\nContinuous finalizer 内短命借用 projector，保留 AuctionLifecycleProjector 独立职责与不同事实输入；ParentOrderPlan 的单对象 child receiver 属旧 session-N01，不被本项再实现。\n\n**最小迁移步骤：**\n\n- 固定 partial fill→release 的 diagnostics、pending plan、身份基址溢出和最先错误；保持是否启用 simulation-diagnostics 的分支。\n- 原 ends_day 分支原样委托；仍先修改候选的 parent/NPC/retail 后计算 index，不新增内部全有或全无。\n- 统一 Settlement 和交易日日终留在外层，禁止日终 projector 自动调用 P9 或回补 P1。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs: no_closing_auction_finishes_day_and_releases_new_orders_once 检查 DayEnd receipt、撤单、清簿、账本清空和 DayBoundary 一次。\n- packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs: partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quantity 检查 fill 后剩余数量、DayEnd release、ReceiptAggregation 与 T+1 解锁。\n- packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs 的 diagnostics 条件用例检查 causal termination、清簿 quote 与 completed Continuous phase。\n\n**待补边界：**\n\n- 若提取，直接测试无释放收据时不产生订单生命周期变更或事件。\n- 多个 DayEnd receipts 的 envelope 次序、相同 stock 多 account 和 event index 边界下事件身份唯一。\n- parent、NPC lifecycle、retail diagnostic 对同一 release 分别恰一次清理，且失败时候选整体不提交。\n\n**语义边界：**\n\n- P4：只能消费当日连续撮合后生成的 DayEnd receipt；不得改变成交/挂单/撤单受理顺序或价格时间优先。\n- P7/P8/P9：Settlement 与派生投影仍在私有 candidate 中完成，任何失败不泄漏局部状态；event identity 不成为交易排序。\n- A 股 T+1：结算使用当前 tick 原 market_minute，日终后才按既有日边界规则解锁；本候选不修改该语义。\n- Money/股：只处理 receipt 中既有 qty_before 与生命周期事实，不重算费用或 cash/share envelope；P0/P1 预留规则不受影响。\n\n**必要性判断：**\n\n低优先可选：同一组 DayEnd release 同时投影四种生命周期与事件身份；一次调用仍有共同 mutable 工作状态，不因短期或函数内而排除。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N05",
+    "title": "CapturedExperienceObservation 绑定同源观察输出",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+      "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+      "packages/engine/src/session/pipeline/decision_snapshot_tests.rs",
+      "packages/engine/src/session/pipeline/decision_snapshot.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:286-368 `RetailExperienceObservation` 与 `observe_retail_experience_for` 同时维护 experience、equity、position peak、risk inputs、self positions 和 watchlist prune。",
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:169-219 将 experience、风险观察、SelfView 和 StrategyState 合并成 `DecisionAccountInput`。",
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:224-249 统一写回每个观察账户的更新后 RetailExperienceState。",
+      "packages/engine/src/session/pipeline/decision_snapshot.rs:21-39,132-148 构造快照时只校验 Retail 相关 Option 存在，未校验风险和持仓投影同源。",
+      "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs:197-230 覆盖 experience 计数溢出，但没有有仓 Retail 多股票的投影一致性断言。"
+    ],
+    "fields": [
+      "NoExperience / Captured 具名 enum；Captured 组合 experience: RetailExperienceState、risk_positions: Option<BTreeMap<StockCode,RiskPositionInput>>、self_positions: BTreeMap<StockCode,PositionView>。",
+      "account/market_minute 是构造输入；equity 是原 helper 内临时计算，不将其添加为没有 caller 使用的冗余输出字段。"
+    ],
+    "methods": [
+      "capture 在当前 observe_retail_experience_for 位置构造 NoExperience 或 Captured；继续观察 equity、position peaks 并 prune 原 watchlist。",
+      "consume 将同源 experience/risk/self positions 交给 capture closure；非 Retail 但有 experience 的现有 Some(exp)/None-risk/Some(self) 组合仍可表达，不擅自只支持 Retail。"
+    ],
+    "production_callers": [
+      "已核实：`npc_tick_preparation.rs::prepare_npc_projection` (packages/engine/src/session/pipeline/npc_tick_preparation.rs:76-91) 调用 `capture_decision_snapshot`；`queue_npc_for_next_tick` (113-147) 是 P9 candidate queue caller。",
+      "已核实：`candidate_commit.rs::prepare_candidate_commit` (packages/engine/src/session/pipeline/candidate_commit.rs:33-58) 在 tick 候选提交前调用 next-tick NPC queue；同文件 `prepare_tick_shadow_plan_commit_with_evidence` 最终调用该准备函数。"
+    ],
+    "data_owner": "生产权威状态仍是 GameSession shadow 中每账户的 RetailExperienceState、AccountEntry.cash/positions 与 Market；候选对象只拥有单次 capture 的派生事实，不增加第二份长期权威状态。",
+    "composition": "替换三个独立 Option 的 tuple，构造器拥有原转换算法；DecisionAccountInput、SelfView、risk observation 仍保留现有职责和构造时点。权威更新仍在整个 DecisionSnapshot::new/urgency 校验成功之后 replace_existing_shared_parallel。",
+    "migration_steps": [
+      "固定 empty、Retail、多持仓、非 Retail 但存在 experience 的当前分支、watchlist 和 overflow 错误次序。",
+      "替换 tuple 及解包为 private enum/具名值；风险计算仍在原位置，不提前到 helper 内改变与 SelfView/strategy 错误优先级。",
+      "原 DecisionSnapshot API 和 observer selection 不改变，也不借此实施 ADR-0018 未完成的观察版本迁移。"
+    ],
+    "existing_tests": [
+      "`decision_snapshot_capture_tests.rs`：shadow-only capture、fast path、experience overflow、missing strategy/attention、risk failure、invalid attention、worker 数对照。",
+      "`decision_snapshot_tests.rs`：DecisionSnapshot canonical 顺序、时钟一致、Retail 必需字段和非 Player 条件。"
+    ],
+    "missing_tests": [
+      "多持仓 Retail account：确认 equity 使用每只股票当前 last_price 与股数，风险 input 的 peak 与更新后 experience 对应同一 market_minute。",
+      "watchlist prune 后仍持有股票与已清仓股票的边界，确认只移除未持有项目且 SelfView sellable_qty 与 account position 的 T+1 状态一致。",
+      "任一股票缺价格或某 Money 运算溢出时整个 capture 返回带 account/code 的错误且原权威 session 不变（caller shadow 被丢弃）。"
+    ],
+    "semantic_boundaries": [
+      "保持当前生产 capture 使用的观察版本及调用位置；不把调查变成 P0 前/后观察政策迁移。",
+      "T+1 可卖数由 Position::sellable；Money 分与股分开，risk/self 派生同源不改变账户。",
+      "三个 Option 的现有生产组合保持；消除内部不可能的组合不能缩小现有合法输入集合。"
+    ],
+    "necessity": "可选值对象：原 tuple 中 experience/risk/self 三个 Option 的共存关系只由 helper 约定和 caller expect 维持；具名 enum 明确这些关系，收益不要求新增校验或第二份快照。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n05",
+    "group": "pipeline",
+    "source_candidates": [
+      "r18:R18-C1"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/decision_snapshot_capture.rs:286-368 `RetailExperienceObservation` 与 `observe_retail_experience_for` 同时维护 experience、equity、position peak、risk inputs、self positions 和 watchlist prune。\n- packages/engine/src/session/pipeline/decision_snapshot_capture.rs:169-219 将 experience、风险观察、SelfView 和 StrategyState 合并成 `DecisionAccountInput`。\n- packages/engine/src/session/pipeline/decision_snapshot_capture.rs:224-249 统一写回每个观察账户的更新后 RetailExperienceState。\n- packages/engine/src/session/pipeline/decision_snapshot.rs:21-39,132-148 构造快照时只校验 Retail 相关 Option 存在，未校验风险和持仓投影同源。\n- packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs:197-230 覆盖 experience 计数溢出，但没有有仓 Retail 多股票的投影一致性断言。\n\n**字段与单位：**\n\n- NoExperience / Captured 具名 enum；Captured 组合 experience: RetailExperienceState、risk_positions: Option<BTreeMap<StockCode,RiskPositionInput>>、self_positions: BTreeMap<StockCode,PositionView>。\n- account/market_minute 是构造输入；equity 是原 helper 内临时计算，不将其添加为没有 caller 使用的冗余输出字段。\n\n**方法与失败契约：**\n\n- capture 在当前 observe_retail_experience_for 位置构造 NoExperience 或 Captured；继续观察 equity、position peaks 并 prune 原 watchlist。\n- consume 将同源 experience/risk/self positions 交给 capture closure；非 Retail 但有 experience 的现有 Some(exp)/None-risk/Some(self) 组合仍可表达，不擅自只支持 Retail。\n\n**生产调用方：**\n\n- 已核实：`npc_tick_preparation.rs::prepare_npc_projection` (packages/engine/src/session/pipeline/npc_tick_preparation.rs:76-91) 调用 `capture_decision_snapshot`；`queue_npc_for_next_tick` (113-147) 是 P9 candidate queue caller。\n- 已核实：`candidate_commit.rs::prepare_candidate_commit` (packages/engine/src/session/pipeline/candidate_commit.rs:33-58) 在 tick 候选提交前调用 next-tick NPC queue；同文件 `prepare_tick_shadow_plan_commit_with_evidence` 最终调用该准备函数。\n\n**数据owner：**\n\n生产权威状态仍是 GameSession shadow 中每账户的 RetailExperienceState、AccountEntry.cash/positions 与 Market；候选对象只拥有单次 capture 的派生事实，不增加第二份长期权威状态。\n\n**组合关系：**\n\n替换三个独立 Option 的 tuple，构造器拥有原转换算法；DecisionAccountInput、SelfView、risk observation 仍保留现有职责和构造时点。权威更新仍在整个 DecisionSnapshot::new/urgency 校验成功之后 replace_existing_shared_parallel。\n\n**最小迁移步骤：**\n\n- 固定 empty、Retail、多持仓、非 Retail 但存在 experience 的当前分支、watchlist 和 overflow 错误次序。\n- 替换 tuple 及解包为 private enum/具名值；风险计算仍在原位置，不提前到 helper 内改变与 SelfView/strategy 错误优先级。\n- 原 DecisionSnapshot API 和 observer selection 不改变，也不借此实施 ADR-0018 未完成的观察版本迁移。\n\n**现有静态测试证据：**\n\n- `decision_snapshot_capture_tests.rs`：shadow-only capture、fast path、experience overflow、missing strategy/attention、risk failure、invalid attention、worker 数对照。\n- `decision_snapshot_tests.rs`：DecisionSnapshot canonical 顺序、时钟一致、Retail 必需字段和非 Player 条件。\n\n**待补边界：**\n\n- 多持仓 Retail account：确认 equity 使用每只股票当前 last_price 与股数，风险 input 的 peak 与更新后 experience 对应同一 market_minute。\n- watchlist prune 后仍持有股票与已清仓股票的边界，确认只移除未持有项目且 SelfView sellable_qty 与 account position 的 T+1 状态一致。\n- 任一股票缺价格或某 Money 运算溢出时整个 capture 返回带 account/code 的错误且原权威 session 不变（caller shadow 被丢弃）。\n\n**语义边界：**\n\n- 保持当前生产 capture 使用的观察版本及调用位置；不把调查变成 P0 前/后观察政策迁移。\n- T+1 可卖数由 Position::sellable；Money 分与股分开，risk/self 派生同源不改变账户。\n- 三个 Option 的现有生产组合保持；消除内部不可能的组合不能缩小现有合法输入集合。\n\n**必要性判断：**\n\n可选值对象：原 tuple 中 experience/risk/self 三个 Option 的共存关系只由 helper 约定和 caller expect 维持；具名 enum 明确这些关系，收益不要求新增校验或第二份快照。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N06",
+    "title": "IncrementalContinuousStockShadow 拥有跨轮迁移与收尾",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs"
+    ],
+    "evidence": [
+      "incremental_continuous_stock_shadow.rs:78-93 `IncrementalContinuousStockShadow` 将每股 `Market`、`EnvelopeLedger`、`next_trade_event_index`、累计 receipts/trades/facts/outbox 放在同一状态 owner。",
+      "incremental_continuous_stock_shadow.rs:419-474 `apply_stock_round` 接收 shadow 后更新其所有并行演进字段；现由 coordinator round worker 调用。",
+      "incremental_continuous_stock_shadow.rs:366-390 `finish_for_tick` 读取每个 shadow、核验 book-ledger、冻结 closing price，并仅在 ends_day 时加日终 release 与清簿。",
+      "continuous_tick_transaction.rs:190-255 是 production 初始化/驱动/finish coordinator 的正式 seam；session_execution_transaction.rs:95-110 在完成后把 workers 与 detached facts 交给一次性 Projection/Settlement 路径。"
+    ],
+    "fields": [
+      "`phase: TradingPhase`：撮合阶段",
+      "`market: Market`：该 StockCode 私有订单簿/行情状态",
+      "`ledger: EnvelopeLedger`：该股票托管资源账本",
+      "`config: GameConfig`：股票轮次处理配置",
+      "`next_trade_event_index: u64`：股票局部成交事件 identity 游标",
+      "`created_envelopes`, `receipts`, `terminal_keys`, `trades`, `place_facts`, `cancel_facts`, `execution_facts`：该股票跨 adaptive routes 累积的结果/审计 outbox；股数仍由委托及领域类型承载，不引入新单位"
+    ],
+    "methods": [
+      "将 apply_stock_round 改为既有 shadow 的 consuming apply_round(code,operations)，共同推进 market/ledger/trade index 与各 outbox，输出 StockRoundResult。",
+      "每股 consuming finish(ends_day) 承接现有 book-ledger 校验、清簿前 closing price、DayEnd receipts/terminal keys 与 worker output；总 fact 计数由 coordinator 保留。"
+    ],
+    "production_callers": [
+      "`continuous_tick_transaction.rs:190-255` 通过 `continuous_shards` 建立 coordinator、用 `drive_stock_stream` 推进 adaptive route，之后调用 `finish_continuous_shards`；该 stream driver 本身维护计划 continuation 与阶段边界。",
+      "`pre_open_transaction.rs:219-257,294-307` 使用同一 coordinator/round 接口完成 PreOpen 路径并在一次 P4-P7 transaction 前 finish。",
+      "`session_execution_transaction.rs:95-110` 只消费完成后的 aggregate，校验 session ownership/receipt cursor 并交给一次性 Settlement/Projection。"
+    ],
+    "data_owner": "一股一个 `IncrementalContinuousStockShadow` 拥有其 tick candidate 中的 Market、EnvelopeLedger 及股票局部索引和事实 outbox；跨股票 round 身份集合、并行 worker 汇总、detached cancel 与一次性 finish 仍归 `IncrementalContinuousStockCoordinator`。",
+    "composition": "Coordinator 按 StockCode 持有 per-stock shadow。收到一批已由 P3 接受的操作后，按股票分组并行调用每个 shadow；同股 vector 顺序保留，跨股票输出按身份整理只服务错误选择与投影收集。每轮成功后 coordinator 合并结果并登记全轮 seen identities。计划 continuation 可观察每轮 typed outcome/MarketDelta，但不能触发 Settlement、重建 P1 或回补 P3 预算；所有轮结束才调用 coordinator 的 consuming finish。",
+    "migration_steps": [
+      "固定两轮延续、worker fatal 后 coordinator failed、closing price 在清簿前和 DayEnd 一次。",
+      "移动原 consuming free function，失败仍消费掉 shadow，coordinator 不得继续使用失败状态；不要新增回滚克隆或声称 shadow 在 Err 后保持原样。",
+      "仅移动每股 finish 部分，总体 stocks 遍历顺序、总数 checked_add/最终比较与首错仍留协调层，不并行化原串行 finish 或改变错误顺序。"
+    ],
+    "existing_tests": [
+      "incremental_continuous_stock_shadow_tests.rs 已由独立 r20 全文读：持续多轮、同股顺序、重复身份与 fatal-invalidated coordinator；其具体原始断言见 readers/r20.json。",
+      "stock_stream 与 Continuous transaction 测试核对后统一 tail/Settlement。"
+    ],
+    "missing_tests": [
+      "未来迁移应有一条单股票最小 fixture：一次成功 round 同时推进 Market、EnvelopeLedger、stock-local trade index 和 outbox，第二 round 可读到第一 round 结果。",
+      "shadow transition 返回错误时原 shadow 的所有字段不发生部分替换，或清楚证明 consuming shadow 被丢弃且 coordinator 必须失效；区分单股票调用契约与整 tick authority rollback。",
+      "finish day-end 在统一 finish 执行一次，closing price 取日终清簿之前的最终状态；重复 finish 不可达（consuming API）。"
+    ],
+    "semantic_boundaries": [
+      "P3/P4：P3 已接受的每个操作在每个 P4 round 恰有一个 typed fact；未知股票撤单是 detached 业务拒绝，未知股票 Place 属 invariant fatal。",
+      "同一股票按实际局部受理/同股次序处理；stock shard 完成顺序、全局 sealed identity、事件输出排序不可变成撮合先后。",
+      "P0/P1：shadow 由 post-P0 Market/ledger 初始化，后续不得重新构造 P1 或把 P4 释放资源回补本轮 P3 预算。",
+      "envelope 资源 cash/shares 分别守恒，连续股票撮合维护金额以 Money 分、数量以股计；取消/成交事实不应改变既定 A 股 T+1、整手和价格规则。",
+      "ReceiptAggregation/Settlement/Projection 与日终 finalizer 各自仅在整个 stream 排空后执行一次；失败 candidate 不进入 P9 authority。"
+    ],
+    "necessity": "既有 data owner 内聚机会：market、ledger、事件游标和结果日志已在同一 shadow 中，但实际迁移仍是接收整个 shadow 的 free function，finish 的股内行为位于外层 coordinator。不同于旧 A01 的单轮 processor 与旧 stream 的多股调度器。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n06",
+    "group": "pipeline",
+    "source_candidates": [
+      "r19:r19-c1"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- incremental_continuous_stock_shadow.rs:78-93 `IncrementalContinuousStockShadow` 将每股 `Market`、`EnvelopeLedger`、`next_trade_event_index`、累计 receipts/trades/facts/outbox 放在同一状态 owner。\n- incremental_continuous_stock_shadow.rs:419-474 `apply_stock_round` 接收 shadow 后更新其所有并行演进字段；现由 coordinator round worker 调用。\n- incremental_continuous_stock_shadow.rs:366-390 `finish_for_tick` 读取每个 shadow、核验 book-ledger、冻结 closing price，并仅在 ends_day 时加日终 release 与清簿。\n- continuous_tick_transaction.rs:190-255 是 production 初始化/驱动/finish coordinator 的正式 seam；session_execution_transaction.rs:95-110 在完成后把 workers 与 detached facts 交给一次性 Projection/Settlement 路径。\n\n**字段与单位：**\n\n- `phase: TradingPhase`：撮合阶段\n- `market: Market`：该 StockCode 私有订单簿/行情状态\n- `ledger: EnvelopeLedger`：该股票托管资源账本\n- `config: GameConfig`：股票轮次处理配置\n- `next_trade_event_index: u64`：股票局部成交事件 identity 游标\n- `created_envelopes`, `receipts`, `terminal_keys`, `trades`, `place_facts`, `cancel_facts`, `execution_facts`：该股票跨 adaptive routes 累积的结果/审计 outbox；股数仍由委托及领域类型承载，不引入新单位\n\n**方法与失败契约：**\n\n- 将 apply_stock_round 改为既有 shadow 的 consuming apply_round(code,operations)，共同推进 market/ledger/trade index 与各 outbox，输出 StockRoundResult。\n- 每股 consuming finish(ends_day) 承接现有 book-ledger 校验、清簿前 closing price、DayEnd receipts/terminal keys 与 worker output；总 fact 计数由 coordinator 保留。\n\n**生产调用方：**\n\n- `continuous_tick_transaction.rs:190-255` 通过 `continuous_shards` 建立 coordinator、用 `drive_stock_stream` 推进 adaptive route，之后调用 `finish_continuous_shards`；该 stream driver 本身维护计划 continuation 与阶段边界。\n- `pre_open_transaction.rs:219-257,294-307` 使用同一 coordinator/round 接口完成 PreOpen 路径并在一次 P4-P7 transaction 前 finish。\n- `session_execution_transaction.rs:95-110` 只消费完成后的 aggregate，校验 session ownership/receipt cursor 并交给一次性 Settlement/Projection。\n\n**数据owner：**\n\n一股一个 `IncrementalContinuousStockShadow` 拥有其 tick candidate 中的 Market、EnvelopeLedger 及股票局部索引和事实 outbox；跨股票 round 身份集合、并行 worker 汇总、detached cancel 与一次性 finish 仍归 `IncrementalContinuousStockCoordinator`。\n\n**组合关系：**\n\nCoordinator 按 StockCode 持有 per-stock shadow。收到一批已由 P3 接受的操作后，按股票分组并行调用每个 shadow；同股 vector 顺序保留，跨股票输出按身份整理只服务错误选择与投影收集。每轮成功后 coordinator 合并结果并登记全轮 seen identities。计划 continuation 可观察每轮 typed outcome/MarketDelta，但不能触发 Settlement、重建 P1 或回补 P3 预算；所有轮结束才调用 coordinator 的 consuming finish。\n\n**最小迁移步骤：**\n\n- 固定两轮延续、worker fatal 后 coordinator failed、closing price 在清簿前和 DayEnd 一次。\n- 移动原 consuming free function，失败仍消费掉 shadow，coordinator 不得继续使用失败状态；不要新增回滚克隆或声称 shadow 在 Err 后保持原样。\n- 仅移动每股 finish 部分，总体 stocks 遍历顺序、总数 checked_add/最终比较与首错仍留协调层，不并行化原串行 finish 或改变错误顺序。\n\n**现有静态测试证据：**\n\n- incremental_continuous_stock_shadow_tests.rs 已由独立 r20 全文读：持续多轮、同股顺序、重复身份与 fatal-invalidated coordinator；其具体原始断言见 readers/r20.json。\n- stock_stream 与 Continuous transaction 测试核对后统一 tail/Settlement。\n\n**待补边界：**\n\n- 未来迁移应有一条单股票最小 fixture：一次成功 round 同时推进 Market、EnvelopeLedger、stock-local trade index 和 outbox，第二 round 可读到第一 round 结果。\n- shadow transition 返回错误时原 shadow 的所有字段不发生部分替换，或清楚证明 consuming shadow 被丢弃且 coordinator 必须失效；区分单股票调用契约与整 tick authority rollback。\n- finish day-end 在统一 finish 执行一次，closing price 取日终清簿之前的最终状态；重复 finish 不可达（consuming API）。\n\n**语义边界：**\n\n- P3/P4：P3 已接受的每个操作在每个 P4 round 恰有一个 typed fact；未知股票撤单是 detached 业务拒绝，未知股票 Place 属 invariant fatal。\n- 同一股票按实际局部受理/同股次序处理；stock shard 完成顺序、全局 sealed identity、事件输出排序不可变成撮合先后。\n- P0/P1：shadow 由 post-P0 Market/ledger 初始化，后续不得重新构造 P1 或把 P4 释放资源回补本轮 P3 预算。\n- envelope 资源 cash/shares 分别守恒，连续股票撮合维护金额以 Money 分、数量以股计；取消/成交事实不应改变既定 A 股 T+1、整手和价格规则。\n- ReceiptAggregation/Settlement/Projection 与日终 finalizer 各自仅在整个 stream 排空后执行一次；失败 candidate 不进入 P9 authority。\n\n**必要性判断：**\n\n既有 data owner 内聚机会：market、ledger、事件游标和结果日志已在同一 shadow 中，但实际迁移仍是接收整个 shadow 的 free function，finish 的股内行为位于外层 coordinator。不同于旧 A01 的单轮 processor 与旧 stream 的多股调度器。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N07",
+    "title": "SellerChargeAllocation 表达单腿实收费用封顶",
+    "priority": "P3 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/transition.rs",
+      "packages/engine/src/session/pipeline/ledger_validation.rs",
+      "packages/engine/src/session/pipeline/ledger_receipt_tests.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/transition.rs:77 FillTransition::sell 校验 nominal_before、charged_before，计算历史未收费用、按 gross_delta 封顶，并生成 charged 与 deliver_cash。",
+      "packages/engine/src/session/pipeline/transition.rs:190 allocate_charged_components 按 commission、stamp_tax、transfer_fee 顺序分配封顶额度。",
+      "packages/engine/src/session/pipeline/ledger_validation.rs:291 validate_seller_fill_charge 根据 receipt/audit 复算同一 charge cap 与组件优先级。",
+      "packages/engine/src/session/pipeline/ledger_validation.rs:333 allocate_seller_charge 重复实现同样的三项 fee 分配。",
+      "packages/engine/src/session/pipeline/stock_auction.rs:601 与 packages/engine/src/session/pipeline/continuous_matching.rs:1115 是 FillTransition::sell 的生产调用位置；stock_auction.rs:649、729 将 receipt transition 应用于临时 order envelope。",
+      "packages/engine/src/session/pipeline/receipt_aggregation.rs:69-92 通过 EnvelopeLedger 生产应用并校验聚合 receipts；EnvelopeLedger::apply_one 调 ledger_validation::validate。"
+    ],
+    "fields": [
+      "borrowed/输入 nominal_after: FeeComponents、charged_before: FeeComponents、gross_delta: Money（分）。",
+      "输出 charged_delta: FeeComponents、charged_after: FeeComponents、deliver_cash: Money（分）；没有跨 tick audit 或数量 owner。"
+    ],
+    "methods": [
+      "checked calculate 在原算法中计算历史欠费，按 commission→stamp_tax→transfer_fee 分配本腿 cap 并得到净交付；不拥有新费率或替代 fees 函数。",
+      "validate_receipt 仍在 ledger validator 逐项检查字段、累计链、nominal、charged、delivery 与 delta；可保留独立分配算法作为对照，不能因共享 value 弱化 validator。"
+    ],
+    "production_callers": [
+      "FillTransition::sell 的生产调用者为 stock_auction.rs:601 与 continuous_matching.rs:1115（符号搜索已核实）。",
+      "账本验证调用者为 EnvelopeLedger::apply_one → ledger_validation::validate（已完整读取 ledger.rs）。"
+    ],
+    "data_owner": "成交 transition 构造结果由 FillTransition 负责；EnvelopeAudit 继续归 Envelope/EnvelopeLedger 所有并保存跨 tick 累计账目。候选只应是无状态费用分配策略/值结果，不能另存一份权威 audit。",
+    "composition": "FillTransition::sell 可组合局部纯结果；validator 复用算法是可选第二步，独立复算有价值时继续保留。config.rs::fee_delta / buy_order_reservation 保持现有共享实现并调用 GameConfig 收费 receiver；domain 第二轮候选16-1（OrderCashRules）已因缺少新增事实/行为被拒绝，不作为本项依赖。本项也不同于 session-R2-N07 的保存格式累计 fee audit 校验。",
+    "migration_steps": [
+      "固定 cap 刚好截在每项边界、历史欠费追收、component 矛盾与 Money overflow。",
+      "将现有本腿输入/输出与计算收在私有值，不移动其他 FillTransition 边界或费用公式。",
+      "保留 validator 全部字段/方程验证与原 error location/次序；不强求 producer/validator 共用一条实现。"
+    ],
+    "existing_tests": [
+      "transition_tests.rs 已由新 r33 全文复读：sell_fills_cap_actual_charges_and_recover_nominal_fee_arrears、sell_fill_allocates_capped_charge_commission_then_stamp_then_transfer。",
+      "ledger_receipt_tests.rs 与 ledger_state_tests.rs 的卖方封顶、欠费链、错误历史拒绝，已由 r22 全文读取。"
+    ],
+    "missing_tests": [
+      "给定三个组件均有欠费、gross cap 依次截断在 commission、stamp_tax、transfer_fee 边界时分别断言每个 charged 分项及 deliver_cash。",
+      "覆盖 nominal_after 与 charged_before 某一分项不连续、组件合计可能看似有效但单项超额的拒绝。",
+      "覆盖极大 Money 运算溢出时返回明确 fatal，且 EnvelopeLedger/receipt 输入没有部分修改。",
+      "对 transition 构造结果与 ledger validator 的期望费用做参数化对照，同时保留独立的交付、资源和累计字段伪造拒绝。"
+    ],
+    "semantic_boundaries": [
+      "P4 生成的 seller fill receipt 到 P5 EnvelopeLedger/ReceiptAggregation 验证边界；不移动 P9 提交职责。",
+      "T+1 股份释放/交付由其他规则层负责，本候选只处理每腿卖出净现金，不改变可卖股份。",
+      "金额以 Money 的分为单位，数量以股为单位；cash envelope 的 seller 分量恒为 0，spent.cash 恒为 0。",
+      "nominal 应计与 charged 实收分开累计；本腿 charged 合计不超过本腿 gross，净 deliver_cash 非负。",
+      "commission→stamp_tax→transfer_fee 是 ADR-0017 的游戏简化顺序，不等同交易所真实清算；候选禁止改变此声明。",
+      "本候选不能改变订单局部受理次序、receipt 身份、Settlement 结算或费用公式的证券类别适用范围。"
+    ],
+    "necessity": "低优先级可选纯值：应计欠费、本腿 gross cap、实收分项与净交付具有一个独立数量关系。抽取对象并不以去掉独立 validator 算法为前提，更不能承诺新增清算真实性。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n07",
+    "group": "pipeline",
+    "source_candidates": [
+      "r22:r22-c1"
+    ],
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/transition.rs:77 FillTransition::sell 校验 nominal_before、charged_before，计算历史未收费用、按 gross_delta 封顶，并生成 charged 与 deliver_cash。\n- packages/engine/src/session/pipeline/transition.rs:190 allocate_charged_components 按 commission、stamp_tax、transfer_fee 顺序分配封顶额度。\n- packages/engine/src/session/pipeline/ledger_validation.rs:291 validate_seller_fill_charge 根据 receipt/audit 复算同一 charge cap 与组件优先级。\n- packages/engine/src/session/pipeline/ledger_validation.rs:333 allocate_seller_charge 重复实现同样的三项 fee 分配。\n- packages/engine/src/session/pipeline/stock_auction.rs:601 与 packages/engine/src/session/pipeline/continuous_matching.rs:1115 是 FillTransition::sell 的生产调用位置；stock_auction.rs:649、729 将 receipt transition 应用于临时 order envelope。\n- packages/engine/src/session/pipeline/receipt_aggregation.rs:69-92 通过 EnvelopeLedger 生产应用并校验聚合 receipts；EnvelopeLedger::apply_one 调 ledger_validation::validate。\n\n**字段与单位：**\n\n- borrowed/输入 nominal_after: FeeComponents、charged_before: FeeComponents、gross_delta: Money（分）。\n- 输出 charged_delta: FeeComponents、charged_after: FeeComponents、deliver_cash: Money（分）；没有跨 tick audit 或数量 owner。\n\n**方法与失败契约：**\n\n- checked calculate 在原算法中计算历史欠费，按 commission→stamp_tax→transfer_fee 分配本腿 cap 并得到净交付；不拥有新费率或替代 fees 函数。\n- validate_receipt 仍在 ledger validator 逐项检查字段、累计链、nominal、charged、delivery 与 delta；可保留独立分配算法作为对照，不能因共享 value 弱化 validator。\n\n**生产调用方：**\n\n- FillTransition::sell 的生产调用者为 stock_auction.rs:601 与 continuous_matching.rs:1115（符号搜索已核实）。\n- 账本验证调用者为 EnvelopeLedger::apply_one → ledger_validation::validate（已完整读取 ledger.rs）。\n\n**数据owner：**\n\n成交 transition 构造结果由 FillTransition 负责；EnvelopeAudit 继续归 Envelope/EnvelopeLedger 所有并保存跨 tick 累计账目。候选只应是无状态费用分配策略/值结果，不能另存一份权威 audit。\n\n**组合关系：**\n\nFillTransition::sell 可组合局部纯结果；validator 复用算法是可选第二步，独立复算有价值时继续保留。config.rs::fee_delta / buy_order_reservation 保持现有共享实现并调用 GameConfig 收费 receiver；domain 第二轮候选16-1（OrderCashRules）已因缺少新增事实/行为被拒绝，不作为本项依赖。本项也不同于 session-R2-N07 的保存格式累计 fee audit 校验。\n\n**最小迁移步骤：**\n\n- 固定 cap 刚好截在每项边界、历史欠费追收、component 矛盾与 Money overflow。\n- 将现有本腿输入/输出与计算收在私有值，不移动其他 FillTransition 边界或费用公式。\n- 保留 validator 全部字段/方程验证与原 error location/次序；不强求 producer/validator 共用一条实现。\n\n**现有静态测试证据：**\n\n- transition_tests.rs 已由新 r33 全文复读：sell_fills_cap_actual_charges_and_recover_nominal_fee_arrears、sell_fill_allocates_capped_charge_commission_then_stamp_then_transfer。\n- ledger_receipt_tests.rs 与 ledger_state_tests.rs 的卖方封顶、欠费链、错误历史拒绝，已由 r22 全文读取。\n\n**待补边界：**\n\n- 给定三个组件均有欠费、gross cap 依次截断在 commission、stamp_tax、transfer_fee 边界时分别断言每个 charged 分项及 deliver_cash。\n- 覆盖 nominal_after 与 charged_before 某一分项不连续、组件合计可能看似有效但单项超额的拒绝。\n- 覆盖极大 Money 运算溢出时返回明确 fatal，且 EnvelopeLedger/receipt 输入没有部分修改。\n- 对 transition 构造结果与 ledger validator 的期望费用做参数化对照，同时保留独立的交付、资源和累计字段伪造拒绝。\n\n**语义边界：**\n\n- P4 生成的 seller fill receipt 到 P5 EnvelopeLedger/ReceiptAggregation 验证边界；不移动 P9 提交职责。\n- T+1 股份释放/交付由其他规则层负责，本候选只处理每腿卖出净现金，不改变可卖股份。\n- 金额以 Money 的分为单位，数量以股为单位；cash envelope 的 seller 分量恒为 0，spent.cash 恒为 0。\n- nominal 应计与 charged 实收分开累计；本腿 charged 合计不超过本腿 gross，净 deliver_cash 非负。\n- commission→stamp_tax→transfer_fee 是 ADR-0017 的游戏简化顺序，不等同交易所真实清算；候选禁止改变此声明。\n- 本候选不能改变订单局部受理次序、receipt 身份、Settlement 结算或费用公式的证券类别适用范围。\n\n**必要性判断：**\n\n低优先级可选纯值：应计欠费、本腿 gross cap、实收分项与净交付具有一个独立数量关系。抽取对象并不以去掉独立 validator 算法为前提，更不能承诺新增清算真实性。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N08",
+    "title": "ReadyAdmissionPlan 拥有批内偏序构造与消费",
+    "priority": "P3 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/local_admission.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/local_admission.rs:63 admit_ready_batch",
+      "packages/engine/src/session/pipeline/local_admission.rs:72 ResourceLane 分组",
+      "packages/engine/src/session/pipeline/local_admission.rs:108-145 账户资源边与显式 predecessor 校验",
+      "packages/engine/src/session/pipeline/local_admission.rs:149-203 股票 gate 偏序合并和拓扑输出",
+      "packages/engine/src/session/pipeline/ready_ingress.rs:96-118 生产调用与下一轮 ready admission",
+      "packages/engine/src/session/pipeline/ready_stock_stream.rs:127-171 P3/P4 前摄入及 pending typed feedback"
+    ],
+    "fields": [
+      "owned candidates: Vec<IntentCandidate>；resource_groups: ResourceLane→(index,AccountReceipt)；successors: Vec<Vec<usize>> 与 incoming: Vec<usize>。",
+      "stock_counts/gates 及拓扑 output slots/order 是本批派生工作状态；现有 StockAdmission 的 atomic counters/borrowed successors 继续作为其 scoped worker view。"
+    ],
+    "methods": [
+      "build_resource_edges、add_quote_dependencies 在原顺序构造/核对明确边；run_stock_gates 仍用原 Rayon scope 与 StockAdmission。",
+      "finish_layout 消耗本批 slots，组合实际 gate arrival edges 与资源/quote 边并完成拓扑遍历，保留 ready.pop 的原顺序与当前 errors。"
+    ],
+    "production_callers": [
+      "`ready_ingress::validate_available_ready`（packages/engine/src/session/pipeline/ready_ingress.rs:96-118）每个新 ready wave 调用 `admit_ready_batch`，随后交由 `AccountValidatorDriver::consume_round`。",
+      "结果作为 ready operations 交给 `ReadyStockStream` / stock stream；`ready_stock_stream.rs:67-123` 根据股票完成回传的 typed outcome 唤醒计划，`127-171` 将新批再次 admission。"
+    ],
+    "data_owner": "仅当前 ready batch。跨调用的 `AccountReceipts` 由 tick ingress 持有，仅为 plan-chain 每账户分配本 tick ready 序号；NPC/Player receipt 来自既有队列身份。真实资源余额 owner 仍是 P1 `DecisionResourceSnapshot` 与后续 validator/envelope，候选对象不能拥有余额或订单簿。",
+    "composition": "`ReadyIngress` 组合源队列和 `AdaptivePlanChainCoordinator`；`ReadyStockStream` 组合该 admission 边界、P3 validator、pending outcomes 与按股票反馈。若引入值对象，只由 `admit_ready_batch`/ingress 创建并立即消费，不持有 session，不延长 P0/P1/P3/P4 交易阶段。",
+    "migration_steps": [
+      "保留短批/无冲突两个 fast path，先固定 quote fork、cross-account cross-stock、依赖错误及 receipt overflow 次序。",
+      "收拢邻接表、入度与候选槽位为具名 batch owner；不把所有临时变量保留到不需要的阶段。",
+      "AccountReceipts 的 observe 仍在原扫描位置，发生后续错误时其已推进的游标契约保持，外层丢弃 tick；不新增 plan 自身重试原子保证。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/local_admission.rs：`quote_replacements_wait_for_every_cancel_across_a_resource_fork` 检查两项撤单均先于替换及现金分支约束；`quote_dependency_rejects_missing_reversed_or_unrelated_predecessors` 覆盖坏前驱；`crossed_account_stock_requests_keep_each_account_receipt_order` 覆盖两个账户交叉两股；`same_account_sells_keep_share_receipt_order_and_cancel_is_admitted` 覆盖卖股资源序和独立撤单；`account_cash_conflict_uses_receipt_instead_of_candidate_layout` 覆盖输入布局不定义现金冲突顺序。",
+      "ready_ingress_tests.rs已由r26全文读：root completion通知在1/3 worker与stream启动前到达，account_receipts_follow_request_time_and_plan_readiness_not_key_order固定receipt来自请求时间/ready而非key优先。"
+    ],
+    "missing_tests": [
+      "未来若迁移，增加 NPC `PreviousCommit`、Player `BetweenTicks`、Plan `ReadyThisTick` 同账户混合现金 lane 的显式顺序断言，并反向排列候选输入以证明 receipt 而非布局决定冲突顺序。",
+      "显式覆盖同一账户买单现金 lane 与不同股票卖股 lane 的 fork 可并行，但不得让某 lane 顺序伪装成全账户交易顺序；金额与股数资源不得混算。",
+      "考虑验证拓扑依赖环与 atomic dependency counter underflow 错误契约；当前正常 API 的 predecessor 检查已拒绝逆序边，环/underflow 主要属于内部损坏路径。"
+    ],
+    "semantic_boundaries": [
+      "P0 后 P1 分配快照固定；admission 只排序，不释放 P0 资源、不回补预算、不重建 P1。",
+      "同账户买单现金竞争使用 receipt，卖单只按同账户同股票 shares lane 竞争；卖单现金占用为 0。",
+      "同股股票 gate 记录实际并发受理顺序，必须保留价格时间撮合和本股局部顺序；跨股票、跨账户无真实冲突时不造总序。",
+      "普通撤单不排进全账户现金/股份 lane；只有明确的 NPC quote replacement predecessor 建立撤单→新申报关系。撤单失败反馈与受理资格语义属于后续 P4/P3 caller，不得改成以撤单成功作为前置校验。",
+      "Money 使用分，股份使用股；A 股整手/T+1/价格限制仍由 validator 和现有策略负责，本候选不引入任何交易规则变化。"
+    ],
+    "necessity": "具体可选算法 owner：边表、入度和 slot 的同一候选索引必须一致，共同被 gate 与拓扑消费。目前 StockAdmission 只封装并行登记部分，不覆盖构造/输出阶段。不得仅将整个纯函数换 static 方法。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n08",
+    "group": "pipeline",
+    "source_candidates": [
+      "r23:r23-admission-plan"
+    ],
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/local_admission.rs:63 admit_ready_batch\n- packages/engine/src/session/pipeline/local_admission.rs:72 ResourceLane 分组\n- packages/engine/src/session/pipeline/local_admission.rs:108-145 账户资源边与显式 predecessor 校验\n- packages/engine/src/session/pipeline/local_admission.rs:149-203 股票 gate 偏序合并和拓扑输出\n- packages/engine/src/session/pipeline/ready_ingress.rs:96-118 生产调用与下一轮 ready admission\n- packages/engine/src/session/pipeline/ready_stock_stream.rs:127-171 P3/P4 前摄入及 pending typed feedback\n\n**字段与单位：**\n\n- owned candidates: Vec<IntentCandidate>；resource_groups: ResourceLane→(index,AccountReceipt)；successors: Vec<Vec<usize>> 与 incoming: Vec<usize>。\n- stock_counts/gates 及拓扑 output slots/order 是本批派生工作状态；现有 StockAdmission 的 atomic counters/borrowed successors 继续作为其 scoped worker view。\n\n**方法与失败契约：**\n\n- build_resource_edges、add_quote_dependencies 在原顺序构造/核对明确边；run_stock_gates 仍用原 Rayon scope 与 StockAdmission。\n- finish_layout 消耗本批 slots，组合实际 gate arrival edges 与资源/quote 边并完成拓扑遍历，保留 ready.pop 的原顺序与当前 errors。\n\n**生产调用方：**\n\n- `ready_ingress::validate_available_ready`（packages/engine/src/session/pipeline/ready_ingress.rs:96-118）每个新 ready wave 调用 `admit_ready_batch`，随后交由 `AccountValidatorDriver::consume_round`。\n- 结果作为 ready operations 交给 `ReadyStockStream` / stock stream；`ready_stock_stream.rs:67-123` 根据股票完成回传的 typed outcome 唤醒计划，`127-171` 将新批再次 admission。\n\n**数据owner：**\n\n仅当前 ready batch。跨调用的 `AccountReceipts` 由 tick ingress 持有，仅为 plan-chain 每账户分配本 tick ready 序号；NPC/Player receipt 来自既有队列身份。真实资源余额 owner 仍是 P1 `DecisionResourceSnapshot` 与后续 validator/envelope，候选对象不能拥有余额或订单簿。\n\n**组合关系：**\n\n`ReadyIngress` 组合源队列和 `AdaptivePlanChainCoordinator`；`ReadyStockStream` 组合该 admission 边界、P3 validator、pending outcomes 与按股票反馈。若引入值对象，只由 `admit_ready_batch`/ingress 创建并立即消费，不持有 session，不延长 P0/P1/P3/P4 交易阶段。\n\n**最小迁移步骤：**\n\n- 保留短批/无冲突两个 fast path，先固定 quote fork、cross-account cross-stock、依赖错误及 receipt overflow 次序。\n- 收拢邻接表、入度与候选槽位为具名 batch owner；不把所有临时变量保留到不需要的阶段。\n- AccountReceipts 的 observe 仍在原扫描位置，发生后续错误时其已推进的游标契约保持，外层丢弃 tick；不新增 plan 自身重试原子保证。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/local_admission.rs：`quote_replacements_wait_for_every_cancel_across_a_resource_fork` 检查两项撤单均先于替换及现金分支约束；`quote_dependency_rejects_missing_reversed_or_unrelated_predecessors` 覆盖坏前驱；`crossed_account_stock_requests_keep_each_account_receipt_order` 覆盖两个账户交叉两股；`same_account_sells_keep_share_receipt_order_and_cancel_is_admitted` 覆盖卖股资源序和独立撤单；`account_cash_conflict_uses_receipt_instead_of_candidate_layout` 覆盖输入布局不定义现金冲突顺序。\n- ready_ingress_tests.rs已由r26全文读：root completion通知在1/3 worker与stream启动前到达，account_receipts_follow_request_time_and_plan_readiness_not_key_order固定receipt来自请求时间/ready而非key优先。\n\n**待补边界：**\n\n- 未来若迁移，增加 NPC `PreviousCommit`、Player `BetweenTicks`、Plan `ReadyThisTick` 同账户混合现金 lane 的显式顺序断言，并反向排列候选输入以证明 receipt 而非布局决定冲突顺序。\n- 显式覆盖同一账户买单现金 lane 与不同股票卖股 lane 的 fork 可并行，但不得让某 lane 顺序伪装成全账户交易顺序；金额与股数资源不得混算。\n- 考虑验证拓扑依赖环与 atomic dependency counter underflow 错误契约；当前正常 API 的 predecessor 检查已拒绝逆序边，环/underflow 主要属于内部损坏路径。\n\n**语义边界：**\n\n- P0 后 P1 分配快照固定；admission 只排序，不释放 P0 资源、不回补预算、不重建 P1。\n- 同账户买单现金竞争使用 receipt，卖单只按同账户同股票 shares lane 竞争；卖单现金占用为 0。\n- 同股股票 gate 记录实际并发受理顺序，必须保留价格时间撮合和本股局部顺序；跨股票、跨账户无真实冲突时不造总序。\n- 普通撤单不排进全账户现金/股份 lane；只有明确的 NPC quote replacement predecessor 建立撤单→新申报关系。撤单失败反馈与受理资格语义属于后续 P4/P3 caller，不得改成以撤单成功作为前置校验。\n- Money 使用分，股份使用股；A 股整手/T+1/价格限制仍由 validator 和现有策略负责，本候选不引入任何交易规则变化。\n\n**必要性判断：**\n\n具体可选算法 owner：边表、入度和 slot 的同一候选索引必须一致，共同被 gate 与拓扑消费。目前 StockAdmission 只封装并行登记部分，不覆盖构造/输出阶段。不得仅将整个纯函数换 static 方法。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N09",
+    "title": "NpcOrderLifecycleBook 收拢普通报价期限集合维护",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session.rs",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session.rs:553 `NpcOrderLifecycle` 持有 account/code/order_id/placed_market_minute/expires_market_minute，定义为存档可恢复的 NPC 普通限价单行为期限，明确排除 player、auction 和 parent child。",
+      "packages/engine/src/session.rs:2581 `register_npc_order_lifecycle_at_quote` 校验 continuous/NPC/non-parent-child、重复 order ID、从 acceptance quote 推导期限并截断至 day_end；期限推导在 2650 后。",
+      "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:738 `ContinuousPlaceFact::Resting` 按 sealed_index 找 acceptance quote、核对 typed order fact，再注册；取消 fact 在 772-780 移除记录。",
+      "packages/engine/src/session/pipeline/quote_expiry.rs:62-93 按绝对 market minute 找到期项并关联 live envelope，115 后执行正常撤单；其余 terminal receipt 清理路径可见 `continuous_tick_finalizer.rs:226` 与 `adaptive_plan_chain.rs:783` 注释。"
+    ],
+    "fields": [
+      "现有 entries: Vec<NpcOrderLifecycle>，元素 account/code/order_id/placed_market_minute/expires_market_minute（绝对标准交易分钟）。",
+      "先可采用短命借用 editor 组合 Vec，未来 owned book 仍须通过透明输出/原 DTO 保留存档数组形状；不更换索引、不增加新配置。"
+    ],
+    "methods": [
+      "ensure_order_absent 必须在原 phase/account/parent 排除之后、placed minute/lifetime/day cap 计算之前，保持全局OrderId duplicate panic；GameSession 在原位置继续计算期限，最后 append_prepared 仅追加同一事实。不能把duplicate检查放到计算后的注册入口。",
+      "remove(account,code,order_id) 完全保持原三字段 retain 谓词和不存在时 no-op；due_at 只提供原到期迭代，expiry sorting 仍外层执行；clear 供日终现有清理点。"
+    ],
+    "production_callers": [
+      "已核实 acceptance caller：`AdaptivePlanChainCoordinator::project_execution_round` 对 resting fact 调用 `GameSession::register_npc_order_lifecycle_at_quote`，对成功取消调用 remove（adaptive_plan_chain.rs:738-780）。",
+      "已核实 expiry caller：P0 `plan_expiry` 调用 `GameSession::apply_quote_expiry`；该方法读取生命周期并经 `cancel_continuous_order_state_only` 形成正常取消事实（quote_expiry.rs:51-129）。",
+      "终结 receipt 的其他清理位置由 adaptive plan projection 与 continuous finalizer 消费；候选迁移前须逐条确认 full fill、日终、P0 expiration、取消都到同一状态入口。"
+    ],
+    "data_owner": "GameSession 拥有序列化生命周期集合；建议对象可以是 `NpcOrderLifecycleBook`/状态服务或集合类型，由 GameSession 持有并由其投影 transaction 调用。具体容器变更不是候选必需，不能预设从 Vec 改索引表。",
+    "composition": "GameSession 保留生命周期集合 owner 与 quote inputs/lifetime 算法；book/editor 只负责集合身份和期限事实。typed acceptance、terminal receipt、P0 与日終调用同一入口。ParentOrderPlan 的 child transitions 属旧 session-N01，不能纳入普通 quote book。",
+    "migration_steps": [
+      "固定非连续/Player/active parent 的排除、全局 duplicate panic、三字段 removal 与 accepted quote 期限不重采样。",
+      "让旧 GameSession register/remove 先委托窄 editor，P0 查询与日终 clear 逐项迁移；期限公式和 day-end cap 留原时点。",
+      "restore/hash/DTO 的 Vec 字段形状不改。panic→Result、增加未知 terminal 错误或补缺省 lifetime 都是行为变更，必须另案，不纳入 OOP 候选。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs：resting 生命周期持久化/恢复不重采样；passive full fill 清理；parent child 排除；partial resting 与 immediate full fill 分流；acceptance quote 固定期限；同 round 后续成交不留 stale lifecycle；缺失 acceptance quote 返回 typed failure。",
+      "packages/engine/src/session/pipeline/npc_state_projection_tests.rs：P2 projection 不写订单簿，不替代 P4 lifecycle transition。",
+      "未运行测试；以上为源码断言盘点，不是执行结果。"
+    ],
+    "missing_tests": [
+      "跨 account/code 相同 OrderId 的 registration 保持当前全局重复契约；相同 OrderId 但错误 owner/code 的 removal 保持不删除。",
+      "expires_market_minute 等于 now 与超过日终 cap，接受后同 round terminal 清理及 restore 不重采样。",
+      "迁移若拟改 panic/Err 必须另列行为变化，不能靠新断言将原契约换掉。"
+    ],
+    "semantic_boundaries": [
+      "A 股交易制度边界：该期限是游戏 NPC 行为模型，不是交易所委托强制有效期；不改 trading-rules 中连续竞价、日终撤单或竞价规则。",
+      "P0/P1：仅在已到期 lifecycle 对应 live envelope 时通过 P0 normal cancel/release；不新增重复释放，不将其他终结路径提前到 P0。",
+      "P3/P4：只把 `ContinuousPlaceFact::Resting` 加入普通 quote lifecycle；即时全成不登记，后续同 round 终结要去掉暂存项。",
+      "P9：生命周期字段是 candidate 权威状态的一部分，失败时随 tick shadow 丢弃，不能提前写 authority。",
+      "计量单位：市场时间使用绝对标准交易分钟 u64；不混用 wall-clock、日期、元/分或股数。"
+    ],
+    "necessity": "可选窄 owner：持续期限集合由接受、成交/撤单 terminal、P0 和日终共同维护；现有数据 struct 不拥有集合的 identity/add/remove/due 约束。已经存在 GameSession 方法不是排除内部集合职责的理由。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n09",
+    "group": "pipeline",
+    "source_candidates": [
+      "r24:r24-c1"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session.rs:553 `NpcOrderLifecycle` 持有 account/code/order_id/placed_market_minute/expires_market_minute，定义为存档可恢复的 NPC 普通限价单行为期限，明确排除 player、auction 和 parent child。\n- packages/engine/src/session.rs:2581 `register_npc_order_lifecycle_at_quote` 校验 continuous/NPC/non-parent-child、重复 order ID、从 acceptance quote 推导期限并截断至 day_end；期限推导在 2650 后。\n- packages/engine/src/session/pipeline/adaptive_plan_chain.rs:738 `ContinuousPlaceFact::Resting` 按 sealed_index 找 acceptance quote、核对 typed order fact，再注册；取消 fact 在 772-780 移除记录。\n- packages/engine/src/session/pipeline/quote_expiry.rs:62-93 按绝对 market minute 找到期项并关联 live envelope，115 后执行正常撤单；其余 terminal receipt 清理路径可见 `continuous_tick_finalizer.rs:226` 与 `adaptive_plan_chain.rs:783` 注释。\n\n**字段与单位：**\n\n- 现有 entries: Vec<NpcOrderLifecycle>，元素 account/code/order_id/placed_market_minute/expires_market_minute（绝对标准交易分钟）。\n- 先可采用短命借用 editor 组合 Vec，未来 owned book 仍须通过透明输出/原 DTO 保留存档数组形状；不更换索引、不增加新配置。\n\n**方法与失败契约：**\n\n- ensure_order_absent 必须在原 phase/account/parent 排除之后、placed minute/lifetime/day cap 计算之前，保持全局OrderId duplicate panic；GameSession 在原位置继续计算期限，最后 append_prepared 仅追加同一事实。不能把duplicate检查放到计算后的注册入口。\n- remove(account,code,order_id) 完全保持原三字段 retain 谓词和不存在时 no-op；due_at 只提供原到期迭代，expiry sorting 仍外层执行；clear 供日终现有清理点。\n\n**生产调用方：**\n\n- 已核实 acceptance caller：`AdaptivePlanChainCoordinator::project_execution_round` 对 resting fact 调用 `GameSession::register_npc_order_lifecycle_at_quote`，对成功取消调用 remove（adaptive_plan_chain.rs:738-780）。\n- 已核实 expiry caller：P0 `plan_expiry` 调用 `GameSession::apply_quote_expiry`；该方法读取生命周期并经 `cancel_continuous_order_state_only` 形成正常取消事实（quote_expiry.rs:51-129）。\n- 终结 receipt 的其他清理位置由 adaptive plan projection 与 continuous finalizer 消费；候选迁移前须逐条确认 full fill、日终、P0 expiration、取消都到同一状态入口。\n\n**数据owner：**\n\nGameSession 拥有序列化生命周期集合；建议对象可以是 `NpcOrderLifecycleBook`/状态服务或集合类型，由 GameSession 持有并由其投影 transaction 调用。具体容器变更不是候选必需，不能预设从 Vec 改索引表。\n\n**组合关系：**\n\nGameSession 保留生命周期集合 owner 与 quote inputs/lifetime 算法；book/editor 只负责集合身份和期限事实。typed acceptance、terminal receipt、P0 与日終调用同一入口。ParentOrderPlan 的 child transitions 属旧 session-N01，不能纳入普通 quote book。\n\n**最小迁移步骤：**\n\n- 固定非连续/Player/active parent 的排除、全局 duplicate panic、三字段 removal 与 accepted quote 期限不重采样。\n- 让旧 GameSession register/remove 先委托窄 editor，P0 查询与日终 clear 逐项迁移；期限公式和 day-end cap 留原时点。\n- restore/hash/DTO 的 Vec 字段形状不改。panic→Result、增加未知 terminal 错误或补缺省 lifetime 都是行为变更，必须另案，不纳入 OOP 候选。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/npc_lifecycle_projection_tests.rs：resting 生命周期持久化/恢复不重采样；passive full fill 清理；parent child 排除；partial resting 与 immediate full fill 分流；acceptance quote 固定期限；同 round 后续成交不留 stale lifecycle；缺失 acceptance quote 返回 typed failure。\n- packages/engine/src/session/pipeline/npc_state_projection_tests.rs：P2 projection 不写订单簿，不替代 P4 lifecycle transition。\n- 未运行测试；以上为源码断言盘点，不是执行结果。\n\n**待补边界：**\n\n- 跨 account/code 相同 OrderId 的 registration 保持当前全局重复契约；相同 OrderId 但错误 owner/code 的 removal 保持不删除。\n- expires_market_minute 等于 now 与超过日终 cap，接受后同 round terminal 清理及 restore 不重采样。\n- 迁移若拟改 panic/Err 必须另列行为变化，不能靠新断言将原契约换掉。\n\n**语义边界：**\n\n- A 股交易制度边界：该期限是游戏 NPC 行为模型，不是交易所委托强制有效期；不改 trading-rules 中连续竞价、日终撤单或竞价规则。\n- P0/P1：仅在已到期 lifecycle 对应 live envelope 时通过 P0 normal cancel/release；不新增重复释放，不将其他终结路径提前到 P0。\n- P3/P4：只把 `ContinuousPlaceFact::Resting` 加入普通 quote lifecycle；即时全成不登记，后续同 round 终结要去掉暂存项。\n- P9：生命周期字段是 candidate 权威状态的一部分，失败时随 tick shadow 丢弃，不能提前写 authority。\n- 计量单位：市场时间使用绝对标准交易分钟 u64；不混用 wall-clock、日期、元/分或股数。\n\n**必要性判断：**\n\n可选窄 owner：持续期限集合由接受、成交/撤单 terminal、P0 和日终共同维护；现有数据 struct 不拥有集合的 identity/add/remove/due 约束。已经存在 GameSession 方法不是排除内部集合职责的理由。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N10",
+    "title": "ExpiryOutput 拥有逐笔释放与账户汇总的同步写入",
+    "priority": "P3 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "packages/engine/src/session/pipeline/decision_resources.rs",
+      "packages/engine/src/session/pipeline/mod.rs"
+    ],
+    "evidence": [
+      "quote_expiry.rs:15-19 `ExpiryOutput` 同时存明细与账户聚合",
+      "quote_expiry.rs:130-142 明细逐条 append、另行累加账户 ResVec",
+      "mod.rs:256-260 `plan_tick` 将 P0 输出直接放入 `TickShadowPlan` 后立即计划 P1"
+    ],
+    "fields": [
+      "保留现有 releases: Vec<ExpiryRelease> 与 released_by_account: BTreeMap<AccountId,ResVec>；资源 cash Money 分、shares 股分开。"
+    ],
+    "methods": [
+      "record_release 接收已验证/已应用 receipt 对应的 ExpiryRelease，原样先 checked_add 账户 ResVec 再 append 明细；不新增重复身份校验，也不改错误先后。",
+      "只读视图与必要消费方法可继续提供原数据；最小方案不收紧 public 字段，以免变更外部构造 API；若另拟私有化须额外评估已存在 public 使用。"
+    ],
+    "production_callers": [
+      "plan_tick→plan_expiry→GameSession::apply_quote_expiry；唯一累加点 quote_expiry.rs:130–142；candidate_commit.rs:130 使用 releases.len 验证 P0 事件键。",
+      "rg 全 engine 反查 released_by_account 当前无生产读取，只有 quote_expiry_tests.rs 汇总断言；因此本项为既有审计输出一致性收益，不能声称改善 P1 性能。"
+    ],
+    "data_owner": "P0 shadow 内本轮发生的 NPC 报价过期释放结果；权威 order book、lifecycle、envelope 仍由 `GameSession`/`TickShadow` 拥有，批对象只拥有 P0 的派生输出。",
+    "composition": "现有 ExpiryOutput struct + impl，GameSession::apply_quote_expiry 在已取消与 ledger 处理后调用它。P1 只基于 post-P0 live ledger；汇总当前仅测试读取，candidate_commit 消费明细长度用于 identity 边界，绝不能将汇总再加预算。",
+    "migration_steps": [
+      "固定同账户多股 cash/shares 求和与 overflow，原 P0 errors/序号不变。",
+      "移动唯一生产累加块到 record_release，不重复由全量 releases 重建 aggregate，保留原循环。",
+      "不新增 wrapper、持久字段或静态服务；公开接口收紧单独作为后续选择。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/quote_expiry_tests.rs：读取完整；覆盖单买释放、卖单零现金释放股份、不同股票确定 receipt index、多账户 receipt 配对、diagnostic 先后、失败回滚和重复 P0 拒绝；未运行。",
+      "packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs：读取完整；覆盖无过期时完整 envelope hydrate 且权威现金、seq、receipt cursor 不变；未运行。"
+    ],
+    "missing_tests": [
+      "同一账户多笔不同股票同时过期，校验 map 中 cash/shares 各自等于逐笔求和",
+      "空批及 P0 不处于 Continuous 时输出两个视图均为空且不改变 authority",
+      "`ResVec` 聚合溢出时以显式 invariant 失败且整 tick 丢弃，不留下订单/receipt/event 部分状态"
+    ],
+    "semantic_boundaries": [
+      "P0 仅 Continuous 阶段按报价生命周期过期释放；不得把日界清簿搬到 P0",
+      "P1 available cash/sell quantity 已反映 post-P0 live envelope，禁止再把 aggregate 当额外预算叠加",
+      "现金单位 `Money`、股份数量 `u32` 必须分开守恒；卖单 cash envelope 恒为零",
+      "P0 receipt 与取消事件仅在 shadow 成功后通过 P9 发布；失败不得局部提交"
+    ],
+    "necessity": "低优先级但具体已有对象内部职责：逐笔列表与账户汇总共享一条求和等式，owner 可拥有联合写入。无 production 汇总 consumer 降低必要性，但不否定现有输出内部内聚机会。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n10",
+    "group": "pipeline",
+    "source_candidates": [
+      "r25:expiry-release-batch"
+    ],
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- quote_expiry.rs:15-19 `ExpiryOutput` 同时存明细与账户聚合\n- quote_expiry.rs:130-142 明细逐条 append、另行累加账户 ResVec\n- mod.rs:256-260 `plan_tick` 将 P0 输出直接放入 `TickShadowPlan` 后立即计划 P1\n\n**字段与单位：**\n\n- 保留现有 releases: Vec<ExpiryRelease> 与 released_by_account: BTreeMap<AccountId,ResVec>；资源 cash Money 分、shares 股分开。\n\n**方法与失败契约：**\n\n- record_release 接收已验证/已应用 receipt 对应的 ExpiryRelease，原样先 checked_add 账户 ResVec 再 append 明细；不新增重复身份校验，也不改错误先后。\n- 只读视图与必要消费方法可继续提供原数据；最小方案不收紧 public 字段，以免变更外部构造 API；若另拟私有化须额外评估已存在 public 使用。\n\n**生产调用方：**\n\n- plan_tick→plan_expiry→GameSession::apply_quote_expiry；唯一累加点 quote_expiry.rs:130–142；candidate_commit.rs:130 使用 releases.len 验证 P0 事件键。\n- rg 全 engine 反查 released_by_account 当前无生产读取，只有 quote_expiry_tests.rs 汇总断言；因此本项为既有审计输出一致性收益，不能声称改善 P1 性能。\n\n**数据owner：**\n\nP0 shadow 内本轮发生的 NPC 报价过期释放结果；权威 order book、lifecycle、envelope 仍由 `GameSession`/`TickShadow` 拥有，批对象只拥有 P0 的派生输出。\n\n**组合关系：**\n\n现有 ExpiryOutput struct + impl，GameSession::apply_quote_expiry 在已取消与 ledger 处理后调用它。P1 只基于 post-P0 live ledger；汇总当前仅测试读取，candidate_commit 消费明细长度用于 identity 边界，绝不能将汇总再加预算。\n\n**最小迁移步骤：**\n\n- 固定同账户多股 cash/shares 求和与 overflow，原 P0 errors/序号不变。\n- 移动唯一生产累加块到 record_release，不重复由全量 releases 重建 aggregate，保留原循环。\n- 不新增 wrapper、持久字段或静态服务；公开接口收紧单独作为后续选择。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/quote_expiry_tests.rs：读取完整；覆盖单买释放、卖单零现金释放股份、不同股票确定 receipt index、多账户 receipt 配对、diagnostic 先后、失败回滚和重复 P0 拒绝；未运行。\n- packages/engine/src/session/pipeline/quote_expiry_checkpoint_tests.rs：读取完整；覆盖无过期时完整 envelope hydrate 且权威现金、seq、receipt cursor 不变；未运行。\n\n**待补边界：**\n\n- 同一账户多笔不同股票同时过期，校验 map 中 cash/shares 各自等于逐笔求和\n- 空批及 P0 不处于 Continuous 时输出两个视图均为空且不改变 authority\n- `ResVec` 聚合溢出时以显式 invariant 失败且整 tick 丢弃，不留下订单/receipt/event 部分状态\n\n**语义边界：**\n\n- P0 仅 Continuous 阶段按报价生命周期过期释放；不得把日界清簿搬到 P0\n- P1 available cash/sell quantity 已反映 post-P0 live envelope，禁止再把 aggregate 当额外预算叠加\n- 现金单位 `Money`、股份数量 `u32` 必须分开守恒；卖单 cash envelope 恒为零\n- P0 receipt 与取消事件仅在 shadow 成功后通过 P9 发布；失败不得局部提交\n\n**必要性判断：**\n\n低优先级但具体已有对象内部职责：逐笔列表与账户汇总共享一条求和等式，owner 可拥有联合写入。无 production 汇总 consumer 降低必要性，但不否定现有输出内部内聚机会。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N11",
+    "title": "AccountFillProjection 拥有账户级经验与持仓对账累积态",
+    "priority": "P2 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/retail_projection.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/retail_projection.rs:305-318 `Aggregate` 与结果型 `AccountProjection`；后者没有持有实际累计状态。",
+      "packages/engine/src/session/pipeline/retail_projection.rs:345-434 `project_receipts` 构造 per-account jobs 并并行调用账户投影，再统一收集错误、state 与 events。",
+      "packages/engine/src/session/pipeline/retail_projection.rs:436-598 `project_retail_account` 在一个 order loop 内共同迁移 `running_qty`、机构 `running_positions`、RetailExperienceState、actual fee 与最终 position consistency。",
+      "packages/engine/src/session/pipeline/account_settlement.rs:143-215 是实际批次 caller：只从权威 AccountKind 派生 retail_accounts，先由 Settlement 生成 positions_after，再调用 retail 与 institutional experience projection，最终返回 detached patches。",
+      "packages/engine/src/session/pipeline/institutional_experience_projection.rs:8-78 为机构账户选择与 belief book 写回 adapter；机构交易仍通过同一 account 投影逻辑。"
+    ],
+    "fields": [
+      "account: AccountId；session 内账户身份。",
+      "mode: Retail 或 InstitutionalFacts；不能以 experience store 是否存在推断账户种类。",
+      "state: Option<RetailExperienceState>；当前 RetailExperienceState 或机构 Experience 子状态的账户级候选副本。",
+      "market_minute: u64；仅 Retail fill experience 时间标记，单位为 market minute。",
+      "moment: Option<ExperienceMoment> 当前代码按 mode 可选；若对象分型，应让 InstitutionalFacts 必须带完整 moment（civil date、market minute、trading day），避免 `expect`。",
+      "positions_before: account 的 StockCode -> Position 只读快照；`Position.qty` 单位为股，cost/invested/recovered 为分。",
+      "positions_after: Settlement 后 position 快照，只用于最后一致性核验与 Retail watchlist prune。",
+      "running_qty: StockCode -> 股；跨同账户订单串接 before/after 数量。",
+      "running_positions: StockCode -> Position；机构 realized profit 账本累计。",
+      "events: Vec<RetailReceiptEvent>；每个 `(account, stock, side, order)` 汇总后的 Fill 事实。"
+    ],
+    "methods": [
+      "apply_order 原样推进 state、running_qty、机构 running_positions 与 RetailReceiptEvent；保持平均价整分截断、实际 charged 费用与成本读取来源。",
+      "finish 计算并保存原 final_position_error，而不立即 Err；随后仍进行 Retail watchlist prune 并返回 AccountProjection。project_receipts 先扫描所有 job 的 Result 错误，再处理 final_position_error 的原优先级不可改变。"
+    ],
+    "production_callers": [
+      "已核实 production chain：`pre_open_transaction::apply_session_pre_open_transaction` -> `session_execution_transaction::apply_incremental_session_execution_transaction` -> `apply_session_execution_transaction` -> `stock_execution_transaction::apply_stock_execution_transaction_with_beliefs` -> `account_settlement::prepare_settlement_transaction_with_beliefs` -> `project_retail_receipts` / `project_institutional_experience` -> `project_retail_account`。",
+      "`account_settlement::apply_session_settlement_transaction` 是另一条 session-shadow Settlement 入口，同样准备后统一安装 account/experience/belief/seen patches。"
+    ],
+    "data_owner": "只在一个 P6/P7 candidate batch 的单 account 投影期间拥有临时累计状态；authority 是 Settlement 后的 account positions 与 session 持久经验/belief containers，账户对象不得把这些临时值另行存档或取代 authority。",
+    "composition": "project_receipts 按账户创建短命 worker state，现有 AccountProjection 是结果DTO；account_settlement 继续同步安装账户/经验/belief/seen patches。与 domain-N07 的 RetailExperienceState 内部方法不同：这里拥有跨订单数量与机构成本的 orchestration 累积状态。",
+    "migration_steps": [
+      "先固定机构清仓 fee history、跨 order Buy-before-Sell、平均价截断及 job error vs final_position_error 的先后。",
+      "只把 project_retail_account 的本地状态与 order loop 移入 private receiver；moment/mode 可采用旧 engine-pipeline-10-A01 的改造结果，不重复计数。",
+      "保持并行 jobs、各账户结果合并与 seen/patch 提交位置；finish 保留延迟对账错误而不是创建新的立即失败边界。"
+    ],
+    "existing_tests": [
+      "packages/engine/src/session/pipeline/retail_projection_tests.rs:321-357 重放去重与实收费用事件；359-427 跨批 partial fill 与同 order 多 leg 聚合；429-459 输入乱序仍 Buy-before-Sell；484-555 typed malformed/conflict/final-position errors；557-626 1/4 worker account 输出；628-661 错误先后。",
+      "packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs:144-248 覆盖持久 seen prefix 与 Settlement replay；它不是账户内部生命周期测试。",
+      "account_settlement_tests.rs已由r01全文读：机构成交事实/净现金收益/fee history、重放幂等、同订单多腿、同账户先买后卖、跨账户后项失败全批回滚、T+1与市场分钟（见r01静态证据）。"
+    ],
+    "missing_tests": [
+      "机构账户买入后部分卖出、再清仓：验证 invested_cents/recovered_cents、历史加本次实际费用以及 realized_profit 的一致性。",
+      "机构清仓时缺失 `institutional_fees_paid` 明确返回 InconsistentFeedback，且不生成局部 patch。",
+      "同一 stock 多个 order 经 Buy-before-Sell 后最终位置与 Settlement after 快照一致；包括卖出数量超过前序买入可用 position 的 PositionTransition。",
+      "gross cents 不能整除 qty 时平均价格保持整数 cents/股截断，零 qty 与算术 overflow 分别返回约定 typed error。",
+      "Retail 多 stock fill 后只按 positions_after 持仓修剪 watchlist；未触及股票仍不改变体验状态。"
+    ],
+    "semantic_boundaries": [
+      "P6 Settlement 先计算账户权威持仓，P7 projection 仅派生经验与事实，不再次结算、不改 account cash 或持仓；ADR-0017 §§1、2、数据流中的 Projection 约束。",
+      "P9 前均属 shadow candidate，任何 projection 错误不得部分安装；事务失败需留在可丢弃 shadow。",
+      "收据仅消费 Settlement 实际 charged fee 增量；nominal 费用不是实收，保留佣金/印花税/过户费的 Money 分值和实际字段。",
+      "Position.qty 和订单 qty 单位为股，Money 以分存储；平均成交价 cents/share；不要把分与元、股与手、名义与实收混用。",
+      "适用时保留股票 T+1 已结算 Position 的现有 before/after 快照语义；投影层不能释放冻结股份或变更可卖数量。",
+      "保留 ADR-0017 规定的同账户同股票 Buy-before-Sell 生命周期次序；输出顺序和 receipt index 只作为身份/整理，不构成不同委托交易优先级。",
+      "无 P0/P1/P3/P4 撮合或受理语义变更；此对象仅处理 P6 后实际 Fill 投影及 account 内状态迁移。"
+    ],
+    "necessity": "具体可选 worker owner：四项累积态由同账户多 order 推进并与 Settlement positions_after 对账；原 ExperienceUpdateMode 只收口模式必需 moment，未覆盖此状态对象。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n11",
+    "group": "pipeline",
+    "source_candidates": [
+      "r27:r27.c1"
+    ],
+    "details_markdown": "分类：new；优先级：P2 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/retail_projection.rs:305-318 `Aggregate` 与结果型 `AccountProjection`；后者没有持有实际累计状态。\n- packages/engine/src/session/pipeline/retail_projection.rs:345-434 `project_receipts` 构造 per-account jobs 并并行调用账户投影，再统一收集错误、state 与 events。\n- packages/engine/src/session/pipeline/retail_projection.rs:436-598 `project_retail_account` 在一个 order loop 内共同迁移 `running_qty`、机构 `running_positions`、RetailExperienceState、actual fee 与最终 position consistency。\n- packages/engine/src/session/pipeline/account_settlement.rs:143-215 是实际批次 caller：只从权威 AccountKind 派生 retail_accounts，先由 Settlement 生成 positions_after，再调用 retail 与 institutional experience projection，最终返回 detached patches。\n- packages/engine/src/session/pipeline/institutional_experience_projection.rs:8-78 为机构账户选择与 belief book 写回 adapter；机构交易仍通过同一 account 投影逻辑。\n\n**字段与单位：**\n\n- account: AccountId；session 内账户身份。\n- mode: Retail 或 InstitutionalFacts；不能以 experience store 是否存在推断账户种类。\n- state: Option<RetailExperienceState>；当前 RetailExperienceState 或机构 Experience 子状态的账户级候选副本。\n- market_minute: u64；仅 Retail fill experience 时间标记，单位为 market minute。\n- moment: Option<ExperienceMoment> 当前代码按 mode 可选；若对象分型，应让 InstitutionalFacts 必须带完整 moment（civil date、market minute、trading day），避免 `expect`。\n- positions_before: account 的 StockCode -> Position 只读快照；`Position.qty` 单位为股，cost/invested/recovered 为分。\n- positions_after: Settlement 后 position 快照，只用于最后一致性核验与 Retail watchlist prune。\n- running_qty: StockCode -> 股；跨同账户订单串接 before/after 数量。\n- running_positions: StockCode -> Position；机构 realized profit 账本累计。\n- events: Vec<RetailReceiptEvent>；每个 `(account, stock, side, order)` 汇总后的 Fill 事实。\n\n**方法与失败契约：**\n\n- apply_order 原样推进 state、running_qty、机构 running_positions 与 RetailReceiptEvent；保持平均价整分截断、实际 charged 费用与成本读取来源。\n- finish 计算并保存原 final_position_error，而不立即 Err；随后仍进行 Retail watchlist prune 并返回 AccountProjection。project_receipts 先扫描所有 job 的 Result 错误，再处理 final_position_error 的原优先级不可改变。\n\n**生产调用方：**\n\n- 已核实 production chain：`pre_open_transaction::apply_session_pre_open_transaction` -> `session_execution_transaction::apply_incremental_session_execution_transaction` -> `apply_session_execution_transaction` -> `stock_execution_transaction::apply_stock_execution_transaction_with_beliefs` -> `account_settlement::prepare_settlement_transaction_with_beliefs` -> `project_retail_receipts` / `project_institutional_experience` -> `project_retail_account`。\n- `account_settlement::apply_session_settlement_transaction` 是另一条 session-shadow Settlement 入口，同样准备后统一安装 account/experience/belief/seen patches。\n\n**数据owner：**\n\n只在一个 P6/P7 candidate batch 的单 account 投影期间拥有临时累计状态；authority 是 Settlement 后的 account positions 与 session 持久经验/belief containers，账户对象不得把这些临时值另行存档或取代 authority。\n\n**组合关系：**\n\nproject_receipts 按账户创建短命 worker state，现有 AccountProjection 是结果DTO；account_settlement 继续同步安装账户/经验/belief/seen patches。与 domain-N07 的 RetailExperienceState 内部方法不同：这里拥有跨订单数量与机构成本的 orchestration 累积状态。\n\n**最小迁移步骤：**\n\n- 先固定机构清仓 fee history、跨 order Buy-before-Sell、平均价截断及 job error vs final_position_error 的先后。\n- 只把 project_retail_account 的本地状态与 order loop 移入 private receiver；moment/mode 可采用旧 engine-pipeline-10-A01 的改造结果，不重复计数。\n- 保持并行 jobs、各账户结果合并与 seen/patch 提交位置；finish 保留延迟对账错误而不是创建新的立即失败边界。\n\n**现有静态测试证据：**\n\n- packages/engine/src/session/pipeline/retail_projection_tests.rs:321-357 重放去重与实收费用事件；359-427 跨批 partial fill 与同 order 多 leg 聚合；429-459 输入乱序仍 Buy-before-Sell；484-555 typed malformed/conflict/final-position errors；557-626 1/4 worker account 输出；628-661 错误先后。\n- packages/engine/src/session/pipeline/retail_projection_persistence_tests.rs:144-248 覆盖持久 seen prefix 与 Settlement replay；它不是账户内部生命周期测试。\n- account_settlement_tests.rs已由r01全文读：机构成交事实/净现金收益/fee history、重放幂等、同订单多腿、同账户先买后卖、跨账户后项失败全批回滚、T+1与市场分钟（见r01静态证据）。\n\n**待补边界：**\n\n- 机构账户买入后部分卖出、再清仓：验证 invested_cents/recovered_cents、历史加本次实际费用以及 realized_profit 的一致性。\n- 机构清仓时缺失 `institutional_fees_paid` 明确返回 InconsistentFeedback，且不生成局部 patch。\n- 同一 stock 多个 order 经 Buy-before-Sell 后最终位置与 Settlement after 快照一致；包括卖出数量超过前序买入可用 position 的 PositionTransition。\n- gross cents 不能整除 qty 时平均价格保持整数 cents/股截断，零 qty 与算术 overflow 分别返回约定 typed error。\n- Retail 多 stock fill 后只按 positions_after 持仓修剪 watchlist；未触及股票仍不改变体验状态。\n\n**语义边界：**\n\n- P6 Settlement 先计算账户权威持仓，P7 projection 仅派生经验与事实，不再次结算、不改 account cash 或持仓；ADR-0017 §§1、2、数据流中的 Projection 约束。\n- P9 前均属 shadow candidate，任何 projection 错误不得部分安装；事务失败需留在可丢弃 shadow。\n- 收据仅消费 Settlement 实际 charged fee 增量；nominal 费用不是实收，保留佣金/印花税/过户费的 Money 分值和实际字段。\n- Position.qty 和订单 qty 单位为股，Money 以分存储；平均成交价 cents/share；不要把分与元、股与手、名义与实收混用。\n- 适用时保留股票 T+1 已结算 Position 的现有 before/after 快照语义；投影层不能释放冻结股份或变更可卖数量。\n- 保留 ADR-0017 规定的同账户同股票 Buy-before-Sell 生命周期次序；输出顺序和 receipt index 只作为身份/整理，不构成不同委托交易优先级。\n- 无 P0/P1/P3/P4 撮合或受理语义变更；此对象仅处理 P6 后实际 Fill 投影及 account 内状态迁移。\n\n**必要性判断：**\n\n具体可选 worker owner：四项累积态由同账户多 order 推进并与 Settlement positions_after 对账；原 ExperienceUpdateMode 只收口模式必需 moment，未覆盖此状态对象。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N12",
+    "title": "ReceiptSettlementPlan 拥有收据聚合与账户准备工作态",
+    "priority": "P3 可选",
+    "files": [
+      "packages/engine/src/session/pipeline/settlement.rs",
+      "packages/engine/src/session/pipeline/account_settlement.rs",
+      "packages/engine/src/session/pipeline/settlement_tests.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/settlement.rs:44 `prepare_receipt_settlements` 同时筛选/验证收据、按 account-stock 聚合、再并行应用账户 shadow。",
+      "packages/engine/src/session/pipeline/settlement.rs:15 `SideTotals` 已显式表达 Buy/Sell 累计，说明计划不应复制已有值对象。",
+      "packages/engine/src/session/pipeline/account_settlement.rs:157 生产调用以 canonical unseen receipts 调用 prepare，再与经验投影共同提交。"
+    ],
+    "fields": [
+      "totals_by_account_stock: BTreeMap<(AccountId,StockCode),SideTotals>，复用原 SideTotals/SettlementTotals；application: SettlementApplication。",
+      "consume 时派生 grouped 的账户/股票集合，不持有 authority AccountBook；只产生 Account patch。"
+    ],
+    "methods": [
+      "record_receipt 原样跳过非 Fill 和零数量 Fill，checked 计算数量/gross、买方印花税校验并依次累计五项 SettlementTotals 与 applied_receipts。",
+      "prepare_accounts 消耗聚合态并保持 account 并行、stock 排序、同股 Buy-before-Sell、clone_for_shadow/Account::apply_settlement 以及 deterministic first error，最后累计 groups。"
+    ],
+    "production_callers": [
+      "已核实 `account_settlement.rs:157` 的 `prepare_settlement_transaction_with_beliefs`，在 unseen receipt 规范化后准备结算 patch，之后再完成 retail/institutional projection 并原子提交。",
+      "`apply_receipt_settlements` 标注 `cfg(test)`；它不是生产入口。"
+    ],
+    "data_owner": "收据属于 ReceiptAggregation 结果且费用由 P4 receipt 给定；`AccountBook` 是账户权威数据 owner。候选对象只负责本批临时 SettlementTotals 计划。",
+    "composition": "由 `prepare_receipt_settlements` 建立计划，`account_settlement` 把其账户 patch 与 retail/belief projection patch 组合，再一次性写入 shadow session；不跨 tick 保存。",
+    "migration_steps": [
+      "保留各项既有拒绝和零量 skip、实际 charged fee 累加顺序及账户错误/计数错误先后。",
+      "将临时 totals/application 变为私有计划，并将 add_receipt 操作保留逐字段顺序；不将输入称为新的已验证 token 或重复 receipt validator。",
+      "调用方仍在经验投影全部成功后一起安装 patch；无新 API、存档或 independently reusable transaction 承诺。"
+    ],
+    "existing_tests": [
+      "`packages/engine/src/session/pipeline/settlement_tests.rs`：实际 charged fee、买入 T+1 锁定、同组 Buy-before-Sell、过滤 Release/Rollover/Reject、买方印花税不变量、同组/跨账户失败回滚、卖方费用封顶与多订单/多腿汇总。",
+      "`packages/engine/src/session/pipeline/settlement_tests.rs`：只影响实际收据账户且 1/4 worker 账户状态和计数一致。"
+    ],
+    "missing_tests": [
+      "未来若引入对象，测试聚合计划构造失败时不产生可部分消费的计划，且准备失败后调用方四个容器均不变。",
+      "可增加同一 account-stock 多个收据的 fee component 分别累计断言；已有多腿测试已覆盖 commission 累积，其他 component 仍可按需补齐。",
+      "应明确由 ReceiptAggregation 验证 Fill 零数量增量的可达性；当前测试没有直接固定该入口契约，不要在本次重构中私自改定义。"
+    ],
+    "semantic_boundaries": [
+      "P4 提供实际成交及 charged fee；Settlement 仅消费实际费用，不重算名义费。",
+      "ReceiptAggregation 先验证收据身份和资源链；Settlement 不能以全局 receipt index 或排序创造交易先后。",
+      "T+1：同账户同股票先 Buy 后 Sell，不能用本 tick 新买股份突破卖出可用量；现有 `t1_enabled` 参数语义保持。",
+      "金额使用 Money 的分，数量使用股；gross、commission、stamp_tax、transfer_fee 分别累计，避免把名义费用和实收费用混淆。",
+      "局部结算准备成功与权威提交分开；任何账户失败都不能提交部分 AccountBook patch，最终提交仍服从 P9 单点边界。"
+    ],
+    "necessity": "低优先可选累积对象，聚合总计与实际应用审计计数共同表示一个本批结算计划。已有短函数能运行，但不能因函数短/纯而排除此共同状态 owner；若没有维护需求可继续维持原函数。",
+    "optional": true,
+    "kind": "new",
+    "extends": null,
+    "report_anchor": "pipeline-r2-n12",
+    "group": "pipeline",
+    "source_candidates": [
+      "r28:r28.settlement_plan"
+    ],
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/settlement.rs:44 `prepare_receipt_settlements` 同时筛选/验证收据、按 account-stock 聚合、再并行应用账户 shadow。\n- packages/engine/src/session/pipeline/settlement.rs:15 `SideTotals` 已显式表达 Buy/Sell 累计，说明计划不应复制已有值对象。\n- packages/engine/src/session/pipeline/account_settlement.rs:157 生产调用以 canonical unseen receipts 调用 prepare，再与经验投影共同提交。\n\n**字段与单位：**\n\n- totals_by_account_stock: BTreeMap<(AccountId,StockCode),SideTotals>，复用原 SideTotals/SettlementTotals；application: SettlementApplication。\n- consume 时派生 grouped 的账户/股票集合，不持有 authority AccountBook；只产生 Account patch。\n\n**方法与失败契约：**\n\n- record_receipt 原样跳过非 Fill 和零数量 Fill，checked 计算数量/gross、买方印花税校验并依次累计五项 SettlementTotals 与 applied_receipts。\n- prepare_accounts 消耗聚合态并保持 account 并行、stock 排序、同股 Buy-before-Sell、clone_for_shadow/Account::apply_settlement 以及 deterministic first error，最后累计 groups。\n\n**生产调用方：**\n\n- 已核实 `account_settlement.rs:157` 的 `prepare_settlement_transaction_with_beliefs`，在 unseen receipt 规范化后准备结算 patch，之后再完成 retail/institutional projection 并原子提交。\n- `apply_receipt_settlements` 标注 `cfg(test)`；它不是生产入口。\n\n**数据owner：**\n\n收据属于 ReceiptAggregation 结果且费用由 P4 receipt 给定；`AccountBook` 是账户权威数据 owner。候选对象只负责本批临时 SettlementTotals 计划。\n\n**组合关系：**\n\n由 `prepare_receipt_settlements` 建立计划，`account_settlement` 把其账户 patch 与 retail/belief projection patch 组合，再一次性写入 shadow session；不跨 tick 保存。\n\n**最小迁移步骤：**\n\n- 保留各项既有拒绝和零量 skip、实际 charged fee 累加顺序及账户错误/计数错误先后。\n- 将临时 totals/application 变为私有计划，并将 add_receipt 操作保留逐字段顺序；不将输入称为新的已验证 token 或重复 receipt validator。\n- 调用方仍在经验投影全部成功后一起安装 patch；无新 API、存档或 independently reusable transaction 承诺。\n\n**现有静态测试证据：**\n\n- `packages/engine/src/session/pipeline/settlement_tests.rs`：实际 charged fee、买入 T+1 锁定、同组 Buy-before-Sell、过滤 Release/Rollover/Reject、买方印花税不变量、同组/跨账户失败回滚、卖方费用封顶与多订单/多腿汇总。\n- `packages/engine/src/session/pipeline/settlement_tests.rs`：只影响实际收据账户且 1/4 worker 账户状态和计数一致。\n\n**待补边界：**\n\n- 未来若引入对象，测试聚合计划构造失败时不产生可部分消费的计划，且准备失败后调用方四个容器均不变。\n- 可增加同一 account-stock 多个收据的 fee component 分别累计断言；已有多腿测试已覆盖 commission 累积，其他 component 仍可按需补齐。\n- 应明确由 ReceiptAggregation 验证 Fill 零数量增量的可达性；当前测试没有直接固定该入口契约，不要在本次重构中私自改定义。\n\n**语义边界：**\n\n- P4 提供实际成交及 charged fee；Settlement 仅消费实际费用，不重算名义费。\n- ReceiptAggregation 先验证收据身份和资源链；Settlement 不能以全局 receipt index 或排序创造交易先后。\n- T+1：同账户同股票先 Buy 后 Sell，不能用本 tick 新买股份突破卖出可用量；现有 `t1_enabled` 参数语义保持。\n- 金额使用 Money 的分，数量使用股；gross、commission、stamp_tax、transfer_fee 分别累计，避免把名义费用和实收费用混淆。\n- 局部结算准备成功与权威提交分开；任何账户失败都不能提交部分 AccountBook patch，最终提交仍服从 P9 单点边界。\n\n**必要性判断：**\n\n低优先可选累积对象，聚合总计与实际应用审计计数共同表示一个本批结算计划。已有短函数能运行，但不能因函数短/纯而排除此共同状态 owner；若没有维护需求可继续维持原函数。",
+    "origin": "challenge-new",
+    "extensions": []
+  },
+  {
+    "id": "pipeline-R2-N13",
+    "kind": "new",
+    "extends": null,
+    "title": "SelfViewCashReservations 拥有可替换报价现金累计",
+    "priority": "P3 可选",
+    "optional": true,
+    "group": "pipeline",
+    "report_anchor": "pipeline-r2-n13",
+    "source_candidates": [
+      "manager:build_self_view_for-record"
+    ],
+    "files": [
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs"
+    ],
+    "evidence": [
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:386–399 reserved/replaceable/record closure 共同累计；:400–449 按连续与竞价委托分别输入 required/may_replace。",
+      "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:450–464 cash = entry.cash - reserved + replaceable；当前位置 MoneyError 映射带不同 sum location。"
+    ],
+    "fields": [
+      "reserved: Money、replaceable: Money（分）；来自同一次账户 SelfView 观察，replaceable 只累计同一 required 的可替换子集。"
+    ],
+    "methods": [
+      "record(required,may_replace) 先增加 reserved 再按分支增加 replaceable，返回原 MoneyError；不更改 caller 对 continuous/auction reservation sum 的错误 location。",
+      "available_cash(raw_cash) 按原 sub→add 顺序计算 SelfView cash，保持它与 P1 execution budget 不同的既有含义。"
+    ],
+    "production_callers": [
+      "capture_decision_snapshot_in_place 的每账户 job→build_self_view_for；由 npc_tick_preparation 的真实生产 capture/next-tick queue 调用。"
+    ],
+    "data_owner": "一次账户 SelfView 的临时累计器，不持有真实 cash、订单簿、P1 budget 或 FeeRates。",
+    "composition": "build_self_view_for 内组合私有两字段 receiver，现有 live_cash_reservation 仍计算每笔 required；买单费用/现金预留继续由 config.rs 现有 fee_delta / buy_order_reservation 与 GameConfig 收费 receiver 计算；domain 第二轮候选16-1（OrderCashRules）已拒绝，不是此账户累计 state 的迁移依赖。",
+    "migration_steps": [
+      "固定 continuous 可替换、opening 取消窗口、closing/PreOpen 不可替换及 Money error 顺序。",
+      "用 accumulator 替换 closure/两Money局部值，仅 record 与 available_cash 迁为方法。",
+      "may_replace 仍由原 phase/tick 逻辑传入，不让累计器重新推断交易阶段。"
+    ],
+    "existing_tests": [
+      "decision_snapshot_capture_tests.rs 的账户观察与只读/shadow捕获断言；npc_lifecycle_projection_tests.rs 的 acceptance-time quote 期限属于另一职责，不当作现金累计测试。"
+    ],
+    "missing_tests": [
+      "混合 continuous/auction working orders 下 reserved 与 replaceable 子集及最终 cash；买卖混合时卖单 required 为零。",
+      "reserved.add 失败与 replaceable.add 失败保持现有 Money/location，既有 partial accumulator mutation 由捕获失败丢弃。"
+    ],
+    "semantic_boundaries": [
+      "Money 分；不把可替换现金视作同 tick P3 释放预算；T+1/股份、竞价撤单窗口仍在原计算/外层。",
+      "P2 capture 版本和 attention/experience 提交时点不变；不新增交易制度。"
+    ],
+    "necessity": "管理者全文反查补出明确局部共同状态：每条 working order 同时影响总占用及可替换子集，closure 已有行为但未有具名数据 owner。对象收益有限，登记为可选，不新增输入校验。",
+    "details_markdown": "分类：new；优先级：P3 可选；extends：无；尚未实施。\n\n**源码证据：**\n\n- packages/engine/src/session/pipeline/decision_snapshot_capture.rs:386–399 reserved/replaceable/record closure 共同累计；:400–449 按连续与竞价委托分别输入 required/may_replace。\n- packages/engine/src/session/pipeline/decision_snapshot_capture.rs:450–464 cash = entry.cash - reserved + replaceable；当前位置 MoneyError 映射带不同 sum location。\n\n**字段与单位：**\n\n- reserved: Money、replaceable: Money（分）；来自同一次账户 SelfView 观察，replaceable 只累计同一 required 的可替换子集。\n\n**方法与失败契约：**\n\n- record(required,may_replace) 先增加 reserved 再按分支增加 replaceable，返回原 MoneyError；不更改 caller 对 continuous/auction reservation sum 的错误 location。\n- available_cash(raw_cash) 按原 sub→add 顺序计算 SelfView cash，保持它与 P1 execution budget 不同的既有含义。\n\n**生产调用方：**\n\n- capture_decision_snapshot_in_place 的每账户 job→build_self_view_for；由 npc_tick_preparation 的真实生产 capture/next-tick queue 调用。\n\n**数据owner：**\n\n一次账户 SelfView 的临时累计器，不持有真实 cash、订单簿、P1 budget 或 FeeRates。\n\n**组合关系：**\n\nbuild_self_view_for 内组合私有两字段 receiver，现有 live_cash_reservation 仍计算每笔 required；买单费用/现金预留继续由 config.rs 现有 fee_delta / buy_order_reservation 与 GameConfig 收费 receiver 计算；domain 第二轮候选16-1（OrderCashRules）已拒绝，不是此账户累计 state 的迁移依赖。\n\n**最小迁移步骤：**\n\n- 固定 continuous 可替换、opening 取消窗口、closing/PreOpen 不可替换及 Money error 顺序。\n- 用 accumulator 替换 closure/两Money局部值，仅 record 与 available_cash 迁为方法。\n- may_replace 仍由原 phase/tick 逻辑传入，不让累计器重新推断交易阶段。\n\n**现有静态测试证据：**\n\n- decision_snapshot_capture_tests.rs 的账户观察与只读/shadow捕获断言；npc_lifecycle_projection_tests.rs 的 acceptance-time quote 期限属于另一职责，不当作现金累计测试。\n\n**待补边界：**\n\n- 混合 continuous/auction working orders 下 reserved 与 replaceable 子集及最终 cash；买卖混合时卖单 required 为零。\n- reserved.add 失败与 replaceable.add 失败保持现有 Money/location，既有 partial accumulator mutation 由捕获失败丢弃。\n\n**语义边界：**\n\n- Money 分；不把可替换现金视作同 tick P3 释放预算；T+1/股份、竞价撤单窗口仍在原计算/外层。\n- P2 capture 版本和 attention/experience 提交时点不变；不新增交易制度。\n\n**必要性判断：**\n\n管理者全文反查补出明确局部共同状态：每条 working order 同时影响总占用及可替换子集，closure 已有行为但未有具名数据 owner。对象收益有限，登记为可选，不新增输入校验。",
+    "origin": "challenge-new",
+    "extensions": []
+  }
+]

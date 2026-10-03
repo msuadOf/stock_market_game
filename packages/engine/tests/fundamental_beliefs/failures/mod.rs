@@ -5,13 +5,14 @@ mod guards;
 
 use crate::scenario;
 use crate::{assumptions_rng, hour_after, market, ISSUED_SHARES};
+use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
 use engine::account::StockCode;
 use engine::company::CompanyKind;
-use engine::information::{AcquisitionError, NpcInformationState, NpcObservationContext};
+use engine::information::AcquisitionError;
 use engine::orderbook::AccountId;
 use engine::strategy::{
-    AnalysisProfile, AnalysisWeights, BeliefBook, BeliefCause, BeliefError, BeliefInputs,
-    FundamentalMethod, RetailStyle, StrategyProfile,
+    AnalysisProfile, AnalysisWeights, BeliefCause, BeliefError, FundamentalMethod, RetailStyle,
+    StrategyProfile,
 };
 
 pub(crate) fn stock_code() -> StockCode {
@@ -23,49 +24,43 @@ pub(crate) fn stock_code() -> StockCode {
 fn credit_default_without_own_annual_material_is_typed_error() {
     let sc = scenario();
     let npc = AccountId(3);
-    let mut state = NpcInformationState::new(npc);
-    state
-        .record_acquisition(
-            npc,
-            &sc.library,
-            sc.announcement_id,
-            hour_after(
-                engine::calendar::CivilInstant::from_hms(
-                    engine::calendar::CivilDate::from_iso("2031-04-01").expect("date"),
-                    18,
-                    0,
-                    0,
-                )
-                .expect("phase"),
-            ),
-        )
-        .expect("acquire announcement");
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         StrategyProfile::Retail(RetailStyle::Momentum),
         AnalysisProfile::new(
             AnalysisWeights::new(3_000, 2_000, 2_000, 1_500, 1_500).expect("weights"),
             Some(FundamentalMethod::CashFlow),
         )
         .expect("slot"),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_100,
-    };
-    let err = book
+    case.acquire(
+        case.scenario.announcement_id,
+        hour_after(
+            engine::calendar::CivilInstant::from_hms(
+                engine::calendar::CivilDate::from_iso("2031-04-01").expect("date"),
+                18,
+                0,
+                0,
+            )
+            .expect("phase"),
+        ),
+    )
+    .expect("acquire announcement");
+
+    let err = case
         .apply_cause(
             &stock_code(),
             BeliefCause::CreditDefault {
-                announcement: sc.announcement_id,
+                announcement: case.scenario.announcement_id,
             },
-            &inputs,
+            1_100,
         )
         .expect_err("no own annual material");
     assert!(matches!(err, BeliefError::NoOwnAnnualMaterial));
@@ -76,33 +71,30 @@ fn credit_default_without_own_annual_material_is_typed_error() {
 fn unacquired_material_is_rejected() {
     let sc = scenario();
     let npc = AccountId(3);
-    let state = NpcInformationState::new(npc);
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         StrategyProfile::Retail(RetailStyle::Momentum),
         AnalysisProfile::new(
             AnalysisWeights::new(3_000, 2_000, 2_000, 1_500, 1_500).expect("weights"),
             Some(FundamentalMethod::CashFlow),
         )
         .expect("slot"),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_100,
-    };
-    let err = book
+
+    let err = case
         .apply_cause(
             &stock_code(),
             BeliefCause::NewMaterial {
-                report: sc.annual_ids[3],
+                report: case.scenario.annual_ids[3],
             },
-            &inputs,
+            1_100,
         )
         .expect_err("material not acquired");
     assert!(matches!(
@@ -116,34 +108,31 @@ fn unacquired_material_is_rejected() {
 fn triggers_without_entry_are_typed_errors() {
     let sc = scenario();
     let npc = AccountId(3);
-    let state = NpcInformationState::new(npc);
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         StrategyProfile::Retail(RetailStyle::Momentum),
         AnalysisProfile::new(
             AnalysisWeights::new(3_000, 2_000, 2_000, 1_500, 1_500).expect("weights"),
             Some(FundamentalMethod::CashFlow),
         )
         .expect("slot"),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_100,
-    };
+
     for cause in [
         BeliefCause::HorizonExpired,
         BeliefCause::ExperienceFailure {
             order: engine::orderbook::OrderId(1),
         },
     ] {
-        let err = book
-            .apply_cause(&stock_code(), cause, &inputs)
+        let err = case
+            .apply_cause(&stock_code(), cause, 1_100)
             .expect_err("no entry yet");
         assert!(matches!(err, BeliefError::NoBeliefEntry));
     }
@@ -154,43 +143,37 @@ fn triggers_without_entry_are_typed_errors() {
 fn method_disabled_records_typed_unavailability() {
     let sc = scenario();
     let npc = AccountId(4);
-    let mut state = NpcInformationState::new(npc);
-    state
-        .record_acquisition(
-            npc,
-            &sc.library,
-            sc.annual_ids[3],
-            hour_after(sc.annual_instants[3]),
-        )
-        .expect("acquire");
-    let market_view = market(30_000);
-    let mut book = BeliefBook::new(
+    let mut case = FundamentalBeliefCase::new(
+        sc,
         npc,
+        market(30_000),
         StrategyProfile::Retail(RetailStyle::Noise),
         AnalysisProfile::new(
             AnalysisWeights::new(0, 1_000, 1_000, 1_000, 7_000).expect("weights"),
             None,
         )
         .expect("no-method profile is legal"),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
         &mut assumptions_rng(0.0),
     );
-    let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
-    let inputs = BeliefInputs {
-        ctx: &ctx,
-        company: sc.company.clone(),
-        kind: CompanyKind::Industrial,
-        total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_000,
-    };
-    book.apply_cause(
+    case.acquire(
+        case.scenario.annual_ids[3],
+        hour_after(case.scenario.annual_instants[3]),
+    )
+    .expect("acquire");
+
+    case.apply_cause(
         &stock_code(),
         BeliefCause::NewMaterial {
-            report: sc.annual_ids[3],
+            report: case.scenario.annual_ids[3],
         },
-        &inputs,
+        1_000,
     )
     .expect("entry still forms for the disabled method");
-    let entry = book.entry(&stock_code()).unwrap();
+    let entry = case.book.entry(&stock_code()).unwrap();
     assert_eq!(
         entry.valuation,
         engine::strategy::ValuationOutcome::Unavailable {

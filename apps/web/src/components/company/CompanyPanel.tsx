@@ -57,8 +57,9 @@ export function CompanyPanel({ companyId, companyState, initialCivilDate, onComp
   }, [companyId, onQuery, rootPage]);
 
   useEffect(() => {
+    if (state.kind !== "ready" && state.kind !== "empty") return;
     setSelectedReportId((current) => selectVisibleReportId(current, reports.map((item) => item.id)));
-  }, [reports]);
+  }, [reports, state.kind]);
 
   if (company === undefined || companyId === null) {
     return <section className="company-panel" aria-label="公司信息"><p className="company-empty">当前证券没有可公开查询的公司映射。</p></section>;

@@ -26,21 +26,26 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         build_account_validation_context(&game).unwrap(),
     )
     .unwrap()
     .validate()
     .unwrap();
     let draft = &output.drafts()[0];
-    let bound = game.markets[&code].down_stop().unwrap();
+    let bound = game.state.markets[&code].down_stop().unwrap();
     assert_eq!(draft.requested_price(), Some(crate::LimitPrice::Lowest));
     assert_eq!(draft.limit(), bound);
     assert_eq!(
         draft.required().cash,
-        crate::session::buy_order_reservation(&game.setup.config, bound, 100, crate::Money::ZERO)
-            .unwrap()
+        crate::session::buy_order_reservation(
+            &game.state.setup.config,
+            bound,
+            100,
+            crate::Money::ZERO
+        )
+        .unwrap()
     );
     let envelope = draft.materialize_envelope();
     assert_eq!(envelope.live(), draft.required());
@@ -52,7 +57,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
     let code = crate::StockCode("600888".to_owned());
     let setup = crate::session::npc_working_quote_tests::quote_setup(0);
     let probe = GameSession::new(setup.clone(), 42).unwrap();
-    let up = probe.markets[&code].up_stop().unwrap();
+    let up = probe.state.markets[&code].up_stop().unwrap();
     let exact =
         crate::session::buy_order_reservation(&setup.config, up, 100, crate::Money::ZERO).unwrap();
 
@@ -61,7 +66,11 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
         (exact.sub(crate::Money::from_cents(1)).unwrap(), false),
     ] {
         let mut game = GameSession::new(setup.clone(), 42).unwrap();
-        game.accounts.get_mut(&crate::AccountId(0)).unwrap().cash = cash;
+        game.state
+            .accounts
+            .get_mut(&crate::AccountId(0))
+            .unwrap()
+            .fixture_set_cash(cash);
         let plan = plan_tick(PhaseInput { session: &game }).unwrap();
         let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
             IntentCandidateKey::player(0),
@@ -78,8 +87,8 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
             batch,
             plan.decision_resources().unwrap().clone(),
             plan.envelope_ledger().unwrap(),
-            game.next_order_id,
-            game.setup.config.clone(),
+            game.state.next_order_id,
+            game.state.setup.config.clone(),
             build_account_validation_context(&game).unwrap(),
         )
         .unwrap()
@@ -105,7 +114,11 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
     let code = crate::StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_strategy(None);
     let before = game.business_state_hash().unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
@@ -146,8 +159,8 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
@@ -165,11 +178,11 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
     );
     assert_eq!(
         output.drafts()[0].order_id(),
-        crate::OrderId(game.next_order_id)
+        crate::OrderId(game.state.next_order_id)
     );
     assert_eq!(
         output.drafts()[1].order_id(),
-        crate::OrderId(game.next_order_id + 1)
+        crate::OrderId(game.state.next_order_id + 1)
     );
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
@@ -197,7 +210,7 @@ fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         u64::MAX,
-        game.setup.config.clone(),
+        game.state.setup.config.clone(),
         build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
@@ -225,8 +238,8 @@ fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
@@ -258,8 +271,8 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context(std::iter::empty()),
     )
     .unwrap();
@@ -280,7 +293,7 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
             ..
         }] if *owner == account && code == &unknown
     ));
-    assert_eq!(output.next_order_id_after(), game.next_order_id);
+    assert_eq!(output.next_order_id_after(), game.state.next_order_id);
 }
 
 #[test]
@@ -325,8 +338,8 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context([(
             known,
             StockValidation::new(
@@ -371,11 +384,11 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
             .map(EnvelopeDraft::order_id)
             .collect::<Vec<_>>(),
         vec![
-            crate::OrderId(game.next_order_id),
-            crate::OrderId(game.next_order_id + 1),
+            crate::OrderId(game.state.next_order_id),
+            crate::OrderId(game.state.next_order_id + 1),
         ]
     );
-    assert_eq!(output.next_order_id_after(), game.next_order_id + 2);
+    assert_eq!(output.next_order_id_after(), game.state.next_order_id + 2);
 }
 
 #[test]
@@ -384,7 +397,8 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
     let code = crate::StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
@@ -433,8 +447,8 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap()
@@ -462,14 +476,17 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
     assert_eq!(market.kind(), PlaceKind::Market);
     assert_eq!(market.limit(), crate::Money::from_cents(1_100));
     assert_eq!(market.qty(), 100);
-    assert_eq!(market.order_id(), crate::OrderId(game.next_order_id + 1));
+    assert_eq!(
+        market.order_id(),
+        crate::OrderId(game.state.next_order_id + 1)
+    );
     assert_eq!(market.order(), market.order_id());
     assert_eq!(market.key().account, account);
     assert_eq!(market.required().shares, 0);
     assert_eq!(
         market.required().cash,
         crate::session::buy_order_reservation(
-            &game.setup.config,
+            &game.state.setup.config,
             crate::Money::from_cents(1_100),
             100,
             crate::Money::ZERO,
@@ -478,7 +495,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
     );
     let sell = &output.drafts()[0];
     assert_eq!(sell.kind(), PlaceKind::Limit);
-    assert_eq!(sell.order_id(), crate::OrderId(game.next_order_id));
+    assert_eq!(sell.order_id(), crate::OrderId(game.state.next_order_id));
     assert_eq!(sell.required(), ResVec::new(crate::Money::ZERO, 50));
     let envelope = sell.materialize_envelope();
     assert_eq!(envelope.origin(), EnvelopeOrigin::CreatedAtValidation);
@@ -488,7 +505,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
     assert_eq!(envelope.audit().remaining_qty, sell.qty());
     assert_eq!(
         output.next_order_id_after(),
-        game.next_order_id.checked_add(2).unwrap()
+        game.state.next_order_id.checked_add(2).unwrap()
     );
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
@@ -501,19 +518,26 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
     let unknown = crate::StockCode("600999".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
-    game.accounts
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(crate::Money::ZERO);
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(main.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
-    game.accounts
-        .get_mut(&account)
-        .unwrap()
-        .positions
-        .get_mut(&main)
-        .unwrap()
-        .t1_locked = 100;
+    let holder = game.state.accounts.get_mut(&account).unwrap();
+    let position = holder.position(&main).unwrap();
+    let locked = crate::Position::from_restored_parts(
+        position.qty(),
+        100,
+        position.invested_cents(),
+        position.recovered_cents(),
+    );
+    holder.fixture_insert_position(main.clone(), locked);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
         limit(0, account, unknown, crate::Side::Buy, 100),
@@ -556,8 +580,8 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
         IntentCandidateBatch::new(candidates).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context,
     )
     .unwrap()
@@ -623,13 +647,17 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
     )
     .unwrap();
     let reservation = crate::session::buy_order_reservation(
-        &game.setup.config,
+        &game.state.setup.config,
         crate::Money::from_cents(900),
         100,
         crate::Money::ZERO,
     )
     .unwrap();
-    game.accounts.get_mut(&account).unwrap().cash = reservation;
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(reservation);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
         limit(0, account, first.clone(), crate::Side::Buy, 100),
@@ -645,8 +673,8 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context([(first, validation), (second, validation)]),
     )
     .unwrap()
@@ -686,7 +714,7 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
         plan.decision_resources().unwrap().clone(),
         ledger.clone(),
         u64::MAX - 1,
-        game.setup.config.clone(),
+        game.state.setup.config.clone(),
         context([(
             code,
             StockValidation::new(
@@ -716,7 +744,11 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
     let chinext = crate::StockCode("300888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(10_000_000_000);
+    game.state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_set_cash(crate::Money::from_cents(10_000_000_000));
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
         limit(0, account, main.clone(), crate::Side::Buy, 1_000_000),
@@ -764,8 +796,8 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
         IntentCandidateBatch::new(candidates).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context([
             (
                 main,
@@ -843,7 +875,8 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
     let code = crate::StockCode("600888".to_owned());
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts
+    game.state
+        .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
@@ -858,8 +891,8 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
         .unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
-        game.next_order_id,
-        game.setup.config.clone(),
+        game.state.next_order_id,
+        game.state.setup.config.clone(),
         context([(
             code,
             StockValidation::new(

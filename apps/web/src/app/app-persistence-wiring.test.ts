@@ -4,15 +4,19 @@ import test from "node:test";
 
 test("App queries current player orders without generating persistence", () => {
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const refresh = source.slice(source.indexOf("const refreshPlayerOrders"), source.indexOf("// 自动单添加"));
+  const trading = readFileSync(new URL("./useTradingCommands.ts", import.meta.url), "utf8");
+  const refresh = trading.slice(trading.indexOf("const refreshPlayerOrders"), trading.indexOf("// 自动单添加"));
+  assert.ok(source.includes("useTradingCommands({ hostRef, playerOrderRefreshGateRef"));
   assert.ok(refresh.includes("host.playerWorkingOrders()"));
   assert.equal(refresh.includes("host.save()"), false);
 });
 
 test("App save controls schedule day-end persistence rather than writing intraday", () => {
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const save = source.slice(source.indexOf("async function handleSave()"), source.indexOf("async function handleLoad()"));
-  const file = source.slice(source.indexOf("async function handleSaveFile()"), source.indexOf("async function handleLoadFile()"));
+  const commands = readFileSync(new URL("./useSaveCommands.ts", import.meta.url), "utf8");
+  const save = commands.slice(commands.indexOf("async function handleSave()"), commands.indexOf("async function handleLoad()"));
+  const file = commands.slice(commands.indexOf("async function handleSaveFile()"), commands.indexOf("async function handleLoadFile()"));
+  assert.ok(source.includes("useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
   assert.equal(save.includes(".save("), false);
   assert.equal(file.includes(".save("), false);
   assert.ok(file.includes("selectDayEndFileTarget()"));
@@ -21,7 +25,9 @@ test("App save controls schedule day-end persistence rather than writing intrada
 
 test("App restores its initial archive before starting the memory session", () => {
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  const initialization = source.slice(source.indexOf("let ownedHost"), source.indexOf("// eslint-disable-next-line react-hooks/exhaustive-deps"));
+  const lifecycle = readFileSync(new URL("./useSessionHostLifecycle.ts", import.meta.url), "utf8");
+  const initialization = lifecycle.slice(lifecycle.indexOf("let ownedHost"), lifecycle.indexOf("function createSessionHost("));
+  assert.ok(source.includes("useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
   assert.ok(initialization.includes("initialSaveSourceRef.current.read("));
   assert.ok(initialization.includes("await host.load(initialSlot)"));
   assert.ok(initialization.indexOf("await host.load(initialSlot)") < initialization.indexOf("host.start("));
@@ -33,5 +39,7 @@ test("App keeps archive loads outside tick updates and never projects live order
   const updates = source.slice(source.indexOf("onApplied(reduction"), source.indexOf("onFailure(failure)"));
   assert.equal(updates.includes(".load("), false);
   assert.equal(source.includes("projectPlayerOrders(slot)"), false);
-  assert.ok(source.includes("validateDayEndArchive(slot)"));
+  const commands = readFileSync(new URL("./useSaveCommands.ts", import.meta.url), "utf8");
+  assert.ok(commands.includes("validateDayEndArchive(slot)"));
+  assert.equal(commands.includes("projectPlayerOrders(slot)"), false);
 });

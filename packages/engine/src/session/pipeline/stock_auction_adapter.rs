@@ -31,14 +31,14 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
     let specs = validate_market_and_spec_identity(session)?;
     let envelopes = validate_live_orders(session, phase)?;
 
-    let mut inputs = Vec::with_capacity(session.markets.len());
-    for (code, market) in &session.markets {
+    let mut inputs = Vec::with_capacity(session.state.markets.len());
+    for (code, market) in &session.state.markets {
         let spec = specs
             .get(code)
             .ok_or_else(|| invariant("market has no canonical stock specification"))?;
         let mut state = StockAuctionState::new(code.clone());
         state.use_committed_fills(market.clone());
-        if let Some(orders) = session.auction_orders.get(code) {
+        if let Some(orders) = session.state.auction_orders.get(code) {
             for order in orders {
                 validate_serializable_order_id(order.order_id)?;
                 let key = EnvelopeKey {
@@ -91,7 +91,7 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
                 previous_close: market.last_close(),
                 exchange: spec.exchange,
                 price_tick: spec.tick,
-                config: session.setup.config.clone(),
+                config: session.state.setup.config.clone(),
                 day_end_envelopes: Vec::new(),
             },
             continuous_envelopes,
@@ -104,8 +104,8 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
 fn auction_phase(session: &GameSession) -> Result<AuctionPhase, StepFatal> {
     match session.phase() {
         TradingPhase::CallAuction => Ok(AuctionPhase::Opening {
-            elapsed_ticks: session.tick() % session.setup.ticks_per_day,
-            cancelable_ticks: session.setup.auction_ticks / 3,
+            elapsed_ticks: session.tick() % session.state.setup.ticks_per_day,
+            cancelable_ticks: session.state.setup.auction_ticks / 3,
         }),
         TradingPhase::ClosingAuction => Ok(AuctionPhase::Closing),
         TradingPhase::PreOpen | TradingPhase::Continuous => Err(invariant(
@@ -118,15 +118,16 @@ fn validate_market_and_spec_identity(
     session: &GameSession,
 ) -> Result<BTreeMap<StockCode, &crate::StockSpec>, StepFatal> {
     let specs = session
+        .state
         .setup
         .stocks
         .iter()
         .map(|spec| (spec.code.clone(), spec))
         .collect::<BTreeMap<_, _>>();
-    if specs.len() != session.setup.stocks.len() {
+    if specs.len() != session.state.setup.stocks.len() {
         return Err(invariant("stock specifications contain duplicate codes"));
     }
-    for (code, market) in &session.markets {
+    for (code, market) in &session.state.markets {
         if market.code() != code {
             return Err(invariant(
                 "market map key disagrees with the market stock code",
@@ -138,13 +139,13 @@ fn validate_market_and_spec_identity(
             ));
         }
     }
-    if specs.len() != session.markets.len() {
+    if specs.len() != session.state.markets.len() {
         return Err(invariant(
             "market and stock specification code sets disagree",
         ));
     }
-    for code in session.auction_orders.keys() {
-        if !session.markets.contains_key(code) {
+    for code in session.state.auction_orders.keys() {
+        if !session.state.markets.contains_key(code) {
             return Err(invariant(&format!(
                 "auction queue references unknown stock {}",
                 code.0
@@ -177,7 +178,7 @@ fn validate_live_orders(
 ) -> Result<BTreeMap<EnvelopeKey, Envelope>, StepFatal> {
     validate_ledger_evidence(session)?;
     let mut authoritative = BTreeMap::new();
-    for (key, envelope) in session.envelope_ledger.iter() {
+    for (key, envelope) in session.state.envelope_ledger.iter() {
         if authoritative
             .insert(key.clone(), envelope.clone())
             .is_some()
@@ -194,7 +195,7 @@ fn validate_live_orders(
         .map(|envelope| (envelope.key().clone(), envelope))
         .collect::<BTreeMap<_, _>>();
 
-    for (code, market) in &session.markets {
+    for (code, market) in &session.state.markets {
         let resting = market.resting_orders();
         if matches!(phase, AuctionPhase::Opening { .. }) && !resting.is_empty() {
             return Err(invariant(
@@ -212,7 +213,7 @@ fn validate_live_orders(
             validate_continuous_audit(&envelope, &order)?;
         }
     }
-    for (code, orders) in &session.auction_orders {
+    for (code, orders) in &session.state.auction_orders {
         for order in orders {
             validate_serializable_order_id(order.order_id)?;
             let key = EnvelopeKey {
@@ -234,7 +235,7 @@ fn validate_live_orders(
 }
 
 fn validate_ledger_evidence(session: &GameSession) -> Result<(), StepFatal> {
-    let ledger = &session.envelope_ledger;
+    let ledger = &session.state.envelope_ledger;
     ledger.validate_conservation().map_err(|error| {
         invariant(&format!(
             "post-P0 envelope ledger conservation is invalid: {error}"

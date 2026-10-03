@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::experience::PersonalWatchlist;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// 单个 NPC 的随机注意力状态。市场越活跃，下一次观察的有效概率越高。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
@@ -256,30 +258,74 @@ impl NpcAttentionState {
     }
 }
 
-impl GameSession {
-    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+/// 只拥有候选堆；权威 NpcAttentionState 及独立 RNG 仍由 Session 保存。
+#[derive(Clone, Debug, Default)]
+pub(super) struct NpcAttentionScheduler {
+    candidates: BinaryHeap<Reverse<(u64, AccountId)>>,
+}
+
+impl NpcAttentionScheduler {
+    pub(super) fn enqueue(&mut self, tick: u64, id: AccountId) {
+        self.candidates.push(Reverse((tick, id)));
+    }
+
+    pub(super) fn next_scheduled_tick(&self) -> Option<u64> {
+        self.candidates.peek().map(|Reverse((tick, _))| *tick)
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear(&mut self) {
+        self.candidates.clear();
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &(u64, AccountId)> {
+        self.candidates.iter().map(|Reverse(entry)| entry)
+    }
+}
+
+impl FromIterator<(u64, AccountId)> for NpcAttentionScheduler {
+    fn from_iter<T: IntoIterator<Item = (u64, AccountId)>>(entries: T) -> Self {
+        Self {
+            candidates: entries.into_iter().map(Reverse).collect(),
+        }
+    }
+}
+
+impl NpcAttentionScheduler {
+    pub(super) fn pop_due(
+        &mut self,
+        tick: u64,
+        current_candidate_tick: impl Fn(AccountId) -> Option<u64>,
+    ) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
         let mut due = Vec::new();
         let mut popped = Vec::new();
-        while let Some(Reverse((scheduled_tick, _))) = self.attention_queue.peek() {
+        while let Some(Reverse((scheduled_tick, _))) = self.candidates.peek() {
             if *scheduled_tick > tick {
                 break;
             }
             let Reverse((scheduled_tick, id)) = self
-                .attention_queue
+                .candidates
                 .pop()
                 .expect("peeked attention entry must still exist");
             popped.push((scheduled_tick, id));
-            if self
-                .npc_attention
-                .get(&id)
-                .is_some_and(|state| state.next_attention_candidate_tick == scheduled_tick)
-            {
+            if current_candidate_tick(id) == Some(scheduled_tick) {
                 due.push(id);
             }
         }
         due.sort_unstable();
         due.dedup();
         (due, popped)
+    }
+}
+
+impl GameSession {
+    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+        let attention = &self.state.npc_attention;
+        self.state.attention_scheduler.pop_due(tick, |id| {
+            attention
+                .get(&id)
+                .map(|state| state.next_attention_candidate_tick)
+        })
     }
 }
 
@@ -406,5 +452,61 @@ mod attention_tests {
             index: 0,
         };
         assert!(sample_attention_wait(0.000_001, &mut long_wait) > 10_000);
+    }
+}
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+
+    #[test]
+    fn insertion_order_does_not_change_due_ids_or_popped_entries() {
+        let entries = [
+            (2, AccountId(2)),
+            (1, AccountId(1)),
+            (2, AccountId(2)),
+            (3, AccountId(3)),
+        ];
+        let mut forward: NpcAttentionScheduler = entries.into_iter().collect();
+        let mut reverse: NpcAttentionScheduler = entries.into_iter().rev().collect();
+        let current = |id| Some(if id == AccountId(1) { 4 } else { 2 });
+        assert_eq!(forward.pop_due(3, current), reverse.pop_due(3, current));
+        assert_eq!(forward.next_scheduled_tick(), None);
+    }
+
+    #[test]
+    fn stale_due_entries_are_returned_but_only_current_ids_wake_once() {
+        let mut scheduler: NpcAttentionScheduler = [
+            (2, AccountId(2)),
+            (1, AccountId(1)),
+            (2, AccountId(2)),
+            (3, AccountId(3)),
+            (5, AccountId(4)),
+        ]
+        .into_iter()
+        .collect();
+        let current = [(AccountId(1), 7), (AccountId(2), 2)]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        let (due, popped) = scheduler.pop_due(3, |id| current.get(&id).copied());
+        assert_eq!(due, vec![AccountId(2)]);
+        assert_eq!(
+            popped,
+            vec![
+                (1, AccountId(1)),
+                (2, AccountId(2)),
+                (2, AccountId(2)),
+                (3, AccountId(3))
+            ]
+        );
+        assert_eq!(
+            scheduler.iter().copied().collect::<Vec<_>>(),
+            vec![(5, AccountId(4))]
+        );
+        scheduler.enqueue(4, AccountId(3));
+        let candidate = scheduler.clone();
+        scheduler.clear();
+        assert_eq!(scheduler.iter().count(), 0);
+        assert_eq!(candidate.iter().count(), 2);
     }
 }

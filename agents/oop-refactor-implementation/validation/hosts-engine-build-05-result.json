@@ -1,0 +1,73 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "-p",
+    "server",
+    "-p",
+    "web-wasm",
+    "-p",
+    "stock-market-game",
+    "--lib",
+    "--features",
+    "engine/simulation-diagnostics,engine/verification-harness,server/web-ui,server/host-parity,stock-market-game/host-parity,web-wasm/simulation-diagnostics",
+    "--no-run",
+    "--message-format=json",
+    "-j",
+    "32"
+  ],
+  "environment": {
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0"
+  },
+  "exit_code": 0,
+  "timed_out": false,
+  "seconds": 66.574,
+  "samples": [
+    {
+      "seconds": 0.0,
+      "processes": 1,
+      "threads": 1,
+      "cpu": 0.0
+    },
+    {
+      "seconds": 10.01,
+      "processes": 14,
+      "threads": 62,
+      "cpu": 1091.1
+    },
+    {
+      "seconds": 20.02,
+      "processes": 4,
+      "threads": 14,
+      "cpu": 229.7
+    },
+    {
+      "seconds": 30.03,
+      "processes": 4,
+      "threads": 17,
+      "cpu": 309.0
+    },
+    {
+      "seconds": 40.05,
+      "processes": 4,
+      "threads": 17,
+      "cpu": 310.6
+    },
+    {
+      "seconds": 50.06,
+      "processes": 4,
+      "threads": 17,
+      "cpu": 305.6
+    },
+    {
+      "seconds": 60.07,
+      "processes": 3,
+      "threads": 18,
+      "cpu": 215.2
+    }
+  ],
+  "meaning": "仅编译或类型检查，不运行测试"
+}

@@ -1,5 +1,6 @@
 use super::{GameSession, StepFatal};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// FNV-1a over length-delimited canonical JSON fields; not a security digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -28,6 +29,14 @@ impl GameSession {
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
     pub fn business_state_hash(&self) -> Result<StateHash, StepFatal> {
         let Self {
+            state,
+            poison: _,
+            #[cfg(test)]
+                injected_failure: _,
+            #[cfg(test)]
+                post_shadow_failure: _,
+        } = self;
+        let super::CommittableSessionState {
             setup: _,
             rng: _,
             seed: _,
@@ -35,8 +44,7 @@ impl GameSession {
             accounts: _,
             price_history: _,
             market_minute_closes: _,
-            daily_candles: _,
-            active_daily_candles: _,
+            candle_book: _,
             auction_orders: _,
             pending_player: _,
             pending_npc: _,
@@ -45,7 +53,13 @@ impl GameSession {
             parent_orders: _,
             pending_plan_events: _,
             npc_order_lifecycles: _,
-            attention_queue: _,
+            last_retail_decisions: _,
+            last_retail_order_events: _,
+            #[cfg(feature = "simulation-diagnostics")]
+                npc_decision_traces: _,
+            #[cfg(feature = "simulation-diagnostics")]
+                causal: _,
+            attention_scheduler: _,
             company_registry: _,
             operations: _,
             closing: _,
@@ -54,10 +68,7 @@ impl GameSession {
             disclosures: _,
             plans: _,
             urgency_policy: _,
-            information: _,
-            belief_books: _,
-            watchlists: _,
-            price_memories: _,
+            belief_participants: _,
             envelope_ledger: _,
             retail_projection_seen: _,
             next_receipt_base: _,
@@ -66,33 +77,21 @@ impl GameSession {
             day: _,
             seq: _,
             civil_clock: _,
-            poison: _,
-            last_retail_decisions: _,
-            last_retail_order_events: _,
-            #[cfg(test)]
-                injected_failure: _,
-            #[cfg(test)]
-                post_shadow_failure: _,
-            #[cfg(feature = "simulation-diagnostics")]
-                npc_decision_traces: _,
-            #[cfg(feature = "simulation-diagnostics")]
-                causal: _,
-        } = self;
+        } = state;
         let mut hash = StateHash(0xcbf29ce484222325);
-        hash.field(&self.setup)?;
-        hash.field(&self.seed)?;
-        hash.field(&self.rng.state)?;
-        for (id, account) in &self.accounts {
+        hash.field(&self.state.setup)?;
+        hash.field(&self.state.seed)?;
+        hash.field(&self.state.rng.state)?;
+        for (id, account) in &self.state.accounts {
             hash.field(&(
                 id,
-                account.id,
-                account.kind,
-                account.cash,
-                &account.positions,
+                account.id(),
+                account.kind(),
+                account.cash(),
+                &account.positions(),
             ))?;
             let state = account
-                .strategy
-                .as_ref()
+                .strategy()
                 .map(|strategy| strategy.production_state())
                 .transpose()
                 .map_err(|error| StepFatal::InvariantViolation {
@@ -101,60 +100,86 @@ impl GameSession {
                 })?;
             hash.field(&state)?;
         }
-        for (code, market) in &self.markets {
+        for (code, market) in &self.state.markets {
             hash.field(&(code, market.hash_projection()))?;
         }
-        hash.field(&self.price_history)?;
-        hash.field(&self.market_minute_closes)?;
-        hash.field(&self.daily_candles)?;
-        hash.field(&self.active_daily_candles)?;
-        hash.field(&self.auction_orders)?;
-        hash.field(&self.pending_player)?;
-        hash.field(&self.pending_npc)?;
-        hash.field(&self.npc_attention)?;
-        hash.field(&self.retail_experience)?;
-        hash.field(&self.parent_orders)?;
-        hash.field(&self.pending_plan_events)?;
-        hash.field(&self.npc_order_lifecycles)?;
-        let mut queue: Vec<_> = self.attention_queue.iter().map(|entry| entry.0).collect();
+        hash.field(&self.state.price_history)?;
+        hash.field(&self.state.market_minute_closes)?;
+        hash.field(&self.state.candle_book.histories())?;
+        hash.field(&self.state.candle_book.active())?;
+        hash.field(&self.state.auction_orders)?;
+        hash.field(&self.state.pending_player)?;
+        hash.field(&self.state.pending_npc)?;
+        hash.field(&self.state.npc_attention)?;
+        hash.field(&self.state.retail_experience)?;
+        hash.field(&self.state.parent_orders)?;
+        hash.field(&self.state.pending_plan_events)?;
+        hash.field(&self.state.npc_order_lifecycles)?;
+        let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
         queue.sort_unstable();
         hash.field(&queue)?;
-        hash.field(self.company_registry.as_ref())?;
-        let operations =
-            self.operations
-                .hash_projection()
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: error.to_string(),
-                    location: "state_hash.company_operations".to_owned(),
-                })?;
+        hash.field(self.state.company_registry.as_ref())?;
+        let operations = self.state.operations.hash_projection().map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "state_hash.company_operations".to_owned(),
+            }
+        })?;
         hash.field(&operations)?;
-        let closing =
-            self.closing
-                .hash_projection()
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: error.to_string(),
-                    location: "state_hash.closing".to_owned(),
-                })?;
+        let closing = self.state.closing.hash_projection().map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "state_hash.closing".to_owned(),
+            }
+        })?;
         hash.field(&closing)?;
-        hash.field(&self.library.hash_projection())?;
-        hash.field(&self.ops_wiring)?;
-        hash.field(&self.disclosures)?;
-        hash.field(&self.plans)?;
-        hash.field(&self.urgency_policy)?;
-        hash.field(&self.information)?;
-        hash.field(&self.belief_books)?;
-        hash.field(&self.watchlists)?;
-        hash.field(&self.price_memories)?;
-        hash.field(&self.envelope_ledger.hash_projection())?;
-        hash.field(&self.retail_projection_seen)?;
+        hash.field(&self.state.library.hash_projection())?;
+        hash.field(&self.state.ops_wiring)?;
+        hash.field(&self.state.disclosures)?;
+        hash.field(&self.state.plans)?;
+        hash.field(&self.state.urgency_policy)?;
+        hash.field(
+            &self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (id, participant.information()))
+                .collect::<BTreeMap<_, _>>(),
+        )?;
+        hash.field(
+            &self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (id, participant.belief()))
+                .collect::<BTreeMap<_, _>>(),
+        )?;
+        hash.field(
+            &self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (id, participant.watchlist()))
+                .collect::<BTreeMap<_, _>>(),
+        )?;
+        hash.field(
+            &self
+                .state
+                .belief_participants
+                .iter()
+                .map(|(id, participant)| (id, participant.price_memory()))
+                .collect::<BTreeMap<_, _>>(),
+        )?;
+        hash.field(&self.state.envelope_ledger.hash_projection())?;
+        hash.field(&self.state.retail_projection_seen)?;
         hash.field(&(
-            self.next_order_id,
-            self.tick,
-            self.day,
-            self.seq,
-            self.next_receipt_base,
+            self.state.next_order_id,
+            self.state.tick,
+            self.state.day,
+            self.state.seq,
+            self.state.next_receipt_base,
         ))?;
-        hash.field(&self.civil_clock.save())?;
+        hash.field(&self.state.civil_clock.save())?;
         Ok(hash)
     }
 
@@ -169,7 +194,7 @@ impl GameSession {
         mut hash: StateHash,
     ) -> Result<StateHash, StepFatal> {
         hash.field(&self.poison)?;
-        for trace in &self.last_retail_decisions {
+        for trace in &self.state.last_retail_decisions {
             hash.field(&(
                 trace.account,
                 &trace.decision.code,
@@ -181,11 +206,11 @@ impl GameSession {
                 format!("{:?}", trace.execution_urgency),
             ))?;
         }
-        hash.field(&self.last_retail_order_events)?;
+        hash.field(&self.state.last_retail_order_events)?;
         #[cfg(feature = "simulation-diagnostics")]
         {
-            hash.field(&self.npc_decision_traces)?;
-            hash.field(&self.causal)?;
+            hash.field(&self.state.npc_decision_traces)?;
+            hash.field(&self.state.causal)?;
         }
         Ok(hash)
     }

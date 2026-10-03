@@ -1,0 +1,320 @@
+{
+  "baseline": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "files": [
+    {
+      "file": "packages/engine/src/plans/candidates.rs",
+      "sha256": "11e36eb7bcc8535d256c45ec6fbdade674fa4d245810edd918c522fe624f2ac2",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/candidates/targets.rs",
+      "sha256": "dbc5238a44bf26c7047aa232713bd68c632d40bff043c302b5c065fa5e5564f1",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/mod.rs",
+      "sha256": "b2ab5492ff8e2e74bec5c7dfb292f544ab950dc78a994b1f1fa0d070e7e6186b",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/revision.rs",
+      "sha256": "c55e1cd4b157777a17f8520c1d6619f83e9380144e5638a541fad821422ca23c",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/state.rs",
+      "sha256": "c601a22b188540e021c90e2ec03195fb048369f36526a556854fe2e938e9439c",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/plans/validation.rs",
+      "sha256": "2930661212f736c26750c729553db7ccdeacd266320d73471e3dfbc8c8e02e69",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session.rs",
+      "sha256": "c208c39dc832b8fa41f17331c6e0bb628a041007fcfef367f4f136bd51a4e7bb",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/account_book.rs",
+      "sha256": "1385a460975449e967acdb2c2864d1fd61390b565736abbbf6fb20a555984bd0",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/attention.rs",
+      "sha256": "eb31033e2ff7a030fd4a220247ce9c8bebde964ce8a0ef3ce506c8d19d974266",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/candles.rs",
+      "sha256": "01eaa497889978a3dd11cca1f428b772de851e97fd5374e1c29a3b21d0302bd4",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/causal.rs",
+      "sha256": "c2bf7eedfa4d3a97a7f56aa83e16cb0e0613005e5b9284ef07a33e0662520cfb",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/company_assembly.rs",
+      "sha256": "843667970a1a890e5572aeff915015f18b1fd70aeca59180a069b4070fa2e47c",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/continuous_cancellation.rs",
+      "sha256": "e516c7f0d0baefb4e043ba10e95cda06b778f0e66572c8d9c054328a4686693d",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/continuous_cancellation_tests.rs",
+      "sha256": "afb784a7151608a274215dd41466383087a3a1ae03f894aa6fe2e51f31a6b7f7",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain.rs",
+      "sha256": "b6696ad873d44ab39443ea99d21f31e1dd26e658ad447e494f3971da644399d5",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain/lifecycle.rs",
+      "sha256": "3d400b95ce0d698f26f57fae0b77f2fb09a9e827e6415393d169ccdea44d0f4d",
+      "new_file": true
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain/personal_state.rs",
+      "sha256": "f523212df76d13a7d253df349d318828d0f115afb59efc440dd1f6f61f3d5caa",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain/quote.rs",
+      "sha256": "8d5227f6106de9ba4d35235af124578da68fd9891642ff45052eb531ca63af1c",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain/roots.rs",
+      "sha256": "e9c03356cd80cc7da54e6e4c82b5aee3a848754c7bb8a35bbaf8e407abbd3a8d",
+      "new_file": true
+    },
+    {
+      "file": "packages/engine/src/session/decision_chain/urgency.rs",
+      "sha256": "5a861bdc56bd29218d114101e737428f7c3afc1a4b54a6d7cbadbcf037f70551",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/envelope_projection.rs",
+      "sha256": "a619bde3a7181aa757938ee0cc3da7cfd9c1a579b8fbacf6f91f1c4b0f9a8144",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/envelope_projection_hydration_tests.rs",
+      "sha256": "a336f4761aefb843984dddddee6f311749ad8eeef314d3f0582e6c42ac6744ba",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/envelope_projection_tests.rs",
+      "sha256": "340e760df0c974747a839746aeb44ce8b12ef7ce93c7ed455f8d9a807e00b59c",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution.rs",
+      "sha256": "754cfdddc552344cc44d0108a294d94eb14546b5060f88a7ce5051bb17f34495",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/orders.rs",
+      "sha256": "05a4e3fce6fea325b76ed04c5f57fdd44a4839feec2b1bd4089857d1c60ee7b3",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/reconcile_plan.rs",
+      "sha256": "5a5ac6e2f25b789addd26c9dda09f1e1c23d918c05c15f9dc82eb7c7a65f0361",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/execution/records.rs",
+      "sha256": "2006786b472c23e7d904e560c489f4962cd7d4c974d2761b75fe5ed4149301f7",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/failure.rs",
+      "sha256": "6f1f4fa1c3ba370a10a2442c005c27288734b64f8c5c64480208b0aab2b45adf",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/failure_tests.rs",
+      "sha256": "bcc8dee1db70652464be9be323d596b65f0bb62252102ab251e740c1ff1ea6f0",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/hash.rs",
+      "sha256": "d171f00dc61d0e847c59daf647c42d2fafb8dbc43995fe0b0e11c1c70658da13",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/hash_contract_tests.rs",
+      "sha256": "7528667d4c45dc04872597f4d42a63f6a4c02db5fdde2582d06e05398e1d79f5",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/institutional_behavior.rs",
+      "sha256": "8a7d64484bd128421af125d91129276ca42a7a37be79b1b6e58518d0640a8649",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/observation_clock.rs",
+      "sha256": "2e13f5fc3d3867d9d2decfcad24e8bbeb66b2a53a25902c7d462e4bfb3d7d835",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence.rs",
+      "sha256": "41754f6014a909ce9ae1666869291d0a5c00c7c5bd145c462016d27f40f40da9",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence/v2.rs",
+      "sha256": "328aae85f4a346fa596418ddca7b3b190ed20516828b4f9304c2ccc3143684e3",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/persistence/v2_tests.rs",
+      "sha256": "2f84d83557af16f2c00036cc904d1b556efe39c2f5261d8ed1dde23951393032",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_chain_candidates.rs",
+      "sha256": "7eff20608f6b3642144a6e82cf1718f50a78982f8228dac2788fe6365e4fa48b",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+      "sha256": "6fae566e176b623f579cb67e16afbc4fe80c3b3837bf8e3c3849e2587081855f",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_chain_candidates/adaptive_tests.rs",
+      "sha256": "df46f999ff142773a4ba686044b214a175c678172121200ed10032bfdac0b945",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_chain_candidates/source_tests.rs",
+      "sha256": "35d60f4a9652f29c27eccd25334039fb0fab32de5f2df4fc018d00231c7f7a76",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_chain_candidates_tests.rs",
+      "sha256": "d6d7d1cf3a94f41df946b2b750d0115f3543f13958e7c375f2ffb39264455c9b",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution.rs",
+      "sha256": "ef9b48ed9411336cf6f0cc6b36b652ead1c046cb7129e677448d1fca0a5ce730",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/actions.rs",
+      "sha256": "2f1c4dfd125e0328e1bf36ca7a0e03400ce13dad257388966e411cf7f60e803a",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/continuation_tests.rs",
+      "sha256": "1ad42f3b714dda7e2546eb71af3167e163fc39a90259d9cf0ca84f08c8f80276",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/interpreter.rs",
+      "sha256": "96c30829b8045aa27802f86378ed2702d3d23545d140e7e946f2be9760949a0f",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/interpreter/resume.rs",
+      "sha256": "aee716bc1de76975f8e2340a7eacb7fe395b7474119625074e073b3a07425871",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/routing.rs",
+      "sha256": "71bec4082b73092b487b5a43a2e0fcb4bc4da6514eeff05cf8bf93abb7f1fbdb",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/plan_execution/synchronization.rs",
+      "sha256": "a39772c8e471429de75d068c0d96c4e9e89f632ef67a998fc1c0a54fb1abf8dc",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/player_candidates.rs",
+      "sha256": "2807798b1657b758aaad803f2ca1354e4a5ec9e2994c1f1745c5765cb3d4eb40",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/player_candidates_tests.rs",
+      "sha256": "75b468da671ae87e28d3d0b1201923b2f453a406dd6b56e61ea5eff3524398d6",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/mod.rs",
+      "sha256": "b475e6436fa19198cb8c03b8344731d3300361a51dd1400794db94db0f885ab1",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/publication_tests.rs",
+      "sha256": "3c598384bec9a99f491a75fb23994dde582fd2bc5c4eb4f1b2c7e34b31b219b3",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/civil/session.rs",
+      "sha256": "abf6bacb61b218c147bd8f5de9855ae1b0363a98bffe8865eac4187ea749491a",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/delta.rs",
+      "sha256": "22f002390487087585f718c0d51fc06296f8d83b3b46eabeb9ec565e468b316f",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/protocol/player_orders.rs",
+      "sha256": "94d5df333af9835c0bc93da00c6f02b3bedc415f2368944feb7ca3664932b497",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/reconciliation_plan_phase_tests.rs",
+      "sha256": "b9c4c5276424f929dd31f4f69a9f95eddfc260406a4160cad289983ac389e777",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/reconciliation_plan_tests.rs",
+      "sha256": "90ffff1823e22367cefada259dddcbd3566935888f5a1f693fc3932680852cd9",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/self_views.rs",
+      "sha256": "9f73e4973fbf8e8b3fd8f4cd3e6a8b4f01e2da616a1f07a4901f4d2609eb2e7a",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/snapshot.rs",
+      "sha256": "b14b7b6b614561f5942d5ec793a18e0077f8b2c510c02bac5fbd1d565a05d17e",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/session/views.rs",
+      "sha256": "f4df3b745f6aa229a8b84c930a5266725c39d0a148e8c88d02168473534a58e0",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/beliefs.rs",
+      "sha256": "e43b10b3bf3b56fc983e6739a3142b277fb573af42ba6e963b661bf2b4a5f5d4",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/retail.rs",
+      "sha256": "c9cfb56ca5a80afd5d1b84c733593d22d2cd8682624bc4a5f63cf8f3cf290e66",
+      "new_file": false
+    },
+    {
+      "file": "packages/engine/src/strategy/zi_noise.rs",
+      "sha256": "b56bfa63fdd714345ae67e836cb2e45bd1bc2ad71eeae03b25b1f6e623861db1",
+      "new_file": false
+    }
+  ]
+}

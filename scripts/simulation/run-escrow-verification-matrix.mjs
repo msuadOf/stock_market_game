@@ -546,162 +546,6 @@ function harnessInvocation(entry, output) {
   };
 }
 
-async function runEntry(config, entry, runChild, logPrefix) {
-  const output = path.join(config.outputRoot, "runs", entry.id);
-  if (await pathExists(output)) {
-    throw new MatrixFailure("OUTPUT_NOT_FRESH", `${entry.id} output already exists`, { entry: entry.id, output });
-  }
-  const invocation = harnessInvocation(entry, output);
-  const env = {
-    ...process.env,
-    ESCROW_WORKSPACE_ROOT: config.workspaceRoot,
-    CARGO_TARGET_DIR: config.targetDir,
-    TMPDIR: config.processTemp,
-    TMP: config.processTemp,
-    TEMP: config.processTemp,
-  };
-  const result = await runChild({ ...invocation, cwd: config.sourceRoot, env, entry, output });
-  const stdoutLog = path.join(config.logsDir, `${logPrefix}-${entry.id}.stdout.log`);
-  const stderrLog = path.join(config.logsDir, `${logPrefix}-${entry.id}.stderr.log`);
-  await Promise.all([
-    writeFile(stdoutLog, result.stdout ?? "", { flag: "wx" }),
-    writeFile(stderrLog, result.stderr ?? "", { flag: "wx" }),
-  ]);
-  if (!(await pathExists(path.join(output, "capture.json")))) {
-    throw new MatrixFailure("MISSING_CAPTURE", `${entry.id} did not create capture.json`, { entry: entry.id, exit_code: result.code, signal: result.signal });
-  }
-  const captureReceipt = await validateCaptureReceipt(output, entry);
-  let capture;
-  try {
-    capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
-  } catch (error) {
-    throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture.json is invalid: ${error.message}`, { entry: entry.id });
-  }
-  const stdout = parseStdoutSummary(result.stdout ?? "", entry);
-  if (capture.schema !== CAPTURE_SCHEMA) {
-    throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture schema is unsupported`, { entry: entry.id, schema: capture.schema });
-  }
-  const expectedCapturePath = path.join(output, "capture.json");
-  if (stdout.capture !== expectedCapturePath) {
-    throw new MatrixFailure("STATUS_MISMATCH", `${entry.id} stdout does not identify its exact capture.json`, {
-      entry: entry.id,
-      expected_capture: expectedCapturePath,
-      actual_capture: stdout.capture,
-    });
-  }
-  const captureStatus = normalizeStatus(capture.status);
-  const stdoutStatus = normalizeStatus(stdout.status);
-  if (captureStatus === "BLOCKED" || stdoutStatus === "BLOCKED" || result.code === 3) {
-    throw new MatrixFailure("HARNESS_BLOCKED", `${entry.id} is BLOCKED and cannot count as escrow verification PASS`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
-  }
-  if (captureStatus === "FAIL" || stdoutStatus === "FAIL") {
-    throw new MatrixFailure("HARNESS_FAIL", `${entry.id} harness reported FAIL`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
-  }
-  if (captureStatus !== stdoutStatus) {
-    throw new MatrixFailure("STATUS_MISMATCH", `${entry.id} stdout and capture status disagree`, { entry: entry.id, capture_status: capture.status, stdout_status: stdout.status });
-  }
-  if (captureStatus !== "PASS") {
-    throw new MatrixFailure("INVALID_STATUS", `${entry.id} status is neither PASS, FAIL, nor BLOCKED`, { entry: entry.id, capture_status: capture.status });
-  }
-  if (result.code !== 0 || result.signal !== null) {
-    throw new MatrixFailure("EXIT_STATUS_MISMATCH", `${entry.id} reported PASS but did not exit successfully`, { entry: entry.id, exit_code: result.code, signal: result.signal });
-  }
-  assertCaptureConfiguration(capture, entry);
-  const artifacts = await validateArtifacts(capture, output, entry);
-  const executorOrders = validateExecutorEvidence(capture, entry);
-  if (entry.mode === "negative-control" && !negativeControlDetected(capture)) {
-    throw new MatrixFailure("NEGATIVE_CONTROL_NOT_DETECTED", `${entry.id} did not prove that disabling its canonical merge was detected`, { entry: entry.id, dimension: entry.disabledMerge });
-  }
-  return {
-    id: entry.id,
-    status: "PASS",
-    exit_code: result.code,
-    output: path.relative(config.outputRoot, output).split(path.sep).join("/"),
-    stdout_log: stdoutLog,
-    stderr_log: stderrLog,
-    command: invocation.printable,
-    configuration: {
-      scenario: entry.scenario,
-      seed: entry.seed,
-      budget: entry.budget,
-      repeat: entry.repeat,
-      mode: entry.mode,
-      disabled_merge: entry.disabledMerge,
-    },
-    artifacts,
-    capture_receipt: captureReceipt,
-    executor_orders: executorOrders,
-  };
-}
-
-async function validateStoredPass(config, request, requestHash, sourceManifest) {
-  let summary;
-  try {
-    summary = JSON.parse(await readFile(path.join(config.outputRoot, "summary.json"), "utf8"));
-  } catch (error) {
-    throw new MatrixFailure("OUTPUT_NOT_FRESH", `existing output is not a completed reusable matrix: ${error.message}`);
-  }
-  if (summary.schema !== SCHEMA || summary.status !== "PASS" || summary.request_fingerprint !== requestHash || JSON.stringify(summary.request) !== JSON.stringify(request)) {
-    throw new MatrixFailure("OUTPUT_NOT_FRESH", "existing output does not match this completed matrix request");
-  }
-  let storedSourceManifest;
-  try {
-    storedSourceManifest = JSON.parse(await readFile(path.join(config.outputRoot, "source-manifest.json"), "utf8"));
-  } catch (error) {
-    throw new MatrixFailure("REUSE_VALIDATION_FAILED", `stored source manifest is unreadable: ${error.message}`);
-  }
-  if (JSON.stringify(storedSourceManifest) !== JSON.stringify(sourceManifest)) {
-    throw new MatrixFailure("SOURCE_HASH_DRIFT", "stored source manifest differs from the current frozen source bytes");
-  }
-  const expected = matrixEntries(config.seed);
-  if (!Array.isArray(summary.entries) || summary.entries.length !== expected.length) {
-    throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS summary has an incomplete matrix");
-  }
-  const lines = [];
-  let baselineVector = null;
-  const ordersBySlot = new Map();
-  for (const [index, stored] of summary.entries.entries()) {
-    if (stored.id !== expected[index].id || stored.status !== "PASS") {
-      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS matrix order or entry status changed", { index });
-    }
-    const output = path.resolve(config.outputRoot, stored.output);
-    if (!isBelow(output, config.outputRoot)) {
-      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS entry output escapes the matrix root", { entry: stored.id });
-    }
-    const captureReceipt = await validateCaptureReceipt(output, expected[index]);
-    const capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
-    if (capture.schema !== CAPTURE_SCHEMA || normalizeStatus(capture.status) !== "PASS") {
-      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored capture no longer reports PASS", { entry: stored.id, status: capture.status });
-    }
-    assertCaptureConfiguration(capture, expected[index]);
-    verifyOrders(ordersBySlot, expected[index], validateExecutorEvidence(capture, expected[index]));
-    const artifacts = await validateArtifacts(capture, output, expected[index]);
-    if (artifactVector(artifacts) !== artifactVector(stored.artifacts)) {
-      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS artifact receipt list changed", { entry: stored.id });
-    }
-    if (JSON.stringify(captureReceipt) !== JSON.stringify(stored.capture_receipt)) {
-      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS capture receipt changed", { entry: stored.id });
-    }
-    const vector = artifactVector(artifacts);
-    if (expected[index].mode !== "negative-control") {
-      if (baselineVector === null) baselineVector = vector;
-      else if (vector !== baselineVector) {
-        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored deterministic artifact receipts drifted", { entry: stored.id });
-      }
-    } else {
-      if (!negativeControlDetected(capture) || vector === baselineVector) {
-        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored negative control no longer exposes the disabled merge", { entry: stored.id });
-      }
-    }
-    for (const artifact of artifacts) lines.push(`${artifact.sha256}  ${stored.output}/${artifact.file}`);
-  }
-  const determinism = `${lines.join("\n")}\n`;
-  const persisted = await readFile(path.join(config.outputRoot, "determinism.sha256"));
-  if (persisted.toString("utf8") !== determinism || sha256Hex(persisted) !== summary.determinism_manifest_sha256) {
-    throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored determinism.sha256 changed");
-  }
-  return { ...summary, reused: true };
-}
 
 function failureRecord(error) {
   if (error instanceof MatrixFailure) {
@@ -710,88 +554,260 @@ function failureRecord(error) {
   return { code: "RUNNER_INTERNAL", message: error instanceof Error ? error.message : String(error), details: {} };
 }
 
-export async function runEscrowVerificationMatrix(inputConfig, { runChild = defaultRunChild } = {}) {
-  const config = await normalizeConfig(inputConfig);
-  const sourceManifest = await escrowSourceManifest(config.sourceRoot);
-  if (sourceManifest.sha256 !== config.sourceFingerprint) {
-    throw new MatrixFailure("SOURCE_HASH_DRIFT", "source bytes do not match the requested complete source fingerprint");
+class EscrowVerificationRun {
+  constructor(config, sourceManifest, runChild) {
+    this.config = Object.freeze(config);
+    this.sourceManifest = sourceManifest;
+    this.runChild = runChild;
+    this.request = requestRecord(config);
+    this.requestHash = requestFingerprint(this.request);
+    this.entries = [];
+    this.baselineVector = null;
+    this.ordersBySlot = new Map();
+    this.logPrefix = `${path.basename(config.outputRoot).replaceAll(/[^A-Za-z0-9_.-]/g, "-")}-${this.requestHash.slice(0, 12)}`;
   }
-  const request = requestRecord(config);
-  const requestHash = requestFingerprint(request);
-  if (await pathExists(config.outputRoot)) {
+
+  static async create(inputConfig, runChild) {
+    const config = await normalizeConfig(inputConfig);
+    const sourceManifest = await escrowSourceManifest(config.sourceRoot);
+    if (sourceManifest.sha256 !== config.sourceFingerprint) {
+      throw new MatrixFailure("SOURCE_HASH_DRIFT", "source bytes do not match the requested complete source fingerprint");
+    }
+    return new EscrowVerificationRun(config, sourceManifest, runChild);
+  }
+
+  verify_orders(entry, orders) {
+    verifyOrders(this.ordersBySlot, entry, orders);
+  }
+
+  compare_artifacts(entry, artifacts, reusable = false) {
+    const vector = artifactVector(artifacts);
+    if (entry.mode !== "negative-control") {
+      if (this.baselineVector === null) this.baselineVector = vector;
+      else if (vector !== this.baselineVector) {
+        throw new MatrixFailure(reusable ? "REUSE_VALIDATION_FAILED" : "DETERMINISM_DRIFT",
+          reusable ? "stored deterministic artifact receipts drifted" : `${entry.id} artifact receipts differ from the frozen matrix reference`, { entry: entry.id });
+      }
+    } else if (vector === this.baselineVector) {
+      throw new MatrixFailure(reusable ? "REUSE_VALIDATION_FAILED" : "NEGATIVE_CONTROL_NOT_DETECTED",
+        reusable ? "stored negative control no longer exposes the disabled merge" : `${entry.id} artifact receipts did not expose the disabled canonical merge`,
+        reusable ? { entry: entry.id } : { entry: entry.id, dimension: entry.disabledMerge });
+    }
+  }
+
+  async run_entry(entry) {
+    const { config, runChild, logPrefix } = this;
+    const output = path.join(config.outputRoot, "runs", entry.id);
+    if (await pathExists(output)) {
+      throw new MatrixFailure("OUTPUT_NOT_FRESH", `${entry.id} output already exists`, { entry: entry.id, output });
+    }
+    const invocation = harnessInvocation(entry, output);
+    const env = {
+      ...process.env,
+      ESCROW_WORKSPACE_ROOT: config.workspaceRoot,
+      CARGO_TARGET_DIR: config.targetDir,
+      TMPDIR: config.processTemp,
+      TMP: config.processTemp,
+      TEMP: config.processTemp,
+    };
+    const result = await runChild({ ...invocation, cwd: config.sourceRoot, env, entry, output });
+    const stdoutLog = path.join(config.logsDir, `${logPrefix}-${entry.id}.stdout.log`);
+    const stderrLog = path.join(config.logsDir, `${logPrefix}-${entry.id}.stderr.log`);
+    await Promise.all([
+      writeFile(stdoutLog, result.stdout ?? "", { flag: "wx" }),
+      writeFile(stderrLog, result.stderr ?? "", { flag: "wx" }),
+    ]);
+    if (!(await pathExists(path.join(output, "capture.json")))) {
+      throw new MatrixFailure("MISSING_CAPTURE", `${entry.id} did not create capture.json`, { entry: entry.id, exit_code: result.code, signal: result.signal });
+    }
+    const captureReceipt = await validateCaptureReceipt(output, entry);
+    let capture;
     try {
-      const canonical = await realpath(config.outputRoot);
-      if (canonical !== config.outputRoot) throw new MatrixFailure("OUTPUT_NOT_FRESH", "existing outputRoot is a symbolic link or alias");
-      return await validateStoredPass(config, request, requestHash, sourceManifest);
+      capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
     } catch (error) {
-      return {
+      throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture.json is invalid: ${error.message}`, { entry: entry.id });
+    }
+    const stdout = parseStdoutSummary(result.stdout ?? "", entry);
+    if (capture.schema !== CAPTURE_SCHEMA) {
+      throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture schema is unsupported`, { entry: entry.id, schema: capture.schema });
+    }
+    const expectedCapturePath = path.join(output, "capture.json");
+    if (stdout.capture !== expectedCapturePath) {
+      throw new MatrixFailure("STATUS_MISMATCH", `${entry.id} stdout does not identify its exact capture.json`, {
+        entry: entry.id,
+        expected_capture: expectedCapturePath,
+        actual_capture: stdout.capture,
+      });
+    }
+    const captureStatus = normalizeStatus(capture.status);
+    const stdoutStatus = normalizeStatus(stdout.status);
+    if (captureStatus === "BLOCKED" || stdoutStatus === "BLOCKED" || result.code === 3) {
+      throw new MatrixFailure("HARNESS_BLOCKED", `${entry.id} is BLOCKED and cannot count as escrow verification PASS`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
+    }
+    if (captureStatus === "FAIL" || stdoutStatus === "FAIL") {
+      throw new MatrixFailure("HARNESS_FAIL", `${entry.id} harness reported FAIL`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
+    }
+    if (captureStatus !== stdoutStatus) {
+      throw new MatrixFailure("STATUS_MISMATCH", `${entry.id} stdout and capture status disagree`, { entry: entry.id, capture_status: capture.status, stdout_status: stdout.status });
+    }
+    if (captureStatus !== "PASS") {
+      throw new MatrixFailure("INVALID_STATUS", `${entry.id} status is neither PASS, FAIL, nor BLOCKED`, { entry: entry.id, capture_status: capture.status });
+    }
+    if (result.code !== 0 || result.signal !== null) {
+      throw new MatrixFailure("EXIT_STATUS_MISMATCH", `${entry.id} reported PASS but did not exit successfully`, { entry: entry.id, exit_code: result.code, signal: result.signal });
+    }
+    assertCaptureConfiguration(capture, entry);
+    const artifacts = await validateArtifacts(capture, output, entry);
+    const executorOrders = validateExecutorEvidence(capture, entry);
+    if (entry.mode === "negative-control" && !negativeControlDetected(capture)) {
+      throw new MatrixFailure("NEGATIVE_CONTROL_NOT_DETECTED", `${entry.id} did not prove that disabling its canonical merge was detected`, { entry: entry.id, dimension: entry.disabledMerge });
+    }
+    return {
+      id: entry.id,
+      status: "PASS",
+      exit_code: result.code,
+      output: path.relative(config.outputRoot, output).split(path.sep).join("/"),
+      stdout_log: stdoutLog,
+      stderr_log: stderrLog,
+      command: invocation.printable,
+      configuration: {
+        scenario: entry.scenario,
+        seed: entry.seed,
+        budget: entry.budget,
+        repeat: entry.repeat,
+        mode: entry.mode,
+        disabled_merge: entry.disabledMerge,
+      },
+      artifacts,
+      capture_receipt: captureReceipt,
+      executor_orders: executorOrders,
+    };
+  }
+
+  async validate_reusable_pass() {
+    const { config, request, requestHash, sourceManifest } = this;
+    let summary;
+    try {
+      summary = JSON.parse(await readFile(path.join(config.outputRoot, "summary.json"), "utf8"));
+    } catch (error) {
+      throw new MatrixFailure("OUTPUT_NOT_FRESH", `existing output is not a completed reusable matrix: ${error.message}`);
+    }
+    if (summary.schema !== SCHEMA || summary.status !== "PASS" || summary.request_fingerprint !== requestHash || JSON.stringify(summary.request) !== JSON.stringify(request)) {
+      throw new MatrixFailure("OUTPUT_NOT_FRESH", "existing output does not match this completed matrix request");
+    }
+    let storedSourceManifest;
+    try {
+      storedSourceManifest = JSON.parse(await readFile(path.join(config.outputRoot, "source-manifest.json"), "utf8"));
+    } catch (error) {
+      throw new MatrixFailure("REUSE_VALIDATION_FAILED", `stored source manifest is unreadable: ${error.message}`);
+    }
+    if (JSON.stringify(storedSourceManifest) !== JSON.stringify(sourceManifest)) {
+      throw new MatrixFailure("SOURCE_HASH_DRIFT", "stored source manifest differs from the current frozen source bytes");
+    }
+    const expected = matrixEntries(config.seed);
+    if (!Array.isArray(summary.entries) || summary.entries.length !== expected.length) {
+      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS summary has an incomplete matrix");
+    }
+    const lines = [];
+    for (const [index, stored] of summary.entries.entries()) {
+      if (stored.id !== expected[index].id || stored.status !== "PASS") {
+        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS matrix order or entry status changed", { index });
+      }
+      const output = path.resolve(config.outputRoot, stored.output);
+      if (!isBelow(output, config.outputRoot)) {
+        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS entry output escapes the matrix root", { entry: stored.id });
+      }
+      const captureReceipt = await validateCaptureReceipt(output, expected[index]);
+      const capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
+      if (capture.schema !== CAPTURE_SCHEMA || normalizeStatus(capture.status) !== "PASS") {
+        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored capture no longer reports PASS", { entry: stored.id, status: capture.status });
+      }
+      assertCaptureConfiguration(capture, expected[index]);
+      this.verify_orders(expected[index], validateExecutorEvidence(capture, expected[index]));
+      const artifacts = await validateArtifacts(capture, output, expected[index]);
+      if (artifactVector(artifacts) !== artifactVector(stored.artifacts)) {
+        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS artifact receipt list changed", { entry: stored.id });
+      }
+      if (JSON.stringify(captureReceipt) !== JSON.stringify(stored.capture_receipt)) {
+        throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS capture receipt changed", { entry: stored.id });
+      }
+      this.compare_artifacts(expected[index], artifacts, true);
+      for (const artifact of artifacts) lines.push(`${artifact.sha256}  ${stored.output}/${artifact.file}`);
+    }
+    const determinism = `${lines.join("\n")}\n`;
+    const persisted = await readFile(path.join(config.outputRoot, "determinism.sha256"));
+    if (persisted.toString("utf8") !== determinism || sha256Hex(persisted) !== summary.determinism_manifest_sha256) {
+      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored determinism.sha256 changed");
+    }
+    return { ...summary, reused: true };
+  }
+
+  async execute() {
+    const { config, request, requestHash, sourceManifest, entries } = this;
+    if (await pathExists(config.outputRoot)) {
+      try {
+        const canonical = await realpath(config.outputRoot);
+        if (canonical !== config.outputRoot) throw new MatrixFailure("OUTPUT_NOT_FRESH", "existing outputRoot is a symbolic link or alias");
+        return await this.validate_reusable_pass();
+      } catch (error) {
+        return {
+          schema: SCHEMA,
+          status: "FAIL",
+          request,
+          request_fingerprint: requestHash,
+          reused: false,
+          entries: [],
+          determinism_manifest_sha256: null,
+          failure: failureRecord(error),
+        };
+      }
+    }
+    await mkdir(path.join(config.outputRoot, "runs"), { recursive: true });
+    await writeFile(path.join(config.outputRoot, "source-manifest.json"), `${JSON.stringify(sourceManifest, null, 2)}\n`, { flag: "wx" });
+    try {
+      for (const entry of matrixEntries(config.seed)) {
+        const result = await this.run_entry(entry);
+        if ((await escrowSourceManifest(config.sourceRoot)).sha256 !== sourceManifest.sha256) {
+          throw new MatrixFailure("SOURCE_HASH_DRIFT", `${entry.id} source changed while validation was running`);
+        }
+        this.verify_orders(entry, result.executor_orders);
+        this.compare_artifacts(entry, result.artifacts);
+        entries.push(result);
+      }
+      const lines = entries.flatMap((entry) => entry.artifacts.map((artifact) => `${artifact.sha256}  ${entry.output}/${artifact.file}`));
+      const determinism = `${lines.join("\n")}\n`;
+      await writeFile(path.join(config.outputRoot, "determinism.sha256"), determinism, { flag: "wx" });
+      const summary = {
+        schema: SCHEMA,
+        status: "PASS",
+        request,
+        request_fingerprint: requestHash,
+        reused: false,
+        entries,
+        determinism_manifest_sha256: sha256Hex(Buffer.from(determinism)),
+        failure: null,
+      };
+      await writeFile(path.join(config.outputRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
+      return summary;
+    } catch (error) {
+      const summary = {
         schema: SCHEMA,
         status: "FAIL",
         request,
         request_fingerprint: requestHash,
         reused: false,
-        entries: [],
+        entries,
         determinism_manifest_sha256: null,
         failure: failureRecord(error),
       };
+      await writeFile(path.join(config.outputRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
+      return summary;
     }
   }
-  await mkdir(path.join(config.outputRoot, "runs"), { recursive: true });
-  await writeFile(path.join(config.outputRoot, "source-manifest.json"), `${JSON.stringify(sourceManifest, null, 2)}\n`, { flag: "wx" });
-  const entries = [];
-  const logPrefix = `${path.basename(config.outputRoot).replaceAll(/[^A-Za-z0-9_.-]/g, "-")}-${requestHash.slice(0, 12)}`;
-  let baselineVector = null;
-  const ordersBySlot = new Map();
-  try {
-    for (const entry of matrixEntries(config.seed)) {
-      const result = await runEntry(config, entry, runChild, logPrefix);
-      if ((await escrowSourceManifest(config.sourceRoot)).sha256 !== sourceManifest.sha256) {
-        throw new MatrixFailure("SOURCE_HASH_DRIFT", `${entry.id} source changed while validation was running`);
-      }
-      verifyOrders(ordersBySlot, entry, result.executor_orders);
-      if (entry.mode !== "negative-control") {
-        const vector = artifactVector(result.artifacts);
-        if (baselineVector === null) baselineVector = vector;
-        else if (vector !== baselineVector) {
-          throw new MatrixFailure("DETERMINISM_DRIFT", `${entry.id} artifact receipts differ from the frozen matrix reference`, { entry: entry.id });
-        }
-      } else if (artifactVector(result.artifacts) === baselineVector) {
-        throw new MatrixFailure("NEGATIVE_CONTROL_NOT_DETECTED", `${entry.id} artifact receipts did not expose the disabled canonical merge`, {
-          entry: entry.id,
-          dimension: entry.disabledMerge,
-        });
-      }
-      entries.push(result);
-    }
-    const lines = entries.flatMap((entry) => entry.artifacts.map((artifact) => `${artifact.sha256}  ${entry.output}/${artifact.file}`));
-    const determinism = `${lines.join("\n")}\n`;
-    await writeFile(path.join(config.outputRoot, "determinism.sha256"), determinism, { flag: "wx" });
-    const summary = {
-      schema: SCHEMA,
-      status: "PASS",
-      request,
-      request_fingerprint: requestHash,
-      reused: false,
-      entries,
-      determinism_manifest_sha256: sha256Hex(Buffer.from(determinism)),
-      failure: null,
-    };
-    await writeFile(path.join(config.outputRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
-    return summary;
-  } catch (error) {
-    const summary = {
-      schema: SCHEMA,
-      status: "FAIL",
-      request,
-      request_fingerprint: requestHash,
-      reused: false,
-      entries,
-      determinism_manifest_sha256: null,
-      failure: failureRecord(error),
-    };
-    await writeFile(path.join(config.outputRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
-    return summary;
-  }
+}
+
+export async function runEscrowVerificationMatrix(inputConfig, { runChild = defaultRunChild } = {}) {
+  return (await EscrowVerificationRun.create(inputConfig, runChild)).execute();
 }
 
 async function runGit(sourceRoot, args) {

@@ -322,30 +322,25 @@ struct AccountProjection {
 pub(super) fn project_retail_receipts(
     input: RetailProjectionInput<'_>,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
-    project_receipts(input, ExperienceUpdateMode::Retail, None)
+    project_receipts(input, ExperienceUpdateMode::Retail)
 }
 
 pub(super) fn project_institutional_receipts(
     input: RetailProjectionInput<'_>,
     moment: crate::experience::ExperienceMoment,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
-    project_receipts(
-        input,
-        ExperienceUpdateMode::InstitutionalFacts,
-        Some(moment),
-    )
+    project_receipts(input, ExperienceUpdateMode::InstitutionalFacts(moment))
 }
 
 #[derive(Clone, Copy)]
 enum ExperienceUpdateMode {
     Retail,
-    InstitutionalFacts,
+    InstitutionalFacts(crate::experience::ExperienceMoment),
 }
 
 fn project_receipts(
     input: RetailProjectionInput<'_>,
     mode: ExperienceUpdateMode,
-    moment: Option<crate::experience::ExperienceMoment>,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
     let mut seen = input.seen.clone();
     let mut aggregates = BTreeMap::new();
@@ -409,7 +404,13 @@ fn project_receipts(
         .collect();
     let prepared: Vec<Result<AccountProjection, RetailProjectionError>> = jobs
         .into_par_iter()
-        .map(|(account, orders)| project_retail_account(&input, account, orders, mode, moment))
+        .map(|(account, orders)| {
+            let mut projection = AccountFillProjection::new(&input, account, mode, orders.len());
+            for (order, aggregate) in orders {
+                projection.apply_order(order, aggregate)?;
+            }
+            Ok(projection.finish())
+        })
         .collect();
 
     // Complete every account's fill processing before checking final positions.
@@ -433,32 +434,66 @@ fn project_receipts(
     })
 }
 
-fn project_retail_account(
-    input: &RetailProjectionInput<'_>,
+/// 单个账户在本批 Fill 中的可丢弃累积态；Settlement 的持仓快照仍是权威。
+struct AccountFillProjection<'a> {
     account: AccountId,
-    orders: Vec<(RetailOrderIdentity, Aggregate)>,
     mode: ExperienceUpdateMode,
-    moment: Option<crate::experience::ExperienceMoment>,
-) -> Result<AccountProjection, RetailProjectionError> {
-    let mut state = input.retail_experience.get(&account).cloned();
-    let before_positions = input.positions_before.get(&account);
-    let mut running_qty = BTreeMap::new();
-    let mut running_positions = match mode {
-        ExperienceUpdateMode::InstitutionalFacts => before_positions.cloned().unwrap_or_default(),
-        ExperienceUpdateMode::Retail => BTreeMap::new(),
-    };
-    let mut events = Vec::with_capacity(orders.len());
-    for (order, aggregate) in orders {
-        let before_qty = *running_qty.entry(order.stock.clone()).or_insert_with(|| {
-            before_positions
-                .and_then(|positions| positions.get(&order.stock))
-                .map_or(0, |position| position.qty)
-        });
+    state: Option<RetailExperienceState>,
+    market_minute: u64,
+    positions_before: Option<&'a BTreeMap<StockCode, Position>>,
+    positions_after: Option<&'a BTreeMap<StockCode, Position>>,
+    running_qty: BTreeMap<StockCode, u32>,
+    running_positions: BTreeMap<StockCode, Position>,
+    events: Vec<RetailReceiptEvent>,
+}
+
+impl<'a> AccountFillProjection<'a> {
+    fn new(
+        input: &'a RetailProjectionInput<'_>,
+        account: AccountId,
+        mode: ExperienceUpdateMode,
+        order_count: usize,
+    ) -> Self {
+        let positions_before = input.positions_before.get(&account);
+        let running_positions = match mode {
+            ExperienceUpdateMode::InstitutionalFacts(_) => {
+                positions_before.cloned().unwrap_or_default()
+            }
+            ExperienceUpdateMode::Retail => BTreeMap::new(),
+        };
+        Self {
+            account,
+            mode,
+            state: input.retail_experience.get(&account).cloned(),
+            market_minute: input.market_minute,
+            positions_before,
+            positions_after: input.positions_after.get(&account),
+            running_qty: BTreeMap::new(),
+            running_positions,
+            events: Vec::with_capacity(order_count),
+        }
+    }
+
+    fn apply_order(
+        &mut self,
+        order: RetailOrderIdentity,
+        aggregate: Aggregate,
+    ) -> Result<(), RetailProjectionError> {
+        let before_qty = *self
+            .running_qty
+            .entry(order.stock.clone())
+            .or_insert_with(|| {
+                self.positions_before
+                    .and_then(|positions| positions.get(&order.stock))
+                    .map_or(0, |position| position.qty())
+            });
         let after_qty = match aggregate.side {
             Side::Buy => before_qty.checked_add(aggregate.qty),
             Side::Sell => before_qty.checked_sub(aggregate.qty),
         }
-        .ok_or(RetailProjectionError::PositionTransition { account })?;
+        .ok_or(RetailProjectionError::PositionTransition {
+            account: self.account,
+        })?;
         let average = Money::from_cents(
             aggregate
                 .gross
@@ -469,14 +504,18 @@ fn project_retail_account(
         if average <= Money::ZERO {
             return Err(RetailProjectionError::NonPositiveAveragePrice { order: order.order });
         }
-        let cost_before = before_positions
+        let cost_before = self
+            .positions_before
             .and_then(|positions| positions.get(&order.stock))
             .and_then(Position::cost_price)
             .filter(|cost| *cost > Money::ZERO);
-        let experience = state
-            .as_mut()
-            .ok_or(RetailProjectionError::MissingRetailExperience { account })?;
-        match mode {
+        let experience =
+            self.state
+                .as_mut()
+                .ok_or(RetailProjectionError::MissingRetailExperience {
+                    account: self.account,
+                })?;
+        match self.mode {
             ExperienceUpdateMode::Retail => experience.record_fill_with_order(
                 &order.stock,
                 aggregate.side,
@@ -484,10 +523,10 @@ fn project_retail_account(
                 before_qty,
                 after_qty,
                 cost_before,
-                input.market_minute,
+                self.market_minute,
                 Some(order.order.0),
             )?,
-            ExperienceUpdateMode::InstitutionalFacts => {
+            ExperienceUpdateMode::InstitutionalFacts(moment) => {
                 let fees = aggregate
                     .charged
                     .commission
@@ -497,25 +536,27 @@ fn project_retail_account(
                 let mut realized_profit = false;
                 match aggregate.side {
                     Side::Buy => {
-                        let position =
-                            running_positions
-                                .entry(order.stock.clone())
-                                .or_insert(Position {
-                                    qty: 0,
-                                    t1_locked: 0,
-                                    invested_cents: 0,
-                                    recovered_cents: 0,
-                                });
-                        position.qty = after_qty;
-                        position.invested_cents = position
-                            .invested_cents
+                        let position = self
+                            .running_positions
+                            .entry(order.stock.clone())
+                            .or_insert_with(|| Position::from_restored_parts(0, 0, 0, 0));
+                        let invested_cents = position
+                            .invested_cents()
                             .checked_add(aggregate.gross.cents())
                             .ok_or(RetailProjectionError::Overflow)?;
+                        *position = Position::from_restored_parts(
+                            after_qty,
+                            position.t1_locked(),
+                            invested_cents,
+                            position.recovered_cents(),
+                        );
                     }
                     Side::Sell => {
-                        let position = running_positions
-                            .get(&order.stock)
-                            .ok_or(RetailProjectionError::PositionTransition { account })?;
+                        let position = self.running_positions.get(&order.stock).ok_or(
+                            RetailProjectionError::PositionTransition {
+                                account: self.account,
+                            },
+                        )?;
                         if after_qty == 0 {
                             let paid = experience
                                 .feedback
@@ -531,20 +572,25 @@ fn project_retail_account(
                             let total_fees = paid
                                 .add(fees)
                                 .map_err(|_| RetailProjectionError::Overflow)?;
-                            realized_profit = i128::from(position.recovered_cents)
+                            realized_profit = i128::from(position.recovered_cents())
                                 + i128::from(aggregate.gross.cents())
-                                > i128::from(position.invested_cents)
+                                > i128::from(position.invested_cents())
                                     + i128::from(total_fees.cents());
                         }
-                        if let Some(position) = running_positions.get_mut(&order.stock) {
-                            position.qty = after_qty;
-                            position.recovered_cents = position
-                                .recovered_cents
+                        if let Some(position) = self.running_positions.get_mut(&order.stock) {
+                            let recovered_cents = position
+                                .recovered_cents()
                                 .checked_add(aggregate.gross.cents())
                                 .ok_or(RetailProjectionError::Overflow)?;
+                            *position = Position::from_restored_parts(
+                                after_qty,
+                                position.t1_locked(),
+                                position.invested_cents(),
+                                recovered_cents,
+                            );
                         }
                         if after_qty == 0 {
-                            running_positions.remove(&order.stock);
+                            self.running_positions.remove(&order.stock);
                         }
                     }
                 }
@@ -557,13 +603,13 @@ fn project_retail_account(
                     fees,
                     realized_profit,
                     order.order.0,
-                    moment.expect("institutional fact projection supplies the full moment"),
+                    moment,
                 )?;
             }
         }
-        running_qty.insert(order.stock.clone(), after_qty);
-        events.push(RetailReceiptEvent::Filled {
-            account,
+        self.running_qty.insert(order.stock.clone(), after_qty);
+        self.events.push(RetailReceiptEvent::Filled {
+            account: self.account,
             stock: order.stock,
             side: aggregate.side,
             order: order.order,
@@ -571,30 +617,34 @@ fn project_retail_account(
             gross: aggregate.gross,
             charged: aggregate.charged,
         });
+        Ok(())
     }
 
-    let final_position_error = running_qty.iter().find_map(|(stock, qty)| {
-        let settled_qty = input
-            .positions_after
-            .get(&account)
-            .and_then(|positions| positions.get(stock))
-            .map_or(0, |position| position.qty);
-        (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition { account })
-    });
-    if let (ExperienceUpdateMode::Retail, Some(state)) = (mode, &mut state) {
-        let held = input
-            .positions_after
-            .get(&account)
-            .map(|positions| positions.keys().cloned().collect())
-            .unwrap_or_default();
-        state.prune_watchlist(&held);
+    // 对账错误留到所有 job 的 Fill 处理错误检查之后，不能提前变成 Err。
+    fn finish(mut self) -> AccountProjection {
+        let final_position_error = self.running_qty.iter().find_map(|(stock, qty)| {
+            let settled_qty = self
+                .positions_after
+                .and_then(|positions| positions.get(stock))
+                .map_or(0, |position| position.qty());
+            (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition {
+                account: self.account,
+            })
+        });
+        if let (ExperienceUpdateMode::Retail, Some(state)) = (self.mode, &mut self.state) {
+            let held = self
+                .positions_after
+                .map(|positions| positions.keys().cloned().collect())
+                .unwrap_or_default();
+            state.prune_watchlist(&held);
+        }
+        AccountProjection {
+            account: self.account,
+            state: self.state,
+            events: self.events,
+            final_position_error,
+        }
     }
-    Ok(AccountProjection {
-        account,
-        state,
-        events,
-        final_position_error,
-    })
 }
 
 /// Produces the deterministic ReceiptAggregation receipt subset that this Settlement transaction has

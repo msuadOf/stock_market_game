@@ -27,7 +27,7 @@ impl GameSession {
                 _ => PatienceStyle::Other,
             },
         };
-        assess_urgency(&inputs, &self.urgency_policy)
+        assess_urgency(&inputs, &self.state.urgency_policy)
             .unwrap_or_else(|error| panic!("initial plan urgency failed for {account:?}: {error}"))
             .urgency
     }
@@ -55,12 +55,14 @@ impl GameSession {
         market_view: &MarketView,
     ) -> (UrgencyAssessment, RiskUrgencyAssessment) {
         let experience = self
-            .belief_books
-            .get(&plan.account)
+            .state
+            .belief_participants
+            .get(&plan.account())
+            .map(|participant| participant.belief())
             .unwrap_or_else(|| {
                 panic!(
                     "plan account {:?} has no personal belief book",
-                    plan.account
+                    plan.account()
                 )
             })
             .experience();
@@ -69,29 +71,29 @@ impl GameSession {
                 reason: "no own-observed institution equity peak".to_owned(),
             },
             Some(peak) => {
-                let account = &self.accounts[&plan.account];
+                let account = &self.state.accounts[&plan.account()];
                 let equity = account
-                    .positions
+                    .positions()
                     .iter()
-                    .try_fold(account.cash, |equity, (code, position)| {
+                    .try_fold(account.cash(), |equity, (code, position)| {
                         equity.add(
                             market_view.stocks[code]
                                 .last_price
-                                .mul_shares(position.qty)?,
+                                .mul_shares(position.qty())?,
                         )
                     })
                     .unwrap_or_else(|error| {
                         panic!("institution equity observation failed: {error}")
                     });
                 let positions = account
-                    .positions
+                    .positions()
                     .iter()
                     .map(|(code, position)| {
                         let price = market_view.stocks[code].last_price;
                         (
                             code.clone(),
                             crate::observation::RiskPositionInput {
-                                qty: position.qty,
+                                qty: position.qty(),
                                 cost_price: position.cost_price().filter(|cost| cost.cents() > 0),
                                 last_price: price,
                                 peak_price_since_entry: experience
@@ -105,22 +107,22 @@ impl GameSession {
                     .collect();
                 // 本次自身权益也属于观察；不是全市场或其他机构共享的峰值。
                 let observed = build_account_risk_observation(
-                    account.cash,
+                    account.cash(),
                     &positions,
                     experience.reference_equity,
                     Some(peak.max(equity)),
                 )
                 .unwrap_or_else(|error| panic!("institution risk observation failed: {error}"));
-                let reducing = plan.direction == Side::Sell
+                let reducing = plan.direction() == Side::Sell
                     && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
                     && account
-                        .positions
-                        .get(&plan.code)
-                        .is_some_and(|position| position.qty > 0);
+                        .positions()
+                        .get(plan.code())
+                        .is_some_and(|position| position.qty() > 0);
                 // 只提升已有卖出减仓计划的紧迫度，绝不按回撤新建卖出方向。
-                assess_existing_reduction_urgency(reducing, &observed, &self.urgency_policy)
+                assess_existing_reduction_urgency(reducing, &observed, &self.state.urgency_policy)
                     .unwrap_or_else(|error| {
-                        panic!("plan risk urgency failed for {:?}: {error}", plan.plan_id)
+                        panic!("plan risk urgency failed for {:?}: {error}", plan.plan_id())
                     })
             }
         };
@@ -132,40 +134,41 @@ impl GameSession {
             } => (*risk_reduction_active, *account_drawdown_bp),
             RiskUrgencyAssessment::Unavailable { .. } => (false, None),
         };
-        let belief = &self.belief_books[&plan.account];
+        let belief = &self.state.belief_participants[&plan.account()].belief();
         let behavior = self.institution_behavior(
-            plan.account,
+            plan.account(),
             belief,
-            &plan.code,
+            plan.code(),
             market_view,
-            match plan.status {
+            match plan.status() {
                 PlanStatus::Paused { reason } => Some(reason),
                 _ => None,
             },
         );
         let inputs = UrgencyInputs {
-            side: plan.direction,
+            side: plan.direction(),
             return_30min_bp,
             return_1min_bp,
-            risk_pressure_pause: plan.direction == Side::Buy
+            risk_pressure_pause: plan.direction() == Side::Buy
                 && behavior.risk_pressure_pause == Some(true),
-            adverse_selection_pause: plan.direction == Side::Buy
+            adverse_selection_pause: plan.direction() == Side::Buy
                 && behavior.adverse_selection_pause,
             risk_reduction_active,
             account_drawdown_bp,
             remaining_trading_days: u32::try_from(
                 plan.last_valid_trading_day()
-                    .saturating_sub(u64::from(self.day)),
+                    .saturating_sub(u64::from(self.state.day)),
             )
             .expect("live plan remaining days fit its u32 horizon"),
-            confidence_bp: plan.confidence_bp,
-            style: match self.belief_style(plan.account) {
+            confidence_bp: plan.confidence_bp(),
+            style: match self.belief_style(plan.account()) {
                 Some(crate::strategy::InstitutionStyle::DeepValue) => PatienceStyle::DeepValue,
                 _ => PatienceStyle::Other,
             },
         };
-        let urgency = assess_urgency(&inputs, &self.urgency_policy)
-            .unwrap_or_else(|error| panic!("plan urgency failed for {:?}: {error}", plan.plan_id));
+        let urgency = assess_urgency(&inputs, &self.state.urgency_policy).unwrap_or_else(|error| {
+            panic!("plan urgency failed for {:?}: {error}", plan.plan_id())
+        });
         (urgency, risk)
     }
 }

@@ -84,7 +84,7 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
 fn saved_filled_identity_cannot_also_be_an_active_order() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = session.setup.stocks[0].code.clone();
+    let code = session.state.setup.stocks[0].code.clone();
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
@@ -110,6 +110,73 @@ fn saved_filled_identity_cannot_also_be_an_active_order() {
         matches!(validate_saved_order_state(&session, &save), Err(SessionError::InvalidSave(message)) if message.contains("duplicate saved order id"))
     );
 }
+
+#[cfg(test)]
+#[test]
+fn save_validation_context_preserves_phase_boundaries_and_shared_domain_facts() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut save = session.save().unwrap();
+    save.setup.auction_ticks = 30;
+    save.setup.closing_auction_ticks = 5;
+    save.setup.validate().unwrap();
+    for (tick, day, phase, market_minute) in [
+        (0, 0, TradingPhase::CallAuction, 0),
+        (19, 0, TradingPhase::CallAuction, 0),
+        (20, 0, TradingPhase::PreOpen, 0),
+        (29, 0, TradingPhase::PreOpen, 0),
+        (30, 0, TradingPhase::Continuous, 0),
+        (94, 0, TradingPhase::Continuous, 236),
+        (95, 0, TradingPhase::ClosingAuction, 240),
+        (99, 0, TradingPhase::ClosingAuction, 240),
+        (100, 1, TradingPhase::CallAuction, 240),
+    ] {
+        save.snapshot.tick = tick;
+        let (saved_day, day_tick, _, saved_phase) =
+            SaveValidationContext::derive_trading_clock(&save).unwrap();
+        assert_eq!((saved_day, day_tick, saved_phase), (day, tick % 100, phase));
+        let completed_ticks = day_tick.saturating_sub(30).min(65);
+        let current_market_minute = saved_day * u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY)
+            + u64::from(crate::completed_market_minute_count(completed_ticks, 65).unwrap());
+        let context = SaveValidationContext::new(
+            &save,
+            saved_day,
+            day_tick,
+            saved_phase,
+            save.setup
+                .stocks
+                .iter()
+                .map(|stock| stock.code.clone())
+                .collect(),
+            1,
+            current_market_minute,
+        );
+        assert_eq!(context.current_market_minute, market_minute);
+        assert_eq!(context.stock_codes.len(), save.setup.stocks.len());
+        assert_eq!(
+            context.issuer_ids.len(),
+            save.company_operations.companies.len()
+        );
+        assert_eq!(context.config.lot_size, 100);
+        validate_personal_states(&context).unwrap();
+        validate_plan_contract(&context).unwrap();
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn save_validation_context_preserves_first_error_before_domain_checks() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut save = session.save().unwrap();
+    save.snapshot.markets.clear();
+    save.information_states.clear();
+    assert!(
+        matches!(validate_save_slot(&save), Err(SessionError::InvalidSave(message)) if message == "snapshot market set does not exactly match setup")
+    );
+    save.snapshot.tick = (u64::from(u32::MAX) + 1) * save.setup.ticks_per_day;
+    assert!(
+        matches!(validate_save_slot(&save), Err(SessionError::InvalidSave(message)) if message == format!("tick {} exceeds the supported trading-day range", save.snapshot.tick))
+    );
+}
 pub(super) use v2::{
     capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
 };
@@ -118,6 +185,75 @@ pub use v2::{
     ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2, SaveRuntimeV2,
     SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
+
+/// 单次 SaveSlot 校验的只读事实：派生值在原门禁位置完成后才组合。
+/// 不绑定恢复后的 GameSession，也不推断或修补可编辑存档事实。
+struct SaveValidationContext<'a> {
+    save: &'a SaveSlot,
+    config: &'a GameConfig,
+    saved_day: u64,
+    day_tick: u64,
+    phase: TradingPhase,
+    stock_codes: BTreeSet<StockCode>,
+    issuer_ids: BTreeSet<&'a crate::company::CompanyId>,
+    npc_count: u64,
+    current_market_minute: u64,
+}
+
+impl<'a> SaveValidationContext<'a> {
+    fn new(
+        save: &'a SaveSlot,
+        saved_day: u64,
+        day_tick: u64,
+        phase: TradingPhase,
+        stock_codes: BTreeSet<StockCode>,
+        npc_count: u64,
+        current_market_minute: u64,
+    ) -> Self {
+        Self {
+            save,
+            config: &save.setup.config,
+            saved_day,
+            day_tick,
+            phase,
+            stock_codes,
+            issuer_ids: save.company_operations.companies.keys().collect(),
+            npc_count,
+            current_market_minute,
+        }
+    }
+
+    /// 仅在 schema/setup 守卫通过后调用，维持交易日范围错误先于集合校验。
+    fn derive_trading_clock(
+        save: &SaveSlot,
+    ) -> Result<(u64, u64, u64, TradingPhase), SessionError> {
+        let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
+        if saved_day > u64::from(u32::MAX) {
+            return Err(SessionError::InvalidSave(format!(
+                "tick {} exceeds the supported trading-day range",
+                save.snapshot.tick
+            )));
+        }
+        let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
+        let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
+        let phase = if day_tick < auction_entry_ticks {
+            TradingPhase::CallAuction
+        } else if day_tick < save.setup.auction_ticks {
+            TradingPhase::PreOpen
+        } else if day_tick
+            >= save
+                .setup
+                .ticks_per_day
+                .saturating_sub(save.setup.closing_auction_ticks)
+        {
+            TradingPhase::ClosingAuction
+        } else {
+            TradingPhase::Continuous
+        };
+
+        Ok((saved_day, day_tick, auction_entry_ticks, phase))
+    }
+}
 
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_schema_version(save.schema_version)?;
@@ -131,29 +267,8 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
 
-    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
-    if saved_day > u64::from(u32::MAX) {
-        return Err(SessionError::InvalidSave(format!(
-            "tick {} exceeds the supported trading-day range",
-            save.snapshot.tick
-        )));
-    }
-    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
-    let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
-    let saved_phase = if day_tick < auction_entry_ticks {
-        TradingPhase::CallAuction
-    } else if day_tick < save.setup.auction_ticks {
-        TradingPhase::PreOpen
-    } else if day_tick
-        >= save
-            .setup
-            .ticks_per_day
-            .saturating_sub(save.setup.closing_auction_ticks)
-    {
-        TradingPhase::ClosingAuction
-    } else {
-        TradingPhase::Continuous
-    };
+    let (saved_day, day_tick, auction_entry_ticks, saved_phase) =
+        SaveValidationContext::derive_trading_clock(save)?;
 
     let expected_markets: BTreeSet<StockCode> = save
         .setup
@@ -361,6 +476,16 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let current_market_minute = day_start.checked_add(completed_minutes).ok_or_else(|| {
         SessionError::InvalidSave("experience market-minute overflow".to_string())
     })?;
+    let context = SaveValidationContext::new(
+        save,
+        saved_day,
+        day_tick,
+        saved_phase,
+        expected_markets,
+        npc_count,
+        current_market_minute,
+    );
+    let expected_markets = &context.stock_codes;
     let day_end_market_minute = day_start
         .checked_add(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .ok_or_else(|| {
@@ -368,7 +493,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         })?;
     let mut lifecycle_keys = BTreeSet::new();
     for lifecycle in &save.npc_order_lifecycles {
-        if lifecycle.account.0 == 0 || lifecycle.account.0 > npc_count {
+        if lifecycle.account.0 == 0 || lifecycle.account.0 > context.npc_count {
             return Err(SessionError::InvalidSave(format!(
                 "NPC quote lifecycle account {} is not an NPC",
                 lifecycle.account.0
@@ -378,13 +503,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             || lifecycle.order_id.0 == 0
             || lifecycle.order_id.0 >= save.next_order_id
             || lifecycle.placed_market_minute < day_start
-            || lifecycle.placed_market_minute > current_market_minute
+            || lifecycle.placed_market_minute > context.current_market_minute
             || lifecycle.expires_market_minute <= lifecycle.placed_market_minute
             || lifecycle.expires_market_minute > day_end_market_minute
-            || (saved_phase == TradingPhase::Continuous
-                && lifecycle.expires_market_minute <= current_market_minute)
-            || (saved_phase != TradingPhase::Continuous
-                && saved_phase != TradingPhase::ClosingAuction)
+            || (context.phase == TradingPhase::Continuous
+                && lifecycle.expires_market_minute <= context.current_market_minute)
+            || (context.phase != TradingPhase::Continuous
+                && context.phase != TradingPhase::ClosingAuction)
         {
             return Err(SessionError::InvalidSave(format!(
                 "NPC quote lifecycle for account {} is invalid",
@@ -432,10 +557,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 || plan.child_qty == 0
                 || plan.child_qty > plan.target_qty
                 || plan.filled_qty >= plan.target_qty
-                || plan.target_qty % save.setup.config.lot_size != 0
-                || plan.child_qty % save.setup.config.lot_size != 0
+                || plan.target_qty % context.config.lot_size != 0
+                || plan.child_qty % context.config.lot_size != 0
                 || plan.limit_price.cents() <= 0
-                || plan.expires_market_minute <= current_market_minute
+                || plan.expires_market_minute <= context.current_market_minute
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} violates execution-plan invariants",
@@ -507,8 +632,8 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                     id.0, code.0
                 )));
             }
-            if stock.last_trade_market_minute > current_market_minute
-                || stock.last_observed_market_minute > current_market_minute
+            if stock.last_trade_market_minute > context.current_market_minute
+                || stock.last_observed_market_minute > context.current_market_minute
             {
                 return Err(SessionError::InvalidSave(format!(
                     "retail account {} stock {} experience reads a future market minute",
@@ -669,7 +794,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
 
     for (id, account) in &save.snapshot.accounts {
         for (code, position) in &account.positions {
-            if (!save.setup.t1_enabled || saved_phase == TradingPhase::CallAuction)
+            if (!save.setup.t1_enabled || context.phase == TradingPhase::CallAuction)
                 && position.t1_locked != 0
             {
                 return Err(SessionError::InvalidSave(format!(
@@ -682,7 +807,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
 
     let daily_candle_markets: BTreeSet<StockCode> =
         save.snapshot.daily_candles.keys().cloned().collect();
-    if daily_candle_markets != expected_markets {
+    if daily_candle_markets != *expected_markets {
         return Err(SessionError::InvalidSave(
             "daily-candle market set does not exactly match setup".to_string(),
         ));
@@ -694,7 +819,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        let expected_candles = usize::try_from(saved_day)
+        let expected_candles = usize::try_from(context.saved_day)
             .ok()
             .and_then(|completed_days| completed_days.checked_add(360))
             .ok_or_else(|| {
@@ -775,11 +900,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     }
     let active_candle_markets: BTreeSet<StockCode> =
         save.snapshot.active_daily_candles.keys().cloned().collect();
-    let active_candle_set_is_valid = if day_tick == 0 || day_tick < auction_entry_ticks {
-        active_candle_markets.is_empty()
-    } else {
-        active_candle_markets == expected_markets
-    };
+    let active_candle_set_is_valid =
+        if context.day_tick == 0 || context.day_tick < auction_entry_ticks {
+            active_candle_markets.is_empty()
+        } else {
+            active_candle_markets == *expected_markets
+        };
     if !active_candle_set_is_valid {
         return Err(SessionError::InvalidSave(
             "active-candle market set does not match the current trading tick".to_string(),
@@ -809,8 +935,8 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
 
     validate_company_domain(save)?;
     validate_disclosure_cursors(save)?;
-    validate_personal_states(save)?;
-    validate_plan_contract(save)?;
+    validate_personal_states(&context)?;
+    validate_plan_contract(&context)?;
     Ok(())
 }
 
@@ -972,8 +1098,9 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
 }
 
 /// 个体决策链状态校验：三图同键、报告引用存在、无前视/未来观察。
-fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
-    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
+fn validate_personal_states(context: &SaveValidationContext) -> Result<(), SessionError> {
+    let save = context.save;
+    let saved_day = context.saved_day;
     let belief_keys: BTreeSet<AccountId> = save.belief_books.keys().copied().collect();
     let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
     let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
@@ -987,13 +1114,11 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 .to_string(),
         ));
     }
-    let npc_count = u64::from(save.setup.npcs.retail_count)
-        + u64::from(save.setup.npcs.inst_count)
-        + u64::from(save.setup.npcs.hot_count);
+    let npc_count = context.npc_count;
     let current = save.civil_clock.current_date;
-    let issuer_ids: BTreeSet<&crate::company::CompanyId> =
-        save.company_operations.companies.keys().collect();
-    let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
+    let issuer_ids = &context.issuer_ids;
+    let stock_codes = &context.stock_codes;
+    let current_market_minute = context.current_market_minute;
     for (id, state) in &save.information_states {
         if state.owner() != *id {
             return Err(SessionError::InvalidSave(format!(
@@ -1056,24 +1181,6 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
             }
         }
     }
-    let continuous_ticks = save
-        .setup
-        .ticks_per_day
-        .saturating_sub(save.setup.auction_ticks)
-        .saturating_sub(save.setup.closing_auction_ticks);
-    let completed_ticks = (save.snapshot.tick % save.setup.ticks_per_day)
-        .saturating_sub(save.setup.auction_ticks)
-        .min(continuous_ticks);
-    let completed_minutes = u64::from(
-        crate::completed_market_minute_count(completed_ticks, continuous_ticks)
-            .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
-    );
-    let current_market_minute = saved_day
-        .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
-        .and_then(|offset| offset.checked_add(completed_minutes))
-        .ok_or_else(|| {
-            SessionError::InvalidSave("price-memory market-minute overflow".to_string())
-        })?;
     for (id, memory) in &save.price_memories {
         let cap = save
             .setup
@@ -1111,8 +1218,7 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
             }
         }
     }
-    let saved_issuers: BTreeSet<&crate::company::CompanyId> =
-        save.company_operations.companies.keys().collect();
+    let saved_issuers = &context.issuer_ids;
     for (id, book) in &save.belief_books {
         if book.npc() != *id {
             return Err(SessionError::InvalidSave(format!(
@@ -1300,28 +1406,27 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
 }
 
 /// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
-fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
-    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
-    let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
-    let npc_count = u64::from(save.setup.npcs.retail_count)
-        + u64::from(save.setup.npcs.inst_count)
-        + u64::from(save.setup.npcs.hot_count);
+fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), SessionError> {
+    let save = context.save;
+    let saved_day = context.saved_day;
+    let stock_codes = &context.stock_codes;
+    let npc_count = context.npc_count;
     for plan_id in save.plans.plan_ids() {
         let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
-        if plan.account.0 > npc_count {
+        if plan.account().0 > npc_count {
             return Err(SessionError::InvalidSave(format!(
                 "plan {plan_id:?} belongs to unknown account {:?}",
-                plan.account
+                plan.account()
             )));
         }
-        if !stock_codes.contains(&plan.code) {
+        if !stock_codes.contains(plan.code()) {
             return Err(SessionError::InvalidSave(format!(
                 "plan {plan_id:?} targets unknown stock {:?}",
-                plan.code
+                plan.code()
             )));
         }
-        if let crate::plans::PlanTarget::ShareCount(target) = plan.target {
-            if target == 0 || plan.filled_qty > target {
+        if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
+            if target == 0 || plan.filled_qty() > target {
                 return Err(SessionError::InvalidSave(format!(
                     "plan {plan_id:?} share target/filled progress is invalid"
                 )));
@@ -1338,7 +1443,7 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                     "parent order for account {account:?} {code:?} links to {plan_id:?}: {error}"
                 ))
             })?;
-            if linked.is_terminal() || linked.account != *account || linked.code != *code {
+            if linked.is_terminal() || linked.account() != *account || linked.code() != code {
                 return Err(SessionError::InvalidSave(format!(
                     "parent order for account {account:?} {code:?} links to an incompatible plan {plan_id:?}"
                 )));
@@ -1484,12 +1589,13 @@ pub(super) fn validate_saved_order_state(
     };
 
     for (code, orders) in &save.auction_orders {
-        let market = session.markets.get(code).ok_or_else(|| {
+        let market = session.state.markets.get(code).ok_or_else(|| {
             SessionError::InvalidSave(format!(
                 "save auction order references unknown stock {code:?}"
             ))
         })?;
         let stock = session
+            .state
             .setup
             .stocks
             .iter()
@@ -1503,7 +1609,7 @@ pub(super) fn validate_saved_order_state(
             .up_stop()
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
         for order in orders {
-            if !session.accounts.contains_key(&order.owner) {
+            if !session.state.accounts.contains_key(&order.owner) {
                 return Err(SessionError::InvalidSave(format!(
                     "save auction order references unknown account {:?}",
                     order.owner
@@ -1512,7 +1618,9 @@ pub(super) fn validate_saved_order_state(
             if order.qty == 0
                 || order.qty > stock.category.max_order_qty(false)
                 || (order.side == Side::Buy
-                    && !order.qty.is_multiple_of(session.setup.config.lot_size))
+                    && !order
+                        .qty
+                        .is_multiple_of(session.state.setup.config.lot_size))
                 || order.limit < down
                 || order.limit > up
                 || order.limit.cents() % tick.cents() != 0
@@ -1542,7 +1650,7 @@ pub(super) fn validate_saved_order_state(
             )?;
             max_order_id = max_order_id.max(order.order_id);
             reservations.record(
-                &session.setup.config,
+                &session.state.setup.config,
                 order.owner,
                 code,
                 ReservationOrder {
@@ -1556,12 +1664,13 @@ pub(super) fn validate_saved_order_state(
     }
 
     for (code, orders) in &save.resting_orders {
-        let market = session.markets.get(code).ok_or_else(|| {
+        let market = session.state.markets.get(code).ok_or_else(|| {
             SessionError::InvalidSave(format!(
                 "save resting order references unknown stock {code:?}"
             ))
         })?;
         let stock = session
+            .state
             .setup
             .stocks
             .iter()
@@ -1576,7 +1685,7 @@ pub(super) fn validate_saved_order_state(
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
         for order in orders {
             let original_qty = order.original_qty;
-            if !session.accounts.contains_key(&order.owner)
+            if !session.state.accounts.contains_key(&order.owner)
                 || order.qty == 0
                 || original_qty > stock.category.max_order_qty(false)
                 || order.filled_value.cents() < 0
@@ -1620,7 +1729,7 @@ pub(super) fn validate_saved_order_state(
             )?;
             max_order_id = max_order_id.max(order.id.0);
             reservations.record(
-                &session.setup.config,
+                &session.state.setup.config,
                 order.owner,
                 code,
                 ReservationOrder {
@@ -1642,10 +1751,11 @@ pub(super) fn validate_saved_order_state(
     let SavedReservations { cash, sells, .. } = reservations;
     for (owner, reserved) in &cash {
         let available = session
+            .state
             .accounts
             .get(owner)
             .expect("saved order owner was validated")
-            .cash;
+            .cash();
         if *reserved > i128::from(available.cents()) {
             return Err(SessionError::InvalidSave(format!(
                 "saved orders over-reserve cash for {owner:?}"
@@ -1654,6 +1764,7 @@ pub(super) fn validate_saved_order_state(
     }
     for ((owner, code), reserved) in &sells {
         let sellable = session
+            .state
             .accounts
             .get(owner)
             .expect("saved order owner was validated")
@@ -1666,16 +1777,18 @@ pub(super) fn validate_saved_order_state(
     }
     for lifecycle in &save.npc_order_lifecycles {
         let account = session
+            .state
             .accounts
             .get(&lifecycle.account)
             .expect("lifecycle account was validated against the NPC range");
-        if account.kind == AccountKind::Player {
+        if account.kind() == AccountKind::Player {
             return Err(SessionError::InvalidSave(format!(
                 "NPC quote lifecycle account {} is a player",
                 lifecycle.account.0
             )));
         }
         let live_orders: Vec<_> = session
+            .state
             .markets
             .get(&lifecycle.code)
             .expect("lifecycle stock was validated against setup")
@@ -1829,6 +1942,7 @@ impl SavedReservations {
         }
         if filled_qty > 0 {
             let market = session
+                .state
                 .markets
                 .get(code)
                 .expect("saved order market was validated");
@@ -1855,7 +1969,7 @@ impl SavedReservations {
                 )));
             }
         }
-        let lot_size = u64::from(session.setup.config.lot_size);
+        let lot_size = u64::from(session.state.setup.config.lot_size);
         if side == Side::Buy {
             if !u64::from(original_qty).is_multiple_of(lot_size) {
                 return Err(SessionError::InvalidSave(format!(
@@ -1867,6 +1981,7 @@ impl SavedReservations {
 
         let sellable = u64::from(
             session
+                .state
                 .accounts
                 .get(&owner)
                 .expect("saved order owner was validated")

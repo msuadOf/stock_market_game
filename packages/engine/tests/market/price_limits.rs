@@ -3,50 +3,6 @@
 //!（卖一/买一回退）、低价十档放宽、涨跌停边界闭区间接受与越界拒绝。
 
 use super::*;
-use engine::LimitPrice;
-
-#[test]
-fn symbolic_limit_prices_resolve_at_the_current_authoritative_boundary() {
-    let mut market = mk_market();
-    for (side, price, caged, uncaged) in [
-        (Side::Buy, LimitPrice::Highest, 1020, 1100),
-        (Side::Sell, LimitPrice::Lowest, 980, 900),
-        (Side::Sell, LimitPrice::Highest, 1100, 1100),
-        (Side::Buy, LimitPrice::Lowest, 900, 900),
-    ] {
-        assert_eq!(
-            market.resolve_limit_price(side, price, true).unwrap(),
-            Money::from_cents(caged)
-        );
-        assert_eq!(
-            market.resolve_limit_price(side, price, false).unwrap(),
-            Money::from_cents(uncaged)
-        );
-    }
-    assert_eq!(
-        market
-            .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
-            .unwrap(),
-        Money::from_cents(1_007)
-    );
-    market.place(sell(1, 1_050, 100)).unwrap();
-    assert_eq!(
-        market
-            .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
-            .unwrap(),
-        Money::from_cents(1_071)
-    );
-    market.set_last_close(Money::from_cents(i64::MAX));
-    assert!(market
-        .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
-        .is_err());
-    assert_eq!(
-        market
-            .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
-            .unwrap(),
-        Money::from_cents(1_007)
-    );
-}
 
 #[test]
 fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
@@ -77,13 +33,6 @@ fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
         low_price_narrow_limit.down_stop().unwrap(),
         Money::from_cents(1)
     );
-}
-
-#[test]
-fn price_limit_overflow_is_an_explicit_error_not_a_panic() {
-    let mut market = mk_market();
-    market.set_last_close(Money::from_cents(i64::MAX));
-    assert!(market.up_stop().is_err());
 }
 
 #[test]
@@ -168,28 +117,6 @@ fn legal_limit_order_prices_intersect_the_cage_with_daily_limits() {
         market.limit_order_price_bound(Side::Sell, true).unwrap(),
         Money::from_cents(900)
     );
-}
-
-#[test]
-fn legal_limit_order_prices_keep_the_wider_ten_tick_cage_and_propagate_errors() {
-    let mut market = Market::new(
-        StockCode("LOW_PRICE".to_string()),
-        Money::from_cents(285),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap();
-    assert_eq!(
-        market.limit_order_price_bound(Side::Buy, true).unwrap(),
-        Money::from_cents(295)
-    );
-    assert_eq!(
-        market.limit_order_price_bound(Side::Sell, true).unwrap(),
-        Money::from_cents(275)
-    );
-    market.set_last_close(Money::from_cents(i64::MAX));
-    assert!(market.limit_order_price_bound(Side::Buy, true).is_err());
-    assert!(market.limit_order_price_bound(Side::Buy, false).is_err());
 }
 
 #[test]

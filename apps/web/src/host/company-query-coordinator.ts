@@ -15,6 +15,7 @@ import {
   startCompanyQuery,
 } from "../store/company-slice.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
+import { CompanyRequestRegistry } from "./company-request-registry.ts";
 
 interface Baseline {
   civilDate: string | null;
@@ -55,8 +56,7 @@ export class CompanyQueryCoordinator {
   private disposed = false;
   private generation = 0;
   private lastEventSeq = 0;
-  private requestSequence = 0;
-  private readonly activeRequests = new Map<string, number>();
+  private readonly requests = new CompanyRequestRegistry();
   private readonly cachedCompanies = new Set<string>();
   private readonly host: CompanyQueryHost;
   private readonly dispatch: Dispatch;
@@ -68,7 +68,7 @@ export class CompanyQueryCoordinator {
 
   dispose(): void {
     this.disposed = true;
-    this.activeRequests.clear();
+    this.requests.clear();
     this.cachedCompanies.clear();
   }
 
@@ -76,7 +76,7 @@ export class CompanyQueryCoordinator {
     if (this.disposed) return;
     this.generation += 1;
     this.lastEventSeq = baseline.seq;
-    this.activeRequests.clear();
+    this.requests.clear();
     this.cachedCompanies.clear();
     this.dispatch(installCompanyBaseline({ generation: this.generation, ...baseline }));
   }
@@ -85,13 +85,12 @@ export class CompanyQueryCoordinator {
     if (this.disposed) return;
     const generation = this.generation;
     const key = `${generation}\u0000${query.companyId}\u0000${query.cursor ?? "root"}`;
-    if (!force && this.activeRequests.has(key)) return;
-    const request = ++this.requestSequence;
-    this.activeRequests.set(key, request);
+    const request = this.requests.begin(key, force);
+    if (request === null) return;
     this.cachedCompanies.add(query.companyId);
     if (!this.host.capabilities.publicCompanyReports || !this.host.queryPublicReports) {
       this.dispatch(unavailable({ generation, ...query, message: "当前宿主不支持公开公司报告查询" }));
-      this.activeRequests.delete(key);
+      this.requests.finishIfCurrent(key, request);
       return;
     }
     this.dispatch(startCompanyQuery({ generation, ...query }));
@@ -109,7 +108,7 @@ export class CompanyQueryCoordinator {
         }));
       }
     } finally {
-      if (this.isCurrentRequest(generation, key, request)) this.activeRequests.delete(key);
+      if (this.isCurrentRequest(generation, key, request)) this.requests.finishIfCurrent(key, request);
     }
   }
 
@@ -117,13 +116,12 @@ export class CompanyQueryCoordinator {
     if (this.disposed) return;
     const generation = this.generation;
     const key = `${generation}\u0000${query.companyId}\u0000report\u0000${query.reportId}`;
-    if (this.activeRequests.has(key)) return;
-    const request = ++this.requestSequence;
-    this.activeRequests.set(key, request);
+    const request = this.requests.begin(key);
+    if (request === null) return;
     this.cachedCompanies.add(query.companyId);
     if (!this.host.capabilities.publicCompanyReports || !this.host.publicReportById) {
       this.dispatch(unavailable({ generation, companyId: query.companyId, cursor: null, message: "当前宿主不支持公开公司报告查询" }));
-      this.activeRequests.delete(key);
+      this.requests.finishIfCurrent(key, request);
       return;
     }
     try {
@@ -139,7 +137,7 @@ export class CompanyQueryCoordinator {
         }));
       }
     } finally {
-      if (this.isCurrentRequest(generation, key, request)) this.activeRequests.delete(key);
+      if (this.isCurrentRequest(generation, key, request)) this.requests.finishIfCurrent(key, request);
     }
   }
 
@@ -208,7 +206,7 @@ export class CompanyQueryCoordinator {
   }
 
   private isCurrentRequest(generation: number, key: string, request: number): boolean {
-    return !this.disposed && generation === this.generation && this.activeRequests.get(key) === request;
+    return !this.disposed && generation === this.generation && this.requests.matches(key, request);
   }
 }
 

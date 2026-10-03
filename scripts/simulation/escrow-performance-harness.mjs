@@ -322,67 +322,101 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
   };
 }
 
-export async function runProcessSample(endpoint, { rssSampleIntervalMs }) {
-  const startedAt = process.hrtime.bigint();
-  const child = spawn(endpoint.command[0], endpoint.command.slice(1), {
-    cwd: endpoint.cwd,
-    env: process.env,
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  let spawnError;
-  let peakRss = 0;
-  const threadStateSamples = [];
-  let sampling = true;
-  let sampleDelayHandle;
-  let releaseSampleDelay;
-  const waitForNextSample = () => new Promise((resolve) => {
-    releaseSampleDelay = resolve;
-    sampleDelayHandle = setTimeout(() => {
-      sampleDelayHandle = undefined;
-      releaseSampleDelay = undefined;
-      resolve();
-    }, rssSampleIntervalMs);
-  });
-  const stopSampling = () => {
-    sampling = false;
-    if (sampleDelayHandle !== undefined) clearTimeout(sampleDelayHandle);
-    sampleDelayHandle = undefined;
-    const release = releaseSampleDelay;
-    releaseSampleDelay = undefined;
+class ProcessSampleRun {
+  #endpoint;
+  #rssSampleIntervalMs;
+  #sampleTreeProbe;
+  #stdout;
+  #stderr;
+  #peakRss;
+  #threadStateSamples;
+  #sampling;
+  #releaseSampleDelay;
+  #sampleDelayHandle;
+  #child;
+  #startedAt;
+  #endedAt;
+  #spawnError;
+
+  constructor(endpoint, { rssSampleIntervalMs, sampleTree = linuxProcessTreeSample }) {
+    this.#sampleTreeProbe = sampleTree;
+    this.#endpoint = endpoint;
+    this.#rssSampleIntervalMs = rssSampleIntervalMs;
+    this.#stdout = "";
+    this.#stderr = "";
+    this.#peakRss = 0;
+    this.#threadStateSamples = [];
+    this.#sampling = true;
+  }
+
+  waitNextSample() {
+    return new Promise((resolve) => {
+      this.#releaseSampleDelay = resolve;
+      this.#sampleDelayHandle = setTimeout(() => {
+        this.#sampleDelayHandle = undefined;
+        this.#releaseSampleDelay = undefined;
+        resolve();
+      }, this.#rssSampleIntervalMs);
+    });
+  }
+
+  stopSampling() {
+    this.#sampling = false;
+    if (this.#sampleDelayHandle !== undefined) clearTimeout(this.#sampleDelayHandle);
+    this.#sampleDelayHandle = undefined;
+    const release = this.#releaseSampleDelay;
+    this.#releaseSampleDelay = undefined;
     release?.();
-  };
-  const sampler = (async () => {
-    while (sampling) {
-      if (child.pid) {
-        const sample = await linuxProcessTreeSample(child.pid);
-        peakRss = Math.max(peakRss, sample.rss_bytes);
-        if (sample.total_threads > 0) threadStateSamples.push(sample);
+  }
+
+  async sampleTree() {
+    while (this.#sampling) {
+      if (this.#child.pid) {
+        const sample = await this.#sampleTreeProbe(this.#child.pid);
+        this.#peakRss = Math.max(this.#peakRss, sample.rss_bytes);
+        if (sample.total_threads > 0) this.#threadStateSamples.push(sample);
       }
-      if (sampling) await waitForNextSample();
+      if (this.#sampling) await this.waitNextSample();
     }
-  })();
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  child.on("error", (error) => { spawnError = error; });
-  const { code, signal, endedAt } = await new Promise((resolve) => child.on("close", (code, signal) => {
-    const endedAt = process.hrtime.bigint();
-    stopSampling();
-    resolve({ code, signal, endedAt });
-  }));
-  await sampler;
-  if (spawnError) throw spawnError;
-  if (code !== 0) fail(`${endpoint.command.join(" ")} exited ${code} signal ${signal ?? "none"}: ${stderr}`);
-  if (peakRss <= 0) fail(`${endpoint.command.join(" ")} completed before a positive process-tree RSS sample was observed`);
-  return {
-    wall_ns: String(endedAt - startedAt),
-    peak_process_tree_rss_bytes: peakRss,
-    process_tree_thread_state: summarizeThreadStateSamples(threadStateSamples, rssSampleIntervalMs),
-    stdout,
-    stderr,
-  };
+  }
+
+  async start() {
+    this.#startedAt = process.hrtime.bigint();
+    this.#child = spawn(this.#endpoint.command[0], this.#endpoint.command.slice(1), {
+      cwd: this.#endpoint.cwd,
+      env: process.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const sampler = this.sampleTree();
+    this.#child.stdout.on("data", (chunk) => { this.#stdout += chunk; });
+    this.#child.stderr.on("data", (chunk) => { this.#stderr += chunk; });
+    this.#child.on("error", (error) => { this.#spawnError = error; });
+    const { code, signal } = await new Promise((resolve) => this.#child.on("close", (code, signal) => {
+      this.#endedAt = process.hrtime.bigint();
+      this.stopSampling();
+      resolve({ code, signal });
+    }));
+    await sampler;
+    return this.collectResult(code, signal);
+  }
+
+  collectResult(code, signal) {
+    if (this.#spawnError) throw this.#spawnError;
+    if (code !== 0) fail(`${this.#endpoint.command.join(" ")} exited ${code} signal ${signal ?? "none"}: ${this.#stderr}`);
+    if (this.#peakRss <= 0) fail(`${this.#endpoint.command.join(" ")} completed before a positive process-tree RSS sample was observed`);
+    return {
+      wall_ns: String(this.#endedAt - this.#startedAt),
+      peak_process_tree_rss_bytes: this.#peakRss,
+      process_tree_thread_state: summarizeThreadStateSamples(this.#threadStateSamples, this.#rssSampleIntervalMs),
+      stdout: this.#stdout,
+      stderr: this.#stderr,
+    };
+  }
+}
+
+export async function runProcessSample(endpoint, options) {
+  return new ProcessSampleRun(endpoint, options).start();
 }
 
 function aggregateSamples(samples) {
@@ -436,74 +470,138 @@ async function verifyEndpointSource(endpoint, label, sourceManifest) {
   return manifest.sha256;
 }
 
+function freezeSnapshot(value) {
+  if (value !== null && typeof value === "object") {
+    for (const entry of Object.values(value)) freezeSnapshot(entry);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export class PerformanceComparisonRun {
+  #config;
+  #samples = { before: [], after: [] };
+  #failed = false;
+
+  constructor(config) {
+    const snapshot = structuredClone(config);
+    validatePerformanceConfig(snapshot);
+    this.#config = freezeSnapshot(snapshot);
+  }
+
+  async #measureSide(side, context, { runSample = runProcessSample, sourceManifest = escrowSourceManifest } = {}) {
+    const endpoint = this.#config[side];
+    const label = `${side} ${context.warmup ? "warmup" : "sample"} ${context.index}`;
+    try {
+      const before = await verifyEndpointSource(endpoint, `${label} before invocation`, sourceManifest);
+      const measured = await runSample(endpoint, { rssSampleIntervalMs: this.#config.rss_sample_interval_ms, side, ...context });
+      const after = await verifyEndpointSource(endpoint, `${label} after invocation`, sourceManifest);
+      if (before !== after) fail(`${label} source hash drifted while the sample was running`);
+      return validateMeasuredSample(measured, endpoint, this.#config.workload, label, side === "after", this.#config.environment_contract);
+    } catch (error) {
+      this.#failed = true;
+      throw error;
+    }
+  }
+
+  #appendSample(side, sample) {
+    this.#samples[side].push(structuredClone(sample));
+  }
+
+  async measure(dependencies) {
+    for (let index = 0; index < this.#config.warmup_runs; index += 1) {
+      for (const side of ["before", "after"]) await this.#measureSide(side, { warmup: true, index }, dependencies);
+    }
+    for (let index = 0; index < this.#config.sample_count; index += 1) {
+      const order = index % 2 === 0 ? ["before", "after"] : ["after", "before"];
+      for (const side of order) this.#appendSample(side, await this.#measureSide(side, { warmup: false, index }, dependencies));
+    }
+  }
+
+  buildReport(environmentManifest, timestamp) {
+    if (this.#failed) fail("performance run failed; no PASS report can be built");
+    if (["before", "after"].some((side) => this.#samples[side].length !== this.#config.sample_count)) fail("performance run samples are incomplete");
+    const beforeAggregate = aggregateSamples(this.#samples.before);
+    const afterAggregate = aggregateSamples(this.#samples.after);
+    const throughputRatio = afterAggregate.ticks_per_second.mean / beforeAggregate.ticks_per_second.mean;
+    const peakRssRatio = afterAggregate.peak_process_tree_rss_bytes.mean / beforeAggregate.peak_process_tree_rss_bytes.mean;
+    if (!Number.isFinite(throughputRatio) || throughputRatio <= 0 || !Number.isFinite(peakRssRatio) || peakRssRatio <= 0) {
+      fail("performance comparison ratios must be finite and positive");
+    }
+    if (!isRecord(environmentManifest) || Object.keys(environmentManifest).length === 0) fail("environment manifest must be a non-empty object");
+    validateJsonValue(environmentManifest, "environment manifest");
+    return structuredClone({
+      schema: REPORT_SCHEMA,
+      status: "PASS",
+      generated_at: timestamp,
+      workload: this.#config.workload,
+      environment_contract: this.#config.environment_contract,
+      environment_manifest: environmentManifest,
+      measurement_contract: {
+        same_machine_for_both_sides: true,
+        same_workload_for_both_sides: true,
+        comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
+        rss_scope: "Linux process tree rooted at the configured executable",
+        runnable_thread_source: "Linux /proc process-tree task state R (running or runnable)",
+        rayon_registry_capacity_is_not_worker_activity: true,
+        throughput_source: "completed_ticks / measured wall time",
+        cpu_utilization_used_as_throughput: false,
+        preset_performance_threshold: null,
+        warmup_runs: this.#config.warmup_runs,
+        sample_count: this.#config.sample_count,
+        alternating_measurement_order: true,
+        source_manifest_verified_before_and_after_every_invocation: true,
+      },
+      before: { role: "baseline", source_fingerprint: this.#config.before.source_fingerprint, command: this.#config.before.command, cwd: this.#config.before.cwd, samples: this.#samples.before, aggregate: beforeAggregate },
+      after: { role: "new-engine", source_fingerprint: this.#config.after.source_fingerprint, command: this.#config.after.command, cwd: this.#config.after.cwd, samples: this.#samples.after, aggregate: afterAggregate },
+      comparison: {
+        conditions_match: true,
+        throughput_mean_ratio_after_over_before: throughputRatio,
+        peak_rss_mean_ratio_after_over_before: peakRssRatio,
+      },
+    });
+  }
+
+  matchesReusableReport(report, currentEnvironmentManifest) {
+    if (!isRecord(report) || report.schema !== REPORT_SCHEMA || report.status !== "PASS") {
+      fail("existing performance report is not a reusable PASS report");
+    }
+    if (!isDeepStrictEqual(report.workload, this.#config.workload)
+      || !isDeepStrictEqual(report.environment_contract, this.#config.environment_contract)
+      || !isDeepStrictEqual(report.environment_manifest, currentEnvironmentManifest)
+      || report.measurement_contract?.warmup_runs !== this.#config.warmup_runs
+      || report.measurement_contract?.sample_count !== this.#config.sample_count
+      || report.measurement_contract?.same_machine_for_both_sides !== true
+      || report.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
+      || report.comparison?.conditions_match !== true
+      || !Number.isFinite(report.comparison?.throughput_mean_ratio_after_over_before)
+      || report.comparison.throughput_mean_ratio_after_over_before <= 0
+      || !Number.isFinite(report.comparison?.peak_rss_mean_ratio_after_over_before)
+      || report.comparison.peak_rss_mean_ratio_after_over_before <= 0) {
+      fail("existing performance report conditions differ from the requested run");
+    }
+    for (const side of ["before", "after"]) {
+      if (report[side]?.source_fingerprint !== this.#config[side].source_fingerprint
+        || !isDeepStrictEqual(report[side]?.command, this.#config[side].command)
+        || report[side]?.cwd !== this.#config[side].cwd
+        || !Array.isArray(report[side]?.samples)
+        || report[side].samples.length !== this.#config.sample_count) {
+        fail(`existing performance report ${side} endpoint or sample count differs from the requested run`);
+      }
+    }
+    return true;
+  }
+}
+
 export async function runPerformanceHarness(config, {
   runSample = runProcessSample,
   now = () => new Date().toISOString(),
   environment = runtimeEnvironment,
   sourceManifest = escrowSourceManifest,
 } = {}) {
-  validatePerformanceConfig(config);
-  const measure = async (side, context) => {
-    const endpoint = config[side];
-    const label = `${side} ${context.warmup ? "warmup" : "sample"} ${context.index}`;
-    const before = await verifyEndpointSource(endpoint, `${label} before invocation`, sourceManifest);
-    const measured = await runSample(endpoint, { rssSampleIntervalMs: config.rss_sample_interval_ms, side, ...context });
-    const after = await verifyEndpointSource(endpoint, `${label} after invocation`, sourceManifest);
-    if (before !== after) fail(`${label} source hash drifted while the sample was running`);
-    return validateMeasuredSample(measured, endpoint, config.workload, label, side === "after", config.environment_contract);
-  };
-  for (let index = 0; index < config.warmup_runs; index += 1) {
-    for (const side of ["before", "after"]) {
-      await measure(side, { warmup: true, index });
-    }
-  }
-  const samples = { before: [], after: [] };
-  for (let index = 0; index < config.sample_count; index += 1) {
-    const order = index % 2 === 0 ? ["before", "after"] : ["after", "before"];
-    for (const side of order) {
-      samples[side].push(await measure(side, { warmup: false, index }));
-    }
-  }
-  const beforeAggregate = aggregateSamples(samples.before);
-  const afterAggregate = aggregateSamples(samples.after);
-  const throughputRatio = afterAggregate.ticks_per_second.mean / beforeAggregate.ticks_per_second.mean;
-  const peakRssRatio = afterAggregate.peak_process_tree_rss_bytes.mean / beforeAggregate.peak_process_tree_rss_bytes.mean;
-  if (!Number.isFinite(throughputRatio) || throughputRatio <= 0 || !Number.isFinite(peakRssRatio) || peakRssRatio <= 0) {
-    fail("performance comparison ratios must be finite and positive");
-  }
-  const environmentManifest = environment();
-  if (!isRecord(environmentManifest) || Object.keys(environmentManifest).length === 0) fail("environment manifest must be a non-empty object");
-  validateJsonValue(environmentManifest, "environment manifest");
-  return {
-    schema: REPORT_SCHEMA,
-    status: "PASS",
-    generated_at: now(),
-    workload: config.workload,
-    environment_contract: config.environment_contract,
-    environment_manifest: environmentManifest,
-    measurement_contract: {
-      same_machine_for_both_sides: true,
-      same_workload_for_both_sides: true,
-      comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
-      rss_scope: "Linux process tree rooted at the configured executable",
-      runnable_thread_source: "Linux /proc process-tree task state R (running or runnable)",
-      rayon_registry_capacity_is_not_worker_activity: true,
-      throughput_source: "completed_ticks / measured wall time",
-      cpu_utilization_used_as_throughput: false,
-      preset_performance_threshold: null,
-      warmup_runs: config.warmup_runs,
-      sample_count: config.sample_count,
-      alternating_measurement_order: true,
-      source_manifest_verified_before_and_after_every_invocation: true,
-    },
-    before: { role: "baseline", source_fingerprint: config.before.source_fingerprint, command: config.before.command, cwd: config.before.cwd, samples: samples.before, aggregate: beforeAggregate },
-    after: { role: "new-engine", source_fingerprint: config.after.source_fingerprint, command: config.after.command, cwd: config.after.cwd, samples: samples.after, aggregate: afterAggregate },
-    comparison: {
-      conditions_match: true,
-      throughput_mean_ratio_after_over_before: throughputRatio,
-      peak_rss_mean_ratio_after_over_before: peakRssRatio,
-    },
-  };
+  const run = new PerformanceComparisonRun(config);
+  await run.measure({ runSample, sourceManifest });
+  return run.buildReport(environment(), now());
 }
 
 export function reportPathForOutputDirectory(outputDirectory) {
@@ -524,7 +622,7 @@ export async function writeReportIdempotently(filePath, bytes) {
   return "created";
 }
 
-async function loadReusableReport(filePath, config, currentEnvironmentManifest) {
+async function loadReusableReport(filePath, run, currentEnvironmentManifest) {
   let stat;
   try {
     stat = await fsp.lstat(filePath);
@@ -539,32 +637,7 @@ async function loadReusableReport(filePath, config, currentEnvironmentManifest) 
   } catch (error) {
     fail(`existing performance report is not valid JSON: ${error.message}`);
   }
-  if (!isRecord(report) || report.schema !== REPORT_SCHEMA || report.status !== "PASS") {
-    fail("existing performance report is not a reusable PASS report");
-  }
-  if (!isDeepStrictEqual(report.workload, config.workload)
-    || !isDeepStrictEqual(report.environment_contract, config.environment_contract)
-    || !isDeepStrictEqual(report.environment_manifest, currentEnvironmentManifest)
-    || report.measurement_contract?.warmup_runs !== config.warmup_runs
-    || report.measurement_contract?.sample_count !== config.sample_count
-    || report.measurement_contract?.same_machine_for_both_sides !== true
-    || report.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
-    || report.comparison?.conditions_match !== true
-    || !Number.isFinite(report.comparison?.throughput_mean_ratio_after_over_before)
-    || report.comparison.throughput_mean_ratio_after_over_before <= 0
-    || !Number.isFinite(report.comparison?.peak_rss_mean_ratio_after_over_before)
-    || report.comparison.peak_rss_mean_ratio_after_over_before <= 0) {
-    fail("existing performance report conditions differ from the requested run");
-  }
-  for (const side of ["before", "after"]) {
-    if (report[side]?.source_fingerprint !== config[side].source_fingerprint
-      || !isDeepStrictEqual(report[side]?.command, config[side].command)
-      || report[side]?.cwd !== config[side].cwd
-      || !Array.isArray(report[side]?.samples)
-      || report[side].samples.length !== config.sample_count) {
-      fail(`existing performance report ${side} endpoint or sample count differs from the requested run`);
-    }
-  }
+  run.matchesReusableReport(report, currentEnvironmentManifest);
   return report;
 }
 
@@ -594,7 +667,7 @@ export async function main(argv, {
     verifyEndpointSource(config.before, "baseline endpoint", sourceManifest),
     verifyEndpointSource(config.after, "new-engine endpoint", sourceManifest),
   ]);
-  const reusable = await loadReusableReport(reportPath, config, currentEnvironmentManifest);
+  const reusable = await loadReusableReport(reportPath, new PerformanceComparisonRun(config), currentEnvironmentManifest);
   if (reusable !== null) {
     const summary = { status: "PASS", report: reportPath, write: "unchanged", before_samples: reusable.before.samples.length, after_samples: reusable.after.samples.length };
     stdout(JSON.stringify(summary));

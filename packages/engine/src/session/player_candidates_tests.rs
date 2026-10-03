@@ -3,15 +3,15 @@ use super::*;
 #[test]
 fn player_candidate_capture_returns_empty_batch_without_touching_session_state() {
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 41).unwrap();
-    let next_order_id_before = session.next_order_id;
-    let seq_before = session.seq;
+    let next_order_id_before = session.state.next_order_id;
+    let seq_before = session.state.seq;
 
     let batch = session.capture_player_candidate_batch();
 
     assert!(batch.intents.is_empty());
-    assert!(session.pending_player.is_empty());
-    assert_eq!(session.next_order_id, next_order_id_before);
-    assert_eq!(session.seq, seq_before);
+    assert!(session.state.pending_player.is_empty());
+    assert_eq!(session.state.next_order_id, next_order_id_before);
+    assert_eq!(session.state.seq, seq_before);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
             },
         ),
     ];
-    session.pending_player = queued.clone();
+    session.state.pending_player = queued.clone();
 
     let batch = session.capture_player_candidate_batch();
 
@@ -55,7 +55,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
         serde_json::to_vec(&batch.intents).unwrap(),
         serde_json::to_vec(&queued).unwrap()
     );
-    assert!(session.pending_player.is_empty());
+    assert!(session.state.pending_player.is_empty());
     assert!(session.capture_player_candidate_batch().intents.is_empty());
 }
 
@@ -91,7 +91,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
             },
         ),
     ];
-    session.pending_player = queued.clone();
+    session.state.pending_player = queued.clone();
 
     let batch = session.capture_player_candidate_batch();
 
@@ -106,7 +106,7 @@ fn player_candidate_capture_transfers_queued_intents_without_routing_side_effect
     let player = AccountId(0);
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 44).unwrap();
-    session.pending_player = vec![(
+    session.state.pending_player = vec![(
         player,
         Intent::PlaceLimit {
             code,
@@ -116,13 +116,13 @@ fn player_candidate_capture_transfers_queued_intents_without_routing_side_effect
         },
     )];
     let before_snapshot = serde_json::to_vec(&session.snapshot()).unwrap();
-    let identities = (session.next_order_id, session.seq);
+    let identities = (session.state.next_order_id, session.state.seq);
 
     let batch = session.capture_player_candidate_batch();
 
     assert_eq!(batch.intents.len(), 1);
-    assert!(session.pending_player.is_empty());
-    assert_eq!((session.next_order_id, session.seq), identities);
+    assert!(session.state.pending_player.is_empty());
+    assert_eq!((session.state.next_order_id, session.state.seq), identities);
     assert_eq!(
         serde_json::to_vec(&session.snapshot()).unwrap(),
         before_snapshot

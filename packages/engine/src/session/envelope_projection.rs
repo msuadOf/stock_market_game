@@ -14,12 +14,12 @@ struct LiveOrderProjection<'a> {
 impl GameSession {
     pub fn project_live_envelopes(&self) -> Result<Vec<pipeline::Envelope>, StepFatal> {
         let mut envelopes = Vec::new();
-        for (code, market) in &self.markets {
+        for (code, market) in &self.state.markets {
             for order in market.resting_orders() {
                 envelopes.push(self.project_continuous_envelope(code, &order)?);
             }
         }
-        for (code, orders) in &self.auction_orders {
+        for (code, orders) in &self.state.auction_orders {
             for order in orders {
                 envelopes.push(self.project_auction_envelope(code, order)?);
             }
@@ -36,14 +36,14 @@ impl GameSession {
 
     pub fn hydrate_or_validate_envelope_ledger(&mut self) -> Result<(), StepFatal> {
         let mut projected = self.project_live_envelopes()?;
-        let has_authoritative_ledger = self.envelope_ledger.iter().next().is_some();
+        let has_authoritative_ledger = self.state.envelope_ledger.iter().next().is_some();
         if has_authoritative_ledger {
             // Resting orders independently project identity, resources, remaining quantity,
             // cumulative fills and nominal fees. Only ADR-0017 #9's actually charged seller fee
             // history is ledger-owned. Validate that history before preserving it for the strict
             // full-envelope comparison; missing/extra identities still fail closed below.
             for envelope in &mut projected {
-                let Ok(authoritative) = self.envelope_ledger.get(envelope.key()) else {
+                let Ok(authoritative) = self.state.envelope_ledger.get(envelope.key()) else {
                     continue;
                 };
                 let projected_audit = envelope.audit();
@@ -71,7 +71,7 @@ impl GameSession {
                 "cannot hydrate a partially filled seller without charged fee history",
             ));
         }
-        self.envelope_ledger.hydrate_or_validate(projected)
+        self.state.envelope_ledger.hydrate_or_validate(projected)
     }
 
     pub(in crate::session) fn project_continuous_envelope(
@@ -116,7 +116,7 @@ impl GameSession {
         // escrow ledger never reserves seller cash.
         let cash = match order.side {
             Side::Buy => buy_order_reservation(
-                &self.setup.config,
+                &self.state.setup.config,
                 order.limit,
                 order.qty,
                 order.filled_value,
@@ -128,7 +128,8 @@ impl GameSession {
             Side::Buy => 0,
             Side::Sell => order.qty,
         };
-        let nominal = cumulative_nominal_fees(&self.setup.config, order.side, order.filled_value)?;
+        let nominal =
+            cumulative_nominal_fees(&self.state.setup.config, order.side, order.filled_value)?;
         // Buyer actual fees always equal nominal fees. Seller charges are path-dependent because
         // every fill leg is gross-capped; only the authoritative ledger can supply that history.
         let charged = if order.side == Side::Buy {

@@ -1,4 +1,4 @@
-use super::{auction_shards, finish_auction_shards, AuctionStockInput};
+use super::{auction_shards, finish_auction_shards, AuctionStockInput, AuctionTickBoundary};
 use crate::session::pipeline::stock_auction::auction_day_end::AuctionFinishProbe;
 use crate::session::pipeline::stock_auction::{
     AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
@@ -50,7 +50,7 @@ fn independent_stock_auction_finishes_overlap_and_clear_each_book_once() {
         .build()
         .unwrap();
     let finished = pool
-        .install(|| finish_auction_shards(shards, 600, true, false))
+        .install(|| finish_auction_shards(shards, AuctionTickBoundary::for_test(600, true, false)))
         .unwrap();
 
     assert_eq!(finished.workers.len(), 2);
@@ -144,7 +144,10 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
         .unwrap();
     assert_eq!(
         serial
-            .install(|| finish_auction_shards(shards(), 600, true, false))
+            .install(|| finish_auction_shards(
+                shards(),
+                AuctionTickBoundary::for_test(600, true, false)
+            ))
             .err()
             .unwrap(),
         errors[0]
@@ -153,8 +156,7 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
     let completion = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
     let mut shards = shards();
     for (code, shard) in &mut shards {
-        // The callback has one owner: the consuming finish call. Dropping that
-        // owner records its return, including the real error path through `?`.
+        // consuming finish 独占 callback；Drop 登记正常返回及 `?` 的真实错误返回。
         let returned = FinishReturned {
             code: code.clone(),
             completion: Arc::clone(&completion),
@@ -168,7 +170,7 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
         .build()
         .unwrap();
     let error = parallel
-        .install(|| finish_auction_shards(shards, 600, true, false))
+        .install(|| finish_auction_shards(shards, AuctionTickBoundary::for_test(600, true, false)))
         .err()
         .unwrap();
     assert_eq!(error, errors[0]);
@@ -187,8 +189,7 @@ impl FinishReturned {
     fn wait_for_second_stock_if_first(&self) {
         if self.code.0 == "600001" {
             let state = self.completion.0.lock().unwrap();
-            // Timeout releases the worker even if dispatch stops early. The
-            // completion-order assertion then reports the missed dependency.
+            // 分派提前停止时 timeout 仍释放 worker；完成顺序断言明确报告遗漏依赖。
             drop(
                 self.completion
                     .1

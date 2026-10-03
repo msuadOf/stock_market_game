@@ -48,7 +48,7 @@ scripts\build.bat server --jobs 8
 
 产物位于 `target/build-artifacts/<目标>/`，不是源码目录中的开发服务。
 先查看规划可以使用 `--dry-run`；它不编译，也不证明对应平台制品已经可运行。
-编译不会默认运行完整回归；CI 的回归门禁仍独立保留。
+编译不运行回归；`ci.yml` 仅保留手动开发诊断入口，与产品构建和标签发布独立。
 
 已有制品目录默认拒绝覆盖或删除，避免混入旧资源或改写用户文件。重复构建可选择
 制品根目录内的新目录，例如：
@@ -114,7 +114,7 @@ WebUI Server 部署无需 Node.js，可选择只启动网页服务、只启动�
 这不会部署 Pages。
 
 有效标签为 `v1.2.3` 格式或 `test-20261002-120000` / `test-abc1234` 格式。
-标签 push 后自动调用 CI 门禁、构建全平台分发、校验 manifest/哈希并发布 Release，
+标签 push 后校验标签和固定源码 SHA，直接构建全平台分发，校验十组 manifest/哈希并发布 Release，
 所有有效标签均更新 Pages。`test-*` 标为预发行；不自动修改产品自身版本号。
 Release 附 `release-source.json` 记录源码 SHA，manifest 文件名按产品/target 唯一化。
 公开前先上传 draft；中途失败可能留下 draft，应检查后再处理，脚本不覆盖旧资产。
@@ -124,7 +124,7 @@ Release 附 `release-source.json` 记录源码 SHA，manifest 文件名按产品
 - Ubuntu 24.04 / Windows Server 2022 / macOS 15 原生 runner；根据 `rustc -vV`
   标注实际 target 与架构，不声称一个原生包支持其他架构，也不生成 universal 包。
 - 纯 Server 三平台任务独立于前端，使用原有无 Node shell/batch 编译入口。
-  Actions runner 自带 Node 仅用于编译后的短 smoke 与归档工具；Server 编译与部署
+  Actions runner 自带 Node 仅用于归档工具；Server 编译与部署
   不依赖 Node，纯 Server 任务不安装 Node、pnpm、WASM 或 Tauri。
 - Desktop / WebUI Server 共用本次 workflow 的一份生产前端；固定 WASM nightly、
   wasm-pack 0.13.1 与 pnpm 11.19.0，原生 Desktop 下载官方 Tauri CLI 2.12.1。
@@ -140,8 +140,11 @@ Release 附 `release-source.json` 记录源码 SHA，manifest 文件名按产品
   当前仅发布 Desktop，Rust 壳库只生成供桌面可执行程序/测试链接的 `rlib`，不额外
   链接未使用的 mobile FFI `staticlib`/`cdylib`；Windows 冷链接不能通过输出三份
   重复引擎或放宽时限解决。未来如需原生移动宿主，须重新定义其 FFI 产物契约。
-- 原有 `ci.yml` 的回归、Clippy、lint 与 E2E 门禁保留；分发 workflow 不额外执行
-  完整回归，不将“打包成功”当作游戏回归或 GUI 安装验收。
+- 产品构建和标签发布不调用 CI，不执行契约测试、回归、Clippy、lint、浏览器或
+  原生服务 smoke，也不安装 Playwright 浏览器。生产 TypeScript 编译、工具版本、
+  WASM 能力与发布边界检查、manifest/大小/SHA-256 核验继续保留。
+  原有 `ci.yml` 仅供手动开发诊断，保留其回归、Clippy、lint 与 E2E；
+  不将“打包成功”当作游戏回归或 GUI 安装验收。
 
 | 产品 | Actions 下载产物（包含大小及 SHA-256 manifest） |
 |---|---|
@@ -203,10 +206,10 @@ Service Worker：首次访问在 App 导入、读档和开局前刷新一次；�
 CORS/凭据。普通 Desktop/WebUI Server 不启用此引导。
 浏览器不支持该隔离方式时明确失败，不静默切为单线程。
 
-共享前端构建后，Actions 仅重跑 Vite 生成独立 `dist-pages/`，不重复编译 WASM；
-用无隔离头的静态服务定向验证子路径与真实多线程游戏，再上传 Pages 站点。
-该十秒 smoke 仅在测试进程中把 Worker 创建输入缩小为两股票、七 NPC 与显式线程
-预算，不改生产包、不启用 E2E 私有能力；不把它称为默认两万 NPC 开局的性能验收。
+共享前端构建后，Actions 仅重跑 Vite 生成独立 `dist-pages/`，不重复编译 WASM，
+随后打包并上传 Pages 站点。浏览器定向 smoke 保留为独立开发工具，不在发布链路
+运行；其两股票、七 NPC 与显式线程预算只能验证短 fixture，不能作为默认两万
+NPC 开局的性能验收。
 标签成功发包后回收本标签的不可跨标签复用缓存；失败留进度，活动构建时暂缓。
 缓存总量只剩受保护项仍超 10GB 时明确报错，而不是盲删未知最新缓存或谎报成功。
 
@@ -328,4 +331,5 @@ Release、默认两万 NPC 开局性能与 GUI 安装；后续验证见下文。
 SAB、启动前零次快速档读取及本地游戏启动通过；一个主 Worker 加四个 Rayon Worker。
 使用两股票/七 NPC 短 fixture，未证明默认两万 NPC 开局性能，也不替代三平台 GUI
 安装、签名或公证验收。本轮本地仅运行相关短测、工作流语法检查和定向浏览器验收；
-完整回归仅由既有标签云端 CI 门禁执行。
+该日期的完整回归仅由当时的标签云端 CI 门禁执行；2026-10-03 起标签发布改为
+直接构建，完整回归改由独立手动 CI 或本地验收运行。

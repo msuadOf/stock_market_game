@@ -1,0 +1,1314 @@
+{
+  "branch": "refactor/oop-complete",
+  "base_commit": "b89afb3346743a4b4fccf26c9ac9ff108595f696",
+  "audit_actions_sha256": "b745dd8ad293484c0de18d648de43f6cdd6c30c0cf134011cfc83809d19ab23e",
+  "scope": "完成128个动作组及已归位增强；只做针对性短单元测试与必要编译，不运行复杂回归、E2E、长期性能矩阵。",
+  "preexisting_changes": [
+    "AGENTS.md",
+    ".worktree/",
+    "agents/oop-refactor-audit/"
+  ],
+  "actions": [
+    {
+      "id": "engine-foundation-01-A03",
+      "group": "domain",
+      "title": "Account 与 Position 的受控变更边界",
+      "status": "complete",
+      "extensions": [
+        "domain-E01"
+      ],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-01-A01",
+      "group": "pipeline",
+      "title": "AccountBudget 快照加载 / apply_update / lane 补丁采纳 API",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-03-A02",
+      "group": "pipeline",
+      "title": "AuctionStockShadow 和 IncrementalAuctionStockCoordinator",
+      "status": "complete",
+      "extensions": [
+        "pipeline-R2-E01"
+      ],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-03-A03",
+      "group": "pipeline",
+      "title": "AuctionLifecycleProjector（私有投影辅助对象，拥有 parent order 与 retail lifecycle 投影）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-05-A01",
+      "group": "pipeline",
+      "title": "private ContinuousStockRoundProcessor",
+      "status": "complete",
+      "extensions": [
+        "pipeline-R2-E03",
+        "pipeline-R2-E02"
+      ],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-10-A01",
+      "group": "pipeline",
+      "title": "ExperienceUpdateMode（封闭参数枚举）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-pipeline-11-A01",
+      "group": "pipeline",
+      "title": "StockStreamCoordinator<S>（从 drive_stock_stream 提取的私有 per-tick owner）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-session-01-A01",
+      "group": "session",
+      "title": "替换 GameSession 可转移字段的私有 CommittableSessionState",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-session-02-A03",
+      "group": "session",
+      "title": "DailyCandleHistory 加上负责活动/历史 maps 的窄职责 SessionCandleBook",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-session-03-A01",
+      "group": "session",
+      "title": "DecisionChainObservation + RootReadContext（不可变共享 root 输入）+ InstitutionDecisionRoot（单账户暂存工作）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-strategy-01-A01",
+      "group": "session",
+      "title": "TradingPlan 私有生命周期字段与 receiver transitions",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "engine-strategy-03-A01",
+      "group": "session",
+      "title": "ZiNoiseStrategy",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-01-A01",
+      "group": "hosts",
+      "title": "桌面端 SessionHandles 命令边界",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-01-A02",
+      "group": "hosts",
+      "title": "服务端 SessionHandles 命令及订阅边界",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-03-A01",
+      "group": "hosts",
+      "title": "SessionRegistry（私有、WASM worker 局部 owner）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "tooling-01-A02",
+      "group": "hosts",
+      "title": "BuildRun + BuildArtifactPublisher 私有类型",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "tooling-01-A01",
+      "group": "hosts",
+      "title": "WorkspacePathPolicy + CaptureArtifactWriter 私有辅助类型",
+      "status": "complete",
+      "extensions": [
+        "hosts-R2-E01"
+      ],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "tooling-04-A01",
+      "group": "hosts",
+      "title": "SimulationBatchContext（私有组合值，不导出）",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "tooling-05-A01",
+      "group": "hosts",
+      "title": "EscrowVerificationRun",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "web-01-A06",
+      "group": "frontend",
+      "title": "AppShell 组合的 SessionHostLifecycle 闭包对象、SaveCommands 门面与 TradingCommands hook 返回对象（候选）；AppShell 保留 JSX 与 ProtocolCoordinator 接线",
+      "status": "complete",
+      "extensions": [
+        "frontend-E01",
+        "frontend-E02"
+      ],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "web-01-A27",
+      "group": "frontend",
+      "title": "MarketChartProjection（候选）+ useMarketChartRuntime React适配hook",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "web-08-A01",
+      "group": "frontend",
+      "title": "MobileTradingConceptController（原型交互，可选）",
+      "status": "complete",
+      "extensions": [
+        "frontend-E03"
+      ],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N01",
+      "group": "domain",
+      "title": "KDJ 共同递推状态归入私有 KdjAccumulator",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N02",
+      "group": "domain",
+      "title": "Order 的成交进度值行为",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N03",
+      "group": "domain",
+      "title": "Market 状态写口的真实职责边界",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N04",
+      "group": "domain",
+      "title": "三行业 Config 拥有开局种子守卫",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N05",
+      "group": "domain",
+      "title": "Accumulator 拥有工作底稿摄入行为",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N06",
+      "group": "domain",
+      "title": "VatPolicy 与 IncomeTaxPolicy 的纯值行为",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-N07",
+      "group": "domain",
+      "title": "机构观察与持仓对账转换交回 RetailExperienceState",
+      "status": "complete",
+      "extensions": [
+        "domain-R2-E03"
+      ],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-N01",
+      "group": "pipeline",
+      "title": "聚合同订单连续交易诊断的临时依赖状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-N02",
+      "group": "pipeline",
+      "title": "以 AuctionTickBoundary value object 表达 checked 收尾边界",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-N01",
+      "group": "session",
+      "title": "ParentOrderPlan 聚合真实 child 转换与续发判断",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-N02",
+      "group": "session",
+      "title": "ProtocolState 统一 Session 与 Checkpoint 配对状态",
+      "status": "complete",
+      "extensions": [
+        "session-R2-E01"
+      ],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N01",
+      "group": "frontend",
+      "title": "Remote 报告查询时间线与归属索引",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N02",
+      "group": "frontend",
+      "title": "命令式图表资源所有权",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N03",
+      "group": "frontend",
+      "title": "AG Grid 行提交同步所有权",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N04",
+      "group": "frontend",
+      "title": "WASM 会话槽资源所有权",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N05",
+      "group": "frontend",
+      "title": "WASM tick 调度循环所有权",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N06",
+      "group": "frontend",
+      "title": "Worker 请求资源范围与序号分配",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N07",
+      "group": "frontend",
+      "title": "Remote 写命令关联登记",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N08",
+      "group": "frontend",
+      "title": "移动分时视图投影值",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-N09",
+      "group": "frontend",
+      "title": "移动 K 线窗口投影值",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N01",
+      "group": "hosts",
+      "title": "在各自 SessionActor 内组合宿主 Pacing 状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N02",
+      "group": "hosts",
+      "title": "WebState 组合已校验的 StaticAssetRoot 值对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N03",
+      "group": "hosts",
+      "title": "把测试披露场景的变更方法归属 Scenario",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N04",
+      "group": "hosts",
+      "title": "周末披露 fixture 聚合共同日结与派发流程",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N05",
+      "group": "hosts",
+      "title": "可选：具名组织跨模块的两日存档 fixture 与只读缓存",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N06",
+      "group": "hosts",
+      "title": "CLI 拒绝测试的 child/deadline 生命周期对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N07",
+      "group": "hosts",
+      "title": "把测量 child 与 sampler 生命周期聚合为 ProcessSampleRun",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-N08",
+      "group": "hosts",
+      "title": "把 bounded command 的 child、计时器、回调与完成态聚合",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N01",
+      "group": "domain",
+      "title": "封装 ClosingEngine 的跨期重述映射登记簿",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N02",
+      "group": "domain",
+      "title": "将固定资产计量迁移交给 FixedAssetEntry",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N03",
+      "group": "domain",
+      "title": "将存货收发状态迁移交给 InventoryItemState",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N04",
+      "group": "domain",
+      "title": "让内部交易申报承载校验后的工作底稿生成行为",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N06",
+      "group": "domain",
+      "title": "资产负债表权益行计算值",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N07",
+      "group": "domain",
+      "title": "让报表分类映射拥有全覆盖与冲突不变量",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N08",
+      "group": "domain",
+      "title": "集中管理合并窗口成员扫描与拆分事实构造",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N10",
+      "group": "domain",
+      "title": "存款合同状态拥有局部状态转移，BankBooks 保留账套事务",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N11",
+      "group": "domain",
+      "title": "EclPolicy 组合情景验证并计算 allowance target",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N12",
+      "group": "domain",
+      "title": "让 BankLoanState 封装贷款生命周期的受检状态转移",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N13",
+      "group": "domain",
+      "title": "集中工商公司开局子账种子对账",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N14",
+      "group": "domain",
+      "title": "工商贷款组合及利息生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N16",
+      "group": "domain",
+      "title": "工商税务位置与年度所得税计算",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N18",
+      "group": "domain",
+      "title": "保险合同组组合计量进度与赔案账，收束 release/remeasure 预览",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N19",
+      "group": "domain",
+      "title": "受检 IndustryPairView 绑定当前行业账套与 FlowParams 借用",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N20",
+      "group": "domain",
+      "title": "CompanyOperations 日推进与到期结算协调器",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N22",
+      "group": "domain",
+      "title": "地产项目借款费用计提协调对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N25",
+      "group": "domain",
+      "title": "将项目生命周期与成本守恒规则集中到 ProjectState",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N26",
+      "group": "domain",
+      "title": "ProjectLoanState 预览与偿付 guard 收回现有状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N27",
+      "group": "domain",
+      "title": "PresaleContract 收款与交付 guard 收回合同值",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N28",
+      "group": "domain",
+      "title": "借用 RetailPositionDecisionContext 聚合仓位输入与分阶段目标判断",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N30",
+      "group": "domain",
+      "title": "封装 retail 订单生命周期诊断账本",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N31",
+      "group": "domain",
+      "title": "封装单 seed 事件投影与运行期累加",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N32",
+      "group": "domain",
+      "title": "因果诊断报告构建器",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N34",
+      "group": "domain",
+      "title": "StockPriceMemory 条目维护本人观察与公开读取事实",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N35",
+      "group": "domain",
+      "title": "PersonalWatchlist 与个人价格记忆的淘汰策略关系",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N37",
+      "group": "domain",
+      "title": "封装订单簿的盘口与状态索引一致性",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N38",
+      "group": "domain",
+      "title": "共享两种按 OrderId 索引的持久 treap 基础实现",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N39",
+      "group": "domain",
+      "title": "封装阶段定时账本与阶段身份映射",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N40",
+      "group": "domain",
+      "title": "可选 EMA recurrence owner，保留 fast/slow/DEA 独立系数",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "domain-R2-N41",
+      "group": "domain",
+      "title": "CausalCollector receiver 保证 decision 序号与 filled-value 链同步",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "domain/completion-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N01",
+      "group": "pipeline",
+      "title": "PlanChainFactConsumption 拥有跨轮查重与消费登记",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N02",
+      "group": "pipeline",
+      "title": "TradingDayEndTransition 组织共用日终状态迁移",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N04",
+      "group": "pipeline",
+      "title": "ContinuousDayEndLifecycleProjection 收拢日终取消投影",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N05",
+      "group": "pipeline",
+      "title": "CapturedExperienceObservation 绑定同源观察输出",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N06",
+      "group": "pipeline",
+      "title": "IncrementalContinuousStockShadow 拥有跨轮迁移与收尾",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N07",
+      "group": "pipeline",
+      "title": "SellerChargeAllocation 表达单腿实收费用封顶",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N08",
+      "group": "pipeline",
+      "title": "ReadyAdmissionPlan 拥有批内偏序构造与消费",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N09",
+      "group": "pipeline",
+      "title": "NpcOrderLifecycleBook 收拢普通报价期限集合维护",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N10",
+      "group": "pipeline",
+      "title": "ExpiryOutput 拥有逐笔释放与账户汇总的同步写入",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N11",
+      "group": "pipeline",
+      "title": "AccountFillProjection 拥有账户级经验与持仓对账累积态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N12",
+      "group": "pipeline",
+      "title": "ReceiptSettlementPlan 拥有收据聚合与账户准备工作态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "pipeline-R2-N13",
+      "group": "pipeline",
+      "title": "SelfViewCashReservations 拥有可替换报价现金累计",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "pipeline/implementation-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N01",
+      "group": "session",
+      "title": "NpcAttentionScheduler 候选堆生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N02",
+      "group": "session",
+      "title": "OpeningFigures 的双账套投影",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N03",
+      "group": "session",
+      "title": "PlanLifecycleReview 当前候选的单账户复核",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N04",
+      "group": "session",
+      "title": "BeliefParticipantState 同账户四组个人状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N05",
+      "group": "session",
+      "title": "BeliefBook 账户风险 latch 的 owner 行为",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N06",
+      "group": "session",
+      "title": "SaveValidationContext 共享恢复校验上下文",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N07",
+      "group": "session",
+      "title": "CumulativeFeeAuditV2 累计收费审计值",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N08",
+      "group": "session",
+      "title": "PlanRootCoordinator 异步 root 计算生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N09",
+      "group": "session",
+      "title": "StockRouteCoordination 批次内延迟续作状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N10",
+      "group": "session",
+      "title": "LiveOrderReservations 快照预留汇总",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N11",
+      "group": "session",
+      "title": "CandidateTargetProposal 权重到数量的共同转换",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "session-R2-N12",
+      "group": "session",
+      "title": "RetailDecisionContext 单股行情与个人收益事实",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "session/action-ledger.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-R2-N01",
+      "group": "frontend",
+      "title": "IndicatorResultRequest：可选聚合请求身份与结果转换",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-R2-N02",
+      "group": "frontend",
+      "title": "RemotePublisherState：消费端连接与基线同步状态",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-R2-N03",
+      "group": "frontend",
+      "title": "TauriTimelineState：缩小会话时间线与查询游标 owner",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "frontend-R2-N04",
+      "group": "frontend",
+      "title": "CompanyRequestRegistry：可选聚合页查询与 by-id 请求 ticket",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "frontend/completion.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N01",
+      "group": "hosts",
+      "title": "将重复的公告曝光测试输入收拢为 AnnouncementExposureFixture",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N02",
+      "group": "hosts",
+      "title": "可选：用 AuctionFixture 聚合竞价测试场景和存档恢复构造",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N04",
+      "group": "hosts",
+      "title": "把成对市场输入聚合为行为决策测试场景",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N05",
+      "group": "hosts",
+      "title": "把春节跨休市 fixture 聚合为有名测试场景对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N06",
+      "group": "hosts",
+      "title": "FundamentalBeliefCase 测试场景对象集中重复的 belief 调用生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N08",
+      "group": "hosts",
+      "title": "将更正重述测试场景的相关生命周期状态聚合",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N10",
+      "group": "hosts",
+      "title": "测试专用个人计划场景封装",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N11",
+      "group": "hosts",
+      "title": "将失败披露基线的构造与请求派生收敛到 Base fixture",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N12",
+      "group": "hosts",
+      "title": "集中构造并恢复满足跨投影不变量的订单 SaveSlot 测试夹具",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N13",
+      "group": "hosts",
+      "title": "actor 测试会话 fixture 持有构造状态与事件接收生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N14",
+      "group": "hosts",
+      "title": "封装 WebSocket publisher 连接的协议生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N15",
+      "group": "hosts",
+      "title": "把 settled API 测试会话的关联 fixture 状态收进测试对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N16",
+      "group": "hosts",
+      "title": "用 ServerFixture 拥有 WS 集成测试服务器生命周期",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N17",
+      "group": "hosts",
+      "title": "可选聚合桌面构建路由策略及其前置条件",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N18",
+      "group": "hosts",
+      "title": "行情性能脚本资源会话",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N19",
+      "group": "hosts",
+      "title": "将回归制品库存建模为封存值对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N20",
+      "group": "hosts",
+      "title": "诊断审计临时仓库 fixture 生命周期对象",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N21",
+      "group": "hosts",
+      "title": "配对性能测量的运行上下文与样本汇总",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    },
+    {
+      "id": "hosts-R2-N22",
+      "group": "hosts",
+      "title": "现金与股份资源值及 envelope 收据守恒聚合",
+      "status": "complete",
+      "extensions": [],
+      "implementation_record": "hosts/status.json",
+      "final_review": "final-review/final-review.md",
+      "validation": "validation/final-validation.json"
+    }
+  ],
+  "validation_status": "128 项及所属已接受增强全部实施；独立总复核通过。278 个唯一 Rust 精确 case、前端及工具链短测、必要编译与类型检查通过；未运行复杂回归。",
+  "final_review": "final-review/final-review.md",
+  "validation": "validation/final-validation.json"
+}

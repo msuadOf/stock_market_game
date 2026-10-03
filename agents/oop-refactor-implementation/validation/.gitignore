@@ -1,0 +1,7 @@
+# 原始编译输出与本机可执行文件清单只在本地保留；提交结构化结果和最终验证对账。
+*.jsonl
+*.log
+*-errors.json
+*-artifacts.json
+lib-list-*.txt
+short-list-*.txt

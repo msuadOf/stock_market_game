@@ -87,78 +87,91 @@ pub(crate) fn post_undisclosed_fact(books: &mut Books, source: u64) {
         .expect("undisclosed entry posts");
 }
 
-/// 公开库：一条已公布的临时公告（发生日当天 18:00 相位）。
-pub(crate) fn library_with_announcement() -> (PublicLibrary, CivilInstant) {
-    let occurred = d("2030-06-11");
-    let published = CivilInstant::from_hms(occurred, 18, 0, 0).expect("18:00 phase");
-    let mut library = PublicLibrary::new();
-    library
-        .publish_announcement(AnnouncementRequest {
-            company: company_of(&code("600101")),
-            occurred_on: occurred,
-            published_at: published,
-            event: AnnouncedEvent {
-                kind: ShockKind::ContractWon,
-                amplitude_bp: 1_200,
-                starts_on: occurred,
-                expires_on: d("2030-06-20"),
-            },
-        })
-        .expect("announcement publishes");
-    (library, published)
+/// 公告曝光场景拥有公开库、公布时点与同一代码集合派生的行情。
+/// 私有 Books 与个人状态由各测试独立持有，不进入公开输入。
+pub(crate) struct AnnouncementExposureFixture {
+    library: PublicLibrary,
+    pub(crate) published: CivilInstant,
+    codes: Vec<StockCode>,
+    market: MarketView,
 }
 
-/// 会话接线形态的曝光集合派生：公司 × 股票映射 + `discovery_candidates`。
-pub(crate) fn exposed_codes(
-    library: &PublicLibrary,
-    codes: &[StockCode],
-    as_of: CivilInstant,
-) -> BTreeSet<StockCode> {
-    codes
-        .iter()
-        .filter(|code| !discovery_candidates(library, &company_of(code), as_of).is_empty())
-        .cloned()
-        .collect()
-}
+impl AnnouncementExposureFixture {
+    pub(crate) fn new() -> Self {
+        let occurred = d("2030-06-11");
+        let published = CivilInstant::from_hms(occurred, 18, 0, 0).expect("18:00 phase");
+        let mut library = PublicLibrary::new();
+        library
+            .publish_announcement(AnnouncementRequest {
+                company: company_of(&code("600101")),
+                occurred_on: occurred,
+                published_at: published,
+                event: AnnouncedEvent {
+                    kind: ShockKind::ContractWon,
+                    amplitude_bp: 1_200,
+                    starts_on: occurred,
+                    expires_on: d("2030-06-20"),
+                },
+            })
+            .expect("announcement publishes");
+        let codes = vec![code("600101"), code("600102")];
+        let market = market_of(
+            codes
+                .iter()
+                .cloned()
+                .map(|code| (code, view(1_000, &[1_000, 1_002], 1.0)))
+                .collect(),
+        );
+        Self {
+            library,
+            published,
+            codes,
+            market,
+        }
+    }
 
-pub(crate) fn quiet_market() -> MarketView {
-    market_of(vec![
-        (code("600101"), view(1_000, &[1_000, 1_002], 1.0)),
-        (code("600102"), view(1_000, &[1_000, 1_002], 1.0)),
-    ])
+    pub(crate) fn exposed_at(&self, as_of: CivilInstant) -> BTreeSet<StockCode> {
+        self.codes
+            .iter()
+            .filter(|code| {
+                !discovery_candidates(&self.library, &company_of(code), as_of).is_empty()
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn market(&self) -> &MarketView {
+        &self.market
+    }
+    pub(crate) fn codes(&self) -> &[StockCode] {
+        &self.codes
+    }
 }
 
 #[test]
 fn announcement_exposure_enters_weights_only_through_the_public_surface() {
-    let (library, published) = library_with_announcement();
-    let market = quiet_market();
-    let all_codes = vec![code("600101"), code("600102")];
+    let fixture = AnnouncementExposureFixture::new();
 
     // 公布时点之前：候选面为空 ⇒ 权重全为基础值（未披露事实惰性）。
-    let before = exposed_codes(
-        &library,
-        &all_codes,
-        CivilInstant::from_hms(d("2030-06-11"), 17, 0, 0).expect("17:00"),
-    );
+    let before =
+        fixture.exposed_at(CivilInstant::from_hms(d("2030-06-11"), 17, 0, 0).expect("17:00"));
     assert!(before.is_empty(), "公布前无公共曝光");
-    let weights = NpcAttentionState::discovery_weights(&market, &before);
+    let weights = NpcAttentionState::discovery_weights(fixture.market(), &before);
     assert_eq!(weights[&code("600101")], 1.0);
 
     // 公布后：公告所属公司股票进入曝光集合 ⇒ 发现权重 +2.0；其他股票不变。
-    let after = exposed_codes(&library, &all_codes, published);
+    let after = fixture.exposed_at(fixture.published);
     let expected_exposed: BTreeSet<StockCode> = [code("600101")].into_iter().collect();
     assert_eq!(after, expected_exposed, "只有公告所属股票曝光");
-    let weights = NpcAttentionState::discovery_weights(&market, &after);
+    let weights = NpcAttentionState::discovery_weights(fixture.market(), &after);
     assert_eq!(weights[&code("600101")], 3.0, "公告曝光 +2.0");
     assert_eq!(weights[&code("600102")], 1.0, "未涉及股票权重不变");
 }
 
 #[test]
 fn one_public_announcement_never_synchronizes_all_npc_candidates() {
-    let (library, published) = library_with_announcement();
-    let market = quiet_market();
-    let all_codes = vec![code("600101"), code("600102")];
-    let exposed = exposed_codes(&library, &all_codes, published);
+    let fixture = AnnouncementExposureFixture::new();
+    let exposed = fixture.exposed_at(fixture.published);
     let watchlist = PersonalWatchlist::new();
     let held = BTreeSet::new();
 
@@ -173,7 +186,8 @@ fn one_public_announcement_never_synchronizes_all_npc_candidates() {
     for npc in 1..=npcs {
         let mut state = attention(0x5EED_0000 ^ npc.wrapping_mul(0x6A09_E667_F3BC_C908));
         for _ in 0..draws_per_npc {
-            let picked = state.sample_discovery_stock(&market, &held, &watchlist, &exposed);
+            let picked =
+                state.sample_discovery_stock(fixture.market(), &held, &watchlist, &exposed);
             if npc == 1 {
                 first_run.push(picked.clone());
             }
@@ -200,7 +214,7 @@ fn one_public_announcement_never_synchronizes_all_npc_candidates() {
     // 确定性：个体流可重放（同派生种子 ⇒ 同序列）。
     let mut replay = attention(0x5EED_0000 ^ 1u64.wrapping_mul(0x6A09_E667_F3BC_C908));
     let second_run: Vec<Option<StockCode>> = (0..draws_per_npc)
-        .map(|_| replay.sample_discovery_stock(&market, &held, &watchlist, &exposed))
+        .map(|_| replay.sample_discovery_stock(fixture.market(), &held, &watchlist, &exposed))
         .collect();
     assert_eq!(first_run, second_run, "同种子个体序列逐次一致");
 }

@@ -38,90 +38,113 @@ export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process
   if (onStdout !== undefined && typeof onStdout !== "function") throw new Error("onStdout must be a function");
   if (onStderr !== undefined && typeof onStderr !== "function") throw new Error("onStderr must be a function");
   if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error(`bounded command ${command} was aborted before start`));
-  return new Promise((resolve, reject) => {
-    const child = spawnProcess(command, args, {
-      cwd,
-      env,
-      stdio: captureOutput ? ["ignore", "pipe", "pipe"] : "inherit",
-      windowsHide: true,
-      detached: process.platform !== "win32",
+  return new BoundedCommandRun({ command, args, timeoutMs, cwd, env, spawnProcess, captureOutput, onStdout, onStderr, signal, cleanupReserveMs }).start();
+}
+
+class BoundedCommandRun {
+  #options;
+  #child;
+  #stdout = "";
+  #stderr = "";
+  #outputCallbackError;
+  #timedOut = false;
+  #abortReason;
+  #settled = false;
+  #executionTimer;
+  #hardTimer;
+  #abortListener;
+  #resolve;
+  #reject;
+
+  constructor(options) {
+    this.#options = options;
+    this.#abortListener = () => this.#abort();
+  }
+
+  start() {
+    return new Promise((resolve, reject) => {
+      this.#resolve = resolve;
+      this.#reject = reject;
+      const { command, args, cwd, env, spawnProcess, captureOutput, timeoutMs, cleanupReserveMs, signal } = this.#options;
+      this.#child = spawnProcess(command, args, {
+        cwd,
+        env,
+        stdio: captureOutput ? ["ignore", "pipe", "pipe"] : "inherit",
+        windowsHide: true,
+        detached: process.platform !== "win32",
+      });
+      if (captureOutput) {
+        this.#child.stdout?.on("data", (chunk) => this.#onOutput("stdout", chunk));
+        this.#child.stderr?.on("data", (chunk) => this.#onOutput("stderr", chunk));
+      }
+      this.#executionTimer = setTimeout(() => {
+        this.#timedOut = true;
+        terminateTree(this.#child);
+      }, timeoutMs - cleanupReserveMs);
+      this.#hardTimer = setTimeout(() => this.#settleOnce(() => {
+        reject(new Error(`bounded command exceeded its total ${timeoutMs}ms deadline; its process tree was terminated but close did not settle within the ${cleanupReserveMs}ms cleanup reserve`));
+      }), timeoutMs);
+      signal?.addEventListener("abort", this.#abortListener, { once: true });
+      this.#child.on("error", (error) => this.#onError(error));
+      this.#child.on("close", (code, signal) => this.#onClose(code, signal));
     });
-    let stdout = "";
-    let stderr = "";
-    let outputCallbackError;
-    if (captureOutput) {
-      child.stdout?.on("data", (chunk) => {
-        stdout += chunk;
-        if (onStdout !== undefined && outputCallbackError === undefined) {
-          try { onStdout(chunk); } catch (error) {
-            outputCallbackError = new Error(`bounded command stdout callback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-            terminateTree(child);
-          }
-        }
-      });
-      child.stderr?.on("data", (chunk) => {
-        stderr += chunk;
-        if (onStderr !== undefined && outputCallbackError === undefined) {
-          try { onStderr(chunk); } catch (error) {
-            outputCallbackError = new Error(`bounded command stderr callback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-            terminateTree(child);
-          }
-        }
-      });
+  }
+
+  #onOutput(stream, chunk) {
+    if (stream === "stdout") this.#stdout += chunk;
+    else this.#stderr += chunk;
+    const callback = stream === "stdout" ? this.#options.onStdout : this.#options.onStderr;
+    if (callback === undefined || this.#outputCallbackError !== undefined) return;
+    try {
+      callback(chunk);
+    } catch (error) {
+      this.#outputCallbackError = new Error(`bounded command ${stream} callback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      terminateTree(this.#child);
     }
-    let timedOut = false;
-    let abortReason;
-    let settled = false;
-    const cleanup = () => {
-      clearTimeout(executionTimer);
-      clearTimeout(hardTimer);
-      signal?.removeEventListener("abort", abortChild);
-    };
-    const abortChild = () => {
-      abortReason = signal.reason instanceof Error ? signal.reason : new Error(`bounded command ${command} was aborted`);
-      terminateTree(child);
-    };
-    const executionTimer = setTimeout(() => {
-      timedOut = true;
-      terminateTree(child);
-    }, timeoutMs - cleanupReserveMs);
-    const hardTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error(`bounded command exceeded its total ${timeoutMs}ms deadline; its process tree was terminated but close did not settle within the ${cleanupReserveMs}ms cleanup reserve`));
-    }, timeoutMs);
-    signal?.addEventListener("abort", abortChild, { once: true });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error(`cannot start ordinary test command ${command}: ${error.message}`));
+  }
+
+  #abort() {
+    const { command, signal } = this.#options;
+    this.#abortReason = signal.reason instanceof Error ? signal.reason : new Error(`bounded command ${command} was aborted`);
+    terminateTree(this.#child);
+  }
+
+  #onError(error) {
+    this.#settleOnce(() => {
+      this.#reject(new Error(`cannot start ordinary test command ${this.#options.command}: ${error.message}`));
     });
-    child.on("close", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (outputCallbackError !== undefined) {
-        reject(outputCallbackError);
-        return;
+  }
+
+  #onClose(code, signal) {
+    this.#settleOnce(() => {
+      const { command, timeoutMs, captureOutput } = this.#options;
+      if (this.#outputCallbackError !== undefined) {
+        this.#reject(this.#outputCallbackError);
+      } else if (this.#abortReason !== undefined) {
+        this.#reject(new Error(`bounded command ${command} was aborted because a sibling command failed: ${this.#abortReason.message}`, { cause: this.#abortReason }));
+      } else if (this.#timedOut) {
+        this.#reject(new Error(`bounded command exhausted its execution budget within the total ${timeoutMs}ms deadline and its process tree was terminated`));
+      } else if (code !== 0) {
+        const detail = captureOutput && this.#stderr.trim().length > 0 ? `: ${this.#stderr.trim()}` : "";
+        this.#reject(new Error(`bounded command exited with ${code ?? `signal ${signal}`}${detail}`));
+      } else {
+        this.#resolve({ stdout: this.#stdout, stderr: this.#stderr });
       }
-      if (abortReason !== undefined) {
-        reject(new Error(`bounded command ${command} was aborted because a sibling command failed: ${abortReason.message}`, { cause: abortReason }));
-        return;
-      }
-      if (timedOut) {
-        reject(new Error(`bounded command exhausted its execution budget within the total ${timeoutMs}ms deadline and its process tree was terminated`));
-        return;
-      }
-      if (code !== 0) {
-        const detail = captureOutput && stderr.trim().length > 0 ? `: ${stderr.trim()}` : "";
-        reject(new Error(`bounded command exited with ${code ?? `signal ${signal}`}${detail}`));
-        return;
-      }
-      resolve({ stdout, stderr });
     });
-  });
+  }
+
+  #settleOnce(complete) {
+    if (this.#settled) return;
+    this.#settled = true;
+    this.#cleanup();
+    complete();
+  }
+
+  #cleanup() {
+    clearTimeout(this.#executionTimer);
+    clearTimeout(this.#hardTimer);
+    this.#options.signal?.removeEventListener("abort", this.#abortListener);
+  }
 }
 
 export function runWithDeadline(options) {

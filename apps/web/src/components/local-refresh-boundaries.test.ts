@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const gridSource = readFileSync(new URL("./MarketGrid.tsx", import.meta.url), "utf8");
+const synchronizerSource = readFileSync(new URL("./market-grid-row-synchronizer.ts", import.meta.url), "utf8");
 
 describe("局部刷新边界", () => {
   it("根 App 不订阅完整 snapshot", () => {
@@ -13,6 +14,8 @@ describe("局部刷新边界", () => {
 
   it("AG Grid 通过稳定行 id 和异步事务更新", () => {
     assert.ok(gridSource.includes("getRowId="));
-    assert.ok(gridSource.includes("applyTransactionAsync"));
+    assert.ok(gridSource.includes("rowSynchronizer.attach(event.api"));
+    assert.ok(gridSource.includes("rowSynchronizer.updateLatest(allRowData)"));
+    assert.ok(synchronizerSource.includes("applyTransactionAsync(transaction)"));
   });
 });

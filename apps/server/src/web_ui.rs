@@ -10,7 +10,84 @@ use tower_http::services::ServeFile;
 
 #[derive(Clone)]
 struct WebState {
-    root: PathBuf,
+    root: StaticAssetRoot,
+}
+
+/// 已校验的静态部署根；每个请求仍重新解析资源路径。
+#[derive(Clone)]
+struct StaticAssetRoot {
+    canonical: PathBuf,
+}
+
+enum ResourceError {
+    NotFound,
+    Access(std::io::Error),
+}
+
+impl StaticAssetRoot {
+    fn validate_package(root: &FilePath) -> Result<Self, DeploymentError> {
+        let root = std::fs::canonicalize(root).map_err(|error| startup_error(root, error))?;
+        if !root.is_dir() {
+            return Err(startup_error(&root, "expected a directory"));
+        }
+        let index = root.join("index.html");
+        let index = std::fs::canonicalize(&index).map_err(|error| startup_error(&index, error))?;
+        if !index.starts_with(&root) || !index.is_file() {
+            return Err(startup_error(
+                &index,
+                "index.html must be a file within web-root",
+            ));
+        }
+        if std::fs::read(&index)
+            .map_err(|error| startup_error(&index, error))?
+            .is_empty()
+        {
+            return Err(startup_error(&index, "index.html must not be empty"));
+        }
+        let assets = root.join("assets");
+        let assets =
+            std::fs::canonicalize(&assets).map_err(|error| startup_error(&assets, error))?;
+        if !assets.starts_with(&root) || !assets.is_dir() {
+            return Err(startup_error(
+                &assets,
+                "assets must be a directory within web-root",
+            ));
+        }
+        let mut entries =
+            std::fs::read_dir(&assets).map_err(|error| startup_error(&assets, error))?;
+        match entries.next() {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => return Err(startup_error(&assets, error)),
+            None => return Err(startup_error(&assets, "assets must not be empty")),
+        }
+        Ok(Self { canonical: root })
+    }
+
+    fn accepts_resource_path(&self, path: &str) -> bool {
+        !path.split('/').any(|segment| {
+            segment.is_empty() || segment.starts_with('.') || segment.contains(['\\', ':', '\0'])
+        })
+    }
+
+    async fn resolve_resource(&self, path: &str) -> Result<PathBuf, ResourceError> {
+        let file = tokio::fs::canonicalize(self.canonical.join(path))
+            .await
+            .map_err(ResourceError::Access)?;
+        let relative = file
+            .strip_prefix(&self.canonical)
+            .map_err(|_| ResourceError::NotFound)?;
+        if relative.components().any(|component| match component {
+            Component::Normal(name) => name.to_string_lossy().starts_with('.'),
+            _ => true,
+        }) {
+            return Err(ResourceError::NotFound);
+        }
+        match tokio::fs::metadata(&file).await {
+            Ok(metadata) if metadata.is_file() => Ok(file),
+            Ok(_) => Err(ResourceError::NotFound),
+            Err(error) => Err(ResourceError::Access(error)),
+        }
+    }
 }
 
 fn startup_error(path: &FilePath, reason: impl std::fmt::Display) -> DeploymentError {
@@ -18,38 +95,7 @@ fn startup_error(path: &FilePath, reason: impl std::fmt::Display) -> DeploymentE
 }
 
 pub(crate) fn static_router(root: &FilePath) -> Result<Router, DeploymentError> {
-    let root = std::fs::canonicalize(root).map_err(|error| startup_error(root, error))?;
-    if !root.is_dir() {
-        return Err(startup_error(&root, "expected a directory"));
-    }
-    let index = root.join("index.html");
-    let index = std::fs::canonicalize(&index).map_err(|error| startup_error(&index, error))?;
-    if !index.starts_with(&root) || !index.is_file() {
-        return Err(startup_error(
-            &index,
-            "index.html must be a file within web-root",
-        ));
-    }
-    if std::fs::read(&index)
-        .map_err(|error| startup_error(&index, error))?
-        .is_empty()
-    {
-        return Err(startup_error(&index, "index.html must not be empty"));
-    }
-    let assets = root.join("assets");
-    let assets = std::fs::canonicalize(&assets).map_err(|error| startup_error(&assets, error))?;
-    if !assets.starts_with(&root) || !assets.is_dir() {
-        return Err(startup_error(
-            &assets,
-            "assets must be a directory within web-root",
-        ));
-    }
-    let mut entries = std::fs::read_dir(&assets).map_err(|error| startup_error(&assets, error))?;
-    match entries.next() {
-        Some(Ok(_)) => {}
-        Some(Err(error)) => return Err(startup_error(&assets, error)),
-        None => return Err(startup_error(&assets, "assets must not be empty")),
-    }
+    let root = StaticAssetRoot::validate_package(root)?;
     Ok(Router::new()
         .route("/", any(index_file))
         .route("/*path", any(static_file))
@@ -109,9 +155,7 @@ fn file_error(error: std::io::Error, path: &str) -> Response {
 }
 
 async fn serve_file(state: WebState, path: &str, request: Request) -> Response {
-    if path.split('/').any(|segment| {
-        segment.is_empty() || segment.starts_with('.') || segment.contains(['\\', ':', '\0'])
-    }) {
+    if !state.root.accepts_resource_path(path) {
         return not_found();
     }
     if request.method() != Method::GET && request.method() != Method::HEAD {
@@ -125,25 +169,11 @@ async fn serve_file(state: WebState, path: &str, request: Request) -> Response {
             .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
         return response;
     }
-    let file = match tokio::fs::canonicalize(state.root.join(path)).await {
+    let file = match state.root.resolve_resource(path).await {
         Ok(file) => file,
-        Err(error) => return file_error(error, path),
+        Err(ResourceError::NotFound) => return not_found(),
+        Err(ResourceError::Access(error)) => return file_error(error, path),
     };
-    let relative = match file.strip_prefix(&state.root) {
-        Ok(relative) => relative,
-        Err(_) => return not_found(),
-    };
-    if relative.components().any(|component| match component {
-        Component::Normal(name) => name.to_string_lossy().starts_with('.'),
-        _ => true,
-    }) {
-        return not_found();
-    }
-    match tokio::fs::metadata(&file).await {
-        Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => return not_found(),
-        Err(error) => return file_error(error, path),
-    }
     match ServeFile::new(&file).try_call(request).await {
         Ok(response) if response.status() == StatusCode::NOT_FOUND => {
             match tokio::fs::File::open(file).await {

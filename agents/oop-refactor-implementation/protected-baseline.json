@@ -1,0 +1,17 @@
+{
+  "meaning": "任务开始前已有工作只读保留；本文件记录关键已有文件的字节，不授权暂存旧工作。",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "81c4924d64c93b6f463ae4ac81dca5381acce669275299d2139743d98900cdea"
+    },
+    {
+      "path": "agents/oop-refactor-audit/summary.md",
+      "sha256": "4333c3700fa4670745bfa80b5eb279135ffc5faf258cd913e507aef77cbb736e"
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/final-review.md",
+      "sha256": "3d29e6b9c24eac464e09b04f81e874a805953f7577ba3a5d2f0e79a9081f1796"
+    }
+  ]
+}

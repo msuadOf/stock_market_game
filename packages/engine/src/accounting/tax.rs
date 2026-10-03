@@ -76,7 +76,7 @@ pub fn output_vat_on(
     base_excl_vat: AccountingAmount,
     vat: &VatPolicy,
 ) -> Result<AccountingAmount, AccountingError> {
-    base_excl_vat.apply_basis_points(vat.output_rate_bp)
+    vat.output_vat_on(base_excl_vat)
 }
 
 /// 进项税额拆分：全额进项 = 基数 × 进项税率；可抵扣 = 全额 × 抵扣比例；
@@ -91,12 +91,30 @@ pub fn split_input_vat(
     base_excl_vat: AccountingAmount,
     vat: &VatPolicy,
 ) -> Result<InputVatSplit, AccountingError> {
-    let full = base_excl_vat.apply_basis_points(vat.input_rate_bp)?;
-    let deductible = full.apply_basis_points(vat.deductible_share_bp)?;
-    Ok(InputVatSplit {
-        deductible,
-        non_deductible: full.sub(deductible)?,
-    })
+    vat.split_input_vat(base_excl_vat)
+}
+
+impl VatPolicy {
+    /// 销项税额按政策落分；不重复执行结构校验。
+    pub fn output_vat_on(
+        &self,
+        base_excl_vat: AccountingAmount,
+    ) -> Result<AccountingAmount, AccountingError> {
+        base_excl_vat.apply_basis_points(self.output_rate_bp)
+    }
+
+    /// 先计算全额进项，再按抵扣比例落分，保留两次半偶舍入。
+    pub fn split_input_vat(
+        &self,
+        base_excl_vat: AccountingAmount,
+    ) -> Result<InputVatSplit, AccountingError> {
+        let full = base_excl_vat.apply_basis_points(self.input_rate_bp)?;
+        let deductible = full.apply_basis_points(self.deductible_share_bp)?;
+        Ok(InputVatSplit {
+            deductible,
+            non_deductible: full.sub(deductible)?,
+        })
+    }
 }
 
 /// 可抵扣亏损池条目（起源年 + 剩余金额；FIFO 弥补，到期出池）。
@@ -127,67 +145,129 @@ pub fn compute_income_tax(
     pool: &[LossEntry],
     policy: &IncomeTaxPolicy,
 ) -> Result<IncomeTaxComputation, AccountingError> {
-    // 到期出池：year − origin_year > 结转年限 ⇔ 不可再用。
-    let mut surviving: Vec<LossEntry> = Vec::new();
-    let mut losses_expired = AccountingAmount::ZERO;
-    for entry in pool {
-        if year.saturating_sub(entry.origin_year) > i32::from(policy.loss_carryforward_years) {
-            losses_expired = losses_expired.add(entry.remaining)?;
-        } else if entry.remaining.is_positive() {
-            surviving.push(entry.clone());
-        }
-    }
-    // FIFO 弥补（池已按起源年有序传入；此处再按起源年稳定排序）。
-    surviving.sort_by_key(|entry| entry.origin_year);
-    let mut loss_offset_used = AccountingAmount::ZERO;
-    if pretax.is_positive() {
-        for entry in &mut surviving {
-            if loss_offset_used >= pretax {
-                break;
+    policy.compute(pretax, year, pool)
+}
+
+impl IncomeTaxPolicy {
+    /// 计算税额与期末亏损池；调用方在过账成功后提交亏损池。
+    pub fn compute(
+        &self,
+        pretax: AccountingAmount,
+        year: i32,
+        pool: &[LossEntry],
+    ) -> Result<IncomeTaxComputation, AccountingError> {
+        // 到期出池：year − origin_year > 结转年限 ⇔ 不可再用。
+        let mut surviving: Vec<LossEntry> = Vec::new();
+        let mut losses_expired = AccountingAmount::ZERO;
+        for entry in pool {
+            if year.saturating_sub(entry.origin_year) > i32::from(self.loss_carryforward_years) {
+                losses_expired = losses_expired.add(entry.remaining)?;
+            } else if entry.remaining.is_positive() {
+                surviving.push(entry.clone());
             }
-            let room = pretax.sub(loss_offset_used)?;
-            let take = if entry.remaining > room {
-                room
-            } else {
-                entry.remaining
-            };
-            entry.remaining = entry.remaining.sub(take)?;
-            loss_offset_used = loss_offset_used.add(take)?;
         }
+        // FIFO 弥补（池已按起源年有序传入；此处再按起源年稳定排序）。
+        surviving.sort_by_key(|entry| entry.origin_year);
+        let mut loss_offset_used = AccountingAmount::ZERO;
+        if pretax.is_positive() {
+            for entry in &mut surviving {
+                if loss_offset_used >= pretax {
+                    break;
+                }
+                let room = pretax.sub(loss_offset_used)?;
+                let take = if entry.remaining > room {
+                    room
+                } else {
+                    entry.remaining
+                };
+                entry.remaining = entry.remaining.sub(take)?;
+                loss_offset_used = loss_offset_used.add(take)?;
+            }
+        }
+        let taxable = if pretax.is_positive() {
+            pretax.sub(loss_offset_used)?
+        } else {
+            AccountingAmount::ZERO
+        };
+        let current_tax = taxable.apply_basis_points(self.rate_bp)?;
+        let mut ending_pool: Vec<LossEntry> = surviving
+            .into_iter()
+            .filter(|e| e.remaining.is_positive())
+            .collect();
+        let loss_added = if pretax.is_negative() {
+            pretax.neg()?
+        } else {
+            AccountingAmount::ZERO
+        };
+        if loss_added.is_positive() {
+            ending_pool.push(LossEntry {
+                origin_year: year,
+                remaining: loss_added,
+            });
+        }
+        let mut pool_total = AccountingAmount::ZERO;
+        for entry in &ending_pool {
+            pool_total = pool_total.add(entry.remaining)?;
+        }
+        let deferred_tax_asset = pool_total.apply_basis_points(self.rate_bp)?;
+        Ok(IncomeTaxComputation {
+            pretax,
+            current_tax,
+            loss_offset_used,
+            loss_added,
+            losses_expired,
+            ending_pool,
+            deferred_tax_asset,
+        })
     }
-    let taxable = if pretax.is_positive() {
-        pretax.sub(loss_offset_used)?
-    } else {
-        AccountingAmount::ZERO
-    };
-    let current_tax = taxable.apply_basis_points(policy.rate_bp)?;
-    let mut ending_pool: Vec<LossEntry> = surviving
-        .into_iter()
-        .filter(|e| e.remaining.is_positive())
-        .collect();
-    let loss_added = if pretax.is_negative() {
-        pretax.neg()?
-    } else {
-        AccountingAmount::ZERO
-    };
-    if loss_added.is_positive() {
-        ending_pool.push(LossEntry {
-            origin_year: year,
-            remaining: loss_added,
-        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_methods_preserve_two_roundings_and_unvalidated_rates() {
+        let vat = VatPolicy {
+            output_rate_bp: 12_000,
+            input_rate_bp: 3_000,
+            deductible_share_bp: 6_000,
+        };
+        let base = AccountingAmount::from_cents(2);
+        let split = vat.split_input_vat(base).unwrap();
+        assert_eq!(split.deductible.cents(), 1);
+        assert_eq!(split.non_deductible, AccountingAmount::ZERO);
+        assert_eq!(split_input_vat(base, &vat).unwrap(), split);
+        assert_eq!(vat.output_vat_on(base).unwrap().cents(), 2);
+        assert_eq!(
+            output_vat_on(base, &vat).unwrap(),
+            vat.output_vat_on(base).unwrap()
+        );
     }
-    let mut pool_total = AccountingAmount::ZERO;
-    for entry in &ending_pool {
-        pool_total = pool_total.add(entry.remaining)?;
+
+    #[test]
+    fn policy_compute_keeps_pool_unchanged_and_inclusive_expiry() {
+        let policy = IncomeTaxPolicy {
+            rate_bp: 2_500,
+            loss_carryforward_years: 5,
+        };
+        let pool = vec![LossEntry {
+            origin_year: 2028,
+            remaining: AccountingAmount::from_cents(8),
+        }];
+        let before = pool.clone();
+        let zero = policy.compute(AccountingAmount::ZERO, 2033, &pool).unwrap();
+        assert_eq!(zero.ending_pool, pool);
+        assert_eq!(zero.deferred_tax_asset.cents(), 2);
+        let expired = policy
+            .compute(AccountingAmount::from_cents(8), 2034, &pool)
+            .unwrap();
+        assert_eq!(expired.losses_expired.cents(), 8);
+        assert_eq!(expired.current_tax.cents(), 2);
+        assert_eq!(pool, before);
+        assert_eq!(
+            compute_income_tax(AccountingAmount::ZERO, 2033, &pool, &policy).unwrap(),
+            zero
+        );
     }
-    let deferred_tax_asset = pool_total.apply_basis_points(policy.rate_bp)?;
-    Ok(IncomeTaxComputation {
-        pretax,
-        current_tax,
-        loss_offset_used,
-        loss_added,
-        losses_expired,
-        ending_pool,
-        deferred_tax_asset,
-    })
 }
