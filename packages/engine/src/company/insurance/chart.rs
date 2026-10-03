@@ -1,7 +1,7 @@
-//! 保险科目表 v4（版本化数据表）：保险经营科目（应收保费/未到期责任负债/
+//! 保险科目表（AccountChart.version=4）（版本化数据表）：保险经营科目（应收保费/未到期责任负债/
 //! 已发生赔款负债/保险服务收入/保险服务费用/保险财务损益）。科目代码的
 //! 单一真源在 [`crate::accounting::reports::insurance::codes`]（列报映射与
-//! 过账共享同一份代码表，杜绝两层漂移）；不改动通用 v1 语义（任务 6 语义
+//! 过账共享同一份代码表，杜绝两层漂移）；不改动通用科目表（AccountChart.version=1）语义（会计底座语义
 //! 冻结区），恢复优先用存档内科目表。
 
 use crate::accounting::reports::insurance::codes;
@@ -12,8 +12,8 @@ pub(crate) mod acct {
     pub use crate::accounting::reports::insurance::codes::*;
 }
 
-/// 保险科目表 v4（版本 4；全部科目均由保险处理器/列报使用）。
-pub fn insurance_chart_v4() -> AccountChart {
+/// 保险科目表（AccountChart.version=4）（版本 4；全部科目均由保险处理器/列报使用）。
+pub fn insurance_account_chart() -> AccountChart {
     use crate::accounting::AccountElement::*;
     let acc = |code: &str, def: AccountDef| (LedgerAccountId(code.to_string()), def);
     let accounts = vec![
@@ -39,5 +39,5 @@ pub fn insurance_chart_v4() -> AccountChart {
             AccountDef::new("保险财务损益", Expense),
         ),
     ];
-    AccountChart::new(4, accounts).expect("insurance chart v4 is well-formed")
+    AccountChart::new(4, accounts).expect("保险科目表定义合法（AccountChart.version=4）")
 }

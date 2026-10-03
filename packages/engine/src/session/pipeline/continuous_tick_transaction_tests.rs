@@ -763,8 +763,8 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             ..
         }
     ));
-    // P3 forwards cancellations without allocating an order ID. The stock
-    // worker supplies the UnknownStock business rejection checked below.
+    // AccountValidation 转发撤单且不分配 OrderId；股票 worker
+    // 随后产生本用例校验的 UnknownStock 业务拒绝。
     assert!(matches!(
         result_for(1),
         CandidateValidationResult::Accepted { .. }
@@ -1331,7 +1331,7 @@ fn matching_rejection_preserves_its_allocated_causal_lifecycle() {
                         && origin.qty == 100
             )
         })
-        .expect("P4 rejection must retain the allocated-ID submission");
+        .expect("StockProcessing 拒绝必须保留已分配 OrderId 的申报");
     assert!(matches!(
         facts[submitted - 1].kind,
         CausalFactKind::Quote(_)
@@ -1675,7 +1675,7 @@ fn execution_round_rejects_foreign_swapped_and_duplicate_matching_fact_identitie
         validate_execution_round_for_test(&outcomes, &round).unwrap();
         corrupt_fact_identities(&mut round, corruption);
         let error = validate_execution_round_for_test(&outcomes, &round)
-            .expect_err("malformed P4 identity must fail before candidate projection");
+            .expect_err("无效的 StockProcessing 身份必须在 candidate 投影前失败");
         assert!(matches!(error, StepFatal::InvariantViolation { .. }));
     }
 }

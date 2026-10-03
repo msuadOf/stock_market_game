@@ -121,8 +121,8 @@ pub(super) enum ContinuousPlaceFact {
     },
 }
 
-/// 每个 P3 Accepted 操作对应唯一 typed P4 结果，供 continuation 按身份关联。
-/// 不得从 Projection 事件重建：即时全成没有 `OrderAccepted`，P4 Rejected Place 仍拥有预分配 OrderId。
+/// 每个 AccountValidation Accepted 操作对应唯一 typed stock_processing 结果，供 continuation 按身份关联。
+/// 不得从 Projection 事件重建：即时全成没有 `OrderAccepted`，stock_processing Rejected Place 仍拥有预分配 OrderId。
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContinuousExecutionFact {
     pub(super) candidate_key: super::IntentCandidateKey,
@@ -170,7 +170,7 @@ pub(super) struct ContinuousTradeFact {
 #[derive(Debug)]
 pub(super) struct ContinuousStockOutput {
     pub(super) market: Market,
-    // 保留全部 P3 Place draft，即使 P4 拒绝或终结；下游先创建账本行、应用 receipts，
+    // 保留全部 AccountValidation Place draft，即使 stock_processing 拒绝或终结；下游先创建账本行、应用 receipts，
     // 再移除 terminal_keys。提前过滤终结 draft 会破坏资源守恒。
     pub(super) created_envelopes: Vec<Envelope>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
@@ -201,7 +201,7 @@ pub(super) struct ContinuousAcceptanceQuote {
     pub(super) best_ask: Option<Money>,
 }
 
-/// 已分配 OrderId 的 P4 Place 或成功撤单前后的精确订单簿观察。
+/// 已分配 OrderId 的 stock_processing Place 或成功撤单前后的精确订单簿观察。
 /// `ContinuousAcceptanceQuote` 仅用于 NPC 工作单的操作后核对；诊断还需操作前快照，
 /// 包括即时全成的市价单。worker 拒单未修改订单簿，因此 before/after 相同。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -843,7 +843,7 @@ fn validate_initial_snapshots(
         snapshot.envelope.validate()?;
         if snapshot.envelope.origin() != EnvelopeOrigin::TickStart {
             return Err(invariant(
-                "post-P0 continuous input contains a same-tick envelope",
+                "报价过期后的 Continuous 输入包含同 tick 创建的 envelope",
             ));
         }
         if snapshot.envelope.key().stock != *market.code() {

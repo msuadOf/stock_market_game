@@ -1,4 +1,4 @@
-//! 资产负债表生成器（K3，任务 13）：由窗口读投影推导主表行。
+//! 资产负债表生成器：由窗口读投影推导主表行。
 //!
 //! 列示口径（CAS 30（2026）§25/§27/§16 已核验，docs/company-accounting.md §2.1）：
 //! 行值 = 该行归类科目净借方（余额/运动）按借贷正常方向折算的正数口径；
@@ -8,7 +8,7 @@
 //!
 //! 合并权益列：实收资本 = 根成员 4001；归母留存 = 归母权益 − 根成员实收
 //! 资本（固定控制、无并购计量——子公司权益母公司份额并入留存，登记于
-//! issues 的游戏简化）；少数股东权益 = 任务 12 拆分。
+//! issues 的游戏简化）；少数股东权益由固定集团合并拆分。
 
 use std::collections::BTreeMap;
 
@@ -353,7 +353,7 @@ mod tests {
     fn windows() -> StatementWindows {
         let current = AccountingPeriod::from_ymd(2030, 1).unwrap();
         let prior = AccountingPeriod::from_ymd(2029, 1).unwrap();
-        let defs = AccountChart::generic_v1()
+        let defs = AccountChart::generic_account_chart()
             .iter()
             .map(|(code, def)| (code.clone(), def.clone()))
             .collect();

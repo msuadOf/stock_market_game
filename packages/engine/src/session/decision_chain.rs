@@ -1,9 +1,9 @@
-//! 完整决策链（任务 26）：信念机构账户的 K5a/K6 编排。
+//! 编排信念机构账户的混合分析、方向迟滞与个人计划生命周期。
 //!
 //! 链条（每次 accepted 注意力触发，各账户的根观察可并行执行）：
 //!
 //! 1. **候选集**：持仓 ∪ 已有信念条目 ∪ 本次个体发现
-//!    （[`NpcAttentionState::sample_discovery_stock`]，任务 25 的个体注意力流；
+//!    （[`NpcAttentionState::sample_discovery_stock`] 使用个体注意力随机流；
 //!    发现接受时写入 [`PersonalWatchlist`]）。
 //! 2. **本人信息**：对候选发行人调用 `information::discovery_candidates`
 //!    （公共曝光面），未获知的公布经 `record_acquisition` 显式登记（新曝光
@@ -11,9 +11,9 @@
 //!    同个人决策」的验收由此保证）。
 //! 3. **信念更新**：新获知的**年报**触发 `BeliefCause::NewMaterial`（λ 修订 +
 //!    按新事实重估）；既有预期到期触发 `HorizonExpired`。估值纯属个人：
-//!    每股区间 = 归母整体估计 / 已发行总股本（K5 行 141——绝不把整体权益
+//!    每股区间 = 归母整体估计 / 已发行总股本（个人估值的单位约束——绝不把整体权益
 //!    量纲与市场报价直接比较）。
-//! 4. **K5a 聚合**：五路信号（基本面/趋势/量价/技术/成本经历）按账户
+//! 4. **混合分析与方向迟滞 聚合**：五路信号（基本面/趋势/量价/技术/成本经历）按账户
 //!    `AnalysisProfile` 权重混合（`plans::blend_candidate`）。机构经历事实独立
 //!    保存；成本经历按个人参数形成候选，不直接生成订单或统一止损。
 //!    基本面方法不可用 ⇒ 该路 `Unavailable` ⇒ 不开/不反向修订方向性计划
@@ -26,7 +26,7 @@
 //!    （风险减仓→既有计划→新机会排序）。
 //! 7. **紧迫度与报价**：`assess_urgency` + `decide_quote`（受保护限价取
 //!    个人每股区间的乐观/悲观端；无估值时退到涨跌停带边界）。
-//! 8. **执行**：计划动作作为带身份的请求进入本轮 P3/P4；只有真实成交
+//! 8. **执行**：计划动作作为带身份的请求进入本轮 AccountValidation/stock_processing；只有真实成交
 //!    推进 `filled_qty`。账户级分配仍可能等待本账户其他股票的待反馈命令。
 //!
 //! 链内没有独立 RNG；交易请求的优先关系由实际资源冲突和订单簿决定。
@@ -253,7 +253,7 @@ pub(super) fn derived_stream(seed: u64, tag: &str, id: AccountId) -> u64 {
 }
 
 /// 公告曝光新鲜度窗口（自然日）：公布日落在本窗口内的股票获得发现权重
-/// 加成（版本化游戏假设；任务 25 `ANNOUNCEMENT_BOOST` 的消费面）。
+/// 公告发现加成（版本化游戏假设；消费 ANNOUNCEMENT_BOOST）。
 const EXPOSURE_FRESHNESS_DAYS: u32 = 2;
 
 /// 决策链只读诊断（验收测试面）。
@@ -310,9 +310,9 @@ fn root_candidate_codes(
     candidates
 }
 
-/// A lifecycle decision carries no plan-book write until the caller applies it. The current
-/// caller applies immediately. These actions carry no state version: if a future path crosses
-/// P3/P4 before applying them, it must observe current facts and collect again.
+/// 生命周期决策在调用方应用前不写 PlanBook；当前调用方立即应用。
+/// 这些动作不携带状态 version。未来若跨越 AccountValidation/StockProcessing 边界，
+/// 必须重新观察当前事实并再次收集。
 pub(in crate::session) enum PlanLifecycleAction {
     ExecutionState {
         plan_id: PlanId,
@@ -499,8 +499,8 @@ impl GameSession {
         }
     }
 
-    /// Captures the complete root domain before the first P4 operation. The batch is lazy:
-    /// account discovery/lifecycle/quotes run only when the private coordinator visits that root.
+    /// 首次 StockProcessing operation 前捕获完整根域；batch 按需生产。
+    /// 仅当私有 coordinator 访问该根时，才运行账户发现、生命周期与报价。
     pub(in crate::session) fn capture_decision_chain_roots(
         &self,
         accepted_due_npc_ids: &[AccountId],
@@ -515,7 +515,7 @@ impl GameSession {
             || snapshot.phase() != self.phase()
         {
             return Err(invariant(
-                "plan-chain P1 observation clock does not match tick".to_owned(),
+                "计划链的 SealAllocationSnapshot 观察时钟与 tick 不一致".to_owned(),
             ));
         }
         if accepted_due_npc_ids
@@ -743,7 +743,7 @@ impl GameSession {
         self.observation_civil_instant()
     }
 
-    /// 曝光股票集合：公布/公告落在新鲜度窗口内的发行人股票（任务 25 发现
+    /// 曝光股票集合：公布或公告落在新鲜度窗口内的发行人股票（发现
     /// 权重的公告加成输入；公司 ↔ 股票映射 = 发行人注册表）。
     #[cfg(test)]
     fn chain_exposed_stocks(&self, now: crate::calendar::CivilInstant) -> BTreeSet<StockCode> {
@@ -835,7 +835,7 @@ impl GameSession {
     /// 计划生命周期驱动：新开/修订/平静观察。需要基本面的策略在
     /// 个人估值不可用时不产生新方向性动作；零基本面权重的策略用其他信号。
     ///
-    /// 日中终止/反向修订前必须先真实撤销在途子单（task-24 复核移交项）：
+    /// 日中终止或反向修订前必须先真实撤销在途子单：
     /// 见 [`Self::cancel_in_flight_child_before_restructure`]。
     pub(in crate::session) fn collect_plan_lifecycle_actions(
         &self,
@@ -1043,7 +1043,7 @@ impl GameSession {
             .unwrap_or_default()
     }
 
-    /// 单账户单股的 K5a 评估（诊断/测试）。
+    /// 单账户单股的 混合分析与方向迟滞 评估（诊断/测试）。
     pub fn assessment_debug(
         &self,
         account: AccountId,
@@ -3335,7 +3335,7 @@ mod chain_restructure_tests {
                 Event::OrderAccepted { account, remaining_qty, .. }
                     if *account == owner && *remaining_qty == child_qty
             )),
-            "the affordable child must route through P3/P4: {events:?}"
+            "可负担的子单必须进入 AccountValidation/StockProcessing：{events:?}"
         );
         assert!(
             session
@@ -3657,7 +3657,7 @@ mod chain_restructure_tests {
             )
             .unwrap();
             assert!(
-                matches!(session.capture_decision_chain_roots(&[], &snapshot), Err(StepFatal::InvariantViolation { description, .. }) if description.contains("observation clock"))
+                matches!(session.capture_decision_chain_roots(&[], &snapshot), Err(StepFatal::InvariantViolation { description, location }) if description == "计划链的 SealAllocationSnapshot 观察时钟与 tick 不一致" && location == "decision_chain::capture_decision_chain_roots")
             );
         }
     }
@@ -4281,7 +4281,7 @@ mod chain_restructure_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+            simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         };
         GameSession::new(setup, 42).unwrap()
     }

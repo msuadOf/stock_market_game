@@ -11,6 +11,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_COMPILE_CACHE_FORMAT_VERSION: 1
+  SEALED_CARGO_CACHE_FORMAT_VERSION: 2
   # Windows links dozens of test binaries; full PDBs exhaust the build deadline.
   # Keep debug assertions/overflow checks and every test, omit symbols only.
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -106,7 +108,7 @@ jobs:
         with:
           workspaces: |
             . -> target
-          prefix-key: v1-rust-compile-only
+          prefix-key: rust-compile-only-cache-${{ env.RUST_COMPILE_CACHE_FORMAT_VERSION }}
           cache-targets: false
           cache-directories: |
             target/debug
@@ -171,10 +173,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .tmp/build-cache/full-regression
-          key: sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sealed-cargo-cache-no-debug-${{ env.SEALED_CARGO_CACHE_FORMAT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
-            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-
+            sealed-cargo-cache-no-debug-${{ env.SEALED_CARGO_CACHE_FORMAT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-cache-no-debug-${{ env.SEALED_CARGO_CACHE_FORMAT_VERSION }}-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Prepare Windows native libraries (separate 5 minute compile deadline)
         id: native-prepare

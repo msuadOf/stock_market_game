@@ -338,7 +338,7 @@ export async function packageDistributions(options, { root = process.cwd(), run 
       const info = await requireFile(filename);
       files.push({ name, bytes: info.size, sha256: await fileDigest(filename) });
     }
-    const manifest = { schema: "distribution-manifest-v1", product: options.product, target: options.target, files };
+    const manifest = { schema: "distribution-manifest", schema_version: 1, product: options.product, target: options.target, files };
     await writeFile(path.join(distributions, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     await publish(distributions, output);
     return manifest;

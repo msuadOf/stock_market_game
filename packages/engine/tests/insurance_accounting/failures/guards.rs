@@ -94,7 +94,7 @@ fn discount_rate_above_upper_bound_is_rejected_at_construction() {
 #[test]
 fn claim_payment_beyond_cash_fails_typed_and_leaves_state_unchanged() {
     // 现金 3000 元（开局 2000 + 保费 1000）；赔付 5000 元超可支付现金 →
-    // PaymentFailed（K2 客户流动性约束：险企继续运行，无透支无自动补钱）。
+    // PaymentFailed（客户流动性约束：险企继续运行，无透支无自动补钱）。
     let mut ins = seeded();
     ins.record_claim(&group_id(), claim_id(), yuan(5_000), d("2030-05-01"))
         .expect("claim occurs (负债确认不受现金约束)");

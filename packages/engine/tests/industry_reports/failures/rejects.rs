@@ -40,10 +40,10 @@ fn original_request<'a>(
     }
 }
 
-/// 科目无归属：通用 v1 科目表 + 银行列报（1001/1601 等无银行分类）→ 类型化拒绝。
+/// 科目无归属：通用科目表（version=1）+ 银行列报（1001/1601 等无银行分类）→ 类型化拒绝。
 #[test]
 fn unclassified_account_rejects_publication() {
-    let books = Books::new(AccountChart::generic_v1());
+    let books = Books::new(AccountChart::generic_account_chart());
     let err = generate_report_set(original_request(
         ReportSource::Standalone {
             id: MemberId("C-X".to_string()),

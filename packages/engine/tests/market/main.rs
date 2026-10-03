@@ -1,7 +1,6 @@
 //! engine market 模块集成测试（TDD 红绿循环）。
-//! 任务 26 修复轮：从 ccf0490 恢复；删除 5 个 `evolve_v_*` 测试与 VParams 专属断言，
-//! 适配 4 参 `Market::new`；**全部非 V 涨跌停/价格笼子/撮合语义测试逐字保留**。
-//! 体积超过 250 行约定，按 task-6 目录先例拆 `price_limits.rs`（`--test market` 不变）。
+//! 验证 Market 的涨跌停、价格笼子与撮合语义；成交价由实际撮合产生。
+//! 涨跌停与价格笼子用例在 `price_limits.rs` 中验证（`--test market` 不变）。
 use engine::account::StockCode;
 use engine::market::{Market, MarketError};
 use engine::Money;
@@ -17,10 +16,10 @@ fn market_error_basics() {
         up: Money::from_cents(1100),
     };
     assert!(e.to_string().contains("600101"));
-    let e2 = MarketError::InvalidParams {
+    let invalid_params_error = MarketError::InvalidParams {
         reason: "bad".to_string(),
     };
-    assert!(e2.to_string().contains("bad"));
+    assert!(invalid_params_error.to_string().contains("bad"));
 }
 
 fn mk_market() -> Market {

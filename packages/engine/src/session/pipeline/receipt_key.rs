@@ -34,7 +34,7 @@ impl PartialOrd for JournalRank {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum ReceiptSource {
     SealedIntent(u64),
-    #[serde(rename = "P0Expiry")]
+
     QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),

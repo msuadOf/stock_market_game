@@ -1,6 +1,6 @@
-//! NPC 个体注意力/观察节奏接缝：从 session.rs 按责任抽出（W1-Task 3）。
+//! 管理 NPC 个体注意力与观察节奏。
 //! 抽样函数、到期弹出与实时候选评估保持原行为；注意力 RNG 流与存档格式不变。
-//! K4 个人发现权重与个体发现抽样（W4-Task 25）在本文件 additive 追加。
+//! 公共信号形成发现权重，个人状态决定是否观察；发现机会不等于自动获知。
 
 use super::*;
 use crate::experience::PersonalWatchlist;
@@ -91,12 +91,12 @@ pub(super) fn sample_attention_wait(probability: f64, rng: &mut dyn Rng) -> u64 
     wait.clamp(1.0, u64::MAX as f64) as u64
 }
 
-// ---- K4 个人发现权重与个体发现抽样（W4-Task 25；会话接线归任务 26） ----
+// ---- 公共发现权重与个人发现抽样；GameSession 负责接线 ----
 //
 // 发现面输入只有两类**公共**数据：市场视图（行情/量能）与公告曝光集合
-// （由任务 16 `information::discovery_candidates` 公开面派生）。私有经营
+// （由 information::discovery_candidates 公开接口派生）。私有经营
 // 事实（未披露总账/CompanyState 内部）结构性不可达；新曝光只提高发现
-// 机会，绝不自动获知（获知只能经 `record_acquisition`，任务 16 语义）。
+// 机会，不产生自动获知；只有 record_acquisition 才登记个人获知。
 
 /// 30 分钟窗口 |涨跌| 达到该比例视为异常（版本化待校准游戏假设）。
 const DISCOVERY_ANOMALY_MOVE_RATIO: f64 = 0.02;
@@ -216,10 +216,10 @@ fn select_discovery_stock(
 }
 
 impl NpcAttentionState {
-    /// 公共信号发现权重表（K4）：1.0 基础 + 异常30分钟涨跌/相对量能/公告
+    /// 公共信号发现权重表（经营与信息披露）：1.0 基础 + 异常30分钟涨跌/相对量能/公告
     /// 曝光加成。纯函数 of (公共市场视图, 公开曝光集合)——私有经营事实
-    /// 结构性不可达；公告曝光集合由调用方从任务 16 `discovery_candidates`
-    /// 面派生（公司↔股票映射与曝光新鲜度窗口归会话接线，任务 26）。
+    /// 结构性不可达；公告曝光集合由调用方从 discovery_candidates
+    /// 接口派生；公司与股票映射、曝光新鲜度窗口由 GameSession 负责。
     pub fn discovery_weights(
         market: &MarketView,
         announcement_exposed: &BTreeSet<StockCode>,
@@ -236,7 +236,7 @@ impl NpcAttentionState {
             .collect()
     }
 
-    /// 个体发现抽样（K4/K6）：继承原候选结构——60% 持仓优先（均匀，异常
+    /// 个体发现抽样（经营与信息披露/个人计划生命周期）：继承原候选结构——60% 持仓优先（均匀，异常
     /// 权重不进入持仓分支）→ 70% 关注列表（加权）→ 全市场（加权）。
     ///
     /// 消费本 NPC 的个体注意力 RNG 流（继承原候选个体 RNG；推进

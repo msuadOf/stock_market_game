@@ -38,7 +38,7 @@ it("gives native and WASM builds an explicit CPU budget and external deadline", 
 
 it("reuses same-platform Cargo artifacts when dependency manifests change", () => {
   const restore = steps[stepContaining("Restore sealed Cargo cache")];
-  assert.match(restore, /restore-keys:[\s\S]*sealed-cargo-v2-no-debug-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\s*$/);
+  assert.match(restore, /restore-keys:[\s\S]*sealed-cargo-cache-no-debug-\$\{\{ env\.SEALED_CARGO_CACHE_FORMAT_VERSION \}\}-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\s*$/);
 });
 
 it("pins wasm-pack after Cargo cache restoration and verifies the installed version", () => {

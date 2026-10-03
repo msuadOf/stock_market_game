@@ -7,9 +7,9 @@ use engine::accounting::{
     AccountingAmount, InventoryItemCode, JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::CivilDate;
-use engine::company::bank::{bank_chart_v3, BankConfig, EclPolicy, EclScenario};
+use engine::company::bank::{bank_account_chart, BankConfig, EclPolicy, EclScenario};
 use engine::company::events::ShockParams;
-use engine::company::industrial::{industrial_chart_v2, IndustrialConfig};
+use engine::company::industrial::{industrial_account_chart, IndustrialConfig};
 use engine::company::operations::{
     CompanyOperationsConfig, FlowParams, IndustrialFlowParams, OperatingCompanyConfig,
 };
@@ -79,7 +79,7 @@ fn spec(id: &str, kind: CompanyKind) -> CompanySpec {
 /// 工商公司（开局种子与总账逐科目对账守卫满足）。
 fn industrial_company(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 2_000_000),
@@ -144,10 +144,10 @@ fn industrial_company(as_of: CivilDate) -> OperatingCompanyConfig {
     }
 }
 
-/// 银行公司（跨行业前史覆盖：科目表 v3 列报路径）。
+/// 银行公司（跨行业前史覆盖：科目表 version=3 列报路径）。
 fn bank_company(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = BankConfig {
-        chart: bank_chart_v3(),
+        chart: bank_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1003", PostingSide::Debit, 3_000_000),

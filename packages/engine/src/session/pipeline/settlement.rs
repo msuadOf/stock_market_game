@@ -1,6 +1,6 @@
 //! Settlement 消费 ReceiptAggregation 校验后的收据增量。
 //!
-//! nominal 费用由 P4 计算；此处只累计 EnvelopeReceipt::charged 的实际实收金额。
+//! nominal 费用由 stock_processing 计算；此处只累计 EnvelopeReceipt::charged 的实际实收金额。
 
 use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
 use crate::account::SettlementTotals;

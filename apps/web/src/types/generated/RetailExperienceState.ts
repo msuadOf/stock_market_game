@@ -13,9 +13,9 @@ export type RetailExperienceState = {
   consecutive_failed_buys: number;
   stocks: { [key in StockCode]: RetailStockExperience };
   /**
-   * K5 经历反馈事实（任务 20）：受挫事件日期、持仓生命周期、退出/冷静期
-   * 历史。默认空 = 新账户或尚未接双时钟事件（序列化时省略，旧档字节与
-   * 读取语义不变）；衰减只作用于读取档位，不删除这里登记的任何事实。
+   * 经历反馈事实：受挫事件日期、持仓生命周期、退出/冷静期
+   * 历史。默认空表示新账户或尚未登记双时钟事件，序列化时省略空反馈；
+   * 衰减只作用于读取档位，不删除这里登记的任何事实。
    */
   feedback?: ExperienceFeedback;
 };

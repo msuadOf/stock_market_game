@@ -1,9 +1,9 @@
-//! 经营到期事件队列（K4，任务 14）：持久化、稳定排序、替代整账扫描。
+//! 经营到期事件队列（经营与信息披露，自然日经营演化）：持久化、稳定排序、替代整账扫描。
 //!
 //! 排序键 `(due_date, id)`——id 由队列单调分配，同日业务按提交顺序恰好一次
-//! 派发。业务去重以调用方提供的**稳定来源 key** 承担（任务 5 时钟侧注释
+//! 派发。业务去重以调用方提供的**稳定来源 key** 承担（自然日时钟
 //! 约定：同类业务可在同一日期注册多条）。股东动作（分红/回购/清算分配）是
-//! K3 红线：结算仅设计，无运行时队列——送入即类型化拒绝。
+//! 行业会计红线：结算仅设计，无运行时队列——送入即类型化拒绝。
 //!
 //! 时钟集成经会话接缝（`session::company_operations`）：调度器待办镜像为
 //! `CivilClock` 的 `DueKind::InterestAccrual/ContractMaturity`，恰好一次
@@ -45,7 +45,7 @@ pub enum ScheduledAction {
 }
 
 /// 提交请求。`ShareholderDistribution` 变体只存在于输入面——提交即拒绝，
-/// 永不进入队列（K3：不执行任何股东分配）。
+/// 永不进入队列（行业会计约束：不执行任何股东分配）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SchedulerRequest {
     Due {
@@ -73,9 +73,7 @@ pub struct ScheduledDue {
 pub enum SchedulerError {
     #[error("due key {key:?} is already pending (duplicate submission)")]
     DuplicateDueKey { key: String },
-    #[error(
-        "shareholder action for {company:?} ({detail}) is unsupported: settlements are design-only (K3)"
-    )]
+    #[error("不支持公司 {company:?} 的股东动作（{detail}）：股东结算仅为设计边界，运行时不执行")]
     ShareholderActionsUnsupported { company: CompanyId, detail: String },
     #[error("due {key:?} on {due_date} is not after the settled floor {floor:?}")]
     DueDateInPast {

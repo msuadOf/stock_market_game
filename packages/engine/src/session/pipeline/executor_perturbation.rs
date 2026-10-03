@@ -31,19 +31,18 @@ pub struct ExecutorPerturbation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ExecutorBoundary {
-    #[serde(rename = "P3AccountShards")]
     AccountValidationShards,
-    #[serde(rename = "P3WorkerResults")]
+
     AccountValidationWorkerResults,
-    #[serde(rename = "P4ContinuousStockShards")]
+
     ContinuousStockShards,
-    #[serde(rename = "P4ContinuousWorkerResults")]
+
     ContinuousWorkerResults,
-    #[serde(rename = "P4AuctionStockShards")]
+
     AuctionStockShards,
-    #[serde(rename = "P4AuctionWorkerResults")]
+
     AuctionWorkerResults,
-    #[serde(rename = "P5ReceiptResults")]
+
     AggregatedReceiptResults,
 }
 

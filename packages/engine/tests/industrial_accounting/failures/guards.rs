@@ -298,7 +298,7 @@ fn opening_seed_guards_reject_ledger_subledger_drift() {
         Err(IndustrialError::OpeningSeedMismatch { .. })
     ));
 
-    // 开局累计折旧（1602 非零）暂不支持 → 类型化拒绝（诚实边界，前史由任务 14
+    // 开局累计折旧（1602 非零）暂不支持 → 类型化拒绝（诚实边界，前史由自然日经营演化
     // 生成）。资产种子与 1601 对齐，确保命中的是累计折旧守卫而非种子对账守卫。
     let mut cfg = base_config();
     cfg.opening_lines = vec![

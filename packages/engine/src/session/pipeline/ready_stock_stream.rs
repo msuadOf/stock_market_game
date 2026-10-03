@@ -1,5 +1,5 @@
-//! Advance plan routes as each stock returns its typed P4 result. P3 and plan
-//! state stay on the tick coordinator; workers only own their stock shadows.
+//! 每只股票返回 typed StockProcessing 结果后立即推进依赖计划路由。
+//! AccountValidation 与计划状态留在 tick coordinator；workers 只拥有各自股票 shadows。
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
@@ -130,12 +130,12 @@ impl<'a> ReadyStockStream<'a> {
             let outcome = self
                 .pending
                 .remove(key)
-                .ok_or_else(|| invariant("P4 returned an unpending candidate"))?;
-            let operation = outcome
-                .operation()
-                .ok_or_else(|| invariant("P4 returned a P3-rejected candidate"))?;
+                .ok_or_else(|| invariant("StockProcessing 返回了非待处理候选"))?;
+            let operation = outcome.operation().ok_or_else(|| {
+                invariant("StockProcessing 返回了 AccountValidation 已拒绝的候选")
+            })?;
             if operation_code(operation) != stock {
-                return Err(invariant("P4 completion came from a different stock"));
+                return Err(invariant("StockProcessing completion 来自其他股票"));
             }
             outcomes.push(outcome);
         }
@@ -167,7 +167,7 @@ impl<'a> ReadyStockStream<'a> {
                         .insert(outcome.candidate_key().clone(), outcome)
                         .is_some()
                     {
-                        return Err(invariant("P3 returned a duplicate pending candidate"));
+                        return Err(invariant("AccountValidation 返回了重复待处理候选"));
                     }
                     operations.push(operation);
                 } else if matches!(
@@ -205,9 +205,7 @@ impl<'a> ReadyStockStream<'a> {
 
     pub(super) fn finish(self) -> Result<(), StepFatal> {
         if !self.pending.is_empty() {
-            return Err(invariant(
-                "P4 left accepted candidates without typed feedback",
-            ));
+            return Err(invariant("StockProcessing 的已受理候选缺少 typed feedback"));
         }
         Ok(())
     }

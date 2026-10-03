@@ -1,5 +1,5 @@
-//! 保险域统一错误（K3，任务 10）。绝不静默吞错（铁律二）：每个变体携带定位
-//! 与数值上下文。`PaymentFailed` 是负现金禁令（K2）在保险经营域的类型化映射
+//! 保险域统一错误（保险会计约束）。绝不静默吞错（铁律二）：每个变体携带定位
+//! 与数值上下文。`PaymentFailed` 是负现金禁令（会计与资金边界）在保险经营域的类型化映射
 //! ——赔款支付超可支付现金不是引擎错误：险企继续运行（支付失败、负债保留），
 //! 无透支、无自动补钱。
 
@@ -14,7 +14,7 @@ use thiserror::Error;
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum InsuranceError {
     /// 赔款支付将打负现金（`NegativeCashProhibited` 的领域映射）：类型化
-    /// 拒绝，账套与子账零改动（K2 客户流动性约束：险企继续运行）。
+    /// 拒绝，账套与子账零改动（客户流动性约束：险企继续运行）。
     #[error("payment failed (insufficient cash): {source}")]
     PaymentFailed { source: AccountingError },
 
@@ -87,11 +87,9 @@ pub enum InsuranceError {
         estimate: AccountingAmount,
     },
 
-    /// 开局给保险子账科目种子暂不支持（诚实边界：经营前史由任务 14 用同一
+    /// 开局给保险子账科目种子暂不支持（诚实边界：经营前史由自然日经营演化用同一
     /// 处理器生成，不从存档倒推）。
-    #[error(
-        "opening lines must not seed insurance sub-ledger account {account}; prehistory is task 14"
-    )]
+    #[error("开局分录不能为保险子账科目 {account} 注入余额；经营前史须由自然日经营处理器生成")]
     OpeningInsuranceBooksSeeded { account: LedgerAccountId },
 
     #[error(transparent)]
@@ -102,7 +100,7 @@ pub enum InsuranceError {
 }
 
 /// 过账错误 → 领域错误映射：批末负现金（`NegativeCashProhibited` 的领域
-/// 包装，K2 负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
+/// 包装，负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
 pub(super) fn map_post_error(source: AccountingError) -> InsuranceError {
     if let AccountingError::BatchAborted { cause, .. } = &source {
         if matches!(**cause, AccountingError::NegativeCashProhibited { .. }) {

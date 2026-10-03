@@ -38,7 +38,6 @@ pub struct EnvelopeReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(super) struct ConservationState {
-    #[serde(rename = "p0_released")]
     pub(super) expiry_released: ResVec,
     pub(super) sealed_spent: ResVec,
     pub(super) sealed_released: ResVec,
@@ -206,9 +205,8 @@ impl EnvelopeLedger {
         self.remove_terminal_private(terminal_keys, true)
     }
 
-    /// P4 owns a discardable stock-round ledger. Validate each receipt transition
-    /// immediately, then check aggregate conservation once before publishing the
-    /// round. An error discards the whole stock round and ultimately the tick.
+    /// StockProcessing 持有可丢弃的逐股账本，立即逐项校验 receipt transition。
+    /// 发布本轮结果前再检查一次汇总守恒；失败时丢弃完整股票轮次，最终丢弃 tick。
     pub(super) fn apply_private_for_stock_round(
         &mut self,
         receipts: &mut [EnvelopeReceipt],
@@ -235,10 +233,9 @@ impl EnvelopeLedger {
         self.remove_terminal_private(terminal_keys, false)
     }
 
-    /// Atomically installs the P3-created envelopes that ReceiptAggregation will validate.
+    /// 原子安装 AccountValidation 创建的 envelopes，后续由 ReceiptAggregation 校验。
     ///
-    /// This operation only creates ledger rows. It does not allocate receipt
-    /// indices, consume local receipt identities, or apply any transition.
+    /// 此操作只创建账本行，不分配 receipt index、消费局部 receipt 身份或应用 transition。
     pub fn insert_created(
         &mut self,
         envelopes: impl IntoIterator<Item = Envelope>,
@@ -263,12 +260,12 @@ impl EnvelopeLedger {
             envelope.validate()?;
             if envelope.origin() != EnvelopeOrigin::CreatedAtValidation {
                 return Err(ledger_validation::invariant(
-                    "inserted envelope was not created by P3",
+                    "插入的 envelope 并非由 AccountValidation 创建",
                 ));
             }
             if envelope.live() == ResVec::ZERO {
                 return Err(ledger_validation::invariant(
-                    "inserted P3 envelope has no live resources",
+                    "插入的 AccountValidation envelope 缺少 live resources",
                 ));
             }
             let key = envelope.key().clone();
@@ -279,7 +276,7 @@ impl EnvelopeLedger {
                 || self.conservation.contains_key(&key)
             {
                 return Err(ledger_validation::invariant(
-                    "inserted P3 envelope key conflicts with ledger evidence",
+                    "插入的 AccountValidation envelope key 与账本证据冲突",
                 ));
             }
             prepared.push((key, envelope));
@@ -315,8 +312,8 @@ impl EnvelopeLedger {
         Ok(())
     }
 
-    /// The P9 owner already discards its whole tick candidate on failure.
-    /// Move live rows out of that candidate instead of cloning the ledger again.
+    /// CommitTick owner 在失败时已丢弃完整 tick candidate。
+    /// 直接移出 candidate 的 live rows，避免再次复制账本。
     pub(super) fn rebase_private_for_tick_commit(&mut self) -> Result<(), StepFatal> {
         validate_ledger_evidence(self)?;
 

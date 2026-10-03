@@ -12,7 +12,7 @@ export function validateDayEndArchive(slot: StrictSaveEnvelope): StrictSaveEnvel
   if (Object.values(slot.resting_orders).some((orders) => orders.length > 0)
     || Object.values(slot.auction_orders).some((orders) => orders.length > 0)
     || Object.values(slot.parent_orders).some((plans) => Object.keys(plans).length > 0)
-    || slot.runtime_v2.live_envelopes.length > 0
+    || slot.runtime_state.live_envelopes.length > 0
     || slot.npc_order_lifecycles.length > 0) {
     throw new Error("日终存档不能包含日内活动委托或冻结资源");
   }

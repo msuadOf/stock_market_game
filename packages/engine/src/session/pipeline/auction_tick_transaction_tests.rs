@@ -153,7 +153,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
     let rejected_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
-        .expect("market rejection is an ordinary P4 outcome")
+        .expect("市场拒绝属于普通 StockProcessing 结果")
         .commit();
 
     assert!(matches!(
@@ -243,11 +243,11 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
     let rejected_market_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
-        .expect("auction market rejection is an ordinary P4 outcome")
+        .expect("Auction 市场拒绝属于普通 StockProcessing 结果")
         .commit();
 
-    // P3 按 protective price 预算受理市价请求；A 股集合竞价仅允许限价，P4 随后拒绝。
-    // 已分配 identity 与 P3 预算均不退还给后续限价请求。
+    // AccountValidation 按 protective price 预算受理市价请求；A 股集合竞价仅允许限价，stock_processing 随后拒绝。
+    // 已分配 identity 与 AccountValidation 预算均不退还给后续限价请求。
     assert!(matches!(
         committed.output.validation.results(),
         [
@@ -308,7 +308,7 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
     let rejected_id = OrderId(authority.state.next_order_id);
 
     let committed = prepare_auction_tick(&mut authority)
-        .expect("P3 business rejections and P4 market rejection commit atomically")
+        .expect("AccountValidation 业务拒绝与 StockProcessing 市场拒绝必须原子提交")
         .commit();
 
     let results = committed.output.validation.results();
@@ -761,7 +761,7 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
     );
     assert!(
         session.state.pending_plan_events.is_empty(),
-        "continuation-consumed cancel/accept facts must not be projected again in P7"
+        "continuation 已消费的 cancel/accept 事实不得再次进入 DerivationAudit 投影"
     );
     let plan_account = session.state.plans.plan(request.plan_id).unwrap().account();
     assert_eq!(

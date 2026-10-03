@@ -2,7 +2,7 @@
 
 /**
  * 计划目标：目标仓位（权益占比 bp）或目标股数，两者都可表达。
- * 份额目标才有份额级完成/超额语义；比例目标由预算换算层（任务 22）转成股数。
+ * 股数目标才有股数级完成/超额语义；比例目标由预算换算层转成股数。
  */
 export type PlanTarget = { "ShareCount": number } | {
   "PositionFractionBp": number;

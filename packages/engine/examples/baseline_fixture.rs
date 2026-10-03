@@ -206,9 +206,9 @@ fn matrix_setup() -> SessionSetup {
             inst: 0.53,
             hot: 0.02,
         },
-        // K1 默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
+        // 冻结日历与双时钟的默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -269,9 +269,9 @@ fn compressed_setup() -> SessionSetup {
             inst: 0.53,
             hot: 0.02,
         },
-        // K1 默认开局日期（与 matrix 场景一致的基准语义）。
+        // 冻结日历与双时钟的默认开局日期（与 matrix 场景一致的基准语义）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 

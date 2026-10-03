@@ -4,7 +4,7 @@ import type { CivilDate } from "./CivilDate";
 /**
  * Asia/Shanghai 语义的日内时刻：日期 + 当日秒（0..86_400）。
  *
- * 规则时间与模拟时间分离（K1 §4）的最小承载单元；时区不引入 tz 数据库，
+ * 规则时间与模拟时间分离的最小承载单元；时区不引入 tz 数据库，
  * 中国大陆自 1991 年起无夏令时，全年统一 UTC+8，此处直接存"本地日 + 日内秒"。
  */
 export type CivilInstant = { date: CivilDate; second_of_day: number };

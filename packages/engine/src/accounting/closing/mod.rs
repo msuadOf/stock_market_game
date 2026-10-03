@@ -1,4 +1,4 @@
-//! 结账（K3，任务 13）：月末封月 / 年末结账 / 季报与半年报快照 / 差错更正。
+//! 结账：月末封月 / 年末结账 / 季报与半年报快照 / 差错更正。
 //!
 //! **期间版本语义**：
 //! - `close_month`：试算平衡 → 生成五产物 → 勾稽与比较项诚实性校验 →
@@ -132,7 +132,7 @@ struct StandaloneTarget<'a> {
 }
 
 /// 结账域错误（类型化，绝不静默；Report 装箱压缩 Err 值域——clippy 先例
-/// 见任务 12 的 DeclaredSide）。
+/// 见合并域的 DeclaredSide）。
 #[derive(Debug, thiserror::Error)]
 pub enum ClosingError {
     #[error("report failure: {0}")]

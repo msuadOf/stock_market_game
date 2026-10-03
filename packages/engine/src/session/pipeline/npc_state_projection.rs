@@ -1,9 +1,8 @@
-//! NPC P2 projection onto the discardable tick candidate.
+//! 将 NPC 决策结果投影到可丢弃 tick candidate。
 //!
-//! Reconciliation decisions deliberately remain separate from residual intents:
-//! Working-order decisions are projected before residual intents are routed.
-//! The candidate composer assigns one contiguous local sequence per account after projection,
-//! preserving reconciliation-before-residual order without reusing raw strategy identities.
+//! 工作单 reconciliation 决策先于 residual intents 路由，二者保持分离。
+//! candidate composer 在投影后为每个账户分配连续局部序号，
+//! 保留 reconciliation 在 residual 之前的顺序，不重用 raw strategy 身份。
 
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
@@ -110,7 +109,7 @@ impl NpcDecisionProjectionOutput {
 #[derive(Debug, thiserror::Error)]
 pub(in crate::session) enum NpcDecisionProjectionError {
     #[error(
-        "P2 NPC projection clock mismatch: shadow tick/phase {shadow_tick}/{shadow_phase:?}, snapshot {snapshot_tick}/{snapshot_phase:?}"
+        "DecisionShadow NPC 投影时钟不一致：shadow tick/phase {shadow_tick}/{shadow_phase:?}，snapshot {snapshot_tick}/{snapshot_phase:?}"
     )]
     ClockMismatch {
         shadow_tick: u64,
@@ -118,24 +117,24 @@ pub(in crate::session) enum NpcDecisionProjectionError {
         snapshot_tick: u64,
         snapshot_phase: crate::TradingPhase,
     },
-    #[error("P2 NPC projection source account or intent order does not match the sealed snapshot")]
+    #[error("DecisionShadow NPC 投影来源账户或 intent 顺序与密封快照不一致")]
     AccountOrderMismatch,
-    #[error("P2 NPC projection is missing shadow account {0:?}")]
+    #[error("DecisionShadow NPC 投影缺少 shadow 账户 {0:?}")]
     MissingAccount(AccountId),
-    #[error("P2 NPC projection account {0:?} changed kind after capture")]
+    #[error("DecisionShadow NPC 投影账户 {0:?} 的 kind 在捕获后发生变化")]
     AccountKindMismatch(AccountId),
-    #[error("P2 NPC projection account {0:?} has no retail experience state")]
+    #[error("DecisionShadow NPC 投影账户 {0:?} 缺少 retail experience state")]
     MissingRetailExperience(AccountId),
-    #[error("P2 NPC projection parent-order state is invalid for account {account:?}: {reason}")]
+    #[error("DecisionShadow NPC 投影账户 {account:?} 的 parent-order 状态无效：{reason}")]
     InvalidParentOrder { account: AccountId, reason: String },
-    #[error("P2 NPC projection parent-order horizon overflows for account {0:?}")]
+    #[error("DecisionShadow NPC 投影账户 {0:?} 的 parent-order horizon 溢出")]
     ParentOrderHorizonOverflow(AccountId),
-    #[error("P2 NPC projection has already transferred strategy state for account {0:?}")]
+    #[error("DecisionShadow NPC 投影已移交账户 {0:?} 的 strategy state")]
     ConsumedStrategyState(AccountId),
 }
 
-/// Projects the pure P2 result onto the caller's discardable tick shadow. A failure
-/// aborts the whole tick candidate; the caller must discard it rather than resume it.
+/// 把纯 NPC 决策结果投影到调用方可丢弃的 tick shadow。
+/// 失败时调用方必须丢弃整个 tick candidate，不能继续使用部分投影。
 pub(in crate::session) fn project_npc_state(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,

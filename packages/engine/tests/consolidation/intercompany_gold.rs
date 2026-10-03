@@ -15,7 +15,7 @@
 use super::{acct, entry, ic_balance, ic_sale, member, request, yuan};
 use engine::accounting::consolidation::consolidate;
 use engine::accounting::{BusinessKind, CashFlowClass, LedgerAccountId, PostingSide};
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::industrial::industrial_account_chart;
 use PostingSide::{Credit, Debit};
 
 /// 合并余额的净借方。
@@ -29,7 +29,7 @@ fn net(out: &engine::accounting::consolidation::ConsolidationOutput, code: &str)
 /// 上游场景的子公司账套：开局 + 全部赊销给母公司（成本 600,000、售价 1,000,000）。
 fn upstream_sub() -> engine::accounting::Books {
     super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -61,7 +61,7 @@ fn upstream_sub() -> engine::accounting::Books {
 /// 上游场景的母公司账套：开局 + 赊购 + 对外售出一半（成本口径 500,000）。
 fn upstream_parent() -> engine::accounting::Books {
     super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -158,7 +158,7 @@ fn upstream_unrealized_profit_reduces_minority_share() {
 fn downstream_unrealized_profit_stays_with_parent() {
     // 下游：母公司是卖方（开局带库存 600,000），子公司买后对外售出一半。
     let parent = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -186,7 +186,7 @@ fn downstream_unrealized_profit_stays_with_parent() {
         ],
     );
     let sub = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,

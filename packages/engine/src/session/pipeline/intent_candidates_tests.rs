@@ -172,5 +172,5 @@ fn intent_candidate_batch_deserializes_source_order_and_rejects_duplicate_identi
     );
     value["candidates"][1] = value["candidates"][0].clone();
     let error = serde_json::from_value::<IntentCandidateBatch>(value).unwrap_err();
-    assert!(error.to_string().contains("duplicate P2 candidate key"));
+    assert!(error.to_string().contains("DecisionShadow 候选 key 重复"));
 }

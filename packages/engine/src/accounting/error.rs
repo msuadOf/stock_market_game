@@ -1,4 +1,4 @@
-//! 会计域统一错误（K2）。绝不静默吞掉（铁律二）：每个变体携带定位与数值上下文。
+//! 会计域统一错误。绝不静默吞掉（铁律二）：每个变体携带定位与数值上下文。
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::journal::{BusinessEventId, PostingSide};
@@ -68,21 +68,21 @@ pub enum AccountingError {
         account: LedgerAccountId,
     },
 
-    /// 同一 `BusinessEventId` 至多入账一次：重复入账显式拒绝（K2 来源唯一性）。
+    /// 同一 `BusinessEventId` 至多入账一次：重复入账显式拒绝。
     #[error("duplicate posting for event {event:?}: first posted on {first_date}")]
     DuplicatePosting {
         event: BusinessEventId,
         first_date: CivilDate,
     },
 
-    /// 记账将把现金科目打成负数：类型化拒绝，绝不 clamp（K2 负现金禁令）。
+    /// 记账将把现金科目打成负数：类型化拒绝，绝不 clamp。
     #[error("posting would drive cash account {account} to {projected}; negative cash prohibited")]
     NegativeCashProhibited {
         account: LedgerAccountId,
         projected: AccountingAmount,
     },
 
-    /// 已封期间拒绝新入账（结账机制本体在任务 13；本模块只有状态 + 守卫）。
+    /// 已封期间拒绝新入账（结账机制在 `closing`；本模块只有状态 + 守卫）。
     #[error("period {period} is closed; posting for event {event:?} rejected")]
     ClosedPeriod {
         period: AccountingPeriod,

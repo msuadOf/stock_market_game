@@ -156,7 +156,7 @@ fn execute(
             let (events, timing) = timed.into_parts();
             for record in timing.records() {
                 let total = phase_wall_ns
-                    .entry(format!("P{}", record.phase().rank()))
+                    .entry(record.phase().name().to_owned())
                     .or_default();
                 *total = total
                     .checked_add(record.wall_time_ns())
@@ -213,7 +213,7 @@ fn execute(
             .map(|(phase, wall)| (phase, wall.to_string()))
             .collect::<BTreeMap<_, _>>();
         Ok(json!({
-            "schema": "production-entry-performance-v2",
+            "schema": "production-entry-performance", "schema_version": 2,
             "input_fingerprint_fnv1a64": input_fingerprint,
             "seed": workload.seed,
             "setup": workload.setup,

@@ -1,5 +1,5 @@
-//! 银行域统一错误（K3，任务 9）。绝不静默吞错（铁律二）：每个变体携带定位
-//! 与数值上下文。`PaymentFailed` 是负现金禁令（K2）在银行经营域的类型化映射
+//! 银行域统一错误（银行会计约束）。绝不静默吞错（铁律二）：每个变体携带定位
+//! 与数值上下文。`PaymentFailed` 是负现金禁令（会计与资金边界）在银行经营域的类型化映射
 //! ——客户流动性约束不足不是引擎错误：银行继续运行（提款失败、头寸保留），
 //! 无透支、无自动补钱、无央行兜底。
 
@@ -14,7 +14,7 @@ use thiserror::Error;
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum BankError {
     /// 付款/提款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化
-    /// 拒绝，账套与子账零改动（K2 客户流动性约束：银行继续运行）。
+    /// 拒绝，账套与子账零改动（客户流动性约束：银行继续运行）。
     #[error("payment failed (insufficient cash): {source}")]
     PaymentFailed { source: AccountingError },
 
@@ -125,11 +125,9 @@ pub enum BankError {
         to_stage: EclStage,
     },
 
-    /// 开局给银行子账科目种子暂不支持（诚实边界：经营前史由任务 14 用同一
+    /// 开局给银行子账科目种子暂不支持（诚实边界：经营前史由自然日经营演化用同一
     /// 处理器生成，不从存档倒推）。
-    #[error(
-        "opening lines must not seed bank sub-ledger account {account}; prehistory is task 14"
-    )]
+    #[error("开局分录不能为银行子账科目 {account} 注入余额；经营前史须由自然日经营处理器生成")]
     OpeningBankBooksSeeded { account: LedgerAccountId },
 
     #[error(transparent)]
@@ -140,7 +138,7 @@ pub enum BankError {
 }
 
 /// 过账错误 → 领域错误映射：批末负现金（`NegativeCashProhibited` 的领域
-/// 包装，K2 负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
+/// 包装，负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
 pub(super) fn map_post_error(source: AccountingError) -> BankError {
     if let AccountingError::BatchAborted { cause, .. } = &source {
         if matches!(**cause, AccountingError::NegativeCashProhibited { .. }) {

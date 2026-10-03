@@ -1,8 +1,7 @@
-//! Projection projection of continuous-stock worker facts.
+//! 将 Continuous 股票 worker 事实投影为 Projection 事件事实。
 //!
-//! Every stable identity comes from the typed P4 fact. This module never uses
-//! collection position or worker completion timing to invent an identity, and it
-//! never assigns the externally visible event sequence.
+//! 稳定身份均来自 typed 股票处理事实，不从集合位置或 worker completion 时点虚构。
+//! 本模块不分配外部可见事件序号。
 
 use super::{
     continuous_matching::{
@@ -33,11 +32,11 @@ pub(super) fn adapt_continuous_execution_facts(
 use crate::{Event, RejectionReason};
 use std::collections::BTreeSet;
 
-/// Projects P4 continuous facts into Projection-owned event facts.
+/// 把 Continuous 股票处理事实投影为 Projection 拥有的事件事实。
 ///
-/// `ContinuousPlaceFact::Filled` deliberately has no direct public event: each public fill is
-/// represented exactly once by `ContinuousTradeFact`. The triggering sealed identity stays on
-/// that P4 audit fact; the ADR-0017 Trade stable key uses its explicit stock-local trade index.
+/// ContinuousPlaceFact::Filled 不直接产生公共事件；每次成交由 ContinuousTradeFact 恰好表示一次。
+/// 触发成交的 sealed identity 保留在真实股票处理 audit fact 上；
+/// ADR-0017 的 Trade stable key 使用显式逐股 trade index。
 pub(super) fn adapt_continuous_facts(
     places: &[ContinuousPlaceFact],
     cancels: &[ContinuousCancelFact],
@@ -166,8 +165,7 @@ fn validate_unique_facts(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
     for fact in facts {
         if !seen.insert(&fact.key) {
             return Err(StepFatal::InvariantViolation {
-                description: "continuous P4 facts contain duplicate event stable identity"
-                    .to_owned(),
+                description: "Continuous StockProcessing 事实含有重复 EventStableKey".to_owned(),
                 location: "pipeline::execution_fact_producers".to_owned(),
             });
         }

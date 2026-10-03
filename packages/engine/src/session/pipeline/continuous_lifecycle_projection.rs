@@ -1,4 +1,4 @@
-//! 根据 typed P3/P4/ReceiptAggregation 事实投影 Continuous 生命周期诊断。
+//! 根据 typed AccountValidation/stock_processing/ReceiptAggregation 事实投影 Continuous 生命周期诊断。
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
@@ -24,16 +24,14 @@ pub(super) fn project_continuous_retail_lifecycle(
     let candidates = index_candidates(candidates)?;
     if candidates.len() != validation.results().len() {
         return Err(invariant(
-            "P3 result count does not match the continuous P2 candidate batch",
+            "AccountValidation 结果数量与 Continuous DecisionShadow 候选批次不一致",
         ));
     }
     let mut facts = BTreeMap::new();
     for fact in execution_facts {
         let identity = (fact.candidate_key.clone(), fact.sealed_index);
         if facts.insert(identity.clone(), fact).is_some() {
-            return Err(invariant(
-                "continuous P4 facts contain a duplicate identity",
-            ));
+            return Err(invariant("Continuous StockProcessing 事实含有重复身份"));
         }
         if !consumed.contains_operation(&identity.0, identity.1) {
             return Err(invariant(
@@ -48,7 +46,7 @@ pub(super) fn project_continuous_retail_lifecycle(
         .count();
     if facts.len() != accepted_count {
         return Err(invariant(
-            "continuous P4 fact count does not match P3 accepted results",
+            "Continuous StockProcessing 事实数量与 AccountValidation 受理结果不一致",
         ));
     }
 
@@ -76,17 +74,17 @@ pub(super) fn project_continuous_retail_lifecycle(
     let mut events = Vec::new();
     let mut fill_quantities = BTreeMap::new();
     for result in validation.results() {
-        let candidate = candidates
-            .get(result.key())
-            .ok_or_else(|| invariant("continuous P3 result has no P2 candidate"))?;
+        let candidate = candidates.get(result.key()).ok_or_else(|| {
+            invariant("Continuous AccountValidation 结果缺少 DecisionShadow 候选")
+        })?;
         match result {
             CandidateValidationResult::Rejected { reason, .. } => {
                 push_rejected(session, &mut events, candidate, reason.clone())?;
             }
             CandidateValidationResult::Accepted { key, sealed_index } => {
-                let fact = facts
-                    .remove(&(key.clone(), *sealed_index))
-                    .ok_or_else(|| invariant("P3 acceptance has no continuous P4 fact"))?;
+                let fact = facts.remove(&(key.clone(), *sealed_index)).ok_or_else(|| {
+                    invariant("AccountValidation 受理结果缺少 Continuous StockProcessing 事实")
+                })?;
                 validate_operation(candidate, fact)?;
                 project_operation(session, &mut events, fact)?;
                 for receipt in fills_by_request.remove(sealed_index).unwrap_or_default() {
@@ -117,7 +115,9 @@ pub(super) fn project_continuous_retail_lifecycle(
         }
     }
     if !facts.is_empty() {
-        return Err(invariant("continuous P4 fact has no P3 result"));
+        return Err(invariant(
+            "Continuous StockProcessing 事实缺少 AccountValidation 结果",
+        ));
     }
     session
         .state
@@ -299,9 +299,7 @@ fn validate_result_identities(results: &[CandidateValidationResult]) -> Result<(
     let mut sealed_indices = BTreeSet::new();
     for result in results {
         if !keys.insert(result.key()) || !sealed_indices.insert(result.sealed_index()) {
-            return Err(invariant(
-                "continuous P3 results contain a duplicate identity",
-            ));
+            return Err(invariant("Continuous AccountValidation 结果含有重复身份"));
         }
     }
     Ok(())
@@ -313,7 +311,7 @@ fn validate_operation(
 ) -> Result<(), StepFatal> {
     if fact.candidate_key() != candidate.key() {
         return Err(invariant(
-            "continuous P4 fact belongs to a different P2 candidate",
+            "Continuous StockProcessing 事实属于其他 DecisionShadow 候选",
         ));
     }
     let valid = match (candidate.intent(), fact.outcome()) {
@@ -393,7 +391,7 @@ fn validate_operation(
         Ok(())
     } else {
         Err(invariant(
-            "continuous P4 payload does not match its P2 candidate",
+            "Continuous StockProcessing payload 与其 DecisionShadow 候选不一致",
         ))
     }
 }
@@ -444,7 +442,7 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for candidate in candidates.candidates() {
         if indexed.insert(candidate.key(), candidate).is_some() {
-            return Err(invariant("continuous P2 batch contains a duplicate key"));
+            return Err(invariant("Continuous DecisionShadow 批次含有重复 key"));
         }
     }
     Ok(indexed)

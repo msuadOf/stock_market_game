@@ -17,7 +17,9 @@ pub(super) fn resolve_draft(
         return Ok((draft.limit(), None));
     };
     if envelope.pending_price() != Some(requested) || envelope.audit().limit != draft.limit() {
-        return Err(invariant("P3 draft and pending envelope price disagree"));
+        return Err(invariant(
+            "AccountValidation draft 与 pending envelope 的价格不一致",
+        ));
     }
     let price = market
         .resolve_limit_price(draft.side(), requested, apply_price_cage)
@@ -38,7 +40,7 @@ pub(super) fn resolve_draft(
         Side::Sell => ResVec::ZERO,
     };
     if released.cash < Money::ZERO {
-        return Err(invariant("resolved price exceeds the P3 cash reservation"));
+        return Err(invariant("解析价格超出 AccountValidation 现金预留"));
     }
     let live_after = envelope.live().checked_sub(released)?;
     let audit = envelope.audit();

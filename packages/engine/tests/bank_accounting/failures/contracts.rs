@@ -1,7 +1,7 @@
 //! 未支持合同显式拒绝 + 开局子账种子守卫：结构化衍生品（CAS 22 §23–§26 +
 //! 解释第20号第一部分）、FVTPL/FVOCI 类投资一律 `UnsupportedContract`
 //! （docs/company-accounting.md §6——不冒充已实现、不静默 fallback）；
-//! 开局行触碰银行子账科目 → 构造期拒绝（经营前史归任务 14）。
+//! 开局行触碰银行子账科目 → 构造期拒绝（经营前史归自然日经营演化）。
 
 use super::super::{acct, base_config, cent_line, d, yuan};
 use super::{bor_cp, dep_cp, loan_id, with_deposit};
@@ -57,7 +57,7 @@ fn structured_and_unsupported_contracts_are_explicitly_rejected() {
 
 #[test]
 fn opening_lines_touching_bank_subledgers_are_rejected() {
-    // 开局不得给银行子账科目（贷款/存款/准备/损益）种子——经营前史由任务 14
+    // 开局不得给银行子账科目（贷款/存款/准备/损益）种子——经营前史由自然日经营演化
     // 用同一处理器生成；开局只允许现金 + 权益（显式诚实边界）。
     let mut cfg: BankConfig = base_config();
     cfg.opening_lines = vec![

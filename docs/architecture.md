@@ -76,6 +76,13 @@ Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务
 
 ## 4. 状态与持久化
 
+当前 `SaveSlot` 使用 `schema_version = 3`，恢复事实放在 `runtime_state: SavedRuntimeState`。
+Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime-state.ts` 分别负责
+投影/恢复和严格输入校验；生成类型与三宿主消费同一契约。仅成功自然日日结产生持久存档候选，
+日内回滚使用内存 checkpoint；旧 schema 1/2 显式拒绝，不建立格式迁移。见
+[ADR-0025](decisions/0025-day-end-only-persistence.md) 和
+[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
+
 - 游戏状态是**可序列化的纯数据**（JSON 友好），不含函数、不含类实例的隐藏状态。
 - 持久化通过**单一数据访问层**（[`principles.md`](principles.md) 原则 4）进行：
   - 接口定义在适配层（`loadState` / `saveState`）。
@@ -108,15 +115,15 @@ engine 是被依赖的叶子，不依赖任何 app。
 ## Escrow tick 与验证边界（ADR-0017）
 
 本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
-市场 tick 采用一条生产路径。P1 由 `DecisionResourceSnapshot::seal` 一次按账户并行固定 post-P0 资源；
-P2 决策影子与 P3/P4 就绪轮次承接真实计划依赖，最后统一进入 ReceiptAggregation 收据聚合、Settlement 结算、
-Projection 派生、P8 哈希核查及 P9 `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
+市场 tick 采用一条生产路径。SealAllocationSnapshot 由 `DecisionResourceSnapshot::seal` 一次按账户并行固定报价到期释放后的资源；
+DecisionShadow 决策影子与 AccountValidation/StockProcessing 就绪轮次承接真实计划依赖，最后统一进入 ReceiptAggregation 收据聚合、Settlement 结算、
+Projection 派生、PreCommitValidation 哈希核查及 CommitTick `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
 线程预算为 1 不是另一套串行引擎。
 
 `engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。
 `engine::ResVec` 的 cash（分）与 shares（股）分别守恒，聚合方程就是逐 envelope 方程之和。
-P0 报价过期释放在 P1 前可见；密封批成交、撤单、拒单、竞价完成及日界释放在下一密封批才可用于分配。
-提交后的公开快照立即反映余额，但 UI 快照不保证包含全部账户；全账户验证读取完整存档快照。
+ExpiryShadow 报价过期释放在 SealAllocationSnapshot 前可见；密封批成交、撤单、拒单、竞价完成及日界释放在下一密封批才可用于分配。
+提交后的公开快照立即反映余额，但 UI 快照不保证包含全部账户；全账户验证读取完整内存验证投影。
 
 `engine::StepFatal` 与业务 IntentRejected 不同。失败丢弃私有影子与 outbox，
 `engine::business_state_hash` 不变；`engine::session_state_hash` 允许已声明的 poison/错误元数据差异。

@@ -43,7 +43,7 @@ fn duplicate_due_key_is_rejected_without_mutation() {
     assert_eq!(scheduler.pending(), before.as_slice());
 }
 
-/// 股东动作送入调度器 → 明确不支持（K3 红线：结算仅设计，无运行时队列）。
+/// 股东动作送入调度器 → 明确不支持（行业会计红线：结算仅设计，无运行时队列）。
 #[test]
 fn shareholder_actions_are_unsupported() {
     let mut scheduler = OperatingScheduler::new();

@@ -706,8 +706,9 @@ mod tests {
         for _ in 0..8 {
             let error = continuous_shards(vec![second.clone(), first.clone()]).unwrap_err();
             assert!(
-                matches!(error, StepFatal::InvariantViolation { description, .. }
-                if description.contains("initialization included sealed operations"))
+                matches!(error, StepFatal::InvariantViolation { description, location }
+                if description == "增量 StockProcessing 初始化时包含了 sealed operations"
+                    && location == "pipeline::incremental_continuous_stock_shadow")
             );
         }
     }

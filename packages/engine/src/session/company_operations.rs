@@ -1,10 +1,9 @@
-//! 会话接缝（任务 14）：调度器 ↔ 自然日时钟到期队列。
+//! 将 CompanyOperations 调度待办镜像为 CivilClock 到期队列。
 //!
-//! `CompanyOperationsClockWiring` 把经营调度器的待办镜像为 [`CivilClock`] 的
-//! `DueKind` 到期项（安装时 + 每次日终后增量同步）；`run_day_end` 在
-//! `GameSession::end_civil_day` 返回报告后推进当日经营并重新同步。**披露
-//! 装配不在这里**（任务 15 经 18:00 观察者接缝）；新局接线归任务 26——本
-//! 接缝是纯函数性粘合，不改变既有会话行为。
+//! CompanyOperationsClockWiring 在安装和每次日结后增量同步 DueKind 项。
+//! CivilClock 生成日结报告后，GameSession 的私有日结 candidate 调用 run_day_end
+//! 推进当日经营并重新同步；随后由 DisclosureDispatch 在 18:00 相位派发披露。
+//! 新局公司装配由 company_assembly 完成，此模块只负责调度与时钟接线。
 
 use std::collections::BTreeSet;
 
@@ -34,7 +33,7 @@ pub struct CompanyOperationsClockWiring {
     mirrored: BTreeSet<u64>,
 }
 
-/// 调度动作 → 时钟到期种类（InterestAccrual/ContractMaturity，任务 5 的
+/// 调度动作 → 时钟到期种类（InterestAccrual/ContractMaturity，自然日时钟 的
 /// DueKind 钩子语义）。
 pub fn due_kind_of(action: &ScheduledAction) -> DueKind {
     match action {
@@ -74,7 +73,7 @@ impl CompanyOperationsClockWiring {
     }
 
     /// 日终回调：时钟已派发（恰好一次）→ 推进当日经营 → 重新同步。
-    /// 在 `GameSession::end_civil_day` 成功返回后调用（任务 26 接宿主循环）。
+    /// 由 GameSession 的日结 candidate 在 CivilClock 返回报告后调用。
     pub fn run_day_end(
         &mut self,
         report: &CivilDayEndReport,
@@ -91,7 +90,7 @@ impl CompanyOperationsClockWiring {
         self.mirrored.len()
     }
 
-    /// 恢复边界校验（任务 27）：镜像集合必须与当前调度待办**精确相等**——
+    /// 恢复边界校验（完整存档）：镜像集合必须与当前调度待办**精确相等**——
     /// 生产路径上 sync 收编全部待办、prune_dispatched 裁掉已派发项，存档
     /// 时点二者恒等；不相等 = 镜像与调度器失步的篡改/损坏档。
     pub fn mirror_is_exact(&self, ops: &CompanyOperations) -> bool {
@@ -104,7 +103,7 @@ impl CompanyOperationsClockWiring {
         self.mirrored == pending
     }
 
-    /// 裁剪不再待办的镜像 id（task-14 复核 F-O3：`mirrored` 只增不减会让
+    /// 裁剪不再待办的镜像 id（`mirrored` 只增不减会让
     /// 长局存档线性膨胀；派发/到期的 due 已离开调度器，镜像记录无增量同步
     /// 价值，按当前待办集合收缩）。
     pub fn prune_dispatched(&mut self, ops: &CompanyOperations) {

@@ -1,5 +1,5 @@
-//! Task-38 fresh simulation acceptance baseline fixture. It constructs a new current session per
-//! run, advances both market and civil clocks, and never accepts a save path.
+//! 当前新会话的模拟验收 baseline fixture。每次运行创建会话，
+//! 推进 market 与 civil clocks，不接受存档路径。
 
 use std::{env, process};
 
@@ -10,18 +10,18 @@ use engine::{
     StockExchange, StockSpec, StrategyParams, TradingCalendar,
 };
 
-const SOURCE: &str = "fresh_current_k7_setup";
+const SOURCE: &str = "current_session_setup";
 const BUILD_SOURCE_FINGERPRINT: &str = match option_env!("SIMULATION_SOURCE_FINGERPRINT_DIGEST") {
     Some(value) => value,
-    None => "unbound-build-rejected-by-k7-runner",
+    None => "unbound-build-rejected-by-simulation-acceptance-runner",
 };
-const USAGE: &str = "usage: simulation_baseline_fixture <primary|cross-year> <seed> <days> <behavior_multiplier> <event_multiplier> <c01_denominator_multiplier>";
+const USAGE: &str = "usage: simulation_baseline_fixture <primary|cross-year> <seed> <days> <behavior_multiplier> <event_multiplier> <volume_denominator_multiplier>";
 
 #[derive(Clone, Copy)]
 struct Multipliers {
     behavior: f64,
     event: f64,
-    c01: f64,
+    volume_denominator_assumption: f64,
 }
 
 fn main() {
@@ -42,7 +42,7 @@ fn run() -> Result<(), String> {
     let multipliers = Multipliers {
         behavior: parse_multiplier("behavior_multiplier", &args[3])?,
         event: parse_multiplier("event_multiplier", &args[4])?,
-        c01: parse_multiplier("c01_denominator_multiplier", &args[5])?,
+        volume_denominator_assumption: parse_multiplier("volume_denominator_multiplier", &args[5])?,
     };
     let mut setup = scenario_setup(scenario)?;
     apply_behavior_multiplier(&mut setup, multipliers.behavior)?;
@@ -65,7 +65,7 @@ fn run() -> Result<(), String> {
         "multipliers": {
             "behavior": multipliers.behavior,
             "event": multipliers.event,
-            "c01_denominator_assumption": multipliers.c01,
+            "volume_denominator_assumption": multipliers.volume_denominator_assumption,
         },
         "calendar": calendar,
         "verification_profile": verification_profile(scenario, &setup),
@@ -85,8 +85,8 @@ fn run() -> Result<(), String> {
 
 fn verification_profile(scenario: &str, setup: &SessionSetup) -> serde_json::Value {
     serde_json::json!({
-        "schema": "k7-bounded-representative-profile-v1",
-        "profile_id": format!("{scenario}-bounded-representative-v1"),
+        "schema": "simulation-bounded-representative-profile", "schema_version": 1,
+        "profile_id": format!("{scenario}-bounded-representative"),
         "scope": "bounded_representative_not_full_market_scale",
         "retail_count": setup.npcs.retail_count,
         "inst_count": setup.npcs.inst_count,
@@ -170,7 +170,8 @@ fn run_fresh_session(
     natural_days: u32,
     event_multiplier_bp: u16,
 ) -> Result<(GameSession, CalendarSummary), String> {
-    let calendar = TradingCalendar::default_v1().map_err(|error| error.to_string())?;
+    let calendar =
+        TradingCalendar::current_default_calendar().map_err(|error| error.to_string())?;
     let mut session =
         GameSession::new_with_company_event_multiplier(setup.clone(), seed, event_multiplier_bp)
             .map_err(|error| error.to_string())?;
@@ -307,7 +308,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
             "2030-01-01"
         })
         .map_err(|error| error.to_string())?,
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     })
 }
 

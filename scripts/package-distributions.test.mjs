@@ -102,6 +102,8 @@ describe("package distributions (short fixtures, concurrency=4)", { concurrency:
     const result = await runCli(fixture_);
     assert.match(result.stdout, /published/i);
     const manifest = JSON.parse(await readFile(path.join(fixture_.output, "manifest.json"), "utf8"));
+    assert.equal(manifest.schema, "distribution-manifest");
+    assert.equal(manifest.schema_version, 1);
     assert.equal(manifest.product, "server");
     assert.equal(manifest.target, nativeTarget);
     assert.equal(manifest.files.length, 2);

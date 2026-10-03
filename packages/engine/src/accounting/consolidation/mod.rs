@@ -1,8 +1,8 @@
-//! 固定集团合并（K3，任务 12）：单体汇总 + 工作底稿抵销 + 少数股东。
+//! 固定集团合并：单体汇总 + 工作底稿抵销 + 少数股东。
 //!
-//! 输入是 task-7 公司规格的会计域镜像（`MemberSpec`：`group_parent` +
+//! 输入是公司规格的会计域镜像（`MemberSpec`：`group_parent` +
 //! `issued_shares` + 母公司持股股数——accounting 不得 import company，
-//! 由调用方从注册表派生；任务 13/26 接线）。四种行业账套
+//! 由调用方从注册表派生）。四种行业账套
 //! （`IndustrialBooks`/`BankBooks`/`InsuranceBooks`/`RealEstateBooks`）都
 //! 暴露 `books()`，混合行业集团因此合法。
 //!
@@ -14,8 +14,8 @@
 //!    汇总余额（**绝不回记成员账套**，集团现金逐分不变）；
 //! 4. [`minority`]：调整后成员经济量 × 少数比例 → 拆分与合并总量。
 //!
-//! 明确不在范围（K3 边界）：并购/股权交易、权益法、变动持股、多层集团、
-//! 亏损内部交易、完整报表生成（任务 13 消费本模块输出）。
+//! 明确不在合并计算范围：并购/股权交易、权益法、变动持股、多层集团、
+//! 亏损内部交易、完整报表生成（报表生成器消费本模块输出）。
 
 mod aggregate;
 mod eliminate;
@@ -52,7 +52,7 @@ pub struct ConsolidationRequest<'a> {
 /// 合并结果：工作底稿 + 调整后余额 + 少数股东拆分 + 合并总量。
 ///
 /// 所有金额都是**调整后**（含抵销）口径；`scope` 显式标记合并范围
-/// （K3：单体与合并分别标记，任务 13 据此生成报表）。
+/// （单体与合并分别标记，报表生成器据此生成报表）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConsolidationOutput {
     /// 范围标记（合并，携带母公司 id）。

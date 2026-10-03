@@ -90,7 +90,7 @@ fn missing_fact_table_year_is_typed_error() {
     ));
 
     // 用截断表构造覆盖 2099 的政策 → 在装配边界以"缺 2038 年"显式失败。
-    let base = CalendarPolicy::default_v1().unwrap();
+    let base = CalendarPolicy::current_default_policy().unwrap();
     let mut spec = base.spec();
     spec.simulated_fallback = SimulatedFallbackRuleset::new(1, 2026, truncated).unwrap();
     assert!(matches!(
@@ -101,7 +101,7 @@ fn missing_fact_table_year_is_typed_error() {
 
 #[test]
 fn rejects_duplicate_and_conflicting_official_coverage() {
-    let base = CalendarPolicy::default_v1().unwrap();
+    let base = CalendarPolicy::current_default_policy().unwrap();
 
     // 同一交易所同一年重复登记。
     let mut spec = base.spec();
@@ -171,7 +171,7 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
 
 #[test]
 fn rejects_wrong_digest_on_restore() {
-    let default_policy = CalendarPolicy::default_v1().unwrap();
+    let default_policy = CalendarPolicy::current_default_policy().unwrap();
     let json = serde_json::to_string(&default_policy).unwrap();
 
     // 篡改事实表内容但保留 digest → 校验失败。
@@ -210,13 +210,13 @@ fn rejects_wrong_digest_on_restore() {
 
     // 直接构造内部不一致的 LunarYearFacts（digest 与内容不符）。
     let facts = engine::calendar::data::embedded_lunar_facts().unwrap();
-    let f0 = facts.facts()[0].clone();
+    let baseline_lunar_year_fact = facts.facts()[0].clone();
     let mutated = LunarYearFact {
-        year: f0.year,
+        year: baseline_lunar_year_fact.year,
         lunar_new_year: d("1998-01-29"),
-        dragon_boat: f0.dragon_boat,
-        mid_autumn: f0.mid_autumn,
-        qingming: f0.qingming,
+        dragon_boat: baseline_lunar_year_fact.dragon_boat,
+        mid_autumn: baseline_lunar_year_fact.mid_autumn,
+        qingming: baseline_lunar_year_fact.qingming,
     };
     let mut raw = facts.facts().to_vec();
     raw[0] = mutated;
@@ -238,7 +238,7 @@ fn makeup_weekends_never_trading_days() {
         assert_eq!(
             cal.day_status(CalendarExchange::Sse, d(makeup)).unwrap(),
             DayStatus::Closed(engine::calendar::ClosedReason::Weekend),
-            "{makeup} 是调休补班周末，但不是交易日（K1 不模拟补班）"
+            "{makeup} 是调休补班周末，但不是交易日（日历不模拟补班）"
         );
     }
 

@@ -154,6 +154,8 @@ it("ignores only Tauri-generated schemas while detecting changes to real desktop
       await writeFile(target, "source-A");
     }
     const before = await collectFullRegressionSourceFingerprint(sourceRoot);
+    assert.equal(before.algorithm, "full-regression-source-fingerprint");
+    assert.equal(before.algorithm_version, 1);
     const generated = path.join(desktopRoot, "gen", "schemas", "capabilities.json");
     await mkdir(path.dirname(generated), { recursive: true });
     await writeFile(generated, "generated");
@@ -281,7 +283,7 @@ it("CI cache directory probe distinguishes a directory, a missing path, and an i
   }
 });
 
-async function createSealedFixture({ fingerprint = { algorithm: "test", files: [], digest: "a".repeat(64) } } = {}) {
+async function createSealedFixture({ fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) } } = {}) {
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const target = path.join(workspaceRoot, ".tmp", "build-cache", "full-regression");
   const artifact = path.join(target, "debug", "deps", `full-regression-fixture-${process.pid}-${Date.now()}`);
@@ -327,7 +329,7 @@ it("reports Cargo build progress before a real timed-out child is killed", async
     await assert.rejects(buildFullRegressionArtifacts({
       cwd: process.cwd(), inventoryPath,
       cpuCount: 4,
-      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) }),
       log: (line) => logs.push(JSON.parse(line)),
       writeDiagnostic: (chunk) => diagnostics.push(chunk.toString()),
       progressIntervalMs: 100,
@@ -357,7 +359,7 @@ it("reports bounded rendered Cargo errors from a real failing child", async () =
   try {
     await assert.rejects(buildFullRegressionArtifacts({
       cwd: process.cwd(), inventoryPath,
-      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) }),
       log: (line) => logs.push(JSON.parse(line)),
       writeDiagnostic: () => undefined,
       run: (options) => runBoundedCommand({
@@ -381,7 +383,7 @@ it("keeps the timeout reason when Cargo leaves an incomplete JSON line", async (
   try {
     await assert.rejects(buildFullRegressionArtifacts({
       cwd: process.cwd(), inventoryPath,
-      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) }),
       log: (line) => logs.push(JSON.parse(line)),
       writeDiagnostic: () => undefined,
       run: (options) => runBoundedCommand({
@@ -403,7 +405,8 @@ it("seals the source identity and exact binary bytes in an atomic build inventor
   const fixture = await createSealedFixture();
   try {
     const inventory = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
-    assert.equal(inventory.schema, "full-regression-artifact-inventory-v1");
+    assert.equal(inventory.schema, "full-regression-artifact-inventory");
+    assert.equal(inventory.schema_version, 1);
     assert.equal(inventory.source_fingerprint.digest, fixture.fingerprint.digest);
     assert.match(inventory.identity_digest, /^[a-f0-9]{64}$/);
     assert.equal(inventory.artifacts.length, 1);
@@ -536,12 +539,19 @@ it("rejects missing identity fields and changed seals before starting any test",
     const original = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
     const mutations = [
       ["missing schema", (record) => { delete record.schema; }, /malformed, stale, or bound/i],
+      ["legacy schema", (record) => { record.schema = "full-regression-artifact-inventory-v1"; }, /malformed, stale, or bound/i],
+      ["missing schema version", (record) => { delete record.schema_version; }, /malformed, stale, or bound/i],
+      ["string schema version", (record) => { record.schema_version = "1"; }, /malformed, stale, or bound/i],
+      ["unknown schema version", (record) => { record.schema_version = 2; }, /malformed, stale, or bound/i],
       ["missing digest", (record) => { delete record.identity_digest; }, /malformed, stale, or bound/i, false],
       ["changed source", (record) => { record.source_root += "-other"; }, /malformed, stale, or bound/i],
       ["changed workspace", (record) => { record.workspace_root += "-other"; }, /malformed, stale, or bound/i],
       ["changed target", (record) => { record.cargo_target_dir += "-other"; }, /malformed, stale, or bound/i],
       ["changed temp", (record) => { record.process_tmp_dir += "-other"; }, /malformed, stale, or bound/i],
       ["changed fingerprint", (record) => { record.source_fingerprint.digest = "b".repeat(64); }, /malformed, stale, or bound/i],
+      ["changed fingerprint algorithm", (record) => { record.source_fingerprint.algorithm = "full-regression-source-v1"; }, /malformed, stale, or bound/i],
+      ["missing fingerprint algorithm version", (record) => { delete record.source_fingerprint.algorithm_version; }, /malformed, stale, or bound/i],
+      ["changed fingerprint algorithm version", (record) => { record.source_fingerprint.algorithm_version = 2; }, /malformed, stale, or bound/i],
       ["missing artifacts", (record) => { delete record.artifacts; }, /malformed, stale, or bound/i],
       ["empty artifacts", (record) => { record.artifacts = []; }, /malformed, stale, or bound/i],
       ["missing artifact label", (record) => { delete record.artifacts[0].label; }, /invalid artifact entry/i],
@@ -619,7 +629,7 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
   await mkdir(path.dirname(artifactPaths[0]), { recursive: true });
   await Promise.all(artifactPaths.map((artifact) => writeFile(artifact, `binary-${artifact}`)));
   const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `failure-inventory-${process.pid}.json`);
-  const fingerprint = { algorithm: "test", files: [], digest: "b".repeat(64) };
+  const fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "b".repeat(64) };
   const artifacts = artifactPaths.map((artifact, index) => JSON.stringify({
     reason: "compiler-artifact",
     package_id: `pkg-${index} 0.1.0`,
@@ -720,7 +730,7 @@ it("rejects inventory paths outside workspace .tmp", async () => {
   await assert.rejects(buildFullRegressionArtifacts({
     cwd: process.cwd(),
     inventoryPath: path.join(path.parse(process.cwd()).root, "tmp", `inventory-${process.pid}.json`),
-    collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "e".repeat(64) }),
+    collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: "e".repeat(64) }),
     run: async () => { throw new Error("must reject before build"); },
   }), /strict child of workspace \.tmp/i);
 });
@@ -732,7 +742,7 @@ it("rejects an artifact redirected outside Cargo target through an intermediate 
   const artifact = path.join(linkDirectory, "test-binary");
   const escapedDirectory = path.join(workspaceRoot, ".tmp", `escaped-artifact-${process.pid}-${Date.now()}`);
   const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `symlink-inventory-${process.pid}-${Date.now()}.json`);
-  const fingerprint = { algorithm: "test", files: [], digest: "f".repeat(64) };
+  const fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "f".repeat(64) };
   await mkdir(linkDirectory, { recursive: true });
   await writeFile(artifact, "sealed symlink binary");
   try {
@@ -770,7 +780,7 @@ it("does not publish an inventory when source changes during the build", async (
   try {
     await assert.rejects(buildFullRegressionArtifacts({
       cwd: process.cwd(), inventoryPath,
-      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: `${++fingerprintCall}`.padStart(64, "0") }),
+      collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: `${++fingerprintCall}`.padStart(64, "0") }),
       run: async () => ({ stdout: `${JSON.stringify({ reason: "compiler-artifact", package_id: "fixture", target: { name: "fixture", kind: ["test"], test: true }, profile: { test: true }, executable: artifact })}\n`, stderr: "" }),
     }), /source changed during.*build/i);
     await assert.rejects(readFile(inventoryPath), /ENOENT/);

@@ -1,7 +1,7 @@
-//! Task 28: real `GameSession` accounting-information-plan-matching scenarios.
+//! 真实 `GameSession` 的公司会计、信息、计划与撮合场景。
 //!
-//! This target deliberately uses the session's public test surface. It never fabricates a
-//! `Trade`, candle, fill, or liquidity: the orderbook emits every asserted trade.
+//! 本套件使用会话的公共测试接口；断言中的每笔成交均由 orderbook 产生，
+//! 不虚构 `Trade`、candle、fill 或流动性。
 
 use engine::account::StockCode;
 use engine::money::Money;
@@ -29,7 +29,7 @@ pub(crate) fn fixture() -> ScenarioFixture {
     serde_json::from_str(include_str!(
         "../fixtures/company-model/company-information-scenario.json"
     ))
-    .expect("task-28 fixture must be structurally valid")
+    .expect("公司经营与交易场景 fixture 的结构必须合法")
 }
 
 pub(crate) fn code(value: &str) -> StockCode {
@@ -101,12 +101,12 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
             hot: 0.1,
         },
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_owned(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
     }
 }
 
 pub(crate) fn session(start_date: &str) -> GameSession {
-    GameSession::new(setup(start_date), SEED).expect("task-28 fixture must assemble")
+    GameSession::new(setup(start_date), SEED).expect("公司经营与交易场景 fixture 必须成功装配")
 }
 
 /// Disclosure-focused scenarios still use the real company, information and

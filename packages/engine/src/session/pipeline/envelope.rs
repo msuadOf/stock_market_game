@@ -5,7 +5,7 @@ use crate::{LimitPrice, Money};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum EnvelopeOrigin {
     TickStart,
-    #[serde(rename = "P3Created")]
+
     CreatedAtValidation,
 }
 
@@ -147,7 +147,10 @@ impl Envelope {
     pub fn validate(&self) -> Result<(), StepFatal> {
         if self.pending_price.is_some() && self.origin != EnvelopeOrigin::CreatedAtValidation {
             return Err(StepFatal::InvariantViolation {
-                description: format!("envelope {:?} has a pending price outside P3", self.key),
+                description: format!(
+                    "envelope {:?} 在 AccountValidation 之外仍含有 pending price",
+                    self.key
+                ),
                 location: "pipeline::Envelope::validate".to_owned(),
             });
         }

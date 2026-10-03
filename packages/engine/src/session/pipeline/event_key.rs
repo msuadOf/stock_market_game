@@ -2,9 +2,51 @@ use super::super::Event;
 use crate::{AccountId, StockCode};
 use std::cmp::Ordering;
 
-/// P0 cancellations and Projection book events share the accepted Account/Sealed wire
-/// domain. Reserve the top u32-sized range for account-local P0 identities so
-/// later Projection activity cannot change the identity of an earlier expiry fact.
+#[cfg(test)]
+mod source_contract_tests {
+    use super::super::conservation::ConservationBasis;
+    use super::super::{EnvelopeOrigin, ReceiptSource, ResVec};
+    use super::EventSourceIndex;
+
+    #[test]
+    fn quote_expiry_source_uses_responsibility_tag_and_preserves_rank() {
+        assert_eq!(EventSourceIndex::QuoteExpiry.rank(), 1);
+        assert_eq!(
+            serde_json::to_value(EventSourceIndex::QuoteExpiry).unwrap(),
+            serde_json::json!("QuoteExpiry")
+        );
+        assert_eq!(
+            serde_json::from_value::<EventSourceIndex>(serde_json::json!("QuoteExpiry")).unwrap(),
+            EventSourceIndex::QuoteExpiry
+        );
+        assert!(serde_json::from_value::<EventSourceIndex>(serde_json::json!("P0")).is_err());
+    }
+
+    #[test]
+    fn receipt_and_conservation_wire_names_describe_resource_origins() {
+        assert_eq!(
+            serde_json::to_value(ReceiptSource::QuoteExpiry(7)).unwrap(),
+            serde_json::json!({"QuoteExpiry": 7})
+        );
+        assert_eq!(
+            serde_json::to_value(EnvelopeOrigin::CreatedAtValidation).unwrap(),
+            serde_json::json!("CreatedAtValidation")
+        );
+        let basis =
+            serde_json::to_value(ConservationBasis::CreatedAtValidation(ResVec::ZERO)).unwrap();
+        assert_eq!(
+            basis.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["CreatedAtValidation"]
+        );
+        let release = serde_json::to_value(super::super::ledger::ConservationState::EMPTY).unwrap();
+        assert!(release.get("expiry_released").is_some());
+        assert!(release.get("p0_released").is_none());
+    }
+}
+
+/// ExpiryShadow 撤单与 Projection 订单簿事件共享既定 Account/Sealed wire 身份域。
+/// 为账户局部报价过期身份预留最高的 u32 范围；
+/// 后续 Projection 活动不能改变早先报价过期事实的身份。
 pub(super) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
     crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
 
@@ -44,7 +86,6 @@ impl PartialOrd for EntityTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EventSourceIndex {
     Sealed,
-    #[serde(rename = "P0")]
     QuoteExpiry,
     PriceTick,
     DayEnd,

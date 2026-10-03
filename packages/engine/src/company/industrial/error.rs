@@ -1,5 +1,5 @@
-//! 工商域统一错误（K3）。绝不静默吞错（铁律二）：每个变体携带定位与数值
-//! 上下文。`PaymentFailed` 是账套负现金禁令（K2）在经营域的类型化映射——
+//! 工商域统一错误（行业会计约束）。绝不静默吞错（铁律二）：每个变体携带定位与数值
+//! 上下文。`PaymentFailed` 是账套负现金禁令（会计与资金边界）在经营域的类型化映射——
 //! 资金不足不是引擎错误：公司继续运行，无透支、无自动补钱。
 
 use crate::accounting::{
@@ -112,10 +112,8 @@ pub enum IndustrialError {
         seeded: AccountingAmount,
     },
 
-    /// 开局带累计折旧暂不支持（诚实边界）：经营前史由任务 14 用同一处理器生成。
-    #[error(
-        "opening accumulated depreciation (1602 = {balance:?}) unsupported; generate prehistory via task 14"
-    )]
+    /// 开局带累计折旧暂不支持（诚实边界）：经营前史由自然日经营演化用同一处理器生成。
+    #[error("不支持开局累计折旧余额（1602 = {balance:?}）；经营前史须由自然日经营处理器生成")]
     OpeningAccumulatedDepreciation { balance: AccountingAmount },
 
     #[error(transparent)]
@@ -138,7 +136,7 @@ pub enum IndustrialError {
 }
 
 /// 过账错误 → 领域错误映射：批末负现金（`NegativeCashProhibited` 的领域包装，
-/// K2 负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
+/// 负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
 pub(super) fn map_post_error(source: AccountingError) -> IndustrialError {
     if let AccountingError::BatchAborted { cause, .. } = &source {
         if matches!(**cause, AccountingError::NegativeCashProhibited { .. }) {

@@ -73,7 +73,7 @@ fn amount_round_half_even_ties_pin_behavior() {
     );
 }
 
-/// K2：利息小数保留合同累计余数——1000 分 @337bp 跨 3 期，逐期半偶落分，
+/// 利息小数保留合同累计余数——1000 分 @337bp 跨 3 期，逐期半偶落分，
 /// 尾差进余数账户，总分毫未丢（守恒：3×1000×337 = 已付×10000 + 余数）。
 #[test]
 fn amount_basis_point_accumulation_conserves_exact_total() {

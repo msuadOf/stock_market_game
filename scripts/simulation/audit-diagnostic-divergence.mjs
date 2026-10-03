@@ -5,7 +5,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const AUDIT_SCHEMA = "escrow-diagnostic-divergence-audit-v1";
+const AUDIT_SCHEMA = "escrow-diagnostic-divergence-audit";
 const DIFF_PATHS = ["packages/engine/src/diagnostics.rs", "packages/engine/tests"];
 const ANNOTATION = /\/\/\s*分歧\s*#([1-9])\s*[;；]\s*evidence:\s*(\S+)\s*$/;
 
@@ -242,7 +242,7 @@ export function parseDiagnosticDiff(diff, { baseSha, headSha, evidenceFiles }) {
   if (files.size === 0) fail("diagnostic audit range changed no allowlisted files");
   if (changes.length === 0) fail("diagnostic audit found no annotated expectation changes; refusing an empty pass");
   return {
-    schema: AUDIT_SCHEMA,
+    schema: AUDIT_SCHEMA, schema_version: 1,
     base_sha: baseSha,
     head_sha: headSha,
     command: ["git", "diff", baseSha, headSha, "--", ...DIFF_PATHS],
@@ -317,7 +317,7 @@ async function writeNewFile(filePath, content) {
 
 export async function main(argv) {
   if (argv.length !== 4 || argv.some((value) => value.startsWith("-"))) {
-    fail("usage: node scripts/simulation/audit-diagnostic-divergence.mjs <repo-root> <task9-sha> <task10-sha> <new-audit.json>");
+    fail("usage: node scripts/simulation/audit-diagnostic-divergence.mjs <repo-root> <base-sha> <head-sha> <new-audit.json>");
   }
   const [repoRootInput, baseSha, headSha, outputInput] = argv;
   const repoRoot = path.resolve(repoRootInput);

@@ -1,6 +1,6 @@
-//! 工业科目表 v2（版本化数据表）：通用 v1 全集 + 工业经营科目（存货/在产品/
+//! 工业科目表（AccountChart.version=2）（版本化数据表）：通用科目表（AccountChart.version=1）全集 + 工业经营科目（存货/在产品/
 //! 增值税子科目/长短期借款/坏账与减值准备/递延所得税/费用细分）。不改动通用
-//! v1 语义（任务 6 语义冻结区）；恢复优先用存档内科目表。
+//! 科目表（AccountChart.version=1）的语义；恢复优先用存档内科目表。
 
 use crate::accounting::AccountElement::{Asset, Equity, Expense, Liability, Revenue};
 use crate::accounting::{AccountChart, AccountDef};
@@ -32,12 +32,12 @@ pub(crate) mod acct {
     pub const TAX_EXP: &str = "6801";
 }
 
-/// 工业科目表 v2 = 通用 v1 + 工业扩充（版本 2，向前兼容 v1 科目编号）。
-pub fn industrial_chart_v2() -> AccountChart {
+/// 工业科目表（AccountChart.version=2） = 通用科目表（AccountChart.version=1） + 工业扩充（版本 2，保持通用科目表（AccountChart.version=1）的科目编号）。
+pub fn industrial_account_chart() -> AccountChart {
     let acc =
         |code: &str, def: AccountDef| (crate::accounting::LedgerAccountId(code.to_string()), def);
     let accounts = vec![
-        // —— 通用 v1 全集（语义不变）——
+        // —— 通用科目表（AccountChart.version=1）全集（语义不变）——
         acc("1001", AccountDef::new("库存现金", Asset).with_cash()),
         acc(acct::BANK, AccountDef::new("银行存款", Asset).with_cash()),
         acc(acct::AR, AccountDef::new("应收账款", Asset)),
@@ -84,7 +84,7 @@ pub fn industrial_chart_v2() -> AccountChart {
         ),
         acc(acct::LT_DEBT, AccountDef::new("长期借款", Liability)),
         // 递延所得税负债（2901）：简化模型只确认亏损 DTA（1811），科目预留
-        // 完整性（任务 13 报表如需应税暂时性差异再启用）。
+        // 完整性（报表如需应税暂时性差异再启用）。
         acc("2901", AccountDef::new("递延所得税负债", Liability)),
         // 生产成本（在产品）按经济实质计入存货（资产负债表在产品属存货）。
         acc(acct::WIP, AccountDef::new("生产成本（在产品）", Asset)),
@@ -93,5 +93,5 @@ pub fn industrial_chart_v2() -> AccountChart {
         acc(acct::RND_EXP, AccountDef::new("管理费用—研发费用", Expense)),
         acc(acct::IMPAIR_LOSS, AccountDef::new("资产减值损失", Expense)),
     ];
-    AccountChart::new(2, accounts).expect("industrial chart v2 is well-formed")
+    AccountChart::new(2, accounts).expect("工业科目表定义合法（AccountChart.version=2）")
 }

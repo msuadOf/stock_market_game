@@ -1,5 +1,5 @@
 use super::super::*;
-use super::v2::*;
+use super::saved_runtime::*;
 use crate::session::pipeline::{
     transition::{FillTransition, SellFillInput},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank,
@@ -8,12 +8,12 @@ use crate::session::pipeline::{
 
 fn session_with_runtime_state() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
-    GameSession::new(setup, 42).expect("v2 fixture must be valid")
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
+    GameSession::new(setup, 42).expect("runtime_state fixture 必须有效")
 }
 
-fn saved_fee_components(fees: FeeComponents) -> FeeComponentsV2 {
-    FeeComponentsV2 {
+fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
+    SavedFeeComponents {
         commission: fees.commission,
         stamp_tax: fees.stamp_tax,
         transfer_fee: fees.transfer_fee,
@@ -84,15 +84,15 @@ fn low_price_session() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.commission_min = Money::ZERO;
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
-    GameSession::new(setup, 42).expect("low-price v2 fixture must be valid")
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
+    GameSession::new(setup, 42).expect("low-price runtime_state fixture 必须有效")
 }
 
 fn gross_capped_fee_session() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].initial_price = Money::from_cents(1);
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
-    GameSession::new(setup, 42).expect("gross-capped v2 fixture must be valid")
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
+    GameSession::new(setup, 42).expect("gross-capped runtime_state fixture 必须有效")
 }
 
 fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
@@ -354,13 +354,14 @@ fn restore_error(save: &SaveSlot) -> SessionError {
 }
 
 #[test]
-fn schema_header_accepts_only_explicit_v2() {
-    validate_schema_version_header(br#"{"schema_version":2}"#).unwrap();
+fn schema_header_accepts_only_current_supported_version() {
+    validate_schema_version_header(br#"{"schema_version":3}"#).unwrap();
 
     for (json, message) in [
-        (br#"{}"#.as_slice(), "missing"),
-        (br#"{"schema_version":1}"#.as_slice(), "legacy"),
-        (br#"{"schema_version":3}"#.as_slice(), "newer"),
+        (br#"{}"#.as_slice(), "缺失"),
+        (br#"{"schema_version":1}"#.as_slice(), "不支持旧版本"),
+        (br#"{"schema_version":2}"#.as_slice(), "不支持旧版本"),
+        (br#"{"schema_version":4}"#.as_slice(), "高于当前支持版本"),
     ] {
         assert_invalid_save(validate_schema_version_header(json).unwrap_err(), message);
     }
@@ -368,7 +369,11 @@ fn schema_header_accepts_only_explicit_v2() {
 
 #[test]
 fn new_session_rejects_legacy_and_unknown_simulation_policies() {
-    for policy in ["a-share-simulation-v1", "a-share-simulation-unknown"] {
+    for policy in [
+        "a-share-simulation-v1",
+        "a-share-simulation-v2",
+        "a-share-simulation-unknown",
+    ] {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.simulation_policy_id = policy.to_owned();
         let error = match GameSession::new(setup, 42) {
@@ -377,7 +382,7 @@ fn new_session_rejects_legacy_and_unknown_simulation_policies() {
         };
         match error {
             SessionError::InvalidSetup(description) => assert!(
-                description.contains(SIMULATION_POLICY_ID_V2),
+                description.contains(SIMULATION_POLICY_ID),
                 "policy rejection must name the supported policy: {description}"
             ),
             other => panic!("unsupported policy must be InvalidSetup, got {other}"),
@@ -388,8 +393,8 @@ fn new_session_rejects_legacy_and_unknown_simulation_policies() {
 #[test]
 fn fresh_session_strategy_and_attention_share_exact_canonical_probability() {
     let session = GameSession::new(super::super::npc_working_quote_tests::quote_setup(0), 994)
-        .expect("v2 session must be valid");
-    let state = capture_runtime_v2(&session).expect("fresh v2 authority must be consistent");
+        .expect("runtime_state session 必须有效");
+    let state = capture_runtime_state(&session).expect("新局 runtime_state 权威状态必须一致");
     for (account, strategy) in state.strategy_states {
         assert_eq!(
             strategy.base_observation_probability().to_bits(),
@@ -403,7 +408,7 @@ fn fresh_session_strategy_and_attention_share_exact_canonical_probability() {
 #[test]
 fn healthy_initial_quiet_point_roundtrips_complete_strategy_state() {
     let source = session_with_runtime_state();
-    let state = capture_runtime_v2(&source).expect("healthy quiet point must capture");
+    let state = capture_runtime_state(&source).expect("healthy quiet point must capture");
 
     assert!(!state.poisoned);
     assert_eq!(state.next_receipt_base, 0);
@@ -412,8 +417,8 @@ fn healthy_initial_quiet_point_roundtrips_complete_strategy_state() {
     assert_eq!(state.strategy_states.len(), 1);
 
     let mut restored = session_with_runtime_state();
-    restore_runtime_v2(&mut restored, &state).expect("valid v2 state must restore");
-    assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
+    restore_runtime_state(&mut restored, &state).expect("有效 runtime_state 必须可恢复");
+    assert_eq!(capture_runtime_state(&restored).unwrap(), state);
 }
 
 #[test]
@@ -421,7 +426,7 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
     let mut source = session_with_runtime_state();
     let envelope = install_live_buy(&mut source);
     install_receipt_prefix(&mut source, envelope);
-    let state = capture_runtime_v2(&source).expect("non-empty quiet point must capture");
+    let state = capture_runtime_state(&source).expect("non-empty quiet point must capture");
 
     assert_eq!(state.live_envelopes.len(), 1);
     assert_eq!(state.retail_projection_seen.len(), 1);
@@ -430,10 +435,10 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
 
     let mut restored = session_with_runtime_state();
     install_live_buy(&mut restored);
-    restore_runtime_v2(&mut restored, &state).expect("non-empty v2 state must restore");
+    restore_runtime_state(&mut restored, &state).expect("非空 runtime_state 必须可恢复");
     assert_eq!(restored.state.next_receipt_base, 1);
     assert_eq!(restored.state.envelope_ledger.next_receipt_index(), 1);
-    assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
+    assert_eq!(capture_runtime_state(&restored).unwrap(), state);
 }
 
 #[test]
@@ -445,7 +450,7 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
     let snapshot = encoded["snapshot"].as_object().unwrap();
     assert!(!snapshot.contains_key("day"));
     assert!(!snapshot.contains_key("phase"));
-    let envelope = encoded["runtime_v2"]["live_envelopes"][0]
+    let envelope = encoded["runtime_state"]["live_envelopes"][0]
         .as_object()
         .unwrap();
     assert_eq!(
@@ -504,7 +509,7 @@ fn runtime_envelope_rejects_injected_derived_fields() {
         });
         encoded[field] = serde_json::json!(0);
         assert!(
-            serde_json::from_value::<LiveEnvelopeV2>(encoded).is_err(),
+            serde_json::from_value::<SavedLiveEnvelope>(encoded).is_err(),
             "legacy derived field {field} must be rejected"
         );
     }
@@ -560,7 +565,7 @@ fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history()
 fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
     let mut source = low_price_session();
     install_partially_filled_sell(&mut source);
-    let state = capture_runtime_v2(&source).expect("seller fee debt must be persistable");
+    let state = capture_runtime_state(&source).expect("seller fee debt must be persistable");
     let audit = source.project_live_envelopes().unwrap()[0].audit();
     let charged = state.live_envelopes[0].charged;
 
@@ -575,8 +580,8 @@ fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
 
     let mut restored = low_price_session();
     install_partially_filled_sell(&mut restored);
-    restore_runtime_v2(&mut restored, &state).expect("seller fee debt must restore");
-    assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
+    restore_runtime_state(&mut restored, &state).expect("seller fee debt must restore");
+    assert_eq!(capture_runtime_state(&restored).unwrap(), state);
     restored
         .step()
         .expect("a restored path-dependent seller fee debt must survive the next tick");
@@ -588,7 +593,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.commission_rate = 0.0005;
     setup.config.commission_min = Money::ZERO;
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
     let code = source.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
@@ -677,13 +682,13 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
 }
 
 #[test]
-fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
+fn complete_restore_accepts_zero_cash_seller_with_live_envelope() {
     let mut source = gross_capped_fee_session();
     let key = install_unfilled_gross_capped_sell(&mut source);
-    let mut save = source.save().expect("valid v2 seller debt must save");
+    let mut save = source.save().expect("有效卖方费用欠额必须可存档");
     assert_eq!(
-        save.runtime_v2.live_envelopes[0].charged,
-        FeeComponentsV2::default(),
+        save.runtime_state.live_envelopes[0].charged,
+        SavedFeeComponents::default(),
         "an unfilled seller has no actual charges",
     );
     save.snapshot
@@ -693,15 +698,15 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
         .cash = Money::ZERO;
 
     let restored = GameSession::restore(&save)
-        .expect("v2 seller envelope reserves shares but never requires seller cash");
+        .expect("卖方 runtime_state envelope 只预留股份，不要求卖方现金");
     assert_eq!(
         restored
             .save()
             .expect("restored zero-cash seller must remain saveable")
-            .runtime_v2
+            .runtime_state
             .live_envelopes[0]
             .charged,
-        FeeComponentsV2::default(),
+        SavedFeeComponents::default(),
     );
 }
 
@@ -709,7 +714,7 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
 fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
     let mut source = gross_capped_fee_session();
     let key = install_unfilled_gross_capped_sell(&mut source);
-    let save = source.save().expect("valid v2 seller must save");
+    let save = source.save().expect("有效卖方 runtime_state 必须可存档");
 
     let mut assets_tampered = save;
     assets_tampered
@@ -730,9 +735,9 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     setup.npcs.inst_count = 0;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(10_000);
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = setup.stocks[0].code.clone();
-    let mut session = GameSession::new(setup, 42).expect("v2 fixture must be valid");
+    let mut session = GameSession::new(setup, 42).expect("runtime_state fixture 必须有效");
     session
         .state
         .accounts
@@ -787,7 +792,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         Money::ZERO,
     );
     let seller = partial
-        .runtime_v2
+        .runtime_state
         .live_envelopes
         .iter()
         .find(|envelope| envelope.key.side == Side::Sell)
@@ -831,9 +836,9 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     setup.npcs.inst_count = 0;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = setup.stocks[0].code.clone();
-    let mut session = GameSession::new(setup, 43).expect("v2 fixture must be valid");
+    let mut session = GameSession::new(setup, 43).expect("runtime_state fixture 必须有效");
     session
         .state
         .accounts
@@ -886,7 +891,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         .save()
         .expect("same-tick debt recovery must end at a save quiet point");
     let seller = save
-        .runtime_v2
+        .runtime_state
         .live_envelopes
         .iter()
         .find(|envelope| envelope.key.side == Side::Sell)
@@ -916,9 +921,9 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     setup.npcs.inst_count = 0;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
-    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = setup.stocks[0].code.clone();
-    let mut session = GameSession::new(setup, 44).expect("v2 fixture must be valid");
+    let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
     session
         .state
         .accounts
@@ -970,7 +975,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         .save()
         .expect("same-tick new seller audit must end at a save quiet point");
     let seller = save
-        .runtime_v2
+        .runtime_state
         .live_envelopes
         .iter()
         .find(|envelope| envelope.key.side == Side::Sell)
@@ -991,11 +996,11 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
 fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
     let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "negative component",
     );
 }
@@ -1004,11 +1009,11 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
 fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
     let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "inconsistent cumulative charged fee audit",
     );
 }
@@ -1017,12 +1022,12 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
 fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
     let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     let charged = &mut state.live_envelopes[0].charged;
     charged.commission = Money::from_cents(12);
     charged.transfer_fee = Money::from_cents(1);
 
-    validate_runtime_v2(&session, &state)
+    validate_runtime_state(&session, &state)
         .expect("cumulative fee components cannot reveal historical per-fill priority");
 }
 
@@ -1030,11 +1035,11 @@ fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
 fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal() {
     let mut session = gross_capped_fee_session();
     install_gross_capped_sell(&mut session);
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(101);
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "inconsistent cumulative charged fee audit",
     );
 }
@@ -1042,11 +1047,11 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
 #[test]
 fn receipt_gap_is_rejected_as_corrupt_save() {
     let session = session_with_runtime_state();
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.next_receipt_base = 1;
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "receipt prefix",
     );
 }
@@ -1056,7 +1061,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
     let mut session = session_with_runtime_state();
     let envelope = install_live_buy(&mut session);
     install_receipt_prefix(&mut session, envelope);
-    let state = capture_runtime_v2(&session).unwrap();
+    let state = capture_runtime_state(&session).unwrap();
 
     let mut unknown_account = state.clone();
     unknown_account.retail_projection_seen[0]
@@ -1065,7 +1070,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .envelope
         .account = AccountId(999);
     assert_invalid_save(
-        validate_runtime_v2(&session, &unknown_account).unwrap_err(),
+        validate_runtime_state(&session, &unknown_account).unwrap_err(),
         "unknown account",
     );
 
@@ -1076,7 +1081,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .envelope
         .stock = StockCode("600999".to_owned());
     assert_invalid_save(
-        validate_runtime_v2(&session, &unknown_stock).unwrap_err(),
+        validate_runtime_state(&session, &unknown_stock).unwrap_err(),
         "unknown stock",
     );
 
@@ -1087,7 +1092,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .envelope
         .order = OrderId(0);
     assert_invalid_save(
-        validate_runtime_v2(&session, &zero_order).unwrap_err(),
+        validate_runtime_state(&session, &zero_order).unwrap_err(),
         "invalid order",
     );
 
@@ -1098,7 +1103,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .envelope
         .order = OrderId(session.state.next_order_id);
     assert_invalid_save(
-        validate_runtime_v2(&session, &future_order).unwrap_err(),
+        validate_runtime_state(&session, &future_order).unwrap_err(),
         "invalid order",
     );
 }
@@ -1107,11 +1112,11 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
 fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
     let mut session = session_with_runtime_state();
     install_live_buy(&mut session);
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes.push(state.live_envelopes[0].clone());
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "strict canonical key order",
     );
 }
@@ -1120,42 +1125,43 @@ fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
 fn live_envelope_tampering_is_rejected_without_partial_restore() {
     let mut source = session_with_runtime_state();
     install_live_buy(&mut source);
-    let mut state = capture_runtime_v2(&source).unwrap();
+    let mut state = capture_runtime_state(&source).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(1);
 
     let mut target = session_with_runtime_state();
     install_live_buy(&mut target);
-    let before = capture_runtime_v2(&target).unwrap();
+    let before = capture_runtime_state(&target).unwrap();
     assert_invalid_save(
-        restore_runtime_v2(&mut target, &state).unwrap_err(),
+        restore_runtime_state(&mut target, &state).unwrap_err(),
         "inconsistent cumulative charged fee audit",
     );
-    assert_eq!(capture_runtime_v2(&target).unwrap(), before);
+    assert_eq!(capture_runtime_state(&target).unwrap(), before);
 }
 
 #[test]
 fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
     let session = session_with_runtime_state();
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.poisoned = true;
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "poisoned",
     );
 
-    let mut encoded = serde_json::to_value(capture_runtime_v2(&session).unwrap()).unwrap();
+    let mut encoded = serde_json::to_value(capture_runtime_state(&session).unwrap()).unwrap();
     encoded
         .as_object_mut()
         .expect("runtime DTO must encode as an object")
         .insert("unexpected".to_owned(), serde_json::Value::Bool(true));
-    assert!(serde_json::from_value::<SaveRuntimeV2>(encoded).is_err());
+    assert!(serde_json::from_value::<SavedRuntimeState>(encoded).is_err());
 }
 
 #[test]
 fn decode_rejects_unknown_nested_strategy_state_fields() {
     let session = session_with_runtime_state();
-    let mut encoded = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
-    let states = encoded["runtime_v2"]["strategy_states"]
+    let mut encoded =
+        serde_json::to_value(session.save().expect("健康 runtime_state 存档")).unwrap();
+    let states = encoded["runtime_state"]["strategy_states"]
         .as_object_mut()
         .expect("strategy states must encode as an object");
     let state = states
@@ -1181,10 +1187,10 @@ fn decode_rejects_unknown_nested_strategy_state_fields() {
 #[test]
 fn decode_rejects_noncanonical_strategy_float_bit_strings() {
     let session = session_with_runtime_state();
-    let pristine = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
+    let pristine = serde_json::to_value(session.save().expect("健康 runtime_state 存档")).unwrap();
     for malformed in ["0", "3FF0000000000000"] {
         let mut encoded = pristine.clone();
-        let states = encoded["runtime_v2"]["strategy_states"]
+        let states = encoded["runtime_state"]["strategy_states"]
             .as_object_mut()
             .expect("strategy states must encode as an object");
         let payload = states
@@ -1209,13 +1215,13 @@ fn decode_rejects_noncanonical_strategy_float_bit_strings() {
 #[test]
 fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
     let mut hot_setup = super::super::npc_working_quote_tests::quote_setup(0);
-    hot_setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    hot_setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     hot_setup.npcs.inst_count = 0;
     hot_setup.npcs.hot_count = 1;
-    let hot_session = GameSession::new(hot_setup, 42).expect("hot v2 fixture must be valid");
+    let hot_session = GameSession::new(hot_setup, 42).expect("hot runtime_state fixture 必须有效");
     let mut save_json =
         serde_json::to_value(hot_session.save().expect("healthy hot save")).unwrap();
-    let saved_strategy = save_json["runtime_v2"]["strategy_states"]
+    let saved_strategy = save_json["runtime_state"]["strategy_states"]
         .as_object_mut()
         .and_then(|states| states.values_mut().next())
         .and_then(|state| state.get_mut("Momentum"))
@@ -1257,8 +1263,9 @@ fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
 #[test]
 fn restore_rejects_strategy_attention_probability_drift() {
     let session = session_with_runtime_state();
-    let mut encoded = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
-    let states = encoded["runtime_v2"]["strategy_states"]
+    let mut encoded =
+        serde_json::to_value(session.save().expect("健康 runtime_state 存档")).unwrap();
+    let states = encoded["runtime_state"]["strategy_states"]
         .as_object_mut()
         .expect("strategy states must encode as an object");
     let payload = states
@@ -1283,7 +1290,7 @@ fn restore_rejects_strategy_attention_probability_drift() {
 #[test]
 fn strategy_state_identity_tampering_is_rejected() {
     let session = session_with_runtime_state();
-    let mut state = capture_runtime_v2(&session).unwrap();
+    let mut state = capture_runtime_state(&session).unwrap();
     state.strategy_states.insert(
         AccountId(1),
         crate::strategy::StrategyState::Momentum(
@@ -1292,7 +1299,7 @@ fn strategy_state_identity_tampering_is_rejected() {
     );
 
     assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
+        validate_runtime_state(&session, &state).unwrap_err(),
         "deterministic strategy identity",
     );
 }
@@ -1302,25 +1309,25 @@ fn capture_rejects_poisoned_session_without_emitting_a_dto() {
     let mut session = session_with_runtime_state();
     let fatal = StepFatal::InvariantViolation {
         description: "fixture poison".to_owned(),
-        location: "persistence::v2_tests".to_owned(),
+        location: "persistence::saved_runtime_tests".to_owned(),
     };
     session.poison = Some(fatal.clone());
 
-    assert_eq!(capture_runtime_v2(&session).unwrap_err(), fatal);
+    assert_eq!(capture_runtime_state(&session).unwrap_err(), fatal);
 }
 
 #[test]
-fn cumulative_fee_audit_v2_buyer_requires_every_nominal_component() {
+fn cumulative_fee_audit_buyer_requires_every_nominal_component() {
     let config = GameConfig::proposed_defaults();
     let gross = Money::from_cents(100_000);
-    let nominal = CumulativeFeeAuditV2 {
+    let nominal = CumulativeFeeAudit {
         side: Side::Buy,
         filled_value: gross,
-        charged: FeeComponentsV2::default(),
+        charged: SavedFeeComponents::default(),
     }
     .nominal(&config)
     .unwrap();
-    assert!(CumulativeFeeAuditV2 {
+    assert!(CumulativeFeeAudit {
         side: Side::Buy,
         filled_value: gross,
         charged: nominal
@@ -1328,20 +1335,20 @@ fn cumulative_fee_audit_v2_buyer_requires_every_nominal_component() {
     .validate(&config)
     .unwrap());
     for charged in [
-        FeeComponentsV2 {
+        SavedFeeComponents {
             commission: nominal.commission.sub(Money::from_cents(1)).unwrap(),
             ..nominal
         },
-        FeeComponentsV2 {
+        SavedFeeComponents {
             transfer_fee: Money::ZERO,
             ..nominal
         },
-        FeeComponentsV2 {
+        SavedFeeComponents {
             stamp_tax: Money::from_cents(1),
             ..nominal
         },
     ] {
-        assert!(!CumulativeFeeAuditV2 {
+        assert!(!CumulativeFeeAudit {
             side: Side::Buy,
             filled_value: gross,
             charged
@@ -1352,24 +1359,59 @@ fn cumulative_fee_audit_v2_buyer_requires_every_nominal_component() {
 }
 
 #[test]
-fn cumulative_fee_audit_v2_zero_and_negative_gross_keep_existing_boundaries() {
+fn cumulative_fee_audit_zero_and_negative_gross_keep_existing_boundaries() {
     let config = GameConfig::proposed_defaults();
     for side in [Side::Buy, Side::Sell] {
-        let zero = CumulativeFeeAuditV2 {
+        let zero = CumulativeFeeAudit {
             side,
             filled_value: Money::ZERO,
-            charged: FeeComponentsV2::default(),
+            charged: SavedFeeComponents::default(),
         };
-        assert_eq!(zero.nominal(&config).unwrap(), FeeComponentsV2::default());
+        assert_eq!(
+            zero.nominal(&config).unwrap(),
+            SavedFeeComponents::default()
+        );
         assert!(zero.validate(&config).unwrap());
-        let negative = CumulativeFeeAuditV2 {
+        let negative = CumulativeFeeAudit {
             side,
             filled_value: Money::from_cents(-1),
-            charged: FeeComponentsV2::default(),
+            charged: SavedFeeComponents::default(),
         };
         assert_invalid_save(
             negative.nominal(&config).unwrap_err(),
             "saved filled value cannot be negative",
         );
     }
+}
+
+#[test]
+fn saved_receipt_source_accepts_quote_expiry_and_rejects_old_tag() {
+    let source = SavedReceiptSource::QuoteExpiry(7);
+    assert_eq!(
+        serde_json::to_value(source).unwrap(),
+        serde_json::json!({ "QuoteExpiry": 7 })
+    );
+    assert!(
+        serde_json::from_value::<SavedReceiptSource>(serde_json::json!({ "P0Expiry": 7 })).is_err()
+    );
+}
+
+#[test]
+fn save_slot_names_current_schema_and_rejects_legacy_runtime_key() {
+    let session = session_with_runtime_state();
+    let encoded = serde_json::to_value(session.save().unwrap()).unwrap();
+    assert_eq!(encoded["schema_version"], 3);
+    assert!(encoded.get("runtime_state").is_some());
+    assert!(encoded.get("runtime_v2").is_none());
+    let mut legacy = encoded;
+    let runtime = legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("runtime_state")
+        .unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .insert("runtime_v2".to_owned(), runtime);
+    assert!(serde_json::from_value::<SaveSlot>(legacy).is_err());
 }

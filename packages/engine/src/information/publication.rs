@@ -1,4 +1,4 @@
-//! 公开值类型与公布请求（K4，任务 15）：`PublishedReport` / `Announcement`
+//! 公开值类型与公布请求：`PublishedReport` / `Announcement`
 //! 与时点/关系校验。
 //!
 //! 发生 / 报告期 / 批准 / 公布四个时点显式分离：
@@ -10,7 +10,7 @@
 //!
 //! 公开更正 = **新版本关联旧 ID**（`supersedes`）；历史版本永不覆写。
 //! `PublishedReport` 不重复存储 scope/period/kind/version（单一真源 =
-//! 内嵌的任务 13 `ReportSet`，恢复边界零一致性检查负担）。公告内容只含
+//! 内嵌的 `ReportSet`，恢复边界零一致性检查负担）。公告内容只含
 //! 该时点已确认事实（事件条款）；未来合同现金流是预测，类型上就没有
 //! 「已实现」标记位。
 
@@ -58,12 +58,12 @@ impl PublicationId {
 }
 
 /// 会计政策引用（公开报告的政策基线最小承载：科目表/列报口径版本；
-/// 更丰富的政策标识随任务 16/29 的消费需要再扩展）。
+/// 更丰富的政策标识随获知登记与诊断的消费需要再扩展）。
 #[derive(
     Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]
 pub struct AccountingPolicyRef {
-    /// 科目表版本（v2 工业 / v3 银行 / v4 保险 / v5 地产）。
+    /// 科目表 version（工业=2 / 银行=3 / 保险=4 / 地产=5）。
     pub chart_version: u32,
 }
 
@@ -117,11 +117,11 @@ pub struct PublishedReport {
     pub origin: PublicationOrigin,
     /// 更正关系：新版本关联的旧公布 id（历史不可覆写）。
     pub supersedes: Option<PublicationId>,
-    /// 任务 13 五产物（含 scope/period/kind/window/version）。
+    /// 报表五产物（含 scope/period/kind/window/version）。
     pub reports: ReportSet,
 }
 
-/// 公告事件条款（该时点已确认事实；复用任务 14 事件目录类型，不镜像）。
+/// 公告事件条款（该时点已确认事实；复用公司经营事件目录类型，不镜像）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AnnouncedEvent {
     pub kind: crate::company::ShockKind,

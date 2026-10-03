@@ -1,8 +1,8 @@
-//! 行业报表层（K3，任务 9–13）。
+//! 行业报表层：列报分类、窗口读投影与完整报表生成。
 //!
-//! - 任务 9–11：行业**列报分类层**（`bank`/`insurance`/`real_estate` +
-//!   任务 13 的 `industrial`）——全期间读投影，科目代码单一真源。
-//! - 任务 13：**完整报表生成器**（`balance_sheet`/`income`/`cash_flow`/
+//! - 行业**列报分类层**（`bank`/`insurance`/`real_estate` +
+//!   `industrial`）——全期间读投影，科目代码单一真源。
+//! - **完整报表生成器**（`balance_sheet`/`income`/`cash_flow`/
 //!   `equity`/`notes` + `window`/`consolidated_window` 窗口底座）——五产物
 //!   `ReportSet`（四张基本表 + 附注），由分录纯函数推导，带 ScopeId
 //!   （单体/合并）、期间与不可变版本标记；结账/更正在 [`super::closing`]。
@@ -41,7 +41,7 @@ use crate::accounting::journal::BusinessEventId;
 use crate::accounting::ledger::{AccountChart, TrialBalanceSummary};
 use crate::accounting::period::AccountingPeriod;
 
-/// 行业列报口径（与科目表版本对应：v1/v2 工业、v3 银行、v4 保险、v5 地产）。
+/// 行业列报口径（按 AccountChart.version 对应：1/2 工业、3 银行、4 保险、5 地产）。
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug, serde::Serialize, serde::Deserialize,
 )]

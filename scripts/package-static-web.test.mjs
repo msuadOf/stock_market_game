@@ -32,6 +32,8 @@ test("static archives carry source metadata and license, reject reruns and canno
       archives.push(archive);
       await writeFile(archive.output, `archive/${archive.format}`);
     } });
+    assert.equal(manifest.schema, "distribution-manifest");
+    assert.equal(manifest.schema_version, 1);
     assert.equal(manifest.commit, options.sha);
     assert.deepEqual(manifest.files.map((file) => file.name), ["web-static.zip", "web-static.tar.gz"]);
     assert.equal(JSON.parse(await readFile(path.join(input, "build-info.json"), "utf8")).commit, options.sha);

@@ -1,4 +1,4 @@
-//! 实现常量与任务 2 冻结 fixture 的机器对账（policy-sources.json calendar 节）。
+//! 实现常量与冻结政策来源 fixture 的机器对账（policy-sources.json calendar 节）。
 //!
 //! fixture 值由 `tests/policy_manifest.rs` 独立锁定；本用例把 engine::calendar
 //! 的运行时常量与 fixture 绑定，防止实现与已核验政策基线漂移。

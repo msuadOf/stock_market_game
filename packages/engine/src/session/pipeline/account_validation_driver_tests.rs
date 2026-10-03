@@ -298,7 +298,7 @@ fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_ret
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, .. }
-            if description == "P3 order ID allocation overflow"
+            if description == "AccountValidation 分配 OrderId 时溢出"
     ));
     assert_eq!(driver.checkpoint(), before_checkpoint);
     assert_eq!(driver.output(), &before_output);
@@ -380,7 +380,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
         StepFatal::InvariantViolation {
             description,
             location,
-        } if description.contains("identity was replayed")
+        } if description == "AccountValidation driver 重放了候选身份"
             && location == "pipeline::account_validation_driver"
     ));
     assert_eq!(driver.checkpoint(), before_checkpoint);
@@ -584,7 +584,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, .. }
-            if description == "P3 order ID allocation overflow"
+            if description == "AccountValidation 分配 OrderId 时溢出"
     ));
     assert_eq!(driver.checkpoint(), before_checkpoint);
     assert_eq!(driver.output(), &before_output);
@@ -644,7 +644,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, .. }
-            if description == "P3 sealed candidate index overflow"
+            if description == "AccountValidation 密封候选索引溢出"
     ));
     assert_eq!(driver.checkpoint(), before_checkpoint);
     assert_eq!(driver.output(), &before_output);

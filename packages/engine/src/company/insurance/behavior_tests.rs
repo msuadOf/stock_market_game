@@ -15,7 +15,7 @@ fn date() -> CivilDate {
 
 fn config() -> InsuranceConfig {
     InsuranceConfig {
-        chart: insurance_chart_v4(),
+        chart: insurance_account_chart(),
         as_of: date(),
         opening_lines: vec![
             line(chart::acct::CASH, PostingSide::Debit, amount(200_000)),

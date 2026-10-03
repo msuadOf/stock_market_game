@@ -1,4 +1,4 @@
-//! 保险账套装配输入与开局守卫 + 版本化贴现假设（K3 保险，任务 10）。
+//! 保险账套装配输入与开局守卫 + 版本化贴现假设（保险经营会计约束）。
 //!
 //! 贴现假设是显式游戏假设（无默认构造——不声称真实精算利率）：单一平坦
 //! 年利率（bp），ACT/365F 简单贴现。风险调整为逐组显式金额输入（同样
@@ -34,7 +34,7 @@ impl DiscountAssumption {
 pub struct InsuranceConfig {
     pub chart: crate::accounting::AccountChart,
     pub as_of: CivilDate,
-    /// 显式平衡的开局行（经 `post_batch` 验证路径，任务 7 语义）。
+    /// 显式平衡的开局行（经 `post_batch` 验证路径，公司规格与开局账套语义）。
     /// 只允许现金 + 权益侧科目；触碰保险子账科目 → 构造期拒绝。
     pub opening_lines: Vec<JournalLine>,
     pub counterparties: Vec<ExternalCounterparty>,

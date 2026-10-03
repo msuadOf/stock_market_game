@@ -1,11 +1,11 @@
-//! K5 经历反馈（行 136，任务 20）：把真实经历接入信心、忍耐与风险压力。
+//! 经历反馈：把真实经历接入信心、忍耐与风险压力。
 //!
 //! 状态只登记**事实**：受挫事件（双时钟日期）、每股持仓生命周期（入场/本人观察）
 //! 与清仓退出历史（含冷静期）。忍耐/信心/风险压力档位是读取时从事实派生的
-//! 输入（任务 22/23 聚合），不在状态里另存一份可漂移的副本；账户损益复用
+//! 输入（候选评分与紧迫度决策聚合），不在状态里另存一份可漂移的副本；账户损益复用
 //! 既有 `reference_equity`/`peak_equity`/`consecutive_failed_buys` 字段。
 //!
-//! 双时钟纪律（K1）：公历日期、市场分钟、交易日序分别记录、分别单调，
+//! 双时钟纪律：公历日期、市场分钟、交易日序分别记录、分别单调，
 //! 互不换算。任何事件都不允许把任一时钟回拨；评估时刻早于已登记经历
 //! （= 状态里有"未来经历"）同样类型化拒绝。
 //!
@@ -15,10 +15,10 @@
 //! 衰减（每 20 个交易日无新受挫减弱一档）只调影响档，**永不删除**登记的
 //! 亏损事实；真实获利退出沿用 legacy 恢复规则（计数减一）。
 //!
-//! 会话接线（把 session 侧 fill/observe 调用切到 `*_dated` 变体）属任务
-//! 25/26；存档恢复边界调用 [`ExperienceFeedback::validate`] 属任务 27。
+//! session 的成交与观察接线使用 `*_dated` 方法；
+//! 存档恢复边界调用 [`ExperienceFeedback::validate`]。
 //!
-//! 双时钟写入方法（`*_dated`）在 [`lifecycle`]；任务 22/23 消费的读取输入
+//! 双时钟写入方法（`*_dated`）在 [`lifecycle`]；候选评分与紧迫度决策消费的读取输入
 //! （失败影响衰减/长期被套/风险压力）在 [`inputs`]。
 
 mod inputs;
@@ -30,9 +30,9 @@ use super::{require_positive, AppendOnlyHistory, ExperienceError, RetailExperien
 use crate::calendar::CivilDate;
 use crate::{Money, Side, StockCode};
 
-/// 每 20 个交易日无新受挫，失败影响减弱一档（K5；ADR-0013 衰减取代条款）。
+/// 每 20 个交易日无新受挫，失败影响减弱一档（ADR-0013 衰减取代条款）。
 pub const FAILURE_DECAY_TRADING_DAYS: u64 = 20;
-/// 长期被套要求持有满 20 个交易日（K5）。
+/// 长期被套要求持有满 20 个交易日。
 pub const LONG_STUCK_TRADING_DAYS: u64 = 20;
 
 /// 一次经历事件的双时钟时刻。三个分量分别单调，绝不互相换算。
@@ -122,8 +122,8 @@ pub struct ExperienceFeedback {
 }
 
 impl ExperienceFeedback {
-    /// 序列化守卫：未接双时钟事件的默认反馈不写入存档——旧档字节保持不变
-    /// （K1 不留迁移器；缺省字段由 `serde(default)` 恢复为空反馈）。
+    /// 序列化守卫：未登记双时钟事件的空反馈不写入存档；
+    /// 内部缺省字段由 `serde(default)` 恢复为空反馈，不代表公共入口兼容旧格式。
     pub(crate) fn is_empty(&self) -> bool {
         self.latest_moment.is_none()
             && self.failure_events.is_empty()
@@ -192,7 +192,7 @@ impl ExperienceFeedback {
         Ok(())
     }
 
-    /// 恢复边界一致性校验（任务 27 在存档恢复时调用；篡改的存档在此显式失败）。
+    /// 恢复边界一致性校验（存档恢复时调用；篡改的存档在此显式失败）。
     pub fn validate(&self) -> Result<(), ExperienceError> {
         let inconsistent = |detail: &str| ExperienceError::InconsistentFeedback {
             detail: detail.to_string(),

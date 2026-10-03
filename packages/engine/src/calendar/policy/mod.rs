@@ -1,13 +1,13 @@
-//! 冻结交易日历政策（K1）：算法版本、适用范围、沪深官方休市覆盖、模拟回退。
+//! 冻结交易日历政策：算法版本、适用范围、沪深官方休市覆盖、模拟回退。
 //!
 //! 政策与法源基线见 docs/simulation-calendar.md；机器可读冻结值见
-//! tests/fixtures/company-model/policy-sources.json `calendar` 节（任务 2 已
-//! test-enforced，本模块运行时值与其对账——见 tests/calendar/fixture_binding.rs）。
+//! tests/fixtures/company-model/policy-sources.json `calendar` 节；
+//! 本模块运行时值通过 tests/calendar/fixture_binding.rs 与冻结值对账。
 //!
 //! **冻结语义**：`CalendarPolicy` 内嵌完整政策数据（官方覆盖 + 模拟回退 +
 //! 农历事实表 + 各级 digest）。恢复存档时反序列化出的政策即权威：
 //! `TradingCalendar::from_policy` 只做自洽校验（digest/形状），不读、也不被
-//! 更新版默认表覆盖（session 存档接线在任务 27，机制由本模块类型保证）。
+//! 更新版默认表覆盖；session 存档恢复沿用保存的政策，本模块类型保证冻结机制。
 //!
 //! 分层：`coverage`（覆盖/回退数据类型）、`validation`（装配不变量 + digest），
 //! 本文件负责政策类型本体与装配入口。
@@ -23,7 +23,7 @@ use super::data::embedded_lunar_facts;
 use super::date::CivilDate;
 use super::CalendarError;
 
-/// 合同计息基准（K2 游戏假设，fixture `calendar.day_count_basis`）。
+/// 合同计息基准（游戏假设，fixture `calendar.day_count_basis`）。
 pub const DAY_COUNT_BASIS_ACT_365F: &str = "ACT/365F";
 
 /// 政策装配入参（`from_parts` 全量校验后生成带 digest 的 `CalendarPolicy`）。
@@ -52,9 +52,9 @@ pub struct CalendarPolicy {
 }
 
 impl CalendarPolicy {
-    /// 当前发布默认政策 v1（内嵌 HKO 事实表；2026 通知原文未取得 → 无
+    /// 当前发布的默认日历政策（内嵌 HKO 事实表；2026 通知原文未取得 → 无
     /// Official 条目，2026 按通知未核验年处理）。
-    pub fn default_v1() -> Result<Self, CalendarError> {
+    pub fn current_default_policy() -> Result<Self, CalendarError> {
         Self::from_parts(CalendarPolicySpec {
             algorithm_version: 1,
             default_start: CivilDate::from_iso("2030-01-01")?,

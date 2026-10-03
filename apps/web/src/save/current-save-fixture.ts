@@ -5,8 +5,8 @@ type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
   return {
-    schema_version: 2,
-    runtime_v2: {
+    schema_version: 3,
+    runtime_state: {
       poisoned: false,
       next_receipt_base: "0",
       live_envelopes: [],
@@ -58,7 +58,7 @@ export function currentSaveFixture(): JsonObject {
       t1_enabled: true,
       float_allocation: { ByKind: { retail: 1, inst: 0, hot: 0 } },
       start_date: "2030-01-01",
-      simulation_policy_id: "a-share-simulation-v2",
+      simulation_policy_id: "a-share-simulation",
     },
     seed: "42",
     snapshot: {

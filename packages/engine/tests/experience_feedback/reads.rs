@@ -1,4 +1,4 @@
-//! 读侧派生输入（任务 22/23 的目标/紧迫度接缝）：失败影响衰减、长期被套、
+//! 目标与紧迫度决策的读侧派生输入：失败影响衰减、长期被套、
 //! 真实获利恢复与风险压力复用账户峰值。
 
 use engine::experience::{FAILURE_DECAY_TRADING_DAYS, LONG_STUCK_TRADING_DAYS};

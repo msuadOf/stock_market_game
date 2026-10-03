@@ -1,8 +1,8 @@
-//! 纯公历日期算术（K1）：`CivilDate` / `CivilInstant` / `TradingDayOrdinal`。
+//! 纯公历日期算术：`CivilDate` / `CivilInstant` / `TradingDayOrdinal`。
 //!
 //! 本文件只做格里高利历的**数学事实**：闰年（4/100/400 规则）、星期、日计数、
 //! ISO 解析/格式化。交易所休市语义在 `policy.rs` / `holidays.rs`。类型刻意与
-//! `Money`、tick 计数、市场分钟分离（K1：金额/日期/交易分钟不混用）。
+//! `Money`、tick 计数、市场分钟分离，金额/日期/交易分钟不混用。
 //!
 //! 年限 1900–2199 是**算法验证窗**：覆盖运行区间 1998–2099 及两侧世纪边界
 //! （2000 闰 / 2100 不闰），窗外年份显式拒绝。运行边界（2000-01-01 至
@@ -43,7 +43,7 @@ pub enum Weekday {
 }
 
 impl Weekday {
-    /// 是否周末（周六/周日）。调休形成的补班周末在 K1 下**不**改此判定
+    /// 是否周末（周六/周日）。调休形成的补班周末**不**改变此判定
     /// （不模拟补班，见 docs/simulation-calendar.md §3.3）。
     pub fn is_weekend(self) -> bool {
         matches!(self, Weekday::Saturday | Weekday::Sunday)
@@ -233,7 +233,7 @@ impl<'de> serde::Deserialize<'de> for CivilDate {
 
 /// Asia/Shanghai 语义的日内时刻：日期 + 当日秒（0..86_400）。
 ///
-/// 规则时间与模拟时间分离（K1 §4）的最小承载单元；时区不引入 tz 数据库，
+/// 规则时间与模拟时间分离的最小承载单元；时区不引入 tz 数据库，
 /// 中国大陆自 1991 年起无夏令时，全年统一 UTC+8，此处直接存"本地日 + 日内秒"。
 #[derive(
     Copy,

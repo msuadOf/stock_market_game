@@ -1,6 +1,6 @@
-//! 具名技术指标观测接缝（W3-Task 19）。
+//! 具名技术指标观测接缝。
 //!
-//! 把权威已完成日 K 转换为 K5 具名技术指标观测。窗口长度一律按完整市场时间
+//! 把权威已完成日 K 转换为具名技术指标观测。窗口长度一律按完整市场时间
 //! （交易日）表达，输入是日 K 序列，结构上与宿主 tick 密度无关。原 30 分钟/
 //! 5 日/区间/量能/失衡观测保持不变；本层只在其旁新增 SMA/RSI/ATR 观测，
 //! 短期与长期信号独立携带、互不耦合，因此短期下跌与长期上行可同时表达。
@@ -37,7 +37,7 @@ pub struct TechnicalObservation {
     pub sma20: Result<SimpleMovingAverage, TechnicalError>,
     pub sma60: Result<SimpleMovingAverage, TechnicalError>,
     pub rsi14: Result<RelativeStrengthIndex, TechnicalError>,
-    /// K5 约束：ATR 只供风险/执行，绝不充当方向信号。
+    /// ATR 只供风险/执行，绝不充当方向信号。
     pub atr14: Result<AverageTrueRange, TechnicalError>,
 }
 

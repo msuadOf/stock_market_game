@@ -36,10 +36,11 @@ mod tests {
     };
 
     #[test]
-    fn nested_settlement_preserves_fatal_identity_for_and_b2() {
+    fn nested_settlement_preserves_fatal_identity_through_continuous_execution_and_auction_finalization(
+    ) {
         let fatal = StepFatal::InvariantViolation {
             description: "settlement failed".to_owned(),
-            location: "p6::settlement".to_owned(),
+            location: "session::pipeline::settlement".to_owned(),
         };
         assert_eq!(
             ContinuousTransactionError::SessionExecution(

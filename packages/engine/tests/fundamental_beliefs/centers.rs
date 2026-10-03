@@ -1,4 +1,4 @@
-//! 映射金样：能力中心 / λ / 期限（K5a 行 154 + K5 行 133 的计划锁定值）
+//! 映射金样：能力中心 / λ / 期限的固定游戏参数。
 //! 与信念簿 serde 往返。
 
 use crate::priors::{cash_flow_analysis, profile, total_of};
@@ -14,7 +14,7 @@ use engine::strategy::{
     HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
 };
 
-/// 能力中心 / λ / 期限映射（K5a 行 154 + K5 行 133 的计划锁定值）。
+/// 能力中心 / λ / 期限映射的独立期望值。
 #[test]
 fn capability_centers_lambda_and_horizons() {
     use CapabilityCenter::*;

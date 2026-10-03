@@ -1,4 +1,4 @@
-//! Pure NPC P2 source runner. Implementation owned by the L1 batch.
+//! 运行纯 NPC 决策源。
 use super::{DecisionSnapshot, DecisionSnapshotError, IntentCandidateKey};
 use crate::account::StoredStrategy;
 use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// An NPC raw intent with the identity that P2 composition must preserve.
+/// NPC raw intent 携带身份；候选 composition 必须保留该身份。
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::session) struct NpcDecisionIntent {
     key: IntentCandidateKey,
@@ -85,9 +85,9 @@ impl NpcDecisionAccountOutput {
     }
 }
 
-/// Pure P2 result: prospective strategy states and raw intents only.
+/// 纯 NPC 决策结果只含 prospective strategy states 与 raw intents。
 ///
-/// It deliberately contains no event, router, order-book, envelope, or session handle.
+/// 不持有事件、router、订单簿、envelope 或会话句柄。
 #[derive(Clone, Debug)]
 pub(in crate::session) struct NpcDecisionSourceOutput {
     account_ids: Vec<AccountId>,
@@ -129,21 +129,21 @@ impl NpcDecisionSourceOutput {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(in crate::session) enum NpcDecisionSourceError {
-    #[error("P2 NPC risk urgency failed for account {account:?}: {source}")]
+    #[error("DecisionShadow NPC 账户 {account:?} 的 risk urgency 失败：{source}")]
     RiskUrgency {
         account: AccountId,
         source: crate::plans::UrgencyError,
     },
-    #[error("P2 NPC source snapshot error: {0}")]
+    #[error("DecisionShadow NPC 来源快照错误：{0}")]
     Snapshot(DecisionSnapshotError),
-    #[error("P2 NPC source cannot hydrate strategy for account {account:?}: {source}")]
+    #[error("DecisionShadow NPC 来源无法恢复账户 {account:?} 的 strategy：{source}")]
     StrategyHydration {
         account: AccountId,
         source: StrategyStateError,
     },
-    #[error("P2 NPC source intent ordinal overflow for account {account:?}")]
+    #[error("DecisionShadow NPC 来源账户 {account:?} 的 intent ordinal 溢出")]
     IntentOrdinalOverflow { account: AccountId },
-    #[error("P2 NPC source has no output strategy state for account {0:?}")]
+    #[error("DecisionShadow NPC 来源账户 {0:?} 缺少输出 strategy state")]
     #[cfg(test)]
     MissingOutputState(AccountId),
 }

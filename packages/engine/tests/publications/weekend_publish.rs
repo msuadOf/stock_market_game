@@ -1,4 +1,4 @@
-//! 周末发布金样（K4）：非交易日 18:00 照常公布、零撮合零市场事件零 RNG
+//! 周末发布金样：非交易日 18:00 照常公布、零撮合零市场事件零 RNG
 //! 消费；开局后首次排期经 live 派发落地；提前读取被类型化拒绝。
 
 use crate::fixture::{history_start_of, plus_days, single_company_config, INDUSTRIAL_ID, OPS_SEED};
@@ -18,7 +18,7 @@ use engine::session::{
 /// 找到「Q1 基准日 + 该公司真实偏移」落在周六、且其前一自然日（周五）是
 /// 交易日的年份（确定性搜索：偏移是 seed+公司 id 的纯函数）。
 fn saturday_q1_year(offset: u8) -> i32 {
-    let calendar = TradingCalendar::default_v1().expect("default calendar");
+    let calendar = TradingCalendar::current_default_calendar().expect("default calendar");
     for year in 2030i32..=2096 {
         let instant = scheduled_instant(ScheduledReportKind::Q1, year, offset)
             .expect("q1 schedule legal in search range");
@@ -132,7 +132,7 @@ fn weekend_report_publishes_without_trade() {
 
     scenario.install_dispatch();
 
-    // —— 周五：跑完当日会话，然后日结（K4 顺序：finalize → 披露）——
+    // —— 周五：跑完当日会话，然后日结（finalize → 披露）——
     scenario.step_friday();
     let (_friday_report, friday_out) = scenario.settle_and_dispatch();
     assert!(

@@ -46,7 +46,7 @@ fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>>
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: CivilDate::from_iso("2030-01-02")?,
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_owned(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
     })
 }
 
@@ -126,6 +126,13 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 14 prior_year_end account arrays reordered/deduplicated per tick. Every
     // account amount and all remaining authoritative fields are equal.
     // Old digests: 7e8ca11d72f312a9 / 46bf286fb78cd84a / 169259aea14df5a0.
+    // ADR-0029 命名取证：实际运行 c0ab429 与本轮源码的同一 fixture/seed/
+    // 单 worker producer，三个旧锚全部复现。60 个逐 tick projection 的事件
+    // 与 live snapshot 原字节相同；每个 Save 只改变 schema_version 2→3、
+    // runtime_v2→runtime_state 及 simulation_policy_id 身份。仅按许可 path
+    // 逆替换原文 token 后，全部 projection 原字节精确复现，业务事实与顺序不变。
+    // 旧锚保留（auction_ticks=0/3/6）：1454294662355836716 /
+    // 5242099653663156573 / 4627285058458614055。只重钉当前表示锚。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -135,17 +142,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 1_454_294_662_355_836_716);
+    assert_complete_projection(0, 4_551_912_575_944_664_394);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 5_242_099_653_663_156_573);
+    assert_complete_projection(3, 8_964_527_389_656_814_803);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 4_627_285_058_458_614_055);
+    assert_complete_projection(6, 16_877_315_163_896_328_895);
 }
 
 #[test]

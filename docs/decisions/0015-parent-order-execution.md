@@ -34,8 +34,8 @@
 
 ## 计划契约影响（2026-09-10）
 
-`company-information-npc-intentions` 计划（用户已批准）K6 将母单演进为**个人交易
-计划的执行子状态**，修订本 ADR 的下列边界（实施随 W4 任务，当前未实现）：
+`company-information-npc-intentions` 持续计划契约（用户已批准）将母单演进为**个人交易
+计划的执行子状态**，修订本 ADR 的下列边界（后续实施范围，原记录当时未实现）：
 
 - **"当前仅 `ValueStrategy` 主动选择母单执行"——被取代：** 共同 V 与
   `ValueStrategy` 移除后（ADR-0016），母单语义并入 `TradingPlan` 的执行子状态；

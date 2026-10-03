@@ -24,7 +24,7 @@ fn insurance_profitable_group_full_chain_gold() {
 
     // ── 2030-01-01：建立盈利组（365 天保障，2030-01-01→2031-01-01）──
     // 保费 1000 元、预期赔付 800 元、风险调整 50 元。应收保费挂账（非现金）：
-    // K3 红线：保费不立即计收入——6051 为零，2501 贷记 1000 元。
+    // 行业会计红线：保费不立即计收入——6051 为零，2501 贷记 1000 元。
     ins.establish_group(
         InsuranceProductKind::TermProtection,
         group_id(),
@@ -111,7 +111,7 @@ fn insurance_profitable_group_full_chain_gold() {
     assert_eq!(lines.premiums_receivable, amt(0));
     assert_eq!(lines.cash_position, yuan(2_200));
 
-    // ── 存档往返：重放路径恢复等价账套（K2 事实/派生边界）。──
+    // ── 存档往返：重放路径恢复等价账套（会计与资金边界事实/派生边界）。──
     let json = serde_json::to_string(&ins).expect("serialize");
     let restored: InsuranceBooks = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(restored, ins);
@@ -244,25 +244,29 @@ fn insurance_onerous_group_day_one_loss_gold() {
     // 亏损组部分释放后的组合恒等式：LRC = E_rem + RA_rem − F_rem（备查亏损
     // 成分不加余额）。首段后：收入 23_288、财务 843、
     // LRC = 81_923 − 23_288 + 843 = 59_478；备查亏损 = 21_923 − 6_006 = 15_917。
-    let mut ins2 = InsuranceBooks::new(base_config()).expect("insurer opens");
-    ins2.establish_group(
-        InsuranceProductKind::TermProtection,
-        group_id(),
-        &policyholder(),
-        yuan(600),
-        yuan(800),
-        yuan(50),
-        d("2030-01-01"),
-        d("2031-01-01"),
-    )
-    .expect("establish");
-    ins2.release_service(&group_id(), 100, d("2030-04-11"))
+    let mut partial_release_books = InsuranceBooks::new(base_config()).expect("insurer opens");
+    partial_release_books
+        .establish_group(
+            InsuranceProductKind::TermProtection,
+            group_id(),
+            &policyholder(),
+            yuan(600),
+            yuan(800),
+            yuan(50),
+            d("2030-01-01"),
+            d("2031-01-01"),
+        )
+        .expect("establish");
+    partial_release_books
+        .release_service(&group_id(), 100, d("2030-04-11"))
         .expect("partial release on onerous group");
-    assert_eq!(net_debit(&ins2, acct::LRC), amt(-59_478));
-    let group = ins2.group(&group_id()).unwrap();
+    assert_eq!(net_debit(&partial_release_books, acct::LRC), amt(-59_478));
+    let group = partial_release_books.group(&group_id()).unwrap();
     assert_eq!(group.loss_component(), amt(15_917));
     assert_eq!(
-        (net_debit(&ins2, acct::LRC)).neg().expect("lrc credit"),
+        (net_debit(&partial_release_books, acct::LRC))
+            .neg()
+            .expect("lrc credit"),
         group
             .expected_claims_remaining()
             .add(group.risk_adjustment_remaining())

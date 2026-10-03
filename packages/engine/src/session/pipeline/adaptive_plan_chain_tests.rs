@@ -214,7 +214,7 @@ fn adaptive_real_validation_and_matching_two_cancels_then_new_order_complete_in_
     assert_eq!(
         session.state.accounts[&AccountId(1)].cash(),
         cash,
-        "P6 has not run"
+        "SettlementShadow 尚未运行"
     );
     assert!(session.state.pending_plan_events.is_empty());
 }
@@ -678,7 +678,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
         let Intent::Cancel { code, id } = candidate.intent() else {
             panic!("expected conflict cancel");
         };
-        // 每个 continuation 边界提供显式 P4 拒绝事实；成功用例仍执行真实 P4 撤单。
+        // 每个 continuation 边界提供显式 stock_processing 拒绝事实；成功用例仍执行真实 stock_processing 撤单。
         let mut rejected = ContinuousExecutionRound {
             facts: vec![ContinuousExecutionFact {
                 candidate_key: candidate.key().clone(),

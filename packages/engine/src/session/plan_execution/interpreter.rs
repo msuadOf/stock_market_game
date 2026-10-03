@@ -38,7 +38,7 @@ impl PlanExecutionRoute {
         &self.command
     }
 
-    /// A new parent becomes visible to P4 fact projection only after P4 accepts its child.
+    /// StockProcessing 接受子单后，新的 parent 才对执行事实投影可见。
     pub(in crate::session) fn install_accepted_submit_parent(
         &self,
         session: &mut GameSession,

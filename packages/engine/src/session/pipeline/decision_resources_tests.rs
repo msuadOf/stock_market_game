@@ -417,7 +417,7 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
     let before = game.business_state_hash().unwrap();
 
     let error = match plan_tick(PhaseInput { session: &game }) {
-        Ok(_) => panic!("equity overflow must fail P1 sealing"),
+        Ok(_) => panic!("资产溢出必须使 SealAllocationSnapshot 密封失败"),
         Err(error) => error,
     };
 

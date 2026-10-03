@@ -159,7 +159,7 @@ pub enum Intent {
 pub struct StrategyDecision {
     pub intents: Vec<Intent>,
     pub reviewed_stocks: BTreeSet<StockCode>,
-    /// 仅散户 B02/B03 判断路径提供的目标仓位解释。Session 将其作为非权威诊断样本读取；
+    /// 仅散户目标仓位与经历调整路径提供目标仓位解释。Session 将其作为非权威诊断样本读取；
     /// 它不参与存档、撮合或下一 tick 的决策。
     pub position_decision: Option<PositionDecision>,
 }
@@ -173,9 +173,9 @@ pub trait Rng {
     fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32;
 }
 
-/// 信念机构决策链参数（会话侧 K5a/K6 接线读取；非信念策略恒 `None`）。
+/// 信念机构决策链参数（会话侧候选评分与计划执行读取；非信念策略恒 `None`）。
 ///
-/// 共同 V 删除后，机构的估值与方向只来自账户的 [`BeliefBook`] 与 K5a
+/// 机构的估值与方向只来自账户的 [`BeliefBook`] 与混合分析
 /// 聚合；本结构只暴露个体规模/容忍带等行为参数，不携带任何隐藏市场信息。
 #[derive(Clone, Copy, Debug)]
 pub struct BeliefChainParams {
@@ -256,7 +256,7 @@ pub trait Strategy: Send + Sync {
         }
     }
 
-    /// 带可恢复个体经历的决策入口；未接入经历的策略保持 B02 行为。
+    /// 带可恢复个体经历的决策入口；未接入经历的策略保持瞬时目标仓位判断行为。
     #[allow(clippy::too_many_arguments)]
     fn decide_with_experience(
         &mut self,

@@ -48,7 +48,7 @@ impl StockValidation {
     }
 }
 
-/// Immutable tick-start facts needed by P3. It deliberately contains no session reference.
+/// AccountValidation 所需的不可变 tick 起点事实，明确不含会话引用。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountValidationContext {
     stocks: BTreeMap<StockCode, StockValidation>,
@@ -61,7 +61,7 @@ impl AccountValidationContext {
         let mut stock_map = BTreeMap::new();
         for (code, validation) in stocks {
             if stock_map.insert(code, validation).is_some() {
-                return Err(invariant("duplicate stock in P3 validation context"));
+                return Err(invariant("AccountValidation 校验上下文中股票重复"));
             }
         }
         Ok(Self { stocks: stock_map })
@@ -264,8 +264,8 @@ impl AccountValidationState {
         }
     }
 
-    /// Performs P3's two passes for one ready round without copying previous rounds'
-    /// results. A failed round never changes the cumulative validator.
+    /// 对一个 ready round 执行 AccountValidation 两遍校验，不复制以前轮次结果。
+    /// 失败轮次不得改变累计 validator。
     pub(super) fn consume_round(
         &mut self,
         candidates: &[super::IntentCandidate],
@@ -344,12 +344,12 @@ impl AccountValidationState {
             .filter(|step| matches!(step, PreparedValidationStep::Place { .. }))
             .count();
         let place_count = u64::try_from(place_count)
-            .map_err(|_| invariant("P3 accepted Place count does not fit in u64"))?;
+            .map_err(|_| invariant("AccountValidation 受理的 Place 数量超出 u64"))?;
         let next_order_id_after = self
             .output
             .next_order_id_after
             .checked_add(place_count)
-            .ok_or_else(|| invariant("P3 order ID allocation overflow"))?;
+            .ok_or_else(|| invariant("AccountValidation 分配 OrderId 时溢出"))?;
 
         let mut next_order_id = self.output.next_order_id_after;
         let mut steps = Vec::with_capacity(prepared.len());
@@ -359,7 +359,7 @@ impl AccountValidationState {
                     let order_id = OrderId(next_order_id);
                     next_order_id = next_order_id
                         .checked_add(1)
-                        .ok_or_else(|| invariant("P3 order ID allocation overflow"))?;
+                        .ok_or_else(|| invariant("AccountValidation 分配 OrderId 时溢出"))?;
                     accepted_place(place, required, order_id)
                 }
                 PreparedValidationStep::Cancel {
@@ -380,7 +380,7 @@ impl AccountValidationState {
         }
         if next_order_id != next_order_id_after {
             return Err(invariant(
-                "P3 two-pass OrderId allocation disagrees with its prefix sum",
+                "AccountValidation 两遍分配的 OrderId 与前缀和不一致",
             ));
         }
         self.output.next_order_id_after = next_order_id_after;
@@ -395,15 +395,15 @@ impl AccountValidationState {
         candidates: &[super::IntentCandidate],
     ) -> Result<Vec<PreparedValidationStep>, StepFatal> {
         let count = u64::try_from(candidates.len())
-            .map_err(|_| invariant("P3 candidate count does not fit in u64"))?;
+            .map_err(|_| invariant("AccountValidation 候选数量超出 u64"))?;
         let next_sealed_index = self
             .next_sealed_index
             .checked_add(count)
-            .ok_or_else(|| invariant("P3 sealed candidate index overflow"))?;
+            .ok_or_else(|| invariant("AccountValidation 密封候选索引溢出"))?;
         let processed_count = self
             .processed_count
             .checked_add(count)
-            .ok_or_else(|| invariant("P3 processed candidate count overflow"))?;
+            .ok_or_else(|| invariant("AccountValidation 已处理候选数量溢出"))?;
         let mut grouped =
             BTreeMap::<AccountResourceLane, Vec<(usize, &super::IntentCandidate)>>::new();
         for (index, candidate) in candidates.iter().enumerate() {
@@ -495,7 +495,7 @@ impl AccountValidationState {
                 match step {
                     Ok(step) => {
                         if prepared[index].replace(step).is_some() {
-                            return Err(invariant("P3 candidate was prepared twice"));
+                            return Err(invariant("AccountValidation 候选被重复准备"));
                         }
                     }
                     Err(error) if first_error.as_ref().is_none_or(|(first, _)| index < *first) => {
@@ -512,7 +512,7 @@ impl AccountValidationState {
         self.processed_count = processed_count;
         prepared
             .into_iter()
-            .map(|step| step.ok_or_else(|| invariant("P3 candidate result is missing")))
+            .map(|step| step.ok_or_else(|| invariant("AccountValidation 缺少候选结果")))
             .collect()
     }
 
@@ -550,11 +550,11 @@ impl AccountValidationState {
         let sealed_index = self.next_sealed_index;
         let next_sealed_index = sealed_index
             .checked_add(1)
-            .ok_or_else(|| invariant("P3 sealed candidate index overflow"))?;
+            .ok_or_else(|| invariant("AccountValidation 密封候选索引溢出"))?;
         let next_processed_count = self
             .processed_count
             .checked_add(1)
-            .ok_or_else(|| invariant("P3 processed candidate count overflow"))?;
+            .ok_or_else(|| invariant("AccountValidation 已处理候选数量溢出"))?;
         let key = candidate.key().clone();
         let prepared = match candidate.intent() {
             Intent::Cancel { code, id } => PreparedValidationStep::Cancel {
@@ -698,7 +698,7 @@ impl AccountValidationState {
         let budget = self
             .budgets
             .get_mut(&account)
-            .ok_or_else(|| invariant("P3 validation context is missing an account budget"))?;
+            .ok_or_else(|| invariant("AccountValidation 校验上下文缺少账户预算"))?;
         budget.ensure_sellable_from_snapshot(account, code, &self.resources)
     }
 
@@ -713,7 +713,7 @@ impl AccountValidationState {
         let existing_budget = self
             .budgets
             .get(&place.account)
-            .ok_or_else(|| invariant("P3 validation context is missing an account budget"))?;
+            .ok_or_else(|| invariant("AccountValidation 校验上下文缺少账户预算"))?;
         let current_cash = existing_budget.cash;
         if place.side == Side::Buy && !place.qty.is_multiple_of(self.config.lot_size) {
             return Ok(Err(RejectionReason::InvalidQuantity));
@@ -724,7 +724,7 @@ impl AccountValidationState {
                 .sellable
                 .get(&place.code)
                 .copied()
-                .ok_or_else(|| invariant("P3 validation context is missing a stock budget"))?;
+                .ok_or_else(|| invariant("AccountValidation 校验上下文缺少股票预算"))?;
             if place.qty > available {
                 return Ok(Err(RejectionReason::InsufficientShares));
             }
@@ -771,7 +771,7 @@ impl AccountValidationState {
         let budget = self
             .budgets
             .get_mut(&account)
-            .expect("P3 context budgets were exhaustively initialized");
+            .expect("AccountValidation 上下文预算必须完整初始化");
         budget.apply_update(update);
     }
 

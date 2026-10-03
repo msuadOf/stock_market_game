@@ -1,7 +1,7 @@
-//! 不可变公开信息库（K4，任务 15）：插入与恢复边界。
+//! 不可变公开信息库：插入与恢复边界。
 //!
 //! 库的不变量（每条插入与恢复都独力维护——公开层是信任边界，不是
-//! task-13 登记簿的内部冗余）：
+//! 结账登记簿的内部冗余）：
 //! - 每条报告来自结账引擎登记簿（未定稿 = `ReportNotFinalized`）且勾稽
 //!   通过（`ReportSet::validate`）；
 //! - 时点/排期/更正关系合法（publication.rs 校验族）；
@@ -227,7 +227,7 @@ impl PublicLibrary {
     }
 
     /// 公布（报告或公告）的发表时点；id 不存在 = None（恢复边界交叉校验面，
-    /// 任务 27——不做 as_of 前视守卫，时序比较由调用方显式执行）。
+    /// 存档恢复校验不做 as_of 前视守卫，时序比较由调用方显式执行）。
     pub fn publication_instant(&self, id: PublicationId) -> Option<CivilInstant> {
         if let Some(report) = self.reports.get(&id) {
             return Some(report.published_at);

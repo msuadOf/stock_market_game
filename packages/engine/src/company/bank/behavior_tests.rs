@@ -31,7 +31,7 @@ fn scenarios() -> Vec<EclScenario> {
 
 fn config() -> BankConfig {
     BankConfig {
-        chart: bank_chart_v3(),
+        chart: bank_account_chart(),
         as_of: d("2030-01-01"),
         opening_lines: vec![
             line(chart::acct::CASH, PostingSide::Debit, a(200_000)),

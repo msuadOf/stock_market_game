@@ -16,7 +16,7 @@ export type PlanOpen = {
   target: PlanTarget;
   opinion: PlanOpinion;
   /**
-   * 信心，0..=10000 bp（K5）。
+   * 信心，0..=10000 bp。
    */
   confidence_bp: number;
   urgency: Urgency;

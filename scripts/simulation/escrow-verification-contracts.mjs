@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 
-const OBSERVATION_SCHEMA = "escrow-determinism-observation-v1";
-const CONSERVATION_SCHEMA = "escrow-conservation-snapshot-v1";
+const OBSERVATION_SCHEMA = "escrow-determinism-observation";
+const CONSERVATION_SCHEMA = "escrow-conservation-snapshot";
 const BUDGETS = ["1", "2", "4", "auto"];
 const ARTIFACT_NAMES = ["authoritative_state", "event_stream", "receipts", "save_slot"];
-const RECEIPT_SOURCE_KINDS = new Set(["P0Expiry", "SealedIntent", "Auction", "DayEnd"]);
+const RECEIPT_SOURCE_KINDS = new Set(["QuoteExpiry", "SealedIntent", "Auction", "DayEnd"]);
 const SIGNED_DECIMAL_FIELDS = new Set([
   "price", "indicative_price", "clearing_price", "last_price", "last_close", "best_bid", "best_ask",
   "time", "open", "high", "low", "close", "price_cents", "reserved_cash", "reserved_cash_cents",
@@ -108,8 +108,8 @@ function validateExecutionCoverage(coverage, label) {
 }
 
 export function validateObservation(observation, label = "runtime observation") {
-  exactKeys(observation, ["schema", "scenario", "seed", "budget", "repeat", "mode", "canonical_merge_disabled", "artifacts", "precanonical_order", "execution_coverage"], label);
-  if (observation.schema !== OBSERVATION_SCHEMA) fail(`${label}.schema is unsupported`);
+  exactKeys(observation, ["schema", "schema_version", "scenario", "seed", "budget", "repeat", "mode", "canonical_merge_disabled", "artifacts", "precanonical_order", "execution_coverage"], label);
+  if (observation.schema !== OBSERVATION_SCHEMA || observation.schema_version !== 1) fail(`${label}.schema is unsupported`);
   if (typeof observation.scenario !== "string" || observation.scenario.length === 0) fail(`${label}.scenario is missing`);
   decimal(observation.seed, `${label}.seed`);
   if (!BUDGETS.includes(observation.budget)) fail(`${label}.budget is invalid`);
@@ -290,9 +290,9 @@ class EnvelopeConservation {
     this.commitLive = Resource.fromJson(row.commit_live, `envelope row ${rowIndex}.commit_live`);
     if (!Array.isArray(row.receipts)) fail(`envelope row ${rowIndex}.receipts must be an array`);
     if (row.origin === "existing") {
-      exactKeys(row.basis, ["tick_start_live", "p1_live"], `envelope row ${rowIndex}.basis`);
+      exactKeys(row.basis, ["tick_start_live", "allocation_live"], `envelope row ${rowIndex}.basis`);
       this.live = Resource.fromJson(row.basis.tick_start_live, `envelope row ${rowIndex}.basis.tick_start_live`);
-      this.allocationLive = Resource.fromJson(row.basis.p1_live, `envelope row ${rowIndex}.basis.p1_live`);
+      this.allocationLive = Resource.fromJson(row.basis.allocation_live, `envelope row ${rowIndex}.basis.allocation_live`);
       this.left = this.live;
     } else {
       exactKeys(row.basis, ["created"], `envelope row ${rowIndex}.basis`);
@@ -302,7 +302,7 @@ class EnvelopeConservation {
     if (row.key.side === "Sell" && this.live.cash !== 0n) fail(`envelope row ${rowIndex} Sell basis cash escrow must be zero`);
     if (row.key.side === "Sell" && this.commitLive.cash !== 0n) fail(`envelope row ${rowIndex} Sell commit cash escrow must be zero`);
     if (row.key.side === "Buy" && this.live.shares !== 0n) fail(`envelope row ${rowIndex} Buy basis shares escrow must be zero`);
-    if (row.key.side === "Buy" && row.origin === "existing" && this.allocationLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
+    if (row.key.side === "Buy" && row.origin === "existing" && this.allocationLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy allocation basis shares escrow must be zero`);
     if (row.key.side === "Buy" && this.commitLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy commit shares escrow must be zero`);
     this.expiryReleased = new Resource();
     this.sealedSpent = new Resource();
@@ -310,17 +310,17 @@ class EnvelopeConservation {
     this.reachedSealed = false;
   }
 
-  assertP1Boundary() {
-    if (this.row.origin === "existing") this.live.assertEquals(this.allocationLive, `envelope row ${this.rowIndex} P1 boundary`);
+  assertAllocationBoundary() {
+    if (this.row.origin === "existing") this.live.assertEquals(this.allocationLive, `envelope row ${this.rowIndex} allocation boundary`);
   }
 
   applyReceipt(receipt, receiptIndex) {
     const row = this.row;
     const rowIndex = this.rowIndex;
-    if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
+    if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} 包含不适用的 PreSeal contribution`);
     if (this.reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
     if (receipt.journal === "SealedBatch" && !this.reachedSealed) {
-      this.assertP1Boundary();
+      this.assertAllocationBoundary();
       this.reachedSealed = true;
     }
     const before = Resource.fromJson(receipt.live_before, `envelope row ${rowIndex} receipt ${receiptIndex}.live_before`);
@@ -355,7 +355,7 @@ class EnvelopeConservation {
   assertCommitAndConservation() {
     const row = this.row;
     const rowIndex = this.rowIndex;
-    if (!this.reachedSealed) this.assertP1Boundary();
+    if (!this.reachedSealed) this.assertAllocationBoundary();
     this.live.assertEquals(this.commitLive, `envelope row ${rowIndex} commit live`);
     const sealedTotal = this.sealedSpent.add(this.sealedReleased).add(this.commitLive);
     if (row.origin === "existing") {
@@ -371,8 +371,8 @@ class EnvelopeConservation {
 }
 
 export function verifyConservationSnapshot(snapshot) {
-  exactKeys(snapshot, ["schema", "scenario", "seed", "tick", "envelopes", "accounts"], "conservation snapshot");
-  if (snapshot.schema !== CONSERVATION_SCHEMA) fail("conservation snapshot schema is unsupported");
+  exactKeys(snapshot, ["schema", "schema_version", "scenario", "seed", "tick", "envelopes", "accounts"], "conservation snapshot");
+  if (snapshot.schema !== CONSERVATION_SCHEMA || snapshot.schema_version !== 1) fail("conservation snapshot schema is unsupported");
   if (typeof snapshot.scenario !== "string" || snapshot.scenario.length === 0) fail("conservation snapshot scenario is missing");
   decimal(snapshot.seed, "conservation snapshot seed");
   decimal(snapshot.tick, "conservation snapshot tick");
@@ -401,7 +401,7 @@ export function verifyConservationSnapshot(snapshot) {
       if (!RECEIPT_SOURCE_KINDS.has(receipt.source.kind)) fail(`${receiptLabel}.source.kind is invalid`);
       decimal(receipt.source.index, `${receiptLabel}.source.index`);
       const ordinal = decimal(receipt.transition_ordinal_within_source, `${receiptLabel}.transition_ordinal_within_source`);
-      const expectedJournal = receipt.source.kind === "P0Expiry" ? "PreSeal" : "SealedBatch";
+      const expectedJournal = receipt.source.kind === "QuoteExpiry" ? "PreSeal" : "SealedBatch";
       if (receipt.journal !== expectedJournal) fail(`${receiptLabel} journal/source pairing is invalid`);
       const ordinalScope = `${receipt.journal}\u0000${receipt.source.kind}\u0000${receipt.source.index}\u0000${serializedKey}`;
       receiptIdentities.push({

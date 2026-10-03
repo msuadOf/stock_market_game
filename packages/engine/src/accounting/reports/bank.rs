@@ -1,10 +1,10 @@
-//! 银行列报分类层（K3，任务 9）：总账科目 → CAS 30（2026）银行列示行的
+//! 银行列报分类层：总账科目 → CAS 30（2026）银行列示行的
 //! 映射。官方依据已核验（docs/company-accounting.md §2.3）：CAS 30（2026）
 //! §45–§47、§16——「向客户提供融资」为主要业务活动的经营/筹资归类与流动性
 //! 列示；损益行覆盖 利息净收入 / 手续费及佣金净收入 / 信用减值损失。
 //!
 //! 本模块是**分类层**：只读取总账净借方余额并组合成列报行，不生成完整
-//! 报表、不结账、不触现金（任务 13 的报表生成器消费这里的结果）。
+//! 报表、不结账、不触现金（报表生成器消费这里的结果）。
 //!
 //! 科目代码的单一真源：`codes` 模块同时被 `company::bank::chart`（科目表
 //! 构造）引用——列报映射与过账科目共享同一份代码表，杜绝两层漂移。
@@ -14,7 +14,7 @@ use crate::accounting::error::AccountingError;
 use crate::accounting::ledger::Ledger;
 use crate::accounting::ledger::LedgerAccountId;
 
-/// 银行科目表 v3 科目代码（company/bank/chart.rs 以此构造科目表）。
+/// 银行科目代码（AccountChart.version=3，company/bank/chart.rs 以此构造科目表）。
 pub mod codes {
     pub const CASH: &str = "1003"; // 存放中央银行款项（现金类）
     pub const LOAN_INT_RCV: &str = "1131"; // 应收利息（贷款）
@@ -24,7 +24,7 @@ pub mod codes {
     pub const LT_DEPOSIT: &str = "2601"; // 吸收存款——长期（>365 天）
     pub const DEP_INT_PAYABLE: &str = "2231"; // 应付利息（存款）
     pub const CAPITAL: &str = "4001"; // 实收资本
-    pub const PROFIT_CURRENT: &str = "4103"; // 本年利润（结账科目，任务 13）
+    pub const PROFIT_CURRENT: &str = "4103"; // 本年利润（结账科目）
     pub const INTEREST_INCOME: &str = "6011"; // 利息收入
     pub const FEE_INCOME: &str = "6021"; // 手续费及佣金收入
     pub const INTEREST_EXPENSE: &str = "6411"; // 利息支出
@@ -93,7 +93,7 @@ pub fn bank_presentation_lines(ledger: &Ledger) -> Result<BankPresentationLines,
     })
 }
 
-/// 银行归类表（任务 13 报表生成器消费；v3 全量 13 科目）。
+/// 银行归类表（报表生成器消费；AccountChart.version=3 全量 13 科目）。
 pub fn assignments() -> Vec<super::notes::Assignment> {
     use super::notes::{a, NoteTarget};
     use super::BsLine::{

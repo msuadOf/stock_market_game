@@ -1,10 +1,10 @@
-//! 自然日经营时钟集成测试（company-information-npc-intentions W1-Task 5）。
+//! 自然日经营时钟集成测试。
 //!
-//! K1 双时钟语义：交易日 tick/市场分钟照旧推进，收盘后经当日经营终局窗口与
+//! 双时钟语义：交易日 tick/市场分钟照旧推进，收盘后经当日经营终局窗口与
 //! 18:00 披露阶段才前进自然日；休市日不产生 tick/成交/注意力 RNG 消费，当日
 //! 到期业务恰好处理一次。所有失败先验证并原子生效（状态零部分变更）。
 //!
-//! 利息/到期"业务"本身由任务 14 实现；这里用 DueKind fixture 证明时钟侧
+//! 利息/到期业务本身在公司经营模块实现；这里用 DueKind fixture 证明时钟侧
 //! 恰好一次派发。场景锚定 2030 年春节：02-02（周六，除夕）至 02-05（周二，
 //! 正月初三）连续 4 个休市自然日，前一个交易日为周五 02-01，下一个交易日为
 //! 周三 02-06。
@@ -77,7 +77,7 @@ fn civil_setup(start: &str) -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: date(start),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -115,7 +115,7 @@ impl SpringFestivalScenario {
         }
     }
 
-    /// 任务 26 起会话自带公司经营 dues（滚动利息等）；时钟断言只看测试自注册的到期项。
+    /// 会话自带公司经营 dues（滚动利息等）；时钟断言只看测试自注册的到期项。
     fn own_due(&self, items: impl IntoIterator<Item = DueBusiness>) -> Vec<DueBusiness> {
         let ids: std::collections::BTreeSet<u32> = self
             .registered_due
@@ -596,7 +596,7 @@ fn closed_civil_day_emits_one_date_advance_without_market_events() {
 
 #[test]
 fn setup_start_date_defaults_and_range_gate() {
-    // serde 缺省 = 政策默认开局 2030-01-01（K1）。
+    // serde 缺省 = 政策默认开局 2030-01-01。
     let setup = civil_setup("2030-06-03");
     let mut value = serde_json::to_value(&setup).unwrap();
     let removed = value

@@ -8,7 +8,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
     use crate::{
         session::{
             FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
-            SIMULATION_POLICY_ID_V2,
+            SIMULATION_POLICY_ID,
         },
         GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StrategyParams,
     };
@@ -55,7 +55,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_owned(),
+            simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
         },
         42,
     )
@@ -169,6 +169,11 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
         value["schema"],
         serde_json::json!(CommittedPhaseTiming::SCHEMA)
     );
+    assert_eq!(
+        value["schema"],
+        serde_json::json!("escrow-committed-phase-timing")
+    );
+    assert_eq!(value["schema_version"], serde_json::json!(2));
     assert!(value["tick_before"].is_string());
     assert!(value["tick_after"].is_string());
     assert_eq!(

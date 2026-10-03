@@ -1,4 +1,4 @@
-//! 保险经营会计集成测试（company-information-npc-intentions W2-Task 10）。
+//! 保险经营会计集成测试。
 //!
 //! 政策基线：docs/company-accounting.md §2.4（CAS 25（2020）§11/§12/§20 合同
 //! 分组、§21/§23–§26 履约现金流量三元组（未来现金流量估计 + 货币时间价值及
@@ -9,7 +9,7 @@
 //! 均已核验，财会〔2020〕20号）。适用窗口：非境内外同时上市 2026-01-01 ——
 //! 默认 2030 开局直接适用；更早开局为提前执行游戏假设。
 //!
-//! K3 红线：保费不立即全额计收入（收保费贷记未到期责任负债，随责任单元释放）；
+//! 行业会计红线：保费不立即全额计收入（收保费贷记未到期责任负债，随责任单元释放）；
 //! 分红/投连/再保险合同一律类型化 UnsupportedContract；只有一般计量模型
 //! （GMM）的明确期限非分红保障合同被支持。
 //!
@@ -36,7 +36,7 @@ mod remeasure;
 
 use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide};
 use engine::calendar::CivilDate;
-use engine::company::insurance::{insurance_chart_v4, DiscountAssumption, InsuranceConfig};
+use engine::company::insurance::{insurance_account_chart, DiscountAssumption, InsuranceConfig};
 use engine::company::{CounterpartyId, ExternalCounterparty};
 
 /// 测试用 ISO 日期；输入本身必须合法（否则测试夹具写错）。
@@ -72,7 +72,7 @@ pub(crate) fn fixture_discount() -> DiscountAssumption {
     }
 }
 
-/// 投保人（K2 外部对手方，非证券 NPC）。
+/// 投保人（公司域外部对手方，非证券 NPC）。
 pub(crate) fn counterparties() -> Vec<ExternalCounterparty> {
     vec![ExternalCounterparty {
         id: CounterpartyId("EXT-POL-1".to_string()),
@@ -88,7 +88,7 @@ pub(crate) fn policyholder() -> CounterpartyId {
 /// 基础配置：现金 2000 元 + 实收资本 2000 元（2030-01-01 开局，Fixture 贴现）。
 pub(crate) fn base_config() -> InsuranceConfig {
     InsuranceConfig {
-        chart: insurance_chart_v4(),
+        chart: insurance_account_chart(),
         as_of: d("2030-01-01"),
         opening_lines: vec![
             cent_line(acct::CASH, PostingSide::Debit, 200_000),
@@ -99,7 +99,7 @@ pub(crate) fn base_config() -> InsuranceConfig {
     }
 }
 
-/// 保险科目表 v4 常用科目代码（单一真源 = accounting::reports::insurance::codes）。
+/// 保险科目表（AccountChart.version=4）常用科目代码（单一真源 = accounting::reports::insurance::codes）。
 pub(crate) mod acct {
     pub const CASH: &str = "1002"; // 银行存款（现金类）
     pub const PREMIUM_RECEIVABLE: &str = "1122"; // 应收保费

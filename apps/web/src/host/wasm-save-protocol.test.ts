@@ -19,7 +19,7 @@ test("Given a persisted decimal account map, when rehydrated for WASM, then nume
     npc_attention: {},
     retail_experience: {},
     parent_orders: {},
-    runtime_v2: {
+    runtime_state: {
       poisoned: false,
       next_receipt_base: "0",
       live_envelopes: [],

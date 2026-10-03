@@ -1,11 +1,11 @@
-//! K2 权威日记账（分录值类型）：来源唯一性 + 借贷行复式不变量。
+//! 权威日记账（分录值类型）：来源唯一性 + 借贷行复式不变量。
 //!
 //! Journal 状态（批次/来源索引/封账）在 [`state::Journal`]；本文件承载
 //! 分录、行、业务种类与现金流类别等值对象及不变量验证。Journal 是**事实**
 //! （facts）：随存档保存；余额/索引是派生量，恢复时由 [`super::Books`]
 //! 重放重建（来源事实与派生 report 边界不可混用）。每行金额恒正、方向由
 //! 借贷表示；负权益/亏损是合法状态，负现金由过账验证拒绝（不 clamp）。
-//! 行业业务种类在任务 8–11 扩充。
+//! 业务种类包含工业、银行、保险与地产事件。
 
 mod state;
 
@@ -16,7 +16,7 @@ use crate::accounting::error::AccountingError;
 use crate::accounting::period::AccountingPeriod;
 use crate::calendar::CivilDate;
 
-/// 业务事件来源 newtype：一个业务事件至多入账一次（K2 来源唯一性）。
+/// 业务事件来源 newtype：一个业务事件至多入账一次。
 #[derive(
     Copy,
     Clone,
@@ -44,7 +44,7 @@ impl BusinessEventId {
     }
 }
 
-/// 业务种类（分类标签，不驱动过账逻辑；行业事件在任务 8–11 扩充此枚举）。
+/// 业务种类（分类标签，不驱动过账逻辑；包含各行业事件）。
 #[derive(
     Copy,
     Clone,
@@ -59,7 +59,7 @@ impl BusinessEventId {
     ts_rs::TS,
 )]
 pub enum BusinessKind {
-    /// 期初余额凭证（显式平衡的开业账套，任务 7）。
+    /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。
     LoanDisbursement,
@@ -83,7 +83,7 @@ pub enum BusinessKind {
     TaxPayment,
     /// 直线折旧摊销（非现金）。
     Depreciation,
-    // —— 银行事件（任务 9；偿还任务 8 登记的行业标签债的银行部分）——
+    // —— 银行业务事件 ——
     /// 客户存款存入（现金入、客户存款负债增——不是收入）。
     CustomerDeposit,
     /// 客户存款提取（现金出、负债减）。
@@ -108,7 +108,7 @@ pub enum BusinessKind {
     LoanWriteOff,
     /// 已核销贷款回收（现金融入、贷记贷款损失准备）。
     WriteOffRecovery,
-    // —— 地产事件（任务 11；预售/交付 CAS 14 §39/§4/§13 已核验）——
+    // —— 地产业务事件（预售/交付 CAS 14 §39/§4/§13 已核验）——
     /// 购地（土地成本入开发存货，现金流出）。
     LandAcquisition,
     /// 开发成本发生（现金流出，入开发存货）。
@@ -124,7 +124,7 @@ pub enum BusinessKind {
     BorrowingCostCapitalized,
     /// 开发存货减值（非现金；CAS 8 原文取证受阻）。
     DevelopmentImpairment,
-    // —— 保险事件（任务 10；CAS 25（2020）条款锚点见
+    // —— 保险业务事件（CAS 25（2020）条款锚点见
     //     docs/company-accounting.md §2.4）——
     /// 应收保费挂账（Dr 应收保费 / Cr 未到期责任负债——保费不是收入）。
     InsurancePremiumAccrued,

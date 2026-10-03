@@ -195,7 +195,7 @@ fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, location }
-            if description.contains("order books")
+            if description == "continuous order books contain an unledgered order"
                 && location == "pipeline::continuous_matching_adapter"
     ));
 
@@ -211,7 +211,7 @@ fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, location }
-            if description.contains("order books")
+            if description == "报价过期后的 envelope ledger 缺少对应活动订单簿"
                 && location == "pipeline::continuous_matching_adapter"
     ));
 }

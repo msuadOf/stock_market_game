@@ -88,24 +88,24 @@ impl ExpiryOutput {
 
 pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, StepFatal> {
     if shadow.expiry_applied {
-        return Err(invariant("P0 expiry was applied more than once"));
+        return Err(invariant("ExpiryShadow 重复应用报价过期"));
     }
     let (output, events, receipts) = shadow.state.execute(GameSession::apply_quote_expiry)?;
     let mut next_by_account = BTreeMap::new();
     for event in &events {
         let Event::OrderCanceled { account, .. } = event else {
-            return Err(invariant("P0 emitted a non-cancellation event"));
+            return Err(invariant("ExpiryShadow 产生了非撤单事件"));
         };
         let index = next_by_account.entry(*account).or_insert(0_u64);
         let local_index = super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE
             .checked_add(*index)
-            .ok_or_else(|| invariant("P0 event identity overflow"))?;
+            .ok_or_else(|| invariant("ExpiryShadow 事件身份溢出"))?;
         shadow
             .event_keys
             .push(super::EventStableKey::for_event(event, local_index));
         *index = index
             .checked_add(1)
-            .ok_or_else(|| invariant("P0 account event count overflow"))?;
+            .ok_or_else(|| invariant("ExpiryShadow 账户事件数量溢出"))?;
     }
     shadow.event_outbox.extend(events);
     shadow
@@ -120,7 +120,7 @@ impl GameSession {
     fn apply_quote_expiry(
         &mut self,
     ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
-        // TickShadow 已拥有隔离的 candidate，失败由外层丢弃；P0 建立供 P1 分配的完整 live envelope 视图。
+        // TickShadow 已拥有隔离的 candidate，失败由外层丢弃；ExpiryShadow 建立供 SealAllocationSnapshot 分配的完整 live envelope 视图。
         self.hydrate_or_validate_envelope_ledger()?;
         if self.phase() != crate::TradingPhase::Continuous {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
@@ -138,8 +138,8 @@ impl GameSession {
 
         let mut prepared = Vec::with_capacity(expired.len());
         for (source_index, lifecycle) in expired.iter().enumerate() {
-            let source_index =
-                u32::try_from(source_index).map_err(|_| invariant("P0 expiry index overflow"))?;
+            let source_index = u32::try_from(source_index)
+                .map_err(|_| invariant("ExpiryShadow 报价过期索引溢出"))?;
             let envelope = self
                 .state
                 .envelope_ledger
@@ -176,7 +176,7 @@ impl GameSession {
         for (lifecycle, envelope, _) in prepared {
             let receipt = receipts_by_envelope
                 .remove(&envelope)
-                .ok_or_else(|| invariant("prepared P0 lifecycle has no applied receipt"))?;
+                .ok_or_else(|| invariant("已准备的 ExpiryShadow 生命周期缺少 applied receipt"))?;
             let fact = self
                 .cancel_continuous_order_state_only(
                     lifecycle.account,
@@ -186,7 +186,7 @@ impl GameSession {
                 )
                 .map_err(cancellation_failure)?;
             if fact.side != envelope.side {
-                return Err(invariant("P0 cancellation side disagrees with envelope"));
+                return Err(invariant("ExpiryShadow 撤单方向与 envelope 不一致"));
             }
             output.record_release(ExpiryRelease {
                 receipt_index: receipt.index,
@@ -252,16 +252,16 @@ fn cancellation_failure(
 ) -> StepFatal {
     let description = match error {
         crate::session::continuous_cancellation::ContinuousCancellationError::UnknownStock => {
-            "P0 cancellation references an unknown stock".to_owned()
+            "ExpiryShadow 撤单引用未知股票".to_owned()
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::OrderNotFound => {
-            "P0 cancellation references a missing order".to_owned()
+            "ExpiryShadow 撤单引用不存在的订单".to_owned()
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::OrderAlreadyFilled => {
-            "P0 expiration references an order that has already filled".to_owned()
+            "ExpiryShadow 过期处理引用已成交完毕的订单".to_owned()
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::NotOrderOwner => {
-            "P0 cancellation lifecycle owner disagrees with order owner".to_owned()
+            "ExpiryShadow 撤单生命周期 owner 与订单 owner 不一致".to_owned()
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::Market(error) => {
             error.to_string()

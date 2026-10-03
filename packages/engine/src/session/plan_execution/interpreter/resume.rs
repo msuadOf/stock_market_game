@@ -133,8 +133,8 @@ impl GameSession {
             || current.version() != observed.version()
             || remaining != child.remaining
         {
-            // A fill or revision during P4 invalidates the quote quantity and possibly its
-            // price. The affected plan must observe the new state before making another quote.
+            // StockProcessing 中的成交或修订会使报价数量失效，也可能影响价格。
+            // 受影响计划必须先观察新状态，再生成下一次报价。
             return Ok(Err(PlanExecutionProgress::Complete(PlanExecutionReport {
                 disposition: PlanExecutionDisposition::Waiting {
                     reason: QuoteReason::PendingReconsideration,

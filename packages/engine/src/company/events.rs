@@ -1,17 +1,17 @@
-//! 默认经济事件目录与冲击参数（K4，任务 14）。
+//! 默认经济事件目录与冲击参数（经营与信息披露，自然日经营演化）。
 //!
 //! 最低目录：市场需求扩张/收缩、行业成本变化、单公司合同取得/取消、客户
 //! 延付/信用恶化、生产中断/恢复（= 中断到期）、资产减值迹象。**效果是经济
 //! 参数变化**（需求/成本/履约/信用风险乘数的整数基点增量）——绝不是价格
 //! 百分比，更绝不直接改财务余额；余额只能经行业处理器的业务事件过账变动。
 //!
-//! 冲击参数是**版本化待校准游戏假设**（K4：市场/行业每天独立 1% 候选概率、
+//! 冲击参数是**版本化待校准游戏假设**（经营与信息披露：市场/行业每天独立 1% 候选概率、
 //! 公司 2%；持续 5–30 自然日；幅度带 ±500/±1000/±2000bp）——不声称现实
-//! 频率。压力场景是另一套显式参数（`stress_v1`），不按倍数派生。
+//! 频率。压力场景是另一套显式参数（`stress_parameters`），不按倍数派生。
 //!
 //! 跨行业适用面（事件只作用于适用经济字段；行业标签来自 `CompanySpec`）：
 //! - 需求字段：工商（销量）、保险（新单量）、地产（预售节奏）适用；
-//!   **银行存贷流不读需求字段**（K4 明文）。
+//!   **银行存贷流不读需求字段**（经营与信息披露明文）。
 //! - 成本字段：工商（采购单价）、地产（开发投入）适用；银行/保险无商品
 //!   成本字段。
 //! - 信用恶化：工商 → 应收 ECL 率上浮；银行 → 贷款 ECL 重估；保险/地产
@@ -27,11 +27,11 @@ use crate::company::spec::IndustryId;
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ShockParams {
     pub version: u32,
-    /// 市场冲击每天候选概率（bp；K4 默认 100 = 1%）。
+    /// 市场冲击每天候选概率（bp；经营与信息披露默认 100 = 1%）。
     pub market_candidate_bp: i32,
     /// 行业冲击每天候选概率（每行业独立流）。
     pub industry_candidate_bp: i32,
-    /// 单公司事件每天候选概率（K4 默认 200 = 2%）。
+    /// 单公司事件每天候选概率（经营与信息披露默认 200 = 2%）。
     pub company_candidate_bp: i32,
     /// 事件持续期范围（自然日，闭区间）。
     pub duration_min_days: i64,
@@ -47,8 +47,8 @@ pub struct ShockParams {
 }
 
 impl ShockParams {
-    /// K4 默认参数（待校准游戏假设，不声称现实频率）。
-    pub fn default_v1() -> Self {
+    /// 经营与信息披露默认参数（待校准游戏假设，不声称现实频率）。
+    pub fn current_default_parameters() -> Self {
         Self {
             version: 1,
             market_candidate_bp: 100,
@@ -64,7 +64,7 @@ impl ShockParams {
     }
 
     /// 显式压力场景（另一套独立数值，非倍数派生；游戏假设）。
-    pub fn stress_v1() -> Self {
+    pub fn stress_parameters() -> Self {
         Self {
             version: 1,
             market_candidate_bp: 10_000,

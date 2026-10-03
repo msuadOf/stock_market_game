@@ -39,11 +39,11 @@ async function newTemporaryDirectory() {
 
 function config() {
   return {
-    schema: "escrow-perf-config-v2",
+    schema: "escrow-performance-config", schema_version: 2,
     workload: {
       scenario: "fixed-multi-stock",
       seed: "7",
-      setup_manifest: { schema: "fixture-setup-v1", sha256: SETUP_FINGERPRINT },
+      setup_manifest: { schema: "fixture-setup", schema_version: 1, sha256: SETUP_FINGERPRINT },
       completed_ticks: 1000,
       repetitions: 3,
       profile: "release",
@@ -64,7 +64,7 @@ function measured(side, index = 0) {
     wall_ns: String((isAfter ? 500_000_000 : 1_000_000_000) + index * 10_000_000),
     peak_process_tree_rss_bytes: (isAfter ? 120 : 100) * 1024 * 1024 + index,
     process_tree_thread_state: {
-      schema: "linux-process-tree-thread-state-v1",
+      schema: "linux-process-tree-thread-state", schema_version: 1,
       sampled_state: "R (running or runnable)",
       sample_interval_ms: 10,
       sample_count: 4,
@@ -73,13 +73,13 @@ function measured(side, index = 0) {
       runnable_threads: { minimum: 1, maximum: 2, mean: 1.5, histogram: { 1: 2, 2: 2 } },
     },
     stdout: JSON.stringify({
-      schema: "escrow-perf-sample-v2",
+      schema: "escrow-performance-sample", schema_version: 2,
       status: "PASS",
       workload: config().workload,
       environment_contract: config().environment_contract,
       completed_ticks: 1000,
       source_fingerprint: isAfter ? AFTER_FINGERPRINT : BEFORE_FINGERPRINT,
-      phase_wall_ns: isAfter ? Object.fromEntries(Array.from({ length: 10 }, (_, phase) => [`P${phase}`, String(50 + phase)])) : null,
+      phase_wall_ns: isAfter ? Object.fromEntries(["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"].map((phase, index) => [phase, String(50 + index)])) : null,
       runnable_samples: isAfter ? [4, 4, 4, 4] : null,
     }),
     stderr: "",
@@ -116,7 +116,7 @@ describe("performance harness", () => {
     assert.equal(report.measurement_contract.source_manifest_verified_before_and_after_every_invocation, true);
     assert.equal(report.measurement_contract.rayon_registry_capacity_is_not_worker_activity, true);
     assert.match(report.measurement_contract.runnable_thread_source, /\/proc/);
-    assert.deepEqual(Object.keys(report.after.samples[0].phase_wall_ns), ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"]);
+    assert.deepEqual(Object.keys(report.after.samples[0].phase_wall_ns), ["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"]);
     assert.equal(report.after.samples[0].process_tree_thread_state.runnable_threads.maximum, 2);
     assert.deepEqual(report.after.samples[0].rayon_registry_capacity_samples, [4, 4, 4, 4]);
     assert.equal(report.measurement_contract.same_machine_for_both_sides, true);
@@ -164,8 +164,8 @@ describe("performance harness", () => {
     assert.throws(() => validateMeasuredSample(unboundWorkload, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /workload|scenario|toolchain|environment|keys mismatch/);
 
     const incompleteStages = measured("after");
-    incompleteStages.stdout = JSON.stringify({ ...JSON.parse(incompleteStages.stdout), phase_wall_ns: { P9: "50" } });
-    assert.throws(() => validateMeasuredSample(incompleteStages, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /P0.*P9|all phases|phase wall/);
+    incompleteStages.stdout = JSON.stringify({ ...JSON.parse(incompleteStages.stdout), phase_wall_ns: { commit_tick: "50" } });
+    assert.throws(() => validateMeasuredSample(incompleteStages, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /all PhaseTimingPhase names exactly once/);
 
     const wrongScenario = measured("after");
     wrongScenario.stdout = JSON.stringify({ ...JSON.parse(wrongScenario.stdout), workload: { ...configuration.workload, scenario: "different" } });
@@ -277,12 +277,12 @@ describe("performance harness", () => {
       ...JSON.parse(invalidPhase.stdout),
       phase_wall_ns: {
         ...JSON.parse(invalidPhase.stdout).phase_wall_ns,
-        P4: `${2n ** 64n}`,
+        stock_processing: `${2n ** 64n}`,
       },
     });
     assert.throws(
       () => validateMeasuredSample(invalidPhase, configuration.after, configuration.workload, "after", true, configuration.environment_contract),
-      /phase wall entry P4/,
+      /phase wall entry stock_processing/,
     );
   });
 

@@ -1,4 +1,4 @@
-//! 交易日解析（K1 §3.3）：周末规则 → 官方覆盖 → 模拟回退；前史查询与序数。
+//! 交易日解析：周末规则 → 官方覆盖 → 模拟回退；前史查询与序数。
 //!
 //! 规则优先级：周六/周日休市（调休补班周末**不是**交易日）→ 当年存在官方
 //! 覆盖条目则按其闭市区间休市（真实公告永远覆盖模拟结果）→ 无覆盖年份按
@@ -26,9 +26,9 @@ impl TradingCalendar {
         Ok(Self { policy })
     }
 
-    /// 当前发布默认政策 v1。
-    pub fn default_v1() -> Result<Self, CalendarError> {
-        Self::from_policy(CalendarPolicy::default_v1()?)
+    /// 当前发布的默认日历政策。
+    pub fn current_default_calendar() -> Result<Self, CalendarError> {
+        Self::from_policy(CalendarPolicy::current_default_policy()?)
     }
 
     pub fn policy(&self) -> &CalendarPolicy {

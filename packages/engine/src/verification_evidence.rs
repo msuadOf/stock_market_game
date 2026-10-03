@@ -1,8 +1,7 @@
-//! Purpose-built Task 9 evidence projections for the escrow verifier.
+//! 为 Escrow verifier 构造专用验证证据投影。
 //!
-//! This module deliberately projects the runtime contracts field by field.  It
-//! never exposes `Envelope`, `EnvelopeReceipt`, protocol frames, or account
-//! snapshots through their ordinary serde representations.
+//! 逐字段投影运行时契约，不通过 Envelope、EnvelopeReceipt、protocol frames
+//! 或账户快照的普通 serde 表示暴露内部结构。
 
 #[cfg(test)]
 use crate::OrderId;
@@ -36,16 +35,16 @@ pub use phase_timing::{
     RunnableThreadSample, TimedStep,
 };
 
-pub const OBSERVATION_SCHEMA: &str = "escrow-determinism-observation-v1";
-pub const CONSERVATION_SCHEMA: &str = "escrow-conservation-snapshot-v1";
+pub const OBSERVATION_SCHEMA: &str = "escrow-determinism-observation";
+pub const CONSERVATION_SCHEMA: &str = "escrow-conservation-snapshot";
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EvidenceError {
-    #[error("Task 9 evidence field {field} must not be empty")]
+    #[error("Escrow 验证证据字段 {field} 不能为空")]
     EmptyField { field: &'static str },
-    #[error("Task 9 evidence contains an invalid six-digit stock code: {code}")]
+    #[error("Escrow 验证证据包含无效的六位股票代码：{code}")]
     InvalidStockCode { code: String },
-    #[error("Task 9 evidence cannot project negative money at {field}: {cents} cents")]
+    #[error("Escrow 验证证据不能投影负金额，字段 {field}：{cents} 分")]
     NegativeMoney { field: &'static str, cents: i64 },
     #[error("receipt {receipt_index} does not belong to its projected envelope")]
     ReceiptEnvelopeMismatch { receipt_index: u64 },
@@ -79,7 +78,7 @@ pub enum EvidenceError {
     InvalidEventIdentity { detail: &'static str },
     #[error("runtime update contains no event facts")]
     EmptyUpdate,
-    #[error("Task 9 evidence integer arithmetic overflow at {field}: {value}")]
+    #[error("Escrow 验证证据整数计算溢出，字段 {field}：{value}")]
     IntegerOverflow { field: &'static str, value: u64 },
     #[error("SHA-256 provider returned an invalid lowercase digest for {artifact}")]
     InvalidDigest { artifact: &'static str },
@@ -126,7 +125,6 @@ pub struct EnvelopeKeyProjection {
 pub enum ConservationBasisProjection {
     Existing {
         tick_start_live: ResourceProjection,
-        #[serde(rename = "p1_live")]
         allocation_live: ResourceProjection,
     },
     Created {
@@ -186,6 +184,7 @@ pub struct ConservationAccountProjection {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct ConservationSnapshot {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub scenario: String,
     pub seed: String,
     #[serde(serialize_with = "serialize_decimal")]
@@ -313,7 +312,7 @@ pub fn project_conservation_snapshot(
         let basis_projection = match envelope.origin() {
             EnvelopeOrigin::TickStart => ConservationBasisProjection::Existing {
                 tick_start_live: project_resource(basis, "envelope.tick_start_live")?,
-                allocation_live: project_resource(allocation_live, "envelope.p1_live")?,
+                allocation_live: project_resource(allocation_live, "envelope.allocation_live")?,
             },
             EnvelopeOrigin::CreatedAtValidation => ConservationBasisProjection::Created {
                 created: project_resource(basis, "envelope.created")?,
@@ -380,6 +379,7 @@ pub fn project_conservation_snapshot(
     }
     Ok(ConservationSnapshot {
         schema: CONSERVATION_SCHEMA,
+        schema_version: 1,
         scenario: scenario.to_owned(),
         seed: seed.to_string(),
         tick,
@@ -561,7 +561,7 @@ fn receipt_kind(kind: ReceiptKind) -> &'static str {
 
 fn project_receipt_source(source: ReceiptSource) -> ReceiptSourceProjection {
     let kind = match source {
-        ReceiptSource::QuoteExpiry(_) => "P0Expiry",
+        ReceiptSource::QuoteExpiry(_) => "QuoteExpiry",
         ReceiptSource::SealedIntent(_) => "SealedIntent",
         ReceiptSource::Auction(_) => "Auction",
         ReceiptSource::DayEnd(_) => "DayEnd",
@@ -623,13 +623,11 @@ impl From<&UpdateProjection> for UpdateStreamCursor {
     }
 }
 
-/// Projects one complete, ordered runtime update stream while retaining the
-/// ADR event-identity scope that spans update boundaries.
+/// 投影完整有序的 runtime update stream，保留跨 update 边界的 ADR 事件身份域。
 ///
-/// In particular, phase-6 `Session` facts in a `TickFrame` and a following
-/// same-tick `CivilUpdate` share one ordinal domain. A failed projection is
-/// transactional: callers may correct the rejected update and retry without
-/// rebuilding the projector or corrupting the accepted prefix.
+/// TickFrame 中的 Session 生命周期事实与其后同 tick 的 CivilUpdate 共享 ordinal domain。
+/// 投影失败具备事务性：调用方可以修正被拒绝 update 并重试，
+/// 不必重建 projector，也不会损坏已受理前缀。
 #[derive(Clone, Debug)]
 pub struct UpdateStreamProjector {
     next_ordinals: BTreeMap<EventOrdinalDomain, u64>,
@@ -1265,7 +1263,7 @@ fn project_stable_key(
         "entity": entity,
         "source": match key.source() {
             crate::session::pipeline::EventSourceIndex::Sealed => "Sealed",
-            crate::session::pipeline::EventSourceIndex::QuoteExpiry => "P0",
+            crate::session::pipeline::EventSourceIndex::QuoteExpiry => "QuoteExpiry",
             crate::session::pipeline::EventSourceIndex::PriceTick => "PriceTick",
             crate::session::pipeline::EventSourceIndex::DayEnd => "DayEnd",
             crate::session::pipeline::EventSourceIndex::Session => "Session",
@@ -1497,6 +1495,7 @@ pub enum ObservationMode {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct DeterminismObservation {
     pub schema: &'static str,
+    pub schema_version: u32,
     pub scenario: String,
     pub seed: String,
     pub budget: String,
@@ -1594,6 +1593,7 @@ pub fn project_observation(
     };
     Ok(DeterminismObservation {
         schema: OBSERVATION_SCHEMA,
+        schema_version: 1,
         scenario: input.scenario.to_owned(),
         seed: input.seed.to_string(),
         budget: input.budget.to_owned(),

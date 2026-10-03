@@ -1,4 +1,4 @@
-//! 总账（K2）：T 型科目余额 + 按科目/期间的增量索引 + 现金流（期间×类别）索引。
+//! 总账：T 型科目余额 + 按科目/期间的增量索引 + 现金流（期间×类别）索引。
 //!
 //! Ledger 是**派生投影**：只由 Journal 的已提交分录增量构建，不进入存档
 //! （恢复时由 `Books` 重放重建）——来源事实与派生 report 边界不可混用。
@@ -157,7 +157,7 @@ impl Ledger {
             .neg()
     }
 
-    /// 净利 = 收入（贷余）− 费用（借余）；结账前的滚动口径（结账在任务 13）。
+    /// 净利 = 收入（贷余）− 费用（借余）；结账前的滚动口径（结账在 `closing`）。
     pub fn net_income(&self) -> Result<AccountingAmount, AccountingError> {
         let revenues = self
             .element_net_debit_sum(|def| def.element == AccountElement::Revenue)?

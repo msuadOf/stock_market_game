@@ -28,7 +28,7 @@ export async function collectReleaseAssets(input, output, sha) {
     const targetMatch = /^(?:x86_64|aarch64)-(unknown-linux-gnu|pc-windows-msvc|apple-darwin)$/.exec(manifest.target);
     const web = manifest.product === "web" && manifest.target === "static";
     if (web && manifest.commit !== sha) throw new Error(`static Web manifest source SHA differs from release source: ${directory}`);
-    if (manifest.schema !== "distribution-manifest-v1" || (!web && (!["desktop", "server", "webui-server"].includes(manifest.product) || !targetMatch))
+    if (manifest.schema !== "distribution-manifest" || manifest.schema_version !== 1 || (!web && (!["desktop", "server", "webui-server"].includes(manifest.product) || !targetMatch))
       || directory !== `stock-market-game-${manifest.product}-${manifest.target}-unsigned`
       || !Array.isArray(manifest.files) || manifest.files.length === 0) throw new Error(`invalid distribution manifest: ${directory}`);
     const identity = web ? "web/static" : `${manifest.product}/${targetMatch[1]}`;
@@ -66,7 +66,7 @@ export async function collectReleaseAssets(input, output, sha) {
     assets.push(destination);
   }
   const provenance = path.join(output, "release-source.json");
-  await writeFile(provenance, `${JSON.stringify({ schema: "release-source-v1", commit: sha, unsigned: true, distributions }, null, 2)}\n`, { flag: "wx" });
+  await writeFile(provenance, `${JSON.stringify({ schema: "release-source", schema_version: 1, commit: sha, unsigned: true, distributions }, null, 2)}\n`, { flag: "wx" });
   assets.push(provenance);
   return assets;
 }

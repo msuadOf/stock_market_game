@@ -4,7 +4,7 @@ use crate::{AccountId, Money, StockCode};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
-/// Post-P0 resources observed by P2 and reserved by P3. Each account is prepared once.
+/// DecisionShadow 观察、AccountValidation 预留的资源均来自报价过期后的事实；每个账户只准备一次。
 #[derive(Clone)]
 pub struct DecisionResourceSnapshot {
     accounts: AccountBook,

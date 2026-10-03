@@ -1,4 +1,4 @@
-//! ComputeBackend 契约测试（任务 26 后）：纯批量输入、稳定顺序输出、
+//! ComputeBackend 契约测试（会话批量计算）：纯批量输入、稳定顺序输出、
 //! 无按账户身份授予的信息面。共同 V 及其演化接口已删除。
 use engine::{
     create_backend, decide_data, ComputeBackend, ComputeError, ComputeMode, CpuBackend, MarketView,

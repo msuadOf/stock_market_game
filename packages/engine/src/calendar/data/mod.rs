@@ -1,6 +1,6 @@
 //! 离线农历/节气事实表（1998–2099）：构建期自官方来源固化，运行时无网络。
 //!
-//! ## 来源（provenance，K1：带来源与摘要，不用未核验网上样例拼凑）
+//! ## 来源（provenance：带来源与摘要，不用未核验网上样例拼凑）
 //!
 //! 香港天文台（Hong Kong Observatory，官方政府部门）「公曆與農曆日期對照表」
 //! （Gregorian-Lunar Calendar Conversion Table）：

@@ -1,10 +1,8 @@
-//! Projection adapters for producer-owned facts that already carry complete identity.
+//! 为已有完整身份的 producer 事实提供 Projection adapters。
 //!
-//! These adapters deliberately do not inspect `GameSession`, allocate external event
-//! sequences, or infer identity from worker vector position.  P3 results are checked
-//! against the canonical P2 batch's sealed identity before they are projected. P4
-//! continuous facts are intentionally absent until their owning output contract carries
-//! explicit sealed and per-stock trade identities.
+//! 不检查 GameSession、不分配外部事件序号、不从 worker vector 位置推导身份。
+//! AccountValidation 结果须先与规范 IntentCandidateBatch sealed identity 对照，之后才能投影。
+//! Continuous 股票处理事实通过其输出契约携带显式 sealed identity 与逐股 trade identity。
 
 use super::{
     event_collection::OwnedEventFact, CandidateValidationResult, EventStableKey, IntentCandidate,
@@ -13,11 +11,10 @@ use super::{
 use crate::{Event, Intent, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Converts ordinary P3 rejections into owned Projection facts.
+/// 把普通 AccountValidation 拒绝转换为 Projection 拥有的事件事实。
 ///
-/// P3 rejection results retain their sealed identity, while the immutable P2 batch is
-/// the source for the account and intent code that the public rejection event requires.
-/// This validates the entire P2/P3 result correspondence before producing any facts.
+/// 拒绝结果保留 sealed identity；不可变 IntentCandidateBatch 提供公共拒绝事件所需账户与 intent code。
+/// 产生任何事实前，先校验整个候选批次与账户校验结果的对应关系。
 pub(super) fn adapt_account_validation_rejection_facts(
     candidates: &IntentCandidateBatch,
     results: &[CandidateValidationResult],
@@ -33,9 +30,9 @@ pub(super) fn adapt_account_validation_rejection_facts(
                 sealed_index,
                 reason,
             } => {
-                let binding = candidates_by_key
-                    .get(key)
-                    .ok_or_else(|| invariant("P3 rejection references no P2 candidate"))?;
+                let binding = candidates_by_key.get(key).ok_or_else(|| {
+                    invariant("AccountValidation 拒绝结果未引用 DecisionShadow 候选")
+                })?;
                 let candidate = binding.candidate;
                 let event = Event::IntentRejected {
                     seq: 0,
@@ -65,7 +62,7 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for (canonical_ordinal, candidate) in candidates.candidates().iter().enumerate() {
         let sealed_index = u64::try_from(canonical_ordinal)
-            .map_err(|_| invariant("P2 batch exceeds the sealed identity domain"))?;
+            .map_err(|_| invariant("DecisionShadow 批次超出 sealed identity 域"))?;
         if indexed
             .insert(
                 candidate.key().clone(),
@@ -76,7 +73,7 @@ fn index_candidates(
             )
             .is_some()
         {
-            return Err(invariant("P2 batch contains a duplicate candidate key"));
+            return Err(invariant("DecisionShadow 批次包含重复候选 key"));
         }
     }
     Ok(indexed)
@@ -88,7 +85,7 @@ fn validate_account_validation_result_contract(
 ) -> Result<(), StepFatal> {
     if results.len() != candidates.len() {
         return Err(invariant(
-            "P3 result count does not match the immutable P2 candidate batch",
+            "AccountValidation 结果数量与不可变 DecisionShadow 候选批次不一致",
         ));
     }
 
@@ -97,17 +94,17 @@ fn validate_account_validation_result_contract(
     for result in results {
         let binding = candidates
             .get(result.key())
-            .ok_or_else(|| invariant("P3 result references no P2 candidate"))?;
+            .ok_or_else(|| invariant("AccountValidation 结果未引用 DecisionShadow 候选"))?;
         if result.sealed_index() != binding.sealed_index {
             return Err(invariant(
-                "P3 result sealed identity disagrees with the canonical P2 batch sealed identity",
+                "AccountValidation 结果的 sealed identity 与规范 DecisionShadow 批次的 sealed identity 不一致",
             ));
         }
         if !result_keys.insert(result.key()) {
-            return Err(invariant("P3 results contain a duplicate candidate key"));
+            return Err(invariant("AccountValidation 结果包含重复候选 key"));
         }
         if !sealed_indices.insert(result.sealed_index()) {
-            return Err(invariant("P3 results contain a duplicate sealed identity"));
+            return Err(invariant("AccountValidation 结果包含重复 sealed identity"));
         }
     }
 

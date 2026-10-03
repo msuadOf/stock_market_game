@@ -1,4 +1,4 @@
-//! K2 公司会计金额：`AccountingAmount` = checked i128「分」。
+//! 公司会计金额：`AccountingAmount` = checked i128「分」。
 //!
 //! 与市场域 `Money`（i64 分）分离：公司域金额可超出 JS 安全整数，跨 JSON
 //! 一律**十进制字符串**（绝不用 f64/JS number 承载）；互转必须显式范围检查。

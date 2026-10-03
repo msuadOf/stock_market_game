@@ -1,9 +1,7 @@
-//! Read-only execution facts captured at the prepared P9 boundary.
+//! 在 CommitTick 准备边界捕获只读执行事实。
 //!
-//! The evidence owns clones of the receipts and ledger rows that the pipeline
-//! actually validated. It is deliberately not part of `GameSession` or
-//! `SaveSlot`, and it cannot mutate the prepared candidate or committed
-//! authority.
+//! 证据持有 pipeline 已实际校验的 receipts 与 ledger rows 的副本。
+//! 证据不属于 GameSession 或 SaveSlot，不能修改准备好的 candidate 或已提交权威状态。
 
 use super::{
     validate_indexed_receipt_keys, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger,
@@ -85,8 +83,8 @@ impl AuctionFinalizerExecution {
     }
 }
 
-/// Immutable Task 9 seam captured at the prepared-P9 boundary before P9
-/// rebases tick-local ledger evidence for the next tick.
+/// 在 CommitTick 安装权威状态并为下一 tick 重置局部账本证据之前，
+/// 捕获不可变执行证据接缝。
 #[derive(Clone, Debug)]
 pub struct TickCommitEvidence {
     envelope_chains: Vec<CommitEnvelopeChain>,
@@ -106,7 +104,7 @@ impl TickCommitEvidence {
         &self.receipts
     }
 
-    /// The actual normalized P0 prefix, never reconstructed from expiry summaries.
+    /// 保存实际规范化的 ExpiryShadow 收据前缀，不从过期汇总重建。
     pub fn expiry_receipts(&self) -> &[EnvelopeReceipt] {
         &self.receipts[..self.expiry_receipt_count]
     }
@@ -175,12 +173,12 @@ impl TickCommitEvidence {
                         || !matches!(receipt.local_key.source(), ReceiptSource::QuoteExpiry(_))
                     {
                         return Err(invariant(
-                            "prepared P0 receipts are not the canonical PreSeal prefix",
+                            "已准备的 ExpiryShadow receipts 不构成规范 PreSeal 前缀",
                         ));
                     }
                     expiry_receipt_count = expiry_receipt_count
                         .checked_add(1)
-                        .ok_or_else(|| invariant("prepared P0 receipt count overflow"))?;
+                        .ok_or_else(|| invariant("已准备的 ExpiryShadow receipt 数量溢出"))?;
                 }
                 JournalRank::SealedBatch => reached_sealed = true,
             }

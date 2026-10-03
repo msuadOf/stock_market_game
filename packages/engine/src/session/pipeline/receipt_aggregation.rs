@@ -104,7 +104,7 @@ pub(super) fn apply_owned_receipt_transaction(
 
 fn cursor_mismatch() -> StepFatal {
     StepFatal::InvariantViolation {
-        description: "P5 receipt cursor does not match canonical receipt count".to_owned(),
+        description: "ReceiptAggregation receipt 游标与规范 receipt 数量不一致".to_owned(),
         location: "pipeline::receipt_aggregation::apply_receipt_transaction".to_owned(),
     }
 }

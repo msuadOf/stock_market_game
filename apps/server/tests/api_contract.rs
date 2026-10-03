@@ -1,6 +1,6 @@
-//! WS-5 后端契约集成测试（与前端 RemoteHost 严格对齐）。
+//! 真实成交广播 后端契约集成测试（与前端 RemoteHost 严格对齐）。
 //!
-//! 契约（见任务详情）：
+//! 验证的宿主契约：
 //! - POST /api/new     body {setup, seed}        -> 200 {session_id, session_token} | 400
 //! - POST /api/intent  body {session_id, intent} -> Bearer 鉴权后 200 | 400
 //! - GET  /api/snapshot?session_id=..           -> Bearer 鉴权后 200 Snapshot
@@ -52,7 +52,7 @@ fn sample_setup_json() -> Value {
         "history_len": 5,
         "t1_enabled": true,
         "float_allocation": "Random",
-        "simulation_policy_id": engine::SIMULATION_POLICY_ID_V2
+        "simulation_policy_id": engine::SIMULATION_POLICY_ID
     })
 }
 

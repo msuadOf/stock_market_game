@@ -15,8 +15,8 @@ pub(super) struct AccountValidationFacts {
     pub(super) stocks: BTreeMap<StockCode, StockValidationFacts>,
 }
 
-/// Captures the real post-P0 facts consumed by P3 without deriving board semantics
-/// from a stock-code prefix or inventing protective prices for market orders.
+/// 捕获 AccountValidation 消费的真实报价过期后事实。
+/// 不从股票代码前缀推导板块语义，也不为市价委托虚构 protective price。
 pub(super) fn build_account_validation_context(
     session: &GameSession,
 ) -> Result<AccountValidationContext, StepFatal> {
@@ -44,7 +44,7 @@ pub(super) fn collect_account_validation_context_facts(
     let mut specifications = BTreeMap::new();
     for stock in &session.state.setup.stocks {
         if specifications.insert(&stock.code, stock.category).is_some() {
-            return Err(invariant("duplicate stock specification in P3 context"));
+            return Err(invariant("AccountValidation 上下文中 StockSpec 重复"));
         }
     }
     let stocks = session

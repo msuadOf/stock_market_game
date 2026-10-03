@@ -3,7 +3,7 @@ import type { CivilDate } from "./CivilDate";
 import type { DueBusiness } from "./DueBusiness";
 
 /**
- * 存档中的自然日时钟状态。K1 冻结政策（任务 27）：恢复按存档携带的
+ * 存档中的自然日时钟状态；恢复时按存档携带的
  * [`CalendarPolicySpec`] 重建日历（`from_parts` 重算 digest 并全量校验），
  * 绝不被当前进程的默认政策表覆盖。观察者是进程内 hook，不入档。
  */

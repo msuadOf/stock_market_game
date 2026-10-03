@@ -1,4 +1,4 @@
-//! 外部商业对手方（K2）：客户/供应商/雇员/税务机关/贷款人的稳定 id 与收付记录。
+//! 外部商业对手方（会计与资金边界）：客户/供应商/雇员/税务机关/贷款人的稳定 id 与收付记录。
 //!
 //! 对手方是公司域商业主体，**不是证券 NPC**：`CounterpartyId` 与交易域
 //! `AccountId` 是独立命名空间（编译期不可混用）。收付记录如实登记跨模拟
@@ -17,7 +17,7 @@ use crate::company::error::CompanyError;
 )]
 pub struct CounterpartyId(pub String);
 
-/// 对手方角色（K2 五类外部商业主体）。
+/// 对手方角色（五类外部商业主体；与交易账户隔离）。
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]

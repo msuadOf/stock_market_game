@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs"
-import { currentSaveFixture } from "./save-v2-test-fixture.ts"
+import { currentSaveFixture } from "./current-save-fixture.ts"
 
 const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.json", import.meta.url), "utf8")) as Record<string, unknown>
 
-/** A populated schema projection; cross-domain references may be omitted, so Rust restore validity is not asserted. */
+/** 含非空领域数据的 schema projection；可省略跨域引用，因此不声明 Rust restore 有效。 */
 export function representativeCurrentSaveFixture(): Record<string, unknown> {
   const snapshot = save.snapshot as Record<string, unknown>
   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
@@ -21,8 +21,7 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
         review: { ...(plan.review as Record<string, unknown>), last_review_resources: null },
       }])),
     },
-    // Explicit current-schema examples, matching the DeepValue midpoint preset.
-    // This fixture projects schema branches; it does not migrate historical saves.
+    // 当前 schema 示例使用 DeepValue 中位预设；仅投影 schema 分支，不迁移历史存档。
     belief_books: Object.fromEntries(Object.entries(beliefs).map(([id, book]) => [id, {
       ...book,
       experience: {

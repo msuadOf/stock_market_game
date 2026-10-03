@@ -16,7 +16,7 @@ fn amount(cents: i128) -> AccountingAmount {
 fn config() -> IndustrialConfig {
     let lender = CounterpartyId("LENDER".into());
     IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of: date("2029-12-31"),
         opening_lines: vec![
             line(chart::acct::BANK, PostingSide::Debit, amount(10_000)),

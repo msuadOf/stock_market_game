@@ -1,4 +1,4 @@
-//! K6 plan decisions become tick-local commands and resume from typed execution facts.
+//! 计划判断转换为 tick 内命令，并从 typed 执行事实继续推进。
 
 use super::*;
 use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};

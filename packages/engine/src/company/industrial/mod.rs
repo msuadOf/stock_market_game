@@ -1,9 +1,9 @@
-//! 工商经营与营运资金会计（K3，任务 8）。
+//! 工商经营与营运资金会计（工商会计约束）。
 //!
-//! [`IndustrialBooks`] = 权威账套（[`Books`]，任务 6）+ 共享子账（存货/固定资产/
+//! [`IndustrialBooks`] = 权威账套（[`Books`]，会计底座）+ 共享子账（存货/固定资产/
 //! 应收应付开项，`accounting::{inventory,fixed_assets,receivables}`）+ 税务状态 +
-//! 合同/对手方/授信（任务 7 类型面）。**独立引擎**：不修改 `Company`（注册表
-//! 壳）——银行/保险/地产（任务 9–11）以同一模式组合共享子账；会话接线在任务 26。
+//! 合同/对手方/授信（公司规格与开局账套类型面）。**独立引擎**：不修改 `Company`（注册表
+//! 壳）——银行、保险与地产处理器以同一模式组合共享子账；会话由 `session::company_assembly` 装配。
 //!
 //! 事件处理不变量（每个处理器一致执行）：
 //! 1. **validate → post → apply**：全部业务校验（子账预检 + 政策校验）先于过账；
@@ -37,7 +37,7 @@ pub use expenses::{ExpenseKind, IncomeTaxOutcome};
 pub use loans::{InterestAccrualItem, LoanState, RepaymentOutcome, OPENING_DEBT_CONTRACT_ID};
 pub use purchasing::{PurchaseOutcome, Settlement};
 
-pub use chart::industrial_chart_v2;
+pub use chart::industrial_account_chart;
 
 use crate::accounting::{
     AccountingAmount, Books, BusinessKind, CashFlowClass, FixedAssetRegister, InventoryLedger,
@@ -124,7 +124,7 @@ impl IndustrialBooks {
         &self.books
     }
 
-    /// 权威账套可变访问（任务 26 封账接缝——结账引擎封期需要；经营过账
+    /// 权威账套可变访问（会话装配与执行封账接缝——结账引擎封期需要；经营过账
     /// 仍走各处理器的 validate→post→apply 路径，不经此面）。
     pub fn books_mut(&mut self) -> &mut Books {
         &mut self.books

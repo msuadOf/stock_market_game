@@ -33,7 +33,7 @@ export async function packageStaticWeb({ input, output, sha }, { archive = creat
     const bytes = await readFile(path.join(output, name));
     files.push({ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
   }
-  const manifest = { schema: "distribution-manifest-v1", product: "web", target: "static", commit: sha, files };
+  const manifest = { schema: "distribution-manifest", schema_version: 1, product: "web", target: "static", commit: sha, files };
   await writeFile(path.join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
   return manifest;
 }

@@ -47,7 +47,7 @@ fn diagnostic_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -126,7 +126,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
             .runs
             .iter()
             .all(|run| run.retail_behavior.observed_decisions > 0),
-        "B04 report must preserve each seed's real retail target-position decisions"
+        "散户行为诊断报告必须保留每个 seed 实际产生的散户目标仓位决策"
     );
     assert!(
             report.runs.iter().all(|run| {
@@ -141,7 +141,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
             .runs
             .iter()
             .all(|run| run.retail_execution.submitted_orders > 0),
-        "B04 report must retain actual retail orders separately from position targets"
+        "散户行为诊断报告必须分别保留真实散户订单与目标仓位"
     );
     assert!(report.runs.iter().all(|run| {
         run.retail_execution.filled_shares

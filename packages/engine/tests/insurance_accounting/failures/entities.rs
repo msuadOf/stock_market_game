@@ -190,7 +190,7 @@ fn remeasurement_guards_are_rejected() {
 #[test]
 fn opening_lines_cannot_seed_insurance_accounts() {
     // 开局行只允许现金 + 权益；触碰保险子账/损益科目 → 构造期拒绝
-    // （经营前史由任务 14 用同一处理器生成，不从存档倒推）。
+    // （经营前史由自然日经营演化用同一处理器生成，不从存档倒推）。
     for code in [
         acct::PREMIUM_RECEIVABLE,
         acct::LRC,

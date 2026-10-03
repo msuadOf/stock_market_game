@@ -1,4 +1,4 @@
-//! 前史生成金样（K2：开局前 2 个完整自然年度 + 当年截至开局前日）。
+//! 前史生成金样（会计与资金边界：开局前 2 个完整自然年度 + 当年截至开局前日）。
 //!
 //! 同一处理器 + 初始化专用 RNG 流；不创建历史证券成交、不组装公开报告、
 //! 不触碰任何交易账户（结构保证 + 权益恒等断言）。1998-01-01 下界经日历
@@ -35,12 +35,16 @@ fn history_config(
 /// 前史区间，滚动利息到期已排在开局日；同 seed 重放逐字节一致。
 #[test]
 fn history_spans_two_full_years_before_start() {
-    let mut first =
-        CompanyOperations::generate_history(history_config(5, ShockParams::default_v1()), d(START))
-            .expect("history generates");
-    let second =
-        CompanyOperations::generate_history(history_config(5, ShockParams::default_v1()), d(START))
-            .expect("history replays");
+    let mut first = CompanyOperations::generate_history(
+        history_config(5, ShockParams::current_default_parameters()),
+        d(START),
+    )
+    .expect("history generates");
+    let second = CompanyOperations::generate_history(
+        history_config(5, ShockParams::current_default_parameters()),
+        d(START),
+    )
+    .expect("history replays");
 
     assert_eq!(first.next_expected_date(), d(START));
     assert_eq!(
@@ -95,7 +99,7 @@ fn history_spans_two_full_years_before_start() {
 fn history_honors_1998_init_floor() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: 9,
-        shock_params: ShockParams::default_v1(),
+        shock_params: ShockParams::current_default_parameters(),
         companies: vec![industrial_a(d("1997-12-31"))],
     };
     let ops = CompanyOperations::generate_history(config, d("2000-01-01"))
@@ -112,7 +116,7 @@ fn history_honors_1998_init_floor() {
 fn history_before_init_floor_is_rejected() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: 9,
-        shock_params: ShockParams::default_v1(),
+        shock_params: ShockParams::current_default_parameters(),
         companies: vec![industrial_a(d("1996-12-31"))],
     };
     let error = CompanyOperations::generate_history(config, d("1999-01-01"))

@@ -1,4 +1,4 @@
-//! ClosingEngine 的 serde 存档形态（任务 13 复核 F1）。
+//! ClosingEngine 的 serde 存档形态。
 //!
 //! JSON 映射键必须为字符串：版本键（Scope × 期间 × 种类）与重述底稿键
 //! （Scope）均为组合/枚举键，故平铺为**值列表**，恢复侧重建映射（存档

@@ -130,7 +130,7 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
     );
     authority
         .save()
-        .expect("a committed P0 receipt must form a saveable v2 seen prefix");
+        .expect("已提交的 ExpiryShadow receipt 必须形成可存档的 seen 前缀");
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
 
     let error = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
         .err()
-        .expect("P9 preparation must reject a receipt-key journal without receipt values");
+        .expect("CommitTick 准备必须拒绝缺少 receipt values 的 receipt-key journal");
 
     assert!(matches!(
         error,
@@ -177,7 +177,7 @@ fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
         false,
     )
     .err()
-    .expect("ordinary P9 must reject a journal without applied receipt values");
+    .expect("普通 CommitTick 必须拒绝缺少 applied receipt values 的 journal");
 
     assert!(matches!(error, StepFatal::InvariantViolation { .. }));
     assert_eq!(authority.business_state_hash().unwrap(), before);
@@ -198,7 +198,7 @@ fn prepared_commit_rejects_tampered_receipt_values_without_touching_authority() 
 
     let error = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
         .err()
-        .expect("P9 preparation must reject receipt values that do not replay to the ledger");
+        .expect("CommitTick 准备必须拒绝无法重放到账本的 receipt values");
 
     assert!(matches!(
         error,

@@ -1,8 +1,8 @@
-//! K5 经历反馈验收（任务 20）：真实经历接入信心、忍耐与风险压力。
+//! 经历反馈验收：真实经历接入信心、忍耐与风险压力。
 //!
-//! 规定场景（计划任务 20 Acceptance）在三个文件落地：
+//! 真实经历场景在三个文件落地：
 //! - 本文件：补仓不清除账户损失、清仓再入不抹去冷静期历史、未成交计划
-//!   不记失败交易、状态 serde 往返与旧档默认；
+//!   不记失败交易、状态 serde 往返与内部省略 feedback 字段；
 //! - `seam.rs`：同损益不同经历在受控风格下选择不同、非恐慌者不必止损
 //!   （两者都走既有 `decide_retail_position_with_experience` 读缝，不改
 //!   判断函数体）；
@@ -274,7 +274,7 @@ fn seeded_holding_loss_does_not_create_a_failure_event_without_a_buy_order() {
 }
 
 #[test]
-fn feedback_state_survives_serde_roundtrip_and_old_saves_default_it() {
+fn feedback_state_survives_serde_roundtrip_and_defaults_omitted_feedback() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
     failed_round_trip(&mut state, &code, 1, 0, 0);
@@ -291,12 +291,14 @@ fn feedback_state_survives_serde_roundtrip_and_old_saves_default_it() {
     assert_eq!(restored.feedback.exit_records.len(), 1);
     assert_eq!(restored.feedback.stocks[&code].entry_moment.trading_day, 1);
 
-    // 旧格式存档没有 feedback 字段：恢复边界取默认空反馈，不拒绝、不臆造。
-    let mut legacy = serde_json::from_str::<serde_json::Value>(&json).unwrap();
-    if let serde_json::Value::Object(map) = &mut legacy {
+    // 仅反序列化内部 RetailExperienceState：省略 feedback 字段时恢复为空反馈。
+    // 此处未经过公共存档入口，不代表接受旧 schema 或缺少当前存档结构。
+    let mut state_without_feedback_json = serde_json::from_str::<serde_json::Value>(&json).unwrap();
+    if let serde_json::Value::Object(map) = &mut state_without_feedback_json {
         map.remove("feedback");
     }
-    let legacy_state: RetailExperienceState = serde_json::from_str(&legacy.to_string()).unwrap();
-    assert_eq!(legacy_state.feedback, Default::default());
-    assert_eq!(legacy_state.consecutive_failed_buys, 1);
+    let state_without_feedback: RetailExperienceState =
+        serde_json::from_str(&state_without_feedback_json.to_string()).unwrap();
+    assert_eq!(state_without_feedback.feedback, Default::default());
+    assert_eq!(state_without_feedback.consecutive_failed_buys, 1);
 }

@@ -156,7 +156,7 @@ fn negative_control(
                     capture_artifacts(authoritative_state, event_stream, after_bytes, receipts);
                 return Ok(CaptureBundle {
                     report: CaptureReport {
-                        schema: CAPTURE_SCHEMA, status: CaptureStatus::Pass,
+                        schema: CAPTURE_SCHEMA, schema_version: 1, status: CaptureStatus::Pass,
                         configuration: RuntimeConfiguration { scenario: config.scenario.clone(), seed: config.seed.to_string(),
                             budget: config.budget.label().to_owned(), actual_rayon_threads: threads.to_string(), repeat: config.repeat.to_string(),
                             mode: config.mode, requested_scheduler_merge_disabled: config.disabled_merge },
@@ -364,8 +364,8 @@ fn continuation_bytes(
     .map_err(|error| format!("continuation serialization: {error}"))
 }
 
-/// Every receipt field is captured from the successful commit, before ledger rebase.
-/// Decimal strings retain exact financial and identity integers for JS consumers.
+/// 从成功 commit、ledger rebase 之前捕获真实 receipt 字段。
+/// 使用 decimal strings 为 JavaScript 保留资金与身份整数的精度。
 fn receipt_journal(tick: u64, evidence: &TickCommitEvidence) -> Result<Value, String> {
     use engine::session::pipeline::{FeeComponents, ResVec};
     let resource = |value: ResVec| {
@@ -397,7 +397,7 @@ fn receipt_journal(tick: u64, evidence: &TickCommitEvidence) -> Result<Value, St
     }).collect::<Vec<_>>();
     Ok(decimal_identity_json(serde_json::json!({
         "tick": tick.to_string(), "next_receipt_index": evidence.next_receipt_index().to_string(),
-        "p0_receipt_count": evidence.expiry_receipts().len().to_string(), "receipts": receipts,
+        "expiry_receipt_count": evidence.expiry_receipts().len().to_string(), "receipts": receipts,
         "finalizers": evidence.auction_finalizers().iter().map(|execution| serde_json::json!({
             "stock": execution.stock().0, "auction_tail_passes": execution.auction_tail_passes().to_string(),
             "auction_completion_passes": execution.auction_completion_passes().to_string(),
@@ -541,4 +541,21 @@ pub(super) fn identity_orders(
         ])?,
         completions: select(&[ExecutorBoundary::AggregatedReceiptResults])?,
     })
+}
+
+#[cfg(test)]
+mod receipt_journal_tests {
+    use super::*;
+
+    #[test]
+    fn committed_receipt_journal_emits_expiry_count_without_legacy_key() {
+        let mut session = initial_session(17).expect("构造当前测试会话");
+        let (frame, evidence) = step_scripted(&mut session).expect("实际提交一次 tick");
+        let journal = receipt_journal(frame.tick, &evidence).expect("序列化已提交 receipt journal");
+        assert_eq!(
+            journal["expiry_receipt_count"],
+            serde_json::json!(evidence.expiry_receipts().len().to_string())
+        );
+        assert!(journal.get("p0_receipt_count").is_none());
+    }
 }

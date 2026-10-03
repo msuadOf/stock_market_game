@@ -1,9 +1,9 @@
-//! 经营合同类型面 + 经营预算/授信（K2）。
+//! 经营合同类型面与经营预算、授信约束。
 //!
-//! 本任务只落**纯数据 + 验证**：合同（借款/应付/应收）携带本金、固定年利率
-//! （整数基点）、起止日与计息基准（ACT/365F）；利息计提与入账业务在任务
-//! 8–11/14。新增借款必须落在授信额度内——无授信或超授信都是类型化拒绝，
-//! 不允许无限信用兜底（K2：借款必须经额度/需求约束）。
+//! 本模块提供纯数据与验证：合同（借款/应付/应收）携带本金、固定年利率
+//! （整数基点）、起止日与计息基准（ACT/365F）。行业经营处理器负责利息计提
+//! 与业务过账，自然日经营编排负责调用。新增借款必须落在授信额度内：无授信
+//! 或超授信均类型化拒绝，不允许无限信用兜底。
 
 use std::collections::BTreeMap;
 
@@ -18,8 +18,8 @@ use crate::company::error::CompanyError;
 )]
 pub struct ContractId(pub String);
 
-/// 计息日计数基准（K1：合同用实际自然日 + 约定 basis；默认虚构合同 ACT/365F、
-/// 固定利率，不宣称所有真实合同如此。更多基准随任务 8–11 的需要扩充枚举）。
+/// 计息日计数基准（自然日日历与市场时钟：合同用实际自然日 + 约定 basis；默认虚构合同 ACT/365F、
+/// 固定利率，不宣称所有真实合同如此。当前仅支持 ACT/365F）。
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]
@@ -41,7 +41,7 @@ pub enum ContractRole {
     Receivable,
 }
 
-/// 经营合同（纯数据；业务过账在任务 8–11/14）。
+/// 经营合同（纯数据；业务过账由行业处理器执行，调用由自然日经营编排负责）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OperatingContract {
     pub id: ContractId,
@@ -122,7 +122,7 @@ impl ContractBook {
         self.contracts.iter()
     }
 
-    /// 对某贷款人的未偿借款本金合计（授信占用；还款核销在任务 8–11）。
+    /// 对某贷款人的未偿借款本金合计（授信占用；还款核销在四行业经营处理器）。
     pub fn outstanding_borrowings(
         &self,
         lender: &CounterpartyId,
@@ -144,7 +144,7 @@ pub struct CreditLine {
     pub limit: AccountingAmount,
 }
 
-/// 经营预算（K2：现金下限 + 授信额度集合；借款必须经额度约束）。
+/// 经营预算（会计与资金边界：现金下限 + 授信额度集合；借款必须经额度约束）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OperatingBudget {
     operating_cash_floor: AccountingAmount,
@@ -183,7 +183,7 @@ impl OperatingBudget {
         })
     }
 
-    /// 经营现金下限（资金不足生成 PaymentFailed/Overdue 业务状态属任务 8–11）。
+    /// 经营现金下限（资金不足生成 PaymentFailed/Overdue 业务状态属四行业经营处理器）。
     pub fn operating_cash_floor(&self) -> AccountingAmount {
         self.operating_cash_floor
     }

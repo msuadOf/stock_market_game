@@ -77,7 +77,7 @@ fn validate_price_resolution(
         || pending != requested
     {
         return Err(invariant(
-            "price resolution is not the first transition of a pending P3 order",
+            "price resolution 不是 pending AccountValidation 订单的首个 transition",
         ));
     }
     let price_direction_valid = match (pending, envelope.key().side) {

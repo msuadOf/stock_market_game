@@ -1,4 +1,4 @@
-//! Task 22 QA: account-local candidate scoring and soft-budget allocation.
+//! 候选评分与软预算分配的账户内验证。
 
 mod failures;
 mod gold;

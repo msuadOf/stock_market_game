@@ -1,7 +1,7 @@
-//! Production P2 input capture on the discardable tick shadow.
+//! 在可丢弃 tick shadow 上捕获生产 DecisionShadow 输入。
 //!
-//! This seam advances only the attention/retail-observation state needed
-//! to seal strategy inputs. It never routes an intent or mutates an order book.
+//! 只推进密封 strategy 输入所需的 attention/retail-observation 状态。
+//! 不路由 intent，不修改订单簿。
 
 use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
 use crate::behavior::BehaviorMarketObservation;
@@ -27,65 +27,61 @@ pub(in crate::session) struct CapturedDecisionSnapshot {
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::session) enum DecisionSnapshotCaptureError {
-    #[error("P2 decision snapshot accepted missing account {0:?}")]
+    #[error("DecisionShadow 决策快照受理了不存在的账户 {0:?}")]
     MissingAccount(AccountId),
-    #[error("P2 decision snapshot accepted player account {0:?} as an NPC")]
+    #[error("DecisionShadow 决策快照将玩家账户 {0:?} 作为 NPC 受理")]
     PlayerAccount(AccountId),
-    #[error("P2 decision snapshot account {0:?} has no attention state")]
+    #[error("DecisionShadow 决策快照账户 {0:?} 缺少 attention state")]
     MissingAttention(AccountId),
-    #[error(
-        "P2 decision snapshot account {account:?} has invalid attention probability {probability}"
-    )]
+    #[error("DecisionShadow 决策快照账户 {account:?} 的注意力概率 {probability} 无效")]
     InvalidAttentionProbability {
         account: AccountId,
         probability: f64,
     },
-    #[error("P2 decision snapshot account {0:?} has no production strategy")]
+    #[error("DecisionShadow 决策快照账户 {0:?} 缺少生产 strategy")]
     MissingStrategy(AccountId),
-    #[error("P2 decision snapshot cannot export strategy for account {account:?}: {source}")]
+    #[error("DecisionShadow 决策快照无法导出账户 {account:?} 的 strategy：{source}")]
     StrategyState {
         account: AccountId,
         #[source]
         source: StrategyStateError,
     },
-    #[error("P2 retail experience observation failed for account {account:?}: {source}")]
+    #[error("DecisionShadow 账户 {account:?} 的散户经历观察失败：{source}")]
     Experience {
         account: AccountId,
         #[source]
         source: ExperienceError,
     },
-    #[error("P2 decision snapshot {location} is missing market data for {code:?}")]
+    #[error("DecisionShadow 决策快照 {location} 缺少股票 {code:?} 的市场数据")]
     MissingMarketData {
         location: &'static str,
         code: StockCode,
     },
-    #[error("P2 decision snapshot {location} money failure for account {account:?}: {source}")]
+    #[error("DecisionShadow 决策快照 {location} 的账户 {account:?} 金额计算失败：{source}")]
     Money {
         location: &'static str,
         account: AccountId,
         #[source]
         source: MoneyError,
     },
-    #[error(
-        "P2 decision snapshot {location} observation failure for account {account:?}: {source}"
-    )]
+    #[error("DecisionShadow 决策快照 {location} 的账户 {account:?} 观察失败：{source}")]
     Observation {
         location: &'static str,
         account: Option<AccountId>,
         #[source]
         source: ObservationError,
     },
-    #[error("P2 decision snapshot contract rejected captured input: {0}")]
+    #[error("DecisionShadow 决策快照契约拒绝捕获的输入：{0}")]
     Snapshot(#[source] DecisionSnapshotError),
-    #[error("P2 urgency policy validation failed: {0}")]
+    #[error("DecisionShadow urgency policy 校验失败：{0}")]
     UrgencyPolicy(#[from] crate::plans::UrgencyError),
 }
 
-/// Advances due-attention and pre-decision retail observations on `shadow`, then
-/// returns the immutable input consumed by the pure NPC P2 source.
+/// 在 shadow 上推进到期 attention 与决策前散户观察，
+/// 返回纯 NPC 决策源消费的不可变输入。
 ///
-/// Only due attention and accepted retail observations can change here. The
-/// caller owns a discardable tick candidate and drops it if capture fails.
+/// 此处仅修改到期 attention 与受理的散户观察；
+/// 捕获失败时调用方丢弃完整 tick candidate。
 pub(in crate::session) fn capture_decision_snapshot(
     shadow: &mut super::GameSession,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
@@ -425,7 +421,7 @@ impl CapturedExperienceObservation {
     }
 }
 
-/// SelfView 的报价现金累计；可替换部分不构成本轮 P1 执行预算。
+/// SelfView 的报价现金累计；可替换部分不构成本轮 SealAllocationSnapshot 执行预算。
 #[derive(Default)]
 struct SelfViewCashReservations {
     reserved: Money,

@@ -7,4 +7,15 @@ import type { PublicReportNotes } from "./PublicReportNotes";
 import type { PublicReportScope } from "./PublicReportScope";
 import type { PublicReportVersionKind } from "./PublicReportVersionKind";
 
-export type PublicReportFinancials = { scope: PublicReportScope, window_start: string, window_end: string, version_kind: PublicReportVersionKind, version_supersedes: string | null, balance_sheet: PublicReportBalanceSheet, income: PublicReportIncome, cash_flow: PublicReportCashFlow, equity: PublicReportEquity, notes: PublicReportNotes, };
+export type PublicReportFinancials = {
+  scope: PublicReportScope;
+  window_start: string;
+  window_end: string;
+  version_kind: PublicReportVersionKind;
+  version_supersedes: string | null;
+  balance_sheet: PublicReportBalanceSheet;
+  income: PublicReportIncome;
+  cash_flow: PublicReportCashFlow;
+  equity: PublicReportEquity;
+  notes: PublicReportNotes;
+};

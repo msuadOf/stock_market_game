@@ -1,6 +1,6 @@
-//! 存款子账状态与存取处理器（K3 银行，任务 9；计提/付息在 `interest.rs`）。
+//! 存款子账状态与存取处理器（银行经营会计约束；计提/付息在 `interest.rs`）。
 //! 客户存款是**摊余成本金融负债**（CAS 22 §21）——存入贷记负债（2011/2601）
-//! 而非收入（K3 红线）；提取是负债减少；付息是利息支出（6411）现金结清。
+//! 而非收入（行业会计红线）；提取是负债减少；付息是利息支出（6411）现金结清。
 //!
 //! 现金流分类：存/取均经营活动（CAS 30 (2026) §45–§47——「向客户提供融资」
 //! 为主要业务活动的归类选择，游戏固定选经营）。
@@ -193,7 +193,7 @@ pub struct DepositAccrualItem {
 
 impl BankBooks {
     /// 吸收存款（CAS 22 §21 摊余成本金融负债）：Dr 1003 / Cr 2011|2601
-    /// （经营）。**存款不是收入**（K3 红线）。
+    /// （经营）。**存款不是收入**（行业会计红线）。
     #[allow(clippy::too_many_arguments)]
     pub fn accept_deposit(
         &mut self,
@@ -246,7 +246,7 @@ impl BankBooks {
 
     /// 存款提取（客户流动性约束）：Dr 2011|2601 / Cr 1003（经营）。
     /// 超存款本金 → `WithdrawalBeyondPrincipal`；超可支付现金 →
-    /// `PaymentFailed`（负现金禁令，银行继续运行——K2 不透支不补钱）。
+    /// `PaymentFailed`（负现金禁令，银行继续运行——不透支不补钱）。
     pub fn withdraw_deposit(
         &mut self,
         deposit: &ContractId,

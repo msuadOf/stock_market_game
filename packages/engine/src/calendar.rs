@@ -1,4 +1,4 @@
-//! 真实公历与冻结交易日历（K1，任务 4）。
+//! 真实公历与冻结交易日历。
 //!
 //! 分层：`date`（纯公历算法：CivilDate / CivilInstant / Weekday）→
 //! `data`（1998–2099 离线农历/节气事实表，香港天文台官方来源，构建期固化）→
@@ -29,7 +29,7 @@ pub use policy::{
 };
 
 /// 交易日序数 newtype：由 `TradingCalendar` 在特定政策下赋予/解析
-/// （0 = 初始化下界起第一个交易日）。与 tick 计数、市场分钟严格分离（K1）。
+/// （0 = 初始化下界起第一个交易日）。与 tick 计数、市场分钟严格分离。
 #[derive(
     Copy,
     Clone,
@@ -85,7 +85,7 @@ pub enum HolidayKind {
 /// 休市原因。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum ClosedReason {
-    /// 周末（含政府调休补班周末——K1 不模拟补班）。
+    /// 周末（含政府调休补班周末；交易日历不模拟补班）。
     Weekend,
     /// 官方通知闭市（附出处标识）。
     OfficialHoliday { citation_id: String },

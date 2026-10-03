@@ -77,10 +77,10 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
       await writeFile(path.join(output, artifacts.event_stream.file), "tampered");
     }
     const capture = {
-      schema: "escrow-runtime-evidence-capture-v1",
+      schema: "escrow-runtime-evidence-capture", schema_version: 1,
       status,
       configuration: {
-        scenario: "escrow-runtime-v1",
+        scenario: "escrow-runtime",
         seed: entry.seed,
         budget: entry.budget,
         repeat: entry.repeat,
@@ -89,12 +89,12 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
       },
       artifacts,
       scheduler_precanonical_order: { available: true, records: [
-        ["P3AccountShards", ["1", "2"]], ["P4AuctionStockShards", ["000812", "600101"]],
-        ["P5ReceiptResults", ["receipt-1", "receipt-2"]],
+        ["AccountValidationShards", ["1", "2"]], ["AuctionStockShards", ["000812", "600101"]],
+        ["AggregatedReceiptResults", ["receipt-1", "receipt-2"]],
       ].map(([boundary, identities]) => ({ boundary, identities: entry.mode === "canonical" ? identities : [...identities].reverse(), item_counts: [1, 1] })) },
       runtime_coverage: { tick_from: "1", tick_to: "1" },
       producer_readiness: { conservation_snapshots: [{
-        schema: "escrow-conservation-snapshot-v1", scenario: entry.scenario, seed: entry.seed, tick: "1", envelopes: [],
+        schema: "escrow-conservation-snapshot", schema_version: 1, scenario: entry.scenario, seed: entry.seed, tick: "1", envelopes: [],
         accounts: [{ account_id: "0", cash_cents: "10", positions: [], aggregate: {
           left: { cash_cents: "0", shares: "0" }, right: { cash_cents: "0", shares: "0" },
         } }],
@@ -108,7 +108,7 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
     await writeFile(path.join(output, "capture.json"), JSON.stringify(capture));
     const captureBytes = await readFile(path.join(output, "capture.json"));
     await writeFile(path.join(output, "capture-receipt.json"), JSON.stringify({
-      schema: "escrow-capture-receipt-v1", file: "capture.json",
+      schema: "escrow-capture-receipt", schema_version: 1, file: "capture.json",
       sha256: sha256Hex(captureBytes), byte_length: String(captureBytes.length),
     }));
     return {
@@ -127,9 +127,9 @@ function validPerformanceReport() {
   const sample = (after) => ({
     wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload, environment_contract,
     ticks_per_second: 100_000_000,
-    phase_wall_ns: after ? Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`P${i}`, "1"])) : null,
+    phase_wall_ns: after ? Object.fromEntries(["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"].map((phase) => [phase, "1"])) : null,
     process_tree_thread_state: {
-      schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1,
+      schema: "linux-process-tree-thread-state", schema_version: 1, sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1,
       process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 },
       runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } },
     },
@@ -137,7 +137,7 @@ function validPerformanceReport() {
   });
   const aggregate = { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } };
   return {
-    schema: "escrow-perf-report-v3", status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
+    schema: "escrow-performance-report", schema_version: 3, status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
     environment_manifest: { fixture: true },
     measurement_contract: {
       same_machine_for_both_sides: true, same_workload_for_both_sides: true,
@@ -155,13 +155,25 @@ function validPerformanceReport() {
 }
 
 describe("escrow verification matrix runner", () => {
+  it("接受全部当前 PhaseTimingPhase key，拒绝旧阶段 key 与 schema_version", () => {
+    assert.doesNotThrow(() => validatePerformanceReport(validPerformanceReport()));
+    const legacyPhases = validPerformanceReport();
+    legacyPhases.after.samples[0].phase_wall_ns = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`P${index}`, "1"]));
+    assert.throws(() => validatePerformanceReport(legacyPhases), /phase_wall_ns fields are incomplete or unexpected/);
+    for (const version of [undefined, "3", 2, 4]) {
+      const invalid = validPerformanceReport();
+      invalid.schema_version = version;
+      assert.throws(() => validatePerformanceReport(invalid), /performance report/);
+    }
+  });
+
   it("rejects a forged PASS performance sample whose throughput is not derived from wall time", () => {
     const workload = { scenario: "s", seed: "1", setup_manifest: { schema: "s" }, completed_ticks: 10, repetitions: 1, profile: "release", features: [] };
     const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
     const sample = (after) => ({ wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload,
-      environment_contract, ticks_per_second: 100_000_000, phase_wall_ns: after ? Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`P${i}`, "1"])) : null,
-      process_tree_thread_state: { schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
-    const report = { schema: "escrow-perf-report-v3", status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
+      environment_contract, ticks_per_second: 100_000_000, phase_wall_ns: after ? Object.fromEntries(["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"].map((phase) => [phase, "1"])) : null,
+      process_tree_thread_state: { schema: "linux-process-tree-thread-state", schema_version: 1, sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
+    const report = { schema: "escrow-performance-report", schema_version: 3, status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
       environment_manifest: { fixture: true }, measurement_contract: { same_machine_for_both_sides: true, same_workload_for_both_sides: true,
         comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
         rss_scope: "Linux process tree rooted at the configured executable",
@@ -222,7 +234,7 @@ describe("escrow verification matrix runner", () => {
     );
     assert.deepEqual(fake.invocations[0].args, [
       "run", "--quiet", "-p", "engine", "--features", "verification-harness", "--example", "escrow_verification_harness", "--",
-      "--scenario", "escrow-runtime-v1", "--seed", "17", "--budget", "1", "--repeat", "0",
+      "--scenario", "escrow-runtime", "--seed", "17", "--budget", "1", "--repeat", "0",
       "--mode", "canonical", "--output", fake.invocations[0].output,
     ]);
     assert.deepEqual(fake.invocations.at(-1).args.slice(-6), [
@@ -371,7 +383,7 @@ describe("escrow verification matrix runner", () => {
     const receipt = { sha256: sha256Hex(bytes), byte_length: String(bytes.length) };
     await writeFile(capturePath, bytes);
     await writeFile(path.join(output, "capture-receipt.json"), JSON.stringify({
-      schema: "escrow-capture-receipt-v1", file: "capture.json", ...receipt,
+      schema: "escrow-capture-receipt", schema_version: 1, file: "capture.json", ...receipt,
     }));
     entry.capture_receipt = receipt;
     await writeFile(path.join(config.outputRoot, "summary.json"), JSON.stringify(original));

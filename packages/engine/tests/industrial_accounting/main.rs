@@ -1,14 +1,14 @@
-//! 工商经营与营运资金会计集成测试（company-information-npc-intentions W2-Task 8）。
+//! 工商经营与营运资金会计集成测试。
 //!
 //! 政策基线：docs/company-accounting.md §2.1/§2.2（CAS 14 履约收入、CAS 22 §63
-//! 整个存续期 ECL 简化法、财会〔2016〕22号增值税销项/进项分开核算）+ 计划 K3
+//! 整个存续期 ECL 简化法、财会〔2016〕22号增值税销项/进项分开核算）+ 行业会计约束
 //! （移动加权平均、直线折旧、当期+递延所得税与可抵扣亏损）。增值税/所得税税率
 //! 在 docs §7 登记 `vat-law-current`/`cit-law-current` **取证受阻（blocked）**，
 //! 故本套全部使用显式构造、标注为 Fixture 的合成税率，不声称真实参数。
 //!
 //! 金样单位约定：注释写「元」（1 元 = 100 分）便于人读，执行值一律「分」
 //! （AccountingAmount）。BusinessKind 标签映射表见 src/company/industrial/mod.rs
-//! 头注（journal.rs 属任务 6 语义冻结区，行业枚举扩充前以最接近的通用标签记录）。
+//! 头注（journal.rs 属会计底座语义冻结区，行业枚举扩充前以最接近的通用标签记录）。
 //!
 //! 按场景拆分：`chain_gold`（订单→生产→赊销→回款→结息全链金样）、`assets_gold`
 //! （资本开支/折旧/减值）、`tax_gold`（增值税结算/当期+递延所得税）、`subledgers`
@@ -25,7 +25,7 @@ mod tax_gold;
 
 use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide, TaxPolicy};
 use engine::calendar::CivilDate;
-use engine::company::industrial::{industrial_chart_v2, IndustrialConfig};
+use engine::company::industrial::{industrial_account_chart, IndustrialConfig};
 use engine::company::{CreditLine, ExternalCounterparty, OperatingBudget};
 
 /// 测试用 ISO 日期；输入本身必须合法（否则测试夹具写错）。
@@ -106,7 +106,7 @@ pub(crate) fn bank_credit_budget() -> OperatingBudget {
 /// 无开局借款的基础配置：现金 10000 元 + 实收资本 10000 元。
 pub(crate) fn base_config() -> IndustrialConfig {
     IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of: d("2029-12-31"),
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 1_000_000),
@@ -121,7 +121,7 @@ pub(crate) fn base_config() -> IndustrialConfig {
     }
 }
 
-/// 工业科目表 v2 常用科目代码（v1 通用科目 + 工业扩充，见 industrial_chart_v2）。
+/// 工业科目表（AccountChart.version=2）常用科目代码（通用科目表（AccountChart.version=1）的科目 + 工业扩充，见 industrial_account_chart）。
 pub(crate) mod acct {
     pub const BANK: &str = "1002"; // 银行存款（现金类）
     pub const AR: &str = "1122"; // 应收账款

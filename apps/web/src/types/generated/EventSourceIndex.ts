@@ -2,7 +2,7 @@
 
 export type EventSourceIndex =
   | "Sealed"
-  | "P0"
+  | "QuoteExpiry"
   | "PriceTick"
   | "DayEnd"
   | "Session";

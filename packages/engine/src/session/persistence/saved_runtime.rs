@@ -2,38 +2,35 @@ use super::super::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SAVE_SCHEMA_VERSION_V2: u32 = 2;
-pub const SIMULATION_POLICY_ID_V2: &str = "a-share-simulation-v2";
+pub const SAVE_SCHEMA_VERSION: u32 = 3;
+pub const SIMULATION_POLICY_ID: &str = "a-share-simulation";
 
-/// The parallel-tick state that schema v2 adds to the pre-existing session
-/// payload. It is deliberately a quiet-point DTO instead of a serialized
-/// `EnvelopeLedger`: tick-local terminals, conservation rows and local-key
-/// dedupe evidence must not leak across a successful commit boundary.
+/// 并行 tick 的权威运行时状态，在 quiet point 以 DTO 保存。
+/// 不直接序列化 `EnvelopeLedger`，避免 tick 局部 terminal、守恒行与 local-key
+/// 去重证据越过成功提交边界。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SaveRuntimeV2 {
-    /// A poisoned session can never truthfully produce a save. Keeping the
-    /// marker explicit also makes tampering detectable at restore time.
+pub struct SavedRuntimeState {
+    /// poisoned session 不允许生成存档；显式标记让恢复校验能够识别篡改。
     pub poisoned: bool,
     #[serde(with = "super::super::u64_decimal")]
     pub next_receipt_base: u64,
-    pub live_envelopes: Vec<LiveEnvelopeV2>,
-    pub retail_projection_seen: Vec<RetailReceiptIdentityV2>,
-    /// Complete production strategy state is authoritative. A profile is
-    /// derived from each enum value and is not persisted beside it.
+    pub live_envelopes: Vec<SavedLiveEnvelope>,
+    pub retail_projection_seen: Vec<SavedRetailReceiptIdentity>,
+    /// 完整生产策略状态是权威事实；profile 从 enum value 派生，不重复保存。
     pub strategy_states: BTreeMap<AccountId, crate::strategy::StrategyState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LiveEnvelopeV2 {
-    pub key: EnvelopeKeyV2,
-    pub charged: FeeComponentsV2,
+pub struct SavedLiveEnvelope {
+    pub key: SavedEnvelopeKey,
+    pub charged: SavedFeeComponents,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EnvelopeKeyV2 {
+pub struct SavedEnvelopeKey {
     pub account: AccountId,
     pub stock: StockCode,
     pub order: OrderId,
@@ -42,7 +39,7 @@ pub struct EnvelopeKeyV2 {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct FeeComponentsV2 {
+pub struct SavedFeeComponents {
     pub commission: Money,
     pub stamp_tax: Money,
     pub transfer_fee: Money,
@@ -50,30 +47,29 @@ pub struct FeeComponentsV2 {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RetailReceiptIdentityV2 {
+pub struct SavedRetailReceiptIdentity {
     #[serde(with = "super::super::u64_decimal")]
     pub index: u64,
-    pub local_key: ReceiptLocalKeyV2,
+    pub local_key: SavedReceiptLocalKey,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptLocalKeyV2 {
-    pub journal: JournalRankV2,
-    pub source: ReceiptSourceV2,
-    pub transition: ReceiptTransitionV2,
+pub struct SavedReceiptLocalKey {
+    pub journal: SavedJournalRank,
+    pub source: SavedReceiptSource,
+    pub transition: SavedReceiptTransition,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum JournalRankV2 {
+pub enum SavedJournalRank {
     PreSeal,
     SealedBatch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ReceiptSourceV2 {
+pub enum SavedReceiptSource {
     SealedIntent(#[serde(with = "super::super::u64_decimal")] u64),
-    #[serde(rename = "P0Expiry")]
     QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
@@ -81,8 +77,8 @@ pub enum ReceiptSourceV2 {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptTransitionV2 {
-    pub envelope: EnvelopeKeyV2,
+pub struct SavedReceiptTransition {
+    pub envelope: SavedEnvelopeKey,
     #[serde(with = "super::super::u64_decimal")]
     pub ordinal: u64,
 }
@@ -92,38 +88,35 @@ struct SchemaVersionHeader {
     schema_version: Option<u32>,
 }
 
-/// Rejects missing, legacy and future versions before deserializing the full
-/// save. There is intentionally no legacy branch and no migration fallback.
+/// 在完整存档反序列化前显式拒绝缺失、旧版及未来版本；不提供迁移分支。
 pub fn validate_schema_version_header(json: &[u8]) -> Result<(), SessionError> {
     let header: SchemaVersionHeader = serde_json::from_slice(json).map_err(|error| {
-        SessionError::InvalidSave(format!("save schema header is not decodable: {error}"))
+        SessionError::InvalidSave(format!("存档 schema_version header 无法解码：{error}"))
     })?;
     let version = header.schema_version.ok_or_else(|| {
-        SessionError::InvalidSave(
-            "save schema_version is missing; legacy saves are not supported".to_owned(),
-        )
+        SessionError::InvalidSave("存档 schema_version 缺失；不支持旧版本存档".to_owned())
     })?;
     validate_schema_version(version)
 }
 
 pub fn validate_schema_version(version: u32) -> Result<(), SessionError> {
-    match version.cmp(&SAVE_SCHEMA_VERSION_V2) {
+    match version.cmp(&SAVE_SCHEMA_VERSION) {
         std::cmp::Ordering::Equal => Ok(()),
         std::cmp::Ordering::Less => Err(SessionError::InvalidSave(format!(
-            "save schema_version {version} is legacy; schema v2 requires an explicit new save"
+            "存档 schema_version {version}：不支持旧版本，请创建 schema_version={SAVE_SCHEMA_VERSION} 的新存档"
         ))),
         std::cmp::Ordering::Greater => Err(SessionError::InvalidSave(format!(
-            "save schema_version {version} is newer than supported schema v2"
+            "存档 schema_version {version} 高于当前支持版本 {SAVE_SCHEMA_VERSION}"
         ))),
     }
 }
 
-/// Captures every v2-only authority from a healthy, committed quiet point.
-pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFatal> {
+/// 从健康且已提交的 quiet point 捕获全部权威运行状态。
+pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState, StepFatal> {
     session.require_healthy()?;
-    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         return Err(invariant(format!(
-            "simulation policy {:?} cannot be written as schema v2",
+            "simulation_policy_id {:?} 不允许写入 schema_version={SAVE_SCHEMA_VERSION}",
             session.state.setup.simulation_policy_id
         )));
     }
@@ -156,7 +149,7 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
                     envelope.key()
                 )));
             }
-            Ok(LiveEnvelopeV2::from_envelope(envelope))
+            Ok(SavedLiveEnvelope::from_envelope(envelope))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -174,9 +167,9 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         .authoritative_identities()
         .into_iter()
         .map(|(index, key)| {
-            Ok(RetailReceiptIdentityV2 {
+            Ok(SavedRetailReceiptIdentity {
                 index,
-                local_key: ReceiptLocalKeyV2::from_runtime(&key)?,
+                local_key: SavedReceiptLocalKey::from_runtime(&key)?,
             })
         })
         .collect::<Result<Vec<_>, StepFatal>>()?;
@@ -195,14 +188,14 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
-    let state = SaveRuntimeV2 {
+    let state = SavedRuntimeState {
         poisoned: false,
         next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
         retail_projection_seen,
         strategy_states,
     };
-    validate_runtime_v2(session, &state).map_err(session_error_as_invariant)?;
+    validate_runtime_state(session, &state).map_err(session_error_as_invariant)?;
 
     let reconstructed = state
         .build_ledger(session)
@@ -218,25 +211,24 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
         .map(|(_, envelope)| envelope.clone())
         .collect();
     if actual != projected {
-        return Err(invariant("v2 live-envelope DTO is not lossless".to_owned()));
+        return Err(invariant("SavedLiveEnvelope DTO 无法无损恢复".to_owned()));
     }
     Ok(state)
 }
 
-/// Cross-validates the DTO against already-restored orders and deterministic
-/// account identities. It performs no mutation and never clears damaged data.
-pub fn validate_runtime_v2(
+/// 将 DTO 与已恢复的订单及确定性账户身份交叉校验；不修改或清空损坏数据。
+pub fn validate_runtime_state(
     session: &GameSession,
-    state: &SaveRuntimeV2,
+    state: &SavedRuntimeState,
 ) -> Result<(), SessionError> {
     if state.poisoned {
         return Err(SessionError::InvalidSave(
-            "schema v2 explicitly rejects poisoned session state".to_owned(),
+            "runtime_state 明确拒绝 poisoned session 状态".to_owned(),
         ));
     }
-    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+    if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         return Err(SessionError::InvalidSave(format!(
-            "schema v2 requires simulation policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
+            "schema_version={SAVE_SCHEMA_VERSION} 要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
             session.state.setup.simulation_policy_id
         )));
     }
@@ -264,8 +256,8 @@ pub fn validate_runtime_v2(
         .authoritative_identities()
         .into_iter()
         .map(|(index, local_key)| {
-            ReceiptLocalKeyV2::from_runtime(&local_key)
-                .map(|local_key| RetailReceiptIdentityV2 { index, local_key })
+            SavedReceiptLocalKey::from_runtime(&local_key)
+                .map(|local_key| SavedRetailReceiptIdentity { index, local_key })
                 .map_err(|error| invalid_save("saved retail projection canonical identity", error))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -343,7 +335,7 @@ pub fn validate_runtime_v2(
 
 fn validate_receipt_identity_domain(
     session: &GameSession,
-    identity: &RetailReceiptIdentityV2,
+    identity: &SavedRetailReceiptIdentity,
 ) -> Result<(), SessionError> {
     let envelope = &identity.local_key.transition.envelope;
     if !session.state.accounts.contains_key(&envelope.account) {
@@ -367,13 +359,12 @@ fn validate_receipt_identity_domain(
     Ok(())
 }
 
-/// Atomically hydrates all v2-only authority after the base SaveSlot state and
-/// live orders have been restored and cross-validated.
-pub fn restore_runtime_v2(
+/// 基础 SaveSlot 校验完成后，原子恢复全部权威运行状态。
+pub fn restore_runtime_state(
     session: &mut GameSession,
-    state: &SaveRuntimeV2,
+    state: &SavedRuntimeState,
 ) -> Result<(), SessionError> {
-    validate_runtime_v2(session, state)?;
+    validate_runtime_state(session, state)?;
     let ledger = state.build_ledger(session)?;
     let identities = state
         .retail_projection_seen
@@ -442,7 +433,7 @@ pub fn restore_runtime_v2(
     Ok(())
 }
 
-impl SaveRuntimeV2 {
+impl SavedRuntimeState {
     fn build_ledger(
         &self,
         session: &GameSession,
@@ -451,7 +442,7 @@ impl SaveRuntimeV2 {
             .project_live_envelopes()
             .map_err(|error| invalid_save("saved live order projection", error))?
             .into_iter()
-            .map(|envelope| (EnvelopeKeyV2::from_runtime(envelope.key()), envelope))
+            .map(|envelope| (SavedEnvelopeKey::from_runtime(envelope.key()), envelope))
             .collect::<BTreeMap<_, _>>();
         let mut previous = None;
         let mut envelopes = Vec::with_capacity(self.live_envelopes.len());
@@ -479,11 +470,11 @@ impl SaveRuntimeV2 {
     }
 }
 
-impl LiveEnvelopeV2 {
+impl SavedLiveEnvelope {
     fn from_envelope(envelope: &pipeline::Envelope) -> Self {
         Self {
-            key: EnvelopeKeyV2::from_runtime(envelope.key()),
-            charged: FeeComponentsV2::from_runtime(envelope.audit().charged),
+            key: SavedEnvelopeKey::from_runtime(envelope.key()),
+            charged: SavedFeeComponents::from_runtime(envelope.audit().charged),
         }
     }
 
@@ -518,7 +509,7 @@ impl LiveEnvelopeV2 {
     }
 }
 
-impl EnvelopeKeyV2 {
+impl SavedEnvelopeKey {
     fn from_runtime(key: &pipeline::EnvelopeKey) -> Self {
         Self {
             account: key.account,
@@ -538,7 +529,7 @@ impl EnvelopeKeyV2 {
     }
 }
 
-impl Ord for EnvelopeKeyV2 {
+impl Ord for SavedEnvelopeKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let side_rank = |side: Side| match side {
             Side::Buy => 0_u8,
@@ -559,13 +550,13 @@ impl Ord for EnvelopeKeyV2 {
     }
 }
 
-impl PartialOrd for EnvelopeKeyV2 {
+impl PartialOrd for SavedEnvelopeKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl FeeComponentsV2 {
+impl SavedFeeComponents {
     fn from_runtime(fees: pipeline::FeeComponents) -> Self {
         Self {
             commission: fees.commission,
@@ -604,7 +595,7 @@ impl FeeComponentsV2 {
 
 fn validate_live_envelopes_against_orders(
     session: &GameSession,
-    state: &SaveRuntimeV2,
+    state: &SavedRuntimeState,
     ledger: &pipeline::EnvelopeLedger,
 ) -> Result<(), SessionError> {
     let expected = session
@@ -627,10 +618,10 @@ fn validate_live_envelopes_against_orders(
             SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
         })?;
         let saved_audit = saved.audit();
-        let audit = CumulativeFeeAuditV2 {
+        let audit = CumulativeFeeAudit {
             side: key.side,
             filled_value: saved_audit.filled_value,
-            charged: FeeComponentsV2::from_runtime(saved_audit.charged),
+            charged: SavedFeeComponents::from_runtime(saved_audit.charged),
         };
         if !audit.validate(&session.state.setup.config)? {
             return Err(SessionError::InvalidSave(format!(
@@ -643,23 +634,23 @@ fn validate_live_envelopes_against_orders(
 
 /// 活动委托的累计收费审计；GameConfig 与 EnvelopeAudit 仍各自拥有费率和运行时事实。
 /// 此处只校验累计边界，不能从累计分量重建逐笔收费优先级。
-pub(super) struct CumulativeFeeAuditV2 {
+pub(super) struct CumulativeFeeAudit {
     pub(super) side: Side,
     pub(super) filled_value: Money,
-    pub(super) charged: FeeComponentsV2,
+    pub(super) charged: SavedFeeComponents,
 }
 
-impl CumulativeFeeAuditV2 {
-    pub(super) fn nominal(&self, config: &GameConfig) -> Result<FeeComponentsV2, SessionError> {
+impl CumulativeFeeAudit {
+    pub(super) fn nominal(&self, config: &GameConfig) -> Result<SavedFeeComponents, SessionError> {
         if self.filled_value.cents() < 0 {
             return Err(SessionError::InvalidSave(
                 "saved filled value cannot be negative".to_owned(),
             ));
         }
         if self.filled_value == Money::ZERO {
-            return Ok(FeeComponentsV2::default());
+            return Ok(SavedFeeComponents::default());
         }
-        Ok(FeeComponentsV2 {
+        Ok(SavedFeeComponents {
             commission: config
                 .commission(self.filled_value)
                 .map_err(|error| invalid_save("saved cumulative commission", error))?,
@@ -694,7 +685,7 @@ impl CumulativeFeeAuditV2 {
     }
 }
 
-impl ReceiptLocalKeyV2 {
+impl SavedReceiptLocalKey {
     fn from_runtime(key: &pipeline::ReceiptLocalKey) -> Result<Self, StepFatal> {
         let encoded = serde_json::to_value(key).map_err(|error| {
             invariant(format!(
@@ -706,19 +697,19 @@ impl ReceiptLocalKeyV2 {
                 "authoritative receipt local key has an unsupported shape: {error}"
             ))
         })?;
-        Ok(mirror.into_v2())
+        Ok(mirror.into_saved_receipt_local_key())
     }
 
     fn to_runtime(&self) -> Result<pipeline::ReceiptLocalKey, SessionError> {
         let journal = match self.journal {
-            JournalRankV2::PreSeal => pipeline::JournalRank::PreSeal,
-            JournalRankV2::SealedBatch => pipeline::JournalRank::SealedBatch,
+            SavedJournalRank::PreSeal => pipeline::JournalRank::PreSeal,
+            SavedJournalRank::SealedBatch => pipeline::JournalRank::SealedBatch,
         };
         let source = match self.source {
-            ReceiptSourceV2::SealedIntent(value) => pipeline::ReceiptSource::SealedIntent(value),
-            ReceiptSourceV2::QuoteExpiry(value) => pipeline::ReceiptSource::QuoteExpiry(value),
-            ReceiptSourceV2::Auction(value) => pipeline::ReceiptSource::Auction(value),
-            ReceiptSourceV2::DayEnd(value) => pipeline::ReceiptSource::DayEnd(value),
+            SavedReceiptSource::SealedIntent(value) => pipeline::ReceiptSource::SealedIntent(value),
+            SavedReceiptSource::QuoteExpiry(value) => pipeline::ReceiptSource::QuoteExpiry(value),
+            SavedReceiptSource::Auction(value) => pipeline::ReceiptSource::Auction(value),
+            SavedReceiptSource::DayEnd(value) => pipeline::ReceiptSource::DayEnd(value),
         };
         pipeline::ReceiptLocalKey::new(
             journal,
@@ -734,7 +725,7 @@ impl ReceiptLocalKeyV2 {
 
 #[derive(Deserialize)]
 struct RuntimeReceiptLocalKey {
-    journal: JournalRankV2,
+    journal: SavedJournalRank,
     source: RuntimeReceiptSource,
     transition: RuntimeReceiptTransition,
 }
@@ -742,7 +733,6 @@ struct RuntimeReceiptLocalKey {
 #[derive(Deserialize)]
 enum RuntimeReceiptSource {
     SealedIntent(u64),
-    #[serde(rename = "P0Expiry")]
     QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
@@ -750,21 +740,23 @@ enum RuntimeReceiptSource {
 
 #[derive(Deserialize)]
 struct RuntimeReceiptTransition {
-    envelope: EnvelopeKeyV2,
+    envelope: SavedEnvelopeKey,
     ordinal: u64,
 }
 
 impl RuntimeReceiptLocalKey {
-    fn into_v2(self) -> ReceiptLocalKeyV2 {
-        ReceiptLocalKeyV2 {
+    fn into_saved_receipt_local_key(self) -> SavedReceiptLocalKey {
+        SavedReceiptLocalKey {
             journal: self.journal,
             source: match self.source {
-                RuntimeReceiptSource::SealedIntent(value) => ReceiptSourceV2::SealedIntent(value),
-                RuntimeReceiptSource::QuoteExpiry(value) => ReceiptSourceV2::QuoteExpiry(value),
-                RuntimeReceiptSource::Auction(value) => ReceiptSourceV2::Auction(value),
-                RuntimeReceiptSource::DayEnd(value) => ReceiptSourceV2::DayEnd(value),
+                RuntimeReceiptSource::SealedIntent(value) => {
+                    SavedReceiptSource::SealedIntent(value)
+                }
+                RuntimeReceiptSource::QuoteExpiry(value) => SavedReceiptSource::QuoteExpiry(value),
+                RuntimeReceiptSource::Auction(value) => SavedReceiptSource::Auction(value),
+                RuntimeReceiptSource::DayEnd(value) => SavedReceiptSource::DayEnd(value),
             },
-            transition: ReceiptTransitionV2 {
+            transition: SavedReceiptTransition {
                 envelope: self.transition.envelope,
                 ordinal: self.transition.ordinal,
             },
@@ -775,7 +767,7 @@ impl RuntimeReceiptLocalKey {
 fn invariant(description: String) -> StepFatal {
     StepFatal::InvariantViolation {
         description,
-        location: "session::persistence::v2".to_owned(),
+        location: "session::persistence::saved_runtime".to_owned(),
     }
 }
 

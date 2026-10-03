@@ -168,7 +168,7 @@ fn duplicate_plan_requests_are_rejected_before_order_can_affect_allocation() {
 
 #[test]
 fn non_a_share_board_lot_is_rejected() {
-    // Given / When / Then: task 22's public target conversion cannot opt out of the A-share lot.
+    // 公共目标换算必须遵守 A 股申报数量单位，不能由调用方关闭此约束。
     assert!(matches!(
         engine::plans::target_share_quantity(2_000, money(100_000), money(100), 1),
         Err(CandidateError::InvalidBoardLotSize { lot_size: 1 })

@@ -35,12 +35,12 @@ pub(crate) fn entry(
     }
 }
 
-/// 更正金样账套（科目表 v2）：2029 开局 + 2030 全年经营流（经 Q1/年末）。
+/// 更正金样账套（科目表 version=2）：2029 开局 + 2030 全年经营流（经 Q1/年末）。
 pub(crate) fn correction_books() -> Books {
     use BusinessKind::*;
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
-    let mut books = Books::new(engine::company::industrial::industrial_chart_v2());
+    let mut books = Books::new(engine::company::industrial::industrial_account_chart());
     books
         .post_batch(vec![
             entry(

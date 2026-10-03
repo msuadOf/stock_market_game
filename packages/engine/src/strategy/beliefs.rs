@@ -1,8 +1,8 @@
-//! 信念簿（K5 行 130–133，任务 18）：逐 (NPC, 股票) 的个人基本面预期状态。
+//! 信念簿：逐 (NPC, 股票) 的个人基本面预期状态。
 //!
 //! 估值纯属个人：本模块不存在任何设定/调整市场价格的路径（类型面上不引用
 //! market/session——测试以行情快照 spy 锁定）；跨 NPC 也不共享估值。
-//! 输入只来自本人已获知的公开报告（任务 16 `NpcObservationContext` 引用
+//! 输入只来自本人已获知的公开报告（`NpcObservationContext` 引用
 //! 面），个人假设在构造时一次性抽定（每 profile 生命周期恰 6 次 f64，
 //! canonical 序见 `draw_personal_assumptions` 文档）。信息驱动的更新语义
 //! （λ 修订/直接重估/到期/经历）在 `fundamental/update.rs`。
@@ -64,7 +64,7 @@ pub enum BeliefError {
     NoOwnAnnualMaterial,
 }
 
-/// 逐股票信念条目（K5 行 130）。
+/// 逐股票信念条目。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BeliefEntry {
     pub company: CompanyId,
@@ -230,7 +230,7 @@ impl BeliefBook {
         self.institution_policy = Some(policy);
     }
 
-    /// 个体分析档案（K5a 混合权重面；任务 26 会话决策链接线读取）。
+    /// 个体分析档案（混合权重面；会话决策链接线读取）。
     pub fn analysis(&self) -> &AnalysisProfile {
         &self.analysis
     }

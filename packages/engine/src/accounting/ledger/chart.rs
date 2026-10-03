@@ -1,7 +1,7 @@
-//! 版本化科目表（K2/K3）：通用科目 + 五要素分类 + 现金类/备抵标志。
+//! 版本化科目表：通用科目 + 五要素分类 + 现金类/备抵标志。
 //!
-//! 行业科目表（银行/保险/地产专属科目）在任务 8–11 以**新版本或扩展表**落
-//! 地，不改动本表语义。科目编号沿用企业会计准则通用科目体系（四位数字串，
+//! 各行业科目表（工业/银行/保险/地产）使用**独立 version 值或扩展表**，
+//! 不改动通用表语义。科目编号沿用企业会计准则通用科目体系（四位数字串，
 //! 支持子科目扩展），与交易域 `AccountId` 是完全独立的命名空间。
 
 use std::collections::BTreeMap;
@@ -32,7 +32,7 @@ impl std::fmt::Display for LedgerAccountId {
     }
 }
 
-/// 会计五要素（基本准则；「利润」并入权益的滚动口径，结账在任务 13）。
+/// 会计五要素（基本准则；「利润」并入权益的滚动口径，结账在 `closing`）。
 #[derive(
     Copy,
     Clone,
@@ -138,8 +138,8 @@ impl AccountChart {
         })
     }
 
-    /// 通用 v1 科目表（企业会计准则通用科目编号；行业表在任务 8–11 扩充）。
-    pub fn generic_v1() -> Self {
+    /// 通用科目表（AccountChart.version=1，企业会计准则通用科目编号；行业表独立扩充）。
+    pub fn generic_account_chart() -> Self {
         use AccountElement::*;
         let acc = |code: &str, def: AccountDef| (LedgerAccountId(code.to_string()), def);
         let accounts = vec![
@@ -160,7 +160,7 @@ impl AccountChart {
             acc("6603", AccountDef::new("财务费用", Expense)),
             acc("6801", AccountDef::new("所得税费用", Expense)),
         ];
-        Self::new(1, accounts).expect("generic v1 chart is well-formed")
+        Self::new(1, accounts).expect("通用科目表（AccountChart.version=1）必须合法")
     }
 
     pub fn version(&self) -> u32 {

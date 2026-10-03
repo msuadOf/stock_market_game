@@ -1,7 +1,7 @@
-//! 公告曝光进入发现权重的唯一通道：任务 16 公开面（`discovery_candidates`）。
+//! 公告曝光进入发现权重的唯一通道：公开面 `discovery_candidates`。
 //!
 //! - 公告公布 ⇒ 所属公司股票进入曝光集合 ⇒ 发现权重 +2.0（发现机会提高，
-//!   绝不自动获知——获知只能经 `record_acquisition`，K4「新曝光不等于已读」）。
+//!   绝不自动获知——获知只能经 `record_acquisition`，新曝光不等于已读）。
 //! - 公布时点之前 `as_of` 查询 ⇒ 候选面为空 ⇒ 权重不变（未披露事实惰性）。
 //! - 一次公共公告提高的是**个体**发现概率：每个 NPC 用自己的注意力 RNG 流
 //!   抽样 ⇒ 全体候选绝不同步（分布断言，不是单次结果断言）。
@@ -16,7 +16,7 @@ use engine::accounting::{
     JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::experience::PersonalWatchlist;
 use engine::information::{
@@ -28,7 +28,7 @@ use engine::StockCode;
 
 use super::{attention, code, market_of, view};
 
-/// 公司 id ↔ 股票代码映射由会话接线（任务 26）持有；测试用固定映射。
+/// 公司 id ↔ 股票代码映射由会话接线持有；测试用固定映射。
 pub(crate) fn company_of(code: &StockCode) -> CompanyId {
     CompanyId(format!("C-{}", code.0))
 }
@@ -39,7 +39,7 @@ pub(crate) fn d(iso: &str) -> CivilDate {
 
 /// 开局账套（私有经营事实的载体；与公开库无连接）。
 pub(crate) fn private_books() -> Books {
-    let mut books = Books::new(industrial_chart_v2());
+    let mut books = Books::new(industrial_account_chart());
     books
         .post_batch(vec![JournalEntry {
             source: BusinessEventId::new(1),

@@ -53,7 +53,7 @@ impl AuctionFixture {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-            simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+            simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         };
         Self { setup, seed }
     }
@@ -110,7 +110,7 @@ impl AuctionFixture {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-            simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+            simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         };
         Self { setup, seed }
     }
@@ -156,20 +156,20 @@ impl AuctionFixture {
         let mut envelopes = Vec::new();
         for (stock, orders) in &save.auction_orders {
             for order in orders {
-                envelopes.push(engine::LiveEnvelopeV2 {
-                    key: engine::EnvelopeKeyV2 {
+                envelopes.push(engine::SavedLiveEnvelope {
+                    key: engine::SavedEnvelopeKey {
                         account: order.owner,
                         stock: stock.clone(),
                         order: engine::OrderId(order.order_id),
                         side: order.side,
                     },
-                    charged: engine::FeeComponentsV2::default(),
+                    charged: engine::SavedFeeComponents::default(),
                 });
             }
         }
         envelopes.sort_by(|left, right| left.key.cmp(&right.key));
 
-        save.runtime_v2.live_envelopes = envelopes;
+        save.runtime_state.live_envelopes = envelopes;
 
         save
     }
@@ -208,7 +208,7 @@ fn auction_fixture_preserves_exchange_identity_and_order_envelope_keys() {
         Money::from_cents(10_100)
     );
     let keys = save
-        .runtime_v2
+        .runtime_state
         .live_envelopes
         .iter()
         .map(|envelope| envelope.key.clone())
@@ -216,13 +216,13 @@ fn auction_fixture_preserves_exchange_identity_and_order_envelope_keys() {
     assert_eq!(
         keys,
         vec![
-            engine::EnvelopeKeyV2 {
+            engine::SavedEnvelopeKey {
                 account: AccountId(0),
                 stock: code.clone(),
                 order: engine::OrderId(1),
                 side: Side::Buy
             },
-            engine::EnvelopeKeyV2 {
+            engine::SavedEnvelopeKey {
                 account: AccountId(1),
                 stock: code,
                 order: engine::OrderId(2),

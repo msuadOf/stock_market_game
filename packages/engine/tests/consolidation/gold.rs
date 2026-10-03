@@ -1,6 +1,6 @@
 //! 金样一（混合行业 80% 集团）与「全部售出」内部交易金样。
 //!
-//! 混合行业金样（母公司工业 v2 + 子公司银行 v3，持股 8000bp = 80%）：
+//! 混合行业金样（母公司工业 AccountChart.version=2 + 子公司银行 AccountChart.version=3，持股 8000bp = 80%）：
 //! - 母公司：开局 现金 5,000,000 + 固定资产 3,000,000 = 实收资本 8,000,000；
 //!   1 月现销 1,000,000、现付管理费用 400,000 → NI 600,000、权益滚动 8,600,000。
 //! - 子公司（银行）：开局 存放央行 2,000,000 = 实收资本 2,000,000；1 月手续费
@@ -15,8 +15,8 @@ use engine::accounting::consolidation::{consolidate, ScopeId};
 use engine::accounting::{
     AccountingAmount, BusinessKind, CashFlowClass, LedgerAccountId, PostingSide,
 };
-use engine::company::bank::bank_chart_v3;
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::bank::bank_account_chart;
+use engine::company::industrial::industrial_account_chart;
 use PostingSide::{Credit, Debit};
 
 /// 合并余额的净借方（断言辅助；贷方余额为负）。
@@ -32,9 +32,9 @@ fn net(
 
 #[test]
 fn mixed_industry_group_80_20_minority_split_is_exact() {
-    // 母公司（工业 v2）：开局 + 1 月现销 + 管理费用。
+    // 母公司（工业 AccountChart.version=2）：开局 + 1 月现销 + 管理费用。
     let parent = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -69,9 +69,9 @@ fn mixed_industry_group_80_20_minority_split_is_exact() {
             ),
         ],
     );
-    // 子公司（银行 v3）：开局 + 1 月手续费 + 付存款利息。
+    // 子公司（银行 AccountChart.version=3）：开局 + 1 月手续费 + 付存款利息。
     let sub = super::books_with(
-        bank_chart_v3(),
+        bank_account_chart(),
         vec![
             entry(
                 1,
@@ -176,7 +176,7 @@ fn mixed_industry_group_80_20_minority_split_is_exact() {
 #[test]
 fn fully_sold_intercompany_sale_has_no_inventory_line() {
     let sub = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -204,7 +204,7 @@ fn fully_sold_intercompany_sale_has_no_inventory_line() {
         ],
     );
     let parent = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,

@@ -61,7 +61,7 @@ fn continuous_initial_round_batches_independent_accounts_and_stocks() {
         apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
             .unwrap();
 
-    assert_eq!(rounds.len(), 1, "independent stocks must reach P4 together");
+    assert_eq!(rounds.len(), 1, "独立股票必须共同进入 StockProcessing");
     assert_eq!(rounds[0].projections.len(), 2);
     assert_eq!(rounds[0].facts.len(), 2);
     assert_eq!(validator.last_round_account_shards(), 2);

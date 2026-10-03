@@ -1,10 +1,10 @@
-//! 共享夹具：单公司披露场景（2030 全年账 → 年结 v1 → 按排期公开 + 一条
-//! 临时公告），以及「未披露事实变更」与「更正 v2 事后公布」两个推进助手
+//! 共享夹具：单公司披露场景（2030 全年账 → 原年结报告 → 按排期公开 + 一条
+//! 临时公告），以及「未披露事实变更」与「更正报告事后公布」两个推进助手
 //! （books_fixture/fixture 同 publications 套件形态）。
 //!
 //! 时间线（对一切偏移 0..=7 确定成立）：
-//! 年报 v1 公布 2031-03-20..27 18:00 < 公告 2031-04-01 18:00 <
-//! 更正 v2 公布 2031-04-20..27 18:00。
+//! 原年报公布 2031-03-20..27 18:00 < 公告 2031-04-01 18:00 <
+//! 更正报告公布 2031-04-20..27 18:00。
 
 use engine::accounting::closing::{ClosingEngine, CorrectionRequest};
 use engine::accounting::consolidation::{MemberId, ScopeId};
@@ -14,7 +14,7 @@ use engine::accounting::{
     JournalEntry, JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
     scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
@@ -30,13 +30,13 @@ pub(crate) const OPS_SEED: u64 = 11;
 /// 场景公司 id。
 pub(crate) const COMPANY: &str = "C-INFO";
 
-/// NPC 甲（观察窗口内阅读公开信息）。
-pub(crate) fn npc_a() -> AccountId {
+/// 主要 NPC；是否阅读及阅读时点由各测试场景显式登记。
+pub(crate) fn primary_information_npc() -> AccountId {
     AccountId(11)
 }
 
-/// NPC 乙（观察窗口内不阅读任何内容）。
-pub(crate) fn npc_b() -> AccountId {
+/// 对照 NPC；是否阅读及阅读时点由各测试场景显式登记。
+pub(crate) fn peer_information_npc() -> AccountId {
     AccountId(22)
 }
 
@@ -123,7 +123,7 @@ impl FixtureMarket {
     }
 }
 
-/// 完整披露场景：账套 + 结账登记簿（年报 v1 序列 1）+ 公开库（v1 已公开、
+/// 完整披露场景：账套 + 结账登记簿（原年报 ReportVersion.sequence=1）+ 公开库（原年报已公开、
 /// 一条公告已公开）。
 pub(crate) struct Scenario {
     pub company: CompanyId,
@@ -131,12 +131,12 @@ pub(crate) struct Scenario {
     pub books: Books,
     pub closing: ClosingEngine,
     pub library: PublicLibrary,
-    /// 年报 v1 公布时点（18:00 相位）。
+    /// 原年报公布时点（18:00 相位）。
     pub annual_instant: CivilInstant,
-    /// 更正 v2 公布时点（2031 Q1 排期相位，晚于一切已登记获知时点）。
+    /// 更正报告公布时点（2031 Q1 排期相位，晚于一切已登记获知时点）。
     pub correction_instant: CivilInstant,
-    /// 年报 v1 公布 id。
-    pub annual_v1_id: PublicationId,
+    /// 原年报公布 id。
+    pub original_annual_report_id: PublicationId,
     /// 公告公布 id。
     pub announcement_id: PublicationId,
     /// 公告公布时点（2031-04-01 18:00）。
@@ -155,7 +155,7 @@ impl Scenario {
             .expect("q1 2031 schedule legal");
 
         // 2029 开局 + 2030 全年经营流（publications/books_fixture 同款已证可年结）。
-        let mut books = Books::new(industrial_chart_v2());
+        let mut books = Books::new(industrial_account_chart());
         books
             .post_batch(vec![
                 entry(
@@ -199,14 +199,14 @@ impl Scenario {
             .expect("fixture entries must post");
 
         let mut closing = ClosingEngine::new();
-        let (_monthly, annual_v1) = closing
+        let (_monthly, original_annual_report) = closing
             .close_year(&mut books, &member, IndustryPresentation::Industrial, 2030)
             .expect("year close");
-        assert_eq!(annual_v1.sequence, 1);
+        assert_eq!(original_annual_report.sequence, 1);
 
         let approval = CivilInstant::from_hms(annual_instant.date(), 8, 0, 0).expect("approval");
         let mut library = PublicLibrary::new();
-        let annual_v1_id = library
+        let original_annual_report_id = library
             .publish_closed(
                 &closing,
                 PublicationRequest {
@@ -226,7 +226,7 @@ impl Scenario {
                     supersedes: None,
                 },
             )
-            .expect("annual v1 publishes");
+            .expect("原年报按排期公布");
 
         // 临时公告：发生日 = 公布日（发生后的下一个 18:00 相位），条款只含已确认事实。
         let announcement_date = d("2031-04-01");
@@ -254,7 +254,7 @@ impl Scenario {
             library,
             annual_instant,
             correction_instant,
-            annual_v1_id,
+            original_annual_report_id,
             announcement_id,
             announcement_instant,
         }
@@ -268,8 +268,8 @@ impl Scenario {
             .expect("undisclosed entry posts");
     }
 
-    /// 公开更正 v2：先经结账登记簿重述（调整分录过账于开放期间 2031-01，
-    /// 生成年报 v2 supersedes v1），再在更正后的下一个排期相位公开。
+    /// 公开更正报告：先经结账登记簿重述（调整分录过账于开放期间 2031-01，
+    /// 生成年报 ReportVersion.sequence=2 并令 supersedes 指向原报告（ReportVersion.sequence=1）），再在更正后的下一个排期相位公开。
     pub(crate) fn publish_correction(&mut self) -> PublicationId {
         let corrected = self
             .closing
@@ -286,7 +286,7 @@ impl Scenario {
                     reason: "遗漏现金收入更正".to_string(),
                 },
             )
-            .expect("correction registers v2");
+            .expect("更正年报登记新 ReportVersion.sequence");
         assert_eq!(corrected.sequence, 2);
 
         let approval =
@@ -304,10 +304,10 @@ impl Scenario {
                     approved_at: approval,
                     published_at: self.correction_instant,
                     origin: PublicationOrigin::Correction,
-                    supersedes: Some(self.annual_v1_id),
+                    supersedes: Some(self.original_annual_report_id),
                 },
             )
-            .expect("correction publishes as v2")
+            .expect("更正年报作为新版本公布")
     }
 }
 

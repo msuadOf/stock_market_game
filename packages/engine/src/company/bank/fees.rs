@@ -1,4 +1,4 @@
-//! 手续费及佣金收入处理器（K3 银行，任务 9；CAS 14 §4 服务履约收现）。
+//! 手续费及佣金收入处理器（银行经营会计约束；CAS 14 §4 服务履约收现）。
 
 use crate::accounting::{
     AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, PostingSide,

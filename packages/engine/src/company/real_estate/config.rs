@@ -1,6 +1,6 @@
-//! 地产账套装配输入与开局守卫（K3 地产，任务 11）：配置值类型 + 构造期
+//! 地产账套装配输入与开局守卫（地产经营会计约束）：配置值类型 + 构造期
 //! 守卫（资本化政策校验先行；开局行不得给地产子账科目种子——经营前史由
-//! 任务 14 用同一处理器生成，不从存档倒推，诚实边界）。
+//! 自然日经营演化用同一处理器生成，不从存档倒推，诚实边界）。
 //!
 //! **资本化政策是版本化游戏假设**（`game-assumption-borrowing-capitalization`，
 //! CAS 17 原文取证受阻——docs/company-accounting.md §7；参数不声称真实准则
@@ -40,15 +40,15 @@ impl CapitalizationPolicy {
 pub struct RealEstateConfig {
     pub chart: AccountChart,
     pub as_of: CivilDate,
-    /// 显式平衡的开局行（经 `post_batch` 验证路径，任务 7 语义）。
+    /// 显式平衡的开局行（经 `post_batch` 验证路径，公司规格与开局账套语义）。
     /// 只允许现金 + 权益侧科目；触碰地产子账科目 → 构造期拒绝。
     pub opening_lines: Vec<JournalLine>,
     pub counterparties: Vec<ExternalCounterparty>,
-    /// 经营预算（含授信——项目借款必须经额度约束，K2）。
+    /// 经营预算（含授信——项目借款必须经额度约束，会计与资金边界）。
     pub budget: OperatingBudget,
     /// 版本化资本化政策（游戏假设，无生产默认构造）。
     pub capitalization_policy: CapitalizationPolicy,
-    /// 单公司同时存续的项目数上限（K2 需求约束；≥1）。
+    /// 单公司同时存续的项目数上限（需求与预算约束；≥1）。
     pub max_projects: usize,
 }
 

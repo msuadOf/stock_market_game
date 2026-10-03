@@ -1,4 +1,4 @@
-//! 前史生成（K2：开局前 2 个完整自然年度 + 当年截至开局前日）。
+//! 前史生成（会计与资金边界：开局前 2 个完整自然年度 + 当年截至开局前日）。
 //!
 //! 同一处理器 + 初始化专用 RNG 流（`RngStream::InitHistory`）：账套 as_of
 //! 必须由调用方设为前史首日前一天（行业账套不暴露 as_of——带借款的账套会
@@ -11,7 +11,7 @@ use crate::company::operations::config::CompanyOperationsConfig;
 use crate::company::operations::core::CompanyOperations;
 use crate::company::operations::error::OperationsError;
 
-/// 前史元数据（任务 15 组装开局已发布版本时标记 `SeededPrehistory` 用）。
+/// 前史元数据（information 组装开局已发布版本时标记 `SeededPrehistory` 用）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HistoryMeta {
     /// 前史最后一个已生成自然日（= 开局前日）。
@@ -28,7 +28,7 @@ pub fn generate_history(
     config: CompanyOperationsConfig,
     start_date: CivilDate,
 ) -> Result<CompanyOperations, OperationsError> {
-    let calendar = TradingCalendar::default_v1()?;
+    let calendar = TradingCalendar::current_default_calendar()?;
     let floor = calendar.policy().init_only_min_start();
     let ceiling = calendar.policy().runtime_max_end();
     if start_date > ceiling {

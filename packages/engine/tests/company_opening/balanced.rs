@@ -168,7 +168,7 @@ fn default_registry_maps_five_stocks_with_exact_share_capital() {
             .issuer_of(&StockCode(code.to_string()))
             .expect("every default stock has an issuer");
         let company = registry.get(issuer).expect("issuer is registered");
-        // 股本精确匹配（K2：固定股本与股票总股本一致，流通股与总股本不可互换）。
+        // 股本精确匹配（会计与资金边界：固定股本与股票总股本一致，流通股与总股本不可互换）。
         assert_eq!(company.spec().issued_shares, total_shares, "{code}");
         // 默认 5 股票全部映射工商语义；银行/保险/地产只作为未上市测试实体存在。
         assert_eq!(company.spec().kind, CompanyKind::Industrial, "{code}");
@@ -200,7 +200,7 @@ fn default_registry_maps_five_stocks_with_exact_share_capital() {
         );
     }
 
-    // 固定集团关系：测试工商实体是 600101 发行人的子公司（合并报表任务 12）。
+    // 固定集团关系：测试工商实体是 600101 发行人的子公司（用于合并报表）。
     let parent = registry
         .issuer_of(&StockCode("600101".to_string()))
         .expect("600101 issuer")

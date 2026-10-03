@@ -1,7 +1,7 @@
 use crate::strategy::{ProductionStrategy, Strategy, StrategyState, StrategyStateError};
 use std::sync::{Arc, OnceLock};
 
-/// P2 works on a separate hydrated strategy and installs a replacement only after projection.
+/// DecisionShadow 在独立恢复的 strategy 上运行，只在投影完成后安装替换状态。
 pub struct StoredStrategy(Arc<StrategyStorage>);
 
 impl std::fmt::Debug for StoredStrategy {

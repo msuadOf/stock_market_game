@@ -1,8 +1,8 @@
-//! 机构目标价策略 TargetPolicy 与信念驱动机构策略（任务 26）。
+//! 机构目标价策略 TargetPolicy 与信念驱动机构策略。
 //!
 //! 共同 V（隐藏公允价）已删除：机构的方向判断不再读取任何市场级隐藏价值，
 //! 而是由会话决策链接线（session/decision_chain.rs）按账户的
-//! [`BeliefBook`](super::beliefs::BeliefBook) 个人每股估值区间与 K5a 五路
+//! [`BeliefBook`](super::beliefs::BeliefBook) 个人每股估值区间与五路
 //! 信号聚合驱动。本文件只保留：
 //! - [`TargetPolicy`]：Fixed/DriftUp 两种显式目标价（数据驱动内核与测试用）；
 //! - [`BeliefInstitutionStrategy`]：DeepValue/Defensive/Growth/Balanced/ActiveTrader 的
@@ -37,9 +37,9 @@ pub enum TargetPolicy {
 /// 信念驱动的机构策略壳（含基本面型与日内积极交易型）。
 ///
 /// 估值与方向由账户的 `BeliefBook`（个人已知公开报告推导的每股估值区间）
-/// 与 K5a 混合分析给出，全部状态在会话侧按账户持有；本类型只承载身份、
+/// 与混合分析给出，全部状态在会话侧按账户持有；本类型只承载身份、
 /// 观察节奏与个体规模参数。`decide` 恒空且不触碰工作单——计划驱动的账户
-/// 绝不对同一 (账户,股票) 走普通意图物化路径（任务 24 复核遗留的硬约束）。
+/// 绝不对同一 (账户,股票) 走普通意图物化路径，避免与计划执行重复。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BeliefInstitutionStrategy {

@@ -68,7 +68,7 @@ fn public_step_dispatches_each_market_phase_and_commits_its_evidence() {
         assert_eq!(session.tick(), tick + 1);
         assert_eq!(
             evidence.next_receipt_index(),
-            session.save().unwrap().runtime_v2.next_receipt_base
+            session.save().unwrap().runtime_state.next_receipt_base
         );
         match expected_phase {
             TradingPhase::CallAuction | TradingPhase::ClosingAuction => assert!(events.iter().any(
@@ -313,7 +313,7 @@ fn public_step_commits_phase_boundaries_once_and_leaves_a_saveable_quiet_point()
         assert_eq!(session.day(), expected_day);
 
         let save = session.save().unwrap_or_else(|error| {
-            panic!("tick {tick_after} P9 must leave a legal save quiet point: {error}")
+            panic!("tick {tick_after} 的 CommitTick 必须留下合法存档静止点：{error}")
         });
         let restored = GameSession::restore(&save).unwrap_or_else(|error| {
             panic!("tick {tick_after} committed phase must restore: {error}")

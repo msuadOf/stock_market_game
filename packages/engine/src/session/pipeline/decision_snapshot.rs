@@ -5,11 +5,10 @@ use crate::{AccountId, AccountKind, RetailExperienceState, TradingPhase};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Owned, read-only strategy input sealed before P2 starts.
+/// 在 NPC 决策开始前密封的拥有所有权、只读 strategy 输入。
 ///
-/// The type deliberately contains no router, order book, event sink, or mutable
-/// session reference. P2 source runners return deltas instead of mutating this
-/// snapshot or authoritative state.
+/// 不持有 router、订单簿、event sink 或可变会话引用。
+/// NPC 来源返回 deltas，不直接修改快照或权威状态。
 #[derive(Clone, Debug)]
 pub struct DecisionSnapshot {
     tick: u64,
@@ -188,7 +187,7 @@ impl DecisionSnapshot {
         self.tick
     }
 
-    /// Authoritative session seed used by the legacy-compatible per-account P2 RNG derivation.
+    /// 供账户独立 RNG 派生使用的权威会话 seed，保持既有兼容推导。
     pub const fn npc_seed_base(&self) -> u64 {
         self.npc_seed_base
     }

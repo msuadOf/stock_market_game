@@ -1,4 +1,4 @@
-//! 银行/保险/地产金样 + 窗口化行与任务 9–11 列报分类层的一致性对照。
+//! 银行/保险/地产金样 + 窗口化行与行业列报分类层的一致性对照。
 
 use crate::fixture::{bank_fixture, insurance_fixture, real_estate_fixture, standalone};
 use engine::accounting::reports::bank::bank_presentation_lines;
@@ -102,7 +102,7 @@ fn bank_june_gold() {
         }
     ));
 
-    // 与任务 9 列报分类层的一致性：全期间窗口 == 期末窗口（6 月后无分录）。
+    // 与银行列报分类层的一致性：全期间窗口 == 期末窗口（6 月后无分录）。
     let presentation = bank_presentation_lines(books.ledger()).expect("presentation lines");
     assert_eq!(
         bs_amount(&set, BsLine::LoansAndAdvances),

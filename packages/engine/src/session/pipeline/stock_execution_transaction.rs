@@ -1,8 +1,7 @@
-//! Detached atomic candidate for the continuous-worker, receipt, and settlement stages.
+//! 为 Continuous worker、receipt 与结算构建独立原子 candidate。
 //!
-//! This is deliberately not a `GameSession` integration point. It consumes the owned P4 worker
-//! outputs, runs ReceiptAggregation and Settlement against private authority shadows, and returns one candidate for a
-//! later P9 commit. No input authority is mutated here.
+//! 本模块消费股票 worker 输出，在私有权威 shadows 上运行 ReceiptAggregation 与 Settlement，
+//! 返回供后续 CommitTick 共同安装的 candidate；不修改输入权威状态。
 
 use super::{
     account_settlement::{
@@ -22,15 +21,15 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum StockExecutionTransactionError {
-    #[error("P4 produced more than one continuous worker output for stock {code:?}")]
+    #[error("StockProcessing 为股票 {code:?} 产生了多个 Continuous worker 输出")]
     DuplicateStockWorker { code: StockCode },
-    #[error("P5 receipt transaction failed: {0}")]
+    #[error("ReceiptAggregation receipt 事务失败：{0}")]
     ReceiptAggregation(#[source] StepFatal),
-    #[error("P6 settlement transaction failed: {0}")]
+    #[error("SettlementShadow 结算事务失败：{0}")]
     Settlement(#[source] SettlementTransactionError),
 }
 
-/// P4 facts and the resulting market owned by one deterministically identified stock worker.
+/// 由确定性身份标识的同一个逐股 worker 拥有股票处理事实及其市场结果。
 pub(super) struct StockExecutionOutput {
     pub(super) market: Market,
     pub(super) trades: Vec<ContinuousTradeFact>,
@@ -38,11 +37,10 @@ pub(super) struct StockExecutionOutput {
     pub(super) cancel_facts: Vec<ContinuousCancelFact>,
 }
 
-/// A single detached candidate spanning P4, ReceiptAggregation, and Settlement.
+/// 同一 detached candidate 覆盖 StockProcessing、ReceiptAggregation 与 Settlement。
 ///
-/// The returned containers must be installed together by the future P9 commit. Returning a
-/// candidate instead of mutating the inputs prevents a successful ReceiptAggregation ledger update from becoming
-/// externally visible when Settlement fails.
+/// 全部容器必须由 CommitTick 共同安装。返回 candidate 而不修改输入，
+/// 确保 Settlement 失败时，已成功的 ReceiptAggregation 账本更新不会对外可见。
 pub(super) struct StockExecutionTransactionOutput {
     pub(super) ledger: EnvelopeLedger,
     pub(super) account_patch: BTreeMap<AccountId, Account>,
@@ -74,11 +72,10 @@ impl<'receipt> SettlementApplicationContext<'receipt> {
     }
 }
 
-/// Applies the P4 continuous-worker outputs through ReceiptAggregation then Settlement on private candidates.
+/// 在私有 candidate 上依次应用 Continuous worker 输出、receipt 聚合与结算。
 ///
-/// Stock identity comes from each worker's resulting `Market`, never its position in `workers`.
-/// ReceiptAggregation remains the only receipt-index authority, while Settlement remains the only account-settlement and
-/// retail-projection authority.
+/// 股票身份来自 worker 结果的 Market，而非 workers 中的位置。
+/// ReceiptAggregation 是唯一 receipt index authority；Settlement 是唯一账户结算与散户投影 authority。
 #[cfg(test)]
 pub(super) fn apply_stock_execution_transaction(
     ledger: &EnvelopeLedger,
@@ -123,10 +120,9 @@ pub(super) fn apply_stock_execution_transaction_with_beliefs(
     )
 }
 
-/// Runs the final Settlement once over the already-applied PreSeal prefix followed by
-/// the receipts produced by this ReceiptAggregation batch. PreSeal receipts must not be sent
-/// through ReceiptAggregation again: their ledger transitions and indices were committed by
-/// P0 before the immutable allocation snapshot was captured.
+/// 最终 Settlement 只运行一次，先处理已应用的 PreSeal 前缀，再处理本次 ReceiptAggregation receipts。
+/// PreSeal receipts 不得再次进入 ReceiptAggregation：报价过期处理已在不可变
+/// allocation snapshot 捕获前提交它们的 ledger transitions 与 indices。
 pub(super) fn apply_stock_execution_transaction_with_preceding_beliefs(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
@@ -179,7 +175,7 @@ pub(super) fn apply_stock_execution_transaction_with_preceding_beliefs(
             .checked_add(receipts.len())
             .ok_or_else(|| {
                 StockExecutionTransactionError::Settlement(SettlementTransactionError::Settlement(
-                    invariant("combined P6 receipt count overflow"),
+                    invariant("合并 SettlementShadow receipt 数量时溢出"),
                 ))
             })?,
     );

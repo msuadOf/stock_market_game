@@ -1,4 +1,4 @@
-//! K5a/K6 execution urgency, independent from valuation and direction scoring.
+//! 执行紧迫度评估独立于估值与方向评分。
 
 use super::{PauseReason, Urgency};
 use crate::orderbook::Side;

@@ -28,7 +28,7 @@ test("performance config records the actual toolchain and builds both source-bou
   const request = path.join(root, "request.json");
   const baselineBinary = path.join(root, "baseline-endpoint");
   const currentBinary = path.join(root, "current-endpoint");
-  await writeFile(request, JSON.stringify({ seed: "1", setup: { simulation_policy_id: "a-share-simulation-v2" } }));
+  await writeFile(request, JSON.stringify({ seed: "1", setup: { simulation_policy_id: "a-share-simulation" } }));
   await writeFile(baselineBinary, "#!/bin/sh\nexit 0\n");
   await writeFile(currentBinary, "#!/bin/sh\nexit 0\n");
   await Promise.all([chmod(baselineBinary, 0o755), chmod(currentBinary, 0o755)]);

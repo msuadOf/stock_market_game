@@ -85,7 +85,7 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -190,11 +190,11 @@ impl TestOrderSaveFixture {
             config: &engine::GameConfig,
             side: Side,
             filled_value: Money,
-        ) -> engine::FeeComponentsV2 {
+        ) -> engine::SavedFeeComponents {
             if filled_value == Money::ZERO {
-                return engine::FeeComponentsV2::default();
+                return engine::SavedFeeComponents::default();
             }
-            engine::FeeComponentsV2 {
+            engine::SavedFeeComponents {
                 commission: config.commission(filled_value).unwrap(),
                 stamp_tax: match side {
                     Side::Buy => Money::ZERO,
@@ -239,8 +239,8 @@ impl TestOrderSaveFixture {
         for (stock, orders) in &save.resting_orders {
             for order in orders {
                 let nominal = fees(&save.setup.config, order.side, order.filled_value);
-                envelopes.push(engine::LiveEnvelopeV2 {
-                    key: engine::EnvelopeKeyV2 {
+                envelopes.push(engine::SavedLiveEnvelope {
+                    key: engine::SavedEnvelopeKey {
                         account: order.owner,
                         stock: stock.clone(),
                         order: order.id,
@@ -252,14 +252,14 @@ impl TestOrderSaveFixture {
         }
         for (stock, orders) in &save.auction_orders {
             for order in orders {
-                envelopes.push(engine::LiveEnvelopeV2 {
-                    key: engine::EnvelopeKeyV2 {
+                envelopes.push(engine::SavedLiveEnvelope {
+                    key: engine::SavedEnvelopeKey {
                         account: order.owner,
                         stock: stock.clone(),
                         order: engine::OrderId(order.order_id),
                         side: order.side,
                     },
-                    charged: engine::FeeComponentsV2::default(),
+                    charged: engine::SavedFeeComponents::default(),
                 });
             }
         }
@@ -272,7 +272,7 @@ impl TestOrderSaveFixture {
                 *cursor = (*cursor).max(highest.checked_add(1).unwrap());
             }
         }
-        save.runtime_v2.live_envelopes = envelopes;
+        save.runtime_state.live_envelopes = envelopes;
 
         let restored = GameSession::restore(save)?;
         let snapshot = restored.snapshot();
@@ -382,7 +382,7 @@ fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
         100
     );
     let saved = restored.save().expect("restored fixture saves");
-    assert_eq!(saved.runtime_v2.live_envelopes.len(), 2);
+    assert_eq!(saved.runtime_state.live_envelopes.len(), 2);
     assert_eq!(
         saved.book_next_sequences[&code], 42,
         "同步不能回退已撤单留下的 cursor"
@@ -924,7 +924,7 @@ fn current_save_json_requires_explicit_stock_fields() {
 
     for required_field in [
         "schema_version",
-        "runtime_v2",
+        "runtime_state",
         "price_history",
         "market_minute_closes",
         "rng_state",
@@ -948,15 +948,15 @@ fn current_save_json_requires_explicit_stock_fields() {
     let decoded: engine::SaveSlot = serde_json::from_value(legacy).unwrap();
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("legacy")
+        Err(engine::SessionError::InvalidSave(message)) if message == "存档 schema_version 1：不支持旧版本，请创建 schema_version=3 的新存档"
     ));
 
     let mut future = current;
-    future["schema_version"] = serde_json::json!(3);
+    future["schema_version"] = serde_json::json!(4);
     let decoded: engine::SaveSlot = serde_json::from_value(future).unwrap();
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("newer")
+        Err(engine::SessionError::InvalidSave(message)) if message == "存档 schema_version 4 高于当前支持版本 3"
     ));
 
     let save = GameSession::new(sample_setup(), 42)
@@ -1024,7 +1024,7 @@ fn restore_rejects_mismatched_npc_strategy_state_identity() {
         .unwrap()
         .save()
         .expect("healthy save");
-    save.runtime_v2.strategy_states.insert(
+    save.runtime_state.strategy_states.insert(
         AccountId(1),
         engine::strategy::StrategyState::Momentum(
             engine::MomentumStrategy::new(3, 0.02, 100).unwrap(),
@@ -1043,21 +1043,21 @@ fn saved_strategy_states_cover_each_npc_kind_and_rebuild_exactly() {
         .unwrap()
         .save()
         .expect("healthy save");
-    assert_eq!(save.runtime_v2.strategy_states.len(), 4);
+    assert_eq!(save.runtime_state.strategy_states.len(), 4);
     assert!(matches!(
-        save.runtime_v2.strategy_states[&AccountId(1)].profile(),
+        save.runtime_state.strategy_states[&AccountId(1)].profile(),
         engine::strategy::StrategyProfile::Retail(_)
     ));
     assert!(matches!(
-        save.runtime_v2.strategy_states[&AccountId(2)].profile(),
+        save.runtime_state.strategy_states[&AccountId(2)].profile(),
         engine::strategy::StrategyProfile::Retail(_)
     ));
     assert!(matches!(
-        save.runtime_v2.strategy_states[&AccountId(3)].profile(),
+        save.runtime_state.strategy_states[&AccountId(3)].profile(),
         engine::strategy::StrategyProfile::Institution(_)
     ));
     assert!(matches!(
-        save.runtime_v2.strategy_states[&AccountId(4)].profile(),
+        save.runtime_state.strategy_states[&AccountId(4)].profile(),
         engine::strategy::StrategyProfile::Hot(_)
     ));
     assert!(GameSession::restore(&save).is_ok());
@@ -1070,14 +1070,14 @@ fn restore_rejects_missing_or_extra_npc_strategy_states() {
         .save()
         .expect("healthy save");
     let mut missing = save.clone();
-    missing.runtime_v2.strategy_states.remove(&AccountId(1));
+    missing.runtime_state.strategy_states.remove(&AccountId(1));
     assert!(matches!(
         GameSession::restore(&missing),
         Err(engine::SessionError::InvalidSave(message)) if message.contains("StrategyState account set")
     ));
 
     let mut extra = save;
-    extra.runtime_v2.strategy_states.insert(
+    extra.runtime_state.strategy_states.insert(
         AccountId(99),
         engine::strategy::StrategyState::Momentum(
             engine::MomentumStrategy::new(3, 0.02, 100).unwrap(),
@@ -1215,9 +1215,8 @@ fn auction_does_not_emit_regular_price_ticks_and_rejects_market_orders() {
             Intent::PlaceMarket {
                 code: code.clone(),
                 side: Side::Buy,
-                // A legal board lot reaches the auction worker, where market orders are
-                // explicitly unsupported. A sub-lot would correctly stop earlier in P3 and
-                // would not exercise this auction-specific rejection contract.
+                // 合法整手数量使请求进入 Auction worker，并在那里拒绝不支持的市价委托。
+                // 不足一手的请求会先被 AccountValidation 拒绝，无法覆盖此竞价拒绝契约。
                 qty: 100,
             },
         )
@@ -2843,9 +2842,12 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     // float_shares=0 → 无持仓 → step 无成交；初始盘口空
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
     let code = StockCode("600101".to_string());
-    let snap0 = s.snapshot();
-    let ms0 = snap0.markets.get(&code).unwrap();
-    assert!(ms0.bids.is_empty() && ms0.asks.is_empty(), "初始盘口应为空");
+    let snapshot_before_order = s.snapshot();
+    let market_before_order = snapshot_before_order.markets.get(&code).unwrap();
+    assert!(
+        market_before_order.bids.is_empty() && market_before_order.asks.is_empty(),
+        "初始盘口应为空"
+    );
     // 玩家挂买单 600101@10.00×100（无对手盘 → 进买盘）
     s.enqueue_player_intent(
         AccountId(0),
@@ -2858,12 +2860,15 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     )
     .unwrap();
     s.step().expect("healthy step");
-    let snap1 = s.snapshot();
-    let ms1 = snap1.markets.get(&code).unwrap();
-    assert!(!ms1.bids.is_empty(), "挂买单后买盘非空");
+    let snapshot_after_order = s.snapshot();
+    let market_after_order = snapshot_after_order.markets.get(&code).unwrap();
+    assert!(!market_after_order.bids.is_empty(), "挂买单后买盘非空");
     // 玩家 1000 买单应在盘口（可能非最优价：ZiNoise NPC 会挂 best_bid+1=1001 抢到买一）。
     assert!(
-        ms1.bids.iter().any(|(p, _)| p.cents() == 1000),
+        market_after_order
+            .bids
+            .iter()
+            .any(|(p, _)| p.cents() == 1000),
         "玩家 1000 买单应在盘口"
     );
 }
@@ -2894,7 +2899,7 @@ fn player_session_with_position(qty: u32, cash: i64) -> GameSession {
 }
 
 #[test]
-fn v2_sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
+fn sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -2953,7 +2958,7 @@ fn v2_sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
 }
 
 #[test]
-fn v2_sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
+fn sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -3012,7 +3017,7 @@ fn v2_sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
 }
 
 #[test]
-fn v2_sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
+fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
     let code = StockCode("600101".to_string());
     for first_side in [Side::Buy, Side::Sell] {
         let mut setup = sample_setup();
@@ -3674,12 +3679,16 @@ fn save_restore_preserves_state() {
     // 验证存档有状态
     assert!(saved.snapshot.tick > 0, "tick should be > 0");
     // 恢复
-    let s2 = GameSession::restore(&saved).unwrap();
-    assert_eq!(s2.tick(), saved.snapshot.tick, "tick restored");
-    assert_eq!(s2.day(), s.day(), "day restored");
+    let restored_session = GameSession::restore(&saved).unwrap();
+    assert_eq!(
+        restored_session.tick(),
+        saved.snapshot.tick,
+        "tick restored"
+    );
+    assert_eq!(restored_session.day(), s.day(), "day restored");
     // 验证账户现金一致
     let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
-    let restored_acc = s2.account(AccountId(0)).unwrap();
+    let restored_acc = restored_session.account(AccountId(0)).unwrap();
     assert_eq!(restored_acc.cash(), snap_acc.cash, "player cash restored");
 }
 
@@ -4112,7 +4121,7 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     assert_eq!(saved.npc_attention.len(), 5);
     let mut restored = GameSession::restore(&saved).unwrap();
 
-    // 任务 27：公司域与个体决策链权威状态随档固化——恢复后与不中断实例
+    // 完整存档：公司域与个体决策链权威状态随档固化——恢复后与不中断实例
     // 逐字节连续（事件流 + 权威存档），不再按过渡契约弱化。
     for _ in 0..40 {
         assert_eq!(
@@ -4130,7 +4139,7 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
 
 #[test]
 fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
-    // 任务 27：决策链状态随档固化后，恢复默认人口（含信念机构）即可保持
+    // 完整存档：决策链状态随档固化后，恢复默认人口（含信念机构）即可保持
     // 逐字节连续——本测试回归原始断言强度（诊断样本不是权威状态 + 12 步
     // 事件/存档字节等价）。
     let mut original = GameSession::new(sample_setup(), 42).unwrap();

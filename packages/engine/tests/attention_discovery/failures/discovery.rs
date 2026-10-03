@@ -72,7 +72,7 @@ fn discovery_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -149,7 +149,7 @@ fn mutating_only_private_operating_facts_changes_no_candidate_and_no_order() {
 #[test]
 fn discovery_sampling_never_writes_into_information_state() {
     // 新曝光不等于已读：抽样 1000 次只产生候选代码，个人信息集字节不变
-    // （获知只能经 record_acquisition 显式登记——任务 16 语义）。
+    // （获知只能经 record_acquisition 显式登记）。
     let fixture = AnnouncementExposureFixture::new();
     let exposed = fixture.exposed_at(fixture.published);
 

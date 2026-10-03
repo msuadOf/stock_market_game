@@ -1,8 +1,7 @@
-//! Host-facing public company-report DTOs.
+//! 面向 Host 的公司公开报表 DTO。
 //!
-//! These types intentionally project immutable published reports only. Company books,
-//! operating state, NPC information, beliefs, and other private authority never cross
-//! this boundary.
+//! 这些类型仅投影已经披露的不可变报表；公司账簿、经营状态、NPC 信息与信念
+//! 等私有权威状态不得跨过此边界。
 
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::{
@@ -34,7 +33,7 @@ pub struct PublicReportPage {
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportSummary {
-    /// Opaque decimal publication ID. It is the only pagination order key.
+    /// PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
     pub id: String,
     pub company_id: String,
     pub period: String,
@@ -61,7 +60,7 @@ pub enum PublicReportKind {
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportAccountingSummary {
-    /// All accounting values are exact decimal yuan strings, never JavaScript numbers.
+    /// 所有会计金额均为精确的十进制元字符串，不使用 JavaScript number。
     pub total_assets: String,
     pub total_liabilities: String,
     pub total_equity: String,

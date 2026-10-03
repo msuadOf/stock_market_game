@@ -37,7 +37,7 @@ fn world_mutations_between_observations_do_not_change_personal_decisions() {
     // 版本登记、18:00 披露（可能发布新公布）——在 NPC 下一次 accepted
     // 注意力（获知）之前，**不得**改变任何个人信念。这是「未披露/未读
     // 事实 ⇒ 同个人决策」的会话级锁：两次快照之间世界确实变了，但决策
-    // 状态必须逐字节不动（只有获知事件才允许改变信念——K4/K5）。
+    // 状态必须逐字节不动（只有获知事件才允许改变信念——经营与信息披露/个人认识与决策）。
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     for _ in 0..60 {
         session.step().expect("healthy step");

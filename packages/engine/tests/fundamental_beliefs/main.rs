@@ -1,4 +1,4 @@
-//! 任务 18 测试夹具（fundamental_beliefs）：四年度工业账套 → 逐年结账 →
+//! 个人信念测试夹具（fundamental_beliefs）：四年度工业账套 → 逐年结账 →
 //! 按排程公开年报（FY2027..FY2030）+ 一条临时公告；顺序 f64 RNG；手工
 //! ReportSet 构造器（核心抽取层的直测面——不经结账机器）。
 //!
@@ -22,7 +22,7 @@ use engine::accounting::{
     JournalEntry, JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::industrial::industrial_account_chart;
 use engine::company::CompanyKind;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
@@ -176,7 +176,7 @@ pub(crate) fn scenario() -> Scenario {
     let member = MemberId(COMPANY.to_string());
     let offset = stable_company_offset(OPS_SEED, &company);
 
-    let mut books = Books::new(industrial_chart_v2());
+    let mut books = Books::new(industrial_account_chart());
     let revenues = [100_000i128, 80_000, 180_000, 198_000];
     let mut batch = vec![entry(
         1,

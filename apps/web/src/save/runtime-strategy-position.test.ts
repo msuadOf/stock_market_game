@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { parseSaveRuntimeV2 } from "./schema/runtime-v2.ts"
+import { parseSaveRuntime } from "./schema/runtime-state.ts"
 
 const ONE = "3ff0000000000000"
 const SMALL = "3f847ae147ae147b"
@@ -35,7 +35,7 @@ function runtime(strategyStates: unknown) {
 test("runtime strategies preserve position adjustment steps and uncapped momentum state", () => {
   for (const step of [0, 750, 10_000]) {
     const input = runtime(strategyStates(step))
-    assert.deepEqual(parseSaveRuntimeV2(input), input)
+    assert.deepEqual(parseSaveRuntime(input), input)
   }
 })
 
@@ -44,10 +44,10 @@ test("runtime position adjustment steps must be explicit integers from zero to t
     const expected = new RegExp(`strategy_states\\.${account}\\.${variant}\\.position_step_bp`)
     const missing = strategyStates(750)[account][variant]
     delete missing.position_step_bp
-    assert.throws(() => parseSaveRuntimeV2(runtime({ [account]: { [variant]: missing } })), expected)
+    assert.throws(() => parseSaveRuntime(runtime({ [account]: { [variant]: missing } })), expected)
     for (const invalid of [-1, 10_001, 0.5, "750", null, Number.NaN, Number.POSITIVE_INFINITY]) {
       const payload = strategyStates(invalid)[account][variant]
-      assert.throws(() => parseSaveRuntimeV2(runtime({ [account]: { [variant]: payload } })), expected)
+      assert.throws(() => parseSaveRuntime(runtime({ [account]: { [variant]: payload } })), expected)
     }
   }
 })
@@ -56,7 +56,7 @@ test("runtime strategies reject the removed stock fraction cap without migrating
   for (const [account, variant] of [["1", "ZiNoise"], ["2", "BeliefInstitution"], ["3", "Momentum"]] as const) {
     const payload = { ...strategyStates(750)[account][variant], max_stock_fraction: ONE }
     assert.throws(
-      () => parseSaveRuntimeV2(runtime({ [account]: { [variant]: payload } })),
+      () => parseSaveRuntime(runtime({ [account]: { [variant]: payload } })),
       new RegExp(`strategy_states\\.${account}\\.${variant}\\.max_stock_fraction`),
     )
   }

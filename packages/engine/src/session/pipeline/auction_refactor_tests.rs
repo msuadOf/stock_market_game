@@ -32,7 +32,7 @@ fn checked_auction_boundary_preserves_phase_tick_and_day_first_errors() {
     let mut continuous = session_at(90, true);
     continuous.state.setup.closing_auction_ticks = 0;
     assert!(
-        matches!(AuctionTickBoundary::capture(&continuous), Err(AuctionDayEndError::Precondition(StepFatal::InvariantViolation { description, .. })) if description == "B2 auction transaction requires an opening or closing auction phase")
+        matches!(AuctionTickBoundary::capture(&continuous), Err(AuctionDayEndError::Precondition(StepFatal::InvariantViolation { description, .. })) if description == "Auction/DayEnd tick 的 Auction 事务要求 OpeningAuction 或 ClosingAuction 阶段")
     );
     let mut overflow = session_at(0, false);
     overflow.state.tick = u64::MAX;

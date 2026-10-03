@@ -1,4 +1,4 @@
-//! 原子复式记账与总账底座（K2，任务 6）。
+//! 原子复式记账与总账底座。
 //!
 //! 分层：`amount`（checked i128 分 + 基点/余数/十进制字符串 serde）→
 //! `period`（会计期间 + 封账状态与守卫）→ `journal`（权威日记账：来源唯一、
@@ -6,9 +6,9 @@
 //! `Books` 组合两者并提供唯一过账入口：**整批先验证后原子提交**——逐笔分录
 //! 错误不留半条账。
 //!
-//! 事实/派生边界（K2）：Journal 是权威事实并随存档保存；Ledger 索引只在
-//! 内存中增量维护，恢复时重放重建（见 `Books` 反序列化）。行业科目表、
-//! 结账机制与报表属任务 8–13；本模块保持通用与版本化。
+//! 事实/派生边界：Journal 是权威事实并随存档保存；Ledger 索引只在
+//! 内存中增量维护，恢复时重放重建（见 `Books` 反序列化）。行业科目表由 `company` 独立扩充；
+//! 结账机制与报表分别在 `closing`/`reports`；账套底座保持通用与版本化。
 //!
 //! 铁律：无 f64；比例用整数基点；利息小数保留合同累计余数；落分统一整数
 //! 半偶舍入；负权益/亏损是合法状态，负现金由过账守卫类型化拒绝（不 clamp）。
@@ -55,7 +55,7 @@ pub use tax::{
 use std::collections::HashMap;
 
 /// 公司账套 = 权威日记账 + 派生总账。投资者 `Account` 与公司经营账套
-/// 完全隔离（K2 资金边界）；公司实体与开局账套在任务 7 落地。
+/// 完全隔离；公司实体与开局账套由 `company` 管理。
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Books {
     journal: Journal,
@@ -124,7 +124,7 @@ impl Books {
         Ok(())
     }
 
-    /// 封账：状态 + 守卫（结账试算/结转/快照在任务 13）。
+    /// 封账：状态 + 守卫（结账试算/结转/快照在 `closing`）。
     pub fn close_period(&mut self, period: AccountingPeriod) -> Result<(), AccountingError> {
         self.journal.close_period(period)
     }

@@ -1,9 +1,9 @@
-//! 工业列报分类层（K3，任务 13）：总账科目 → CAS 30（2026）工商列示行的
-//! 映射 + 工业扩充归类表（完成任务 9–11 建立的四行业集合）。
+//! 工业列报分类层：总账科目 → CAS 30（2026）工商列示行的
+//! 映射 + 工业扩充归类表（与银行/保险/地产构成四行业集合）。
 //!
 //! 与 bank/insurance/real_estate 同构：本模块是**分类层**（全期间读投影，
-//! 任务 13 报表生成器消费窗口化口径，二者共享科目代码）。工业科目表 v2
-//! 的代码真源在 `company::industrial::chart::acct`（任务 8 先建，crate 内
+//! 报表生成器消费窗口化口径，二者共享科目代码）。工业科目表（AccountChart.version=2）
+//! 的代码真源在 `company::industrial::chart::acct`（crate 内
 //! 私有）；本文件的 codes 常量与之镜像——漂移由「科目表全覆盖」归类校验
 //! 与四行业金样测试锁定（缺码 = `UnclassifiedAccount` 类型化拒绝）。
 
@@ -16,7 +16,7 @@ use super::notes::{a, Assignment, NoteTarget};
 use super::BsLine;
 use super::IncomeLine;
 
-/// 工业科目表 v2 扩充科目代码（v1 基础科目见 notes::base_assignments）。
+/// 工业扩充科目代码（AccountChart.version=2；通用基础科目见 notes::base_assignments）。
 pub mod codes {
     pub const BAD_DEBT_ALLOW: &str = "1231"; // 坏账准备（资产备抵）
     pub const RAW_MATERIAL: &str = "1403"; // 原材料
@@ -34,7 +34,7 @@ pub mod codes {
     pub const IMPAIR_LOSS: &str = "6701"; // 资产减值损失
 }
 
-/// 工业扩充归类表（v1 基表之外）。
+/// 工业扩充归类表（通用基表之外）。
 pub fn extra_assignments() -> Vec<Assignment> {
     use codes::*;
     vec![

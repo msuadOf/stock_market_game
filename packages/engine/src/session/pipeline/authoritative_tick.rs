@@ -1,7 +1,7 @@
-//! Single production dispatcher for one complete escrow-backed market tick.
+//! 为完整 Escrow 市场 tick 提供唯一生产 dispatcher。
 //!
-//! Phase-specific transactions own their complete P0-P9 candidate and expose
-//! only an infallible authority swap after every validation has succeeded.
+//! 每种交易阶段事务持有从过期处理到提交的完整 candidate。
+//! 全部校验成功后，只暴露不会失败的权威状态交换。
 
 use super::{
     auction_tick_transaction::prepare_auction_tick_with_evidence,

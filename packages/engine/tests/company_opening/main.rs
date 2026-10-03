@@ -1,12 +1,12 @@
-//! 公司实体与开局账套集成测试（company-information-npc-intentions W1-Task 7）。
+//! 公司实体与开局账套集成测试。
 //!
-//! K2 资金边界：公司经营资金只存在于公司账套（accounting::Books），外部商业
+//! 资金边界：公司经营资金只存在于公司账套（accounting::Books），外部商业
 //! 对手方用独立 `CounterpartyId`；投资者交易 `Account` 与公司账套互不复用。
 //! 开局账套由显式平衡的 OpeningBalance 凭证构成，不依据初始股价或旧 V 反推
 //! 资产。默认 5 股票仅新增发行人映射与虚构工商配置，不改变交易类别/股本。
 //!
 //! 默认 5 股票交易规格表是 `apps/web/src/config/defaults.ts` STOCK_SPECS 的
-//! 逐字段副本（W1-Task 1 先例：外部真源副本必须被测试钉住防漂移）。
+//! 逐字段副本（外部真源副本必须由测试固定，防止漂移）。
 //!
 //! 金样单位约定：注释写「元」便于人读，执行值一律「分」（AccountingAmount）。
 //! 按场景拆分：`balanced`（四种独立测试实体 + 默认映射金样）、`isolation`
@@ -29,7 +29,7 @@ use engine::company::{
 use engine::money::Money;
 use engine::session::{SecurityCategory, StockExchange, StockSpec};
 
-/// 默认开局账套锚点日：2030-01-01 开局（政策 v1 默认起点）的前一自然日。
+/// 默认开局账套锚点日：2030-01-01 开局（当前默认政策起点）的前一自然日。
 pub(crate) const OPENING_AS_OF: &str = "2029-12-31";
 
 /// 测试用 ISO 日期；输入本身必须合法（否则测试夹具写错）。
@@ -51,7 +51,7 @@ pub(crate) fn opening_line(code: &str, side: PostingSide, yuan_amount: i128) -> 
     }
 }
 
-/// 通用 v1 科目表上的开局账套（行业科目表在任务 8–11 以新版本扩充）。
+/// 通用科目表（AccountChart.version=1）上的开局账套（行业科目表由对应经营模块提供独立 version）。
 pub(crate) fn generic_opening(lines: Vec<OpeningLine>) -> CompanyOpening {
     CompanyOpening::generic_chart(d(OPENING_AS_OF), lines)
 }

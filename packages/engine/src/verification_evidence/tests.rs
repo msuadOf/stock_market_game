@@ -39,6 +39,16 @@ fn assert_no_json_numbers(value: &Value) {
     visit(value, "$");
 }
 
+fn assert_versioned_evidence_runtime_numbers_are_decimal_strings(value: &Value) {
+    let mut payload = value.clone();
+    let metadata = payload.as_object_mut().expect("验证证据必须是 object");
+    assert_eq!(
+        metadata.remove("schema_version"),
+        Some(serde_json::json!(1))
+    );
+    assert_no_json_numbers(&payload);
+}
+
 #[test]
 fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     let quiet = TickFrame {
@@ -219,6 +229,8 @@ fn projects_real_receipt_chain_and_account_aggregate() {
     .unwrap();
 
     assert_eq!(projected.schema, CONSERVATION_SCHEMA);
+    assert_eq!(projected.schema, "escrow-conservation-snapshot");
+    assert_eq!(projected.schema_version, 1);
     assert_eq!(projected.envelopes[0].origin, "created");
     assert_eq!(projected.envelopes[0].receipts[0].live_before.shares, "100");
     assert_eq!(projected.envelopes[0].receipts[1].live_before.shares, "70");
@@ -230,7 +242,9 @@ fn projects_real_receipt_chain_and_account_aggregate() {
     assert_eq!(first_receipt["transition_ordinal_within_source"], "0");
     assert_eq!(projected.accounts[0].aggregate.left.shares, "100");
     assert_eq!(projected.accounts[0].aggregate.right.shares, "100");
-    assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
+    assert_versioned_evidence_runtime_numbers_are_decimal_strings(
+        &serde_json::to_value(&projected).unwrap(),
+    );
 }
 
 #[test]
@@ -435,6 +449,9 @@ fn existing_envelope_projects_the_post_preseal_decision_resources_boundary() {
     };
     assert_eq!(tick_start_live.shares, "100");
     assert_eq!(allocation_live.shares, "90");
+    let basis = serde_json::to_value(&projected.envelopes[0].basis).unwrap();
+    assert!(basis.get("allocation_live").is_some());
+    assert!(basis.get("p1_live").is_none());
 }
 
 #[test]
@@ -564,7 +581,7 @@ fn announcement_event(seq: u64, publication_id: u32) -> Event {
 }
 
 #[test]
-fn phase_six_session_variants_share_one_ordinal_scope() {
+fn session_lifecycle_variants_share_one_ordinal_scope() {
     let events = vec![
         announcement_event(1, 10),
         Event::CivilDateAdvanced {
@@ -625,7 +642,7 @@ fn projects_event_identity_by_variant_entity_scope_not_seq_or_array_position() {
 
     let projected = project_update(RuntimeUpdateRef::Tick(&frame)).unwrap();
 
-    assert_eq!(projected.seq_from, 1, "B5 uses an inclusive sequence range");
+    assert_eq!(projected.seq_from, 1, "序号范围采用包含端点的范围");
     assert_eq!(projected.events[0].comparison_event_key.0, "5");
     assert_eq!(
         projected.events[0].comparison_event_key.1,
@@ -722,7 +739,7 @@ fn civil_protocol_session() -> ProtocolSession {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: CivilDate::from_iso("2030-01-05").unwrap(),
-            simulation_policy_id: crate::SIMULATION_POLICY_ID_V2.to_owned(),
+            simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
         },
         42,
     )
@@ -730,7 +747,7 @@ fn civil_protocol_session() -> ProtocolSession {
 }
 
 #[test]
-fn real_civil_update_projects_validated_phase_six_shared_ordinals() {
+fn real_civil_update_projects_validated_session_lifecycle_shared_ordinals() {
     let mut session = civil_protocol_session();
     let mut update = session.end_civil_day_update().unwrap();
     let first_seq = update.seq_from.checked_add(1).unwrap();
@@ -863,7 +880,7 @@ fn civil_after_tick(duplicate_disclosure: bool) -> CivilUpdate {
     update
 }
 
-fn civil_with_continued_phase_six_ordinals() -> CivilUpdate {
+fn civil_with_continued_session_lifecycle_ordinals() -> CivilUpdate {
     let mut civil = civil_after_tick(false);
     for (offset, fact) in civil.facts.iter_mut().enumerate() {
         fact.key = crate::session::pipeline::EventStableKey::for_event(
@@ -876,10 +893,10 @@ fn civil_with_continued_phase_six_ordinals() -> CivilUpdate {
 }
 
 #[test]
-fn full_update_stream_projection_shares_same_tick_phase_six_session_ordinals() {
+fn full_update_stream_projection_shares_same_tick_session_lifecycle_ordinals() {
     let stock = StockCode("600001".to_owned());
     let tick = tick_before_civil(&stock);
-    let civil = civil_with_continued_phase_six_ordinals();
+    let civil = civil_with_continued_session_lifecycle_ordinals();
 
     let projected = project_update_stream(&[
         RuntimeUpdateRef::Tick(&tick),
@@ -901,7 +918,7 @@ fn stateful_update_stream_projection_matches_batch_and_rejects_cross_update_rese
     let stock = StockCode("600001".to_owned());
     let tick = tick_before_civil(&stock);
     let reset = civil_after_tick(false);
-    let civil = civil_with_continued_phase_six_ordinals();
+    let civil = civil_with_continued_session_lifecycle_ordinals();
     let expected = project_update_stream(&[
         RuntimeUpdateRef::Tick(&tick),
         RuntimeUpdateRef::Civil(&civil),
@@ -932,7 +949,7 @@ fn stateful_update_stream_projection_matches_batch_and_rejects_cross_update_rese
 fn update_stream_failure_does_not_consume_sequence_or_identity_state() {
     let stock = StockCode("600001".to_owned());
     let tick = tick_before_civil(&stock);
-    let civil = civil_with_continued_phase_six_ordinals();
+    let civil = civil_with_continued_session_lifecycle_ordinals();
     let mut sequence_gap = civil.clone();
     sequence_gap.seq_from += 1;
     sequence_gap.seq_to += 1;
@@ -1060,7 +1077,7 @@ fn event_projection_rejects_gapped_local_indices_and_adr_key_tampering() {
     for (field, forged_value) in [
         ("phase_rank", serde_json::json!(5)),
         ("entity", serde_json::json!({ "Account": 2 })),
-        ("source", serde_json::json!("P0")),
+        ("source", serde_json::json!("QuoteExpiry")),
     ] {
         let mut tampered = frame(vec![event.clone()]);
         let mut key = serde_json::to_value(&tampered.facts[0].key).unwrap();
@@ -1427,7 +1444,7 @@ fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
         observation_input(
             &conservation,
             Some(&restores),
-            Some(b"save-v2-bytes"),
+            Some(b"serialized-save-slot-bytes"),
             &accounts,
             &stocks,
             &completion,
@@ -1448,7 +1465,11 @@ fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
     assert_eq!(projected.execution_coverage.auction_finalizations, u64::MAX);
     assert_eq!(projected.execution_coverage.day_end_finalizations, u64::MAX);
     assert_eq!(projected.execution_coverage.restore_slots.len(), 2);
-    assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
+    assert_eq!(projected.schema, "escrow-determinism-observation");
+    assert_eq!(projected.schema_version, 1);
+    assert_versioned_evidence_runtime_numbers_are_decimal_strings(
+        &serde_json::to_value(&projected).unwrap(),
+    );
 }
 
 #[test]
@@ -1475,7 +1496,7 @@ fn observation_rejects_restore_byte_and_continuation_mismatches() {
         observation_input(
             &conservation,
             Some(&bad_save),
-            Some(b"save-v2-bytes"),
+            Some(b"serialized-save-slot-bytes"),
             &accounts,
             &stocks,
             &completion,
@@ -1502,7 +1523,7 @@ fn observation_rejects_restore_byte_and_continuation_mismatches() {
         observation_input(
             &conservation,
             Some(&bad_continuation),
-            Some(b"save-v2-bytes"),
+            Some(b"serialized-save-slot-bytes"),
             &accounts,
             &stocks,
             &completion,

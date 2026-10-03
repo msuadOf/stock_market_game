@@ -155,8 +155,8 @@ pub enum IntentCandidateError {
 impl std::fmt::Display for IntentCandidateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::DuplicateKey(key) => write!(formatter, "duplicate P2 candidate key {key:?}"),
-            Self::InvalidSourceSequence => formatter.write_str("P2 source sequence is invalid"),
+            Self::DuplicateKey(key) => write!(formatter, "DecisionShadow 候选 key 重复：{key:?}"),
+            Self::InvalidSourceSequence => formatter.write_str("DecisionShadow 来源序号无效"),
         }
     }
 }

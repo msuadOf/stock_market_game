@@ -1,9 +1,9 @@
-//! Complete 09:25-09:30 (`PreOpen`) shadow transaction.
+//! 构建 09:25–09:30 的完整 PreOpen shadow 事务。
 //!
-//! The window remains silent market time: all three real P2 sources are evaluated, but every
-//! accepted place/cancel operation receives its phase rejection from stock-owned P4 state. The
-//! candidate advances the clock only after ReceiptAggregation-Projection succeed and reaches authority solely through the
-//! prepared P9 commit token.
+//! 此窗口没有市场输出，三种真实决策来源仍被求值；
+//! 已受理 place/cancel 由股票拥有的 StockProcessing 状态产生交易阶段拒绝。
+//! ReceiptAggregation/Projection 成功后才推进 candidate 时钟，
+//! 并且只通过已准备的 CommitTick 令牌安装权威状态。
 
 #[cfg(test)]
 use super::continuous_matching::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
@@ -94,7 +94,7 @@ pub(super) struct PreOpenTransactionOutput {
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
-/// Fully checked PreOpen tick whose only remaining operation is the infallible P9 swap.
+/// 已完整校验的 PreOpen tick；只剩不会失败的权威状态交换。
 pub(in crate::session) struct PreparedPreOpenTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
@@ -137,7 +137,7 @@ impl PreparedPreOpenTick<'_> {
 }
 
 impl PreOpenTickResult {
-    /// Consumes the committed result at the session authority boundary without widening P9 types.
+    /// 在会话权威边界消费已提交结果，不扩大 CommitTick 类型范围。
     #[cfg(test)]
     pub(in crate::session) fn into_events(self) -> Vec<Event> {
         self.commit.tick.events
@@ -167,7 +167,7 @@ fn apply_tick_shadow_pre_open_transaction_inner(
     roots_override: Option<PlanChainOperationBatch>,
 ) -> Result<PreOpenTransactionOutput, PreOpenTransactionError> {
     let resources = plan.decision_resources.take().ok_or_else(|| {
-        PreOpenTransactionError::from(invariant("P1 decision resource snapshot is absent"))
+        PreOpenTransactionError::from(invariant("SealAllocationSnapshot 缺少决策资源快照"))
     })?;
     let mut candidate = plan.state.take_session()?;
     let output = apply_session_pre_open_transaction(&mut candidate, resources, roots_override)?;
@@ -195,8 +195,8 @@ fn apply_session_pre_open_transaction(
         return Err(invariant("PreOpen transaction requires the PreOpen phase").into());
     }
     let sources = ReadyIngress::capture_sources(candidate)?;
-    // Plan observation and validator/book setup read the same post-P0 facts.
-    // Plan actions start only after both branches have detached their inputs.
+    // 计划观察与 validator/订单簿准备读取同一报价过期后事实。
+    // 两个分支都隔离输入之后才允许执行计划动作。
     let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
@@ -263,7 +263,7 @@ fn apply_session_pre_open_transaction(
     } = apply_incremental_session_execution_transaction(candidate, finish, preceding_facts)
         .map_err(|error| {
             PreOpenTransactionError::from_source(
-                "pipeline::pre_open_transaction::apply_p4_p7",
+                "pipeline::pre_open_transaction::apply_incremental_session_execution_transaction",
                 error,
             )
         })?;
@@ -336,7 +336,7 @@ pub(super) fn validate_execution_round(
         || fact_identities != accepted_identities
     {
         return Err(invariant(
-            "P4 round fact identities do not match accepted P3 operations",
+            "StockProcessing 本轮事实身份与 AccountValidation 受理的 operations 不一致",
         ));
     }
     Ok(())

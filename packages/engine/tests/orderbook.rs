@@ -6,15 +6,15 @@ use engine::orderbook::{OrderError, OrderId, Side};
 #[test]
 fn order_error_and_side_basics() {
     // InvalidTick 的 to_string 应包含 tick 字段（铁律二：错误携带上下文）。
-    let e1 = OrderError::InvalidTick {
+    let invalid_tick_error = OrderError::InvalidTick {
         tick: engine::Money::ZERO,
     };
-    assert!(e1.to_string().contains("tick"));
+    assert!(invalid_tick_error.to_string().contains("tick"));
 
     // OrderNotFound 的 to_string 应包含被查订单的 id 数值。
     // OrderNotFound(OrderId) 为元组变体（与 DuplicateOrderId 一致，见 orderbook.rs 签名）。
-    let e2 = OrderError::OrderNotFound(OrderId(7));
-    assert!(e2.to_string().contains('7'));
+    let order_not_found_error = OrderError::OrderNotFound(OrderId(7));
+    assert!(order_not_found_error.to_string().contains('7'));
 
     // Side 可判等（同向相等、异向不等）。
     assert_eq!(Side::Buy, Side::Buy);
@@ -147,7 +147,7 @@ fn place_rejects_invalid_price_and_qty() {
 
     // 非 tick 整数倍：tick=1 分时所有整数价格都整除，故改用 tick=5 分、价格 1003 分
     // (1003 % 5 = 3 != 0) 触发非整除分支 → InvalidPrice。
-    let mut book2 = OrderBook::new(Money::from_cents(5)).expect("tick=5 分恒合法");
+    let mut five_cent_tick_book = OrderBook::new(Money::from_cents(5)).expect("tick=5 分恒合法");
     let bad = Order {
         id: OrderId(1),
         side: Side::Buy,
@@ -160,7 +160,7 @@ fn place_rejects_invalid_price_and_qty() {
         seq: 0,
     };
     assert!(matches!(
-        book2.place(bad).unwrap_err(),
+        five_cent_tick_book.place(bad).unwrap_err(),
         OrderError::InvalidPrice { .. }
     ));
 

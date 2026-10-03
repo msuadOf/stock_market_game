@@ -1,9 +1,9 @@
 //! 独立散户账户的最小、可恢复经历状态。
 //!
 //! 只有真实成交和真实观察可以修改这里的状态；委托意图本身不构成经历。
-//! K5 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
-//! 子模块；K5 经历反馈（受挫日期/生命周期/冷静期历史与衰减读取）在
-//! [`feedback`] 子模块；K5 个人关注列表（发现、保留与淡出）在
+//! 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
+//! 子模块；经历反馈（受挫日期/生命周期/冷静期历史与衰减读取）在
+//! [`feedback`] 子模块；个人关注列表（发现、保留与淡出）在
 //! [`watchlist`] 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），
 //! 全部原有公共路径不变。
 
@@ -106,9 +106,9 @@ pub struct RetailExperienceState {
     pub peak_equity: Option<Money>,
     pub consecutive_failed_buys: u16,
     pub stocks: BTreeMap<StockCode, RetailStockExperience>,
-    /// K5 经历反馈事实（任务 20）：受挫事件日期、持仓生命周期、退出/冷静期
-    /// 历史。默认空 = 新账户或尚未接双时钟事件（序列化时省略，旧档字节与
-    /// 读取语义不变）；衰减只作用于读取档位，不删除这里登记的任何事实。
+    /// 经历反馈事实：受挫事件日期、持仓生命周期、退出/冷静期
+    /// 历史。默认空表示新账户或尚未登记双时钟事件，序列化时省略空反馈；
+    /// 衰减只作用于读取档位，不删除这里登记的任何事实。
     #[serde(default, skip_serializing_if = "ExperienceFeedback::is_empty")]
     pub feedback: ExperienceFeedback,
 }

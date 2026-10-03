@@ -1,8 +1,7 @@
-//! Atomic session-candidate installation for continuous P4 through Projection.
+//! 为 Continuous 股票处理至 Projection 构造原子会话 candidate 安装接缝。
 //!
-//! Callers must pass a prospective `GameSession` shadow. This seam computes every fallible P4-Projection
-//! result before replacing any session container, so a typed failure leaves the candidate exactly
-//! unchanged. It does not commit the candidate into authoritative state.
+//! 调用方传入 prospective GameSession shadow。全部可失败结果完成后才替换会话容器，
+//! 因此 typed 失败保持 candidate 完全不变；此处不安装到权威状态。
 
 use super::{
     account_settlement::SettlementTransactionOutput,
@@ -20,11 +19,11 @@ use crate::{Event, GameSession};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum SessionExecutionTransactionError {
-    #[error("P4-P7 session precondition failed: {0}")]
+    #[error("StockProcessing/DerivationAudit 会话前置检查失败：{0}")]
     Precondition(#[source] StepFatal),
-    #[error("P4-P6 transaction failed: {0}")]
+    #[error("StockProcessing/SettlementShadow 事务失败：{0}")]
     StockExecution(#[source] StockExecutionTransactionError),
-    #[error("P7 event collection failed: {0}")]
+    #[error("DerivationAudit 事件收集失败：{0}")]
     Projection(#[source] StepFatal),
 }
 
@@ -35,7 +34,7 @@ pub(super) struct SessionExecutionTransactionOutput {
     pub(super) settlement: SettlementTransactionOutput,
 }
 
-/// Applies continuous P4-Projection to a prospective session shadow without committing authority.
+/// 在 prospective 会话 shadow 上应用 Continuous 股票处理与 Projection，尚不提交权威状态。
 pub(super) fn apply_session_execution_transaction(
     session: &mut GameSession,
     workers: Vec<ContinuousStockOutput>,
@@ -107,11 +106,10 @@ pub(super) fn apply_session_execution_transaction(
     })
 }
 
-/// Consumes a fully drained incremental P4 coordinator and runs ReceiptAggregation/Settlement/Projection exactly once.
+/// 消费已排空的增量股票处理 coordinator，只运行一次 ReceiptAggregation/Settlement/Projection。
 ///
-/// Unknown-stock cancellation rejections are genuine P4 facts but own no stock worker. They are
-/// adapted into the same Projection fact set before the accumulated worker outboxes enter the ordinary
-/// atomic session transaction.
+/// 未知股票撤单拒绝是真实股票处理事实，但不拥有股票 worker。
+/// 先将其适配为同一 Projection 事实集合，再让累计 worker outboxes 进入普通原子会话事务。
 pub(super) fn apply_incremental_session_execution_transaction(
     session: &mut GameSession,
     finish: IncrementalContinuousStockFinish,

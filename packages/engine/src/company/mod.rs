@@ -1,16 +1,15 @@
-//! 公司域（K2/K3）：公司实体、开局账套、外部对手方与经营合同。
+//! 公司域：公司实体、开局账套、外部对手方与四行业经营会计。
 //!
-//! 资金边界铁律（K2）：公司经营资金只存在于公司账套（[`Books`]，现金走科目
+//! 资金边界：公司经营资金只存在于公司账套（[`Books`]，现金走科目
 //! 1001/1002），外部商业对手方用独立 `CounterpartyId`；投资者交易 `Account`
 //! 与公司账套互不复用。发行人映射要求股本精确匹配（`issued_shares` == 股票
 //! `total_shares`），不依据初始股价反推任何资产负债价值。
 //!
-//! 范围边界：本模块提供公司实体 + 显式平衡开局账套 + 合同/授信数据面
-//! （任务 7）、四行业处理器（任务 8–11）、自然日经营演化/事件目录/到期
-//! 调度/RNG 分流与前史生成（任务 14，`operations`/`events`/`scheduler`/
-//! `rng`）；报表（任务 13）、历史发布集（任务 15）与会话接线（任务 26）
-//! 不在此实现。公司注册表独立构建，不依赖 `session`（依赖方向 session →
-//! company 单向）。
+//! 本模块提供公司实体、显式平衡开局账套、合同与授信数据、四行业处理器，
+//! 以及自然日经营演化、事件目录、到期调度、RNG 分流与前史生成
+//! （`operations`/`events`/`scheduler`/`rng`）。报表由 `accounting` 提供，
+//! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
+//! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
 pub mod bank;
 mod contracts;
@@ -43,7 +42,7 @@ pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
 };
 pub use insurance::{
-    insurance_chart_v4, ClaimId, ClaimState, ContractGroupState, DiscountAssumption,
+    insurance_account_chart, ClaimId, ClaimState, ContractGroupState, DiscountAssumption,
     InsuranceBooks, InsuranceConfig, InsuranceError, InsuranceProductKind,
 };
 pub use opening::{
@@ -64,9 +63,9 @@ pub use query::{
     MAX_PUBLIC_REPORT_PAGE_SIZE,
 };
 pub use real_estate::{
-    real_estate_chart_v5, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem, Interruption,
-    PresaleContract, ProjectId, ProjectLoanState, ProjectState, RealEstateBooks, RealEstateConfig,
-    RealEstateError,
+    real_estate_account_chart, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem,
+    Interruption, PresaleContract, ProjectId, ProjectLoanState, ProjectState, RealEstateBooks,
+    RealEstateConfig, RealEstateError,
 };
 pub use rng::{OperatingRng, RngStream};
 pub use scheduler::{
@@ -91,7 +90,7 @@ pub struct CompanyConfig {
 
 /// 公司实体：规格 + 权威账套 + 对手方/合同/预算 + 子账占位。
 ///
-/// 现金在账套（accounting 域）而非交易账户；行业子账内容在任务 8–11 填充。
+/// 现金在账套（accounting 域）而非交易账户；具体行业子账由各行业账套持有。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Company {
     spec: CompanySpec,
@@ -176,7 +175,7 @@ impl Company {
         &self.spec
     }
 
-    /// 公司权威账套（开局凭证已入账；经营过账入口随任务 8–11 提供）。
+    /// 公司权威账套（开局凭证已入账；经营过账由行业处理器提供）。
     pub fn books(&self) -> &Books {
         &self.books
     }

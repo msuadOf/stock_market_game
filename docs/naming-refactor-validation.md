@@ -1,4 +1,70 @@
-# 2026-10-01 命名整理验证记录
+# 命名重构验证记录与历史边界
+
+当前命名与格式契约见 [命名约定](naming-conventions.md) 和
+[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。本轮使用 schema 3，
+旧 schema 1/2 和旧字段/tag 显式拒绝。下面的旧提交、通过数、失败、未运行项及当时标签
+仅记录 2026-10-01 的事实，不作为本轮验证结果；本轮 Clippy、独立复核与提交由实际执行记录证明。
+
+## 当前实施验证
+
+2026-10-04 的职责改名依据全量调查实施：63 个必改名字的 128 条定位、6 个路径目标、
+2385 条文本与契约位置及 48 类可选角色名逐项核销。当前存档使用 `schema_version=3`、
+`runtime_state` 和 `a-share-simulation`；真实业务版本、数值、法源和密封历史证据保留。
+新增遗漏也纳入收尾清单，不用关键词零命中代替完整 AST 核查。
+
+剩余符号实际使用 rust-analyzer LSP 与 TypeScript LanguageService 的 rename；已改名字重新
+查询 semantic references。前期语法位点编辑和文件移动不追认为 LSP rename。Rust 63 个目标
+取得 441 条引用，TypeScript 65 个目标取得 195 条引用，最终位置核对零漂移。TypeScript
+57 条内存 rename 精确复原，8 条动态属性的反向 rename 受限，未冒称全部证明。
+
+| 验证 | 实际结果 |
+|---|---|
+| Rust 常规测试 | 78 个二进制；2254 个通过，9 个原有 ignored 长用例未执行 |
+| Rust doctests | 5 个通过 |
+| Web 短测试 | 124 个文件，612 个 case 通过 |
+| 脚本短测试 | 32 个文件，380 个 case 通过 |
+| 两套 ts-rs bindings | 各 74 个导出 case 通过，保持 `TS_RS_LARGE_INT=number` |
+| TypeScript、格式、diff 检查 | 通过 |
+| Web lint | 通过；保留 3 个原有 React 警告 |
+| Cargo Clippy | `--workspace --all-targets --all-features --jobs 64 --offline -- -D warnings` 通过 |
+
+Rust 常规批次使用 8 个并发二进制，每个 12 个 harness threads 和 4 个 Rayon threads；
+engine 修复旧诊断断言后，1096 个单测以 16 个 harness threads 和 8 个 Rayon threads 全部重跑
+通过。完整测试批次与构建受进程外 300000ms deadline 约束；Node 普通测试同时使用
+10000ms case timeout 和进程树 deadline。Clippy 配置 64 个 Cargo jobs，实际约 42 秒，
+采样峰值 29 个进程、145 条线程；累计 CPU 时间约 130 秒，不将线程容量冒称 CPU 利用率。
+
+初次新增 Rust 测试 import 路径错误、6 个旧英文诊断断言失败、沙箱阻止端口/子进程输出、
+临时目录不在工作区，以及 bindings 导出超时均保留真实日志。修正调用或断言、使用工作区
+`.tmp` 与正确生成环境后重跑通过，没有删除、跳过或放宽断言。四个隔离旧 producer 契约
+反例均实际失败，当前对应 case 通过；这只是事后验证反例效力，不补造实施前 TDD 时序。
+
+新旧真实 producer 的 63 份 capture 只逆替换许可身份 token 后，业务事实和完整字节全部
+相等，6 个历史固定摘要全部复现。仅存档 schema、runtime 字段、policy 身份和来源 tag 改变；
+事件字节不变。五个当前表示摘要据实际输出更新，旧锚保留历史出处，临时导出接口已删除。
+
+额外 verification harness 完整执行为 16 个通过、2 个失败：
+`real_protocol_capture_has_committed_evidence_without_claiming_full_acceptance` 与
+`public_payload_probe_uses_real_identities_and_negative_controls_diverge` 仍被原有
+`local_event_index` 的 zero-based / contiguous 校验拒绝。基线提交 `c0ab429` 的独立 workspace
+分别实际复现相同失败，属于既有验证器问题，未在命名任务中扩大修改；不将该套件记为全绿。
+未运行 ignored 长验收、真实 simulation 长矩阵或浏览器 E2E。
+
+完整 diff 由未实施者分模块独立复核，发现逐项修复再复核。活动审计 Python 生成源仅运行
+`ast.parse` 与归一 AST 比对，不执行旧生成器覆盖历史记录。准确命令、计数、源码指纹、
+rename 响应、旧摘要取证与复核回执统一见
+[本轮实施汇总](../.tmp/naming-refactor-implementation/summary.md)；本地提交信息以实际 Git 记录为准。
+
+## 历史格式名称对照
+
+2026-10-01 当时保留 `P0`/`P0Expiry`、`P3Created`、`p0_released`/`p1_live`，
+以及 `k7-*` schema、`fresh_current_k7_setup` source 和 `P0`–`P9` 计时 key。
+当时 summary schema 从 `escrow-task9-matrix-summary-v1` 改为
+`escrow-verification-matrix-summary-v1`，matrix version 从 `task9-runtime-v1-matrix-v1`
+改为 `escrow-runtime-matrix-v1`，scenario 从 `task9-runtime-v1` 改为 `escrow-runtime-v1`。
+这些是旧改名批次的事实；当前机器身份和独立数值版本遵循 ADR-0029，不沿用此表作为新契约。
+
+## 2026-10-01 历史命名整理验证记录
 
 本批在现有工作区、`fix/synthetic-history-policy` 分支实施，分批独立复核和本地提交，不推送。
 源码命名清理依据初始全仓审计按职责进行，真实版本与历史格式契约保留。

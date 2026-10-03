@@ -1,4 +1,4 @@
-//! 更正金样（K4 / 任务 13 契约）：公开更正 = 新版本关联旧 ID，历史不可
+//! 更正金样：公开更正 = 新版本关联旧 ID，历史不可
 //! 覆写——原版本重复查询逐字节不变；结账登记簿中的原版本同样不变。
 
 use crate::books_fixture::{correction_books, entry};
@@ -26,10 +26,10 @@ fn correction_preserves_previous_version() {
     let approval =
         CivilInstant::from_hms(annual_instant.date(), 8, 0, 0).expect("approval instant");
 
-    // 账套 → 年结 v1（12 月封月 + 年报版本）→ 公开 v1。
+    // 账套 → 原年结报告（12 月封月 + 年报 ReportVersion.sequence=1）→ 公开原报告。
     let mut books = correction_books();
     let mut closing = ClosingEngine::new();
-    let (_monthly, annual_v1) = closing
+    let (_monthly, original_annual_report) = closing
         .close_year(
             &mut books,
             &MemberId(COMPANY.to_string()),
@@ -37,10 +37,10 @@ fn correction_preserves_previous_version() {
             2030,
         )
         .expect("year close");
-    assert_eq!(annual_v1.sequence, 1);
+    assert_eq!(original_annual_report.sequence, 1);
 
     let mut library = PublicLibrary::new();
-    let v1_id = library
+    let original_publication_id = library
         .publish_closed(
             &closing,
             PublicationRequest {
@@ -60,14 +60,15 @@ fn correction_preserves_previous_version() {
                 supersedes: None,
             },
         )
-        .expect("annual v1 publishes");
-    let v1_before = library
-        .report(v1_id, annual_instant)
-        .expect("v1 readable")
+        .expect("原年报公布");
+    let original_report_before_correction = library
+        .report(original_publication_id, annual_instant)
+        .expect("原报告可读取")
         .clone();
-    let v1_bytes = serde_json::to_string(&v1_before).expect("v1 serializes");
+    let original_publication_bytes =
+        serde_json::to_string(&original_report_before_correction).expect("原报告可序列化");
 
-    // —— 差错更正：调整分录过账于开放期间 2031-01 → 年报 v2（supersedes v1）——
+    // —— 差错更正：调整分录过账于开放期间 2031-01 → 年报 ReportVersion.sequence=2（supersedes 指向原报告）——
     let corrected = closing
         .correct(
             &mut books,
@@ -91,7 +92,7 @@ fn correction_preserves_previous_version() {
                 reason: "遗漏现金收入更正".to_string(),
             },
         )
-        .expect("correction registers v2");
+        .expect("更正报告登记新 ReportVersion.sequence");
     assert_eq!(corrected.sequence, 2);
 
     // 公开更正：新 PublishedReport 关联旧 ID，公布在更正后的下一个 18:00 相位。
@@ -99,7 +100,7 @@ fn correction_preserves_previous_version() {
         .expect("an 18:00 phase instant after the correction");
     let correction_approval =
         CivilInstant::from_hms(correction_instant.date(), 8, 0, 0).expect("approval instant");
-    let v2_id = library
+    let corrected_publication_id = library
         .publish_closed(
             &closing,
             PublicationRequest {
@@ -112,32 +113,39 @@ fn correction_preserves_previous_version() {
                 approved_at: correction_approval,
                 published_at: correction_instant,
                 origin: PublicationOrigin::Correction,
-                supersedes: Some(v1_id),
+                supersedes: Some(original_publication_id),
             },
         )
         .expect("correction publishes as a new version");
 
-    // —— 历史不可覆写：v1 重复查询逐字节不变；v2 关联 v1 ——
-    let v1_after = library
-        .report(v1_id, correction_instant)
-        .expect("v1 still readable");
+    // —— 历史不可覆写：原报告重复查询逐字节不变；更正报告关联原报告 ——
+    let original_report_after_correction = library
+        .report(original_publication_id, correction_instant)
+        .expect("原报告仍可读取");
     assert_eq!(
-        serde_json::to_string(v1_after).expect("v1 serializes"),
-        v1_bytes,
+        serde_json::to_string(original_report_after_correction).expect("原报告可序列化"),
+        original_publication_bytes,
         "original published version must be byte-identical after the correction"
     );
     let corrected_publication = library
-        .report(v2_id, correction_instant)
-        .expect("v2 readable");
-    assert_eq!(corrected_publication.supersedes, Some(v1_id));
+        .report(corrected_publication_id, correction_instant)
+        .expect("更正报告可读取");
+    assert_eq!(
+        corrected_publication.supersedes,
+        Some(original_publication_id)
+    );
     assert_eq!(corrected_publication.reports.version.sequence, 2);
     assert_eq!(corrected_publication.reports.version.supersedes, Some(1));
     assert_ne!(
         corrected_publication.reports.income.cumulative.net_income,
-        v1_before.reports.income.cumulative.net_income
+        original_report_before_correction
+            .reports
+            .income
+            .cumulative
+            .net_income
     );
 
-    // latest_for：更正后最新版本是 v2（id 单调 + 查询按 as_of 过滤）。
+    // latest_for：更正后最新版本是更正报告（id 单调 + 查询按 as_of 过滤）。
     let latest = library
         .latest_report(
             &company,
@@ -146,8 +154,8 @@ fn correction_preserves_previous_version() {
             correction_instant,
         )
         .expect("a latest version exists");
-    assert_eq!(latest.id, v2_id);
-    // 更正时点之前，最新版本仍是 v1。
+    assert_eq!(latest.id, corrected_publication_id);
+    // 更正时点之前，最新版本仍是原报告。
     let latest_before = library
         .latest_report(
             &company,
@@ -155,24 +163,25 @@ fn correction_preserves_previous_version() {
             AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
             annual_instant,
         )
-        .expect("v1 was the latest at its time");
-    assert_eq!(latest_before.id, v1_id);
+        .expect("原报告在更正之前为最新版本");
+    assert_eq!(latest_before.id, original_publication_id);
 
-    // 结账登记簿原版本同样不可变（任务 13 契约在披露层的对照锚）。
-    let registry_v1 = closing
+    // 结账登记簿原版本同样不可变，作为披露层的对照锚。
+    let original_registry_report = closing
         .version(
             &scope,
             AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
             ReportKind::Annual,
             1,
         )
-        .expect("registry keeps v1");
+        .expect("登记簿保留原报告");
     assert_eq!(
-        serde_json::to_string(registry_v1).expect("registry v1 serializes"),
-        serde_json::to_string(&v1_before.reports).expect("published v1 set serializes"),
+        serde_json::to_string(original_registry_report).expect("登记簿原报告可序列化"),
+        serde_json::to_string(&original_report_before_correction.reports)
+            .expect("已公布原 ReportSet 可序列化"),
         "published bytes mirror the immutable registry version"
     );
-    // 净利差 = 更正分录 300 元（金样锚：v2 = v1 + 300.00）。
+    // 净利差 = 更正分录 300 元（金样锚：更正报告 = 原报告 + 300.00）。
     assert_eq!(
         (corrected_publication
             .reports
@@ -180,7 +189,12 @@ fn correction_preserves_previous_version() {
             .cumulative
             .net_income
             .cents()
-            - v1_before.reports.income.cumulative.net_income.cents()) as i128,
+            - original_report_before_correction
+                .reports
+                .income
+                .cumulative
+                .net_income
+                .cents()) as i128,
         30_000i128,
         "correction adjustment flows into the restated annual"
     );

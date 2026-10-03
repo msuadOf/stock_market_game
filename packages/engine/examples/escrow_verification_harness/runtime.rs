@@ -7,7 +7,7 @@ use engine::{
     verification_evidence::{RuntimeUpdateRef, UpdateProjection},
     AccountId, CivilDate, Event, FloatAllocation, GameConfig, HotParams, InstParams, Intent, Money,
     NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockCode,
-    StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID_V2,
+    StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -18,7 +18,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-const CAPTURE_SCHEMA: &str = "escrow-runtime-evidence-capture-v1";
+const CAPTURE_SCHEMA: &str = "escrow-runtime-evidence-capture";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -119,6 +119,7 @@ struct TypedBlocker {
 #[derive(Clone, Debug, Serialize)]
 pub struct CaptureReport {
     schema: &'static str,
+    schema_version: u32,
     status: CaptureStatus,
     configuration: RuntimeConfiguration,
     authority_path: &'static str,
@@ -281,6 +282,7 @@ fn assemble(
     let artifacts = capture_artifacts(authoritative_state, event_stream, save_slot, receipts);
     let report = CaptureReport {
         schema: CAPTURE_SCHEMA,
+        schema_version: 1,
         status: CaptureStatus::Pass,
         configuration: RuntimeConfiguration {
             scenario: config.scenario.clone(),
@@ -558,7 +560,7 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: CivilDate::from_iso("2030-01-02").map_err(|error| error.to_string())?,
-        simulation_policy_id: SIMULATION_POLICY_ID_V2.to_owned(),
+        simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
     };
     setup
         .validate()
@@ -609,7 +611,7 @@ impl CaptureArtifactWriter {
         self.write_json(
             "capture-receipt.json",
             &serde_json::json!({
-                "schema": "escrow-capture-receipt-v1",
+                "schema": "escrow-capture-receipt", "schema_version": 1,
                 "file": "capture.json",
                 "sha256": digest_hex(&capture_bytes),
                 "byte_length": capture_bytes.len().to_string(),
@@ -869,6 +871,7 @@ mod tests {
         CaptureBundle {
             report: CaptureReport {
                 schema: CAPTURE_SCHEMA,
+                schema_version: 1,
                 status: CaptureStatus::Pass,
                 configuration: RuntimeConfiguration {
                     scenario: "writer-io-fixture".to_owned(),

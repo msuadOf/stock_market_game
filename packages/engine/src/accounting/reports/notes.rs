@@ -1,4 +1,4 @@
-//! 附注与列报归类（K3，任务 13）：科目 → 主表行的**单一归类表** + 附注明细。
+//! 附注与列报归类：科目 → 主表行的**单一归类表** + 附注明细。
 //!
 //! 归类纪律（验收红线）：
 //! - **科目无归属 = 类型化拒绝**：科目表内每个科目都必须归入恰好一条主表行
@@ -7,7 +7,7 @@
 //!   （同目标重复幂等合法——合并 Scope 跨成员行业表合并的基础）；
 //! - **附注明细合计 == 主表行**（勾稽在 [`super::ReportSet::validate`]）。
 //!
-//! 归类表 = 通用基表（v1 全集）∪ 行业表（v2–v5；代码真源在各行业文件）。
+//! 归类表 = 通用基表（AccountChart.version=1 全集）∪ 行业表（AccountChart.version=2–5；代码真源在各行业文件）。
 //! 合并 Scope 的归类 = 成员行业表按代码合并（不同目标 = 冲突拒绝）。
 
 use std::collections::BTreeMap;
@@ -38,7 +38,7 @@ pub(crate) const fn a(code: &'static str, target: NoteTarget) -> Assignment {
     Assignment { code, target }
 }
 
-/// 通用基表（v1 全集 16 科目；工业表 = 基表 + 工业扩充）。
+/// 通用基表（AccountChart.version=1 全集 16 科目；工业表 = 基表 + 工业扩充）。
 pub fn base_assignments() -> Vec<Assignment> {
     use BsLine::*;
     use IncomeLine::*;

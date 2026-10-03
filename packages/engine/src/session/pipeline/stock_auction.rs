@@ -88,8 +88,8 @@ pub(super) struct AuctionOperationOutput {
     pub(super) terminal_key: Option<EnvelopeKey>,
 }
 
-/// Stock-local auction operation state. P3 validation remains outside this
-/// component; accepted operations are applied in their received order.
+/// 股票局部 Auction operation 状态；AccountValidation 在该组件外部执行。
+/// 已受理 operations 按真实接收顺序应用。
 #[derive(Clone, Debug)]
 pub(super) struct StockAuctionState {
     stock: StockCode,

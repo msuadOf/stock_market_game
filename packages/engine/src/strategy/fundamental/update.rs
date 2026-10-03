@@ -1,4 +1,4 @@
-//! 信息驱动更新（K5a 行 154）：触发因果类型 + `BeliefBook` 的更新语义。
+//! 信息驱动更新：触发因果类型 + `BeliefBook` 的更新语义。
 //! 更新只由显式 [`BeliefCause`] 驱动——信念模块不存在任何 per-tick /
 //! per-observation 变更路径。
 
@@ -41,11 +41,11 @@ pub struct CauseRecord {
     pub as_of_trading_day: u64,
 }
 
-/// 受挫经历的信心增量（K5a 行 154）。
+/// 受挫经历的信心增量。
 pub(crate) const FAILURE_CONFIDENCE_DELTA_BP: i32 = -1_000;
 /// 真实获利退出的信心增量。
 pub(crate) const PROFITABLE_EXIT_CONFIDENCE_DELTA_BP: i32 = 500;
-/// 信心上界（0..=10000bp——K5 行 133 的明示评分定义；饱和是定义的一部分，
+/// 信心上界（0..=10000bp；饱和是评分定义的一部分，
 /// 不是掩盖异常的 clamp）。
 pub(crate) const CONFIDENCE_MAX_BP: u16 = 10_000;
 
@@ -217,7 +217,7 @@ impl BeliefBook {
         self.entries.insert(stock.clone(), entry);
     }
 
-    /// 方法分发（任务 17 纯函数链接；`None` = 零基本权重 ⇒ 类型化
+    /// 方法分发（使用纯函数链接；`None` = 零基本权重 ⇒ 类型化
     /// MethodDisabled，不代换其他模型）。
     fn valuation_for(
         &self,

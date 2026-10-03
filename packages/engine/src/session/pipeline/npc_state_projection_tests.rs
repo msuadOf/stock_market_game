@@ -309,7 +309,7 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
     let books_after = serde_json::to_vec(&shadow.snapshot()).unwrap();
     assert_eq!(
         books_after, books_before,
-        "P2 projection must not route or settle"
+        "DecisionShadow 投影不得路由或结算"
     );
 }
 
@@ -497,6 +497,6 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
             .resting_orders_for(account)
             .len(),
         1,
-        "P2 only proposes the cancellation; P4 still owns the book mutation"
+        "DecisionShadow 只提出撤单；订单簿变更仍由 StockProcessing 负责"
     );
 }

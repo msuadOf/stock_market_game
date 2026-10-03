@@ -3,4 +3,8 @@ import type { RuntimeDelta } from "./RuntimeDelta";
 import type { Snapshot } from "./Snapshot";
 import type { TickFrame } from "./TickFrame";
 
-export type TickBatch = { frames: Array<TickFrame>, runtime_snapshot: Snapshot | null, runtime_delta?: RuntimeDelta, };
+export type TickBatch = {
+  frames: Array<TickFrame>;
+  runtime_snapshot: Snapshot | null;
+  runtime_delta?: RuntimeDelta;
+};

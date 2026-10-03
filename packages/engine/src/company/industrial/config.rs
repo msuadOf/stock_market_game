@@ -1,4 +1,4 @@
-//! 工商账套装配输入与开局种子对账（K3 工商）：配置值类型 + 构造期守卫
+//! 工商账套装配输入与开局种子对账（工商会计约束）：配置值类型 + 构造期守卫
 //! （子账种子与总账逐科目精确对账、开局借款隐式合同与 2001 余额对账）。
 //! 全部为显式配置（无生产默认值——税务默认税率待税法取证解除阻塞，
 //! docs/company-accounting.md §7）。
@@ -19,7 +19,7 @@ use crate::company::industrial::{chart, IndustrialError, OPENING_DEBT_CONTRACT_I
 
 /// 开局借款条款：构造时与开局 2001 贷方余额精确对账（不匹配 → 类型化拒绝），
 /// 并作为隐式合同（`OPENING_DEBT_CONTRACT_ID`）进入同一套计息/付息/授信机制
-/// ——授信占用自动包含开局债务（task-7 review O2 的治理决策）。
+/// ——授信占用自动包含开局债务（历史复核来源 task-7 review O2）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OpeningDebtTerms {
     pub lender: CounterpartyId,
@@ -37,7 +37,7 @@ pub struct OpeningInventoryItem {
     pub cost: AccountingAmount,
 }
 
-/// 开局固定资产种子（全新资产；开局累计折旧暂不支持——前史由任务 14 生成）。
+/// 开局固定资产种子（全新资产；开局累计折旧暂不支持——前史由自然日经营演化生成）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OpeningAssetItem {
     pub code: FixedAssetCode,
@@ -51,7 +51,7 @@ pub struct OpeningAssetItem {
 pub struct IndustrialConfig {
     pub chart: crate::accounting::AccountChart,
     pub as_of: CivilDate,
-    /// 显式平衡的开局行（经 `post_batch` 验证路径，任务 7 语义）。
+    /// 显式平衡的开局行（经 `post_batch` 验证路径，公司规格与开局账套语义）。
     pub opening_lines: Vec<JournalLine>,
     pub opening_inventory: Vec<OpeningInventoryItem>,
     pub opening_assets: Vec<OpeningAssetItem>,

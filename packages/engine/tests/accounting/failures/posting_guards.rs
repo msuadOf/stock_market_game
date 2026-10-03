@@ -147,7 +147,7 @@ fn closed_period_rejects_new_postings() {
     b.close_period(jan).expect("close january");
     assert_eq!(b.journal().period_status(jan), PeriodStatus::Closed);
 
-    // 已封期间入账：类型化拒绝（结账机制本体属任务 13，此处只有状态 + 守卫）。
+    // 已封期间入账：类型化拒绝（结账机制在 `closing`，此处只有状态 + 守卫）。
     let before = b.clone();
     let late = entry(
         8,

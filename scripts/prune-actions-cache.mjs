@@ -6,6 +6,9 @@ import { isReleaseTag, parseReleaseTag } from "./release-policy.mjs";
 
 export const CACHE_BUDGET_BYTES = 10_000_000_000;
 const rollingKeys = [
+  /^(distribution-native-cache-1-(?:ubuntu-24\.04|windows-2022|macos-15)-(?:X64|ARM64)-(?:desktop|webui-server|server))-[a-f0-9]{64}-\d+-\d+$/,
+  /^(sealed-cargo-cache-no-debug-2-(?:Linux|Windows|macOS)-(?:X64|ARM64))-[a-f0-9]{64}-\d+-\d+$/,
+  // 历史 provider cache series 仍须安全退休；各 series 的最新副本继续独立保护。
   /^(distribution-native-v1-(?:ubuntu-24\.04|windows-2022|macos-15)-(?:X64|ARM64)-(?:desktop|webui-server|server))-[a-f0-9]{64}-\d+-\d+$/,
   /^(sealed-cargo-v2-no-debug-(?:Linux|Windows|macOS)-(?:X64|ARM64))-[a-f0-9]{64}-\d+-\d+$/,
 ];

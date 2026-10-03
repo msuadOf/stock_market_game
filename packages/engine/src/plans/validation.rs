@@ -1,4 +1,4 @@
-//! 计划契约的纯校验规则与类型化错误（K6 / K5a 迟滞）。
+//! 计划契约的纯校验规则与类型化错误，包含方向迟滞约束。
 //!
 //! 全部为 (状态, 事件) 的纯函数：不读时钟、不掷随机数、无副作用。
 //! 任何拒绝都以 [`PlanError`] 显式返回，绝不静默 fallback。
@@ -118,7 +118,7 @@ pub enum PlanError {
     SaveInconsistent { detail: String },
 }
 
-/// K5a 迟滞谓词：修订翻转方向时，新方向的综合判断必须越过另一侧门槛。
+/// 方向迟滞谓词：修订翻转方向时，新方向的综合判断必须越过另一侧门槛。
 /// 同向修订不受该门槛约束（是否修订由上游复核条件决定）。
 pub fn reverse_crosses_threshold(old: Side, new: Side, score_bp: i32, threshold_bp: i32) -> bool {
     if old == new {

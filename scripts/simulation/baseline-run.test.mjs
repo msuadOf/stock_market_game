@@ -36,7 +36,7 @@ import {
   publishBeforeDeadline,
 } from "./baseline-run.mjs";
 
-const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture";
+const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/simulation-acceptance/release/examples/simulation_baseline_fixture";
 const isFakeSimulationExecutable = (file) => file === FAKE_SIMULATION_EXECUTABLE || file.endsWith(`/${FAKE_SIMULATION_EXECUTABLE}`);
 async function fakePrepareFixture({ resourcePolicy, sourceFingerprint, workspacePaths }) {
   const workspaceRoot = workspacePaths.workspaceRoot;
@@ -47,8 +47,8 @@ async function fakePrepareFixture({ resourcePolicy, sourceFingerprint, workspace
     binary_bytes: 1024,
     embedded_source_fingerprint_digest: sourceFingerprint.digest,
     workspace_root: workspaceRoot,
-    cargo_target_dir: path.join(workspaceRoot, ".tmp", "build-cache", "k7"),
-    process_tmp_dir: path.join(workspaceRoot, ".tmp", "process-tmp", "k7"),
+    cargo_target_dir: path.join(workspaceRoot, ".tmp", "build-cache", "simulation-acceptance"),
+    process_tmp_dir: path.join(workspaceRoot, ".tmp", "process-tmp", "simulation-acceptance"),
     build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "simulation_baseline_fixture", "--message-format=json-render-diagnostics"],
     cargo_build_jobs: resourcePolicy.maximum_thread_count === "auto"
       ? resourcePolicy.available_cpu_count
@@ -58,12 +58,12 @@ async function fakePrepareFixture({ resourcePolicy, sourceFingerprint, workspace
 }
 
 async function captureAfter(options) {
-  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "k7" });
+  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "simulation-acceptance" });
   return captureAfterWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths, ...options });
 }
 
 async function captureSensitivity(options) {
-  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "k7" });
+  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "simulation-acceptance" });
   return captureSensitivityWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths, ...options });
 }
 
@@ -182,8 +182,8 @@ function fakeSimulationProfile(scenario) {
   const crossYear = scenario === "cross-year";
   const ticks = crossYear ? 20 : 30;
   return {
-    schema: "k7-bounded-representative-profile-v1",
-    profile_id: `${scenario}-bounded-representative-v1`,
+    schema: "simulation-bounded-representative-profile", schema_version: 1,
+    profile_id: `${scenario}-bounded-representative`,
     scope: "bounded_representative_not_full_market_scale",
     retail_count: crossYear ? 32 : 64,
     inst_count: 5,
@@ -238,13 +238,13 @@ function fakeSimulationExec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = 
     const days = Number(args[2]);
     const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
     parsed.tool = "simulation_baseline_fixture";
-    parsed.source = "fresh_current_k7_setup";
+    parsed.source = "current_session_setup";
     parsed.build_source_fingerprint = options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST;
     parsed.scenario = args[0];
     parsed.natural_days = days;
-    parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0, policy_id: "a-share-simulation-v1" };
+    parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0, policy_id: "a-share-simulation" };
     parsed.verification_profile = fakeSimulationProfile(scenario);
-    parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
+    parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), volume_denominator_assumption: Number(args[5]) };
     parsed.price_volume = parsed.report;
     parsed.causal = { ratio_absent_reason: null };
     return { code: 0, stdout: JSON.stringify(parsed), stderr: "" };
@@ -277,7 +277,7 @@ async function createSimulationSourceRepo() {
   await Promise.all([
     writeFile(path.join(repoRoot, "Cargo.toml"), "[workspace]\nmembers = [\"packages/engine\"]\n"),
     writeFile(path.join(repoRoot, "Cargo.lock"), "version = 4\n"),
-    writeFile(path.join(repoRoot, ".gitignore"), "packages/engine/ignored-k7-input.txt\n"),
+    writeFile(path.join(repoRoot, ".gitignore"), "packages/engine/ignored-source-fixture.txt\n"),
     writeFile(path.join(repoRoot, "scripts", "simulation", "baseline-run.mjs"), "export const fixture = 'initial';\n"),
     writeFile(path.join(repoRoot, "scripts", "simulation", "verify-simulation-artifacts.mjs"), "export const verifier = 'initial';\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "Cargo.toml"), "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n"),
@@ -324,7 +324,7 @@ describe("cargo example 参数构造", () => {
 
   it("derives a bounded concurrent simulation acceptance policy with a reasonable Rayon budget per seed", () => {
     assert.deepEqual(buildSimulationResourcePolicy(128, "node_available_parallelism"), {
-      schema: "k7-resource-policy-v7",
+      schema: "simulation-resource-policy", schema_version: 7,
       available_cpu_count: 128,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: "auto",
@@ -340,7 +340,7 @@ describe("cargo example 参数构造", () => {
 
   it("treats an explicit maximum as the total simulation acceptance CPU budget without oversubscription", () => {
     assert.deepEqual(buildSimulationResourcePolicy(12, "node_available_parallelism", 3), {
-      schema: "k7-resource-policy-v7",
+      schema: "simulation-resource-policy", schema_version: 7,
       available_cpu_count: 12,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: 3,
@@ -368,7 +368,7 @@ describe("cargo example 参数构造", () => {
       readCpuMax: async () => "250000 100000\n",
     });
     assert.deepEqual(constrained, {
-      schema: "k7-resource-policy-v7",
+      schema: "simulation-resource-policy", schema_version: 7,
       available_cpu_count: 2,
       available_cpu_source: "node_available_parallelism+cgroup_cpu_max",
       maximum_thread_count: "auto",
@@ -455,10 +455,37 @@ describe("CLI 参数解析", () => {
   });
 });
 
-describe("Task 38 simulation acceptance capture contracts", () => {
+describe("模拟验收 capture 契约", () => {
+  it("拒绝 raw multipliers 中新旧字段并列，失败不发布 manifest", async () => {
+    const outputDir = await newTempDir();
+    const base = fakeSimulationExec();
+    const exec = async (file, args, options) => {
+      const result = await base(file, args, options);
+      if (!isFakeSimulationExecutable(file)) return result;
+      const parsed = JSON.parse(result.stdout);
+      parsed.multipliers.c01_denominator_assumption = parsed.multipliers.volume_denominator_assumption;
+      return { ...result, stdout: JSON.stringify(parsed) };
+    };
+    await assert.rejects(captureAfter({ outputDir, exec, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 }), /multiplier.*keys/);
+    await assert.rejects(readFile(path.join(outputDir, "manifest.json")), /ENOENT/);
+  });
+
+  it("当前 checkpoint 拒绝多余历史 key，拒绝不改写原始字节", async () => {
+    const outputDir = await newTempDir();
+    const common = { outputDir, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 };
+    await captureAfter(common);
+    const checkpointPath = path.join(outputDir, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
+    const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
+    checkpoint.legacy_format = "k7-baseline-checkpoint-v4";
+    await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+    const before = await readFile(checkpointPath);
+    await assert.rejects(captureAfter({ ...common, resume: true }), /checkpoint.*keys/);
+    assert.deepEqual(await readFile(checkpointPath), before);
+  });
+
   it("rejects an output directory outside the unified workspace .tmp before writing", async () => {
     await assert.rejects(
-      captureAfter({ outputDir: "/tmp/k7-external-output", exec: fakeSimulationExec(), repoRoot: "D:/repo" }),
+      captureAfter({ outputDir: "/tmp/simulation-external-output", exec: fakeSimulationExec(), repoRoot: "D:/repo" }),
       /workspace.*\.tmp|strict child/i,
     );
   });
@@ -755,9 +782,9 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       writeFile(path.join(repoRoot, ".git"), `gitdir: ${gitDir}\n`),
       writeFile(path.join(gitDir, "commondir"), "../..\n"),
     ]);
-    const executablePath = path.join(workspaceRoot, ".tmp", "build-cache", "k7", "release", "examples", "simulation_baseline_fixture");
+    const executablePath = path.join(workspaceRoot, ".tmp", "build-cache", "simulation-acceptance", "release", "examples", "simulation_baseline_fixture");
     await mkdir(path.dirname(executablePath), { recursive: true });
-    await writeFile(executablePath, "prebuilt-k7-binary");
+    await writeFile(executablePath, "prebuilt-simulation-binary");
     const sourceFingerprint = { digest: "c".repeat(64) };
     const resourcePolicy = buildSimulationResourcePolicy(8, "test");
     const deadline = buildSimulationDeadline({ batchTimeoutMs: 1_000, childTimeoutMs: 1_000 });
@@ -766,8 +793,8 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       assert.deepEqual(args, buildSimulationFixtureBuildArgs());
       assert.equal(options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST, sourceFingerprint.digest);
       assert.equal(options.env.CARGO_BUILD_JOBS, "8");
-      assert.equal(options.env.CARGO_TARGET_DIR, path.join(workspaceRoot, ".tmp", "build-cache", "k7"));
-      const processTmp = path.join(workspaceRoot, ".tmp", "process-tmp", "k7");
+      assert.equal(options.env.CARGO_TARGET_DIR, path.join(workspaceRoot, ".tmp", "build-cache", "simulation-acceptance"));
+      const processTmp = path.join(workspaceRoot, ".tmp", "process-tmp", "simulation-acceptance");
       assert.equal(options.env.TMPDIR, processTmp);
       assert.equal(options.env.TMP, processTmp);
       assert.equal(options.env.TEMP, processTmp);
@@ -780,7 +807,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     try {
       const prepared = await prepareSimulationFixtureExecutable({ exec, repoRoot, deadline, resourcePolicy, sourceFingerprint });
       assert.equal(prepared.executable_path, executablePath);
-      assert.equal(prepared.executable_relative_path, ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture");
+      assert.equal(prepared.executable_relative_path, ".tmp/build-cache/simulation-acceptance/release/examples/simulation_baseline_fixture");
       assert.equal(prepared.workspace_root, workspaceRoot);
       assert.equal(prepared.embedded_source_fingerprint_digest, sourceFingerprint.digest);
       assert.match(prepared.binary_sha256, /^[a-f0-9]{64}$/);
@@ -792,14 +819,14 @@ describe("Task 38 simulation acceptance capture contracts", () => {
   it("rejects a non-fresh or save-backed after report", async () => {
     await assert.rejects(
       captureAfter({ outputDir: "unused", reportSource: "save_slot" }),
-      /fresh_current_k7_setup/,
+      /current_session_setup/,
     );
   });
 
   it("rejects primary seeds that differ from the before matrix", async () => {
     await assert.rejects(
       captureAfter({ outputDir: "unused", seeds: MATRIX_SEEDS.slice(1) }),
-      /seed.*Task 1|Task 1.*seed/,
+      /seed.*matrix|matrix.*seed/,
     );
   });
 
@@ -821,13 +848,13 @@ describe("Task 38 simulation acceptance capture contracts", () => {
         const days = Number(args[2]);
         const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
         parsed.tool = "simulation_baseline_fixture";
-        parsed.source = "fresh_current_k7_setup";
+        parsed.source = "current_session_setup";
         parsed.build_source_fingerprint = options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST;
         parsed.scenario = args[0];
         parsed.natural_days = days;
         parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0 };
         parsed.verification_profile = fakeSimulationProfile(parsed.scenario);
-        parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
+        parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), volume_denominator_assumption: Number(args[5]) };
         parsed.price_volume = parsed.report;
         parsed.price_volume.runs[0].retail_execution.filled_share_ratio = null;
         parsed.causal = { ratio_absent_reason: "no_submissions" };
@@ -887,8 +914,8 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     assert.ok(maxActiveChildren <= resourcePolicy.max_concurrent_child_executions);
     assert.ok(maxActiveChildren > 1, "the simulation acceptance runner must exercise process-level parallelism");
     assert.deepEqual(observedRayonThreads, new Set([String(resourcePolicy.rayon_threads_per_seed)]));
-    assert.deepEqual(observedCargoTargets, new Set([TEST_WORKSPACE_PATHS.cargoTargetDir.replace("test-fixtures", "k7")]));
-    const simulationProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "k7");
+    assert.deepEqual(observedCargoTargets, new Set([TEST_WORKSPACE_PATHS.cargoTargetDir.replace("test-fixtures", "simulation-acceptance")]));
+    const simulationProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "simulation-acceptance");
     assert.deepEqual(observedProcessTmp, new Set([`${simulationProcessTmp}|${simulationProcessTmp}|${simulationProcessTmp}`]));
     assert.ok(
       resourcePolicy.max_concurrent_child_executions * resourcePolicy.rayon_threads_per_seed <= 128,
@@ -967,11 +994,11 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       /injected child interruption/,
     );
     assert.equal(simulationCallCount(calls), MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length);
-    const completedPath = path.join(target, "primary-b1-e1-c1", "seed-1.json");
+    const completedPath = path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "seed-1.json");
     const completedBytes = await readFile(completedPath);
     const completedStat = await stat(completedPath);
     const executionsBeforeResume = calls.get("primary:1");
-    const checkpoint = JSON.parse(await readFile(path.join(target, "primary-b1-e1-c1", "checkpoint.json"), "utf8"));
+    const checkpoint = JSON.parse(await readFile(path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json"), "utf8"));
     assert.deepEqual(checkpoint.completed.map((entry) => entry.seed), [1]);
     await captureAfter({ outputDir: target, exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true, resourcePolicy });
     assert.deepEqual(await readFile(completedPath), completedBytes);
@@ -998,7 +1025,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       /seed-specific child interruption/,
     );
 
-    const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpointPath = path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     const successfulSeeds = MATRIX_SEEDS.filter((seed) => seed !== 2);
     assert.deepEqual(checkpoint.completed.map((entry) => entry.seed), successfulSeeds);
@@ -1058,7 +1085,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
 
   it("reuses an exact completed seed when only the runner's ignored evidence output dirties Git status", async () => {
     const repoRoot = await createSimulationSourceRepo();
-    const target = path.join(repoRoot, ".omo", "k7-after");
+    const target = path.join(repoRoot, ".omo", "post-run-output");
     const calls = new Map();
 
     await captureAfter({
@@ -1151,7 +1178,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
   it("rejects resume when ignored simulation acceptance source bytes change", async () => {
     const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();
-    const ignoredPath = path.join(repoRoot, "packages", "engine", "ignored-k7-input.txt");
+    const ignoredPath = path.join(repoRoot, "packages", "engine", "ignored-source-fixture.txt");
     await writeFile(ignoredPath, "ignored-first\n");
     await captureAfter({
       outputDir,
@@ -1179,7 +1206,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();
     const targetPath = path.join(repoRoot, "Cargo.toml");
-    await symlink(targetPath, path.join(repoRoot, "packages", "engine", "k7-source-link"));
+    await symlink(targetPath, path.join(repoRoot, "packages", "engine", "linked-source-fixture"));
     await assert.rejects(
       captureAfter({
         outputDir,
@@ -1198,7 +1225,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     const target = path.join(outputDir, "after");
     const calls = new Map();
     await captureAfter({ outputDir: target, exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
-    const primaryDir = path.join(target, "primary-b1-e1-c1");
+    const primaryDir = path.join(target, "primary-behavior-1-event-1-volume-denominator-1");
     const seedPath = path.join(primaryDir, "seed-1.json");
     const before = await readFile(seedPath);
     const executionsBeforeResume = calls.get("primary:1");
@@ -1212,7 +1239,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     it(`never reuses an incomplete seed when ${boundary} publication fails`, async () => {
       const outputDir = await newTempDir();
       const target = path.join(outputDir, "after");
-      const primaryDir = path.join(target, "primary-b1-e1-c1");
+      const primaryDir = path.join(target, "primary-behavior-1-event-1-volume-denominator-1");
       let injected = false;
       const atomicWrite = async (filePath, content, { finalPath = filePath } = {}) => {
         const isRaw = finalPath.endsWith("seed-1.json");
@@ -1268,7 +1295,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     const target = path.join(outputDir, "after");
     const partial = fakeSimulationExec();
     await captureAfter({ outputDir: target, exec: partial, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
-    const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpointPath = path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     await writeFile(checkpointPath, "{not json");
     await assert.rejects(captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /checkpoint.*JSON|JSON.*checkpoint/i);
@@ -1292,7 +1319,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       const outputDir = await newTempDir();
       const target = path.join(outputDir, "after");
       await captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
-      const primaryDir = path.join(target, "primary-b1-e1-c1");
+      const primaryDir = path.join(target, "primary-behavior-1-event-1-volume-denominator-1");
       await mutation[1](primaryDir);
       await assert.rejects(
         captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
@@ -1303,11 +1330,17 @@ describe("Task 38 simulation acceptance capture contracts", () => {
   }
 
   for (const [name, alter, expected] of [
+    ["旧 checkpoint schema", (checkpoint) => { checkpoint.schema = "k7-baseline-checkpoint-v4"; delete checkpoint.schema_version; }, /checkpoint.*keys/],
+    ["非数值 schema_version", (checkpoint) => { checkpoint.schema_version = "4"; }, /schema/],
+    ["runner policy version", (checkpoint) => {
+      checkpoint.identity.runner.runner_policy_version = 7;
+      checkpoint.identity_digest = createHash("sha256").update(JSON.stringify(checkpoint.identity)).digest("hex");
+    }, /identity/],
     ["argv", (checkpoint) => { checkpoint.completed[0].argv = ["cargo", "wrong"]; }, /argv|digest/i],
     ["scenario", (checkpoint) => { checkpoint.identity.scenario = "cross-year"; }, /identity|scenario/i],
     ["natural days", (checkpoint) => { checkpoint.identity.natural_days = TRADING_DAYS + 1; }, /identity|natural/i],
     ["multipliers", (checkpoint) => { checkpoint.identity.multipliers.event = 2; }, /identity|multiplier/i],
-    ["v7 runner version", (checkpoint) => {
+    ["旧 runner 执行代号", (checkpoint) => {
       checkpoint.identity.runner.version = "2026-09-23-cleanup-closed-deadline-v7";
       checkpoint.identity_digest = createHash("sha256").update(JSON.stringify(checkpoint.identity)).digest("hex");
     }, /identity|version/i],
@@ -1316,7 +1349,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       const outputDir = await newTempDir();
       const target = path.join(outputDir, "after");
       await captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
-      const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+      const checkpointPath = path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
       const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
       alter(checkpoint);
       await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
@@ -1344,7 +1377,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     };
     await assert.rejects(
       captureAfter({ outputDir: path.join(outputDir, "after"), exec: saveBacked, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 }),
-      /fresh_current_k7_setup|save/i,
+      /current_session_setup|save/i,
     );
   });
 
@@ -1484,10 +1517,10 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       crossYearNaturalDays: TRADING_DAYS,
     });
 
-    assert.equal(manifest.source_fingerprint.algorithm, "k7-simulation-source-v1");
+    assert.equal(manifest.source_fingerprint.algorithm, "simulation-source-fingerprint");
     assert.match(manifest.source_fingerprint.digest, /^[a-f0-9]{64}$/);
     assert.deepEqual(manifest.primary.source_fingerprint, manifest.source_fingerprint);
-    const receipt = JSON.parse(await readFile(path.join(target, "primary-b1-e1-c1", "seed-1.checkpoint.json"), "utf8"));
+    const receipt = JSON.parse(await readFile(path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "seed-1.checkpoint.json"), "utf8"));
     assert.deepEqual(receipt.identity.source_fingerprint, manifest.source_fingerprint);
     const onDisk = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
     assert.deepEqual(onDisk.source_fingerprint, manifest.source_fingerprint);
@@ -1504,7 +1537,7 @@ describe("Task 38 simulation acceptance capture contracts", () => {
       crossYearNaturalDays: TRADING_DAYS,
       batchSize: MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length + 1,
     });
-    const receiptPath = path.join(target, "primary-b1-e1-c1", "determinism.checkpoint.json");
+    const receiptPath = path.join(target, "primary-behavior-1-event-1-volume-denominator-1", "determinism.checkpoint.json");
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
     delete receipt.identity.source_fingerprint;
     await writeFile(receiptPath, `${JSON.stringify(receipt)}\n`);

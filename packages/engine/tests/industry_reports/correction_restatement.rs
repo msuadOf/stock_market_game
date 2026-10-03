@@ -1,11 +1,11 @@
-//! 更正跨期语义回归（任务 13 复核 F1）：CAS 28 追溯重述。
+//! 更正跨期语义回归：CAS 28 追溯重述。
 //!
 //! 更正调整分录的损益必须归入**目标历史期间**（重述版本 + 后续期间的
 //! 期初留存收益/比较项），绝不进入后续期间的当期利润表；现金仍按实际
 //! 收付期间列报（恰一次）。重述底稿（Scope → 来源 → 目标期间）随
 //! ClosingEngine 持久化，经 serde 存档恢复后仍生效。
 //!
-//! 手算锚（元）：v1 年报净利 5,295 / 现金 95,295；v2 重述净利 5,595 /
+//! 手算锚（元）：原年报（ReportVersion.sequence=1）净利 5,295 / 现金 95,295；重述年报（ReportVersion.sequence=2）净利 5,595 /
 //! 现金 95,595；2031-01 月报净利 0 / 期初留存 105,595 / 经营 CF +300；
 //! FY2031 年报净利 0、上年同期（重述）5,595。
 
@@ -24,7 +24,7 @@ fn member() -> MemberId {
 }
 
 /// 推进到「FY2030 已年结 + 2031-01 更正年报（遗漏收入 +300）」的状态，
-/// 并返回更正前的 v1 年报 serde 字节（供事后逐字节比对）。
+/// 并返回更正前的原年报 serde 字节（供事后逐字节比对）。
 struct CorrectionScenario {
     books: Books,
     closing: ClosingEngine,
@@ -34,7 +34,7 @@ struct CorrectionScenario {
 
 impl CorrectionScenario {
     fn through_correction() -> Self {
-        let mut books = Books::new(engine::company::industrial::industrial_chart_v2());
+        let mut books = Books::new(engine::company::industrial::industrial_account_chart());
         let mut closing = ClosingEngine::new();
         let industry = IndustryPresentation::Industrial;
         let id = member();
@@ -80,9 +80,9 @@ impl CorrectionScenario {
         let original_report_json = serde_json::to_string(
             closing
                 .version(&scope, period("2030-12"), ReportKind::Annual, 1)
-                .expect("annual v1 stored"),
+                .expect("原年报已登记"),
         )
-        .expect("v1 serializes");
+        .expect("原年报可序列化");
         closing
             .correct(
                 &mut books,
@@ -140,7 +140,7 @@ fn correction_does_not_leak_into_later_periods() {
     let corrected_report = scenario
         .closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 2)
-        .expect("restated annual v2")
+        .expect("重述年报已登记")
         .clone();
     assert_eq!(corrected_report.income.cumulative.net_income, yuan(5_595));
     assert_eq!(corrected_report.equity.net_income, yuan(5_595));
@@ -152,11 +152,11 @@ fn correction_does_not_leak_into_later_periods() {
         "restated CF keeps actual periods"
     );
 
-    // (e) 原公布 v1 逐字节不变。
+    // (e) 原公布年报逐字节不变。
     let original_report = scenario
         .closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 1)
-        .expect("original annual v1");
+        .expect("原年报仍可读取");
     assert_eq!(original_report.income.cumulative.net_income, yuan(5_295));
     assert_eq!(
         serde_json::to_string(original_report).unwrap(),

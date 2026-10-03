@@ -85,7 +85,7 @@ impl CompanyEconomicState {
 }
 
 /// 数量域基点缩放（整数半偶舍入；`accounting::amount::div_round_half_even`
-/// 的数量域孪生副本——多行业 rhe 副本先例，任务 13 统一入口时一并收编）。
+/// 的数量域同算法副本；与多行业 rhe 副本采用相同舍入约定）。
 pub(in crate::company::operations) fn scale_units(units: i128, mult_bp: i64) -> i128 {
     let negative = units < 0;
     let magnitude = units.unsigned_abs();

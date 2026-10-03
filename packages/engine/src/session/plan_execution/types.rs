@@ -120,7 +120,7 @@ pub enum PlanExecutionError {
     IncompatibleExecutionState { plan_id: PlanId },
 }
 
-/// 权威路由捕获、尚未应用到计划簿的事实（任务 27 起随存档固化；存档边界
+/// 权威路由捕获、尚未应用到计划簿的事实（随完整存档固化；存档边界
 /// 只保留存活计划的条目）。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PendingPlanEvent {

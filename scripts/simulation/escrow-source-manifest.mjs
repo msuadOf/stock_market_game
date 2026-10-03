@@ -41,6 +41,6 @@ export async function escrowSourceManifest(sourceRoot) {
   }
   for (const input of INPUTS) await visit(input, true);
   files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-  const content = { schema: "escrow-source-manifest-v1", inputs: INPUTS, files, absent: absent.sort() };
+  const content = { schema: "escrow-source-manifest", schema_version: 1, inputs: INPUTS, files, absent: absent.sort() };
   return { ...content, sha256: digest(JSON.stringify(content)) };
 }

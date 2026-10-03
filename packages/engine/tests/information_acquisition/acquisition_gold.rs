@@ -1,9 +1,11 @@
-//! 获知金样（K4 / 任务 16）：公共曝光与个人已知信息分离。
+//! 获知金样：公共曝光与个人已知信息分离。
 //!
 //! 核心验收（无前视）：改变**未披露事实**、或**已披露但本人未读**的内容，
 //! 不改变未观察 NPC 的观察前判断输入——以观察上下文内容的字节投影断言。
 
-use crate::fixture::{hour_after, npc_a, npc_b, FixtureMarket, Scenario, COMPANY};
+use crate::fixture::{
+    hour_after, peer_information_npc, primary_information_npc, FixtureMarket, Scenario, COMPANY,
+};
 use engine::company::CompanyId;
 use engine::information::{
     AcquisitionError, AcquisitionOutcome, NpcInformationState, NpcObservationContext, PublicLibrary,
@@ -58,26 +60,26 @@ pub(crate) fn judgment_projection(ctx: &NpcObservationContext<'_, FixtureMarket>
     parts.join("\n")
 }
 
-/// 金样 1（核心验收）：逐人延迟获知 + 无前视。甲读了年报 v1 与公告、乙
+/// 金样 1（核心验收）：逐人延迟获知 + 无前视。甲读了原年报与公告、乙
 /// 未读——乙的观察上下文不含它们；改变未披露事实（开放期间新分录）或
-/// 已披露但本人未读的内容（更正 v2 公开），乙的观察前判断输入字节不变。
+/// 已披露但本人未读的内容（更正报告公开），乙的观察前判断输入字节不变。
 #[test]
 fn unread_publication_never_enters_unread_npc_inputs() {
     let mut sc = Scenario::new();
-    let (a, b) = (npc_a(), npc_b());
+    let (a, b) = (primary_information_npc(), peer_information_npc());
     let mut state_a = NpcInformationState::new(a);
     let mut state_b = NpcInformationState::new(b);
     let market = FixtureMarket::quiet();
 
-    // 甲获知年报 v1 与公告；乙未获知任何内容（公共曝光 ≠ 个人阅读）。
+    // 甲获知原年报与公告；乙未获知任何内容（公共曝光 ≠ 个人阅读）。
     state_a
         .record_acquisition(
             a,
             &sc.library,
-            sc.annual_v1_id,
+            sc.original_annual_report_id,
             hour_after(sc.annual_instant),
         )
-        .expect("npc a reads annual v1");
+        .expect("主要 NPC 阅读原年报");
     state_a
         .record_acquisition(
             a,
@@ -93,7 +95,7 @@ fn unread_publication_never_enters_unread_npc_inputs() {
         "b knows nothing before any acquisition"
     );
     assert!(matches!(
-        ctx_b.report(sc.annual_v1_id).unwrap_err(),
+        ctx_b.report(sc.original_annual_report_id).unwrap_err(),
         AcquisitionError::NotAcquired { .. }
     ));
     let baseline = judgment_projection(&ctx_b);
@@ -106,8 +108,8 @@ fn unread_publication_never_enters_unread_npc_inputs() {
         "undisclosed ledger facts must not move b's judgment inputs"
     );
 
-    // —— 已披露但本人未读：更正 v2 公开，乙仍未阅读 ——
-    let v2_id = sc.publish_correction();
+    // —— 已披露但本人未读：更正报告公开，乙仍未阅读 ——
+    let corrected_publication_id = sc.publish_correction();
     assert_eq!(
         judgment_projection(&build_ctx(b, &state_b, &sc.library, &market)),
         baseline,
@@ -115,15 +117,20 @@ fn unread_publication_never_enters_unread_npc_inputs() {
     );
     assert!(matches!(
         build_ctx(b, &state_b, &sc.library, &market)
-            .report(v2_id)
+            .report(corrected_publication_id)
             .unwrap_err(),
         AcquisitionError::NotAcquired { .. }
     ));
 
-    // —— 区分力对照：甲获知 v2 后，甲的判断输入集合发生变化 ——
+    // —— 区分力对照：甲获知更正报告后，甲的判断输入集合发生变化 ——
     let before_a = judgment_projection(&build_ctx(a, &state_a, &sc.library, &market));
     state_a
-        .record_acquisition(a, &sc.library, v2_id, hour_after(sc.correction_instant))
+        .record_acquisition(
+            a,
+            &sc.library,
+            corrected_publication_id,
+            hour_after(sc.correction_instant),
+        )
         .expect("npc a reads correction");
     assert_ne!(
         judgment_projection(&build_ctx(a, &state_a, &sc.library, &market)),
@@ -131,15 +138,15 @@ fn unread_publication_never_enters_unread_npc_inputs() {
         "a real acquisition must move a's inputs (the test has discriminating power)"
     );
 
-    // —— 逐人延迟获知：乙更晚才首次阅读年报 v1，只改变乙本人的输入 ——
+    // —— 逐人延迟获知：乙更晚才首次阅读原年报，只改变乙本人的输入 ——
     state_b
         .record_acquisition(
             b,
             &sc.library,
-            sc.annual_v1_id,
+            sc.original_annual_report_id,
             hour_after(sc.correction_instant),
         )
-        .expect("npc b reads annual v1 late");
+        .expect("对照 NPC 延迟阅读原年报");
     let ctx_b = build_ctx(b, &state_b, &sc.library, &market);
     assert_eq!(ctx_b.acquired_reports().len(), 1);
     assert_ne!(
@@ -153,12 +160,12 @@ fn unread_publication_never_enters_unread_npc_inputs() {
 #[test]
 fn repeat_acquisition_is_recorded_once() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let mut state = NpcInformationState::new(a);
-    let t1 = hour_after(sc.annual_instant);
+    let first_read_at = hour_after(sc.annual_instant);
 
     match state
-        .record_acquisition(a, &sc.library, sc.annual_v1_id, t1)
+        .record_acquisition(a, &sc.library, sc.original_annual_report_id, first_read_at)
         .expect("first acquisition")
     {
         AcquisitionOutcome::Recorded {
@@ -166,16 +173,21 @@ fn repeat_acquisition_is_recorded_once() {
             observed_at,
         } => {
             assert_eq!(company, sc.company);
-            assert_eq!(observed_at, t1);
+            assert_eq!(observed_at, first_read_at);
         }
         AcquisitionOutcome::AlreadyAcquired { .. } => panic!("first acquisition must record"),
     }
     let bytes = state_bytes(&state);
 
     // 同 id 更晚的重复阅读：合法幂等输入，不重记、不重写首次时点。
-    let t2 = hour_after(hour_after(sc.annual_instant));
+    let duplicate_read_at = hour_after(hour_after(sc.annual_instant));
     match state
-        .record_acquisition(a, &sc.library, sc.annual_v1_id, t2)
+        .record_acquisition(
+            a,
+            &sc.library,
+            sc.original_annual_report_id,
+            duplicate_read_at,
+        )
         .expect("duplicate acquisition is idempotent")
     {
         AcquisitionOutcome::AlreadyAcquired {
@@ -183,7 +195,10 @@ fn repeat_acquisition_is_recorded_once() {
             first_observed_at,
         } => {
             assert_eq!(company, sc.company);
-            assert_eq!(first_observed_at, t1, "first observation instant wins");
+            assert_eq!(
+                first_observed_at, first_read_at,
+                "first observation instant wins"
+            );
         }
         AcquisitionOutcome::Recorded { .. } => panic!("duplicate must not re-record"),
     }
@@ -198,15 +213,20 @@ fn repeat_acquisition_is_recorded_once() {
 #[test]
 fn state_serde_round_trip_preserves_acquisitions() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let mut state = NpcInformationState::new(a);
-    let t1 = hour_after(sc.annual_instant);
-    let t2 = hour_after(sc.announcement_instant);
+    let annual_report_read_at = hour_after(sc.annual_instant);
+    let announcement_read_at = hour_after(sc.announcement_instant);
     state
-        .record_acquisition(a, &sc.library, sc.annual_v1_id, t1)
+        .record_acquisition(
+            a,
+            &sc.library,
+            sc.original_annual_report_id,
+            annual_report_read_at,
+        )
         .expect("acquire annual");
     state
-        .record_acquisition(a, &sc.library, sc.announcement_id, t2)
+        .record_acquisition(a, &sc.library, sc.announcement_id, announcement_read_at)
         .expect("acquire announcement");
 
     let bytes = serde_json::to_string(&state).expect("state serializes");
@@ -216,8 +236,14 @@ fn state_serde_round_trip_preserves_acquisitions() {
         bytes
     );
     assert_eq!(restored.owner(), a);
-    assert_eq!(restored.observed_at_of(sc.annual_v1_id), Some(t1));
-    assert_eq!(restored.observed_at_of(sc.announcement_id), Some(t2));
+    assert_eq!(
+        restored.observed_at_of(sc.original_annual_report_id),
+        Some(annual_report_read_at)
+    );
+    assert_eq!(
+        restored.observed_at_of(sc.announcement_id),
+        Some(announcement_read_at)
+    );
     assert_eq!(
         restored
             .records_for_company(&CompanyId(COMPANY.to_string()))
@@ -233,7 +259,9 @@ fn state_serde_round_trip_preserves_acquisitions() {
     assert_eq!(ctx.acquired_reports().len(), 1);
     assert_eq!(ctx.acquired_announcements().len(), 1);
     assert_eq!(
-        ctx.report(sc.annual_v1_id).expect("readable").company,
+        ctx.report(sc.original_annual_report_id)
+            .expect("readable")
+            .company,
         sc.company
     );
 }

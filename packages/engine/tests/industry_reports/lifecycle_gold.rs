@@ -5,8 +5,8 @@
 //! 2030-12 的资产负债表/利润表窗口；现金流量表保持实际收付期间口径
 //! （间接法以显式「重述现金调整」行配平，不做 plug）。
 //!
-//! 手算锚（元）：v1 年报净利 5,295 / 现金 99,975；v2 重述净利 5,595 /
-//! 现金 100,275；v2 经营 CF 5,000（实际期间）；2031-01 月报经营 CF +300。
+//! 手算锚（元）：原年报（ReportVersion.sequence=1）净利 5,295 / 现金 99,975；重述年报（ReportVersion.sequence=2）净利 5,595 /
+//! 现金 100,275；重述年报经营 CF 5,000（实际期间）；2031-01 月报经营 CF +300。
 
 use crate::fixture::{entry, standalone};
 use engine::accounting::closing::{ClosingEngine, CorrectionRequest};
@@ -46,7 +46,7 @@ fn original_request<'a>(iso: &str, kind: ReportKind, books: &'a Books) -> Report
 
 #[test]
 fn monthly_finalize_year_close_and_correction_lifecycle() {
-    let mut books = Books::new(engine::company::industrial::industrial_chart_v2());
+    let mut books = Books::new(engine::company::industrial::industrial_account_chart());
     let mut closing = ClosingEngine::new();
     let industry = IndustryPresentation::Industrial;
     let id = member();
@@ -259,7 +259,7 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
             ReportKind::Annual,
             annual.sequence,
         )
-        .expect("annual v1 stored")
+        .expect("原年报已登记")
         .clone();
 
     // —— 次年更正年报：调整分录（现金 300）过账于开放期间 2031-01 ——
@@ -287,22 +287,22 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     assert_eq!(corrected.sequence, 2);
 
     // —— 原公开版本逐字节不变 ——
-    let annual_v1_after = closing
+    let original_annual_report_after_correction = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 1)
-        .expect("annual v1 still stored");
+        .expect("原年报仍保留");
     assert_eq!(
-        &annual_original, annual_v1_after,
+        &annual_original, original_annual_report_after_correction,
         "original published version must be byte-identical"
     );
     assert_eq!(
         serde_json::to_string(&annual_original).unwrap(),
-        serde_json::to_string(annual_v1_after).unwrap()
+        serde_json::to_string(original_annual_report_after_correction).unwrap()
     );
 
     // —— 重述年报：利润表/资产负债表吸收更正；现金流量表保持实际期间 ——
     let corrected_report = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 2)
-        .expect("annual v2 stored");
+        .expect("重述年报已登记");
     assert_eq!(corrected_report.version.supersedes, Some(1));
     assert!(matches!(
         corrected_report.version.kind,

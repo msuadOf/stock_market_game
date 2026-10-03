@@ -1,8 +1,8 @@
-//! 预售处理器（K3 地产）：签约（纯子账事实，不过账）与收款
+//! 预售处理器（地产会计约束）：签约（纯子账事实，不过账）与收款
 //! （Dr 现金 / Cr 2203 合同负债——**不是收入**；CAS 14 §39 已核验）。
 //!
 //! 简化（登记 issues）：不建模预售许可进度（签约时点不受施工进度约束）、
-//! 不建模增值税（K3 地产行未列税项；任务 13 报表税务口径另议）。
+//! 不建模地产增值税（当前地产会计模型未列税项；简化边界见 docs/company-accounting.md）。
 
 use crate::accounting::{
     AccountingAmount, AccountingError, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry,

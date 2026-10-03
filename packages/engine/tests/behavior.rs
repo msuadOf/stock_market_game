@@ -99,7 +99,7 @@ impl BehaviorScenario {
                         max_buy_price: Money::from_cents(1_100),
                         daily_upper_limit: Money::from_cents(1_100),
                         min_sell_price: Money::from_cents(900),
-                        // 故意保持横盘：B02 不得再用 tick 数冒充 30 分钟。
+                        // 故意保持横盘：散户目标仓位判断不得再用 tick 数冒充 30 分钟。
                         recent_prices: vec![Money::from_cents(1_000); 20],
                         recent_market_minute_prices: vec![],
                         relative_volume: 1.0,

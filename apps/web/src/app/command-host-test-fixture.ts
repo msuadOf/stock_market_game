@@ -1,7 +1,7 @@
 import type { EngineHost } from "../host/engine-host.ts";
 import { baseState } from "../host/protocol-test-fixtures.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
-import { currentSaveFixture } from "../save/save-v2-test-fixture.ts";
+import { currentSaveFixture } from "../save/current-save-fixture.ts";
 
 /** 未声明的宿主操作一旦被命令误调用就显式失败，不能靠不完整类型断言通过测试。 */
 export function commandHostFixture(overrides: Partial<EngineHost> = {}): EngineHost {

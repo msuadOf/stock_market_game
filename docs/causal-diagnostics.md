@@ -24,8 +24,8 @@ The historical task-1 baseline fixture/report is unchanged.
   and the optional closing window to 14:57-15:00. This deliberately preserves
   ADR-0011's game-bucket simplification, not 240 real continuous minutes.
 - Acquisition latency uses the actual recorded acquired instant minus actual
-  publication instant. The inherited decision clock omits lunch; see Task-36
-  review evidence. Diagnostics do not falsify that source time to hide the defect.
+  publication instant.
+  历史离线诊断复核曾记录决策时钟缺少午休的来源问题；诊断不得为掩盖时钟缺陷篡改来源时刻。
 - Direction persistence is the same-side fraction of adjacent actual continuous
   aggressor fills within each stock, pooled over eligible pairs. Auction trades
   have no aggressor and are excluded, explicitly.

@@ -81,7 +81,7 @@ pub(super) fn admit_ready_batch(
 }
 
 /// 仅拥有一个 ready batch 的候选索引、偏序及股票受理 gate。
-/// 账户资源余额仍由 P1 snapshot 与 validator 管理。
+/// 账户资源余额仍由 SealAllocationSnapshot snapshot 与 validator 管理。
 struct ReadyAdmissionPlan {
     candidates: Vec<IntentCandidate>,
     successors: Vec<Vec<usize>>,

@@ -37,7 +37,7 @@ function executionCoverage() {
 
 function observation({ budget = "1", repeat = "0", mode = "canonical", disabled = null, artifacts = ARTIFACTS, order } = {}) {
   return {
-    schema: "escrow-determinism-observation-v1",
+    schema: "escrow-determinism-observation", schema_version: 1,
     scenario: "multi-stock-auction-day-end",
     seed: "7",
     budget,
@@ -76,7 +76,7 @@ function res(cash, shares) {
 
 function conservationSnapshot(tick = 12) {
   return {
-    schema: "escrow-conservation-snapshot-v1",
+    schema: "escrow-conservation-snapshot", schema_version: 1,
     scenario: "multi-stock-auction-day-end",
     seed: "7",
     tick: String(tick),
@@ -84,9 +84,9 @@ function conservationSnapshot(tick = 12) {
       {
         key: { account_id: "1", stock_code: "600001", order_id: "41", side: "Buy" },
         origin: "existing",
-        basis: { tick_start_live: res(100, 0), p1_live: res(80, 0) },
+        basis: { tick_start_live: res(100, 0), allocation_live: res(80, 0) },
         receipts: [
-          { receipt_index: "10", journal: "PreSeal", source: { kind: "P0Expiry", index: "0" }, transition_ordinal_within_source: "0", kind: "Release", live_before: res(100, 0), spent: res(0, 0), released: res(20, 0), live_after: res(80, 0) },
+          { receipt_index: "10", journal: "PreSeal", source: { kind: "QuoteExpiry", index: "0" }, transition_ordinal_within_source: "0", kind: "Release", live_before: res(100, 0), spent: res(0, 0), released: res(20, 0), live_after: res(80, 0) },
           { receipt_index: "11", journal: "SealedBatch", source: { kind: "SealedIntent", index: "0" }, transition_ordinal_within_source: "0", kind: "Fill", live_before: res(80, 0), spent: res(50, 0), released: res(10, 0), live_after: res(20, 0) },
         ],
         commit_live: res(20, 0),
@@ -154,7 +154,25 @@ describe("determinism and perturbation contracts", () => {
 });
 
 describe("per-envelope and per-account conservation", () => {
-  it("accepts actual P3-created Buy rows without inventing an existing P1 basis, and checks quiet ticks", () => {
+  it("当前 conservation schema 接受职责字段，拒绝旧 schema、版本与双字段", () => {
+    assert.equal(verifyConservationSnapshot(conservationSnapshot()).receipt_rows, 4);
+    for (const version of [undefined, "1", 0, 2]) {
+      const invalid = conservationSnapshot();
+      invalid.schema_version = version;
+      assert.throws(() => verifyConservationSnapshot(invalid), /schema/);
+    }
+    const legacy = conservationSnapshot();
+    legacy.schema = "escrow-conservation-snapshot-v1";
+    assert.throws(() => verifyConservationSnapshot(legacy), /schema/);
+    const dual = conservationSnapshot();
+    dual.envelopes[0].basis.p1_live = dual.envelopes[0].basis.allocation_live;
+    assert.throws(() => verifyConservationSnapshot(dual), /basis.*keys/);
+    const legacySource = conservationSnapshot();
+    legacySource.envelopes[0].receipts[0].source.kind = "P0Expiry";
+    assert.throws(() => verifyConservationSnapshot(legacySource), /source.*kind/);
+  });
+
+  it("接受 account validation 新建的 Buy row，不虚构 allocation basis，并检查无成交 tick", () => {
     const created = conservationSnapshot();
     const buy = created.envelopes[0];
     buy.origin = "created";
@@ -221,7 +239,7 @@ describe("per-envelope and per-account conservation", () => {
   it("rejects a balanced but non-zero Buy shares escrow", () => {
     const buyShares = conservationSnapshot();
     buyShares.envelopes[0].basis.tick_start_live = res(100, 100);
-    buyShares.envelopes[0].basis.p1_live = res(80, 100);
+    buyShares.envelopes[0].basis.allocation_live = res(80, 100);
     buyShares.envelopes[0].receipts[0].live_before = res(100, 100);
     buyShares.envelopes[0].receipts[0].live_after = res(80, 100);
     buyShares.envelopes[0].receipts[1].live_before = res(80, 100);
@@ -281,7 +299,7 @@ describe("EnvelopeConservation transition 边界", () => {
     const snapshot = conservationSnapshot();
     const buy = snapshot.envelopes[0];
     buy.basis.tick_start_live.cash_cents = String(huge);
-    buy.basis.p1_live.cash_cents = String(huge - 20n);
+    buy.basis.allocation_live.cash_cents = String(huge - 20n);
     buy.receipts[0].live_before.cash_cents = String(huge);
     buy.receipts[0].live_after.cash_cents = String(huge - 20n);
     buy.receipts[1].live_before.cash_cents = String(huge - 20n);
@@ -297,18 +315,18 @@ describe("EnvelopeConservation transition 边界", () => {
     }
   });
 
-  it("无 receipt 与仅 P0 receipt 都检查 P1 截点", () => {
-    for (const onlyP0 of [false, true]) {
+  it("无 receipt 与仅 PreSeal receipt 都检查 allocation 截点", () => {
+    for (const hasPreSealReceipt of [false, true]) {
       const snapshot = conservationSnapshot();
       snapshot.envelopes = [snapshot.envelopes[0]];
       const buy = snapshot.envelopes[0];
-      buy.receipts = onlyP0 ? [buy.receipts[0]] : [];
-      buy.basis.p1_live = res(onlyP0 ? 80 : 100, 0);
-      buy.commit_live = res(onlyP0 ? 80 : 100, 0);
+      buy.receipts = hasPreSealReceipt ? [buy.receipts[0]] : [];
+      buy.basis.allocation_live = res(hasPreSealReceipt ? 80 : 100, 0);
+      buy.commit_live = res(hasPreSealReceipt ? 80 : 100, 0);
       snapshot.accounts[0].aggregate = { left: res(100, 0), right: res(100, 0) };
-      assert.equal(verifyConservationSnapshot(snapshot).receipt_rows, onlyP0 ? 1 : 0);
-      buy.basis.p1_live.cash_cents = "79";
-      assert.throws(() => verifyConservationSnapshot(snapshot), /P1 boundary/);
+      assert.equal(verifyConservationSnapshot(snapshot).receipt_rows, hasPreSealReceipt ? 1 : 0);
+      buy.basis.allocation_live.cash_cents = "79";
+      assert.throws(() => verifyConservationSnapshot(snapshot), /allocation boundary/);
     }
   });
 

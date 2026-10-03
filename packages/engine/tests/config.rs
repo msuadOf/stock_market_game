@@ -1,7 +1,5 @@
-//! engine config 模块集成测试（TDD 红绿循环）。
-//!
-//! 本文件先于实现编写，目的是驱动 `ConfigError` 错误类型的诞生（spec §6 / plan T1）。
-//! 当前阶段只覆盖四变体构造 + Display；GameConfig 校验/方法在后续 T2-T6 补齐。
+//! GameConfig 与 ConfigError 契约测试：构造校验、serde 往返、默认值、费用计算与 crate re-export。
+
 use engine::config::ConfigError;
 use engine::money::Money;
 use engine::GameConfig;
@@ -44,8 +42,8 @@ fn config_error_invalid_cash_constructs_and_displays() {
     assert!(s.contains("-1"), "missing cash cents value: {s}");
 }
 
-// T2：GameConfig serde 往返保真（spec §6 测试矩阵第 2 条）。
-// 刻意用字面量直接构造（字段须 pub），不依赖 T3 才实现的 new()。
+// GameConfig serde 往返必须完整保留配置字段。
+// 直接用公开字段构造 fixture，避免构造校验改变 serde 测试输入。
 
 /// 构造一份合法的 GameConfig 实例，供 round-trip 测试复用。
 fn sample_config() -> GameConfig {
@@ -166,7 +164,7 @@ fn gameconfig_money_fields_serialize_as_bare_i64() {
     );
 }
 
-// T3：GameConfig::new(...) 构造即校验（spec §6 测试矩阵第 3 条 / plan T3）。
+// GameConfig::new(...) 构造即校验。
 //
 // 全合法字段 → Ok；任一非法字段 → 对应变体 Err。错误必须 fail loud，绝不静默 fallback。
 
@@ -519,7 +517,7 @@ fn new_negative_starting_cash_rejected() {
     );
 }
 
-// T4：GameConfig::proposed_defaults()（spec §6 测试矩阵第 4 条）。
+// GameConfig::proposed_defaults() 的默认配置。
 //
 // 返回 ref 提议默认值，逐字段断言；两次调用必须相等。这些数值来自参考游戏，
 // 标注「待 msuad 确认」，尚未作为硬编码常量散落代码。
@@ -566,7 +564,7 @@ fn proposed_defaults_is_stable_across_calls() {
     assert_eq!(a.starting_cash, b.starting_cash);
 }
 
-// T5：GameConfig::commission(amount)（spec §6 测试矩阵第 5 条 / plan T5）。
+// GameConfig::commission(amount) 的佣金边界。
 //
 // 佣金 = amount × commission_rate，但不得低于 commission_min（ref: 小额佣金触发 5 元下限）。
 // 即 commission = max(amount.apply_rate(commission_rate), commission_min)。
@@ -620,7 +618,7 @@ fn commission_exact_floor_boundary_returns_min() {
     );
 }
 
-// T6：GameConfig::stamp_tax(amount)（spec §6 测试矩阵第 6 条 / plan T6）。
+// GameConfig::stamp_tax(amount) 的印花税边界。
 //
 // 印花税 = amount × stamp_tax_rate，**无 floor**（ref: 印花税无下限，与 commission 行为不同）。
 // 即 stamp_tax = amount.apply_rate(stamp_tax_rate)，直接透传。
@@ -668,7 +666,7 @@ fn stamp_tax_small_amount_not_zero_proves_no_floor() {
     );
 }
 
-// T7：验证 lib.rs 的 re-export：调用方可直接 use engine::{GameConfig, ConfigError}（plan T7）。
+// crate root re-export 允许直接导入 GameConfig 与 ConfigError。
 //
 // lib.rs 应 `pub use config::{ConfigError, GameConfig}`，使下游无需写 engine::config:: 前缀。
 // 本测试是 re-export 的守卫：若有人误删/改 lib.rs 的导出行，这里会编译失败（红）。

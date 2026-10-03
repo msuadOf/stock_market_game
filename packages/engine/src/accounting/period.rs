@@ -1,7 +1,7 @@
-//! 会计期间与封账状态（K2）：`AccountingPeriod`（年/月）+ `PeriodStates`
+//! 会计期间与封账状态：`AccountingPeriod`（年/月）+ `PeriodStates`
 //! （Open/Closed 状态 + 已封期间入账守卫）。结账机制本体（试算/结转/快照）
-//! 属任务 13；本模块只提供期间类型、状态与守卫。日历事实复用
-//! `crate::calendar::CivilDate`（K1：金额/日期/交易分钟不混用）。
+//! 在 `closing`；本模块只提供期间类型、状态与守卫。日历事实复用
+//! `crate::calendar::CivilDate`（金额/日期/交易分钟不混用）。
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -9,7 +9,7 @@ use std::fmt;
 use crate::accounting::error::AccountingError;
 use crate::calendar::{CivilDate, CIVIL_YEAR_MAX, CIVIL_YEAR_MIN};
 
-/// 自然月度会计期间（会计年度 = 自然年，K4）。serde = `YYYY-MM` 字符串。
+/// 自然月度会计期间（会计年度 = 自然年）。serde = `YYYY-MM` 字符串。
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct AccountingPeriod {
     year: i32,
@@ -106,14 +106,14 @@ impl<'de> serde::Deserialize<'de> for AccountingPeriod {
     }
 }
 
-/// 期间封账状态。`Closed` 仅表示「拒绝新入账」；结账产物在任务 13。
+/// 期间封账状态。`Closed` 仅表示「拒绝新入账」；结账产物由 `closing` 生成。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum PeriodStatus {
     Open,
     Closed,
 }
 
-/// 已封期间集合：缺省即 Open。随存档保存（K7 恢复后状态一致）。
+/// 已封期间集合：缺省即 Open。随存档保存，恢复后状态一致。
 #[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PeriodStates {
     closed: BTreeSet<AccountingPeriod>,

@@ -21,10 +21,10 @@ import {
   validateThreadStateSampling,
 } from "./escrow-performance-harness.mjs";
 
-const SCHEMA = "escrow-verification-matrix-summary-v1";
-const MATRIX_VERSION = "escrow-runtime-matrix-v1";
-const CAPTURE_SCHEMA = "escrow-runtime-evidence-capture-v1";
-const SCENARIO = "escrow-runtime-v1";
+const SCHEMA = "escrow-verification-matrix-summary";
+const MATRIX_ID = "escrow-runtime-matrix";
+const CAPTURE_SCHEMA = "escrow-runtime-evidence-capture";
+const SCENARIO = "escrow-runtime";
 const BUDGETS = ["1", "2", "4", "auto"];
 const REPEATS = ["0", "1"];
 const MODES = ["canonical", "perturbed"];
@@ -88,7 +88,7 @@ function validatePerfSample(sample, side, report) {
   validateThreadState(sample.process_tree_thread_state, `${side}.process_tree_thread_state`);
   if (/\bBLOCKED\b/u.test(sample.stderr) || /\bFAIL(?:ED)?\b/u.test(sample.stderr)) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance stderr reports BLOCKED/FAIL`);
   if (side === "after") {
-    exactKeys(sample.phase_wall_ns, ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"], `${side}.phase_wall_ns`);
+    exactKeys(sample.phase_wall_ns, ["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"], `${side}.phase_wall_ns`);
     for (const [phase, value] of Object.entries(sample.phase_wall_ns)) positiveDecimal(value, `${side}.${phase}`);
     if (!Array.isArray(sample.rayon_registry_capacity_samples) || sample.rayon_registry_capacity_samples.length === 0
       || sample.rayon_registry_capacity_samples.some((value) => value !== report.environment_contract.rayon_threads)) {
@@ -100,9 +100,9 @@ function validatePerfSample(sample, side, report) {
 }
 
 export function validatePerformanceReport(report, expectedSourceFingerprint = null) {
-  const keys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
+  const keys = ["schema", "schema_version", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
   exactKeys(report, keys, "performance report");
-  if (report.schema !== "escrow-perf-report-v3" || report.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "performance report is not PASS");
+  if (report.schema !== "escrow-performance-report" || report.schema_version !== 3 || report.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "performance report is not PASS");
   const generatedAt = typeof report.generated_at === "string" ? new Date(report.generated_at) : null;
   if (generatedAt === null || Number.isNaN(generatedAt.valueOf()) || generatedAt.toISOString() !== report.generated_at) throw new MatrixFailure("INVALID_EVIDENCE", "performance report generated_at is not an ISO timestamp");
   reuseValidator(validatePerformanceWorkload, report.workload, "performance workload");
@@ -280,7 +280,7 @@ async function normalizeConfig(config) {
 
 function requestRecord(config) {
   return {
-    matrix_version: MATRIX_VERSION,
+    matrix_id: MATRIX_ID, matrix_version: 1,
     scenario: SCENARIO,
     seed: config.seed,
     source_fingerprint: config.sourceFingerprint,
@@ -435,8 +435,8 @@ async function validateCaptureReceipt(output, entry) {
     throw new MatrixFailure("MISSING_CAPTURE_RECEIPT", `${entry.id} capture receipt is unavailable or invalid: ${error.message}`, { entry: entry.id });
   }
   if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)
-    || JSON.stringify(Object.keys(receipt).sort()) !== JSON.stringify(["schema", "file", "sha256", "byte_length"].sort())
-    || receipt.schema !== "escrow-capture-receipt-v1" || receipt.file !== "capture.json"
+    || JSON.stringify(Object.keys(receipt).sort()) !== JSON.stringify(["schema", "schema_version", "file", "sha256", "byte_length"].sort())
+    || receipt.schema !== "escrow-capture-receipt" || receipt.schema_version !== 1 || receipt.file !== "capture.json"
     || !/^[0-9a-f]{64}$/.test(receipt.sha256) || !/^(0|[1-9][0-9]*)$/.test(receipt.byte_length)
     || receipt.sha256 !== sha256Hex(captureBytes) || receipt.byte_length !== String(captureBytes.length)) {
     throw new MatrixFailure("CAPTURE_HASH_DRIFT", `${entry.id} capture.json does not match its SHA-256/byte-length receipt`, { entry: entry.id });
@@ -460,9 +460,9 @@ function validateExecutorEvidence(capture, entry) {
     throw new MatrixFailure("MISSING_EXECUTOR_EVIDENCE", `${entry.id} has no actual executor records`);
   }
   const groups = {
-    account: ["P3AccountShards"],
-    stock: ["P4AuctionStockShards", "P4ContinuousStockShards"],
-    completion: ["P3WorkerResults", "P4AuctionWorkerResults", "P4ContinuousWorkerResults", "P5ReceiptResults"],
+    account: ["AccountValidationShards"],
+    stock: ["AuctionStockShards", "ContinuousStockShards"],
+    completion: ["AccountValidationWorkerResults", "AuctionWorkerResults", "ContinuousWorkerResults", "AggregatedReceiptResults"],
   };
   const orders = {};
   for (const [dimension, boundaries] of Object.entries(groups)) {
@@ -628,7 +628,7 @@ class EscrowVerificationRun {
       throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture.json is invalid: ${error.message}`, { entry: entry.id });
     }
     const stdout = parseStdoutSummary(result.stdout ?? "", entry);
-    if (capture.schema !== CAPTURE_SCHEMA) {
+    if (capture.schema !== CAPTURE_SCHEMA || capture.schema_version !== 1) {
       throw new MatrixFailure("INVALID_CAPTURE", `${entry.id} capture schema is unsupported`, { entry: entry.id, schema: capture.schema });
     }
     const expectedCapturePath = path.join(output, "capture.json");
@@ -692,7 +692,7 @@ class EscrowVerificationRun {
     } catch (error) {
       throw new MatrixFailure("OUTPUT_NOT_FRESH", `existing output is not a completed reusable matrix: ${error.message}`);
     }
-    if (summary.schema !== SCHEMA || summary.status !== "PASS" || summary.request_fingerprint !== requestHash || JSON.stringify(summary.request) !== JSON.stringify(request)) {
+    if (summary.schema !== SCHEMA || summary.schema_version !== 1 || summary.status !== "PASS" || summary.request_fingerprint !== requestHash || JSON.stringify(summary.request) !== JSON.stringify(request)) {
       throw new MatrixFailure("OUTPUT_NOT_FRESH", "existing output does not match this completed matrix request");
     }
     let storedSourceManifest;
@@ -719,7 +719,7 @@ class EscrowVerificationRun {
       }
       const captureReceipt = await validateCaptureReceipt(output, expected[index]);
       const capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
-      if (capture.schema !== CAPTURE_SCHEMA || normalizeStatus(capture.status) !== "PASS") {
+      if (capture.schema !== CAPTURE_SCHEMA || capture.schema_version !== 1 || normalizeStatus(capture.status) !== "PASS") {
         throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored capture no longer reports PASS", { entry: stored.id, status: capture.status });
       }
       assertCaptureConfiguration(capture, expected[index]);
@@ -751,7 +751,7 @@ class EscrowVerificationRun {
         return await this.validate_reusable_pass();
       } catch (error) {
         return {
-          schema: SCHEMA,
+          schema: SCHEMA, schema_version: 1,
           status: "FAIL",
           request,
           request_fingerprint: requestHash,
@@ -778,7 +778,7 @@ class EscrowVerificationRun {
       const determinism = `${lines.join("\n")}\n`;
       await writeFile(path.join(config.outputRoot, "determinism.sha256"), determinism, { flag: "wx" });
       const summary = {
-        schema: SCHEMA,
+        schema: SCHEMA, schema_version: 1,
         status: "PASS",
         request,
         request_fingerprint: requestHash,
@@ -791,7 +791,7 @@ class EscrowVerificationRun {
       return summary;
     } catch (error) {
       const summary = {
-        schema: SCHEMA,
+        schema: SCHEMA, schema_version: 1,
         status: "FAIL",
         request,
         request_fingerprint: requestHash,
@@ -864,7 +864,7 @@ async function main() {
       sourceFingerprint: await frozenSourceFingerprint(sourceRoot),
     });
   } catch (error) {
-    summary = { schema: SCHEMA, status: "FAIL", failure: failureRecord(error) };
+    summary = { schema: SCHEMA, schema_version: 1, status: "FAIL", failure: failureRecord(error) };
   }
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
   process.exitCode = summary.status === "PASS" ? 0 : 1;

@@ -472,7 +472,7 @@ impl<'a> PlanLifecycleReview<'a> {
                     below_filled_rationale: (same_direction && delta < plan.filled_qty())
                         .then_some(TerminationReason::Cancelled),
                 };
-                // task-24 复核移交项（本轮修复）：终止/反向修订会结束旧腿，
+                // 生命周期约束：终止或反向修订结束旧执行腿，
                 // 在途子单必须先经真实路由撤销——否则子单被搁置在市场继续
                 // 成交到日终，且反向后的新子单会触发
                 // record_parent_order_submission 的「第二在途子单」断言。

@@ -13,8 +13,10 @@ import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_CONCURRENT_RUST_TEST_BINARIES = 8;
 const MIN_CPU_BUDGET_PER_TEST_BINARY = 2;
-const FULL_REGRESSION_INVENTORY_SCHEMA = "full-regression-artifact-inventory-v1";
-const FULL_REGRESSION_SOURCE_ALGORITHM = "full-regression-source-v1";
+const FULL_REGRESSION_INVENTORY_SCHEMA = "full-regression-artifact-inventory";
+const FULL_REGRESSION_INVENTORY_SCHEMA_VERSION = 1;
+const FULL_REGRESSION_SOURCE_ALGORITHM = "full-regression-source-fingerprint";
+const FULL_REGRESSION_SOURCE_ALGORITHM_VERSION = 1;
 const FULL_REGRESSION_INTERNAL_PHASE_ENV = "STOCK_GAME_FULL_REGRESSION_INTERNAL_PHASE";
 const REQUIRED_LONG_VALIDATIONS = [
   {
@@ -116,7 +118,7 @@ function sha256(bytes) {
 }
 
 async function collectInputFiles(sourceRoot, relativePath, files) {
-  // tauri-build writes these schemas during compilation; they are outputs, not source inputs.
+  // tauri-build 在编译时生成这些 schema；它们属于输出，不属于源码输入。
   if (relativePath.split(path.sep).join("/") === "apps/desktop/src-tauri/gen/schemas") return;
   const absolutePath = path.join(sourceRoot, relativePath);
   const stat = await fsp.lstat(absolutePath);
@@ -139,7 +141,7 @@ export async function collectFullRegressionSourceFingerprint(sourceRoot) {
     await collectInputFiles(resolvedSourceRoot, relativePath, files);
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
-  const state = { algorithm: FULL_REGRESSION_SOURCE_ALGORITHM, files };
+  const state = { algorithm: FULL_REGRESSION_SOURCE_ALGORITHM, algorithm_version: FULL_REGRESSION_SOURCE_ALGORITHM_VERSION, files };
   return { ...state, digest: sha256(JSON.stringify(state)) };
 }
 
@@ -197,10 +199,13 @@ export class ArtifactInventory {
     if (decoded === null || typeof decoded !== "object"
       || decoded.identity_digest !== this.#computeIdentityDigest(decoded)
       || decoded.schema !== FULL_REGRESSION_INVENTORY_SCHEMA
+      || decoded.schema_version !== FULL_REGRESSION_INVENTORY_SCHEMA_VERSION
       || decoded.source_root !== sourceRoot
       || decoded.workspace_root !== workspacePaths.workspaceRoot
       || decoded.cargo_target_dir !== workspacePaths.cargoTargetDir
       || decoded.process_tmp_dir !== workspacePaths.processTmpDir
+      || decoded.source_fingerprint?.algorithm !== fingerprint.algorithm
+      || decoded.source_fingerprint?.algorithm_version !== fingerprint.algorithm_version
       || decoded.source_fingerprint?.digest !== fingerprint.digest
       || !Array.isArray(decoded.artifacts)
       || decoded.artifacts.length === 0) {
@@ -506,6 +511,7 @@ export async function buildFullRegressionArtifacts({
   const sealedArtifacts = await sealTestArtifacts(artifacts, workspacePaths);
   const inventory = ArtifactInventory.fromBuild({
     schema: FULL_REGRESSION_INVENTORY_SCHEMA,
+    schema_version: FULL_REGRESSION_INVENTORY_SCHEMA_VERSION,
     source_root: sourceRoot,
     workspace_root: workspacePaths.workspaceRoot,
     cargo_target_dir: workspacePaths.cargoTargetDir,

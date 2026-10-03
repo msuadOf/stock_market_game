@@ -88,7 +88,7 @@ pub fn decide_retail_position(
     )
 }
 
-/// 在 B02 瞬时判断上叠加该自然人的真实成交/观察经历。
+/// 在散户目标仓位的瞬时判断上叠加该自然人的真实成交/观察经历。
 #[allow(clippy::too_many_arguments)]
 pub fn decide_retail_position_with_experience(
     strategy: &StrategyData,

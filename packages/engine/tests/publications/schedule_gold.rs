@@ -1,4 +1,4 @@
-//! 排期金样（K4）：基准日期、稳定偏移、窗口合规、年报先于 Q1、同 seed
+//! 排期金样：基准日期、稳定偏移、窗口合规、年报先于 Q1、同 seed
 //! 排期/ID 确定。全部为确定性断言（无 RNG：偏移是 seed+公司 id 的纯函数）。
 
 use crate::fixture::{BANK_ID, INDUSTRIAL_ID, OPS_SEED};
@@ -10,7 +10,7 @@ fn d(iso: &str) -> CivilDate {
     CivilDate::from_iso(iso).expect("test schedule dates are valid")
 }
 
-/// K4 基准日期表（+偏移前）：年报次年 3-20、Q1 4-20、半年 8-15、Q3 10-20。
+/// 游戏排期基准日期表（+偏移前）：年报次年 3-20、Q1 4-20、半年 8-15、Q3 10-20。
 #[test]
 fn schedule_base_dates_follow_operating_calendar() {
     let cases = [
@@ -76,9 +76,9 @@ fn same_seed_same_schedule_across_companies() {
     );
 }
 
-/// 窗口合规（任务 2 已核验法定窗：年报 ≤4-30、半年报 ≤8-31）：
+/// 窗口合规（政策来源清单登记法定窗：年报 ≤4-30、半年报 ≤8-31）：
 /// 全部偏移 0..=7 × 抽样年份都落在法定窗口内，且年报先于同年 Q1、
-/// Q1 不早于上一年年报（K4 排期校验契约）。
+/// Q1 不早于上一年年报（游戏排期校验契约）。
 #[test]
 fn all_windows_legal_and_annual_precedes_q1() {
     for offset in 0u8..=7 {
@@ -106,7 +106,7 @@ fn all_windows_legal_and_annual_precedes_q1() {
                 q3 < annual,
                 "Q3 precedes the same fiscal year's annual (next March)"
             );
-            // 年报先于 Q1（K4 明文契约）：上一年年报 < 本年 Q1。
+            // 年报先于 Q1：上一年年报 < 本年 Q1。
             let prior_annual = scheduled_instant(ScheduledReportKind::Annual, year - 1, offset)
                 .expect("prior annual legal");
             assert!(

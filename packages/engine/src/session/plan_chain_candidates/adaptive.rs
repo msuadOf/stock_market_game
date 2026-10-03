@@ -34,8 +34,8 @@ impl FrozenPlanChainObservation {
         execution: &mut GameSession,
         action: impl FnOnce(&mut GameSession) -> T,
     ) -> T {
-        // This is not a new allocation snapshot. The same post-P0 containers are reused for
-        // every root and quote. Restore them even when the action returns a typed failure.
+        // 每个根与报价重用同一组报价过期后容器，不创建新的 allocation snapshot。
+        // 即使动作返回 typed 失败，也须归还这些容器。
         std::mem::swap(&mut execution.state.accounts, &mut self.accounts);
         std::mem::swap(&mut execution.state.markets, &mut self.markets);
         std::mem::swap(
@@ -281,8 +281,8 @@ impl PlanChainOperationBatch {
                 let resource = route_resource(route.command());
                 self.routes.is_blocked(&resource, unfinished_routes)
             }
-            // The cursor owns grants already allocated across the account. Its next plan can
-            // be quoted while another stock awaits P4; Execute checks the target stock below.
+            // cursor 持有该账户已分配的 grants；其他股票尚在等待 StockProcessing 时，
+            // 下一计划仍可报价。Execute 会检查下方目标股票的状态。
             PlanChainOperation::QuotePlans(_) => false,
             PlanChainOperation::Lifecycle {
                 account,

@@ -1,6 +1,6 @@
-//! 任务 4（company-information-npc-intentions）：真实公历与冻结交易日历集成测试。
+//! 真实公历与冻结交易日历集成测试。
 //!
-//! 政策与法源基线：`docs/simulation-calendar.md`（K1）与
+//! 政策与法源基线：`docs/simulation-calendar.md` 与
 //! `tests/fixtures/company-model/policy-sources.json` 的 calendar 冻结值
 //! （默认 2030-01-01 开局、2000-01-01 至 2099-12-31 运行区间、1998-01-01
 //! 初始化专用下界、ACT/365F）。农历/节气事实表来源与取证记录见
@@ -8,8 +8,8 @@
 //!
 //! 按场景拆分：`gregorian`（纯公历算法段）、`exchange_days`（交易所交易日段）、
 //! `frozen`（存档冻结政策不被新默认表覆盖）、`failures`（负向拒绝）、
-//! `fixture_binding`（实现常量与任务 2 冻结 fixture 对账）。计划指定的两个
-//! QA 入口测试：`gregorian_and_exchange_days` 在本文件，另一个在 frozen.rs。
+//! `fixture_binding`（实现常量与冻结政策来源 fixture 对账）。两个主路径
+//! QA 入口测试分别为本文件的 `gregorian_and_exchange_days` 与 frozen.rs 的冻结恢复用例。
 
 mod exchange_days;
 mod failures;
@@ -39,9 +39,9 @@ pub(crate) fn d(iso: &str) -> CivilDate {
     CivilDate::from_iso(iso).expect("test fixture date must be valid ISO date")
 }
 
-/// 当前发布默认政策 v1 构建的日历。
+/// 当前发布默认政策构建的日历。
 pub(crate) fn default_calendar() -> TradingCalendar {
-    TradingCalendar::default_v1().expect("default v1 calendar must construct")
+    TradingCalendar::current_default_calendar().expect("当前默认日历必须构建成功")
 }
 
 /// 在默认政策之上为指定交易所/年份追加一条**测试专用合成**官方覆盖。
@@ -54,7 +54,7 @@ pub(crate) fn policy_with_synthetic_coverage(
     year: i32,
     ranges: &[(&str, &str)],
 ) -> CalendarPolicy {
-    let base = CalendarPolicy::default_v1().expect("default policy");
+    let base = CalendarPolicy::current_default_policy().expect("default policy");
     let mut spec = base.spec();
     let closed_ranges = ranges
         .iter()

@@ -52,13 +52,11 @@ pub(super) fn prepare_incremental_continuous_inputs(
             envelope.validate()?;
             if envelope.origin() != EnvelopeOrigin::TickStart {
                 return Err(invariant(
-                    "post-P0 live ledger contains an envelope whose origin is not TickStart",
+                    "报价过期后的 live ledger 包含 origin 非 TickStart 的 envelope",
                 ));
             }
         }
-        return Err(invariant(
-            "post-P0 envelope ledger contains no matching live order books",
-        ));
+        return Err(invariant("报价过期后的 envelope ledger 缺少对应活动订单簿"));
     }
     Ok(inputs)
 }
@@ -95,7 +93,7 @@ fn prepare_stock_input(
         envelope.validate()?;
         if envelope.origin() != EnvelopeOrigin::TickStart {
             return Err(invariant(
-                "post-P0 live ledger contains an envelope whose origin is not TickStart",
+                "报价过期后的 live ledger 包含 origin 非 TickStart 的 envelope",
             ));
         }
         let projected = session.project_continuous_envelope(code, order)?;

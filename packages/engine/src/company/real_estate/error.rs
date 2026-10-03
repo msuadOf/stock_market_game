@@ -1,5 +1,5 @@
-//! 地产域统一错误（K3，任务 11）。绝不静默吞错（铁律二）：每个变体携带定位
-//! 与数值上下文。`PaymentFailed` 是账套负现金禁令（K2）在经营域的类型化映射
+//! 地产域统一错误（地产会计约束）。绝不静默吞错（铁律二）：每个变体携带定位
+//! 与数值上下文。`PaymentFailed` 是账套负现金禁令（会计与资金边界）在经营域的类型化映射
 //! ——资金不足不是引擎错误：公司继续运行，无透支、无自动补钱。
 
 use crate::accounting::{AccountingAmount, AccountingError, LedgerAccountId};
@@ -13,7 +13,7 @@ use thiserror::Error;
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum RealEstateError {
     /// 付款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化拒绝，
-    /// 账套与子账零改动；无透支、无自动补钱（K2）。
+    /// 账套与子账零改动；无透支、无自动补钱（会计与资金边界）。
     #[error("payment failed (insufficient cash): {source}")]
     PaymentFailed { source: AccountingError },
 
@@ -44,7 +44,7 @@ pub enum RealEstateError {
     #[error("duplicate loan contract id {contract:?}")]
     DuplicateContract { contract: ContractId },
 
-    /// 单公司项目数上限（K2 需求约束；上限来自版本化配置）。
+    /// 单公司项目数上限（需求与预算约束；上限来自版本化配置）。
     #[error("project count limit {limit} reached; no new projects")]
     ProjectCountLimit { limit: usize },
 
@@ -165,11 +165,9 @@ pub enum RealEstateError {
         limit: AccountingAmount,
     },
 
-    /// 开局给地产子账科目种子暂不支持（诚实边界：经营前史由任务 14 用同一
+    /// 开局给地产子账科目种子暂不支持（诚实边界：经营前史由自然日经营演化用同一
     /// 处理器生成，不从存档倒推）。
-    #[error(
-        "opening lines must not seed real-estate sub-ledger account {account}; prehistory is task 14"
-    )]
+    #[error("开局分录不能为地产子账科目 {account} 注入余额；经营前史须由自然日经营处理器生成")]
     OpeningRealEstateSeeded { account: LedgerAccountId },
 
     #[error(transparent)]
@@ -186,7 +184,7 @@ pub enum RealEstateError {
 }
 
 /// 过账错误 → 领域错误映射：批末负现金（`NegativeCashProhibited` 的领域
-/// 包装，K2 负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
+/// 包装，负现金禁令）→ `PaymentFailed`；其余会计错误原样透传（不吞错）。
 pub(super) fn map_post_error(source: AccountingError) -> RealEstateError {
     if let AccountingError::BatchAborted { cause, .. } = &source {
         if matches!(**cause, AccountingError::NegativeCashProhibited { .. }) {

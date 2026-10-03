@@ -1,8 +1,7 @@
-//! Detached Projection collection for the continuous P4-Settlement transaction candidate.
+//! 为 Continuous 股票处理与结算事务 candidate 独立收集 Projection。
 //!
-//! The candidate already owns typed P4 facts. This adapter only projects those facts through
-//! the approved producer and collector; it never infers identity from vector position and never
-//! mutates the candidate or an authoritative sequence cursor.
+//! candidate 已拥有 typed StockProcessing 事实；adapter 通过既定 producer 和 collector 投影。
+//! 不从 vector 位置推导身份，不修改 candidate 或权威事件序号游标。
 
 use super::{
     event_collection::{collect_events, CollectedEvents, OwnedEventFact},

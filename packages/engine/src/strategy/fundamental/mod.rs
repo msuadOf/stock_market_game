@@ -1,6 +1,6 @@
-//! 个人基本面假设与共享类型（K5 行 130–133 / K5a 行 147–154，任务 18）。
+//! 个人基本面假设与共享类型。
 //!
-//! 本目录是策略域的纯分析内核：只消费本人已获知的公开报告事实（任务 16
+//! 本目录是策略域的纯分析内核：只消费本人已获知的公开报告事实（
 //! `NpcObservationContext` 引用面 → [`super::super::beliefs`] 编排 →
 //! [`facts::extract_annual_facts`]），不读 session/行情/总账。估值纯属个人
 //! ——不存在任何设定或调整市场价格的路径（测试以行情快照 spy 锁定）。
@@ -32,7 +32,7 @@ use super::analysis_profile::FundamentalMethod;
 use super::profile::{InstitutionStyle, RetailStyle, StrategyProfile};
 use super::Rng;
 
-/// 个人一次性假设（K5a 行 149–151 的区间）。游戏默认经
+/// 个人一次性假设（固定游戏参数区间）。游戏默认经
 /// [`draw_personal_assumptions`] 抽样落在计划区间内；类型允许任意值——退化
 /// 假设（如 PE ≤ 0、终值增长 ≥ 资本成本）在方法层得到类型化不可用，绝不
 /// 被静默 clamp 或代换。
@@ -55,9 +55,9 @@ pub struct PersonalAssumptions {
 /// 一次性抽样：恰 6 次 `next_f64`，canonical 序 = 字段声明序（增长偏差 →
 /// 质量系数 → PE → 权益成本 → 终值增长 → ROE 偏差）。
 ///
-/// RNG 流由调用方注入：必须是**专用确定性 profile 流**（任务 26 接线时用
+/// RNG 流由调用方注入：必须是**专用确定性 profile 流**（会话接线使用
 /// 独立种子派生，绝不与 session 主 RNG 混流——extraction_replay 字节锚点
-/// 会红，任务 17 已登记该教训）。整数区间采样沿用 sampling.rs 的
+/// 将失败）。整数区间采样沿用 sampling.rs 的
 /// `lo + (f × width).min(width - 1)` 含端点约定。
 pub fn draw_personal_assumptions(
     profile: &StrategyProfile,
@@ -74,7 +74,7 @@ pub fn draw_personal_assumptions(
     }
 }
 
-/// PE 档位（K5a 行 149）：按主导风格的能力聚类。
+/// PE 档位：按主导风格的能力聚类。
 fn pe_range_for(profile: &StrategyProfile) -> (i32, i32) {
     match profile {
         StrategyProfile::Institution(InstitutionStyle::DeepValue) => (8, 16),
@@ -140,7 +140,7 @@ pub enum ValuationUnavailable {
     PerShareOutOfRange,
 }
 
-/// 每股价格区间（悲观/乐观情景；K5a 行 141/153——个人区间存每股价格，
+/// 每股价格区间（悲观/乐观情景；个人区间存每股价格，
 /// 不把公司总价值直接与股价比较）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PerShareRange {
@@ -160,7 +160,7 @@ pub enum ValuationOutcome {
     },
 }
 
-/// 能力中心（λ 修订档位的风格聚类；K5a 行 154）。
+/// 能力中心（λ 修订档位的风格聚类）。
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CapabilityCenter {
     /// 散户长期。
@@ -185,7 +185,7 @@ pub fn capability_center(profile: &StrategyProfile) -> CapabilityCenter {
     }
 }
 
-/// λ 修订权重（K5a 行 154）：LongTerm/Value 4000bp、Growth 6000bp、其他 2500bp。
+/// λ 修订权重：LongTerm/Value 4000bp、Growth 6000bp、其他 2500bp。
 pub fn revision_lambda_bp(center: CapabilityCenter) -> i32 {
     match center {
         CapabilityCenter::LongTerm | CapabilityCenter::Value => 4_000,
@@ -194,7 +194,7 @@ pub fn revision_lambda_bp(center: CapabilityCenter) -> i32 {
     }
 }
 
-/// 估值期限（K5 行 133）：长期/价值 60、均衡/成长 20、其他 5 交易日。
+/// 估值期限：长期/价值 60、均衡/成长 20、其他 5 交易日。
 pub fn belief_horizon_days(profile: &StrategyProfile) -> u16 {
     match profile {
         StrategyProfile::Retail(RetailStyle::LongTerm)
@@ -234,7 +234,7 @@ pub fn to_per_share_range(
     })
 }
 
-/// 按方法分发（K5a 行 147）：方法不适用 ⇒ 类型化 Unavailable，绝不无声换
+/// 按方法分发：方法不适用 ⇒ 类型化 Unavailable，绝不无声换
 /// 另一模型；增长仅现金流法消费（先验退化 ⇒ GrowthPriorUnavailable）。
 pub fn estimate_by_method(
     method: FundamentalMethod,
@@ -266,8 +266,8 @@ pub fn estimate_by_method(
 /// 整数半偶舍入除法（denominator > 0；负分子按符号对称）。
 ///
 /// 与 `accounting::amount::div_round_half_even` / `strategy::technical` 同
-/// 算法的受控本地副本（该函数在 accounting 是私有；local-copy + 交叉引用
-/// 是本仓库既定先例，任务 13 统一入口时再议）。
+/// 算法的受控本地副本（该函数在 accounting 是私有；通过本地副本与交叉引用
+/// 保持舍入规则一致）。
 pub(crate) fn div_round_half_even(numerator: i128, denominator: i128) -> i128 {
     debug_assert!(
         denominator > 0,

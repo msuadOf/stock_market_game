@@ -1,16 +1,16 @@
-//! 贷款子账状态与计息数学（K3 银行，任务 9）：`BankLoanState`（本金/应收
+//! 贷款子账状态与计息数学（银行经营会计约束）：`BankLoanState`（本金/应收
 //! 利息/计息余数/ECL 阶段与准备/核销回收面）+ ACT/365F 数学 + 合同条款
 //! 校验。发放/收本处理器在 `lending.rs`、计息在 `interest.rs`、ECL 计量
 //! 在 `ecl.rs`、核销回收在 `writeoff.rs`。
 //!
 //! 计息数学：ACT/365F + 合同累计余数（`FractionUnits`，单位 1/3_650_000 分）
-//! ——与任务 8 `industrial::loans::accrue_act_365f` 同算法孪生（该函数为
-//! `pub(super)` 私有，本任务禁改 industrial，故按既有 rhe_div 孪生先例复制，
+//! ——与工商经营会计 `industrial::loans::accrue_act_365f` 同算法孪生（该函数为
+//! `pub(super)` 私有，故此处维护独立的同算法副本，
 //! 单位语义由调用点定义）。逐合同不变量
 //! Σ已提 × 3_650_000 + 终余数 == Σ(基数×bp×天数)。
 //!
 //! 简化登记：逾期贷款按合同利率继续计息（无罚息利率模型）；单利不计复利
-//! （与任务 8 一致）。
+//! （与工商经营会计一致）。
 
 use crate::accounting::{AccountingAmount, AccountingError, FractionUnits};
 use crate::calendar::CivilDate;
@@ -343,7 +343,7 @@ impl BankLoanState {
 }
 
 /// 整数半偶舍入除法（amount.rs / inventory / industrial::loans 的同算法孪生；
-/// journal/ledger/amount 属任务 6 语义冻结区，不改动）。
+/// journal/ledger/amount 属会计底座语义冻结区，不改动）。
 pub(super) fn rhe_div(n: i128, d: i128) -> Result<i128, AccountingError> {
     debug_assert!(d > 0, "divisor is a positive constant");
     let negative = n < 0;
@@ -358,7 +358,7 @@ pub(super) fn rhe_div(n: i128, d: i128) -> Result<i128, AccountingError> {
     Ok(if negative { -magnitude } else { magnitude })
 }
 
-/// ACT/365F 单期计提（任务 8 同构）：paid = rhe((cents×bp×days + carried) /
+/// ACT/365F 单期计提（工商经营会计同构）：paid = rhe((cents×bp×days + carried) /
 /// 3_650_000)；remainder 继续累计。
 pub(super) fn accrue_act_365f(
     base: AccountingAmount,

@@ -32,7 +32,7 @@ const EVENT_NAMES = [
   "Trade", "AuctionTick", "AuctionCompleted", "PriceTick", "DayBoundary", "CivilDateAdvanced",
   "CompanyDisclosurePublished", "IntentRejected", "SettlementError", "OrderCanceled", "OrderAccepted",
 ] as const;
-const EVENT_SOURCES = ["Sealed", "P0", "PriceTick", "DayEnd", "Session"] as const;
+const EVENT_SOURCES = ["Sealed", "QuoteExpiry", "PriceTick", "DayEnd", "Session"] as const;
 const REJECTION_REASONS = [
   "InsufficientCash", "InsufficientShares", "LimitExceeded", "PriceCageExceeded", "UnknownStock",
   "AuctionLimitOrderRequired", "AuctionOrderNotCancelable", "AuctionOrderEntryClosed", "InvalidQuantity",

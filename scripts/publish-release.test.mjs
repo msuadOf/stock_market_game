@@ -14,7 +14,7 @@ async function fixture(root) {
       const name = `${product}-${target}.zip`;
       const bytes = Buffer.from(`${product}/${target}`);
       await writeFile(path.join(directory, name), bytes);
-      await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ schema: "distribution-manifest-v1", product, target,
+      await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ schema: "distribution-manifest", schema_version: 1, product, target,
         ...(product === "web" ? { commit: "a".repeat(40) } : {}),
         files: [{ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }] }));
     }
@@ -32,10 +32,21 @@ test("publishing verifies all ten products, rejects tampering, and gives manifes
     const assets = await collectReleaseAssets(input, path.join(root, "output"), sha);
     assert.equal(new Set(assets.map((file) => path.basename(file))).size, 21);
     const provenance = JSON.parse(await readFile(path.join(root, "output/release-source.json"), "utf8"));
+    assert.equal(provenance.schema, "release-source");
+    assert.equal(provenance.schema_version, 1);
     assert.equal(provenance.commit, sha);
     assert.equal(provenance.distributions.length, 10);
     const webManifest = path.join(input, "stock-market-game-web-static-unsigned/manifest.json");
     const web = JSON.parse(await readFile(webManifest, "utf8"));
+    for (const identity of [
+      { schema: "distribution-manifest-v1", schema_version: undefined },
+      { schema: "distribution-manifest", schema_version: undefined },
+      { schema: "distribution-manifest", schema_version: "1" },
+      { schema: "distribution-manifest", schema_version: 2 },
+    ]) {
+      await writeFile(webManifest, JSON.stringify({ ...web, ...identity }));
+      await assert.rejects(collectReleaseAssets(input, path.join(root, "wrong-format-output"), sha), /invalid distribution manifest/);
+    }
     for (const commit of [undefined, "bad", "b".repeat(40)]) {
       await writeFile(webManifest, JSON.stringify({ ...web, commit }));
       await assert.rejects(collectReleaseAssets(input, path.join(root, "stale-output"), sha), /source SHA/);

@@ -21,7 +21,7 @@
    不把实际撮合的起点推迟到内部 `day = 1`。
 4. 无成交时允许以前收建立零成交占位 K，不生成成交量、成交额或笔数；首笔真实成交取代
    占位 OHLC。零成交与缺样本仍须如实表达，不能为填图而制造成交。
-5. C06 真实市场校准为**不适用/不在产品范围**，而不是“已校准”或“等待授权”。
+5. 真实市场校准为**不适用/不在产品范围**，而不是“已校准”或“等待授权”。
    保留基于虚拟输入与游戏实际成交的多 seed、分布、极端样本、规则边界及量额对账验证。
 6. 当前开局不导入真实市场前史；未来若改变这一范围，必须另有用户决策与 ADR。
    ADR-0018 曾预留的外部前史导入不是当前待办。
@@ -32,12 +32,17 @@
   `update_active_daily_candle` 与收盘归档维护游戏运行记录；本轮不重写已有撮合或价格生成逻辑。
 - `session/pipeline/continuous_tick_finalizer.rs` 与 `auction_day_end.rs` 将实际成交接入日 K；
   公司经营与公开信息前史也已有独立虚拟生成，不是外部真实公司数据导入。
-- K7 当前 `after`/`sensitivity` manifest 保留字段 `c06_external_market_calibration`，
-  值改为 `not_applicable_synthetic_history_only`。runner 版本同步升至
-  `2026-09-30-synthetic-history-policy-v8`，当前验证器明确拒绝旧“等待授权”或“已校准”标记。
+- 当前模拟验收 `after`/`sensitivity` manifest 使用字段 `external_market_calibration_scope`，
+  值为 `not_applicable_synthetic_history_only`。职责身份与真实数值版本按 ADR-0029 分开；
+  当前验证器明确拒绝旧“等待授权”或“已校准”标记。
 - 旧密封 manifest、日志与证据不改写，继续作为历史政策下的记录保留；新版验证器拒绝旧政策标记
   不表示当时的记录被篡改，也不冒充新版验收通过。
-- 本轮只核对既有 Rust 接线并运行 Node 小型 fixture 短测，不执行真实 K7 长矩阵或完整回归。
+- 本轮只核对既有 Rust 接线并运行 Node 小型 fixture 短测，不执行真实模拟验收长矩阵或完整回归。
+
+## 2026-09-30 历史定向验证
+
+当时 runner 版本为 `2026-09-30-synthetic-history-policy-v8`，manifest 字段为
+`c06_external_market_calibration`；这些历史输入与结果未改写，不表示当前契约沿用旧名称。
 
 定向验证：`verify-simulation-artifacts.test.mjs` 15/15 通过，`baseline-run.test.mjs`
 仅选择 source identity、canonical sensitivity reuse 与 v7 runner resume 拒绝三项，3/3 通过。

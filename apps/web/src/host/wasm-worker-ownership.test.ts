@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
-import { currentSaveFixture } from "../save/save-v2-test-fixture.ts";
+import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { civilUpdate, frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
 
 type Message = Record<string, unknown> & { type: string };

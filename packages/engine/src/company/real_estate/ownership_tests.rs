@@ -27,7 +27,7 @@ fn contract(id: &str) -> ContractId {
 
 fn config() -> RealEstateConfig {
     RealEstateConfig {
-        chart: real_estate_chart_v5(),
+        chart: real_estate_account_chart(),
         as_of: date(1),
         opening_lines: vec![
             line(chart::acct::CASH, PostingSide::Debit, amount(1_000_000)),

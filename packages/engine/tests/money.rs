@@ -4,20 +4,20 @@ use serde_json::json;
 
 #[test]
 fn money_error_variants_construct_and_display() {
-    let e1 = MoneyError::ParseFailed {
+    let precision_parse_error = MoneyError::ParseFailed {
         input: "12.345".to_string(),
         reason: "too many digits".to_string(),
     };
-    assert!(e1.to_string().contains("12.345"));
+    assert!(precision_parse_error.to_string().contains("12.345"));
 
-    let e2 = MoneyError::Overflow {
+    let addition_overflow_error = MoneyError::Overflow {
         op: "add",
         operand: "i64 max".to_string(),
     };
-    assert!(e2.to_string().contains("add"));
+    assert!(addition_overflow_error.to_string().contains("add"));
 
-    let e3 = MoneyError::InvalidRate { rate: f64::NAN };
-    assert!(e3.to_string().contains("NaN"));
+    let invalid_rate_error = MoneyError::InvalidRate { rate: f64::NAN };
+    assert!(invalid_rate_error.to_string().contains("NaN"));
 }
 
 use engine::money::Money;

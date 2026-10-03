@@ -1,4 +1,4 @@
-//! WS-5 actor-per-session 集成测试（ADR-0005 §5，无锁、GameSession 独占）。
+//! 真实成交广播 actor-per-session 集成测试（ADR-0005 §5，无锁、GameSession 独占）。
 //!
 //! 直接驱动 SessionManager（不经 HTTP），验证 actor 行为：
 //! - new_session 后 actor 启动并按 base_ms/speed 推 step；
@@ -77,7 +77,7 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -482,7 +482,7 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 /// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
 /// float_shares>0 + ByKind 分配 → NPC 持仓可卖 → 卖盘有货 → 撮合出 Trade。
 ///
-/// 这是任务「市场转活(有 Trade)」断言所需的 setup（默认 sample_setup 的 float_shares=0，
+/// 这是市场产生 Trade 断言所需的 setup（默认 sample_setup 的 float_shares=0，
 /// NPC 无仓只能挂买单、无对手盘 → 无成交；故这里单独构造一份带流通盘的 setup）。
 fn active_market_setup() -> SessionSetup {
     let mut s = sample_setup();
@@ -499,11 +499,11 @@ fn active_market_setup() -> SessionSetup {
     s
 }
 
-/// 任务核心断言：new_session 后市场转活——actor 的 step 应广播出 Trade（成交）事件。
+/// 核心断言：new_session 后市场开始成交——actor 的 step 应广播出 Trade（成交）事件。
 ///
 /// 直接驱动 SessionManager（不经 HTTP）：分配流通盘 → 订阅事件流 → 用很小的 base_ms
 /// 让 actor 快速跑 step → 应在若干 tick 内收到至少一条 `Event::Trade`（maker/taker 双方结算）。
-/// 这是 WS-5「市场转活」的最小契约：不是只出 PriceTick，而是真的撮合成交。
+/// 这是真实成交广播「市场转活」的最小契约：不是只出 PriceTick，而是真的撮合成交。
 #[tokio::test]
 async fn actor_market_goes_live_produces_trade_events() {
     let mgr = SessionManager::with_base_ms(5);

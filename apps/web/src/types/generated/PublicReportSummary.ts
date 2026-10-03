@@ -4,7 +4,19 @@ import type { PublicReportFinancials } from "./PublicReportFinancials";
 import type { PublicReportKind } from "./PublicReportKind";
 
 export type PublicReportSummary = {
-/**
- * Opaque decimal publication ID. It is the only pagination order key.
- */
-id: string, company_id: string, period: string, kind: PublicReportKind, version_sequence: string, supersedes: string | null, approved_date: string, approved_second_of_day: number, published_date: string, published_second_of_day: number, accounting: PublicReportAccountingSummary, financials: PublicReportFinancials, };
+  /**
+   * PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
+   */
+  id: string;
+  company_id: string;
+  period: string;
+  kind: PublicReportKind;
+  version_sequence: string;
+  supersedes: string | null;
+  approved_date: string;
+  approved_second_of_day: number;
+  published_date: string;
+  published_second_of_day: number;
+  accounting: PublicReportAccountingSummary;
+  financials: PublicReportFinancials;
+};

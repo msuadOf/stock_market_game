@@ -4,10 +4,17 @@
 重复旧编译快照，不删除 Actions artifacts、发行包、源码或游戏存档，不改 A 股
 交易语义或构建参数。CI 保留为独立手动开发诊断，标签发布仅构建。
 
-`scripts/prune-actions-cache.mjs` 识别现有 `distribution-native-v1` 和
-`sealed-cargo-v2-no-debug` 滚动 key，按分支 ref、平台、架构、产品各保留最新
-一份。即使 manifest hash 改变，同一系列仍只保留最新快照。pnpm、普通 Cargo
-和未知格式缓存不删除，失败构建的最新编译进度也保留。
+当前 workflow 生产者使用职责名 `distribution-native-cache` 与 `sealed-cargo-cache-no-debug`，
+独立数值 `DISTRIBUTION_NATIVE_CACHE_FORMAT_VERSION=1` 与
+`SEALED_CARGO_CACHE_FORMAT_VERSION=2` 拼入 cache key。恢复前缀与写入 key 使用同一
+身份、版本、平台、架构、产品及 manifest hash 层级。普通依赖缓存使用
+`rust-compile-only-cache` 与独立 `RUST_COMPILE_CACHE_FORMAT_VERSION=1`，不新增滚动清理。
+
+`scripts/prune-actions-cache.mjs` 识别当前 native 格式 1 与 sealed 格式 2，并明确读取历史
+`distribution-native-v1`、`sealed-cargo-v2-no-debug` 系列。按 `(cache.ref, matched series prefix)`
+分别保留最新一份；历史系列与新系列各自最新项都受保护，不能因命名重构退休另一系列。
+即使 manifest hash 改变，同一系列仍只保留最新快照。pnpm、普通 Cargo 和未知格式或平台
+缓存不删除，失败构建的最新编译进度也保留。
 
 需 `gh` 已登录，并有仓库 Actions 缓存删除权限。默认仅预览，显式 `--apply`
 才执行删除；整个清理使用进程外 300000ms deadline，单次网络命令限时 30000ms。

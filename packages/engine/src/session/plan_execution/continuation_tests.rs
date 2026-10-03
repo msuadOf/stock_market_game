@@ -102,7 +102,7 @@ fn restructure_rechecks_partial_fill_before_applying_smaller_target() {
             },
         )
         .unwrap();
-    // P4 has canceled the unfilled remainder before the continuation resumes.
+    // continuation 恢复前，StockProcessing 已撤销未成交余量。
     let parent = session
         .state
         .parent_orders

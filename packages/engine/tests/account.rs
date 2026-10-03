@@ -64,13 +64,13 @@ use engine::account::{AccountError, AccountKind, StockCode};
 
 #[test]
 fn account_error_and_kind_basics() {
-    let e1 = AccountError::InsufficientCash {
+    let insufficient_cash_error = AccountError::InsufficientCash {
         needed: Money::from_cents(1500),
         have: Money::from_cents(1000),
     };
-    assert!(e1.to_string().contains("cash"));
-    let e2 = AccountError::NoPosition(StockCode("600101".to_string()));
-    assert!(e2.to_string().contains("600101"));
+    assert!(insufficient_cash_error.to_string().contains("cash"));
+    let missing_position_error = AccountError::NoPosition(StockCode("600101".to_string()));
+    assert!(missing_position_error.to_string().contains("600101"));
     assert_ne!(AccountKind::Retail, AccountKind::Player);
 }
 

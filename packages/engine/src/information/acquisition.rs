@@ -1,19 +1,19 @@
-//! 个人获知登记（K4，任务 16）：`NpcInformationState`——公共曝光与 NPC
+//! 个人获知登记：`NpcInformationState`——公共曝光与 NPC
 //! 本人获取信息分离。
 //!
-//! 语义（K4 计划行 121–123）：
+//! 个人获知语义：
 //! - 逐公司记录**本人已获取**的报告/公告 id 与获知时点；一次获知只记一次
 //!   （重复获知是合法幂等输入：保留首次时点，状态字节不变）。
 //! - 公共曝光只改变**发现机会**：[`discovery_candidates`] 把公开索引投影为
-//!   候选 id 清单（任务 25 注意力接线消费）；候选**不等于阅读**——只有
+//!   候选 id 清单（注意力发现接线消费）；候选**不等于阅读**——只有
 //!   `record_acquisition` 显式登记才把内容纳入个人信息集。
 //! - 守卫顺序固定：属主一致（跨 NPC 注入/合并拒绝——不存在合并 API）→
-//!   公开库存在性 + `observed_at >= published_at`（EarlyRead 透传复用任务
-//!   15 查询守卫，无前视）→ 重复幂等。
+//!   公开库存在性 + `observed_at >= published_at`（EarlyRead 透传公开库
+//!   查询守卫，无前视）→ 重复幂等。
 //! - dev/宿主查看走公开库查询面（`&self` 只读），对个人状态零写入。
 //!
-//! 获知时点是 civil 瞬间（休市日观察语义：与市场分钟无耦合，注意力唤醒
-//! 接线归任务 25）。确定性：纯数据 + 校验，无 RNG/时钟/IO。NPC 身份复用
+//! 获知时点是 civil 瞬间（休市日观察语义：与市场分钟无耦合，
+//! 观察由注意力发现接线唤醒）。确定性：纯数据 + 校验，无 RNG/时钟/IO。NPC 身份复用
 //! 交易 [`AccountId`]，不建平行身份。
 //!
 //! 存档不变量（恢复边界独力维护）：每公司条目按 id **严格递增**（二分
@@ -85,7 +85,7 @@ struct ResolvedPublication {
 }
 
 /// 解析公布 id：先按报告查（未知再查公告面）；两条守卫（未知 id /
-/// observed_at 早于 published_at）全部透传任务 15 查询守卫，不重复实现。
+/// observed_at 早于 published_at）全部透传公开库查询守卫，不重复实现。
 fn resolve_publication(
     library: &PublicLibrary,
     id: PublicationId,
@@ -259,7 +259,7 @@ impl<'de> serde::Deserialize<'de> for NpcInformationState {
     }
 }
 
-/// 公共曝光发现面（任务 25 注意力接线消费）：该公司截至 `as_of` 已公布的
+/// 公共曝光发现面（注意力发现接线消费）：该公司截至 `as_of` 已公布的
 /// 全部 id（报告 + 公告，id 序，确定性）。**只列候选，不产生阅读**——是否
 /// 真正获知由 `record_acquisition` 显式登记；未登记的候选对
 /// [`crate::information::NpcObservationContext`] 不可读（NotAcquired）。

@@ -35,23 +35,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::session::pipeline) enum AuctionDayEndError {
-    #[error("B2 auction/day-end precondition failed: {0}")]
+    #[error("Auction/DayEnd tick 前置检查失败：{0}")]
     Precondition(#[source] StepFatal),
-    #[error("B2 auction adapter failed: {0}")]
+    #[error("Auction/DayEnd tick 的 Auction adapter 失败：{0}")]
     Adapter(#[source] StepFatal),
-    #[error("B2 stock worker for {code:?} failed: {source}")]
+    #[error("Auction/DayEnd tick 的股票 {code:?} worker 失败：{source}")]
     Worker {
         code: StockCode,
         #[source]
         source: StepFatal,
     },
-    #[error("B2 receipt transaction failed: {0}")]
+    #[error("Auction/DayEnd tick 的 receipt 事务失败：{0}")]
     ReceiptAggregation(#[source] StepFatal),
-    #[error("B2 settlement transaction failed: {0}")]
+    #[error("Auction/DayEnd tick 的结算事务失败：{0}")]
     Settlement(#[source] SettlementTransactionError),
-    #[error("B2 order lifecycle projection failed: {0}")]
+    #[error("Auction/DayEnd tick 的订单生命周期投影失败：{0}")]
     Lifecycle(#[source] StepFatal),
-    #[error("B2 event collection failed: {0}")]
+    #[error("Auction/DayEnd tick 的事件收集失败：{0}")]
     Projection(#[source] StepFatal),
 }
 
@@ -115,7 +115,7 @@ impl AuctionLifecycleFact {
     }
 }
 
-/// 脱离权威状态的股票局部结果；由 Main 与其他 P4 结果组合后统一结算。
+/// 脱离权威状态的股票局部结果；由 Main 与其他 stock_processing 结果组合后统一结算。
 pub(in crate::session::pipeline) struct AuctionStockOutput {
     pub(in crate::session::pipeline) code: StockCode,
     pub(in crate::session::pipeline) market: Market,
@@ -142,7 +142,7 @@ pub(in crate::session::pipeline) struct AuctionDayEndOutput {
     pub(in crate::session::pipeline) finalizer_executions: Vec<AuctionFinalizerExecution>,
 }
 
-/// 面向 continuation 的竞价 P4 结果；显式携带 identity，不从 Projection 排列推断因果。
+/// 面向 continuation 的竞价 stock_processing 结果；显式携带 identity，不从 Projection 排列推断因果。
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::session::pipeline) struct AuctionExecutionFact {
     pub(in crate::session::pipeline) candidate_key: IntentCandidateKey,
@@ -170,7 +170,7 @@ pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
     pub(in crate::session::pipeline) detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
 }
 
-/// tick 私有股票竞价状态；从 post-P0 初始化一次，跨 continuation 保存，consuming finish 执行尾部。
+/// tick 私有股票竞价状态；从 post-ExpiryShadow 初始化一次，跨 continuation 保存，consuming finish 执行尾部。
 #[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     stocks: BTreeMap<StockCode, AuctionStockShadow>,
@@ -328,7 +328,7 @@ impl IncrementalAuctionStockCoordinator {
             } = operation
             else {
                 return Err(invariant(
-                    "P3 accepted an auction place for an unknown stock",
+                    "AccountValidation 为未知股票受理了 Auction Place",
                 ));
             };
             let lifecycle = AuctionLifecycleFact::Rejected {
@@ -953,7 +953,7 @@ impl AuctionTickBoundary {
             TradingPhase::CallAuction | TradingPhase::ClosingAuction
         ) {
             return Err(AuctionDayEndError::Precondition(invariant(
-                "B2 auction transaction requires an opening or closing auction phase",
+                "Auction/DayEnd tick 的 Auction 事务要求 OpeningAuction 或 ClosingAuction 阶段",
             )));
         }
         let tick_after = session
@@ -1029,9 +1029,7 @@ fn apply_finished_candidate(
     context: AuctionFinishContext<'_>,
 ) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     let day_end_event_base = u64::try_from(validation.results().len()).map_err(|_| {
-        AuctionDayEndError::Precondition(invariant(
-            "P3 result count exceeds the event identity domain",
-        ))
+        AuctionDayEndError::Precondition(invariant("AccountValidation 结果数量超出事件身份域"))
     })?;
     facts.extend(finish.detached_event_facts);
     coordinator_lifecycle_facts.extend(finish.detached_lifecycle_facts);
@@ -1089,7 +1087,7 @@ fn apply_finished_candidate(
             .checked_add(receipts.len())
             .ok_or_else(|| {
                 AuctionDayEndError::Settlement(SettlementTransactionError::Settlement(invariant(
-                    "combined B2 P6 receipt count overflow",
+                    "Auction/DayEnd tick 合并 SettlementShadow receipt 数量时溢出",
                 )))
             })?,
     );
@@ -1384,7 +1382,7 @@ pub(super) fn process_auction_stock(
     finalizer.auction_tail_passes = finalizer
         .auction_tail_passes
         .checked_add(1)
-        .ok_or_else(|| invariant("B2 auction-tail execution count overflow"))?;
+        .ok_or_else(|| invariant("Auction/DayEnd tick 的 Auction 收尾执行数量溢出"))?;
     event_facts.push(owned_event(
         Event::AuctionTick {
             seq: 0,
@@ -1418,7 +1416,7 @@ pub(super) fn process_auction_stock(
         finalizer.auction_completion_passes = finalizer
             .auction_completion_passes
             .checked_add(1)
-            .ok_or_else(|| invariant("B2 auction-completion execution count overflow"))?;
+            .ok_or_else(|| invariant("Auction/DayEnd tick 的 Auction completion 执行数量溢出"))?;
         clearing_price = completion.clearing.map(|selection| selection.price);
         if let Some(price) = clearing_price {
             market.apply_auction_price(price);
@@ -1474,7 +1472,7 @@ pub(super) fn process_auction_stock(
             finalizer.day_end_passes = finalizer
                 .day_end_passes
                 .checked_add(1)
-                .ok_or_else(|| invariant("B2 day-end execution count overflow"))?;
+                .ok_or_else(|| invariant("Auction/DayEnd tick 的 DayEnd 执行数量溢出"))?;
         } else {
             market = stage_opening_remainders(market, completion.continuous_orders)?;
         }
@@ -1525,13 +1523,17 @@ fn validate_worker_input(
     finish_day: bool,
 ) -> Result<(), StepFatal> {
     if input.market.code() != &input.code {
-        return Err(invariant("B2 stock input market identity mismatch"));
+        return Err(invariant("Auction/DayEnd tick 股票输入的市场身份不一致"));
     }
     if finish_day && !finish_auction {
-        return Err(invariant("B2 DayEnd requires auction completion"));
+        return Err(invariant(
+            "Auction/DayEnd tick 的 DayEnd 要求 Auction 已完成",
+        ));
     }
     if finish_day && input.completion.phase != super::AuctionPhase::Closing {
-        return Err(invariant("B2 DayEnd requires the closing auction"));
+        return Err(invariant(
+            "Auction/DayEnd tick 的 DayEnd 要求 ClosingAuction 阶段",
+        ));
     }
     for order in input.completion.state.orders() {
         validate_auction_reservation(order, &input.completion.config)?;
@@ -1583,7 +1585,7 @@ fn place_rejection(
     let tick = completion.price_tick.cents();
     if tick <= 0 || price <= Money::ZERO || price.cents() % tick != 0 {
         return Err(invariant(
-            "P3 accepted an auction limit price that is not a positive price tick",
+            "AccountValidation 受理的 Auction 限价不是正值 price tick",
         ));
     }
     let down = market
@@ -1751,7 +1753,7 @@ fn validate_worker_finalizers(
             || !day_end_matches_boundary
         {
             return Err(AuctionDayEndError::Precondition(invariant(
-                "B2 stock worker finalizer executions disagree with the tick boundary",
+                "Auction/DayEnd tick 股票 worker 的 finalizer 执行次数与 tick 边界不一致",
             )));
         }
         if observed
@@ -1759,7 +1761,7 @@ fn validate_worker_finalizers(
             .is_some_and(|value| value != worker.finalizer)
         {
             return Err(AuctionDayEndError::Precondition(invariant(
-                "B2 stock workers disagree on finalizer execution counts",
+                "Auction/DayEnd tick 的股票 workers 对 finalizer 执行次数不一致",
             )));
         }
         executions.push(AuctionFinalizerExecution::new(
@@ -1770,7 +1772,9 @@ fn validate_worker_finalizers(
         ));
     }
     let observed = observed.ok_or_else(|| {
-        AuctionDayEndError::Precondition(invariant("B2 auction transaction has no stock worker"))
+        AuctionDayEndError::Precondition(invariant(
+            "Auction/DayEnd tick 的 Auction 事务缺少股票 worker",
+        ))
     })?;
     Ok((observed, executions))
 }
@@ -2102,7 +2106,7 @@ fn rejection_lifecycle_facts(
         .map(|(key, sealed_index, reason)| {
             let candidate = by_key
                 .get(key)
-                .ok_or_else(|| lifecycle_invariant("P3 rejection has no candidate payload"))?;
+                .ok_or_else(|| lifecycle_invariant("AccountValidation 拒绝结果缺少候选 payload"))?;
             let code = match candidate.intent() {
                 crate::Intent::PlaceLimit { code, .. }
                 | crate::Intent::PlaceMarket { code, .. }
@@ -2218,26 +2222,24 @@ fn validate_order_cursor(
     validation: &AccountValidationOutput,
 ) -> Result<(), AuctionDayEndError> {
     let draft_count = u64::try_from(validation.drafts().len()).map_err(|_| {
-        AuctionDayEndError::Precondition(invariant(
-            "P3 draft count exceeds the order identity domain",
-        ))
+        AuctionDayEndError::Precondition(invariant("AccountValidation draft 数量超出订单身份域"))
     })?;
     let expected = session
         .state
         .next_order_id
         .checked_add(draft_count)
         .ok_or_else(|| {
-            AuctionDayEndError::Precondition(invariant("B2 next order identity overflow"))
+            AuctionDayEndError::Precondition(invariant("Auction/DayEnd tick 的下一个 OrderId 溢出"))
         })?;
     if validation.next_order_id_after() != expected {
         return Err(AuctionDayEndError::Precondition(invariant(
-            "P3 next order cursor disagrees with the B2 session cursor",
+            "AccountValidation 的下一个 OrderId 游标与 Auction/DayEnd tick 会话游标不一致",
         )));
     }
     for (ordinal, draft) in validation.drafts().iter().enumerate() {
         let ordinal = u64::try_from(ordinal).map_err(|_| {
             AuctionDayEndError::Precondition(invariant(
-                "P3 draft ordinal exceeds the order identity domain",
+                "AccountValidation draft ordinal 超出订单身份域",
             ))
         })?;
         let expected_id = session
@@ -2245,11 +2247,13 @@ fn validate_order_cursor(
             .next_order_id
             .checked_add(ordinal)
             .ok_or_else(|| {
-                AuctionDayEndError::Precondition(invariant("B2 draft order identity overflow"))
+                AuctionDayEndError::Precondition(invariant(
+                    "Auction/DayEnd tick 的 draft OrderId 溢出",
+                ))
             })?;
         if draft.order_id() != OrderId(expected_id) {
             return Err(AuctionDayEndError::Precondition(invariant(
-                "P3 draft identity disagrees with the B2 session cursor",
+                "AccountValidation draft 身份与 Auction/DayEnd tick 会话游标不一致",
             )));
         }
     }

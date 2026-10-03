@@ -1,9 +1,9 @@
-//! 赔案子账与处理器（K3 保险，任务 10；CAS 25 §28 已发生赔款负债）。
+//! 赔案子账与处理器（保险经营会计约束；CAS 25 §28 已发生赔款负债）。
 //!
 //! 赔案**发生**（Dr 保险服务费用 / Cr 已发生赔款负债——实际金额，权责发生）
 //! 与**支付**（Dr 已发生赔款负债 / Cr 银行存款——现金出）是两个独立事件；
 //! 支付超未付余额 → `ClaimPaymentBeyondOutstanding`，超可支付现金 →
-//! `PaymentFailed`（K2 客户流动性约束）。现金流分类：赔款支付 = 经营活动。
+//! `PaymentFailed`（客户流动性约束）。现金流分类：赔款支付 = 经营活动。
 //!
 //! 简化登记：预期赔付的释放按责任单元推进（挣得口径），赔案发生不自动改写
 //! 剩余预期（差异经显式重估事件分流——remeasure.rs）。
@@ -160,7 +160,7 @@ impl InsuranceBooks {
 
     /// 赔款支付（现金出，负债降，不重复计费用）：Dr 2502 / Cr 1002（经营）。
     /// 超未付余额 → `ClaimPaymentBeyondOutstanding`；超可支付现金 →
-    /// `PaymentFailed`（负现金禁令，险企继续运行——K2 不透支不补钱）。
+    /// `PaymentFailed`（负现金禁令，险企继续运行——不透支不补钱）。
     pub fn pay_claim(
         &mut self,
         group: &ContractId,

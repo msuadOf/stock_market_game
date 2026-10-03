@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Build the immutable inputs for one paired escrow verification performance run. */
+/** 构造一次配对 escrow 性能验证所需的不可变输入。 */
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -84,8 +84,8 @@ export async function preparePerformanceConfig({
     escrowSourceManifest(await realpath(baselineRoot)),
     escrowSourceManifest(await realpath(currentRoot)),
   ]);
-  if (setupRequest.setup?.simulation_policy_id !== "a-share-simulation-v2") {
-    throw new Error("performance setup must be an explicit current v2 SessionSetup");
+  if (setupRequest.setup?.simulation_policy_id !== "a-share-simulation") {
+    throw new Error("performance setup 必须显式使用当前 SessionSetup 的 simulation_policy_id");
   }
   if (!Number.isSafeInteger(completedTicks) || completedTicks <= 0
     || !Number.isSafeInteger(repetitions) || repetitions <= 0
@@ -93,7 +93,7 @@ export async function preparePerformanceConfig({
     throw new Error("completedTicks must be positive and divisible by repetitions");
   }
   const workload = {
-    scenario: "task9-paired-production-ticks-v1",
+    scenario: "paired-production-tick-throughput",
     seed: String(setupRequest.seed),
     setup_manifest: setupRequest.setup,
     completed_ticks: completedTicks,
@@ -116,12 +116,10 @@ export async function preparePerformanceConfig({
     || !Number.isSafeInteger(rayonThreads) || rayonThreads <= 0) {
     throw new Error("cargo_jobs and rayon_threads must be positive safe integers");
   }
-  // Build only after both complete source manifests are frozen. The endpoint
-  // embeds that fingerprint and refuses a request from any other source tree.
-  // Keep the two release builds sequential to honor the single full-build slot.
-  // The legacy v1 baseline adapter was removed with the sealed-corpus tooling;
-  // the before side is now any current-code checkout running the same endpoint
-  // (both sides must speak the v2 setup contract).
+  // 两侧完整 source manifest 冻结后才编译；endpoint 嵌入 fingerprint，
+  // 拒绝来自其他 source tree 的请求。两次 release build 共用同一完整 build slot，
+  // 因此按顺序执行；每次 Cargo build 内仍使用配置的多核并发。
+  // before 侧使用当前代码 checkout 的同一 endpoint，两侧均使用当前 SessionSetup 契约。
   const verifiedBaselineBinary = await buildEndpoint({
     sourceRoot: baselineRoot,
     targetRoot: path.join(outputRoot, "baseline-target"),
@@ -135,7 +133,7 @@ export async function preparePerformanceConfig({
     sourceFingerprint: currentManifest.sha256,
   });
   const endpoint = (sourceFingerprint) => ({
-    schema: "escrow-perf-endpoint-request-v1", workload,
+    schema: "escrow-performance-endpoint-request", schema_version: 1, workload,
     environment_contract: environmentContract, source_fingerprint: sourceFingerprint,
   });
   const beforeRequest = path.join(outputRoot, "before-request.json");
@@ -147,7 +145,7 @@ export async function preparePerformanceConfig({
     writeNew(path.join(outputRoot, "after-source-manifest.json"), currentManifest),
   ]);
   const config = {
-    schema: "escrow-perf-config-v2", workload, environment_contract: environmentContract,
+    schema: "escrow-performance-config", schema_version: 2, workload, environment_contract: environmentContract,
     warmup_runs: warmupRuns, sample_count: sampleCount,
     rss_sample_interval_ms: rssSampleIntervalMs,
     before: { command: [verifiedBaselineBinary, beforeRequest], cwd: baselineRoot,

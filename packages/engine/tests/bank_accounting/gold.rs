@@ -2,7 +2,7 @@
 //! 100% 计提→核销→回收→重估。全部数字手算钉死（分）。
 //!
 //! 手算依据：ACT/365F = 本金×bp×天数/3_650_000，整数半偶舍入 + 合同累计余数
-//! （FractionUnits，1/3_650_000 分单位，任务 8 同一约定）。ECL 目标 =
+//! （FractionUnits，1/3_650_000 分单位，工商经营会计同一约定）。ECL 目标 =
 //! rhe(Σ(权重×PD×LGD×账面余额)/10^12)——概率加权情景显式输入（Fixture）。
 //! 第三阶段计息基数 = 账面余额 − 减值准备（CAS 22 净额法）。
 
@@ -33,7 +33,7 @@ fn bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold() {
     assert_eq!(net_debit(&bank, acct::CASH), yuan(2_000));
 
     // ── 2030-01-02：存入 1000.00 元 @150bp（181 天 → 短期 2011）──
-    // K3 红线：贷客户存款（负债），不是收入；现金 2000→3000。
+    // 行业会计红线：贷客户存款（负债），不是收入；现金 2000→3000。
     bank.accept_deposit(
         BankProductKind::TermDeposit,
         ContractId("D1".to_string()),
@@ -55,7 +55,7 @@ fn bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold() {
     assert_eq!(net_debit(&bank, acct::CASH), yuan(3_005));
 
     // ── 2030-01-05：贷出 600.00 元 @600bp（181 天）+ 初始 12 个月 ECL ──
-    // K3 红线：转贷款资产（1301），不是费用；初始准备 = 600×1%×50% = 3.00。
+    // 行业会计红线：转贷款资产（1301），不是费用；初始准备 = 600×1%×50% = 3.00。
     bank.issue_loan(
         BankProductKind::TermLoan,
         ContractId("L1".to_string()),
@@ -249,7 +249,7 @@ fn bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold() {
     assert_eq!(transfers[1].to_stage, EclStage::Stage3);
     assert_eq!(transfers[1].reason, "credit-impaired (90 days past due)");
 
-    // ── 报表分类层（CAS 30 (2026) 银行列示；任务 13 消费的分类面）──
+    // ── 报表分类层（CAS 30 (2026) 银行列示；结账与报表消费的分类面）──
     let lines = bank.presentation_lines().expect("presentation lines");
     assert_eq!(lines.interest_income, amt(531));
     assert_eq!(lines.interest_expense, amt(238));
@@ -262,7 +262,7 @@ fn bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold() {
     assert_eq!(lines.customer_deposits, amt(100_000));
     assert_eq!(lines.cash_position, amt(250_528));
 
-    // ── 存档往返：重放路径恢复等价账套（K2 事实/派生边界）──
+    // ── 存档往返：重放路径恢复等价账套（会计与资金边界事实/派生边界）──
     let json = serde_json::to_string(&bank).expect("serialize");
     let restored: BankBooks = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(restored, bank);
@@ -298,7 +298,7 @@ fn deposit_interest_stops_accruing_at_maturity() {
 #[test]
 fn unlisted_bank_test_entity_adds_no_default_stock() {
     // 默认集合恰含一家未上市银行实体；发行映射只覆盖上市工商公司映射的
-    // 股票（股票清单直接由默认规格推导）——银行不增加默认股票（K3：银行
+    // 股票（股票清单直接由默认规格推导）——银行不增加默认股票（行业会计约束：银行
     // 无默认股票也必须可跑通经营与报表查询）。
     let companies = engine::company::default_companies(d("2030-01-01")).expect("default companies");
     let bank_configs: Vec<&engine::company::CompanyConfig> = companies
@@ -331,7 +331,7 @@ fn unlisted_bank_test_entity_adds_no_default_stock() {
 
 #[test]
 fn counterparties_track_cross_boundary_fund_flows() {
-    // K2：跨模拟边界资金流逐笔登记（存款入/贷款出/收息/付息）。
+    // 会计与资金边界：跨模拟边界资金流逐笔登记（存款入/贷款出/收息/付息）。
     let mut bank = BankBooks::new(base_config()).expect("bank opens");
     bank.accept_deposit(
         BankProductKind::TermDeposit,

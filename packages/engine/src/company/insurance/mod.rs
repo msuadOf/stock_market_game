@@ -1,9 +1,9 @@
-//! 保险经营会计（K3，任务 10）。
+//! 保险经营会计（保险会计约束）。
 //!
-//! [`InsuranceBooks`] = 权威账套（[`Books`]，任务 6）+ 合同组子账（GMM 组件：
+//! [`InsuranceBooks`] = 权威账套（[`Books`]，会计底座）+ 合同组子账（GMM 组件：
 //! 预期赔付/风险调整/CSM/亏损成分/贴现差 + 责任单元进度 + 赔案子账）+ 外部
-//! 投保人对手方 + 版本化贴现假设。与任务 8/9 `IndustrialBooks`/`BankBooks`
-//! 同一组合模式：**独立引擎**，不修改 `Company` 注册表壳；会话接线在任务 26。
+//! 投保人对手方 + 版本化贴现假设。与工商和银行账套 `IndustrialBooks`/`BankBooks`
+//! 同一组合模式：**独立引擎**，不修改 `Company` 注册表壳；会话由 `session::company_assembly` 装配。
 //!
 //! 计量框架：一般计量模型（GMM，CAS 25（2020）§21–§34），依据锚点见
 //! docs/company-accounting.md §2.4（§27 初始确认/§28 未到期责任负债+已发生
@@ -16,12 +16,12 @@
 //!    [`Books::post_batch`] 原子提交；子账变更仅在过账成功后落地——任何
 //!    拒绝（含 `PaymentFailed`）账套与子账**字节不变**（测试逐一断言），
 //!    事件 id 不倒退（成功/零过账均单调推进，永不复用）。
-//! 2. K3 红线：保费不立即全额计收入（收保费贷记 2501，收入随责任单元
+//! 2. 行业会计红线：保费不立即全额计收入（收保费贷记 2501，收入随责任单元
 //!    释放）；分红/投连/再保险一律类型化 `UnsupportedContract`，不把此类
 //!    保费流变成股东支付。
 //! 3. 现金流分类：保费收讫/赔款支付均经营活动（CAS 30（2026）§55(二)）。
 //! 4. 客户流动性约束：赔款支付超可支付现金 → `PaymentFailed`（类型化，
-//!    险企继续运行；无透支、无自动补钱、K2 无兜底）。
+//!    险企继续运行；无透支、无自动补钱、无资金兜底）。
 //!
 //! [`Books::post_batch`]: crate::accounting::Books::post_batch
 
@@ -38,7 +38,7 @@ mod service_release;
 #[cfg(test)]
 mod behavior_tests;
 
-pub use chart::insurance_chart_v4;
+pub use chart::insurance_account_chart;
 pub use claims::{ClaimId, ClaimState};
 pub use config::{DiscountAssumption, InsuranceConfig};
 pub use error::InsuranceError;
@@ -69,7 +69,7 @@ pub enum InsuranceProductKind {
     Participating,
     /// 投连险合同（不支持：CAS 25 §39–§44 基础项目/浮动收费安排）。
     UnitLinked,
-    /// 分出的再保险合同（不支持：CAS 25 §58–§72；K3 不做任何分出/分入分录）。
+    /// 分出的再保险合同（不支持：CAS 25 §58–§72；当前模型不做任何分出/分入分录）。
     ReinsuranceCeded,
     /// 分入的再保险合同（不支持：同上）。
     ReinsuranceAccepted,
@@ -148,7 +148,7 @@ impl InsuranceBooks {
     }
 
     /// 报表分类层胶水：总账 → CAS 25 §84/§85 + CAS 30 §55(二) 保险列报行
-    /// （任务 13 消费）。
+    /// （结账与报表消费）。
     pub fn presentation_lines(&self) -> Result<InsurancePresentationLines, AccountingError> {
         insurance_presentation_lines(self.books.ledger())
     }
@@ -169,7 +169,7 @@ impl InsuranceBooks {
         Ok(())
     }
 
-    /// 对手方已登记（处理器前置校验；资金流跨边界留痕的 K2 要求）。
+    /// 对手方已登记（处理器前置校验；资金流跨边界留痕要求）。
     pub(super) fn ensure_counterparty(&self, id: &CounterpartyId) -> Result<(), InsuranceError> {
         if self.counterparties.get(id).is_none() {
             return Err(InsuranceError::Company(

@@ -1,18 +1,13 @@
-//! 披露接线（K4，任务 15）：18:00 观察者 hook + 日终披露派发。
+//! 在自然日经营终局后派发 18:00 披露。
 //!
-//! 日终顺序（K4）：**finalize 当日业务 →（月/年末封账，如到期）→ 18:00
-//! 披露**。本模块承接最后一步：宿主（任务 26）在 `ops_wiring.run_day_end`
-//! （经营终局）之后、以同一份 [`CivilDayEndReport`] 调用
-//! [`DisclosureDispatch::run_day_end`]。月/年末封账（`close_month`/
-//! `close_year`）需要行业账套的 `&mut Books` 面——当前结构性不可达
-//!（任务 8–11 只暴露只读 `books()`），本任务以登记簿登记（勾稽 + 诚实性
-//! 校验 + 不可变）承载「定稿可公开」，封账接线归任务 26（issues 已登记）。
+//! GameSession 先执行 `ops_wiring.run_day_end`，月末或年末通过行业可变账套
+//! 完成 `close_month`/`close_year`，再将同一份 [`CivilDayEndReport`] 传入
+//! [`DisclosureDispatch::run_day_end`]。定期报告须经登记簿校验、定稿后公布。
 //!
-//! 18:00 观察者是 `fn(CivilInstant)` 裸函数指针（无捕获）：相位时点事实由
-//! [`CivilDayEndReport::disclosure_instant`] 权威承载并传入本派发器；
-//! [`disclosure_phase_observer`] 是生产相位钩子（宿主侧集成点，任务 28
-//! 可在同列表追加自己的观察者），有状态派发在同一相位瞬间由
-//! `run_day_end` 执行。观察者保持 panic-free（任务 5 复核 N2）。
+//! 18:00 观察者使用无捕获的 `fn(CivilInstant)`；权威相位瞬间由
+//! [`CivilDayEndReport::disclosure_instant`] 承载。生产 hook
+//! [`disclosure_phase_observer`] 只观察时点，有状态派发由 `run_day_end` 执行。
+//! 观察者不得 panic，以保持日结失败的原子边界。
 
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
@@ -92,8 +87,8 @@ impl DisclosureDispatch {
 
     /// 18:00 披露派发（恰好一次语义：同日重复调用 = no-op）。
     ///
-    /// 1. 临时公告：当日新激活的经济事件（任务 14 目录，`starts_on ==
-    ///    settled_date`）按公司 id 序公布——内容只含已确认事件条款；
+    /// 1. 临时公告：经营目录中 starts_on == settled_date 的当日新激活事件，
+    ///    按公司 id 序公布；内容只含已确认事件条款。
     /// 2. 定期披露：游标窗口 `(published_through, disclosure_instant]`
     ///    内的全部排期（公司 id × 种类确定序），经登记簿定稿后公布。
     pub fn run_day_end(

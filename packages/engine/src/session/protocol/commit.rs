@@ -10,9 +10,8 @@ impl GameSession {
         self.frame_after_step(seq_from, committed.events, committed.event_keys)
     }
 
-    /// Public-runtime frame plus the commit evidence from the exact same P9
-    /// transaction. This is used by the Task 9 verifier and does not retain
-    /// diagnostic state in the session.
+    /// 同一次 CommitTick transaction 产出的 public-runtime frame 与 commit evidence。
+    /// Escrow verifier 使用该证据；会话不额外保留整局历史诊断状态。
     pub fn step_frame_with_commit_evidence(
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {

@@ -1,17 +1,14 @@
-//! Opt-in wall-clock evidence for one successfully committed authoritative tick.
+//! 按需记录单个已成功提交权威 tick 的 wall-clock 证据。
 //!
-//! This recorder is intentionally thread-local and ephemeral. It is not a `GameSession` field,
-//! never participates in persistence or hashing, and constructs public evidence only after P9 has
-//! committed. The runnable-thread value is the number of Rayon workers in the current registry
-//! that are eligible to execute work at the sample point; it is not an operating-system load or
-//! CPU-utilization estimate. P2 includes decision work, plan feedback, and the
-//! wall time shared by concurrent plan-root production and P3/P4 coordinator
-//! initialization. The exclusive P3/P4 records include their input preparation
-//! and subsequent request work, but not the concurrent coordinator setup.
-//! P3 also includes consuming the validator and handing off its validation output.
-//! With no requests, this finalization is the only P3 span; it does not imply that
-//! any order was validated. Concurrent P3/P4 initialization remains in P2 only.
-//! Overlapping branch times cannot be added to these exclusive phase records.
+//! recorder 是临时 thread-local 状态，不属于 GameSession，不参与存档或 hash。
+//! 只有 CommitTick 成功后才构造公共证据。runnable thread 字段记录 Rayon registry
+//! 配置的 worker 数量，不能当作实际 runnable/active worker、操作系统负载或 CPU 利用率。
+//! DecisionAndCoordinatorWork 包含决策、计划反馈，以及并发 plan-root 生产与
+//! AccountValidation/StockProcessing coordinator 初始化共享的 wall time。
+//! AccountValidation/StockProcessing 的独占计时包含输入准备与后续请求工作，
+//! 但不重复包含并发 coordinator 初始化；AccountValidation 还计入消费 validator 与移交输出。
+//! 无请求时，validator 收尾是唯一 AccountValidation span，并不表示已校验订单。
+//! 重叠分支时长不得加到这些独占阶段记录上。
 
 use crate::{session::pipeline::TickPhase, Event, GameSession};
 use serde::{Serialize, Serializer};
@@ -146,6 +143,7 @@ impl PhaseTimingRecord {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CommittedPhaseTiming {
     schema: &'static str,
+    schema_version: u32,
     #[serde(serialize_with = "serialize_decimal")]
     tick_before: u64,
     #[serde(serialize_with = "serialize_decimal")]
@@ -154,7 +152,7 @@ pub struct CommittedPhaseTiming {
 }
 
 impl CommittedPhaseTiming {
-    pub const SCHEMA: &'static str = "escrow-committed-phase-timing-v2";
+    pub const SCHEMA: &'static str = "escrow-committed-phase-timing";
 
     pub const fn schema(&self) -> &'static str {
         self.schema
@@ -210,10 +208,10 @@ pub enum PhaseTimingCaptureError {
 }
 
 impl GameSession {
-    /// Executes the ordinary public [`GameSession::step`] path with ephemeral timing enabled.
+    /// 在普通公共 GameSession::step 路径上启用临时计时。
     ///
-    /// A failed step returns only its typed fatal and discards all partial samples. Successful
-    /// evidence is returned only after P9 has installed the tick candidate into this session.
+    /// step 失败时只返回 typed fatal，丢弃部分采样。
+    /// 成功证据仅在 CommitTick 已将 candidate 安装到会话后返回。
     pub fn step_with_phase_timing(&mut self) -> Result<TimedStep, PhaseTimingCaptureError> {
         let (events, timing) = capture_one_committed_tick(|| self.step())?;
         Ok(TimedStep { events, timing })
@@ -391,6 +389,7 @@ impl Collector {
         let records = self.ledger.records()?;
         Ok(CommittedPhaseTiming {
             schema: CommittedPhaseTiming::SCHEMA,
+            schema_version: 2,
             tick_before,
             tick_after,
             records,
@@ -463,7 +462,7 @@ pub(crate) fn validate_precommit() -> Result<(), crate::session::StepFatal> {
         collector.close_current();
         if let Some(phase) = collector.ledger.missing_precommit_phase() {
             return Err(invariant(&format!(
-                "phase-timing capture reached P9 without {}",
+                "phase timing 到达 CommitTick 时缺少 {}",
                 phase.name()
             )));
         }

@@ -464,7 +464,7 @@ impl InstitutionDecisionRoot {
         // 先形成或更新本人信念，再按本次真实失败订单调整信心；新阅读不会吞掉受挫事件。
         apply_institution_experience_feedback(&mut personal.belief, moment.trading_day);
 
-        // 4–5. K5a 聚合 + 计划生命周期。
+        // 4–5. 混合分析与方向迟滞 聚合 + 计划生命周期。
         let assessments = context.assess_candidates(
             id,
             &personal.belief,

@@ -87,7 +87,7 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
             hot: 0.02,
         },
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
@@ -320,7 +320,7 @@ fn four_industry_ten_year_archive_preserves_each_industry_state() {
     let start = four_industry_fixtures::d("2030-01-01");
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: SEED,
-        shock_params: engine::company::events::ShockParams::default_v1(),
+        shock_params: engine::company::events::ShockParams::current_default_parameters(),
         companies: vec![
             four_industry_fixtures::industrial_a(start),
             four_industry_fixtures::bank_c(start),

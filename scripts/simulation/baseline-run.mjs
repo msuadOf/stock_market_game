@@ -58,11 +58,11 @@ export const SCENARIOS = {
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SIMULATION_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const SIMULATION_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
-const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
-const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
-const SIMULATION_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
+const SIMULATION_CHECKPOINT_SCHEMA = "simulation-acceptance-checkpoint";
+const SIMULATION_RUNNER_ID = "simulation-acceptance";
+const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "simulation-source-fingerprint";
+const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "simulation-determinism-receipt";
+const SIMULATION_RESOURCE_POLICY_SCHEMA = "simulation-resource-policy";
 const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
 const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
 const SIMULATION_SOURCE_INPUTS = [
@@ -88,8 +88,8 @@ export function validateSeedMatrix(seeds) {
   }
 }
 
-export function buildSimulationExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, c01Multiplier) {
-  return [scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(c01Multiplier)];
+export function buildSimulationExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, volumeDenominatorMultiplier) {
+  return [scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(volumeDenominatorMultiplier)];
 }
 
 export function buildSimulationFixtureBuildArgs() {
@@ -121,7 +121,7 @@ export function buildSimulationResourcePolicy(availableCpuCount, availableCpuSou
     Math.max(1, Math.floor(totalThreadBudget / SIMULATION_MIN_RAYON_THREADS_PER_SEED)),
   );
   return {
-    schema: SIMULATION_RESOURCE_POLICY_SCHEMA,
+    schema: SIMULATION_RESOURCE_POLICY_SCHEMA, schema_version: 7,
     available_cpu_count: availableCpuCount,
     available_cpu_source: availableCpuSource,
     maximum_thread_count: maximumThreadCount,
@@ -290,7 +290,7 @@ function validateSimulationResourcePolicy(resourcePolicy) {
       resourcePolicy.available_cpu_source,
       resourcePolicy.maximum_thread_count,
     );
-  if (resourcePolicy?.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA
+  if (resourcePolicy?.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA || resourcePolicy?.schema_version !== 7
     || !Number.isInteger(resourcePolicy.available_cpu_count)
     || resourcePolicy.available_cpu_count <= 0
     || typeof resourcePolicy.available_cpu_source !== "string"
@@ -374,20 +374,28 @@ function requireSensitivityMatrix(values, name) {
   }
 }
 
+function requireCurrentFields(value, expected, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
+    throw new Error(`${label} keys mismatch：字段不完整或包含不支持的历史字段`);
+  }
+}
+
 function validateSimulationOutput(expected) {
-  const { scenario, seed, naturalDays, behavior, event, c01, sourceFingerprintDigest, parsed } = expected;
-  if (parsed.source !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup; save-backed provenance is rejected");
+  const { scenario, seed, naturalDays, behavior, event, volumeDenominatorAssumption, sourceFingerprintDigest, parsed } = expected;
+  if (parsed.source !== "current_session_setup") throw new Error("after report source must be current_session_setup; save-backed provenance is rejected");
   if (parsed.build_source_fingerprint !== sourceFingerprintDigest) throw new Error("simulation acceptance fixture binary/source fingerprint mismatch");
   if (Object.hasOwn(parsed, "save_path") || Object.hasOwn(parsed, "load")) throw new Error("after report must not contain save provenance fields");
   if (parsed.scenario !== scenario || parsed.seed !== String(seed) || parsed.natural_days !== naturalDays) throw new Error("simulation acceptance report scenario, seed, or natural-day request mismatch");
-  if (parsed.multipliers?.behavior !== behavior || parsed.multipliers?.event !== event || parsed.multipliers?.c01_denominator_assumption !== c01) throw new Error("simulation acceptance report multiplier echo mismatch");
+  requireCurrentFields(parsed.multipliers, ["behavior", "event", "volume_denominator_assumption"], "simulation acceptance multipliers");
+  if (parsed.multipliers?.behavior !== behavior || parsed.multipliers?.event !== event || parsed.multipliers?.volume_denominator_assumption !== volumeDenominatorAssumption) throw new Error("simulation acceptance report multiplier echo mismatch");
   if (parsed.calendar?.natural_days !== naturalDays || typeof parsed.calendar?.trading_days !== "number" || typeof parsed.calendar?.closed_days !== "number") throw new Error("simulation acceptance report lacks natural-day calendar accounting");
   if (parsed.calendar.trading_days + parsed.calendar.closed_days !== naturalDays) throw new Error("simulation acceptance calendar accounting does not cover every natural day");
   const expectedProfile = scenario === "primary"
-    ? { id: "primary-bounded-representative-v1", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
-    : { id: "cross-year-bounded-representative-v1", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
+    ? { id: "primary-bounded-representative", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
+    : { id: "cross-year-bounded-representative", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
   const profile = parsed.verification_profile;
-  if (profile?.schema !== "k7-bounded-representative-profile-v1"
+  if (profile?.schema !== "simulation-bounded-representative-profile" || profile?.schema_version !== 1
     || profile.profile_id !== expectedProfile.id
     || profile.scope !== "bounded_representative_not_full_market_scale"
     || profile.retail_count !== expectedProfile.retail
@@ -720,7 +728,7 @@ async function collectSimulationSourceFingerprint(exec, repoRoot, deadline) {
   for (const sourceInput of SIMULATION_SOURCE_INPUTS) await collectFiles(sourceInput);
   deadline.assertRemaining("source fingerprint completion");
   const state = {
-    algorithm: SIMULATION_SOURCE_FINGERPRINT_ALGORITHM,
+    algorithm: SIMULATION_SOURCE_FINGERPRINT_ALGORITHM, algorithm_version: 1,
     committed_tree: committedTree,
     dirty_patch_sha256: sha256(dirtyPatch),
     files,
@@ -758,7 +766,7 @@ export async function prepareSimulationFixtureExecutable({ exec = realExec, repo
   const cargoBuildJobs = resourcePolicy.maximum_thread_count === "auto"
     ? resourcePolicy.available_cpu_count
     : Math.min(resourcePolicy.available_cpu_count, resourcePolicy.maximum_thread_count);
-  workspacePaths ??= await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "k7" });
+  workspacePaths ??= await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "simulation-acceptance" });
   const workspaceEnv = buildSimulationWorkspaceEnv(workspacePaths);
   const startedAt = Date.now();
   const { code, stdout, stderr } = await exec("cargo", buildArgs, {
@@ -854,14 +862,14 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 }) {
+function simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, volumeDenominatorAssumption }) {
   return {
-    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, version: SIMULATION_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 8, effective_date: "2026-09-30", script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: git.revision, dirty_paths: git.dirty_paths },
     source_fingerprint: sourceFingerprint,
     resource_policy: resourcePolicy,
     fixture: {
-      source: "fresh_current_k7_setup",
+      source: "current_session_setup",
       executable_relative_path: preparedFixture.executable_relative_path,
       binary_sha256: preparedFixture.binary_sha256,
       binary_bytes: preparedFixture.binary_bytes,
@@ -871,21 +879,21 @@ function simulationIdentity({ git, sourceFingerprint, preparedFixture, resourceP
       workspace_root: preparedFixture.workspace_root,
       cargo_target_dir: preparedFixture.cargo_target_dir,
       process_tmp_dir: preparedFixture.process_tmp_dir,
-      argv: [preparedFixture.executable_relative_path, ...buildSimulationExampleArgs(scenario, "<seed>", naturalDays, behavior, event, c01)],
+      argv: [preparedFixture.executable_relative_path, ...buildSimulationExampleArgs(scenario, "<seed>", naturalDays, behavior, event, volumeDenominatorAssumption)],
     },
     scenario,
     ordered_seeds: [...seeds],
     natural_days: naturalDays,
-    multipliers: { behavior, event, c01_denominator_assumption: c01 },
+    multipliers: { behavior, event, volume_denominator_assumption: volumeDenominatorAssumption },
   };
 }
 
 function checkpointDigest(checkpoint) {
-  return sha256(JSON.stringify({ schema: checkpoint.schema, identity: checkpoint.identity, identity_digest: checkpoint.identity_digest, completed: checkpoint.completed }));
+  return sha256(JSON.stringify({ schema: checkpoint.schema, schema_version: checkpoint.schema_version, identity: checkpoint.identity, identity_digest: checkpoint.identity_digest, completed: checkpoint.completed }));
 }
 
 function determinismReceiptDigest(receipt) {
-  return sha256(JSON.stringify({ schema: receipt.schema, identity: receipt.identity, identity_digest: receipt.identity_digest, seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: receipt.identical, argv: receipt.argv, exit_code: receipt.exit_code, wall_ms: receipt.wall_ms, revision: receipt.revision, source_fingerprint_digest: receipt.source_fingerprint_digest }));
+  return sha256(JSON.stringify({ schema: receipt.schema, schema_version: receipt.schema_version, identity: receipt.identity, identity_digest: receipt.identity_digest, seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: receipt.identical, argv: receipt.argv, exit_code: receipt.exit_code, wall_ms: receipt.wall_ms, revision: receipt.revision, source_fingerprint_digest: receipt.source_fingerprint_digest }));
 }
 
 function createExecutionPermit(limit) {
@@ -940,7 +948,8 @@ async function settleAllOrThrow(promises) {
 
 function validateCheckpoint(checkpoint, identity) {
   if (checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint)) throw new Error("simulation acceptance checkpoint must be a JSON object");
-  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA) throw new Error(`simulation acceptance checkpoint schema is unsupported or legacy: ${JSON.stringify(checkpoint.schema)}`);
+  requireCurrentFields(checkpoint, ["schema", "schema_version", "identity", "identity_digest", "completed", "checkpoint_digest"], "simulation acceptance checkpoint");
+  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA || checkpoint.schema_version !== 4) throw new Error(`simulation acceptance checkpoint schema is unsupported or legacy: ${JSON.stringify(checkpoint.schema)}`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (JSON.stringify(checkpoint.identity?.resource_policy) !== JSON.stringify(identity.resource_policy)) {
     throw new Error("simulation acceptance checkpoint resource policy mismatch");
@@ -980,7 +989,7 @@ async function readCheckpoint(checkpointPath, identity) {
 }
 
 async function persistCheckpoint(checkpointPath, identity, completed, atomicWrite, deadline) {
-  const checkpoint = { schema: SIMULATION_CHECKPOINT_SCHEMA, identity, identity_digest: sha256(JSON.stringify(identity)), completed };
+  const checkpoint = { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, identity, identity_digest: sha256(JSON.stringify(identity)), completed };
   checkpoint.checkpoint_digest = checkpointDigest(checkpoint);
   await publishBeforeDeadline(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`, atomicWrite, deadline);
   return checkpoint;
@@ -993,7 +1002,8 @@ async function persistSeedCheckpoint(dir, identity, entry, atomicWrite, deadline
 
 function validateDeterminismReceipt(receipt, identity, canonical) {
   if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("simulation acceptance determinism receipt must be a JSON object");
-  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA) throw new Error(`simulation acceptance determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
+  requireCurrentFields(receipt, ["schema", "schema_version", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], "simulation acceptance determinism receipt");
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 1) throw new Error(`simulation acceptance determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (receipt.identity_digest !== identityDigest || JSON.stringify(receipt.identity) !== JSON.stringify(identity)) throw new Error("simulation acceptance determinism receipt identity/source fingerprint mismatch");
   if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) throw new Error("simulation acceptance determinism receipt digest or canonical seed mismatch");
@@ -1022,7 +1032,7 @@ async function readDeterminismReceipt(receiptPath, identity, canonical) {
 
 async function persistDeterminismReceipt(receiptPath, identity, canonical, rerun, atomicWrite, deadline) {
   const receipt = {
-    schema: SIMULATION_DETERMINISM_RECEIPT_SCHEMA,
+    schema: SIMULATION_DETERMINISM_RECEIPT_SCHEMA, schema_version: 1,
     identity,
     identity_digest: sha256(JSON.stringify(identity)),
     seed: canonical.seed,
@@ -1057,9 +1067,9 @@ async function recoverSeedReceipts(dir, identity) {
   return completed;
 }
 
-async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy, executionPool, scenario, seed, naturalDays, behavior, event, c01, write, permit, atomicWrite = writeAtomically }) {
+async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy, executionPool, scenario, seed, naturalDays, behavior, event, volumeDenominatorAssumption, write, permit, atomicWrite = writeAtomically }) {
   if (!acquireExecutionPermit(permit)) return undefined;
-  const args = buildSimulationExampleArgs(scenario, seed, naturalDays, behavior, event, c01);
+  const args = buildSimulationExampleArgs(scenario, seed, naturalDays, behavior, event, volumeDenominatorAssumption);
   const startedAt = Date.now();
   const { code, stdout, stderr } = await executionPool.run(() => exec(preparedFixture.executable_path, args, {
     cwd: repoRoot,
@@ -1079,7 +1089,7 @@ async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, prepa
   if (code !== 0) throw new Error(`${scenario} seed ${seed} failed with exit ${code}: ${stderr.trim()}`);
   let parsed;
   try { parsed = JSON.parse(stdout); } catch (error) { throw new Error(`${scenario} seed ${seed} output is not JSON: ${error.message}`); }
-  validateSimulationOutput({ scenario, seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: preparedFixture.embedded_source_fingerprint_digest, parsed });
+  validateSimulationOutput({ scenario, seed, naturalDays, behavior, event, volumeDenominatorAssumption, sourceFingerprintDigest: preparedFixture.embedded_source_fingerprint_digest, parsed });
   const buffer = Buffer.from(stdout, "utf8");
   const sha256 = createHash("sha256").update(buffer).digest("hex");
   if (write) {
@@ -1095,7 +1105,7 @@ async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, prepa
   };
 }
 
-async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }) {
+async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, volumeDenominatorAssumption }) {
   const identity = simulationIdentity({
     git,
     sourceFingerprint,
@@ -1106,7 +1116,7 @@ async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerpri
     naturalDays,
     behavior,
     event,
-    c01,
+    volumeDenominatorAssumption,
   });
   const receipt = await readCheckpoint(path.join(dir, `seed-${entry.seed}.checkpoint.json`), identity);
   if (receipt === undefined || receipt.completed.length !== 1 || JSON.stringify(receipt.completed[0]) !== JSON.stringify(entry)) {
@@ -1126,15 +1136,15 @@ async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerpri
   } catch (error) {
     throw new Error(`simulation acceptance checkpoint seed ${entry.seed} raw artifact is malformed JSON: ${error.message}`);
   }
-  validateSimulationOutput({ scenario, seed: entry.seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: sourceFingerprint.digest, parsed: raw });
+  validateSimulationOutput({ scenario, seed: entry.seed, naturalDays, behavior, event, volumeDenominatorAssumption, sourceFingerprintDigest: sourceFingerprint.digest, parsed: raw });
   return { ...entry, raw };
 }
 
-async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario, seeds, naturalDays, behavior, event, c01, permit, resume = false, atomicWrite = writeAtomically }) {
+async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario, seeds, naturalDays, behavior, event, volumeDenominatorAssumption, permit, resume = false, atomicWrite = writeAtomically }) {
   validateSeedMatrix(seeds);
-  const dir = path.join(outputDir, `${scenario}-b${behavior}-e${event}-c${c01}`);
+  const dir = path.join(outputDir, `${scenario}-behavior-${behavior}-event-${event}-volume-denominator-${volumeDenominatorAssumption}`);
   await fsp.mkdir(dir, { recursive: true });
-  const identity = simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 });
+  const identity = simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, volumeDenominatorAssumption });
   const checkpointPath = path.join(dir, "checkpoint.json");
   let checkpoint = await readCheckpoint(checkpointPath, identity);
   if (checkpoint === undefined && resume) {
@@ -1148,7 +1158,7 @@ async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, gi
   }
   const completed = checkpoint?.completed ?? [];
   const validated = [];
-  for (const entry of completed) validated.push(await validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }));
+  for (const entry of completed) validated.push(await validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, volumeDenominatorAssumption }));
   const completedSeeds = new Set(validated.map((entry) => entry.seed));
   let executed = 0;
   const pendingSeeds = seeds.filter((seed) => !completedSeeds.has(seed));
@@ -1166,7 +1176,7 @@ async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, gi
       naturalDays,
       behavior,
       event,
-      c01,
+      volumeDenominatorAssumption,
       write: true,
       permit,
       atomicWrite,
@@ -1197,7 +1207,7 @@ async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, gi
   const orderedRuns = validated.sort((left, right) => seeds.indexOf(left.seed) - seeds.indexOf(right.seed));
   const complete = sameSeedList(orderedRuns.map((entry) => entry.seed), seeds);
   if (complete && orderedRuns.length !== seeds.length) throw new Error("simulation acceptance checkpoint cannot finalize with duplicate or extra seed records");
-  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, identity, runs: orderedRuns, complete, finalized: false, executed, checkpoint: path.relative(outputDir, checkpointPath), quantiles_and_extremes: complete ? summarizeSimulationRuns(orderedRuns) : undefined };
+  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, volume_denominator_assumption: volumeDenominatorAssumption }, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, identity, runs: orderedRuns, complete, finalized: false, executed, checkpoint: path.relative(outputDir, checkpointPath), quantiles_and_extremes: complete ? summarizeSimulationRuns(orderedRuns) : undefined };
 }
 
 function validatePreparedSimulationFixture(preparedFixture, resourcePolicy, sourceFingerprint, workspacePaths) {
@@ -1248,8 +1258,8 @@ async function prepareSimulationOutput({ outputDir, resume, exec, repoRoot, work
     batchTimeoutMs: prepareTimeoutMs,
   }, async (deadline) => {
   const resolvedWorkspacePaths = workspacePaths === undefined
-    ? await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "k7" })
-    : await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "k7", workspaceRoot: workspacePaths.workspaceRoot });
+    ? await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "simulation-acceptance" })
+    : await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "simulation-acceptance", workspaceRoot: workspacePaths.workspaceRoot });
   outputDir = await validateWorkspaceOutputPath(resolvedWorkspacePaths.workspaceRoot, outputDir);
   if (resume) {
     try { await fsp.access(outputDir); } catch (error) { if (error?.code === "ENOENT") throw new Error(`simulation acceptance resume output directory does not exist: ${outputDir}`); throw error; }
@@ -1281,7 +1291,7 @@ async function finalizeSimulationMatrix(matrix, { exec, repoRoot, deadline, prep
   if (receipt !== undefined) {
     return { ...matrix, finalized: true, determinism_check: { seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: true, revision: receipt.revision, receipt: path.basename(receiptPath) } };
   }
-  const rerun = await captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy: matrix.resource_policy, executionPool, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, c01: matrix.multipliers.c01_denominator_assumption, write: false, permit });
+  const rerun = await captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy: matrix.resource_policy, executionPool, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, volumeDenominatorAssumption: matrix.multipliers.volume_denominator_assumption, write: false, permit });
   if (rerun === undefined) return { ...matrix, finalized: false, finalization: { complete: false, reason: "execution_budget_exhausted" } };
   if (rerun.sha256 !== canonical.sha256) throw new Error(`simulation acceptance deterministic rerun differs for ${matrix.scenario} seed ${rerunSeed}: ${canonical.sha256} != ${rerun.sha256}`);
   const persisted = await persistDeterminismReceipt(receiptPath, matrix.identity, canonical, rerun, atomicWrite, deadline);
@@ -1320,8 +1330,8 @@ class SimulationBatchContext {
   }
 
   async capture_after_matrices({ seeds, primaryNaturalDays, crossYearNaturalDays }) {
-    const primary = () => this.capture_matrix({ scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1 });
-    const crossYear = () => this.capture_matrix({ scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1 });
+    const primary = () => this.capture_matrix({ scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, volumeDenominatorAssumption: 1 });
+    const crossYear = () => this.capture_matrix({ scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, volumeDenominatorAssumption: 1 });
     return this.batchSize === Number.POSITIVE_INFINITY
       ? settleAllOrThrow([primary(), crossYear()])
       : [await primary(), await crossYear()];
@@ -1336,19 +1346,19 @@ class SimulationBatchContext {
   async capture_sensitivity_matrices(requests, naturalDays) {
     const uniqueRequests = new Map();
     for (const request of requests) {
-      const key = `${request.behavior}/${request.event}/${request.c01}`;
+      const key = `${request.behavior}/${request.event}/${request.volumeDenominatorAssumption}`;
       if (!uniqueRequests.has(key)) uniqueRequests.set(key, request);
     }
     const uniqueEntries = [...uniqueRequests.entries()];
     const canonical = new Map();
     for (let offset = 0; offset < uniqueEntries.length; offset += 3) {
       const group = uniqueEntries.slice(offset, offset + 3);
-      const reports = await settleAllOrThrow(group.map(([, request]) => this.capture_matrix({ scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01 })));
+      const reports = await settleAllOrThrow(group.map(([, request]) => this.capture_matrix({ scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, volumeDenominatorAssumption: request.volumeDenominatorAssumption })));
       for (let index = 0; index < group.length; index += 1) canonical.set(group[index][0], reports[index]);
     }
     const seen = new Set();
     return requests.map((request) => {
-      const key = `${request.behavior}/${request.event}/${request.c01}`;
+      const key = `${request.behavior}/${request.event}/${request.volumeDenominatorAssumption}`;
       const reused = seen.has(key);
       seen.add(key);
       return { dimension: request.dimension, multiplier: request.multiplier, reuse: reused ? { canonical_spec: key, validated: true } : { executed_or_resumed: true }, report: canonical.get(key) };
@@ -1358,7 +1368,7 @@ class SimulationBatchContext {
   async finalize_sensitivity(dimensions) {
     const uniqueReports = new Map();
     for (const dimension of dimensions) {
-      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
+      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.volume_denominator_assumption}`;
       if (!uniqueReports.has(key)) uniqueReports.set(key, dimension.report);
     }
     const entries = [...uniqueReports.entries()];
@@ -1369,15 +1379,15 @@ class SimulationBatchContext {
       for (let index = 0; index < group.length; index += 1) finalized.set(group[index][0], reports[index]);
     }
     return dimensions.map((dimension) => {
-      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
+      const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.volume_denominator_assumption}`;
       return { ...dimension, report: finalized.get(key) };
     });
   }
 }
 
-export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, crossYearNaturalDays = SIMULATION_CROSS_YEAR_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
-  if (reportSource !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup");
-  if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match Task 1 seed matrix");
+export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "current_session_setup", primaryNaturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, crossYearNaturalDays = SIMULATION_CROSS_YEAR_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
+  if (reportSource !== "current_session_setup") throw new Error("after report source must be current_session_setup");
+  if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match simulation acceptance seed matrix");
   resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
   validateSimulationResourcePolicy(resourcePolicy);
   const { git, sourceFingerprint, preparedFixture } = await SimulationBatchContext.prepare({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
@@ -1388,24 +1398,24 @@ export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO
   [primary, crossYear] = await batch.finalize_after_matrices(primary, crossYear);
   if (!primary.finalized || !crossYear.finalized) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
   deadline.assertRemaining("after manifest publication");
-  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
+  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, external_market_calibration_scope: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });
 }
 
-export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
+export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, volumeDenominatorMultipliers = SENSITIVITY_MULTIPLIERS, naturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
   requireSensitivityMatrix(behaviorMultipliers, "behavior");
   requireSensitivityMatrix(eventMultipliers, "event");
-  requireSensitivityMatrix(c01Multipliers, "C01 denominator");
+  requireSensitivityMatrix(volumeDenominatorMultipliers, "volume denominator assumption");
   resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
   validateSimulationResourcePolicy(resourcePolicy);
   const { git, sourceFingerprint, preparedFixture } = await SimulationBatchContext.prepare({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
   return withSimulationDeadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
   const requests = [
-    ...behaviorMultipliers.map((multiplier) => ({ dimension: "behavior", multiplier, behavior: multiplier, event: 1, c01: 1 })),
-    ...eventMultipliers.map((multiplier) => ({ dimension: "event", multiplier, behavior: 1, event: multiplier, c01: 1 })),
-    ...c01Multipliers.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, behavior: 1, event: 1, c01: multiplier })),
+    ...behaviorMultipliers.map((multiplier) => ({ dimension: "behavior", multiplier, behavior: multiplier, event: 1, volumeDenominatorAssumption: 1 })),
+    ...eventMultipliers.map((multiplier) => ({ dimension: "event", multiplier, behavior: 1, event: multiplier, volumeDenominatorAssumption: 1 })),
+    ...volumeDenominatorMultipliers.map((multiplier) => ({ dimension: "volume_denominator_assumption", multiplier, behavior: 1, event: 1, volumeDenominatorAssumption: multiplier })),
   ];
   const batch = new SimulationBatchContext({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, batchSize, resume, atomicWrite });
   const dimensions = await batch.capture_sensitivity_matrices(requests, naturalDays);
@@ -1413,7 +1423,7 @@ export async function captureSensitivity({ outputDir, exec = realExec, repoRoot 
   const finalizedDimensions = await batch.finalize_sensitivity(dimensions);
   if (finalizedDimensions.some((dimension) => !dimension.report.finalized)) return { command: "sensitivity", incomplete: true, dimensions: finalizedDimensions };
   deadline.assertRemaining("sensitivity manifest publication");
-  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
+  const manifest = { command: "sensitivity", source: "current_session_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, external_market_calibration_scope: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });

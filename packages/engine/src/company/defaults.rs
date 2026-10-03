@@ -3,7 +3,7 @@
 //!
 //! 全部经营配置均为**虚构游戏假设**（待校准，不声称真实行业参数）；不依据
 //! 初始股价反推资产——实收资本 = 面值 1 元 × 总股本，与市价无关。2 年经营
-//! 前史在任务 14 生成；本集合由任务 26 统一接入新游戏会话。默认 5 股票的
+//! 前史在自然日经营演化生成；本集合由会话装配与执行统一接入新游戏会话。默认 5 股票的
 //! 交易类别/股本/交易所不因公司映射而改变。
 
 use crate::account::StockCode;
@@ -16,7 +16,7 @@ use crate::company::opening::{CompanyOpening, OpeningLine};
 use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
 use crate::company::CompanyConfig;
 
-/// 通用开局科目代码（企业会计准则通用科目编号；图表 = generic v1）。
+/// 通用开局科目代码（企业会计准则通用科目编号；科目表 = 通用科目表（AccountChart.version=1））。
 mod acct {
     pub const BANK: &str = "1002"; // 银行存款（现金类）
     pub const AR: &str = "1122"; // 应收账款

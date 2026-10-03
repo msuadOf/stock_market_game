@@ -16,7 +16,7 @@ fn project_id() -> ProjectId {
     ProjectId("P-1".to_string())
 }
 
-fn buyer2() -> CounterpartyId {
+fn second_buyer() -> CounterpartyId {
     CounterpartyId("EXT-BUY-2".to_string())
 }
 
@@ -170,7 +170,7 @@ fn rejects_presale_beyond_available_units_and_price() {
         re.sign_presale(
             ContractId("C-2".to_string()),
             &project_id(),
-            &buyer2(),
+            &second_buyer(),
             5,
             yuan(15_000),
             d("2030-02-02"),
@@ -186,7 +186,7 @@ fn rejects_presale_beyond_available_units_and_price() {
         re.sign_presale(
             ContractId("C-3".to_string()),
             &project_id(),
-            &buyer2(),
+            &second_buyer(),
             1,
             yuan(0),
             d("2030-02-02"),

@@ -1,4 +1,4 @@
-//! 贷款发放与收本处理器（K3 银行，任务 9；状态/数学在 `loans.rs`、计息在
+//! 贷款发放与收本处理器（银行经营会计约束；状态/数学在 `loans.rs`、计息在
 //! `interest.rs`、ECL 计量在 `ecl.rs`）。
 
 use crate::accounting::{

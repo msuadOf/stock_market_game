@@ -3,4 +3,12 @@ import type { Money } from "./Money";
 import type { Side } from "./Side";
 import type { StockCode } from "./StockCode";
 
-export type PlayerWorkingOrder = { id: number, code: StockCode, side: Side, price: Money, remainingQty: number, venue: string, frozen: string, };
+export type PlayerWorkingOrder = {
+  id: number;
+  code: StockCode;
+  side: Side;
+  price: Money;
+  remainingQty: number;
+  venue: string;
+  frozen: string;
+};

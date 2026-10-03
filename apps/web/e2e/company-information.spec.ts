@@ -49,7 +49,7 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
   await panel.getByRole("button", { name: "查看精确值" }).click();
   await expect(incomeTable.locator("caption")).toHaveText("金额（元，精确值）");
   await expect(panel.getByRole("table", { name: "利润表" })).toContainText("12928574075.43");
-  await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/desktop-1280.png" });
+  await page.screenshot({ path: "../../.tmp/evidence/company-information/statement-details/desktop-1280.png" });
 });
 
 test("平板端以真实 WASM 切换公司和报告期间并保持规范公开内容", async ({ page }) => {
@@ -75,7 +75,7 @@ test("平板端以真实 WASM 切换公司和报告期间并保持规范公开�
   await expect(semiannualReport).toHaveAttribute("aria-pressed", "true");
   await expect(panel).toContainText("半年度报告 · 期间 2028-06-30");
   expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/tablet-768.png" });
+  await page.screenshot({ path: "../../.tmp/evidence/company-information/company-and-report-selection/tablet-768.png" });
 });
 
 test("移动端复用真实 WASM 公司内容并保持表格滚动在面板内", async ({ page }) => {
@@ -95,7 +95,7 @@ test("移动端复用真实 WASM 公司内容并保持表格滚动在面板内",
   await panel.getByRole("button", { name: "推进模拟自然日" }).focus();
   await expect(panel.getByRole("button", { name: "推进模拟自然日" })).toBeFocused();
   expect(await page.locator("html").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/mobile-375.png" });
+  await page.screenshot({ path: "../../.tmp/evidence/company-information/mobile-statement-scroll/mobile-375.png" });
 });
 
 test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真实 WASM 会话", async ({ page }) => {
@@ -129,7 +129,7 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await expectPublicReportReady(page);
   await expect(companyPanel(page)).toContainText("2031-01-01");
   await expect(companyPanel(page)).toContainText("季度报告 · 2029-03-31");
-  await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/new-game-1280.png" });
+  await page.screenshot({ path: "../../.tmp/evidence/company-information/new-game-disclosure/new-game-1280.png" });
 });
 
 test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async ({ page }) => {

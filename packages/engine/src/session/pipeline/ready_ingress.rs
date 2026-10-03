@@ -23,8 +23,8 @@ pub(super) struct ReadyIngress {
     receipts: AccountReceipts,
 }
 
-/// Taking queued requests changes the tick candidate. Once they are detached,
-/// root observation and P3/P4 setup can read the same post-P0 state concurrently.
+/// 取出排队请求会修改 tick candidate；请求隔离后，
+/// 根观察与 AccountValidation/StockProcessing 准备可并发读取同一报价过期后状态。
 pub(super) struct ReadyIngressSources {
     initial: Vec<IntentCandidate>,
     observed_accounts: Vec<crate::AccountId>,

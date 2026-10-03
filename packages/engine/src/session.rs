@@ -77,10 +77,10 @@ pub use disclosures::{
 pub use execution::ParentOrderPlan;
 pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use persistence::{
-    decode_save_slot, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
-    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2,
-    SaveDecodeLimits, SaveRuntimeV2, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2,
-    SIMULATION_POLICY_ID_V2,
+    decode_save_slot, SaveDecodeLimits, SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank,
+    SavedLiveEnvelope, SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition,
+    SavedRetailReceiptIdentity, SavedRuntimeState, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION,
+    SIMULATION_POLICY_ID,
 };
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
@@ -407,12 +407,12 @@ pub struct DailyTradeStats {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
-    /// 存档契约版本。v1 及缺失版本均显式拒绝，不提供迁移器。
+    /// 存档契约版本。旧 schema_version=1/2 及缺失版本均显式拒绝，不提供迁移器。
     pub schema_version: u32,
-    /// escrow 并行 tick 新增的权威运行时状态。TypeScript 形状由 Web 严格存档
+    /// Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
-    #[ts(type = "import(\"../../save/schema/runtime-v2\").SaveRuntimeV2")]
-    pub runtime_v2: SaveRuntimeV2,
+    #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
+    pub runtime_state: SavedRuntimeState,
     pub setup: SessionSetup,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -455,9 +455,9 @@ pub struct SaveSlot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub next_order_id: u64,
-    /// K1 自然日经营时钟权威状态（任务 27 起随档携带冻结日历政策）。
+    /// 自然日经营时钟权威状态；完整存档携带冻结的日历政策。
     pub civil_clock: CivilClockSave,
-    /// ── K7（任务 27）：公司域与个体决策链权威状态。全部必填；缺失任一字段
+    /// ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
     ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
     /// 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
     /// 余额在反序列化重放边界校验）。
@@ -488,7 +488,7 @@ pub struct SaveSlot {
     pub watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
     pub price_memories: BTreeMap<AccountId, crate::experience::PersonalPriceMemory>,
     /// 计划执行待应用事实队列（存档边界只保留「计划簿中仍存活」的条目；
-    /// 未知/已终止计划的迟到条目按存档契约丢弃——issues.md 任务 27 §3）。
+    /// 未知/已终止计划的迟到条目按完整存档契约显式丢弃。
     #[ts(skip)]
     pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
 }
@@ -771,22 +771,22 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。
     #[error("invalid save: {0}")]
     InvalidSave(String),
-    /// 透传交易日历错误（K1 开局日期门等）。
+    /// 透传交易日历错误（冻结日历与双时钟 开局日期门等）。
     #[error(transparent)]
     Calendar(#[from] crate::calendar::CalendarError),
-    /// 透传自然日时钟错误（K1 日结验证/原子失败）。
+    /// 透传自然日时钟错误（冻结日历与双时钟 日结验证/原子失败）。
     #[error(transparent)]
     CivilClock(#[from] CivilClockError),
-    /// 透传公司经营接线错误（任务 26 日终编排）。
+    /// 透传公司经营接线错误（会话装配与执行接线 日终编排）。
     #[error(transparent)]
     CompanyOperations(#[from] company_operations::CompanyOperationsSeamError),
-    /// 透传披露派发错误（任务 26 日终编排）。
+    /// 透传披露派发错误（会话装配与执行接线 日终编排）。
     #[error(transparent)]
     Disclosure(#[from] DisclosureError),
-    /// 透传结账错误（任务 26 月/年末封账）。
+    /// 透传结账错误（会话装配与执行接线 月/年末封账）。
     #[error("accounting closing failed: {0}")]
     Closing(#[source] crate::accounting::closing::ClosingError),
-    /// 透传个体分析档案派生错误（任务 26 信念机构装配）。
+    /// 透传个体分析档案派生错误（会话装配与执行接线 信念机构装配）。
     #[error(transparent)]
     StrategyAnalysis(#[from] crate::strategy::AnalysisProfileError),
     /// 透传只读公开信息查询错误。
@@ -934,12 +934,12 @@ pub struct SessionSetup {
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
     pub float_allocation: FloatAllocation,
-    /// K1 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
+    /// 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
     /// （1998–1999 仅供初始化前史查询）。休市起点保持原日，不挪到开市日。
     /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
     #[serde(default = "default_civil_start_date")]
     pub start_date: crate::calendar::CivilDate,
-    /// 模拟政策身份（K7 行 174）：本引擎当前行为契约（A 股交易语义、公司域、
+    /// 模拟政策身份：本引擎当前行为契约（A 股交易语义、公司域、
     /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
@@ -954,14 +954,14 @@ impl SessionSetup {
                 "stocks must be non-empty".to_string(),
             ));
         }
-        if self.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+        if self.simulation_policy_id != SIMULATION_POLICY_ID {
             return Err(SessionError::InvalidSetup(format!(
-                "simulation_policy_id must be the current policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
+                "simulation_policy_id 必须为当前政策 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
                 self.simulation_policy_id
             )));
         }
-        // K1 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
-        TradingCalendar::default_v1()?.validate_runtime_start(self.start_date)?;
+        // 冻结日历与双时钟 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
+        TradingCalendar::current_default_calendar()?.validate_runtime_start(self.start_date)?;
         if self.ticks_per_day == 0 {
             return Err(SessionError::InvalidSetup(
                 "ticks_per_day must be > 0".to_string(),
@@ -1149,7 +1149,7 @@ struct CommittableSessionState {
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
     pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
-    /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
+    /// 上一 tick 中实际观察并判断目标仓位与经历调整的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
     last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
@@ -1158,37 +1158,35 @@ struct CommittableSessionState {
     #[cfg(feature = "simulation-diagnostics")]
     causal: crate::diagnostics::causal::CausalCollector,
     attention_scheduler: NpcAttentionScheduler,
-    // ── 公司域 + 决策链状态（任务 26；持久化契约归任务 27，当前为会话期状态：
-    //    恢复时前史确定性重建 + 经营按自然日重放，个人信念/计划/信息集复位，
-    //    已在 issues.md 登记）──
-    /// 发行人注册表（任务 7）：股票 ↔ 公司映射与开局账套。
+    // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
+    /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
-    /// 自然日经营编排（任务 14；前史已推进到开局日）。
+    /// 自然日经营编排（自然日经营演化；前史已推进到开局日）。
     operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
-    /// 结账版本登记簿（任务 13）。
+    /// 结账版本登记簿（结账与报表）。
     closing: crate::accounting::closing::ClosingEngine,
-    /// 公开信息库（任务 15；前史已播种）。
+    /// 公开信息库（公开信息；前史已播种）。
     library: crate::information::PublicLibrary,
     /// 经营 ↔ 时钟到期镜像。
     ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标。
     disclosures: DisclosureDispatch,
-    /// 跨日个人交易计划（K6；PlanBook 本身支持全账户）。
+    /// 跨日个人交易计划（个人计划生命周期；PlanBook 本身支持全账户）。
     plans: crate::plans::PlanBook,
     urgency_policy: crate::plans::UrgencyPolicy,
     /// 每个信念机构的独立个人认识、经历和关注事实。
     belief_participants: AccountPagedMap<BeliefParticipantState>,
-    /// 在簿回执账本；跨存档由 `SaveRuntimeV2` 的 `live_envelopes` 持久恢复。
+    /// 在簿回执账本；跨存档由 `SavedRuntimeState` 的 `live_envelopes` 持久恢复。
     envelope_ledger: pipeline::EnvelopeLedger,
     /// 已由原子 Settlement 账户/经历投影消费的回执；随 tick shadow 提交的权威去重事实。
     retail_projection_seen: pipeline::RetailProjectionSeen,
-    /// 下一个全局回执索引；跨存档由 `SaveRuntimeV2` 的 `next_receipt_base` 持久恢复。
+    /// 下一个全局回执索引；跨存档由 `SavedRuntimeState` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
     next_order_id: u64,
     tick: u64,
     day: u32,
     seq: u64,
-    /// K1 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
+    /// 冻结日历与双时钟 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
     civil_clock: CivilClock,
 }
 
@@ -1388,7 +1386,7 @@ impl GameSession {
             setup.start_date,
             session_calendar_exchange(setup.stocks[0].exchange),
         )?;
-        // 任务 26 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
+        // 会话装配与执行接线 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
         let company_assembly::CompanyAssembly {
             registry,
             prehistory,
@@ -2017,7 +2015,7 @@ impl GameSession {
         self.state.seq
     }
 
-    /// 当前自然日（K1：与交易日计数 `day` 分离；休市日推进只动这里）。
+    /// 当前自然日（冻结日历与双时钟：与交易日计数 `day` 分离；休市日推进只动这里）。
     pub fn civil_date(&self) -> crate::calendar::CivilDate {
         self.state.civil_clock.current_date()
     }
@@ -2059,14 +2057,14 @@ impl GameSession {
         &mut self.state.civil_clock
     }
 
-    /// 自然日日结（K1）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
+    /// 自然日日结（冻结日历与双时钟）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
     ///
     /// 交易日必须先完成当日会话（`ticks_per_day` 个 step，`day` 已自增到位）；
     /// 休市日直接调用。先全量验证（会话同步 + 时钟规则）后原子应用，任何
     /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
     /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
     ///
-    /// 任务 26 接线（K4 顺序）：时钟日结（到期派发 + 18:00 相位）→ 经营终局
+    /// 会话装配与执行接线（经营与信息披露顺序）：时钟日结（到期派发 + 18:00 相位）→ 经营终局
     /// （`CompanyOperationsClockWiring::run_day_end` 推进当日经营并增量再同步）
     /// → 月/年末封账（`close_accounting_periods`）→ 披露派发
     /// （`DisclosureDispatch::run_day_end`，公告先于定期报告）。
@@ -2178,7 +2176,7 @@ impl GameSession {
         Ok(())
     }
 
-    /// 月/年末封账（K4 日终顺序的第二步）：settled 是当月最后一天时对该月
+    /// 月/年末封账（经营与信息披露 日终顺序的第二步）：settled 是当月最后一天时对该月
     /// 封月；12 月末走 `close_year`（其内部含 12 月封月 + 年报版本）。封账后
     /// 该期间拒绝后续入账（底座守卫），晚于封账日的分录天然落在开放期间。
     fn close_accounting_periods(
@@ -2591,10 +2589,10 @@ impl GameSession {
         }
     }
 
-    fn save_projection(&self, runtime_v2: SaveRuntimeV2) -> SaveSlot {
+    fn save_projection(&self, runtime_state: SavedRuntimeState) -> SaveSlot {
         SaveSlot {
-            schema_version: SAVE_SCHEMA_VERSION_V2,
-            runtime_v2,
+            schema_version: SAVE_SCHEMA_VERSION,
+            runtime_state,
             setup: self.state.setup.clone(),
             seed: self.state.seed,
             snapshot: self.save_snapshot_projection(),
@@ -2655,7 +2653,7 @@ impl GameSession {
             pending_npc: self.state.pending_npc.clone(),
             next_order_id: self.state.next_order_id,
             civil_clock: self.state.civil_clock.save(),
-            // K7（任务 27）：公司域与个体决策链权威状态全量入档。
+            // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
             company_operations: self.state.operations.as_ref().clone(),
             closing_registry: self.state.closing.clone(),
             public_library: self.state.library.clone(),
@@ -2688,7 +2686,7 @@ impl GameSession {
                 .map(|(id, participant)| (*id, participant.price_memory().clone()))
                 .collect(),
             // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
-            // 的迟到条目在此显式丢弃（永不适用；见 issues.md 任务 27 §3）。
+            // 的迟到条目在此按完整存档契约显式丢弃（永不适用）。
             pending_plan_events: self
                 .state
                 .pending_plan_events
@@ -2797,7 +2795,7 @@ impl GameSession {
         sess.state.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
             .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
         sess.state.seq = save.snapshot.seq;
-        // 恢复自然日时钟（自洽全量校验；政策 v1 重建，任务 27 起随档冻结）。
+        // 恢复自然日时钟；全量校验其自洽性，并使用随存档冻结的政策。
         sess.state.civil_clock = CivilClock::from_parts(
             save.setup.start_date,
             &save.civil_clock,
@@ -2923,7 +2921,7 @@ impl GameSession {
         // diagnostic samples must not leak into the restored session.
         sess.state.last_retail_decisions.clear();
 
-        // K7（任务 27）：公司域与个体决策链权威状态直接从档恢复——不再前史
+        // 权威状态连续性（完整存档）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
         // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
         let expected_issuers: BTreeSet<&crate::company::CompanyId> = save
@@ -2979,9 +2977,9 @@ impl GameSession {
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
         sess.state.disclosures.install(&mut sess.state.civil_clock);
 
-        // 最后原子替换 v2-only authority。到此账户、市场、订单、ID/seq、RNG 与
+        // 最后原子替换权威运行状态；账户、市场、订单、ID/seq 与 RNG 校验均已完成。
         // 计划/信念/信息域均已恢复，runtime 可以对完整 live-order 域做交叉校验。
-        persistence::restore_runtime_v2(&mut sess, &save.runtime_v2)?;
+        persistence::restore_runtime_state(&mut sess, &save.runtime_state)?;
 
         #[cfg(feature = "simulation-diagnostics")]
         sess.causal_record(crate::diagnostics::causal::CausalFactKind::ObservationRestart);
@@ -3074,7 +3072,7 @@ mod candle_open_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+            simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         }
     }
 
@@ -3380,7 +3378,7 @@ mod npc_working_quote_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+            simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         }
     }
 

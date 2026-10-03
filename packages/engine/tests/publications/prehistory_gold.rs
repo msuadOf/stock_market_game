@@ -1,4 +1,4 @@
-//! 前史金样（K4 / 验收句）：2000-01-01 最早开局下，1998 起财务前史 +
+//! 前史金样：2000-01-01 最早开局下，1998 起财务前史 +
 //! 360 个交易日预置 K 均合法且可恢复；开局未来才公布的报告不提前纳入；
 //! 同 seed 排期与 PublicationId 完全一致。
 
@@ -33,7 +33,7 @@ fn earliest_start_prehistory_is_legal_and_restorable() {
     assert_eq!(history_start_of(start).to_iso(), "1998-01-01");
 
     // 360 个交易日预置 K： earliest 开局下日历前史查询不耗尽。
-    TradingCalendar::default_v1()
+    TradingCalendar::current_default_calendar()
         .expect("default calendar")
         .trading_days_before(CalendarExchange::Sse, start, 360)
         .expect("360 trading days of preset candles are legal at the earliest start");
@@ -138,7 +138,7 @@ fn earliest_start_prehistory_is_legal_and_restorable() {
                 scheduled_instant(kind, year, offset).unwrap()
             );
             assert_eq!(published.reports.period, period);
-            // 比较项诚实性（任务 13 契约）：前史开局凭证落在 1997-12-31，
+            // 比较项诚实性：前史开局凭证落在 1997-12-31，
             // 故 1998 年报（上年窗口 = 全年 1997）比较项 Available（年初余额）；
             // 1998 中期报告的上年同季窗口早于开局凭证 ⇒ 合法 Unavailable。
             if year == 1998 {

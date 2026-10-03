@@ -150,7 +150,7 @@
 
 ## 5. 规则数据、证据或验收缺口，不算游戏功能代码未实现
 
-- 官方休市事实：默认 `CalendarPolicy::default_v1` 的 `official_coverage` 为空，2026 通知
+- 官方休市事实：默认 `CalendarPolicy::current_default_policy` 的 `official_coverage` 为空，2026 通知
   仍待原文取证，历史年份亦有模拟标签；插入官方覆盖的代码与模拟回退已有。
   见 `docs/simulation-calendar.md:35`、`packages/engine/src/calendar/policy/mod.rs:54`。
   “不用真实市场数据”不等于可以编造交易所制度/休市依据，本次未联网补证。

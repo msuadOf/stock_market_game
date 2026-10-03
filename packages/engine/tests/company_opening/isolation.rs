@@ -1,7 +1,7 @@
 //! 资金边界金样：公司初始化不给任何投资者（NPC/玩家）付一分钱；默认 5 股票
 //! 的交易规格（类别/交易所/总股本/流通盘）在初始化前后逐字段不变。
 //!
-//! 公司注册表在本任务中独立于 GameSession 构建（接线在任务 26）；因此测试
+//! 本测试独立构造公司注册表与 GameSession；生产装配由 session 负责。因此测试
 //! 分别构造两者，再对交易账户逐户对比 + 存档字节对比，锁死「公司初始化不
 //! 触碰交易域任何账户状态」的资金边界。外部商业对手方承担全部开局资金流
 //! （股本注入/借款对端是公司域对手方，不是证券 NPC）。
@@ -48,7 +48,7 @@ fn trading_session() -> GameSession {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: d("2030-01-01"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     };
     GameSession::new(setup, 42).expect("compact default-stock session must be valid")
 }
@@ -195,6 +195,6 @@ fn initialization_does_not_pay_investors() {
         company.books().ledger().cash_total().expect("cash"),
         yuan(6_000_000_000)
     );
-    // 公司域无对手方授信兜底之外的隐藏资金源：开局后无收付流水（前史任务 14）。
+    // 公司域无对手方授信兜底之外的隐藏资金源：开局后无收付流水（该断言位于自然日经营前史生成之前）。
     assert_eq!(company.counterparties().flow_count(), 0);
 }

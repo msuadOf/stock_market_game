@@ -213,7 +213,7 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
 #[test]
 fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
     let (mut session, npc) = due_retail(8, 2_000_000);
-    // 7% 的试买目标足以提出 200 万股，由下一 tick 的 P3 执行单笔数量规则。
+    // 7% 的试买目标足以提出 200 万股，由下一 tick 的 AccountValidation 执行单笔数量规则。
     session
         .state
         .accounts

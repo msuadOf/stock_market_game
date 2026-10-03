@@ -1,8 +1,8 @@
-//! 公司规格（K2）：发行人身份、主营行业、会计类型与固定集团关系。
+//! 公司规格（会计与资金边界）：发行人身份、主营行业、会计类型与固定集团关系。
 //!
 //! `CompanyId` 与交易域 `StockCode`/`AccountId` 是完全独立的命名空间；发行
 //! 股票映射用 `Option<StockCode>`（允许未上市测试实体）。行业科目表与行业
-//! 经营逻辑在任务 8–11 落地；本文件只承载规格值类型与规格集合的结构校验
+//! 经营逻辑由各行业模块提供；本文件只承载规格值类型与规格集合的结构校验
 //! （重复 id、重复发行映射、未知母公司、集团环）。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,24 +32,24 @@ pub struct CompanyId(pub String);
 )]
 pub struct IndustryId(pub String);
 
-/// 公司会计类型（K3 行业模型；行业逻辑在任务 8–11 落地）。
+/// 公司会计类型（四行业模型；行业逻辑由对应经营模块提供）。
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]
 pub enum CompanyKind {
     /// 工商（制造/商贸等通用工商主体）。
     Industrial,
-    /// 银行（存贷款与三阶段 ECL；任务 9）。
+    /// 银行（存贷款与三阶段 ECL；银行经营会计）。
     Bank,
-    /// 保险（一般计量模型；任务 10）。
+    /// 保险（一般计量模型；保险经营会计）。
     Insurance,
-    /// 地产（开发销售；任务 11）。
+    /// 地产（开发销售；地产经营会计）。
     RealEstate,
 }
 
 /// 公司规格：身份 + 行业 + 会计类型 + 发行人映射 + 固定集团关系。
 ///
-/// 股本语义（K2）：`issued_shares` 是**已发行普通股总股数**；映射上市股票时
+/// 股本语义（会计与资金边界）：`issued_shares` 是**已发行普通股总股数**；映射上市股票时
 /// 必须与 `total_shares` 精确相等（流通股与总股本不可互换），由
 /// [`CompanyRegistry::validate_issuer_mapping`] 强制。
 ///
@@ -64,7 +64,8 @@ pub struct CompanySpec {
     pub listed_stock: Option<StockCode>,
     /// 已发行普通股总股数（>0；映射股票时与其 total_shares 精确相等）。
     pub issued_shares: u64,
-    /// 固定集团母公司（开局后不变；合并报表在任务 12）。
+    /// 固定集团母公司（开局后不变；accounting::consolidation 提供合并计算，
+    /// accounting::reports 生成合并报表）。
     pub group_parent: Option<CompanyId>,
 }
 

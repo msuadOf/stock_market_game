@@ -66,7 +66,7 @@ fn credit_default_without_own_annual_material_is_typed_error() {
     assert!(matches!(err, BeliefError::NoOwnAnnualMaterial));
 }
 
-/// 未获知的材料 id ⇒ 任务 16 NotAcquired 守卫透传（无前视）。
+/// 未获知的材料 id ⇒ NotAcquired 守卫透传（无前视）。
 #[test]
 fn unacquired_material_is_rejected() {
     let sc = scenario();

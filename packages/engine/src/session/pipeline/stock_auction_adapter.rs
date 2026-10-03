@@ -8,9 +8,9 @@ use crate::orderbook::js_safe_u64;
 use crate::{GameSession, Market, OrderId, StockCode, TradingPhase};
 use std::collections::BTreeMap;
 
-/// Read-only, stock-owned auction worker input assembled at the P3/P4 boundary.
-/// Operations remain unmodified so their global sealed indices and place kinds
-/// survive partitioning. A later worker applies them before completing auction.
+/// 在 AccountValidation/StockProcessing 边界装配股票拥有的只读 Auction worker 输入。
+/// operations 不经改写，分片后仍保留全局 sealed index 与 Place kind；
+/// worker 先应用 operations，再完成 Auction。
 #[derive(Debug)]
 pub(super) struct AuctionStockInput {
     pub(super) code: StockCode,
@@ -20,10 +20,10 @@ pub(super) struct AuctionStockInput {
     pub(super) operations: Vec<ValidatedOperation>,
 }
 
-/// Builds the operation-free post-P0 stock shadows used by incremental auction P4.
+/// 为增量 Auction 构建不含 operation 的报价过期后逐股 shadow。
 ///
-/// Every subsequent round must reuse these owned inputs. Rebuilding them from a session that has
-/// already received private continuation projections would lose tick-start envelope identity.
+/// 后续轮次必须重用这些拥有所有权的输入。若从已收到私有 continuation 投影的会话重建，
+/// 将丢失 tick 起点 envelope 身份。
 pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
     session: &GameSession,
 ) -> Result<Vec<AuctionStockInput>, StepFatal> {
@@ -183,7 +183,7 @@ fn validate_live_orders(
             .insert(key.clone(), envelope.clone())
             .is_some()
         {
-            return Err(invariant("post-P0 ledger contains duplicate envelope keys"));
+            return Err(invariant("报价过期后的 ledger 包含重复 envelope key"));
         }
     }
     let mut unmatched = authoritative.clone();
@@ -227,28 +227,24 @@ fn validate_live_orders(
         }
     }
     if !unmatched.is_empty() || !expected.is_empty() {
-        return Err(invariant(
-            "post-P0 envelope ledger contains no matching live order",
-        ));
+        return Err(invariant("报价过期后的 envelope ledger 缺少对应活动订单"));
     }
     Ok(authoritative)
 }
 
 fn validate_ledger_evidence(session: &GameSession) -> Result<(), StepFatal> {
     let ledger = &session.state.envelope_ledger;
-    ledger.validate_conservation().map_err(|error| {
-        invariant(&format!(
-            "post-P0 envelope ledger conservation is invalid: {error}"
-        ))
-    })?;
+    ledger
+        .validate_conservation()
+        .map_err(|error| invariant(&format!("报价过期后的 envelope ledger 守恒无效：{error}")))?;
     let expected_rows = ledger
         .envelopes
         .len()
         .checked_add(ledger.terminal_envelopes.len())
-        .ok_or_else(|| invariant("post-P0 envelope ledger row count overflow"))?;
+        .ok_or_else(|| invariant("报价过期后的 envelope ledger 行数溢出"))?;
     if ledger.audits.len() != expected_rows || ledger.conservation.len() != expected_rows {
         return Err(invariant(
-            "post-P0 envelope ledger evidence rows do not match envelope rows",
+            "报价过期后的 envelope ledger 证据行与 envelope 行不一致",
         ));
     }
     for (key, envelope) in ledger
@@ -258,26 +254,24 @@ fn validate_ledger_evidence(session: &GameSession) -> Result<(), StepFatal> {
     {
         envelope.validate().map_err(|error| {
             invariant(&format!(
-                "post-P0 envelope ledger contains an invalid envelope: {error}"
+                "报价过期后的 envelope ledger 包含无效 envelope：{error}"
             ))
         })?;
         if envelope.origin() != EnvelopeOrigin::TickStart {
             return Err(invariant(
-                "post-P0 auction input contains a same-tick envelope",
+                "报价过期后的 Auction 输入包含同 tick 创建的 envelope",
             ));
         }
         if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
-            return Err(invariant("post-P0 live and terminal envelope rows overlap"));
+            return Err(invariant("报价过期后的 live 与 terminal envelope 行重叠"));
         }
         if ledger.audits.get(key).copied() != Some(envelope.audit()) {
             return Err(invariant(
-                "post-P0 envelope audit row disagrees with envelope",
+                "报价过期后的 envelope audit 行与 envelope 不一致",
             ));
         }
         if !ledger.conservation.contains_key(key) {
-            return Err(invariant(
-                "post-P0 envelope has no conservation evidence row",
-            ));
+            return Err(invariant("报价过期后的 envelope 缺少守恒证据行"));
         }
     }
     if ledger
@@ -285,7 +279,9 @@ fn validate_ledger_evidence(session: &GameSession) -> Result<(), StepFatal> {
         .values()
         .any(|envelope| envelope.live() == ResVec::ZERO)
     {
-        return Err(invariant("post-P0 live envelope row has no live resources"));
+        return Err(invariant(
+            "报价过期后的 live envelope 行缺少 live resources",
+        ));
     }
     if ledger
         .terminal_envelopes
@@ -293,7 +289,7 @@ fn validate_ledger_evidence(session: &GameSession) -> Result<(), StepFatal> {
         .any(|envelope| envelope.live() != ResVec::ZERO)
     {
         return Err(invariant(
-            "post-P0 terminal envelope row still has live resources",
+            "报价过期后的 terminal envelope 行仍含有 live resources",
         ));
     }
     Ok(())

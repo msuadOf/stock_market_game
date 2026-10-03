@@ -14,7 +14,7 @@ test("Rust caches restore only compilation directories, never prior-run publishe
     assert.match(cache, /cache-targets: false/);
     const paths = cache.split("cache-directories: |\n")[1]?.match(/^(?: +target\/[^\n]+\n)+/)?.[0].trim().split(/\s+/);
     assert.deepEqual(paths, directories);
-    assert.match(cache, /prefix-key: v1-rust-compile-only/);
+    assert.match(cache, /prefix-key: rust-compile-only-cache-\$\{\{ env\.RUST_COMPILE_CACHE_FORMAT_VERSION \}\}/);
   }
 });
 

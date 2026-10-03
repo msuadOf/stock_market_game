@@ -1,6 +1,6 @@
-//! 新游戏公司装配（任务 26）：把 [`SessionSetup`] 的股票清单装配为公司域
+//! 新游戏公司装配：把 [`SessionSetup`] 的股票清单装配为公司域
 //! 全套开局状态——[`CompanyRegistry`]（发行人映射校验）+ 经营前史 + 公开库
-//! （经 [`assemble_seeded_prehistory`]，任务 15）。
+//! （通过 [`assemble_seeded_prehistory`] 构建）。
 //!
 //! 装配策略（文档化游戏假设，见 issues 登记）：
 //! - 默认 5 股票（600101/002156/300260/600610/000812）复用
@@ -11,9 +11,9 @@
 //!   ≈ 12.5% 的**高周转简化**——使 PE 档位估值与常见股价同一量级；真实
 //!   行业参数校准属后续任务，不声称现实口径）；
 //! - 税务政策为显式版本化游戏假设（13%/13%/25%/5 年，与行业测试夹具
-//!   同值；税法原文取证仍 blocked，见任务 2 登记）。
+//!   同值；税法原文取证仍未完成，见政策来源校验记录）。
 //!
-//! 公司域种子与策略/会话 RNG 分流（K4）：`seed ^ COMPANY_SEED_TAG` 后经
+//! 公司域种子与策略/会话 RNG 分流：`seed ^ COMPANY_SEED_TAG` 后经
 //! `OperatingRng::derive` 二次派生，绝不与 self.rng 消费序列重叠。
 
 use super::*;
@@ -25,7 +25,7 @@ use crate::accounting::{
 use crate::calendar::CivilDate;
 use crate::company::events::ShockParams;
 use crate::company::industrial::{
-    industrial_chart_v2, IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms,
+    industrial_account_chart, IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms,
 };
 use crate::company::operations::{
     CompanyOperationsConfig, FlowParams, IndustrialFlowParams, OperatingCompanyConfig,
@@ -41,7 +41,7 @@ use crate::information::{assemble_seeded_prehistory, SeededPrehistory};
 /// 派生模式互不相同，保证公司流与 NPC 流独立。
 const COMPANY_SEED_TAG: u64 = 0x1a4d_706e_79f1_57c5;
 
-/// 单只上市公司的装配产物：注册表配置（任务 7 域）+ 经营配置（任务 14 域）。
+/// 单只上市公司的装配产物：CompanyConfig 注册表配置与 OperatingCompanyConfig 经营配置。
 struct ListedCompanyConfigs {
     registry: CompanyConfig,
     operating: OperatingCompanyConfig,
@@ -85,7 +85,7 @@ pub(super) fn assemble_companies(
     registry
         .validate_issuer_mapping(&issuer_pairs)
         .map_err(|error| SessionError::InvalidSetup(format!("issuer mapping invalid: {error}")))?;
-    let mut shock_params = ShockParams::default_v1();
+    let mut shock_params = ShockParams::current_default_parameters();
     scale_shock_params(&mut shock_params, event_multiplier_bp)?;
     let operations_config = CompanyOperationsConfig {
         seed: seed ^ COMPANY_SEED_TAG,
@@ -163,8 +163,8 @@ impl OpeningFigures {
         }
     }
 
-    /// 从默认表行读取开局数字（元）。默认表行是 generic v1 开局凭证；这里
-    /// 只取数字，行业账套（v2）由本模块统一重建。
+    /// 从默认表行读取开局数字（元）；默认行使用通用科目表（AccountChart::version()=1）。此处
+    /// 只取数字，工业账套（AccountChart::version()=2）由本模块统一重建。
     fn from_default_row(config: &CompanyConfig) -> Self {
         let mut cash = 0_i128;
         let mut receivables = 0_i128;
@@ -192,7 +192,7 @@ impl OpeningFigures {
         }
     }
 
-    /// 注册表域的 generic v1 投影；保留条件债务行与应收插入顺序。
+    /// 注册表域的通用科目表投影（AccountChart::version()=1）；保留条件债务行与应收插入顺序。
     fn registry_opening_lines(&self) -> Vec<OpeningLine> {
         let mut lines = vec![
             opening_line("1002", PostingSide::Debit, self.cash),
@@ -215,7 +215,7 @@ impl OpeningFigures {
         lines
     }
 
-    /// 经营域的工业 v2 投影；债务行为无条件行，沿用开局账套守卫。
+    /// 经营域的工业科目表投影（AccountChart::version()=2）；债务行为无条件行，沿用开局账套守卫。
     fn industrial_opening_lines(&self) -> Vec<JournalLine> {
         let mut lines = vec![
             journal_line("1002", PostingSide::Debit, self.cash),
@@ -241,7 +241,7 @@ fn yuan(value: i128) -> AccountingAmount {
     )
 }
 
-/// 注册表域开局行（generic v1 科目表）。
+/// 注册表域开局行（通用科目表，AccountChart::version()=1）。
 fn opening_line(code: &str, side: PostingSide, value: i128) -> OpeningLine {
     OpeningLine {
         account: LedgerAccountId(code.to_string()),
@@ -250,7 +250,7 @@ fn opening_line(code: &str, side: PostingSide, value: i128) -> OpeningLine {
     }
 }
 
-/// 工业账套域开局行（v2 科目表）。
+/// 工业账套域开局行（AccountChart::version()=2）。
 fn journal_line(code: &str, side: PostingSide, value: i128) -> JournalLine {
     JournalLine {
         account: LedgerAccountId(code.to_string()),
@@ -345,7 +345,7 @@ fn assemble_listed_company(
     };
     spec.validate().map_err(company_error("company spec"))?;
     let lender_id = CounterpartyId(format!("EXT-LDR-{}", stock.code.0));
-    // 注册表配置（任务 7 域：generic v1 科目表）。
+    // 注册表配置使用通用科目表（AccountChart::version()=1）。
     let registry_lines = figures.registry_opening_lines();
     let registry_counterparties = vec![
         counterparty(
@@ -378,7 +378,7 @@ fn assemble_listed_company(
         .map_err(company_error("operating budget"))?,
     };
 
-    // 经营配置（任务 14 域：工业 v2 科目表 + 子账种子 + 流参数）。
+    // 经营配置包含工业科目表（AccountChart::version()=2）、子账种子与经营流参数。
     // 开局行只包含金额为正的科目（过账守卫拒绝非正行金额；通用推导的应收为 0）。
     let debt_maturity = CivilDate::from_ymd(as_of.year() + 2, 12, 31)
         .map_err(|error| SessionError::InvalidSetup(format!("debt maturity invalid: {error}")))?;
@@ -390,7 +390,7 @@ fn assemble_listed_company(
     });
     let industrial_lines = figures.industrial_opening_lines();
     let industrial = IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of,
         opening_lines: industrial_lines,
         opening_inventory: Vec::new(),

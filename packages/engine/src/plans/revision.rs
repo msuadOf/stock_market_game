@@ -1,6 +1,6 @@
-//! 计划事件转移（K6）：观察/子单接受/真实成交/版本化修订（含 K5a 反向门槛）、
+//! 计划事件转移：观察/子单接受/真实成交/版本化修订（含反向门槛）、
 //! 暂停/恢复、到期与日终。全部为纯状态转移；决策（何时复核、何时暂停、
-//! 报价策略）属任务 22/23。
+//! 报价策略）分别在 allocation、candidates 与 urgency 中实现。
 
 use super::state::{
     PauseReason, PlanOpinion, PlanStatus, PlanTarget, ResumeReason, TerminationReason, TradingPlan,
@@ -10,7 +10,7 @@ use super::validation::{classify_revision, validate_fill_qty, PlanError, Revisio
 use super::PlanPolicy;
 use crate::orderbook::{OrderId, Side};
 
-/// 修订原因（K5a 复核触发的显式数据）。
+/// 修订原因（个人判断复核触发的显式数据）。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum RevisionReason {
     /// 综合判断变化达到复核阈值。

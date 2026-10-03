@@ -17,11 +17,11 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const TEST_REVISION = "6ad461e7f735ee1a0b4090497c58380af3422761";
 const TEST_TREE = "d6e7c4a051f231a789ef589c4ec33580ad082109";
 const RESOURCE_POLICY = buildSimulationResourcePolicy(2, "verification_test");
-const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture";
+const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/simulation-acceptance/release/examples/simulation_baseline_fixture";
 const tempDirs = [];
 let validAfterRoot;
 let validSensitivityRoot;
-const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: REPO_ROOT, scope: "k7" });
+const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: REPO_ROOT, scope: "simulation-acceptance" });
 
 async function fakePrepareFixture({ sourceFingerprint, workspacePaths }) {
   return {
@@ -66,22 +66,22 @@ function fakeSimulationExec() {
       const naturalDays = Number(args[2]);
       const behavior = Number(args[3]);
       const event = Number(args[4]);
-      const c01 = Number(args[5]);
+      const volumeDenominatorAssumption = Number(args[5]);
       const crossYear = scenario === "cross-year";
       const ticks = crossYear ? 20 : 30;
       return {
         code: 0,
         stdout: JSON.stringify({
           tool: "simulation_baseline_fixture",
-          source: "fresh_current_k7_setup",
+          source: "current_session_setup",
           build_source_fingerprint: options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST,
           scenario,
           seed,
           natural_days: naturalDays,
-          calendar: { natural_days: naturalDays, trading_days: naturalDays, closed_days: 0, policy_id: "a-share-simulation-v1" },
+          calendar: { natural_days: naturalDays, trading_days: naturalDays, closed_days: 0, policy_id: "a-share-simulation" },
           verification_profile: {
-            schema: "k7-bounded-representative-profile-v1",
-            profile_id: `${scenario}-bounded-representative-v1`,
+            schema: "simulation-bounded-representative-profile", schema_version: 1,
+            profile_id: `${scenario}-bounded-representative`,
             scope: "bounded_representative_not_full_market_scale",
             retail_count: crossYear ? 32 : 64,
             inst_count: 5,
@@ -97,7 +97,7 @@ function fakeSimulationExec() {
           // Rust's serde_json map order is not a wire-contract requirement.
           // Keep this deliberately different from the verifier's expected key
           // construction order so semantic object equality is exercised.
-          multipliers: { behavior, c01_denominator_assumption: c01, event },
+          multipliers: { behavior, volume_denominator_assumption: volumeDenominatorAssumption, event },
           price_volume: { runs: [{ seed, stocks: {}, retail_execution: { filled_share_ratio: 1 } }], stocks: {} },
           causal: { ratio_absent_reason: null },
         }),
@@ -144,7 +144,7 @@ describe("simulation acceptance root verifier", () => {
   it("marks external market calibration inapplicable for synthetic-only worlds", async () => {
     for (const root of [validAfterRoot, validSensitivityRoot]) {
       const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
-      assert.equal(manifest.c06_external_market_calibration, "not_applicable_synthetic_history_only");
+      assert.equal(manifest.external_market_calibration_scope, "not_applicable_synthetic_history_only");
     }
   });
 
@@ -153,7 +153,7 @@ describe("simulation acceptance root verifier", () => {
       const root = await cloneRoot(validAfterRoot, `external-calibration-${status}`);
       const manifestPath = path.join(root, "manifest.json");
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-      manifest.c06_external_market_calibration = status;
+      manifest.external_market_calibration_scope = status;
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
       await assert.rejects(verifySimulationArtifacts(root), /synthetic-history policy/);
     }
@@ -198,13 +198,13 @@ describe("simulation acceptance root verifier", () => {
 
   it("rejects a tampered raw artifact instead of trusting the manifest copy", async () => {
     const root = await cloneRoot(validAfterRoot, "raw-tamper");
-    await writeFile(path.join(root, "primary-b1-e1-c1", "seed-1.json"), "{}\n");
+    await writeFile(path.join(root, "primary-behavior-1-event-1-volume-denominator-1", "seed-1.json"), "{}\n");
     await assert.rejects(verifySimulationArtifacts(root), /raw artifact digest mismatch/);
   });
 
   it("rejects a changed aggregate entry digest even when the per-seed receipt remains intact", async () => {
     const root = await cloneRoot(validAfterRoot, "entry-tamper");
-    const checkpointPath = path.join(root, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpointPath = path.join(root, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     checkpoint.completed[0].sha256 = "0".repeat(64);
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
@@ -233,8 +233,8 @@ describe("simulation acceptance root verifier", () => {
     const root = await cloneRoot(validAfterRoot, "workspace-path-tamper");
     const manifestPath = path.join(root, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest.fixture_binary.process_tmp_dir = "/tmp/escaped-k7";
-    manifest.fixture_build.process_tmp_dir = "/tmp/escaped-k7";
+    manifest.fixture_binary.process_tmp_dir = "/tmp/escaped-workspace-cache";
+    manifest.fixture_build.process_tmp_dir = "/tmp/escaped-workspace-cache";
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await assert.rejects(verifySimulationArtifacts(root), /workspace paths are invalid/i);
   });
@@ -250,7 +250,7 @@ describe("simulation acceptance root verifier", () => {
 
   it("rejects a determinism receipt not bound to the canonical raw bytes", async () => {
     const root = await cloneRoot(validAfterRoot, "determinism-tamper");
-    const receiptPath = path.join(root, "primary-b1-e1-c1", "determinism.checkpoint.json");
+    const receiptPath = path.join(root, "primary-behavior-1-event-1-volume-denominator-1", "determinism.checkpoint.json");
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
     receipt.rerun_digest = "a".repeat(64);
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
@@ -259,7 +259,7 @@ describe("simulation acceptance root verifier", () => {
 
   it("rejects missing and unreferenced artifacts during the root walk", async () => {
     const missing = await cloneRoot(validAfterRoot, "missing-artifact");
-    await unlink(path.join(missing, "primary-b1-e1-c1", "seed-1.checkpoint.json"));
+    await unlink(path.join(missing, "primary-behavior-1-event-1-volume-denominator-1", "seed-1.checkpoint.json"));
     await assert.rejects(verifySimulationArtifacts(missing), /artifact set mismatch.*missing=.*seed-1\.checkpoint\.json/);
 
     const extra = await cloneRoot(validAfterRoot, "extra-artifact");
@@ -269,7 +269,7 @@ describe("simulation acceptance root verifier", () => {
 
   it("returns CLI exit code 1 when an entry digest is corrupted", async () => {
     const root = await cloneRoot(validAfterRoot, "cli-negative");
-    const checkpointPath = path.join(root, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpointPath = path.join(root, "primary-behavior-1-event-1-volume-denominator-1", "checkpoint.json");
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     checkpoint.completed[0].sha256 = "0".repeat(64);
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
@@ -277,7 +277,7 @@ describe("simulation acceptance root verifier", () => {
     assert.equal(result.code, 1);
     assert.equal(result.killed, false);
     assert.equal(result.signal, null);
-    assert.equal(result.stderr, "simulation acceptance root verification failed: matrix primary-b1-e1-c1 aggregate checkpoint.completed mismatch\n");
+    assert.equal(result.stderr, "simulation acceptance root verification failed: matrix primary-behavior-1-event-1-volume-denominator-1 aggregate checkpoint.completed mismatch\n");
     assert.ok(result.stderr.endsWith("\n"));
     assert.equal(result.stdout, "");
   });

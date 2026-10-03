@@ -164,7 +164,7 @@ fn adapter_rejects_missing_stale_and_underfunded_ledger_evidence() {
     missing.hydrate_or_validate_envelope_ledger().unwrap();
     missing.state.auction_orders.clear();
     let error = prepare_incremental_auction_inputs(&missing).unwrap_err();
-    assert_adapter_error(error, "no matching live order");
+    assert_adapter_error(error, "报价过期后的 envelope ledger 缺少对应活动订单");
 
     let mut underfunded = opening_game();
     install_auction_orders(
@@ -217,7 +217,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
         .unwrap()
         .remaining_qty = 99;
     let error = prepare_incremental_auction_inputs(&audit_drift).unwrap_err();
-    assert_adapter_error(error, "audit row disagrees");
+    assert_adapter_error(error, "报价过期后的 envelope audit 行与 envelope 不一致");
 
     let mut conservation_drift = opening_game();
     install_auction_orders(
@@ -237,7 +237,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
         .unwrap()
         .sealed_spent = ResVec::new(Money::from_cents(1), 0);
     let error = prepare_incremental_auction_inputs(&conservation_drift).unwrap_err();
-    assert_adapter_error(error, "conservation");
+    assert_adapter_error(error, "报价过期后的 envelope ledger 守恒无效：");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! W3-Task 21：可跨日的个人交易计划状态机（K6 契约）集成测试。
+//! 可跨日的个人交易计划状态机集成测试。
 //!
 //! 金样覆盖：无变化观察保持方向与真实成交、正向/反向（跨门槛）修订、暂停/恢复、
 //! 各终止原因、真实完成、跨日存档往返、日终仅结束子单生命周期。
@@ -118,7 +118,7 @@ fn forward_revision(target: u32, trading_day: u64) -> PlanRevision {
 // 金样：continue / revise / pause / resume / terminate / 真实完成 / 跨日
 // ---------------------------------------------------------------------------
 
-/// K6：平静且信息/风险/约束无变化时，连续观察保持方向、目标与累计真实成交，
+/// 信息/风险/约束无变化时，连续观察保持方向、目标与累计真实成交，
 /// 不在每观察时重抽买卖，也不推进版本。
 #[test]
 fn no_change_observations_keep_direction_and_filled_progress() {
@@ -177,7 +177,7 @@ fn forward_revision_raises_target_with_version_and_reason() {
     assert_eq!(plan.status(), PlanStatus::Active);
 }
 
-/// K5a 迟滞：反向修订必须越过另一侧门槛（默认 ±2000bp）。跨过则翻转方向、
+/// 方向迟滞：反向修订必须越过另一侧门槛（默认 ±2000bp）。跨过则翻转方向、
 /// 以新方向重新累计成交进度；旧方向的真实成交仍在账户里，不在此重复记账。
 #[test]
 fn reverse_revision_crossing_opposite_threshold_flips_direction_and_restarts_leg_progress() {
@@ -327,11 +327,11 @@ fn funds_unavailable_and_cancelled_terminate_with_explicit_reasons() {
         }
     );
 
-    let mut scenario2 = PlanScenario::new_buy();
-    scenario2
+    let mut cancelled_scenario = PlanScenario::new_buy();
+    cancelled_scenario
         .book
         .apply(
-            scenario2.id,
+            cancelled_scenario.id,
             PlanEvent::Terminated {
                 reason: TerminationReason::Cancelled,
                 trading_day: 1,
@@ -339,12 +339,12 @@ fn funds_unavailable_and_cancelled_terminate_with_explicit_reasons() {
         )
         .expect("terminate by cancel");
     assert_eq!(
-        scenario2.plan().status(),
+        cancelled_scenario.plan().status(),
         PlanStatus::Terminated {
             reason: TerminationReason::Cancelled,
         }
     );
-    assert_eq!(scenario2.plan().filled_qty(), 0);
+    assert_eq!(cancelled_scenario.plan().filled_qty(), 0);
 }
 
 /// 真实完成：累计真实成交到达目标才标 Completed；委托被接受绝不推进。
@@ -716,10 +716,13 @@ fn expired_plan_cannot_revive() {
         );
     }
     // 显式到期事件只接受真正越过有效期末日的调用；提前调用同样拒绝。
-    let mut scenario2 = PlanScenario::new_buy();
-    let err = scenario2
+    let mut early_expiry_scenario = PlanScenario::new_buy();
+    let err = early_expiry_scenario
         .book
-        .apply(scenario2.id, PlanEvent::Expired { trading_day: 0 })
+        .apply(
+            early_expiry_scenario.id,
+            PlanEvent::Expired { trading_day: 0 },
+        )
         .expect_err("expire before horizon end is rejected");
     assert!(matches!(err, PlanError::ExpireBeforeHorizonEnd { .. }));
 }
@@ -945,7 +948,7 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
         PlanBook::from_parts(policy, 2, plans).expect_err("id out of range must fail restore");
     assert!(matches!(err, PlanError::SaveInconsistent { .. }));
 
-    // 任务 27 存档契约：终止计划 + 同键后继活跃计划是合法簿（create 在旧
+    // 存档契约：终止计划 + 同键后继活跃计划是合法簿（create 在旧
     // 计划终止后分配新 PlanId；索引指向最新一条）。
     let mut plans = BTreeMap::new();
     let initial = TradingPlan::from_open(PlanId(0), buy_open(), &policy).unwrap();
@@ -1010,7 +1013,7 @@ fn fraction_targets_accumulate_fills_without_share_completion_semantics() {
     ));
 }
 
-/// 迟滞谓词是 K5a 契约的显式数学：买向需 S >= +threshold，卖向需 S <= -threshold。
+/// 方向迟滞谓词：买向需 S >= +threshold，卖向需 S <= -threshold。
 #[test]
 fn reverse_threshold_predicate_enforces_hysteresis() {
     let policy = PlanPolicy::default();
@@ -1074,9 +1077,9 @@ fn remaining_and_horizon_helpers_are_explicit() {
     assert_eq!(frac.last_valid_trading_day(), 4);
 
     // 暂停中的计划仍可被显式终止（风险路径）。
-    let mut book2 = PlanBook::default();
-    let pid = book2.create(buy_open()).unwrap();
-    book2
+    let mut paused_plan_book = PlanBook::default();
+    let pid = paused_plan_book.create(buy_open()).unwrap();
+    paused_plan_book
         .apply(
             pid,
             PlanEvent::Paused {
@@ -1085,7 +1088,7 @@ fn remaining_and_horizon_helpers_are_explicit() {
             },
         )
         .unwrap();
-    book2
+    paused_plan_book
         .apply(
             pid,
             PlanEvent::Terminated {

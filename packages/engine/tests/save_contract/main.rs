@@ -1,16 +1,16 @@
-//! 任务 27 验收套件：新格式完整存档契约。
+//! 完整存档契约验收：所有继续运行所需的权威事实必须入档。
 //!
-//! K7 权威状态（公司域/结账登记簿/公开信息库/披露游标/计划簿/个人信息集/
-//! 信念簿/关注列表/待应用事实队列/冻结日历政策/模拟政策身份）全部必填入档；
-//! 恢复后与不中断同 seed 实例**逐字节连续**；schema v2 之外的缺失、旧版与
-//! 未来版本都显式拒绝，无 legacy 分支或迁移器。
+//! 公司域、结账登记簿、公开信息库、披露游标、计划簿、个人信息集、信念簿、
+//! 关注列表、待应用事实、冻结日历政策与模拟政策身份均不可缺失。
+//! 当前 schema_version=3；旧版、未来版与缺失字段显式拒绝，不提供兼容迁移。
+//! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, SAVE_SCHEMA_VERSION_V2,
-    SIMULATION_POLICY_ID_V2,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, SAVE_SCHEMA_VERSION,
+    SIMULATION_POLICY_ID,
 };
 
 mod failures;
@@ -80,13 +80,12 @@ fn contract_setup() -> SessionSetup {
             hot: 0.1,
         },
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
-        simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
     }
 }
 
-/// Minimal real K7 world for byte-continuity checks: one account of each NPC
-/// strategy kind. Market-phase quiet points have their own focused test, so
-/// this contract need only cross a real civil day.
+/// 最小真实权威状态 fixture 覆盖每类 NPC，用于存档恢复的事实连续性检查。
+/// 市场阶段静止点已有定向测试；本契约只需跨越一个真实自然日。
 fn continuity_setup() -> SessionSetup {
     let mut setup = contract_setup();
     setup.npcs = NpcSetup {
@@ -213,11 +212,10 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let session = seasoned_fixture().build_session();
     let save = session.save().expect("healthy save");
 
-    assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION_V2);
-    assert!(!save.runtime_v2.poisoned);
+    assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION);
+    assert!(!save.runtime_state.poisoned);
 
-    // 契约有区分力的前置：个体决策链状态非平凡（过渡契约下这里会是空——
-    // 信念/信息集复位——本断言即任务 27 的核心语义锁）。
+    // 确认 fixture 的个人决策状态非空，以捕获恢复时丢失信念或信息集的错误。
     assert!(
         !save.belief_books.is_empty(),
         "two days of chain activity must produce belief books"
@@ -244,7 +242,7 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let bytes = serde_json::to_vec(&save).expect("save must serialize");
     let decoded =
         decode_save_slot(&bytes, &SaveDecodeLimits::default()).expect("fresh save must decode");
-    assert_eq!(decoded.setup.simulation_policy_id, SIMULATION_POLICY_ID_V2);
+    assert_eq!(decoded.setup.simulation_policy_id, SIMULATION_POLICY_ID);
     let restored = GameSession::restore(&decoded).expect("fresh save must restore");
 
     let bytes_after = serde_json::to_vec(&restored.save().expect("healthy save"))

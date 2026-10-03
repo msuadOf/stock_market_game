@@ -1,4 +1,4 @@
-//! 确定性金样（K4 验收：同 seed 同事件/分录序列）+ RNG 状态持久化。
+//! 确定性金样（经营与信息披露验收：同 seed 同事件/分录序列）+ RNG 状态持久化。
 
 use super::fixtures::*;
 use engine::company::events::ShockParams;
@@ -10,7 +10,7 @@ fn start() -> engine::calendar::CivilDate {
 
 fn stress_ops(seed: u64) -> CompanyOperations {
     CompanyOperations::new(
-        four_company_config(seed, ShockParams::stress_v1(), d("2029-12-31")),
+        four_company_config(seed, ShockParams::stress_parameters(), d("2029-12-31")),
         start(),
     )
     .expect("stress ops assembles")

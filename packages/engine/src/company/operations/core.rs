@@ -36,7 +36,7 @@ impl OperatingCompany {
         &self.books
     }
 
-    /// 权威账套可变访问（任务 26 封账接缝——仅结账引擎使用；经营过账
+    /// 权威账套可变访问（会话装配与执行封账接缝——仅结账引擎使用；经营过账
     /// 仍走行业处理器的 validate→post→apply 路径）。
     pub fn books_mut(&mut self) -> &mut Books {
         self.books.books_mut()
@@ -61,7 +61,7 @@ pub struct ExpiredShockRecord {
     pub kind: ShockKind,
 }
 
-/// 付款失败业务状态（K2：PaymentFailed 的经营层记录面——公司存活、不补钱）。
+/// 付款失败业务状态（会计与资金边界：PaymentFailed 的经营层记录面——公司存活、不补钱）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PaymentFailureRecord {
     pub company: CompanyId,
@@ -80,12 +80,12 @@ pub struct CompanyDayReport {
     pub posted_entries: usize,
 }
 
-/// Content-sensitive, constant-size projection used by diagnostic state hashes.
+/// 诊断状态哈希使用的固定大小内容投影。
 ///
-/// Company journals are immutable during a market tick but can span several megabytes after
-/// prehistory generation. Re-serializing them at every P8 comparison made the rollback guard the
-/// dominant tick cost. The cache is derived state: every `CompanyOperations` mutation invalidates
-/// it, clones carry the already verified projection, and deserialization starts empty.
+/// 公司 journal 在市场 tick 内不变，但前史生成后可能达到数 MB；在每次
+/// 提交前校验中重新序列化会使回滚守卫成为 tick 的主要开销。
+/// 缓存属于派生状态：每次 `CompanyOperations` 变更都使其失效，clone 继承
+/// 已验证的投影，反序列化则从空缓存开始。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct CompanyOperationsHashProjection {
     serialized_len: usize,
@@ -123,7 +123,7 @@ impl PartialEq for CompanyOperationsHashCache {
 
 impl Eq for CompanyOperationsHashCache {}
 
-/// 经营编排引擎（K4）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
+/// 经营编排引擎（经营与信息披露）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperations {
     #[serde(with = "crate::session::u64_decimal")]
@@ -150,7 +150,7 @@ impl CompanyOperations {
         Ok(ops)
     }
 
-    /// 初始化专用前史生成（K2：开局前 2 个完整自然年度 + 当年截至开局前日；
+    /// 初始化专用前史生成（会计与资金边界：开局前 2 个完整自然年度 + 当年截至开局前日；
     /// 独立 init RNG 流；不创建历史证券成交、不组装公开报告）。
     pub fn generate_history(
         config: CompanyOperationsConfig,
@@ -230,7 +230,7 @@ impl CompanyOperations {
         self.companies.get(id)
     }
 
-    /// 可变公司访问（任务 26 封账接缝：`close_month`/`close_year` 需要
+    /// 可变公司访问（会话装配与执行封账接缝：`close_month`/`close_year` 需要
     /// `&mut Books`；其他经营路径仍走日终编排，不经此面）。
     pub fn company_mut(&mut self, id: &CompanyId) -> Option<&mut OperatingCompany> {
         self.invalidate_hash_projection();

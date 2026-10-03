@@ -3,4 +3,15 @@ import type { PublicReportBalanceComparison } from "./PublicReportBalanceCompari
 import type { PublicReportComparative } from "./PublicReportComparative";
 import type { PublicReportLine } from "./PublicReportLine";
 
-export type PublicReportBalanceSheet = { asset_lines: Array<PublicReportLine>, total_assets: string, liability_lines: Array<PublicReportLine>, total_liabilities: string, equity_lines: Array<PublicReportLine>, total_equity: string, equity_to_parent: string, liabilities_and_equity: string, closing_cash: string, prior_year_end: PublicReportComparative<PublicReportBalanceComparison>, };
+export type PublicReportBalanceSheet = {
+  asset_lines: Array<PublicReportLine>;
+  total_assets: string;
+  liability_lines: Array<PublicReportLine>;
+  total_liabilities: string;
+  equity_lines: Array<PublicReportLine>;
+  total_equity: string;
+  equity_to_parent: string;
+  liabilities_and_equity: string;
+  closing_cash: string;
+  prior_year_end: PublicReportComparative<PublicReportBalanceComparison>;
+};

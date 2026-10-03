@@ -1,20 +1,20 @@
-//! K5 个人价格记忆（行 135）：本人真实见过的价格锚点，与主动读取公开历史的
+//! 个人价格记忆：本人真实见过的价格锚点，与主动读取公开历史的
 //! 事件记录相互区分，不虚构观察经历。
 //!
-//! 每个自然人的记忆独立（K5 不共享账户状态）。单股条目只由两类真实事件修改：
+//! 每个自然人的记忆独立，不共享账户状态。单股条目只由两类真实事件修改：
 //! - [`PersonalPriceMemory::observe_price`]：本人当时看见的市场价。已观察高低
 //!   只累计本人所见样本，首次观察之前的历史价格永远不会被追认为亲历。
 //! - [`PersonalPriceMemory::record_public_history_read`]：专业技术分析主动读取
-//!   公开历史（K5 唯一读取来源；任务 22/25 若新增来源需扩展为显式来源枚举）。
+//!   公开历史（唯一读取来源；新增来源时须扩展为显式来源枚举）。
 //!   读取行为以「来源=公开历史读取 + 时间戳」记录，不改变任何本人所见锚点。
 //!
 //! 记忆上限复用持仓 + 8 个未持仓股票（[`MAX_UNHELD_WATCHLIST_STOCKS`]）。
 //! 驱逐按最后实际接触时间（本人观察与公开读取取较晚者）排序，同分钟按
 //! StockCode 稳定破同分（与 `RetailExperienceState::prune_watchlist` 的
 //! 降序 `(minute, code)` 约定一致）。受保护集合（持仓 ∪ 活跃计划股票）由
-//! 调用方传入——计划链接由任务 25 接入，此处以集合参数为文档化接缝。
+//! 调用方传入；会话按持仓和活跃计划组合集合，本模块只消费该集合。
 //!
-//! 会话接线（与注意力/决策流的串联）属于任务 25/26；本模块是可恢复的纯状态。
+//! 会话串联注意力与决策流；本模块是可恢复的纯状态。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -123,7 +123,7 @@ pub struct PersonalPriceMemory {
 }
 
 impl PersonalPriceMemory {
-    /// 查询单股记忆（任务 22 聚合的记忆查询面）。
+    /// 查询单股记忆，供候选评分聚合个人判断输入。
     pub fn stock(&self, code: &StockCode) -> Option<&StockPriceMemory> {
         self.stocks.get(code)
     }
@@ -161,7 +161,7 @@ impl PersonalPriceMemory {
         Ok(())
     }
 
-    /// 记录一次主动读取公开历史（K5：专业技术分析）。
+    /// 记录一次专业技术分析主动读取公开历史的事件。
     ///
     /// 读取不改变本人所见锚点与已观察高低，只记录读取事件并刷新最近接触
     /// 时间；从未本人观察过的股票没有记忆条目，读取不能凭空创造亲历。
@@ -181,7 +181,7 @@ impl PersonalPriceMemory {
 
     /// 按最近接触时间驱逐未受保护股票，最多保留 8 个。
     ///
-    /// `protected` = 持仓 ∪ 活跃计划股票（调用方组合；计划链接在任务 25 接入）。
+    /// `protected` = 持仓 ∪ 活跃计划股票（由调用方组合）。
     /// 未受保护股票按 `(last_touched_minute, StockCode)` 降序保留前
     /// [`MAX_UNHELD_WATCHLIST_STOCKS`] 个：同分钟时代码较大者保留。
     pub fn prune(&mut self, protected: &BTreeSet<StockCode>) {

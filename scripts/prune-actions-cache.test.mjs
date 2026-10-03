@@ -4,8 +4,8 @@ import { CACHE_BUDGET_BYTES, planCachePrune, main } from "./prune-actions-cache.
 
 const repository = "owner/game";
 const hash = "a".repeat(64);
-const native = (product = "desktop", platform = "ubuntu-24.04-X64") => `distribution-native-v1-${platform}-${product}-${hash}`;
-const sealed = `sealed-cargo-v2-no-debug-Windows-X64-${hash}`;
+const native = (product = "desktop", platform = "ubuntu-24.04-X64") => `distribution-native-cache-1-${platform}-${product}-${hash}`;
+const sealed = `sealed-cargo-cache-no-debug-2-Windows-X64-${hash}`;
 function cache(id, prefix = native(), extra = {}) {
   return { id, key: `${prefix}-${id}-1`, ref: "refs/heads/main", size_in_bytes: 100,
     created_at: `2026-10-01T00:00:${String(id).padStart(2, "0")}Z`, ...extra };
@@ -253,4 +253,15 @@ test("queries all run statuses together to avoid missing queued-to-running trans
   const completed = fakeGithub([cache(1), cache(2)], { active: [{ id: 43, status: "completed" }] });
   await main(["--repo", repository, "--apply"], { gh: completed.gh, env: {}, log: () => {} });
   assert.equal(completed.calls.filter((args) => args[0] === "cache").length, 1);
+});
+
+
+test("新旧 cache series 均保留最新副本，未知 format version 不被退休", () => {
+  const legacyNative = `distribution-native-v1-ubuntu-24.04-X64-desktop-${hash}`;
+  const legacySealed = `sealed-cargo-v2-no-debug-Windows-X64-${hash}`;
+  const entries = [cache(1, legacyNative), cache(2, legacyNative), cache(3), cache(4),
+    cache(5, legacySealed), cache(6, legacySealed), cache(7, sealed), cache(8, sealed),
+    cache(9, `distribution-native-cache-2-ubuntu-24.04-X64-desktop-${hash}`),
+    cache(10, `distribution-native-cache-2-ubuntu-24.04-X64-desktop-${hash}`)];
+  assert.deepEqual(planCachePrune(entries).remove.map((entry) => entry.id).sort((a, b) => a - b), [1, 3, 5, 7]);
 });

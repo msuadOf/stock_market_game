@@ -2,13 +2,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { parseSaveJson, parseSaveSlot } from "./save-schema.ts"
 import { parseSaveSnapshot } from "./schema/save-snapshot.ts"
-import { parseSaveRuntimeV2 } from "./schema/runtime-v2.ts"
+import { parseSaveRuntime } from "./schema/runtime-state.ts"
 import { parseOrderState } from "./schema/orders.ts"
-import { currentSaveFixture } from "./save-v2-test-fixture.ts"
+import { currentSaveFixture } from "./current-save-fixture.ts"
 
 function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unknown {
   const save = structuredClone(currentSaveFixture())
-  const runtime = save.runtime_v2
+  const runtime = save.runtime_state
   assert.ok(runtime !== null && typeof runtime === "object" && !Array.isArray(runtime))
   mutator(runtime as Record<string, unknown>)
   return save
@@ -35,7 +35,7 @@ function validReceipt(): Record<string, unknown> {
   }
 }
 
-test("schema v2 boundary preserves mandatory runtime authority without legacy profiles", () => {
+test("存档运行时校验边界保留必填权威状态，不保存旧 profile", () => {
   const save = currentSaveFixture()
   assert.equal("strategy_profiles" in save, false)
   assert.deepEqual(parseSaveSlot(save), save)
@@ -86,9 +86,9 @@ test("runtime envelope persists identity and actual charges only", () => {
     retail_projection_seen: [],
     strategy_states: {},
   }
-  assert.deepEqual(parseSaveRuntimeV2(runtime), runtime)
+  assert.deepEqual(parseSaveRuntime(runtime), runtime)
   for (const field of ["live", "limit", "remaining_qty", "filled_qty", "filled_value", "nominal"]) {
-    assert.throws(() => parseSaveRuntimeV2({
+    assert.throws(() => parseSaveRuntime({
       ...runtime,
       live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: 0, shares: 1 } : 1 }],
     }), new RegExp(`live_envelopes\\[0\\]\\.${field}`))
@@ -231,12 +231,12 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
   }
 })
 
-test("schema v2 boundary rejects legacy, missing, and future schema identities", () => {
+test("存档运行时校验边界拒绝旧版、缺失和未来 schema_version", () => {
   const current = currentSaveFixture()
   const { schema_version: _removed, ...missing } = current
   assert.throws(() => parseSaveSlot(missing), /schema_version/)
-  assert.throws(() => parseSaveSlot({ ...current, schema_version: 1 }), /legacy|schema_version/)
-  assert.throws(() => parseSaveSlot({ ...current, schema_version: 3 }), /newer|schema_version/)
+  assert.throws(() => parseSaveSlot({ ...current, schema_version: 1 }), /schema_version 1：不支持旧版本；仅支持 schema_version=3/)
+  assert.throws(() => parseSaveSlot({ ...current, schema_version: 4 }), /schema_version 4 高于当前支持版本 3/)
 })
 
 test("auction save identifies orders without accepting the old arrival field", () => {
@@ -254,13 +254,13 @@ test("auction save identifies orders without accepting the old arrival field", (
   )
 })
 
-test("schema v2 boundary rejects malformed runtime scalars and unknown fields", () => {
-  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.poisoned = "false" })), /runtime_v2\.poisoned/)
-  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.next_receipt_base = 0 })), /runtime_v2\.next_receipt_base/)
-  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.unexpected = true })), /runtime_v2\.unexpected/)
+test("存档运行时校验边界拒绝非法 scalar 和未知字段", () => {
+  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.poisoned = "false" })), /runtime_state\.poisoned/)
+  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.next_receipt_base = 0 })), /runtime_state\.next_receipt_base/)
+  assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => { runtime.unexpected = true })), /runtime_state\.unexpected/)
 })
 
-test("schema v2 boundary rejects malformed strategy state internals", () => {
+test("存档运行时校验边界拒绝非法策略内部状态", () => {
   assert.throws(
     () => parseSaveSlot(mutateRuntime((runtime) => {
       const states = runtime.strategy_states as Record<string, unknown>
@@ -268,7 +268,7 @@ test("schema v2 boundary rejects malformed strategy state internals", () => {
       if (account === undefined) throw new Error("fixture must contain a strategy")
       states[account] = { Momentum: { style: "Momentum", lookback: 2, trend_threshold: 0.02 } }
     })),
-    /runtime_v2\.strategy_states/,
+    /runtime_state\.strategy_states/,
   )
 
   assert.throws(
@@ -303,7 +303,7 @@ test("schema v2 boundary rejects malformed strategy state internals", () => {
   )
 })
 
-test("schema v2 boundary rejects non-finite exact-float bit patterns", () => {
+test("存档运行时校验边界拒绝非有限 exact-float 位串", () => {
   for (const encoded of ["7ff0000000000000", "fff0000000000000", "7ff8000000000000"]) {
     assert.throws(
       () => parseSaveSlot(mutateRuntime((runtime) => {
@@ -323,10 +323,10 @@ test("schema v2 boundary rejects non-finite exact-float bit patterns", () => {
   }
 })
 
-test("schema v2 boundary rejects every Rust u32 overflow", () => {
+test("存档运行时校验边界拒绝 Rust u32 溢出", () => {
   const overflow = 4_294_967_296
   const runtimeMutators: readonly ((runtime: Record<string, unknown>) => void)[] = [
-    ...(["P0Expiry", "Auction", "DayEnd"] as const).map((source) => (runtime: Record<string, unknown>) => {
+    ...(["QuoteExpiry", "Auction", "DayEnd"] as const).map((source) => (runtime: Record<string, unknown>) => {
       const receipt = validReceipt()
       const localKey = receipt.local_key as Record<string, unknown>
       localKey.source = { [source]: overflow }
@@ -372,18 +372,18 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
   }
 })
 
-test("schema v2 boundary rejects injected derived envelope mirrors", () => {
+test("存档运行时校验边界拒绝注入派生 envelope 镜像", () => {
   for (const field of ["live", "limit", "remaining_qty", "filled_qty", "filled_value", "nominal"]) {
     assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => {
       runtime.live_envelopes = [{
         ...validEnvelope(),
         [field]: field === "live" ? { cash: 0, shares: 1 } : 1,
       }]
-    })), new RegExp(`runtime_v2\\.live_envelopes\\[0\\]\\.${field}`))
+    })), new RegExp(`runtime_state\\.live_envelopes\\[0\\]\\.${field}`))
   }
 })
 
-test("schema v2 boundary rejects noncanonical strategy account keys before Map conversion", () => {
+test("存档运行时校验边界在 Map 转换前拒绝非规范策略账户 key", () => {
   assert.throws(
     () => parseSaveSlot(mutateRuntime((runtime) => {
       const states = runtime.strategy_states as Record<string, unknown>
@@ -391,22 +391,22 @@ test("schema v2 boundary rejects noncanonical strategy account keys before Map c
       if (account === undefined) throw new Error("fixture must contain a strategy")
       states[`0${account}`] = structuredClone(states[account])
     })),
-    /runtime_v2\.strategy_states\.0\d+/,
+    /runtime_state\.strategy_states\.0\d+/,
   )
 })
 
-test("schema v2 boundary preserves nonempty live envelopes and receipt identities", () => {
+test("存档运行时校验边界保留非空 live envelope 和回执身份", () => {
   const save = mutateRuntime((runtime) => {
     runtime.next_receipt_base = "1"
     runtime.live_envelopes = [validEnvelope()]
     runtime.retail_projection_seen = [validReceipt()]
   })
   const parsed = parseSaveSlot(save)
-  assert.deepEqual(parsed.runtime_v2.live_envelopes, [validEnvelope()])
-  assert.deepEqual(parsed.runtime_v2.retail_projection_seen, [validReceipt()])
+  assert.deepEqual(parsed.runtime_state.live_envelopes, [validEnvelope()])
+  assert.deepEqual(parsed.runtime_state.retail_projection_seen, [validReceipt()])
 })
 
-test("schema v2 boundary rejects unsafe or unknown nested live-envelope fields", () => {
+test("存档运行时校验边界拒绝不安全及未知的 live-envelope 嵌套字段", () => {
   for (const mutate of [
     (envelope: Record<string, unknown>) => { envelope.unexpected = true },
     (envelope: Record<string, unknown>) => {
@@ -420,11 +420,11 @@ test("schema v2 boundary rejects unsafe or unknown nested live-envelope fields",
       const envelope = validEnvelope()
       mutate(envelope)
       runtime.live_envelopes = [envelope]
-    })), /runtime_v2\.live_envelopes\[0\]/)
+    })), /runtime_state\.live_envelopes\[0\]/)
   }
 })
 
-test("schema v2 boundary rejects malformed receipt source tags and unknown nested fields", () => {
+test("存档运行时校验边界拒绝非法回执来源标签及未知嵌套字段", () => {
   assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => {
     const receipt = validReceipt()
     const localKey = receipt.local_key as Record<string, unknown>
@@ -438,5 +438,41 @@ test("schema v2 boundary rejects malformed receipt source tags and unknown neste
     const transition = localKey.transition as Record<string, unknown>
     transition.unexpected = true
     runtime.retail_projection_seen = [receipt]
-  })), /runtime_v2\.retail_projection_seen\[0\]\.local_key\.transition\.unexpected/)
+  })), /runtime_state\.retail_projection_seen\[0\]\.local_key\.transition\.unexpected/)
+})
+
+
+test("当前存档明确使用 schema_version 3 与 runtime_state，拒绝旧身份与旧字段", () => {
+  const current = currentSaveFixture()
+  assert.equal(current.schema_version, 3)
+  assert.ok("runtime_state" in current)
+  assert.equal("runtime_v2" in current, false)
+  const runtime = current.runtime_state
+  assert.deepEqual(parseSaveSlot(current), current)
+  for (const schema_version of [1, 2]) {
+    assert.throws(() => parseSaveSlot({ ...current, schema_version }), /schema_version.*不支持旧版本/)
+  }
+  assert.throws(() => parseSaveSlot({ ...current, runtime_v2: runtime }), /runtime_v2/)
+  const { runtime_state: _removed, ...missing } = current
+  assert.throws(() => parseSaveSlot(missing), /runtime_state/)
+})
+
+test("SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签", () => {
+  const runtime = {
+    poisoned: false, next_receipt_base: "1", live_envelopes: [], strategy_states: {},
+    retail_projection_seen: [{ ...validReceipt(), local_key: { ...validReceipt().local_key as object, source: { QuoteExpiry: 7 } } }],
+  }
+  assert.deepEqual(parseSaveRuntime(runtime), runtime)
+  const legacy = structuredClone(runtime)
+  legacy.retail_projection_seen[0]!.local_key.source = { P0Expiry: 7 } as unknown as { QuoteExpiry: number }
+  assert.throws(() => parseSaveRuntime(legacy), /runtime_state.*source/)
+})
+
+
+test("旧存档先按 schema_version 显式拒绝；当前存档拒绝旧 simulation_policy_id", () => {
+  const current = currentSaveFixture()
+  const { runtime_state, ...legacy } = current
+  assert.throws(() => parseSaveSlot({ ...legacy, schema_version: 2, runtime_v2: runtime_state }), /schema_version.*不支持旧版本/)
+  const setup = current.setup as Record<string, unknown>
+  assert.throws(() => parseSaveSlot({ ...current, setup: { ...setup, simulation_policy_id: "a-share-simulation-v2" } }), /simulation_policy_id/)
 })

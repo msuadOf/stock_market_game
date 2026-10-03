@@ -1,4 +1,4 @@
-//! 自然日经营时钟（K1，任务 5）：权威推进的双时钟之一。
+//! 自然日经营时钟：与市场时钟共同构成权威双时钟。
 //!
 //! 职责边界：本模块只负责**自然日**语义，不触碰 tick/市场分钟/撮合——
 //! - 交易日：[`super::GameSession::step`] 照旧推进交易时间；收盘后由
@@ -7,11 +7,10 @@
 //! - 休市日：无 tick、无成交、无注意力 RNG 消费；当日到期业务恰好一次
 //!   派发，再前进。休市起点保持真实起点，不静默挪到开市日。
 //!
-//! 钩子接缝（诚实声明）：利息/到期真实业务由任务 14 实现，本模块只提供
-//! "带种类的到期队列 + 按日期恰好一次派发"的调度面，派发结果经
-//! [`CivilDayEndReport`] 返回；18:00 披露阶段是 fn 指针观察者列表，生产
-//! 路径为空，任务 15 填充。所有日结失败**先验证、原子拒绝**：任何 `Err`
-//! 返回时时钟与会话状态保持原样。
+//! 到期队列按日期恰好一次派发，金额与入账由 CompanyOperations 负责。
+//! 派发事实通过 [`CivilDayEndReport`] 返回；DisclosureDispatch 安装无状态的
+//! 18:00 相位观察者，GameSession 在同一相位执行有状态披露派发。
+//! 所有日结失败先验证并原子拒绝；任何 `Err` 返回时时钟与会话状态保持原样。
 
 use super::{Event, StockExchange};
 use crate::calendar::{
@@ -20,7 +19,7 @@ use crate::calendar::{
 };
 use thiserror::Error;
 
-/// 到期业务种类。任务 5 只承载时钟侧调度语义；金额与入账由任务 14 实现。
+/// 到期业务种类；时钟负责调度，CompanyOperations 负责金额与入账。
 #[derive(
     Copy,
     Clone,
@@ -35,7 +34,7 @@ use thiserror::Error;
     ts_rs::TS,
 )]
 pub enum DueKind {
-    /// 按自然日计提的合同利息（ACT/365F，K2 游戏假设）。
+    /// 按自然日计提的合同利息（ACT/365F，显式游戏假设）。
     InterestAccrual,
     /// 合同到期收付/回调。
     ContractMaturity,
@@ -84,7 +83,7 @@ pub struct DueBusiness {
     pub kind: DueKind,
 }
 
-/// 18:00 披露阶段观察者（hook）。生产路径为空列表；任务 15 接入真实披露。
+/// 18:00 披露阶段观察者，由 DisclosureDispatch 安装生产相位 hook。
 pub type DisclosureObserver = fn(CivilInstant);
 
 /// 自然日当前稳定阶段。收盘后经营终局窗口与 18:00 披露阶段是
@@ -114,7 +113,7 @@ pub struct CivilDayEndReport {
     pub events: Vec<Event>,
 }
 
-/// 存档中的自然日时钟状态。K1 冻结政策（任务 27）：恢复按存档携带的
+/// 存档中的自然日时钟状态；恢复时按存档携带的
 /// [`CalendarPolicySpec`] 重建日历（`from_parts` 重算 digest 并全量校验），
 /// 绝不被当前进程的默认政策表覆盖。观察者是进程内 hook，不入档。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -185,9 +184,9 @@ pub enum CivilClockError {
     SaveInconsistent { detail: String },
 }
 
-/// 自然日经营时钟：与 tick/市场分钟严格分离的权威自然日推进（K1）。
+/// 自然日经营时钟：与 tick/市场分钟严格分离的权威自然日推进（冻结日历与双时钟）。
 ///
-/// 持有会话级交易日历（政策 v1；任务 27 起随存档冻结）与到期业务队列，
+/// 持有随存档冻结的会话级交易日历政策与到期业务队列。
 /// 不持有任何市场状态——休市推进因此天然不产生 tick/成交/RNG 消费。
 #[derive(Clone, Debug)]
 pub struct CivilClock {
@@ -201,8 +200,8 @@ pub struct CivilClock {
     disclosure_observers: Vec<DisclosureObserver>,
 }
 
-/// 会话级日历参考所：A 股会话共用一套休市节奏，政策 v1 下沪深同轨。
-/// 取 setup 首只股票的上市所，保证确定性（K1 任务 5 会话接线）。
+/// 会话按固定参考交易所解析日历；当前默认政策下沪深使用同一休市节奏（游戏简化）。
+/// 以 setup 首只股票的上市所作为确定的会话日历参考所。
 pub(super) fn session_calendar_exchange(first: StockExchange) -> CalendarExchange {
     match first {
         StockExchange::Shanghai => CalendarExchange::Sse,
@@ -210,16 +209,16 @@ pub(super) fn session_calendar_exchange(first: StockExchange) -> CalendarExchang
     }
 }
 
-/// K1 默认开局日期 = 政策 v1 `default_start`（2030-01-01）。serde 缺省入口。
+/// serde 缺省开局日期为 2030-01-01，与当前默认政策的 default_start 一致。
 pub(super) fn default_civil_start_date() -> CivilDate {
     CivilDate::from_ymd(2030, 1, 1).expect("2030-01-01 is a statically valid civil date")
 }
 
 impl CivilClock {
-    /// 以政策 v1 构建；开局日期必须落在运行区间 2000-01-01..2099-12-31。
+    /// 用当前默认政策构建，开局日期须在运行区间 2000-01-01..2099-12-31。
     /// 休市开局保持真实起点（phase = `ClosedDay`），不挪到开市日。
     pub fn new(start_date: CivilDate, exchange: CalendarExchange) -> Result<Self, CivilClockError> {
-        let calendar = TradingCalendar::default_v1()?;
+        let calendar = TradingCalendar::current_default_calendar()?;
         calendar.validate_runtime_start(start_date)?;
         Ok(Self {
             calendar,
@@ -233,8 +232,8 @@ impl CivilClock {
         })
     }
 
-    /// 从存档重建（内部自洽全量校验；K1 冻结政策：日历按存档 spec 重建，
-    /// 任务 27 起不再回退 default_v1）。
+    /// 从存档携带的 policy spec 重建并完整校验日历，
+    /// 不回退 current_default_policy 或覆盖冻结政策。
     pub fn from_parts(
         start_date: CivilDate,
         save: &CivilClockSave,
@@ -326,7 +325,7 @@ impl CivilClock {
     }
 
     /// 注册到期业务；due 不得早于当前自然日，且必须落在日历适用区间内。
-    /// 同类业务可在同一日期注册多条（业务侧去重由任务 14 的来源 id 承担）。
+    /// 同类业务可在同一日期注册多条；CompanyOperations 使用来源 id 去重。
     pub fn register_due(
         &mut self,
         due_date: CivilDate,
@@ -351,7 +350,7 @@ impl CivilClock {
         Ok(due)
     }
 
-    /// 安装 18:00 披露观察者（hook；任务 15 前生产路径为空）。
+    /// 添加 18:00 披露观察者；生产 hook 由 DisclosureDispatch 安装。
     pub fn add_disclosure_observer(&mut self, observer: DisclosureObserver) {
         self.disclosure_observers.push(observer);
     }
@@ -374,7 +373,7 @@ impl CivilClock {
         Ok(count)
     }
 
-    /// 自然日日结（K1）：**先全量验证，后原子应用**。
+    /// 自然日日结（冻结日历与双时钟）：**先全量验证，后原子应用**。
     ///
     /// 校验顺序：目标日期与时钟关系（重复/回拨/跳日）→ 次日不越运行上界 →
     /// 无遗留过去 due。应用段：派发当日到期业务（恰好一次，按注册先后）→

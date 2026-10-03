@@ -24,17 +24,16 @@ impl GameSession {
         }
     }
 
-    /// All market work runs on a private tick shadow. A failed candidate is discarded;
-    /// the authority receives only the final infallible P9 swap.
+    /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
+    /// 权威状态只接收最终不会失败的 CommitTick 状态交换。
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
         self.step_inner(false).map(|committed| committed.events)
     }
 
-    /// Executes the same production authority path as [`Self::step`] and returns
-    /// the immutable facts captured immediately before its successful P9 swap.
+    /// 执行与 [`Self::step`] 相同的生产权威路径，并返回
+    /// 保留成功提交前一刻捕获的不可变执行事实。
     ///
-    /// This verification seam is observational: the evidence is not retained in
-    /// the session, serialized, hashed, or made visible to later decisions.
+    /// 此验证入口只用于观察；证据不会留在 session、序列化、参与 hash 或后续决策。
     pub fn step_with_commit_evidence(
         &mut self,
     ) -> Result<(Vec<Event>, super::pipeline::TickCommitEvidence), StepFatal> {
@@ -67,9 +66,8 @@ impl GameSession {
             };
             return Err(self.poison_failed_step(fatal));
         }
-        // Every production phase enters one escrow-backed P0-P9 transaction.
-        // The phase dispatcher returns only after the prepared candidate has
-        // completed its infallible P9 authority swap.
+        // 每个生产交易阶段均进入同一 Escrow 完整 tick 事务。
+        // 只有完成不会失败的权威状态交换后才交付结果。
         let result = super::pipeline::execute_authoritative_tick(self, capture_commit_evidence);
         match result {
             Ok(committed) => Ok(committed),
@@ -84,8 +82,8 @@ impl GameSession {
 
     pub fn save(&self) -> Result<SaveSlot, StepFatal> {
         self.require_healthy()?;
-        let runtime_v2 = super::persistence::capture_runtime_v2(self)?;
-        Ok(self.save_projection(runtime_v2))
+        let runtime_state = super::persistence::capture_runtime_state(self)?;
+        Ok(self.save_projection(runtime_state))
     }
 
     #[cfg(test)]

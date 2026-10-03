@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Engine references are explicit `engine::symbol` tokens or engine-symbol comments. */
+/** Engine 引用使用显式 `engine::symbol` token 或 engine-symbol 注释。 */
 export function referencedEngineSymbols(text) {
   return [...new Set([
     ...[...text.matchAll(/`engine::([A-Za-z_][A-Za-z0-9_:]*)(?:\([^`]*\))?`/g)].map((match) => match[1].split("::").at(-1)),
@@ -21,8 +21,8 @@ export async function checkDocSymbols(repoRoot, documents) {
     }
   }
   await walk(path.join(repoRoot, "packages/engine/src"));
-  // Declarations/variants and impl members are deliberately checked lexically;
-  // this is a missing-symbol guard, not proof of Rust public path resolution.
+  // 声明、variant 和 impl 成员按词法检查；
+  // 本检查只防止遗漏 symbol，不证明 Rust 公共路径可解析。
   const source = sources.join("\n");
   const checked = [];
   const missing = [];
@@ -36,7 +36,7 @@ export async function checkDocSymbols(repoRoot, documents) {
       if (!new RegExp(`\\b${symbol}\\b`).test(source)) missing.push(row);
     }
   }
-  return { schema: "engine-doc-symbol-check-v1", status: missing.length === 0 && checked.length > 0 ? "PASS" : "FAIL",
+  return { schema: "engine-doc-symbol-check", schema_version: 1, status: missing.length === 0 && checked.length > 0 ? "PASS" : "FAIL",
     scope: "explicit engine::symbol references; lexical existence, not type checking", checked, missing };
 }
 

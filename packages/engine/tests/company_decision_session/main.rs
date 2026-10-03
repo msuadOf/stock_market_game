@@ -1,4 +1,4 @@
-//! 任务 26 验收套件：真实 GameSession 内的完整决策链 + 共同 V 删除后的
+//! 会话装配与执行验收套件：真实 GameSession 内的完整决策链 + 共同 V 删除后的
 //! 市场行为。夹具用**默认 5 股票的精确股本**（命中公司域默认表开局数字）
 //! + 全部三类 NPC（5 种机构风格轮换、散户六风格、游资两风格）。
 
@@ -76,11 +76,11 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
             hot: 0.1,
         },
         start_date: engine::CivilDate::from_iso(start_iso).unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 
-/// 跑完一个完整交易日 + 当日 civil 日结（K4：经营终局 → 封账 → 披露）。
+/// 跑完一个完整交易日 + 当日 civil 日结（经营与信息披露：经营终局 → 封账 → 披露）。
 pub(crate) fn run_full_day(session: &mut GameSession) -> Vec<engine::session::Event> {
     let ticks = 60;
     let mut events = Vec::new();

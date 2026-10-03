@@ -320,7 +320,7 @@ fn npc_decisions_sizes_buys_with_the_explicit_session_fee_configuration() {
     assert_eq!(standard.intents().len(), 2);
 
     // 佣金本身已需要全部现金，策略就没有资金再支付成交额。
-    // 这也验证 P2 不会悄悄使用默认佣金代替传入的会话配置。
+    // 这也验证 DecisionShadow 不会悄悄使用默认佣金代替传入的会话配置。
     config.commission_min = snapshot.account(AccountId(9)).unwrap().self_view().cash;
     config.validate().unwrap();
     let expensive = run_npc_decisions(snapshot, &config).unwrap();

@@ -1,5 +1,5 @@
-//! 债务偿付处理器（K3 地产）：付息（全部已提未付）与还本（可部分）。
-//! 两条分录均为筹资活动现金流出（与任务 8 工商同一 CAS 31 口径）。
+//! 债务偿付处理器（地产会计约束）：付息（全部已提未付）与还本（可部分）。
+//! 两条分录均为筹资活动现金流出（与工商经营会计采用同一 CAS 31 口径）。
 
 use crate::accounting::{
     AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, PostingSide,

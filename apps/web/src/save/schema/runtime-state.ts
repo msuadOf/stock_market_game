@@ -9,22 +9,22 @@ const journals = ["PreSeal", "SealedBatch"] as const
 const EXACT_FLOAT = /^[0-9a-f]{16}$/
 const EXACT_FLOAT_EXPONENT_MASK = 0x7ff0000000000000n
 
-export type FeeComponentsV2 = {
+export type SavedFeeComponents = {
   readonly commission: number
   readonly stamp_tax: number
   readonly transfer_fee: number
 }
 
-export type EnvelopeKeyV2 = {
+export type SavedEnvelopeKey = {
   readonly account: number
   readonly stock: string
   readonly order: number
   readonly side: (typeof sides)[number]
 }
 
-export type LiveEnvelopeV2 = {
-  readonly key: EnvelopeKeyV2
-  readonly charged: FeeComponentsV2
+export type SavedLiveEnvelope = {
+  readonly key: SavedEnvelopeKey
+  readonly charged: SavedFeeComponents
 }
 
 type MomentumState = {
@@ -36,7 +36,7 @@ type MomentumState = {
   readonly base_observation_probability: string
 }
 
-export type StrategyStateV2 =
+export type RuntimeStrategyState =
   | { readonly ZiNoise: {
       readonly retail_style: (typeof retailStyles)[number]
       readonly arrival_rate: string
@@ -58,27 +58,27 @@ export type StrategyStateV2 =
       readonly base_observation_probability: string
     } }
 
-type ReceiptSourceV2 =
+type SavedReceiptSource =
   | { readonly SealedIntent: string }
-  | { readonly P0Expiry: number }
+  | { readonly QuoteExpiry: number }
   | { readonly Auction: number }
   | { readonly DayEnd: number }
 
-export type RetailReceiptIdentityV2 = {
+export type SavedRetailReceiptIdentity = {
   readonly index: string
   readonly local_key: {
     readonly journal: (typeof journals)[number]
-    readonly source: ReceiptSourceV2
-    readonly transition: { readonly envelope: EnvelopeKeyV2; readonly ordinal: string }
+    readonly source: SavedReceiptSource
+    readonly transition: { readonly envelope: SavedEnvelopeKey; readonly ordinal: string }
   }
 }
 
-export type SaveRuntimeV2 = {
+export type SavedRuntimeState = {
   readonly poisoned: boolean
   readonly next_receipt_base: string
-  readonly live_envelopes: readonly LiveEnvelopeV2[]
-  readonly retail_projection_seen: readonly RetailReceiptIdentityV2[]
-  readonly strategy_states: Readonly<Record<string, StrategyStateV2>>
+  readonly live_envelopes: readonly SavedLiveEnvelope[]
+  readonly retail_projection_seen: readonly SavedRetailReceiptIdentity[]
+  readonly strategy_states: Readonly<Record<string, RuntimeStrategyState>>
 }
 
 function accountKey(value: string, path: string): void {
@@ -114,7 +114,7 @@ function exactFloat(value: unknown, path: string): string {
   return parsed
 }
 
-function feeComponents(value: unknown, path: string): FeeComponentsV2 {
+function feeComponents(value: unknown, path: string): SavedFeeComponents {
   const parsed = record(value, path)
   exact(parsed, ["commission", "stamp_tax", "transfer_fee"], path)
   return {
@@ -124,7 +124,7 @@ function feeComponents(value: unknown, path: string): FeeComponentsV2 {
   }
 }
 
-function envelopeKey(value: unknown, path: string): EnvelopeKeyV2 {
+function envelopeKey(value: unknown, path: string): SavedEnvelopeKey {
   const parsed = record(value, path)
   exact(parsed, ["account", "stock", "order", "side"], path)
   return {
@@ -135,7 +135,7 @@ function envelopeKey(value: unknown, path: string): EnvelopeKeyV2 {
   }
 }
 
-function liveEnvelope(value: unknown, path: string): LiveEnvelopeV2 {
+function liveEnvelope(value: unknown, path: string): SavedLiveEnvelope {
   const parsed = record(value, path)
   exact(parsed, ["key", "charged"], path)
   return {
@@ -157,7 +157,7 @@ function momentum(value: unknown, path: string): MomentumState {
   }
 }
 
-function strategyState(value: unknown, path: string): StrategyStateV2 {
+function strategyState(value: unknown, path: string): RuntimeStrategyState {
   const parsed = record(value, path)
   const variants = Object.keys(parsed)
   if (variants.length !== 1) throw new Error(`存档 ${path} 必须是单一 StrategyState 变体`)
@@ -196,20 +196,20 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
   }
 }
 
-function receiptSource(value: unknown, path: string): ReceiptSourceV2 {
+function receiptSource(value: unknown, path: string): SavedReceiptSource {
   const parsed = record(value, path)
   const variants = Object.keys(parsed)
   if (variants.length !== 1) throw new Error(`存档 ${path} 必须是单一收据来源变体`)
   switch (variants[0]) {
     case "SealedIntent": return { SealedIntent: decimal(parsed.SealedIntent, `${path}.SealedIntent`) }
-    case "P0Expiry": return { P0Expiry: boundedU32(parsed.P0Expiry, `${path}.P0Expiry`) }
+    case "QuoteExpiry": return { QuoteExpiry: boundedU32(parsed.QuoteExpiry, `${path}.QuoteExpiry`) }
     case "Auction": return { Auction: boundedU32(parsed.Auction, `${path}.Auction`) }
     case "DayEnd": return { DayEnd: boundedU32(parsed.DayEnd, `${path}.DayEnd`) }
     default: throw new Error(`存档 ${path} 包含无效收据来源变体`)
   }
 }
 
-function receiptIdentity(value: unknown, path: string): RetailReceiptIdentityV2 {
+function receiptIdentity(value: unknown, path: string): SavedRetailReceiptIdentity {
   const parsed = record(value, path)
   exact(parsed, ["index", "local_key"], path)
   const localKey = record(parsed.local_key, `${path}.local_key`)
@@ -229,7 +229,7 @@ function receiptIdentity(value: unknown, path: string): RetailReceiptIdentityV2 
   }
 }
 
-export function parseSaveRuntimeV2(value: unknown, path = "runtime_v2"): SaveRuntimeV2 {
+export function parseSaveRuntime(value: unknown, path = "runtime_state"): SavedRuntimeState {
   const parsed = record(value, path)
   exact(parsed, ["poisoned", "next_receipt_base", "live_envelopes", "retail_projection_seen", "strategy_states"], path)
   return {

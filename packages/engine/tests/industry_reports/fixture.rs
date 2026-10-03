@@ -63,7 +63,7 @@ pub(crate) fn books_with(chart: AccountChart, entries: Vec<JournalEntry>) -> Boo
 
 // —— 行业账套夹具（分录均为手工可核对的整数元）——
 
-/// 工业金样账套（科目表 v2）：2030-01..11 经营流 + 2029-12 开局。
+/// 工业金样账套（科目表 version=2）：2030-01..11 经营流 + 2029-12 开局。
 ///
 /// 手算锚（元）：6 月月报现金 97,300 / 权益 102,595 / 累计净利 2,595；
 /// 年报现金 100,275 / 净利 5,595 / 经营 CF 5,300 / 筹资 CF 4,975。
@@ -72,7 +72,7 @@ pub(crate) fn industrial_fixture() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::industrial::industrial_chart_v2(),
+        engine::company::industrial::industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -159,7 +159,7 @@ pub(crate) fn industrial_fixture() -> Books {
     )
 }
 
-/// 银行金样账套（科目表 v3）：存入/贷出/计息/手续费。
+/// 银行金样账套（科目表 version=3）：存入/贷出/计息/手续费。
 ///
 /// 手算锚（元）：6 月月报现金 52,040 / 贷款净额 6,060 / 吸收存款 8,000 /
 /// 应付利息 15 / 累计净利 85（利息净 45 + 手续费 40）。
@@ -168,7 +168,7 @@ pub(crate) fn bank_fixture() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::bank::bank_chart_v3(),
+        engine::company::bank::bank_account_chart(),
         vec![
             entry(
                 1,
@@ -216,7 +216,7 @@ pub(crate) fn bank_fixture() -> Books {
     )
 }
 
-/// 保险金样账套（科目表 v4）：保费挂账/收讫/服务释放/赔案。
+/// 保险金样账套（科目表 version=4）：保费挂账/收讫/服务释放/赔案。
 ///
 /// 手算锚（元）：6 月月报现金 31,200 / 保险合同负债 1,000（LRC 300 + LIC 700）/
 /// 累计净利 200（服务业绩）；6 月当月净利 −700（赔案）。
@@ -225,7 +225,7 @@ pub(crate) fn insurance_fixture() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::insurance::insurance_chart_v4(),
+        engine::company::insurance::insurance_account_chart(),
         vec![
             entry(
                 1,
@@ -266,7 +266,7 @@ pub(crate) fn insurance_fixture() -> Books {
     )
 }
 
-/// 地产金样账套（科目表 v5）：购地/预售/交付/尾款应收。
+/// 地产金样账套（科目表 version=5）：购地/预售/交付/尾款应收。
 ///
 /// 手算锚（元）：6 月月报现金 36,000 / 开发存货 5,000 / 应收尾款 1,000 /
 /// 累计净利 2,000（交付月）；6 月经营 CF 0（购地预售均在前月）。
@@ -275,7 +275,7 @@ pub(crate) fn real_estate_fixture() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::real_estate::real_estate_chart_v5(),
+        engine::company::real_estate::real_estate_account_chart(),
         vec![
             entry(
                 1,
@@ -332,7 +332,7 @@ pub(crate) fn group_parent_books() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::industrial::industrial_chart_v2(),
+        engine::company::industrial::industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -386,7 +386,7 @@ pub(crate) fn group_sub_books() -> Books {
     use CashFlowClass::*;
     use PostingSide::{Credit, Debit};
     books_with(
-        engine::company::industrial::industrial_chart_v2(),
+        engine::company::industrial::industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -446,7 +446,7 @@ pub(crate) fn group_request<'a>(parent: &'a Books, sub: &'a Books) -> Consolidat
         ],
         intercompany_balances: vec![
             // 资产侧（母公司应收）+ 负债侧（子公司应付）各申报一次——
-            // 任务 12 往来抵销的镜像申报形态。
+            // 往来抵销的镜像申报形态。
             IntercompanyBalance {
                 member: MemberId(GROUP_ROOT.to_string()),
                 counterparty: MemberId(GROUP_SUB.to_string()),

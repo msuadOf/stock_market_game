@@ -1,4 +1,4 @@
-//! 类型化拒绝路径（任务 16，同 QA 命令覆盖）：
+//! 类型化拒绝路径（同 QA 命令覆盖）：
 //! - 未来 publication / observed_at 早于 published_at（同一 EarlyRead 守卫的
 //!   两种表述——报告面与公告面各锁一例）；
 //! - 未知 report ID（UnknownPublication 透传）；
@@ -6,9 +6,11 @@
 //! - 未获知读取（NotAcquired）与篡改存档（InconsistentState）。
 //!
 //! 注：`AcquisitionError` 透传的 `InformationError` 无 PartialEq（money 链
-//! 既有约束，task-19 先例）——断言用 `matches!` 字段绑定，语义等价精确。
+//! 既有约束）——断言用 `matches!` 字段绑定，精确核对错误类型与字段。
 
-use crate::fixture::{hour_after, minute_before, npc_a, npc_b, Scenario};
+use crate::fixture::{
+    hour_after, minute_before, peer_information_npc, primary_information_npc, Scenario,
+};
 use engine::information::{
     AcquiredKind, AcquisitionError, AcquisitionRecord, NpcInformationState,
     NpcInformationStateSave, NpcObservationContext,
@@ -19,19 +21,19 @@ use engine::information::{
 #[test]
 fn future_report_publication_rejected() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let mut state = NpcInformationState::new(a);
     let early = minute_before(sc.annual_instant);
 
     let err = state
-        .record_acquisition(a, &sc.library, sc.annual_v1_id, early)
+        .record_acquisition(a, &sc.library, sc.original_annual_report_id, early)
         .expect_err("observed_at before published_at must be rejected");
     assert!(matches!(
         &err,
         AcquisitionError::Library(engine::information::InformationError::EarlyRead {
             id, published_at, as_of
         })
-            if *id == sc.annual_v1_id && *published_at == sc.annual_instant && *as_of == early
+            if *id == sc.original_annual_report_id && *published_at == sc.annual_instant && *as_of == early
     ));
     assert!(
         state.records_for_company(&sc.company).is_empty(),
@@ -43,7 +45,7 @@ fn future_report_publication_rejected() {
 #[test]
 fn future_announcement_publication_rejected() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let mut state = NpcInformationState::new(a);
     let early = minute_before(sc.announcement_instant);
 
@@ -63,7 +65,7 @@ fn future_announcement_publication_rejected() {
 #[test]
 fn unknown_publication_rejected() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let mut state = NpcInformationState::new(a);
     let unknown = engine::information::PublicationId::new(9_999);
 
@@ -82,7 +84,7 @@ fn unknown_publication_rejected() {
 #[test]
 fn cross_npc_injection_rejected() {
     let sc = Scenario::new();
-    let (a, b) = (npc_a(), npc_b());
+    let (a, b) = (primary_information_npc(), peer_information_npc());
     let mut state_a = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();
 
@@ -91,7 +93,7 @@ fn cross_npc_injection_rejected() {
         .record_acquisition(
             b,
             &sc.library,
-            sc.annual_v1_id,
+            sc.original_annual_report_id,
             hour_after(sc.annual_instant),
         )
         .expect_err("cross-npc injection must be rejected");
@@ -106,7 +108,7 @@ fn cross_npc_injection_rejected() {
         .record_acquisition(
             a,
             &sc.library,
-            sc.annual_v1_id,
+            sc.original_annual_report_id,
             hour_after(sc.annual_instant),
         )
         .expect("owner-consistent acquisition");
@@ -131,19 +133,19 @@ fn cross_npc_injection_rejected() {
 #[test]
 fn unacquired_read_rejected() {
     let mut sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let state = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();
-    let v2_id = sc.publish_correction();
+    let corrected_publication_id = sc.publish_correction();
 
     let ctx = NpcObservationContext::new(a, &state, &sc.library, &market)
         .expect("owner-consistent context");
     let err = ctx
-        .report(v2_id)
+        .report(corrected_publication_id)
         .expect_err("unacquired report must be unreadable");
     assert!(matches!(
         &err,
-        AcquisitionError::NotAcquired { npc, id } if *npc == a && *id == v2_id
+        AcquisitionError::NotAcquired { npc, id } if *npc == a && *id == corrected_publication_id
     ));
 }
 
@@ -152,10 +154,10 @@ fn unacquired_read_rejected() {
 #[test]
 fn tampered_restore_rejected() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let t = hour_after(sc.annual_instant);
     let record = || AcquisitionRecord {
-        id: sc.annual_v1_id,
+        id: sc.original_annual_report_id,
         observed_at: t,
         kind: AcquiredKind::Report,
     };
@@ -175,7 +177,7 @@ fn tampered_restore_rejected() {
 
     // 公司内乱序（非严格递增）。
     let later = AcquisitionRecord {
-        id: engine::information::PublicationId::new(sc.annual_v1_id.value() + 1),
+        id: engine::information::PublicationId::new(sc.original_annual_report_id.value() + 1),
         observed_at: t,
         kind: AcquiredKind::Report,
     };
@@ -223,7 +225,7 @@ fn tampered_restore_rejected() {
             .get_mut(&sc.company)
             .unwrap()
             .push(AcquisitionRecord {
-                id: sc.annual_v1_id,
+                id: sc.original_annual_report_id,
                 observed_at: t,
                 kind: AcquiredKind::Report,
             });
@@ -241,7 +243,7 @@ fn tampered_restore_rejected() {
 #[test]
 fn context_surface_only_consumes_information_state_and_library() {
     let sc = Scenario::new();
-    let a = npc_a();
+    let a = primary_information_npc();
     let state = NpcInformationState::new(a);
     let market = crate::fixture::FixtureMarket::quiet();
     let ctx = NpcObservationContext::new(a, &state, &sc.library, &market)

@@ -1,7 +1,7 @@
-//! 地产科目表 v5（版本化数据表）：开发存货/减值准备/合同负债/长短期借款/
+//! 地产科目表（AccountChart.version=5）（版本化数据表）：开发存货/减值准备/合同负债/长短期借款/
 //! 应收尾款/收入成本/财务费用/减值损失。科目代码的单一真源在
 //! [`crate::accounting::reports::real_estate::codes`]（列报映射与过账共享
-//! 同一份代码表，杜绝两层漂移）；不改动通用 v1 语义（任务 6 语义冻结区），
+//! 同一份代码表，杜绝两层漂移）；不改动通用科目表（AccountChart.version=1）语义（会计底座语义冻结区），
 //! 恢复优先用存档内科目表。
 
 use crate::accounting::reports::real_estate::codes;
@@ -12,8 +12,8 @@ pub(crate) mod acct {
     pub use crate::accounting::reports::real_estate::codes::*;
 }
 
-/// 地产科目表 v5（版本 5；全部科目均由地产处理器/列报使用）。
-pub fn real_estate_chart_v5() -> AccountChart {
+/// 地产科目表（AccountChart.version=5）（版本 5；全部科目均由地产处理器/列报使用）。
+pub fn real_estate_account_chart() -> AccountChart {
     use crate::accounting::AccountElement::*;
     let acc = |code: &str, def: AccountDef| (LedgerAccountId(code.to_string()), def);
     let accounts = vec![
@@ -41,5 +41,5 @@ pub fn real_estate_chart_v5() -> AccountChart {
         acc(codes::FIN_EXP, AccountDef::new("财务费用", Expense)),
         acc(codes::IMPAIR_LOSS, AccountDef::new("资产减值损失", Expense)),
     ];
-    AccountChart::new(5, accounts).expect("real estate chart v5 is well-formed")
+    AccountChart::new(5, accounts).expect("地产科目表定义合法（AccountChart.version=5）")
 }

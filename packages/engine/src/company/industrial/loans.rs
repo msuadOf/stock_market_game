@@ -1,10 +1,10 @@
-//! 借款状态与 ACT/365F 计息数学（K3 工商，`interest.rs` 的状态/数学半边）。
+//! 借款状态与 ACT/365F 计息数学（工商会计约束，`interest.rs` 的状态/数学半边）。
 //!
-//! 计息：interest = rhe((本金×利率bp×天数 + 余数) / 3_650_000)，余数以任务 6
+//! 计息：interest = rhe((本金×利率bp×天数 + 余数) / 3_650_000)，余数以会计底座
 //! [`FractionUnits`] 承载（此处单位 = 1/3_650_000 分，ACT/365F 的自然小数单位；
 //! docs/simulation-calendar.md §6）。逐合同不变量 Σ已提 × 3_650_000 + 终余数 ==
-//! Σ(本金×bp×天数)——分毫不丢、不凭空造分（与任务 6 `apply_basis_points_accum`
-//! 同构，任务 9–11 银行/保险计息复用同一约定）。
+//! Σ(本金×bp×天数)——分毫不丢、不凭空造分（与会计底座 `apply_basis_points_accum`
+//! 同构，银行、保险与地产计息复用同一舍入约定）。
 
 use std::collections::BTreeMap;
 
@@ -13,7 +13,7 @@ use crate::calendar::CivilDate;
 use crate::company::contracts::{ContractBook, ContractId};
 use crate::company::industrial::{chart, IndustrialError};
 
-/// 开局借款隐式合同 id（与 2001 开局余额一一对应；task-7 review O2 治理决策）。
+/// 开局借款隐式合同 id（与 2001 开局余额一一对应；历史复核来源 task-7 review O2）。
 pub const OPENING_DEBT_CONTRACT_ID: &str = "OPENING-DEBT";
 
 /// ACT/365F 分母（10_000 bp × 365 天）。
@@ -227,7 +227,7 @@ pub(super) fn loan_account(start: CivilDate, maturity: CivilDate) -> &'static st
     }
 }
 
-/// ACT/365F 单期计提（任务 6 `apply_basis_points_accum` 同构）：
+/// ACT/365F 单期计提（会计底座 `apply_basis_points_accum` 同构）：
 /// paid = rhe((cents×bp×days + carried) / 3_650_000)；remainder 继续累计。
 /// 不变量 Σpaid×3_650_000 + 终余数 == Σ(cents×bp×days)。
 pub(super) fn accrue_act_365f(
@@ -261,8 +261,8 @@ pub(super) fn accrue_act_365f(
     ))
 }
 
-/// 整数半偶舍入除法（任务 6 `amount.rs` 私有实现与 accounting::inventory 共享
-/// 副本的同算法孪生——journal/ledger/amount 属任务 6 语义冻结区，不改动）。
+/// 整数半偶舍入除法（会计底座 `amount.rs` 私有实现与 accounting::inventory 共享
+/// 副本的同算法孪生——journal/ledger/amount 属会计底座语义冻结区，不改动）。
 fn rhe_div(n: i128, d: i128) -> Result<i128, AccountingError> {
     debug_assert!(d > 0, "divisor is the ACT/365F constant");
     let negative = n < 0;

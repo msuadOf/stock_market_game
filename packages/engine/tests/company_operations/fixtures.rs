@@ -5,18 +5,19 @@ use engine::accounting::{
     AccountingAmount, InventoryItemCode, JournalLine, LedgerAccountId, PostingSide, TaxPolicy,
 };
 use engine::calendar::CivilDate;
-use engine::company::bank::{bank_chart_v3, BankConfig, EclPolicy, EclScenario};
+use engine::company::bank::{bank_account_chart, BankConfig, EclPolicy, EclScenario};
 use engine::company::events::ShockParams;
 use engine::company::industrial::{
-    industrial_chart_v2, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
+    industrial_account_chart, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms,
+    OpeningInventoryItem,
 };
-use engine::company::insurance::{insurance_chart_v4, DiscountAssumption, InsuranceConfig};
+use engine::company::insurance::{insurance_account_chart, DiscountAssumption, InsuranceConfig};
 use engine::company::operations::{
     BankFlowParams, CompanyOperationsConfig, FlowParams, IndustrialFlowParams, InsuranceFlowParams,
     OperatingCompanyConfig, RealEstateFlowParams,
 };
 use engine::company::real_estate::{
-    real_estate_chart_v5, CapitalizationPolicy, ProjectId, RealEstateConfig,
+    real_estate_account_chart, CapitalizationPolicy, ProjectId, RealEstateConfig,
 };
 use engine::company::{
     CompanyId, CompanyKind, CompanySpec, CounterpartyId, CounterpartyKind, CreditLine,
@@ -85,7 +86,7 @@ fn spec(id: &str, industry: &str, kind: CompanyKind) -> CompanySpec {
 /// 工商 A（家电行业）：开局现金/存货/固定资产/开局借款齐备（利息与减值有真实驱动面）。
 pub(crate) fn industrial_a(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 2_200_000),
@@ -166,7 +167,7 @@ pub(crate) fn industrial_a(as_of: CivilDate) -> OperatingCompanyConfig {
 /// 工商 B（化工行业）：与 A 不同行业——行业成本冲击只作用于被标签的一方。
 pub(crate) fn industrial_b(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 260_000),
@@ -225,10 +226,10 @@ pub(crate) fn industrial_b(as_of: CivilDate) -> OperatingCompanyConfig {
     }
 }
 
-/// 银行（banking 行业）：存贷/手续费流——**不读商品需求字段**（K4 跨行业红线）。
+/// 银行（banking 行业）：存贷/手续费流——**不读商品需求字段**（经营与信息披露跨行业红线）。
 pub(crate) fn bank_c(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = BankConfig {
-        chart: bank_chart_v3(),
+        chart: bank_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1003", PostingSide::Debit, 5_000_000),
@@ -283,7 +284,7 @@ pub(crate) fn bank_c(as_of: CivilDate) -> OperatingCompanyConfig {
 /// 保险（property-insurance 行业）：新单量响应需求字段（2 组/日基数）。
 pub(crate) fn insurance_c(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = InsuranceConfig {
-        chart: insurance_chart_v4(),
+        chart: insurance_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 2_000_000),
@@ -317,7 +318,7 @@ pub(crate) fn insurance_c(as_of: CivilDate) -> OperatingCompanyConfig {
 /// 地产（residential-development 行业）：购地 → 开发 → 预售 → 完工 → 交付。
 pub(crate) fn real_estate_c(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = RealEstateConfig {
-        chart: real_estate_chart_v5(),
+        chart: real_estate_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 10_000_000),
@@ -362,7 +363,7 @@ pub(crate) fn real_estate_c(as_of: CivilDate) -> OperatingCompanyConfig {
 /// 资金断裂工商（无授信、现金仅 ¥5）：付款失败路径金样。
 pub(crate) fn industrial_broke(as_of: CivilDate) -> OperatingCompanyConfig {
     let config = IndustrialConfig {
-        chart: industrial_chart_v2(),
+        chart: industrial_account_chart(),
         as_of,
         opening_lines: vec![
             cent_line("1002", PostingSide::Debit, 500),

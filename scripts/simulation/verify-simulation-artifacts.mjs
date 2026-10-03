@@ -14,11 +14,11 @@ const SIMULATION_ORDINARY_TEST_MAX_MS = 10_000;
 const SIMULATION_CHILD_TIMEOUT_MS = 300_000;
 const SIMULATION_BATCH_TIMEOUT_MS = 300_000;
 const SIMULATION_CLEANUP_RESERVE_MS = 1_000;
-const SIMULATION_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const SIMULATION_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
-const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
-const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
-const SIMULATION_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
+const SIMULATION_CHECKPOINT_SCHEMA = "simulation-acceptance-checkpoint";
+const SIMULATION_RUNNER_ID = "simulation-acceptance";
+const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "simulation-source-fingerprint";
+const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "simulation-determinism-receipt";
+const SIMULATION_RESOURCE_POLICY_SCHEMA = "simulation-resource-policy";
 const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
 const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
 const REQUIRED_SOURCE_FILES = [
@@ -153,8 +153,8 @@ function validateGit(git) {
 }
 
 function validateResourcePolicy(policy) {
-  requireExactKeys(policy, ["schema", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "rayon_threads_per_seed", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
-  if (policy.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA) fail(`unsupported simulation acceptance resource policy schema: ${JSON.stringify(policy.schema)}`);
+  requireExactKeys(policy, ["schema", "schema_version", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "rayon_threads_per_seed", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
+  if (policy.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA || policy.schema_version !== 7) fail(`unsupported simulation acceptance resource policy schema: ${JSON.stringify(policy.schema)}`);
   if (!Number.isInteger(policy.available_cpu_count) || policy.available_cpu_count <= 0) fail("resource policy CPU count must be positive");
   if (typeof policy.available_cpu_source !== "string" || policy.available_cpu_source.length === 0) fail("resource policy CPU source is missing");
   if (policy.maximum_thread_count !== "auto" && (!Number.isInteger(policy.maximum_thread_count) || policy.maximum_thread_count <= 0)) {
@@ -184,7 +184,7 @@ function validateResourcePolicy(policy) {
 
 function sourceFingerprintState(fingerprint) {
   return {
-    algorithm: fingerprint.algorithm,
+    algorithm: fingerprint.algorithm, algorithm_version: fingerprint.algorithm_version,
     committed_tree: fingerprint.committed_tree,
     dirty_patch_sha256: fingerprint.dirty_patch_sha256,
     files: fingerprint.files,
@@ -192,8 +192,8 @@ function sourceFingerprintState(fingerprint) {
 }
 
 function validateSourceFingerprint(fingerprint) {
-  requireExactKeys(fingerprint, ["algorithm", "committed_tree", "dirty_patch_sha256", "files", "digest"], "manifest.source_fingerprint");
-  if (fingerprint.algorithm !== SIMULATION_SOURCE_FINGERPRINT_ALGORITHM) fail(`unsupported source fingerprint algorithm: ${JSON.stringify(fingerprint.algorithm)}`);
+  requireExactKeys(fingerprint, ["algorithm", "algorithm_version", "committed_tree", "dirty_patch_sha256", "files", "digest"], "manifest.source_fingerprint");
+  if (fingerprint.algorithm !== SIMULATION_SOURCE_FINGERPRINT_ALGORITHM || fingerprint.algorithm_version !== 1) fail(`unsupported source fingerprint algorithm: ${JSON.stringify(fingerprint.algorithm)}`);
   if (typeof fingerprint.committed_tree !== "string" || !/^[a-f0-9]{40,64}$/.test(fingerprint.committed_tree)) fail("source fingerprint committed tree is invalid");
   requireSha256(fingerprint.dirty_patch_sha256, "source fingerprint dirty patch digest");
   requireSha256(fingerprint.digest, "source fingerprint digest");
@@ -219,12 +219,12 @@ function validateSourceFingerprint(fingerprint) {
 }
 
 function matrixDirectoryName(spec) {
-  return `${spec.scenario}-b${spec.behavior}-e${spec.event}-c${spec.c01}`;
+  return `${spec.scenario}-behavior-${spec.behavior}-event-${spec.event}-volume-denominator-${spec.volumeDenominatorAssumption}`;
 }
 
 function validateFixtureBinary(fixture, resourcePolicy) {
   requireExactKeys(fixture, ["source", "executable_relative_path", "workspace_root", "cargo_target_dir", "process_tmp_dir", "binary_sha256", "binary_bytes", "embedded_source_fingerprint_digest", "build_argv", "cargo_build_jobs", "argv"], "manifest.fixture_binary");
-  if (fixture.source !== "fresh_current_k7_setup") fail("fixture binary source is invalid");
+  if (fixture.source !== "current_session_setup") fail("fixture binary source is invalid");
   if (typeof fixture.executable_relative_path !== "string"
     || path.posix.isAbsolute(fixture.executable_relative_path)
     || fixture.executable_relative_path.split("/").some((part) => part === "" || part === "." || part === "..")
@@ -237,8 +237,8 @@ function validateFixtureBinary(fixture, resourcePolicy) {
     fail("fixture binary Cargo build budget is invalid");
   }
   if (!path.isAbsolute(fixture.workspace_root)
-    || fixture.cargo_target_dir !== path.join(fixture.workspace_root, ".tmp", "build-cache", "k7")
-    || fixture.process_tmp_dir !== path.join(fixture.workspace_root, ".tmp", "process-tmp", "k7")) {
+    || fixture.cargo_target_dir !== path.join(fixture.workspace_root, ".tmp", "build-cache", "simulation-acceptance")
+    || fixture.process_tmp_dir !== path.join(fixture.workspace_root, ".tmp", "process-tmp", "simulation-acceptance")) {
     fail("fixture binary workspace paths are invalid");
   }
   if (!Array.isArray(fixture.argv) || fixture.argv[0] !== fixture.executable_relative_path) fail("fixture binary argv is invalid");
@@ -263,13 +263,13 @@ function validateFixtureBuild(build, fixture) {
 function fixtureArgs(rootContext, spec, seed) {
   return [
     rootContext.fixtureBinary.executable_relative_path,
-    spec.scenario, String(seed), String(spec.naturalDays), String(spec.behavior), String(spec.event), String(spec.c01),
+    spec.scenario, String(seed), String(spec.naturalDays), String(spec.behavior), String(spec.event), String(spec.volumeDenominatorAssumption),
   ];
 }
 
 function expectedIdentity(rootContext, spec) {
   return {
-    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, version: SIMULATION_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 8, effective_date: "2026-09-30", script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: rootContext.git.revision, dirty_paths: rootContext.git.dirty_paths },
     source_fingerprint: rootContext.sourceFingerprint,
     resource_policy: rootContext.resourcePolicy,
@@ -277,13 +277,13 @@ function expectedIdentity(rootContext, spec) {
     scenario: spec.scenario,
     ordered_seeds: [...spec.seeds],
     natural_days: spec.naturalDays,
-    multipliers: { behavior: spec.behavior, event: spec.event, c01_denominator_assumption: spec.c01 },
+    multipliers: { behavior: spec.behavior, event: spec.event, volume_denominator_assumption: spec.volumeDenominatorAssumption },
   };
 }
 
 function checkpointDigest(checkpoint) {
   return sha256(JSON.stringify({
-    schema: checkpoint.schema,
+    schema: checkpoint.schema, schema_version: checkpoint.schema_version,
     identity: checkpoint.identity,
     identity_digest: checkpoint.identity_digest,
     completed: checkpoint.completed,
@@ -292,7 +292,7 @@ function checkpointDigest(checkpoint) {
 
 function determinismReceiptDigest(receipt) {
   return sha256(JSON.stringify({
-    schema: receipt.schema,
+    schema: receipt.schema, schema_version: receipt.schema_version,
     identity: receipt.identity,
     identity_digest: receipt.identity_digest,
     seed: receipt.seed,
@@ -309,22 +309,22 @@ function determinismReceiptDigest(receipt) {
 
 function validateSimulationRaw(raw, rootContext, spec, seed, label) {
   requireRecord(raw, label);
-  if (raw.source !== "fresh_current_k7_setup" || Object.hasOwn(raw, "save_path") || Object.hasOwn(raw, "load")) {
+  if (raw.source !== "current_session_setup" || Object.hasOwn(raw, "save_path") || Object.hasOwn(raw, "load")) {
     fail(`${label} is not a fresh current simulation acceptance setup report`);
   }
   if (raw.build_source_fingerprint !== rootContext.sourceFingerprint.digest) fail(`${label} was emitted by a stale fixture binary`);
   if (raw.scenario !== spec.scenario || raw.seed !== String(seed) || raw.natural_days !== spec.naturalDays) fail(`${label} scenario, seed, or natural-day request mismatch`);
-  requireJsonEqual(raw.multipliers, { behavior: spec.behavior, event: spec.event, c01_denominator_assumption: spec.c01 }, `${label}.multipliers`);
+  requireJsonEqual(raw.multipliers, { behavior: spec.behavior, event: spec.event, volume_denominator_assumption: spec.volumeDenominatorAssumption }, `${label}.multipliers`);
   if (!isRecord(raw.calendar) || raw.calendar.natural_days !== spec.naturalDays
     || !Number.isInteger(raw.calendar.trading_days) || !Number.isInteger(raw.calendar.closed_days)
     || raw.calendar.trading_days + raw.calendar.closed_days !== spec.naturalDays) {
     fail(`${label} calendar accounting is incomplete`);
   }
   const profile = spec.scenario === "primary"
-    ? { id: "primary-bounded-representative-v1", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
-    : { id: "cross-year-bounded-representative-v1", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
+    ? { id: "primary-bounded-representative", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
+    : { id: "cross-year-bounded-representative", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
   requireJsonEqual(raw.verification_profile, {
-    schema: "k7-bounded-representative-profile-v1",
+    schema: "simulation-bounded-representative-profile", schema_version: 1,
     profile_id: profile.id,
     scope: "bounded_representative_not_full_market_scale",
     retail_count: profile.retail,
@@ -366,8 +366,8 @@ function validateEntry(entry, rootContext, spec, seed, label) {
 }
 
 function validateCheckpoint(checkpoint, identity, completed, label) {
-  requireExactKeys(checkpoint, ["schema", "identity", "identity_digest", "completed", "checkpoint_digest"], label);
-  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA) fail(`${label} schema is unsupported`);
+  requireExactKeys(checkpoint, ["schema", "schema_version", "identity", "identity_digest", "completed", "checkpoint_digest"], label);
+  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA || checkpoint.schema_version !== 4) fail(`${label} schema is unsupported`);
   requireJsonEqual(checkpoint.identity, identity, `${label}.identity`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (checkpoint.identity_digest !== identityDigest) fail(`${label} identity digest mismatch`);
@@ -386,7 +386,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
   requireExactKeys(report, ["scenario", "seeds", "natural_days", "multipliers", "source_fingerprint", "resource_policy", "identity", "runs", "complete", "finalized", "executed", "checkpoint", "quantiles_and_extremes", "determinism_check"], `manifest matrix ${directoryName}`);
   if (report.scenario !== spec.scenario || report.natural_days !== spec.naturalDays) fail(`manifest matrix ${directoryName} scenario or natural days mismatch`);
   requireJsonEqual(report.seeds, spec.seeds, `manifest matrix ${directoryName}.seeds`);
-  requireJsonEqual(report.multipliers, { behavior: spec.behavior, event: spec.event, c01_denominator_assumption: spec.c01 }, `manifest matrix ${directoryName}.multipliers`);
+  requireJsonEqual(report.multipliers, { behavior: spec.behavior, event: spec.event, volume_denominator_assumption: spec.volumeDenominatorAssumption }, `manifest matrix ${directoryName}.multipliers`);
   requireJsonEqual(report.source_fingerprint, rootContext.sourceFingerprint, `manifest matrix ${directoryName}.source_fingerprint`);
   requireJsonEqual(report.resource_policy, rootContext.resourcePolicy, `manifest matrix ${directoryName}.resource_policy`);
   const identity = expectedIdentity(rootContext, spec);
@@ -420,8 +420,8 @@ async function verifyMatrix(root, report, rootContext, spec) {
 
   const canonical = completed.at(-1);
   const receipt = (await readJson(resolveContained(directoryPath, "determinism.checkpoint.json", `matrix ${directoryName} determinism receipt`), `matrix ${directoryName} determinism receipt`)).parsed;
-  requireExactKeys(receipt, ["schema", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], `matrix ${directoryName} determinism receipt`);
-  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
+  requireExactKeys(receipt, ["schema", "schema_version", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], `matrix ${directoryName} determinism receipt`);
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 1) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
   requireJsonEqual(receipt.identity, identity, `matrix ${directoryName} determinism receipt identity`);
   if (receipt.identity_digest !== sha256(JSON.stringify(identity))) fail(`matrix ${directoryName} determinism receipt identity digest mismatch`);
   if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) {
@@ -448,30 +448,30 @@ async function verifyMatrix(root, report, rootContext, spec) {
 
 function afterSpecs() {
   return [
-    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
-    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: SIMULATION_CROSS_YEAR_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
+    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, volumeDenominatorAssumption: 1 },
+    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: SIMULATION_CROSS_YEAR_NATURAL_DAYS, behavior: 1, event: 1, volumeDenominatorAssumption: 1 },
   ];
 }
 
 function sensitivityRequests() {
   return [
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: multiplier, event: 1, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: multiplier, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: multiplier })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: multiplier, event: 1, volumeDenominatorAssumption: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: multiplier, volumeDenominatorAssumption: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, volumeDenominatorAssumption: multiplier })),
   ];
 }
 
 function validateRootManifest(manifest) {
   requireRecord(manifest, "simulation acceptance manifest");
   if (manifest.command === "after") {
-    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "primary", "cross_year_four_industry", "c06_external_market_calibration"], "after manifest");
+    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "primary", "cross_year_four_industry", "external_market_calibration_scope"], "after manifest");
   } else if (manifest.command === "sensitivity") {
-    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "dimensions", "c06_external_market_calibration"], "sensitivity manifest");
+    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "dimensions", "external_market_calibration_scope"], "sensitivity manifest");
   } else {
     fail(`simulation acceptance manifest command must be after or sensitivity, got ${JSON.stringify(manifest.command)}`);
   }
-  if (manifest.source !== "fresh_current_k7_setup") fail("simulation acceptance manifest source must be fresh_current_k7_setup");
-  if (manifest.c06_external_market_calibration !== "not_applicable_synthetic_history_only") {
+  if (manifest.source !== "current_session_setup") fail("simulation acceptance manifest source must be current_session_setup");
+  if (manifest.external_market_calibration_scope !== "not_applicable_synthetic_history_only") {
     fail("simulation acceptance manifest must mark external market calibration not applicable under the synthetic-history policy");
   }
   validateGit(manifest.git);
@@ -512,7 +512,7 @@ export async function verifySimulationArtifacts(rootPath) {
       const dimension = manifest.dimensions[index];
       requireExactKeys(dimension, ["dimension", "multiplier", "reuse", "report"], `sensitivity dimension ${index}`);
       if (dimension.dimension !== request.dimension || dimension.multiplier !== request.multiplier) fail(`sensitivity dimension ${index} order or multiplier mismatch`);
-      const key = `${request.behavior}/${request.event}/${request.c01}`;
+      const key = `${request.behavior}/${request.event}/${request.volumeDenominatorAssumption}`;
       const previous = reports.get(key);
       if (previous === undefined) {
         requireJsonEqual(dimension.reuse, { executed_or_resumed: true }, `sensitivity dimension ${index}.reuse`);

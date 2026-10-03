@@ -1,4 +1,4 @@
-//! 个人交易计划的权威状态类型（K6）：账户+股票唯一、可跨日、只以真实成交计进度。
+//! 个人交易计划的权威状态类型：账户+股票唯一、可跨日、只以真实成交计进度。
 //!
 //! 复用既有身份类型（AccountId/StockCode/Side/OrderId），不建立平行体系；
 //! 对母单执行子状态仅持可选订单 id 引用，不复制订单/冻结逻辑。
@@ -28,7 +28,7 @@ use crate::orderbook::{AccountId, OrderId, Side};
 pub struct PlanId(#[serde(with = "crate::orderbook::js_safe_u64")] pub u64);
 
 /// 计划目标：目标仓位（权益占比 bp）或目标股数，两者都可表达。
-/// 份额目标才有份额级完成/超额语义；比例目标由预算换算层（任务 22）转成股数。
+/// 股数目标才有股数级完成/超额语义；比例目标由预算换算层转成股数。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum PlanTarget {
     /// 目标股数（正数）。
@@ -37,7 +37,7 @@ pub enum PlanTarget {
     PositionFractionBp(u32),
 }
 
-/// 执行紧迫度（K6）：独立于估值的执行状态字段，决策逻辑属任务 23。
+/// 执行紧迫度：独立于估值的执行状态字段，决策逻辑在 urgency 中实现。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum Urgency {
     Patient,
@@ -45,7 +45,7 @@ pub enum Urgency {
     Urgent,
 }
 
-/// 暂停原因（K6：跌势加速 / 风险压力 / 被动不利选择）。
+/// 暂停原因：跌势加速 / 风险压力 / 被动不利选择。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum PauseReason {
     IntradayDropAcceleration,
@@ -53,7 +53,7 @@ pub enum PauseReason {
     AdverseSelection,
 }
 
-/// 恢复原因（K5a：恢复须下一本人观察）。
+/// 恢复原因：恢复须下一本人观察。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum ResumeReason {
     /// 暂停触发条件解除。
@@ -85,7 +85,7 @@ pub enum PlanStatus {
     Terminated { reason: TerminationReason },
 }
 
-/// 个人观点来源（K5 分析族）。
+/// 个人观点来源（分析族）。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum OpinionSource {
     Fundamental,
@@ -96,14 +96,14 @@ pub enum OpinionSource {
     Blended,
 }
 
-/// 观点快照：综合判断分数（K5a 的 S，由上游计算）与来源。
+/// 观点快照：综合判断分数 S（由上游计算）与来源。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct PlanOpinion {
     pub signal_score_bp: i32,
     pub source: OpinionSource,
 }
 
-/// 复核条件（K5a）：触发下次复核的阈值与上次复核基线；是否复核由任务 22 决定。
+/// 复核条件：触发下次复核的阈值与上次复核基线；由会话决策链基于这些条件决定是否复核。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct ReviewConditions {
     pub min_signal_delta_bp: i32,
@@ -152,7 +152,7 @@ pub struct PlanOpen {
     pub direction: Side,
     pub target: PlanTarget,
     pub opinion: PlanOpinion,
-    /// 信心，0..=10000 bp（K5）。
+    /// 信心，0..=10000 bp。
     pub confidence_bp: u32,
     pub urgency: Urgency,
     /// 有效期（交易日数，日内策略为 1，其他风格可跨日）。
@@ -160,7 +160,7 @@ pub struct PlanOpen {
     pub created_trading_day: u64,
 }
 
-/// 可跨日的个人交易计划（K6）：唯一 per 账户+股票，版本化修订，真实成交计进度。
+/// 可跨日的个人交易计划：每账户+股票唯一、版本化修订、真实成交计进度。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]

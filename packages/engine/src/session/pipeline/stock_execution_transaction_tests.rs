@@ -357,7 +357,7 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     assert_eq!(committed.settlement.settlement.applied_receipts, 2);
     assert_eq!(committed.settlement.settlement.applied_groups, 2);
     let position = &committed.account_patch[&AccountId(0)].positions()[&code];
-    assert_eq!(position.qty(), 100, "P6 applies the buy before the sell");
+    assert_eq!(position.qty(), 100, "SettlementShadow 按买入后卖出顺序应用");
     assert_eq!(position.t1_locked(), 100);
     assert_ne!(
         committed.account_patch[&AccountId(0)].cash(),
@@ -383,7 +383,7 @@ fn settlement_projection_failure_after_receipt_aggregation_receipts_keeps_every_
     assert_eq!(
         worker.receipts.len(),
         2,
-        "the crossing worker supplies P5 fills"
+        "crossing worker 提供 ReceiptAggregation 成交 receipts"
     );
     let initial_ledger = EnvelopeLedger::new(41, [maker.envelope.clone()]).unwrap();
     let ledger_before = initial_ledger.clone();

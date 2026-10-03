@@ -162,7 +162,7 @@ fn account_validation_rejection_adapter_rejects_a_candidate_key_and_sealed_ident
     assert!(matches!(
         adapt_account_validation_rejection_facts(&candidates, &swapped),
         Err(StepFatal::InvariantViolation { description, location })
-            if description.contains("canonical P2 batch sealed identity")
+            if description.contains("规范 DecisionShadow 批次的 sealed identity")
                 && location == "pipeline::session_fact_producers"
     ));
 }

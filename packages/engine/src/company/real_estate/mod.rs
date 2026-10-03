@@ -1,24 +1,24 @@
-//! 地产开发经营会计（K3，任务 11）。
+//! 地产开发经营会计（地产会计约束）。
 //!
-//! [`RealEstateBooks`] = 权威账套（[`Books`]，任务 6）+ 项目子账（成本轨迹
+//! [`RealEstateBooks`] = 权威账套（[`Books`]，会计底座）+ 项目子账（成本轨迹
 //! 与资本化窗口）+ 预售合同子账 + 项目借款子账（双余数链）+ 应收尾款开项
-//! （任务 8 共享 `TradeOpenLedger`）+ 外部对手方 + 版本化资本化政策。
-//! 与任务 8/9 `IndustrialBooks`/`BankBooks` 同一组合模式：**独立引擎**，
-//! 不修改 `Company` 注册表壳；会话接线在任务 26。
+//! （工商经营会计共享 `TradeOpenLedger`）+ 外部对手方 + 版本化资本化政策。
+//! 与工商和银行账套 `IndustrialBooks`/`BankBooks` 同一组合模式：**独立引擎**，
+//! 不修改 `Company` 注册表壳；会话由 `session::company_assembly` 装配。
 //!
 //! 事件处理不变量（每个处理器一致执行）：
 //! 1. **validate → post → apply**：全部业务校验先于过账；过账走
 //!    [`Books::post_batch`] 原子提交；子账变更仅在过账成功后落地——任何
 //!    拒绝（含 `PaymentFailed`）账套与子账**字节不变**（测试逐一断言），
 //!    事件 id 也不消耗。
-//! 2. K3 红线：**预售不是交付收入**（收款进 2203 合同负债，CAS 14 §39
+//! 2. 行业会计红线：**预售不是交付收入**（收款进 2203 合同负债，CAS 14 §39
 //!    已核验；收入只在交付=控制权转移时点确认，§4/§13）；**不无限资本化**
 //!    （窗口终止/暂停强制生效，窗口外利息进 6603 损益——资本化政策是
 //!    版本化游戏假设，CAS 17 原文取证受阻，不声称准则合规）。
 //! 3. 现金流分类：购地/开发投入/预售收款/尾款回收 = 经营活动（开发存货
 //!    是开发商品的原材料存货，非固定资产投资——CAS 31 归类选择，登记
 //!    docs）；借款/付息/还本 = 筹资活动。
-//! 4. 资金不足 → `PaymentFailed`（类型化，公司继续运行；K2 无透支无补钱）。
+//! 4. 资金不足 → `PaymentFailed`（类型化，公司继续运行；无透支无补钱）。
 //!
 //! [`Books::post_batch`]: crate::accounting::Books::post_batch
 
@@ -38,7 +38,7 @@ mod projects;
 #[cfg(test)]
 mod ownership_tests;
 
-pub use chart::real_estate_chart_v5;
+pub use chart::real_estate_account_chart;
 pub use config::{CapitalizationPolicy, RealEstateConfig};
 pub use delivery::DeliveryOutcome;
 pub use error::RealEstateError;
@@ -168,7 +168,7 @@ impl RealEstateBooks {
         Ok(total)
     }
 
-    /// 报表分类层胶水：总账 → CAS 30 (2026) + CAS 14 地产列报行（任务 13 消费）。
+    /// 报表分类层胶水：总账 → CAS 30 (2026) + CAS 14 地产列报行（结账与报表消费）。
     pub fn presentation_lines(&self) -> Result<RealEstatePresentationLines, AccountingError> {
         real_estate_presentation_lines(self.books.ledger())
     }
@@ -189,7 +189,7 @@ impl RealEstateBooks {
         Ok(())
     }
 
-    /// 对手方已登记（处理器前置校验；资金流跨边界留痕的 K2 要求）。
+    /// 对手方已登记（处理器前置校验；资金流跨边界留痕要求）。
     pub(super) fn ensure_counterparty(&self, id: &CounterpartyId) -> Result<(), RealEstateError> {
         if self.counterparties.get(id).is_none() {
             return Err(RealEstateError::Company(

@@ -1,4 +1,4 @@
-//! 合并域统一错误（K3，任务 12）。绝不静默吞掉（铁律二）：每个变体携带
+//! 合并域统一错误。绝不静默吞掉（铁律二）：每个变体携带
 //! 定位与数值上下文；无子公司是类型化 `NotApplicable`（不是伪装的空合并）。
 
 use crate::accounting::amount::AccountingAmount;
@@ -12,7 +12,7 @@ use super::group::MemberId;
 /// 合并操作失败。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum ConsolidationError {
-    /// 公司没有子公司：合并范围不适用（K3 要求显式 `NotApplicable`，不返回
+    /// 公司没有子公司：合并范围不适用（显式 `NotApplicable`，不返回
     /// 伪空合并结果）。
     #[error("consolidation not applicable: company {company:?} has no subsidiary")]
     NotApplicable { company: MemberId },

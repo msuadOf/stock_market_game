@@ -11,8 +11,8 @@ fn fixture(auction: bool) -> GameSession {
     setup.closing_auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
-    // Closed production StrategyState remains installed. Exogenous test candidates
-    // exercise the normal P2/P3 path without replacing the production dispatcher.
+    // 保持生产 StrategyState 已安装。外部测试候选仍走真实
+    // DecisionShadow/AccountValidation 路径，不替换生产 dispatcher。
     for account in [AccountId(1), AccountId(2)] {
         for code in &codes {
             game.state
@@ -186,4 +186,39 @@ fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
     assert!(nested.is_err());
     assert!(records.is_empty());
     assert!(with_executor_perturbation(ExecutorPerturbation::default(), || ()).is_ok());
+}
+#[test]
+fn executor_boundaries_serialize_responsibility_labels() {
+    for (boundary, label) in [
+        (
+            ExecutorBoundary::AccountValidationShards,
+            "AccountValidationShards",
+        ),
+        (
+            ExecutorBoundary::AccountValidationWorkerResults,
+            "AccountValidationWorkerResults",
+        ),
+        (
+            ExecutorBoundary::ContinuousStockShards,
+            "ContinuousStockShards",
+        ),
+        (
+            ExecutorBoundary::ContinuousWorkerResults,
+            "ContinuousWorkerResults",
+        ),
+        (ExecutorBoundary::AuctionStockShards, "AuctionStockShards"),
+        (
+            ExecutorBoundary::AuctionWorkerResults,
+            "AuctionWorkerResults",
+        ),
+        (
+            ExecutorBoundary::AggregatedReceiptResults,
+            "AggregatedReceiptResults",
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(boundary).unwrap(),
+            serde_json::json!(label)
+        );
+    }
 }

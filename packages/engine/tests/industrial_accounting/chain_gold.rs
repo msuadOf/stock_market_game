@@ -2,7 +2,7 @@
 //! 再借款 → 计息 → 付息。所有断言值为手算精确数（注释写元，执行值「分」），
 //! 终态满足：试算平衡、资产 − 净负债 = 权益滚动、现金流三分类对账。
 //!
-//! 开局借款治理决策（task-7 review O2，本任务裁定）：开局 2001 余额以**隐式合同**
+//! 开局借款治理决策（历史复核来源 task-7 review O2）：开局 2001 余额以**隐式合同**
 //! （id = `OPENING-DEBT`）在同一套计息/付息/授信机制下治理——构造时校验开局
 //! 2001 贷方余额 == 配置本金（不匹配 → 类型化拒绝），授信占用自动包含开局债务
 //! （容量 = 限额 − 开局 − 已登记未偿）。
@@ -189,14 +189,17 @@ fn gold_full_chain_order_production_credit_sale_collection_interest() {
         .iter()
         .find(|item| item.contract.0 == "OPENING-DEBT")
         .expect("opening debt accrual");
-    let loan2 = accruals
+    let new_loan_interest_accrual = accruals
         .iter()
         .find(|item| item.contract.0 == "LOAN-2")
         .expect("loan-2 accrual");
     assert_eq!(opening.amount, AccountingAmount::from_cents(679));
     assert_eq!(opening.days, 31);
-    assert_eq!(loan2.amount, AccountingAmount::from_cents(164));
-    assert_eq!(loan2.days, 6);
+    assert_eq!(
+        new_loan_interest_accrual.amount,
+        AccountingAmount::from_cents(164)
+    );
+    assert_eq!(new_loan_interest_accrual.days, 6);
     // 财务费用 6.79 + 1.64 = 8.43 元；应付利息贷方同额（非现金）。
     assert_eq!(net_debit(&co, acct::FIN_EXP), amt(843));
     assert_eq!(net_debit(&co, acct::INT_PAYABLE), amt(-843));

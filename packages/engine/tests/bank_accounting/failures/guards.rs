@@ -160,9 +160,9 @@ fn loan_guards_reject_overcollections_and_backwards_accrual() {
     ));
     assert_eq!(bank, before);
     // 贷款发放超现金 → PaymentFailed（银行不能贷出没有的钱）。
-    let mut bank2 = fresh();
+    let mut insufficient_cash_bank = fresh();
     assert!(matches!(
-        bank2.issue_loan(
+        insufficient_cash_bank.issue_loan(
             BankProductKind::TermLoan,
             loan_id(),
             &bor_cp(),
@@ -174,9 +174,9 @@ fn loan_guards_reject_overcollections_and_backwards_accrual() {
         Err(BankError::PaymentFailed { .. })
     ));
     // 重复贷款 id → DuplicateContract。
-    let mut bank3 = with_loan();
+    let mut duplicate_loan_id_bank = with_loan();
     assert!(matches!(
-        bank3.issue_loan(
+        duplicate_loan_id_bank.issue_loan(
             BankProductKind::TermLoan,
             loan_id(),
             &bor_cp(),

@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 /**
- * escrow verification paired performance evidence runner.
- *
- * Each endpoint prints one escrow-perf-sample-v2 JSON object per invocation.
- * `completed_ticks` is the total number of committed ticks across the declared
- * workload `repetitions`; throughput is derived only from that total and the
- * runner's measured wall clock. The baseline may report null phase/runnable
- * instrumentation. The new engine must report P0..P9 wall totals and at least
- * one Rayon registry-capacity sample. Actual runnable-thread evidence is
- * sampled independently from Linux /proc for the whole measured process tree;
- * CPU utilization is intentionally not substituted for throughput.
+ * 采集 escrow 验证的配对性能证据。
+ * endpoint 每次输出一个 escrow-performance-sample JSON，schema_version 为 2。
+ * completed_ticks 是全部 repetitions 实际提交的 tick 数；throughput 只由它与
+ * runner 实测 wall clock 得出。baseline 可缺少 phase 与 Rayon registry-capacity
+ * 观测，当前 engine 必须提供全部 PhaseTimingPhase 计时与至少一次 capacity 样本。
+ * 实际 runnable-thread 证据由 Linux /proc 独立采集整个进程树，不能以 CPU 利用率代替 throughput。
  */
 import { spawn } from "node:child_process";
 import fsp from "node:fs/promises";
@@ -20,10 +16,10 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 
-const CONFIG_SCHEMA = "escrow-perf-config-v2";
-const SAMPLE_SCHEMA = "escrow-perf-sample-v2";
-const REPORT_SCHEMA = "escrow-perf-report-v3";
-const REQUIRED_PHASES = Array.from({ length: 10 }, (_, index) => `P${index}`);
+const CONFIG_SCHEMA = "escrow-performance-config";
+const SAMPLE_SCHEMA = "escrow-performance-sample";
+const REPORT_SCHEMA = "escrow-performance-report";
+const REQUIRED_PHASES = ["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"];
 const MAX_U64 = 2n ** 64n - 1n;
 const WORKSPACE_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -131,8 +127,8 @@ export function validateEnvironmentContract(environmentContract) {
 }
 
 export function validatePerformanceConfig(config) {
-  exactKeys(config, ["schema", "workload", "environment_contract", "warmup_runs", "sample_count", "rss_sample_interval_ms", "before", "after"], "performance config");
-  if (config.schema !== CONFIG_SCHEMA) fail("performance config schema is unsupported");
+  exactKeys(config, ["schema", "schema_version", "workload", "environment_contract", "warmup_runs", "sample_count", "rss_sample_interval_ms", "before", "after"], "performance config");
+  if (config.schema !== CONFIG_SCHEMA || config.schema_version !== 2) fail("performance config schema is unsupported");
   validatePerformanceWorkload(config.workload);
   validateEnvironmentContract(config.environment_contract);
   if (!Number.isSafeInteger(config.warmup_runs) || config.warmup_runs < 0) fail("performance warmup_runs is invalid");
@@ -211,7 +207,7 @@ function summarizeThreadStateSamples(samples, sampleIntervalMs) {
   const histogram = {};
   for (const value of runnable) histogram[String(value)] = (histogram[String(value)] ?? 0) + 1;
   return {
-    schema: "linux-process-tree-thread-state-v1",
+    schema: "linux-process-tree-thread-state", schema_version: 1,
     sampled_state: "R (running or runnable)",
     sample_interval_ms: sampleIntervalMs,
     sample_count: samples.length,
@@ -227,8 +223,8 @@ function summarizeThreadStateSamples(samples, sampleIntervalMs) {
 }
 
 export function validateThreadStateSampling(value, label) {
-  exactKeys(value, ["schema", "sampled_state", "sample_interval_ms", "sample_count", "process_count", "total_threads", "runnable_threads"], `${label} thread-state sampling`);
-  if (value.schema !== "linux-process-tree-thread-state-v1" || value.sampled_state !== "R (running or runnable)") fail(`${label} thread-state sampling contract is unsupported`);
+  exactKeys(value, ["schema", "schema_version", "sampled_state", "sample_interval_ms", "sample_count", "process_count", "total_threads", "runnable_threads"], `${label} thread-state sampling`);
+  if (value.schema !== "linux-process-tree-thread-state" || value.schema_version !== 1 || value.sampled_state !== "R (running or runnable)") fail(`${label} thread-state sampling contract is unsupported`);
   if (!Number.isSafeInteger(value.sample_interval_ms) || value.sample_interval_ms <= 0
     || !Number.isSafeInteger(value.sample_count) || value.sample_count <= 0) fail(`${label} thread-state sampling interval/count is invalid`);
   for (const field of ["process_count", "total_threads"]) {
@@ -267,8 +263,8 @@ function parseSampleStdout(stdout, label) {
   if (isRecord(parsed) && (parsed.status === "BLOCKED" || parsed.status === "FAIL")) {
     fail(`${label} explicitly reported ${parsed.status}`);
   }
-  exactKeys(parsed, ["schema", "status", "workload", "environment_contract", "completed_ticks", "source_fingerprint", "phase_wall_ns", "runnable_samples"], `${label} sample`);
-  if (parsed.schema !== SAMPLE_SCHEMA) fail(`${label} sample schema is unsupported`);
+  exactKeys(parsed, ["schema", "schema_version", "status", "workload", "environment_contract", "completed_ticks", "source_fingerprint", "phase_wall_ns", "runnable_samples"], `${label} sample`);
+  if (parsed.schema !== SAMPLE_SCHEMA || parsed.schema_version !== 2) fail(`${label} sample schema is unsupported`);
   if (parsed.status !== "PASS") fail(`${label} status must be PASS`);
   if (!Number.isSafeInteger(parsed.completed_ticks) || parsed.completed_ticks <= 0) fail(`${label} completed_ticks is invalid`);
   validateSourceFingerprint(parsed.source_fingerprint, `${label} source_fingerprint`);
@@ -277,7 +273,7 @@ function parseSampleStdout(stdout, label) {
   if (parsed.phase_wall_ns !== null) {
     if (!isRecord(parsed.phase_wall_ns)) fail(`${label} phase_wall_ns must be null or an object`);
     for (const [phase, value] of Object.entries(parsed.phase_wall_ns)) {
-      if (!/^P[0-9]+$/.test(phase)) fail(`${label} phase wall entry ${phase} is invalid`);
+      if (!REQUIRED_PHASES.includes(phase)) fail(`${label} phase wall entry ${phase} is invalid`);
       decimalU64(value, `${label} phase wall entry ${phase}`);
     }
   }
@@ -302,7 +298,7 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
   if (sample.completed_ticks !== workload.completed_ticks) fail(`${label} completed tick count differs from the common workload`);
   if (sample.source_fingerprint !== endpoint.source_fingerprint) fail(`${label} source fingerprint differs from the configured endpoint`);
   if (isAfter && (sample.phase_wall_ns === null || sample.runnable_samples === null)) fail(`${label} new engine sample must include phase wall and runnable samples`);
-  if (isAfter && JSON.stringify(Object.keys(sample.phase_wall_ns).sort()) !== JSON.stringify([...REQUIRED_PHASES].sort())) fail(`${label} new engine phase wall must include all phases P0 through P9 exactly once`);
+  if (isAfter && JSON.stringify(Object.keys(sample.phase_wall_ns).sort()) !== JSON.stringify([...REQUIRED_PHASES].sort())) fail(`${label} new engine phase wall must include all PhaseTimingPhase names exactly once`);
   if (isAfter && !sample.runnable_samples.every((capacity) => capacity === environmentContract.rayon_threads)) {
     fail(`${label} Rayon registry-capacity samples differ from the configured pool size`);
   }
@@ -531,7 +527,7 @@ export class PerformanceComparisonRun {
     if (!isRecord(environmentManifest) || Object.keys(environmentManifest).length === 0) fail("environment manifest must be a non-empty object");
     validateJsonValue(environmentManifest, "environment manifest");
     return structuredClone({
-      schema: REPORT_SCHEMA,
+      schema: REPORT_SCHEMA, schema_version: 3,
       status: "PASS",
       generated_at: timestamp,
       workload: this.#config.workload,
@@ -563,7 +559,7 @@ export class PerformanceComparisonRun {
   }
 
   matchesReusableReport(report, currentEnvironmentManifest) {
-    if (!isRecord(report) || report.schema !== REPORT_SCHEMA || report.status !== "PASS") {
+    if (!isRecord(report) || report.schema !== REPORT_SCHEMA || report.schema_version !== 3 || report.status !== "PASS") {
       fail("existing performance report is not a reusable PASS report");
     }
     if (!isDeepStrictEqual(report.workload, this.#config.workload)

@@ -1,7 +1,7 @@
-//! 固定集团图（K3，任务 12）：成员规格镜像 + 单层母子公司校验。
+//! 固定集团图：成员规格镜像 + 单层母子公司校验。
 //!
-//! 输入是 task-7 `CompanySpec`（`group_parent` + `issued_shares`）的镜像：
-//! accounting 不得 import company（依赖方向铁律），由调用方（任务 13/26）
+//! 输入是 `CompanySpec`（`group_parent` + `issued_shares`）的会计域镜像：
+//! accounting 不得 import company（依赖方向铁律），由调用方
 //! 从注册表派生。校验顺序（每步先于下一步，全部通过才产出集团）：
 //! 重复 id → 未知母公司 → 链上成环 → 根存在且无母公司 → 每个非根成员的
 //! 母公司恰为根（多层集团显式不支持）→ 无子公司 `NotApplicable` →
@@ -26,7 +26,7 @@ impl std::fmt::Display for MemberId {
     }
 }
 
-/// 报表范围标记（K3：单体与合并分别标记，不双计现金）。
+/// 报表范围标记：单体与合并分别标记，不双计现金。
 /// `Consolidated` 携带合并母公司 id（集团由根唯一标识）。
 #[derive(
     Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
@@ -47,7 +47,7 @@ impl std::fmt::Display for ScopeId {
     }
 }
 
-/// 成员规格镜像（task-7 CompanySpec 的会计域投影）。
+/// 成员规格镜像（CompanySpec 的会计域投影）。
 ///
 /// `parent_held_shares` 是**集团母公司**持有的该成员股数（固定事实，开局后
 /// 不变——不做并购/股权交易）；根成员该字段必须为 0。

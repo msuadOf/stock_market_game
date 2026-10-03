@@ -1,6 +1,6 @@
 //! 增量集合竞价事务。
 //!
-//! P3 与股票拥有的 P4 在 continuation 边界交替推进；coordinator 从 post-P0 初始化一次。
+//! AccountValidation 与股票拥有的 stock_processing 在 continuation 边界交替推进；coordinator 从 post-ExpiryShadow 初始化一次。
 //! 请求按每股实际局部受理与适用价格时间规则执行，sealed identity 只用于事实关联。
 //! stream 排空后，consuming finish 恰一次执行 AuctionTick、completion、DayEnd 与统一结算投影。
 
@@ -34,9 +34,9 @@ use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum AuctionTransactionError {
-    #[error("B2 incremental auction preparation failed: {0}")]
+    #[error("Auction/DayEnd tick 的增量 Auction 准备失败：{0}")]
     Preparation(#[source] StepFatal),
-    #[error("B2 incremental auction finalization failed: {0}")]
+    #[error("Auction/DayEnd tick 的增量 Auction 收尾失败：{0}")]
     Finalization(#[from] AuctionDayEndError),
 }
 
@@ -74,8 +74,8 @@ pub(super) struct AuctionTickResult {
     pub(super) output: AuctionTransactionOutput,
 }
 
-/// 构建 phase dispatcher 选定的竞价 candidate；开盘与收盘共享 P0–P9 事务。
-/// 各阶段的 completion 与 DayEnd 均在无失败点的 P9 安装之前完成。
+/// 构建 phase dispatcher 选定的竞价 candidate；开盘与收盘共享 ExpiryShadow–commit_tick 事务。
+/// 各阶段的 completion 与 DayEnd 均在无失败点的 commit_tick 安装之前完成。
 #[cfg(test)]
 pub(super) fn prepare_auction_tick(
     authority: &mut GameSession,
@@ -128,7 +128,7 @@ fn apply_tick_shadow_auction_transaction_inner(
     roots_override: Option<PlanChainOperationBatch>,
 ) -> Result<AuctionTransactionOutput, AuctionTransactionError> {
     let resources = plan.decision_resources.take().ok_or_else(|| {
-        AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
+        AuctionTransactionError::Preparation(invariant("SealAllocationSnapshot 缺少决策资源快照"))
     })?;
     let preceding_receipts = plan.applied_receipts.clone();
     let mut candidate = plan.state.take_session()?;
@@ -168,10 +168,10 @@ fn apply_session_auction_transaction(
         candidate.phase(),
         crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
     ) {
-        return Err(invariant("incremental B2 requires an auction phase").into());
+        return Err(invariant("增量 Auction/DayEnd tick 要求 Auction 阶段").into());
     }
     let sources = ReadyIngress::capture_sources(candidate)?;
-    // 根观察与股票/账户准备共享 post-P0 事实；两个分支完成后才允许计划变更 candidate。
+    // 根观察与股票/账户准备共享 post-ExpiryShadow 事实；两个分支完成后才允许计划变更 candidate。
     let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
@@ -311,7 +311,7 @@ pub(super) fn validate_execution_round(
         || fact_identities != accepted_identities
     {
         return Err(invariant(
-            "auction P4 fact identities do not match accepted P3 operations",
+            "Auction StockProcessing 事实身份与 AccountValidation 受理的 operations 不一致",
         ));
     }
     Ok(())

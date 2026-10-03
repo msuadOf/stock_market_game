@@ -184,7 +184,7 @@ pub struct PriceVolumeRunReport {
     pub rejection_events: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub engine_error_events: u64,
-    /// 仅由真实进入散户 B02/B03 判断路径的目标仓位样本聚合而来；不把目标当成委托或成交。
+    /// 仅由真实进入散户目标仓位与经历调整判断路径的目标仓位样本聚合而来；不把目标当成委托或成交。
     pub retail_behavior: RetailBehaviorRunReport,
     pub retail_execution: RetailExecutionRunReport,
     /// 成交的双边参与量按玩家或 NPC 公开策略档案归因；每笔成交会同时计入 maker 和 taker，
@@ -1811,7 +1811,7 @@ mod tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
-            simulation_policy_id: crate::SIMULATION_POLICY_ID_V2.to_owned(),
+            simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
         (super::SeedDiagnostics::new(&setup, 7, 1, &session), setup)

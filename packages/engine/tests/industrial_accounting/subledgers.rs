@@ -1,5 +1,5 @@
 //! 共享子账（accounting/{inventory,fixed_assets,receivables}）单元金样——
-//! 任务 9–11（银行/保险/地产）复用同一接口，此处锁定其语义契约：
+//! 行业经营处理器复用共享子账接口，此处锁定其语义契约：
 //! 移动加权平均守恒、直线折旧守恒、开项部分核销/账龄/逾期/核销。
 
 use super::{d, yuan};
@@ -89,11 +89,11 @@ fn inventory_rejects_illegal_states_without_mutation() {
 #[test]
 fn receivables_partial_apply_aging_overdue_and_write_off() {
     let mut ledger = engine::accounting::TradeOpenLedger::default();
-    let id1 = OpenItemId("AR-1".to_string());
-    let id2 = OpenItemId("AR-2".to_string());
+    let partially_settled_receivable_item_id = OpenItemId("AR-1".to_string());
+    let overdue_receivable_item_id = OpenItemId("AR-2".to_string());
     ledger
         .open(
-            id1.clone(),
+            partially_settled_receivable_item_id.clone(),
             "CUST",
             d("2030-01-01"),
             d("2030-02-01"),
@@ -102,7 +102,7 @@ fn receivables_partial_apply_aging_overdue_and_write_off() {
         .expect("open 1");
     ledger
         .open(
-            id2.clone(),
+            overdue_receivable_item_id.clone(),
             "CUST",
             d("2029-12-01"),
             d("2030-01-15"),
@@ -110,9 +110,14 @@ fn receivables_partial_apply_aging_overdue_and_write_off() {
         )
         .expect("open 2");
     // 部分核销 40：剩 60；超额核销 → 类型化拒绝。
-    assert_eq!(ledger.apply(&id1, yuan(40)).expect("partial"), yuan(60));
+    assert_eq!(
+        ledger
+            .apply(&partially_settled_receivable_item_id, yuan(40))
+            .expect("partial"),
+        yuan(60)
+    );
     assert!(matches!(
-        ledger.apply(&id1, yuan(61)),
+        ledger.apply(&partially_settled_receivable_item_id, yuan(61)),
         Err(TradeLedgerError::OverApplication { .. })
     ));
     assert_eq!(ledger.total_open().expect("total"), yuan(110));
@@ -129,13 +134,18 @@ fn receivables_partial_apply_aging_overdue_and_write_off() {
         .iter()
         .map(|(id, _)| *id)
         .collect();
-    assert_eq!(overdue, vec![&id2]);
+    assert_eq!(overdue, vec![&overdue_receivable_item_id]);
     // 核销 AR-1（余额 60）→ 清零并计入核销合计。
-    assert_eq!(ledger.write_off(&id1).expect("write off"), yuan(60));
+    assert_eq!(
+        ledger
+            .write_off(&partially_settled_receivable_item_id)
+            .expect("write off"),
+        yuan(60)
+    );
     assert_eq!(ledger.written_off_total().expect("written off"), yuan(60));
     // 已清空项目再操作 → 类型化拒绝；到期早于开立 → 拒绝；重复 id → 拒绝。
     assert!(matches!(
-        ledger.apply(&id1, yuan(1)),
+        ledger.apply(&partially_settled_receivable_item_id, yuan(1)),
         Err(TradeLedgerError::ItemCleared { .. })
     ));
     assert!(matches!(
@@ -150,7 +160,7 @@ fn receivables_partial_apply_aging_overdue_and_write_off() {
     ));
     assert!(matches!(
         ledger.open(
-            id2.clone(),
+            overdue_receivable_item_id.clone(),
             "CUST",
             d("2030-01-05"),
             d("2030-02-05"),

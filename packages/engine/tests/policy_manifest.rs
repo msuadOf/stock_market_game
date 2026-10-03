@@ -1,4 +1,4 @@
-//! 任务2（company-information-npc-intentions）：政策来源清单结构校验。
+//! 政策来源清单结构校验。
 //!
 //! fixture：`tests/fixtures/company-model/policy-sources.json`。只做机器可读结构
 //! 校验——日期/适用区间/来源/状态/不支持合同映射，不校验自然语言措辞（由独立
@@ -12,7 +12,7 @@ const MANIFEST_PATH: &str = concat!(
     "/tests/fixtures/company-model/policy-sources.json"
 );
 
-/// K3 显式列出必须存在 UnsupportedContract 映射的合同类别。
+/// 会计规则显式列出必须存在 UnsupportedContract 映射的合同类别。
 const REQUIRED_UNSUPPORTED: [&str; 5] = [
     "structured-derivatives",
     "reinsurance",
@@ -328,7 +328,7 @@ fn check_unsupported(
         if !seen.contains(required) {
             return Err(err(
                 "missing-unsupported",
-                format!("K3 required {required}"),
+                format!("会计规则要求 {required}"),
             ));
         }
     }
@@ -574,6 +574,7 @@ fn missing_unsupported_contract_mapping_is_rejected() {
         .as_array_mut()
         .unwrap()
         .retain(|u| u["id"].as_str() != Some("reinsurance"));
-    let error = validate(&manifest).expect_err("K3 列明的再保险必须存在 UnsupportedContract 映射");
+    let error =
+        validate(&manifest).expect_err("会计规则列明的再保险必须存在 UnsupportedContract 映射");
     assert_eq!(error.code, "missing-unsupported", "unexpected: {error}");
 }

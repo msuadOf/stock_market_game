@@ -133,9 +133,9 @@ fn duplicate_write_off_and_related_guards_are_rejected() {
         Err(BankError::RecoveryBeyondRecoverable { .. })
     ));
     // 活跃贷款回收 → LoanNotWrittenOff。
-    let mut bank2 = with_loan();
+    let mut active_loan_bank = with_loan();
     assert!(matches!(
-        bank2.recover_written_off(&loan_id(), yuan(1), d("2030-02-25")),
+        active_loan_bank.recover_written_off(&loan_id(), yuan(1), d("2030-02-25")),
         Err(BankError::LoanNotWrittenOff { .. })
     ));
     // 已核销贷款改阶段 → StageTransferOnWrittenOff（同阶段重估允许，

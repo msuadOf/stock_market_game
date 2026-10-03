@@ -3,4 +3,7 @@ import type { Money } from "./Money";
 import type { PositionSnap } from "./PositionSnap";
 import type { StockCode } from "./StockCode";
 
-export type SaveAccountSnap = { cash: Money, positions: { [key in StockCode]: PositionSnap }, };
+export type SaveAccountSnap = {
+  cash: Money;
+  positions: { [key in StockCode]: PositionSnap };
+};

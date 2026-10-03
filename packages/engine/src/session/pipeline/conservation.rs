@@ -91,7 +91,7 @@ impl FeeComponents {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ConservationBasis {
     TickStart(ResVec, ResVec, ResVec),
-    #[serde(rename = "P3Created")]
+
     CreatedAtValidation(ResVec),
 }
 
@@ -146,7 +146,7 @@ impl ConservationRow {
                 self.validate()
             }
             ConservationBasis::CreatedAtValidation(_) => Err(conservation_error(
-                "P3-created envelope has a P0 contribution",
+                "AccountValidation 创建的 envelope 含有 ExpiryShadow 贡献",
             )),
         }
     }

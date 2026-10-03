@@ -228,5 +228,5 @@ fn advance_refuses_out_of_sequence_dates() {
         .advance_civil_day(d("2030-01-03"))
         .expect_err("skipped day rejected");
     assert!(matches!(error, OperationsError::DateOutOfSequence { .. }));
-    let _ = ShockParams::default_v1(); // 参数版本入口保持可用
+    let _ = ShockParams::current_default_parameters(); // 参数版本入口保持可用
 }

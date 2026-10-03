@@ -6,7 +6,7 @@ use crate::calendar::date::CivilDate;
 use crate::calendar::{fnv1a64_hex, CalendarError};
 
 /// 沪深两所标识（日历覆盖维度；与证券上市的 `StockExchange` 分属不同语境，
-/// 由任务 5 的会话接线建立映射，避免本模块反向依赖 session）。
+/// 由会话的自然日时钟接线建立映射，避免本模块反向依赖 session）。
 #[derive(
     Copy,
     Clone,
@@ -131,7 +131,7 @@ impl OfficialCoverageEntry {
     }
 }
 
-/// 模拟假日回退规则集（K1 §3.3，游戏假设而非交易所公告）。
+/// 模拟假日回退规则集（游戏假设而非交易所公告）。
 ///
 /// 规则本体在 holidays.rs 固定实现；本类型承载其**版本化数据**：
 /// 通知未核验年界限 + 内嵌农历事实表 + 内容 digest。

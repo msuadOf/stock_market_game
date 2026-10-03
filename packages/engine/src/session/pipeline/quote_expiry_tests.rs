@@ -219,7 +219,7 @@ fn discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagno
     assert_eq!(game.last_retail_order_events(), before);
 
     let fatal = StepFatal::InvariantViolation {
-        description: "P0 retail diagnostic rollback".to_owned(),
+        description: "ExpiryShadow 散户诊断回滚".to_owned(),
         location: "quote_expiry_tests".to_owned(),
     };
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -375,7 +375,7 @@ fn quote_expiry_post_shadow_failure_discards_order_receipt_and_event() {
     let before_business = game.business_state_hash().unwrap();
     let before_seq = game.seq();
     let fatal = StepFatal::InvariantViolation {
-        description: "P0 post-shadow failure".to_owned(),
+        description: "ExpiryShadow 在 shadow 后失败".to_owned(),
         location: "quote_expiry_tests".to_owned(),
     };
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();

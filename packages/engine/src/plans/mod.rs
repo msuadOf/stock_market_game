@@ -1,9 +1,9 @@
-//! 可跨日的个人交易计划状态机（K6）。
+//! 可跨日的个人交易计划状态机。
 //!
 //! 纯状态机：转移是 (状态, 事件) 的确定性纯函数，无随机数、无 I/O。
 //! 计划不冻结资产，不建立第二套订单/冻结系统；对现有 `ParentOrderPlan`
-//! 执行子状态仅持可选引用（真实路由在任务 24/26 接入）。
-//! 预算分配与紧迫度报价决策属任务 22/23。
+//! 执行子状态仅持可选引用，由会话的计划执行路由接线。
+//! 预算分配与紧迫度报价决策分别在 allocation 与 urgency 中实现。
 
 mod allocation;
 mod candidates;
@@ -48,12 +48,12 @@ use validation::{validate_open, validate_policy};
 use crate::account::StockCode;
 use crate::orderbook::{AccountId, OrderId};
 
-/// K6：个人期限按风格 5/20/60 交易日；风格→期限映射属任务 17，这里只固定可测试参数。
+/// 个人期限按风格为 5/20/60 交易日；风格→期限映射由分析档案派生，这里固定参数。
 pub const HORIZON_TRADING_DAYS_SHORT: u32 = 5;
 pub const HORIZON_TRADING_DAYS_MEDIUM: u32 = 20;
 pub const HORIZON_TRADING_DAYS_LONG: u32 = 60;
 
-/// 计划政策（K5a 固定游戏参数，随 save 固化）。
+/// 计划政策（固定游戏参数，随 save 固化）。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]

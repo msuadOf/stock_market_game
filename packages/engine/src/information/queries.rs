@@ -1,7 +1,7 @@
-//! 公开库查询面（K4，任务 15）：按 id / 公司 / 期间读取已公开版本。
+//! 公开库查询面：按 id / 公司 / 期间读取已公开版本。
 //!
 //! 读取语义：`as_of` 是查询方的当前 civil 时点——早于公布时点的读取 =
-//! [`InformationError::EarlyRead`]（NPC/宿主不可读未公开信息，K4 明文）；
+//! [`InformationError::EarlyRead`]（NPC/宿主不可读未公开信息）；
 //! 公司面查询按 `as_of` 过滤后返回，不报错（「该时点可见什么」语义）。
 
 use std::collections::BTreeSet;

@@ -1,6 +1,6 @@
-//! 开局已公开集合装配（K4，任务 15）：真实历史排期组装。
+//! 开局已公开集合装配：按历史披露排期组装。
 //!
-//! 调用任务 14 前史生成（`generate_history`）+ 任务 13 报表构建，按各公司
+//! 调用公司经营前史生成（`generate_history`）与报表构建，按各公司
 //! 真实历史排期逐期公布——只有公布时点**早于开局日 00:00** 的报告进入已
 //! 公开集合（`SeededPrehistory` 标记）；开局未来才公布的报告不提前纳入，
 //! 由 live 派发（session/disclosures.rs）在其 18:00 相位公布。处理顺序 =
@@ -9,7 +9,7 @@
 //! 版本登记策略：季报/半年报走 `snapshot_interim`（不封账的定稿快照）；
 //! 年报走 `generate_report_set` + `record()`（外部版本登记——行业账套不
 //! 暴露 `&mut Books`，`close_year` 结构性不可达；登记版本同样经勾稽 +
-//! 比较项诚实性校验且不可变。封账接线归任务 26，issues 已登记）。
+//! 比较项诚实性校验且不可变；前史登记与会话自然日封账分别装配）。
 
 use std::collections::BTreeMap;
 
@@ -106,7 +106,7 @@ impl SeededPrehistory {
     }
 }
 
-/// 开局已公开集合装配：真实历史排期（任务 14 前史 + 任务 13 报表）。
+/// 开局已公开集合装配：经营前史与报表按历史披露排期组合。
 pub fn assemble_seeded_prehistory(
     config: crate::company::operations::CompanyOperationsConfig,
     game_start: CivilDate,

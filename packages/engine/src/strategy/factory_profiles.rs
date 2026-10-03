@@ -1,9 +1,9 @@
-//! 工厂侧分析档案派生（K5）：主导风格默认分布、个体一次采样与最大余数归一。
+//! 工厂侧分析档案派生：主导风格默认分布、个体一次采样与最大余数归一。
 //!
 //! 账户身份与主导风格仍由既有 ordinal 映射/抽样决定（本模块不重抽风格、不改
 //! 身份）；只在其上派生「混合分析能力」：每个非零权重按声明顺序恰好采样一次
 //! 0.6–1.4 倍率（独立 profile RNG，零权重不消耗随机数且保持零），再用最大余数
-//! 法归一回 10000bp。基本面方法仅在工厂选择一次（K5a 链接规则）。
+//! 法归一回 10000bp。基本面方法仅在工厂选择一次。
 
 use super::analysis_profile::{
     AnalysisProfile, AnalysisProfileError, AnalysisWeights, FundamentalMethod,
@@ -12,9 +12,9 @@ use super::profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyProfile};
 use super::Rng;
 use crate::orderbook::AccountId;
 
-/// K5 默认分析权重分布（顺序：基本面/趋势/量价/技术/成本经历，单位 bp）。
+/// 默认分析权重分布（顺序：基本面/趋势/量价/技术/成本经历，单位 bp）。
 ///
-/// 数表是计划文本 K5 节的逐字副本；13 个风格各自总和恒为 10000（由
+/// 数表固定主导风格的默认权重；13 个风格各自总和恒为 10000（由
 /// `analysis_profiles` 测试逐字锁定，expect 因此不可达）。
 pub fn default_analysis_weights(profile: &StrategyProfile) -> AnalysisWeights {
     let (fundamental, trend, price_volume, technical, experience_cost) = match profile {
@@ -39,7 +39,7 @@ pub fn default_analysis_weights(profile: &StrategyProfile) -> AnalysisWeights {
         i64::from(technical),
         i64::from(experience_cost),
     )
-    .expect("K5 default distributions sum to 10000 bp (locked by analysis_profiles tests)")
+    .expect("默认分析权重分布总和必须为 10000 bp（analysis_profiles 测试固定此边界）")
 }
 
 /// 为既有身份档案派生个体分析能力（新局确定性构造入口；会话层用独立种子的
@@ -138,7 +138,7 @@ fn sample_nonzero_weight(baseline: u32, rng: &mut dyn Rng) -> i64 {
     i64::from(baseline) * sample_multiplier_bp(rng)
 }
 
-/// K5a 方法链接：选择只在工厂发生，与观察/估值时点无关。
+/// 基本面方法链接：选择只在工厂发生，与观察/估值时点无关。
 fn select_fundamental_method(
     profile: &StrategyProfile,
     account_id: AccountId,

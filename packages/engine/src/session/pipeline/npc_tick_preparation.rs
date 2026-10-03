@@ -1,7 +1,6 @@
-//! Prepare NPC P2 candidates from one sealed decision snapshot and resource snapshot.
+//! 从同一密封决策快照与资源快照准备 NPC intent candidates。
 //!
-//! The combined tick coordinator owns later account validation, stock processing, settlement,
-//! final events, and the authority commit.
+//! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
 
 #[cfg(test)]
 use super::DecisionSnapshot;
@@ -29,11 +28,11 @@ use std::sync::Arc;
 pub(super) enum NpcDecisionPreparationError {
     #[error("NPC decision snapshot capture failed: {0}")]
     Snapshot(#[from] DecisionSnapshotCaptureError),
-    #[error("NPC P2 source failed: {0}")]
+    #[error("NPC DecisionShadow 来源失败：{0}")]
     Source(#[from] NpcDecisionSourceError),
-    #[error("NPC P2 projection failed: {0}")]
+    #[error("NPC DecisionShadow 投影失败：{0}")]
     Projection(#[from] NpcDecisionProjectionError),
-    #[error("NPC P2 candidate composition failed: {0}")]
+    #[error("NPC DecisionShadow 候选 composition 失败：{0}")]
     Composition(#[from] CandidateCompositionError),
     #[error("plan root capture failed: {0}")]
     Roots(#[from] StepFatal),
@@ -43,11 +42,10 @@ pub(super) enum NpcDecisionPreparationError {
     UnknownProjectedSource { key: IntentCandidateKey },
 }
 
-/// NPC-only P2 output for the main three-source orchestrator.
+/// 为三来源 orchestrator 提供仅含 NPC 的 DecisionShadow 输出。
 ///
-/// Candidate identities cover each account's reconciliation commands followed by residual
-/// intents. Raw strategy identities remain in the projection for provenance. Player and
-/// plan-chain candidates have not been read or appended at this boundary.
+/// candidate 身份按账户先覆盖 reconciliation commands，再覆盖 residual intents。
+/// raw strategy 身份保留在投影中用于来源追踪；此边界尚未读取或追加玩家与计划链候选。
 #[cfg(test)]
 pub(super) struct PreparedNpcDecisionSource {
     pub(super) snapshot: Arc<DecisionSnapshot>,
@@ -108,8 +106,8 @@ fn prepare_npc_projection(
     Ok((captured, source, projection, roots))
 }
 
-/// Called on the completed tick candidate immediately before P9. Decisions are
-/// based on this committed version; their orders enter the next market tick.
+/// 在完整 tick candidate 的 CommitTick 之前调用。
+/// 决策基于即将提交的状态，其订单进入下一市场 tick。
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
@@ -146,8 +144,8 @@ pub(in crate::session) fn queue_npc_for_next_tick(
     Ok(())
 }
 
-/// The queue is consumed on the discardable tick shadow after P0. Its source
-/// keys identify facts only; neither account ID nor key order grants priority.
+/// ExpiryShadow 完成后，在可丢弃 tick shadow 上消费队列。
+/// 来源 key 仅标识事实，账户 ID 或 key 顺序不授予交易优先级。
 pub(super) fn take_ready_npc_batch(
     session: &mut GameSession,
 ) -> Result<(IntentCandidateBatch, Vec<AccountId>), StepFatal> {

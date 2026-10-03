@@ -45,22 +45,22 @@ pub fn digest_hex(bytes: &[u8]) -> String {
         for index in 0..64 {
             let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let choose = (e & f) ^ ((!e) & g);
-            let temp1 = h
+            let round_primary_sum = h
                 .wrapping_add(sigma1)
                 .wrapping_add(choose)
                 .wrapping_add(K[index])
                 .wrapping_add(words[index]);
             let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let majority = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = sigma0.wrapping_add(majority);
+            let round_majority_sum = sigma0.wrapping_add(majority);
             h = g;
             g = f;
             f = e;
-            e = d.wrapping_add(temp1);
+            e = d.wrapping_add(round_primary_sum);
             d = c;
             c = b;
             b = a;
-            a = temp1.wrapping_add(temp2);
+            a = round_primary_sum.wrapping_add(round_majority_sum);
         }
         for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
             *slot = slot.wrapping_add(value);

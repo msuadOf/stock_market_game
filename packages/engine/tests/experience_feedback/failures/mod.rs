@@ -1,4 +1,4 @@
-//! 负向拒绝（任务 20 QA failure）：部分成交重复计次、丢失持仓生命周期、
+//! 负向拒绝：部分成交重复计次、丢失持仓生命周期、
 //! 非法金额/溢出与多股隔离。双时钟回拨与未来经历在 `clocks.rs`。
 
 mod clocks;
@@ -169,7 +169,7 @@ fn non_positive_prices_and_costs_are_rejected() {
 
 #[test]
 fn inconsistent_restored_feedback_fails_validation() {
-    // 恢复边界（任务 27 接线）前的手工篡改：乱序/越界登记必须被 validate 拒绝。
+    // 恢复边界前的手工篡改：乱序/越界登记必须被 validate 拒绝。
     let code = code();
     let mut state = err_state();
     crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 5, 50);

@@ -23,7 +23,7 @@ fn fundamental_and_technical_conflict_has_exact_blended_score() {
         experience: available(0),
     };
 
-    // When: K5a mixes only non-zero, available dimensions.
+    // 混合分析只组合权重非零且实际可用的维度。
     let assessment = blend_candidate(&weights, &signals);
 
     // Then: rhe((7000*5000 + 3000*-5000)/10000) = 2000.

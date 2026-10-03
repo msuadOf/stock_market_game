@@ -1,4 +1,4 @@
-/// Tick phase vocabulary. Ranks never depend on declaration order.
+/// TickPhase 职责词汇；rank 不依赖声明顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TickPhase {
     ExpiryShadow,

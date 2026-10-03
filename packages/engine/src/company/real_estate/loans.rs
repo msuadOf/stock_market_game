@@ -1,7 +1,7 @@
-//! 项目借款状态与 ACT/365F 计息数学（K3 地产，`borrowing_costs.rs` 的
+//! 项目借款状态与 ACT/365F 计息数学（地产会计约束，`borrowing_costs.rs` 的
 //! 状态/数学半边；结构与 `industrial::loans` / `bank::loans` 孪生同构）。
 //!
-//! 计息：interest = rhe((本金×利率bp×天数 + 余数) / 3_650_000)，余数以任务 6
+//! 计息：interest = rhe((本金×利率bp×天数 + 余数) / 3_650_000)，余数以会计底座
 //! [`FractionUnits`] 承载（单位 = 1/3_650_000 分）。地产特有：**资本化与
 //! 费用化是两条独立余数链**——逐链不变量 Σpaid×3_650_000 + 终余数 ==
 //! Σ(本金×bp×链内天数)，两条链合计恒等于合同全期利息，分毫不丢。
@@ -179,7 +179,7 @@ pub(super) fn loan_account(start: CivilDate, maturity: CivilDate) -> &'static st
     }
 }
 
-/// ACT/365F 单链计提（任务 6 `apply_basis_points_accum` 同构）：
+/// ACT/365F 单链计提（会计底座 `apply_basis_points_accum` 同构）：
 /// paid = rhe((cents×bp×days + carried) / 3_650_000)；remainder 继续累计。
 pub(super) fn accrue_act_365f(
     principal: AccountingAmount,

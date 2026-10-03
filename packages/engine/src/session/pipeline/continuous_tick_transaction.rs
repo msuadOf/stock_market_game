@@ -1,8 +1,8 @@
-//! Joint Continuous continuous-trading candidate orchestration.
+//! 编排 Continuous 交易阶段的完整 candidate。
 //!
-//! Ready NPC, player, and plan requests use the same local admission rules. All candidates
-//! share one immutable P1 resource snapshot, one persistent P3 validator, and one per-stock P4
-//! shadow. ReceiptAggregation-Projection run exactly once after the operation stream is exhausted.
+//! 就绪的 NPC、玩家与计划请求共用局部受理规则、不可变资源快照、
+//! 持久 AccountValidation validator 与逐股 StockProcessing shadow。
+//! operation stream 排空后，ReceiptAggregation/Projection 恰好运行一次。
 
 use super::{
     account_validation_context::build_account_validation_context,
@@ -35,11 +35,11 @@ use crate::{Event, GameSession};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ContinuousTransactionError {
-    #[error("B1 continuous candidate preparation failed: {0}")]
+    #[error("Continuous tick 的 candidate 准备失败：{0}")]
     Preparation(#[source] StepFatal),
-    #[error("B1 P4-P7 transaction failed: {0}")]
+    #[error("Continuous tick 的 StockProcessing/DerivationAudit 事务失败：{0}")]
     SessionExecution(#[from] SessionExecutionTransactionError),
-    #[error("B1 continuous tick finalization failed: {0}")]
+    #[error("Continuous tick 的收尾失败：{0}")]
     Finalization(#[source] StepFatal),
 }
 
@@ -69,7 +69,7 @@ pub(super) struct ContinuousTransactionOutput {
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
-/// Fully checked Continuous tick whose only remaining operation is the infallible P9 authority swap.
+/// 已完整校验的 Continuous tick；只剩不会失败的 CommitTick 权威状态交换。
 pub(super) struct PreparedContinuousTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
@@ -82,10 +82,9 @@ pub(super) struct ContinuousTickResult {
     pub(super) output: ContinuousTransactionOutput,
 }
 
-/// Builds the isolated P0-P9 continuous candidate used by the authoritative phase dispatcher.
+/// 为权威交易阶段 dispatcher 构建隔离的完整 Continuous tick candidate。
 ///
-/// Callers may inspect a preparation failure, but a successful value has no fallible work
-/// remaining after candidate validation.
+/// 调用方可以检查准备失败；candidate 校验成功后不再留有可失败工作。
 #[cfg(test)]
 pub(super) fn prepare_continuous_tick(
     authority: &mut GameSession,
@@ -153,7 +152,7 @@ fn apply_tick_shadow_continuous_transaction_with_roots(
 ) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     let resources = plan.decision_resources.take().ok_or_else(|| {
         ContinuousTransactionError::Preparation(invariant(
-            "P1 decision resource snapshot is absent",
+            "SealAllocationSnapshot 缺少决策资源快照",
         ))
     })?;
     let preceding_receipts = plan.applied_receipts.clone();
@@ -186,8 +185,8 @@ fn apply_session_continuous_transaction(
 ) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     let sources = ReadyIngress::capture_sources(candidate)?;
-    // Both preparations read the same post-P0 candidate. Plan root actions may
-    // change it only after P3/P4 inputs have been detached and checked.
+    // 两种准备读取同一报价过期后 candidate；计划根动作须等待输入隔离完成。
+    // 只有 AccountValidation/StockProcessing 输入已脱离并完成校验后，计划根动作才可修改 candidate。
     let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
@@ -261,7 +260,7 @@ fn apply_session_continuous_transaction(
         ContinuousTickFinalizationContext {
             boundary,
             day_end_event_base: u64::try_from(validation.results().len())
-                .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
+                .map_err(|_| invariant("AccountValidation 数量超出事件身份域"))?,
             lifecycle: ContinuousLifecycleProjectionInput {
                 candidates: &candidates,
                 validation: &validation,
@@ -333,7 +332,7 @@ pub(super) fn validate_execution_round(
         || fact_identities != accepted_identities
     {
         return Err(invariant(
-            "P4 round fact identities do not match accepted P3 operations",
+            "StockProcessing 本轮事实身份与 AccountValidation 受理的 operations 不一致",
         ));
     }
     Ok(())

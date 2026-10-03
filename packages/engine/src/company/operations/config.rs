@@ -12,8 +12,8 @@ use crate::company::operations::{
 use crate::company::real_estate::RealEstateBooks;
 use crate::company::spec::{CompanyKind, CompanySpec};
 
-/// 行业账套（任务 8–11 的独立引擎组合；不经过 `Company` 注册表壳——会话
-/// 接线归任务 26）。
+/// 行业账套：组合四行业独立引擎，不经过 `Company` 注册表壳；
+/// 由 `session::company_assembly` 负责会话装配。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum IndustryBooks {
     Industrial(IndustrialBooks),
@@ -33,7 +33,7 @@ impl IndustryBooks {
         }
     }
 
-    /// 权威账套可变访问（任务 26 封账接缝：结账引擎 `close_month`/
+    /// 权威账套可变访问（会话装配与执行封账接缝：结账引擎 `close_month`/
     /// `close_year` 需要 `&mut Books`。银行/保险/地产账套当前只暴露
     /// 只读 `books()`——它们的经营处理器不经过本面；会话封账只对上市
     /// 工商公司触发，此处诚实上抛而非静默跳过）。
@@ -199,7 +199,7 @@ pub struct OperatingCompanyConfig {
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperationsConfig {
     /// 公司域 RNG 总种子（派生市场/行业/公司/前史流；绝不与策略/会话种子
-    /// 共享——K4）。
+    /// 共享——经营与信息披露）。
     pub seed: u64,
     pub shock_params: ShockParams,
     pub companies: Vec<OperatingCompanyConfig>,

@@ -1,4 +1,4 @@
-//! 三条独立估值路径（K5a 行 149–153）+ 每股换算。绝不共享一个"fair value"：
+//! 三条独立估值路径 + 每股换算。绝不共享一个 "fair value"：
 //! 每法先算**归母整体权益估计**（分），再除以发行人固定的已发行普通股
 //! 总股数（绝不除以流通股数），个人区间存每股价格（悲观/乐观两情景，
 //! 每情景独立验证——任一退化 ⇒ 整法类型化不可用，不补正值）。
@@ -18,7 +18,7 @@ pub struct ScenarioEstimates {
     pub optimistic: i128,
 }
 
-/// 区间扰动（K5a 行 153）：增长 ±300bp、质量系数 ±1000bp、ROE ±200bp、
+/// 区间扰动：增长 ±300bp、质量系数 ±1000bp、ROE ±200bp、
 /// 资本成本 ±200bp。
 const GROWTH_SCENARIO_BP: i32 = 300;
 const QUALITY_SCENARIO_BP: i32 = 1_000;
@@ -36,7 +36,7 @@ fn scale_round(value: i128, numerator: i128, denominator: i128) -> Result<i128, 
     Ok(div_round_half_even(scaled, denominator))
 }
 
-/// 盈利倍数法（K5a 行 149）：估计 = 归母净利 × 质量系数 × PE。
+/// 盈利倍数法：估计 = 归母净利 × 质量系数 × PE。
 /// 净利 ≤ 0 ⇒ 不可用（绝不取绝对值）；区间 = 质量系数 ±1000bp。
 pub fn earnings_multiple(
     facts: &AnnualFacts,
@@ -77,7 +77,7 @@ pub fn earnings_multiple(
 /// - 现金利息支付 = (新借 − 还本) − 筹资 CF（筹资 = 新借 − 利息 − 还本；
 ///   本游戏经营 CF 未扣利息支付 ⇒ 需再扣利息统一到股东口径）；
 /// - 代数恒等：FCFE = 经营CF − capex + (新借−还本) − 利息 ≡ 年度净现金
-///   变动（游戏无分红/回购——K3 红线）。筹资拆出负利息 ⇒ 窗口含借款行
+///   变动（游戏不支持分红/回购）。筹资拆出负利息 ⇒ 窗口含借款行
 ///   运动无法解释的筹资流入（如开局凭证）⇒ 类型化 Undeterminable。
 fn fcfe_starting_point(facts: &AnnualFacts) -> Result<i128, Unavailable> {
     let capex = facts
@@ -102,7 +102,7 @@ fn fcfe_starting_point(facts: &AnnualFacts) -> Result<i128, Unavailable> {
         .ok_or_else(|| overflow("fcfe assembly"))
 }
 
-/// 现金流法（K5a 行 150）：5 年个人增长预测 + 有条件终值；资本成本必须
+/// 现金流法：5 年个人增长预测 + 有条件终值；资本成本必须
 /// 严格大于终值增长；区间 = 增长 ∓300bp × 资本成本 ±200bp。
 pub fn cash_flow(
     facts: &AnnualFacts,
@@ -177,7 +177,7 @@ fn dcf_equity_total(
     Ok(value)
 }
 
-/// 权益 ROE 法（K5a 行 151，银行/保险按规则固定）：
+/// 权益 ROE 法（银行/保险按规则固定）：
 /// 观察 ROE = rhe(归母净利 × 10000, 平均归母权益)（显式平均权益口径）；
 /// 预期 ROE = 观察 ROE + 个人偏差；估计 = 归母权益 × 预期ROE / 资本成本。
 /// 权益/平均权益/预期 ROE 非正 ⇒ 不可用/高风险；区间 = ROE ∓200bp ×

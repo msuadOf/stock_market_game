@@ -1,18 +1,18 @@
-//! 存档冻结语义：恢复的日历政策是权威，新默认表不得覆盖（K1）。
+//! 存档冻结语义：恢复的日历政策是权威，新默认表不得覆盖。
 //!
-//! 任务 4 在类型层证明机制；session 存档接线在任务 27。
+//! 在日历类型层验证冻结机制；session 恢复仍沿用存档政策。
 
 use crate::{d, default_calendar};
 use engine::calendar::{CalendarExchange, DayStatus, TradingCalendar, YearCoverageLabel};
 
 #[test]
 fn frozen_calendar_survives_new_defaults() {
-    // v1：当前发布默认政策（内嵌完整政策数据：官方覆盖 + 模拟回退 + 农历事实表）。
-    let saved_policy = engine::calendar::CalendarPolicy::default_v1().unwrap();
+    // 已保存政策：当前发布默认表（内嵌完整政策数据：官方覆盖 + 模拟回退 + 农历事实表）。
+    let saved_policy = engine::calendar::CalendarPolicy::current_default_policy().unwrap();
     let saved_policy_bytes = serde_json::to_vec(&saved_policy).unwrap();
 
-    // v2：模拟“未来发布的新默认表”——算法版本升级、2026 已补证（通知未核验年
-    // 前移到 2025）、沪市 2030 新增官方覆盖（额外休市 2030-09-30）。与 v1 在
+    // 模拟未来默认政策：假设算法升级、2026 已补证（通知未核验年
+    // 前移到 2025），并加入沪市 2030 模拟覆盖 metadata（额外休市 2030-09-30）。与已保存政策在
     // 探针查询上有真实分歧，否则本测试没有区分力。
     let mut spec = saved_policy.spec();
     spec.algorithm_version = 2;
@@ -33,7 +33,7 @@ fn frozen_calendar_survives_new_defaults() {
     let future_default_policy = engine::calendar::CalendarPolicy::from_parts(spec).unwrap();
     let future_calendar = TradingCalendar::from_policy(future_default_policy.clone()).unwrap();
 
-    // 分歧确实存在（v2 自身语义生效）。
+    // 模拟未来默认政策自身的查询结果确有分歧。
     assert_eq!(
         future_calendar
             .year_label(CalendarExchange::Sse, 2026)
@@ -53,26 +53,30 @@ fn frozen_calendar_survives_new_defaults() {
         DayStatus::Closed(engine::calendar::ClosedReason::OfficialHoliday { .. })
     ));
 
-    // 恢复：反序列化 v1 字节 → 不读任何新默认表，v1 对所有查询保持权威。
+    // 恢复已保存政策字节，不读任何新默认表；所有查询仍以保存的政策为准。
     let restored: engine::calendar::CalendarPolicy =
         serde_json::from_slice(&saved_policy_bytes).unwrap();
-    let cal_v1 = TradingCalendar::from_policy(restored).unwrap();
+    let restored_calendar = TradingCalendar::from_policy(restored).unwrap();
     assert_eq!(
-        cal_v1.year_label(CalendarExchange::Sse, 2026).unwrap(),
+        restored_calendar
+            .year_label(CalendarExchange::Sse, 2026)
+            .unwrap(),
         YearCoverageLabel::NoticeTextUnverified
     );
     assert_eq!(
-        cal_v1.year_label(CalendarExchange::Sse, 2030).unwrap(),
+        restored_calendar
+            .year_label(CalendarExchange::Sse, 2030)
+            .unwrap(),
         YearCoverageLabel::SimulatedFuture
     );
     assert_eq!(
-        cal_v1
+        restored_calendar
             .day_status(CalendarExchange::Sse, d("2030-09-30"))
             .unwrap(),
         DayStatus::Trading
     );
     assert_eq!(
-        cal_v1.policy().algorithm_version(),
+        restored_calendar.policy().algorithm_version(),
         saved_policy.algorithm_version(),
         "恢复政策不得被新算法版本覆盖"
     );
@@ -82,9 +86,11 @@ fn frozen_calendar_survives_new_defaults() {
     let mut probe = d("2030-01-01");
     while probe <= d("2030-12-31") {
         assert_eq!(
-            cal_v1.day_status(CalendarExchange::Sse, probe).unwrap(),
+            restored_calendar
+                .day_status(CalendarExchange::Sse, probe)
+                .unwrap(),
             fresh.day_status(CalendarExchange::Sse, probe).unwrap(),
-            "restored v1 diverged from fresh v1 at {probe:?}"
+            "恢复日历与按保存政策重新构建的日历在 {probe:?} 处不一致"
         );
         probe = probe.next().unwrap();
     }

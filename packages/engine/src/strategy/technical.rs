@@ -1,4 +1,4 @@
-//! 具名技术指标计算内核（K5 行 134：SMA20/SMA60、RSI14、ATR14 按完整日 K 计算）。
+//! 具名技术指标计算内核：SMA20/SMA60、RSI14、ATR14 按完整日 K 计算。
 //!
 //! 本层是纯数学内核：只接收已完成日 K 的价格序列，不理解交易日历、宿主 tick
 //! 或账户状态；窗口长度一律是完整交易日数。全部为整数分运算，除法一律半偶
@@ -12,9 +12,9 @@
 
 use crate::Money;
 
-/// K5 固定短均线窗口（完整交易日数）。
+/// 固定短均线窗口（完整交易日数）。
 pub const SMA_SHORT_WINDOW: usize = 20;
-/// K5 固定长均线窗口（完整交易日数）。
+/// 固定长均线窗口（完整交易日数）。
 pub const SMA_LONG_WINDOW: usize = 60;
 /// RSI14 的涨跌样本数；需要 RSI_WINDOW + 1 个收盘价。
 pub const RSI_WINDOW: usize = 14;
@@ -67,7 +67,7 @@ pub struct RelativeStrengthIndex {
 }
 
 /// ATR14 = 最近 14 个真实波幅的简单平均，半偶舍入到分。
-/// K5 约束：ATR 只供风险/执行参考，绝不充当方向信号。
+/// ATR 只供风险/执行参考，绝不充当方向信号。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AverageTrueRange {
     pub window: usize,

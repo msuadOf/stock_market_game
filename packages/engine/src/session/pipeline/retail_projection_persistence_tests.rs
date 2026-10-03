@@ -147,7 +147,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         crate::session::npc_working_quote_tests::retail_quote_setup(),
         44,
     )
-    .expect("v2 retail fixture must be valid");
+    .expect("runtime_state retail fixture must be valid");
     let code = source.state.setup.stocks[0].code.clone();
     let old = receipt_for_stock(0, 1, code.clone());
     source.state.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
@@ -162,7 +162,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     let save = source
         .save()
         .expect("non-empty seen prefix must be saveable");
-    assert_eq!(save.runtime_v2.retail_projection_seen.len(), 1);
+    assert_eq!(save.runtime_state.retail_projection_seen.len(), 1);
     let bytes = serde_json::to_vec(&save).unwrap();
     let decoded = crate::session::decode_save_slot(&bytes, &SaveDecodeLimits::default())
         .expect("complete SaveSlot bytes must decode");
@@ -205,14 +205,14 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         vec![vec![candidate]],
         vec![next_key],
     )
-    .expect("P5 must allocate from the restored cursor");
+    .expect("ReceiptAggregation 必须从恢复的游标分配");
     assert_eq!(committed[0].index, 1, "receipt index must not be reused");
     assert_eq!(restored.state.next_receipt_base, 2);
 
     let cash_before = restored.state.accounts[&AccountId(1)].cash();
     let first =
         apply_session_settlement_transaction(&mut restored, &[old.clone(), committed[0].clone()])
-            .expect("P6 must ignore the restored old identity and consume the next one");
+            .expect("SettlementShadow 必须忽略已恢复的旧身份并消费下一个身份");
     assert_eq!(first.settlement.applied_receipts, 1);
     assert_eq!(first.events.len(), 1);
     assert_eq!(
@@ -249,6 +249,6 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     let continued = restored
         .save()
         .expect("continued receipt prefix must remain saveable");
-    assert_eq!(continued.runtime_v2.next_receipt_base, 2);
-    assert_eq!(continued.runtime_v2.retail_projection_seen.len(), 2);
+    assert_eq!(continued.runtime_state.next_receipt_base, 2);
+    assert_eq!(continued.runtime_state.retail_projection_seen.len(), 2);
 }

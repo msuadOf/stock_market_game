@@ -1,4 +1,4 @@
-//! K5a account-local candidate scoring and target conversion.
+//! 按账户评分候选并转换目标。
 
 mod signals;
 mod targets;

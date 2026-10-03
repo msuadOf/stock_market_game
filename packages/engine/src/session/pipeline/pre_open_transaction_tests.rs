@@ -86,7 +86,7 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
         "09:25-09:30 remains a market-data-silent window",
     );
 
-    let save = authority.save().expect("P9 is a legal save quiet point");
+    let save = authority.save().expect("CommitTick 是合法存档静止点");
     let restored = GameSession::restore(&save).expect("committed PreOpen save must restore");
     assert_eq!(
         serde_json::to_value(restored.save().unwrap()).unwrap(),

@@ -1,4 +1,4 @@
-//! Prepared single-point P9 commit for a fully computed tick candidate.
+//! 为完整计算的 tick candidate 准备单点 CommitTick 提交。
 
 #[cfg(test)]
 use crate::session::StateHash;
@@ -42,7 +42,7 @@ impl TickCommitReceipt {
     }
 }
 
-/// Completes every fallible P8/P9 precondition and returns an infallible commit token.
+/// 完成 PreCommitValidation/CommitTick 的全部可失败前置检查，返回不会失败的 commit token。
 pub(super) fn prepare_candidate_commit<'authority>(
     authority: &'authority mut GameSession,
     mut candidate: GameSession,
@@ -59,7 +59,7 @@ pub(super) fn prepare_candidate_commit<'authority>(
         super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
-            "P9 candidate advanced more than one market tick".to_owned(),
+            "CommitTick candidate 推进了超过一个市场 tick".to_owned(),
         ));
     }
     validate_receipt_cursor(&candidate)?;
@@ -166,7 +166,7 @@ fn validate_event_keys(
 ) -> Result<(), StepFatal> {
     if events.len() != keys.len() || expiry_count > events.len() {
         return Err(invariant(
-            "P0 and P7 event identity counts do not match the P9 outbox".to_owned(),
+            "ExpiryShadow 与 DerivationAudit 的事件身份数量与 CommitTick outbox 不一致".to_owned(),
         ));
     }
     let mut seen = BTreeSet::new();
@@ -184,7 +184,7 @@ fn validate_event_keys(
             || !seen.insert(key.clone())
         {
             return Err(invariant(
-                "P0/P7 event identity is invalid or duplicated".to_owned(),
+                "ExpiryShadow/DerivationAudit 事件身份无效或重复".to_owned(),
             ));
         }
     }
@@ -226,7 +226,7 @@ fn validate_applied_receipt_journal(
             JournalRank::PreSeal => {
                 if reached_sealed || !matches!(key.source(), ReceiptSource::QuoteExpiry(_)) {
                     return Err(invariant(
-                        "P0 receipts are not the pre-seal journal prefix".to_owned(),
+                        "ExpiryShadow receipts 不构成 PreSeal journal 前缀".to_owned(),
                     ));
                 }
             }

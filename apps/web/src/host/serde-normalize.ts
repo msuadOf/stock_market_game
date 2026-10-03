@@ -2,7 +2,7 @@ import type { PublicReportPage, PublicReportSummary } from "../types/engine.ts";
 import { parsePublicReport, parsePublicReportPage } from "./public-report-normalize.ts";
 
 type WasmSaveMaps = {
-  readonly runtime_v2: {
+  readonly runtime_state: {
     readonly strategy_states: Record<string, unknown>;
   };
   readonly snapshot: { readonly accounts: Record<string, unknown> };
@@ -83,7 +83,7 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
     return result;
   };
   const accounts = accountMap(slot.snapshot.accounts, "");
-  const strategyStates = accountMap(slot.runtime_v2.strategy_states, "策略状态");
+  const strategyStates = accountMap(slot.runtime_state.strategy_states, "策略状态");
   const npcAttention = accountMap(slot.npc_attention, "NPC 注意力");
   const retailExperience = accountMap(slot.retail_experience, "散户经历");
   const parentOrders = accountMap(slot.parent_orders, "机构母单");
@@ -94,8 +94,8 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
   const plans = accountMap(slot.plans.plans, "交易计划");
   return {
     ...slot,
-    runtime_v2: {
-      ...slot.runtime_v2,
+    runtime_state: {
+      ...slot.runtime_state,
       strategy_states: strategyStates,
     },
     npc_attention: npcAttention,

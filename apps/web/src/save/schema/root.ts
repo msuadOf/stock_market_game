@@ -9,12 +9,12 @@ import { parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
 import { parsePendingPlanEvents, parsePlanBook } from "./personal/plans.ts"
 import { decimal, exact, integer, record } from "./primitives.ts"
 import { parseCivilClock } from "./civil-clock.ts"
-import { parseSaveRuntimeV2 } from "./runtime-v2.ts"
+import { parseSaveRuntime } from "./runtime-state.ts"
 import { parseUrgencyPolicy } from "./urgency-policy.ts"
 
 export type StrictSaveEnvelope = {
-  readonly schema_version: 2
-  readonly runtime_v2: ReturnType<typeof parseSaveRuntimeV2>
+  readonly schema_version: 3
+  readonly runtime_state: ReturnType<typeof parseSaveRuntime>
   readonly setup: ReturnType<typeof parseSetup>
   readonly seed: string
   readonly snapshot: ReturnType<typeof parseSaveSnapshot>
@@ -46,18 +46,21 @@ export type StrictSaveEnvelope = {
   readonly pending_plan_events: ReturnType<typeof parsePendingPlanEvents>
 }
 
-const ROOT_KEYS = ["schema_version", "runtime_v2", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "next_order_id", "civil_clock", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "pending_plan_events"] as const
+const ROOT_KEYS = ["schema_version", "runtime_state", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "next_order_id", "civil_clock", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "pending_plan_events"] as const
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")
-  exact(root, ROOT_KEYS, "根节点")
   const schemaVersion = integer(root.schema_version, "schema_version", 0)
-  if (schemaVersion < 2) throw new Error(`存档 schema_version ${schemaVersion} 是 legacy；仅支持 schema v2`)
-  if (schemaVersion > 2) throw new Error(`存档 schema_version ${schemaVersion} newer than supported schema v2`)
+  if (schemaVersion < 3) throw new Error(`存档 schema_version ${schemaVersion}：不支持旧版本；仅支持 schema_version=3`)
+  if (schemaVersion > 3) throw new Error(`存档 schema_version ${schemaVersion} 高于当前支持版本 3`)
+  exact(root, ROOT_KEYS, "根节点")
   const order = parseOrderState(root)
   const setup = parseSetup(root.setup, "setup")
+  if (setup.simulation_policy_id !== "a-share-simulation") {
+    throw new Error(`存档 setup.simulation_policy_id 必须为 a-share-simulation，实际为 ${JSON.stringify(setup.simulation_policy_id)}`)
+  }
   const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
   exact(order.book_next_sequences, setup.stocks.map((stock) => stock.code), "book_next_sequences (setup.stocks)")
   exact(order.book_next_sequences, Object.keys(snapshot.markets), "book_next_sequences (snapshot.markets)")
-  return { schema_version: 2, runtime_v2: parseSaveRuntimeV2(root.runtime_v2), setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), ops_wiring: parseOperationsWiring(root.ops_wiring), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), pending_plan_events: parsePendingPlanEvents(root.pending_plan_events) }
+  return { schema_version: 3, runtime_state: parseSaveRuntime(root.runtime_state), setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), ops_wiring: parseOperationsWiring(root.ops_wiring), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), pending_plan_events: parsePendingPlanEvents(root.pending_plan_events) }
 }

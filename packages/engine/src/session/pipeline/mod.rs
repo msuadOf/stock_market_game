@@ -1,8 +1,8 @@
-//! Authoritative escrow-backed market-tick pipeline.
+//! 使用 Escrow 的权威市场 tick pipeline。
 //!
-//! Each trading phase prepares its complete P0-P9 candidate against an isolated shadow.  The
-//! public runtime reaches authority only through the single phase dispatcher and an infallible
-//! P9 swap after ledger, settlement and event checks have succeeded.
+//! 每种交易阶段在隔离 shadow 上准备从过期处理到提交的完整 candidate。
+//! 只有唯一交易阶段 dispatcher 可以安装公共运行时权威状态；
+//! ledger、settlement 与事件检查成功后执行不会失败的 CommitTick 交换。
 
 mod account_settlement;
 mod account_validation;
@@ -219,7 +219,7 @@ impl TickShadowPlan {
         self.decision_resources
             .as_ref()
             .ok_or_else(|| StepFatal::InvariantViolation {
-                description: "P1 decision resource snapshot is absent".to_owned(),
+                description: "SealAllocationSnapshot 缺少决策资源快照".to_owned(),
                 location: "TickShadowPlan::decision_resources".to_owned(),
             })
     }
@@ -233,8 +233,8 @@ impl TickShadowPlan {
     }
 }
 
-/// Capture an isolated tick candidate, apply P0 expiry, and seal P1 resources.
-/// Later stages run in the phase-specific transaction before the P9 commit.
+/// 捕获隔离 tick candidate，应用报价过期并密封账户分配资源。
+/// 后续步骤在交易阶段专属事务内运行，并在最后提交 tick。
 pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     input.session.require_healthy()?;
     let mut shadow = TickShadowPlan {
@@ -271,7 +271,8 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
         .hydrate_or_validate_envelope_ledger()
         .expect("plan-root fixture must have a valid starting ledger");
     let phase = authority.phase();
-    let mut plan = plan_tick(PhaseInput { session: authority }).expect("plan-root tick P0/P1");
+    let mut plan = plan_tick(PhaseInput { session: authority })
+        .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
     match phase {
         TradingPhase::Continuous => {
             continuous_tick_transaction::apply_tick_shadow_continuous_transaction_with_roots_for_test(
@@ -294,7 +295,7 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
         }
     }
     candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
-        .expect("plan-root tick P9 preparation")
+        .expect("计划根 tick 的 CommitTick 准备")
         .commit()
         .tick
         .events

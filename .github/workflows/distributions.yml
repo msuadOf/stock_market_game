@@ -29,6 +29,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_COMPILE_CACHE_FORMAT_VERSION: 1
+  DISTRIBUTION_NATIVE_CACHE_FORMAT_VERSION: 1
 
 jobs:
   frontend:
@@ -60,7 +62,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          prefix-key: v1-rust-compile-only
+          prefix-key: rust-compile-only-cache-${{ env.RUST_COMPILE_CACHE_FORMAT_VERSION }}
           cache-targets: false
           cache-directories: |
             target/release
@@ -188,10 +190,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/build-cache/${{ matrix.product }}
-          key: distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: distribution-native-cache-${{ env.DISTRIBUTION_NATIVE_CACHE_FORMAT_VERSION }}-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
-            distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-
+            distribution-native-cache-${{ env.DISTRIBUTION_NATIVE_CACHE_FORMAT_VERSION }}-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            distribution-native-cache-${{ env.DISTRIBUTION_NATIVE_CACHE_FORMAT_VERSION }}-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-
       - name: Download current-run frontend
         if: matrix.product != 'server'
         uses: actions/download-artifact@v4

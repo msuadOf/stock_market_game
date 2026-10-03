@@ -74,7 +74,7 @@ fn collector_rejects_a_key_whose_variant_mapping_does_not_match_its_event() {
 }
 
 #[test]
-fn collector_rejects_duplicate_phase_six_session_identity_without_advancing_cursor() {
+fn collector_rejects_duplicate_session_lifecycle_identity_without_advancing_cursor() {
     let first = Event::CivilDateAdvanced {
         seq: 71,
         settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),

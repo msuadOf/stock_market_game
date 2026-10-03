@@ -1,8 +1,8 @@
-//! 公开信息域（K4，任务 15）：定期报告、临时公告与不可变公开信息库。
+//! 公开信息域：定期报告、临时公告与不可变公开信息库。
 //!
 //! 职责边界（依赖方向：information → {accounting, calendar, company}，
-//! 被 session/disclosures 与任务 16/18/29 消费）：
-//! - [`schedule`]：K4 定期披露游戏排期（基准日 + 公司稳定偏移 + 18:00 相位）。
+//! 被 session/disclosures、NPC 获知登记、个人信念与诊断消费）：
+//! - [`schedule`]：定期披露游戏排期（基准日 + 公司稳定偏移 + 18:00 相位）。
 //! - [`publication`]：`PublishedReport` / `Announcement` 值类型与公布请求/
 //!   时点校验（发生/报告期/批准/公布时点分离；更正 = 新版本关联旧 ID）。
 //! - [`public_view`]：`PublicLibrary` 不可变公开库（插入 + 恢复边界全量
@@ -10,13 +10,13 @@
 //!   已公开集合装配在 `prehistory`（真实历史排期，`SeededPrehistory`
 //!   标记；开局未来才公布的报告不提前纳入）。
 //! - [`acquisition`]：`NpcInformationState` 个人获知登记（一次获知只记一次；
-//!   公共曝光只改变发现机会——`discovery_candidates` 候选面，任务 25 接线）。
+//!   公共曝光只改变发现机会——注意力发现接线消费 `discovery_candidates` 候选面）。
 //! - [`npc_view`]：`NpcObservationContext` 本人已知公开信息 + 可见行情的
 //!   引用面（策略不可达 CompanyState/总账；历史版本按获知时点钉死）。
 //!
 //! 公布是**纯 civil 域事件**：不产生市场事件/tick/RNG 消费，非交易日
-//! 18:00 照常发布（K4 明文）。公开边界只收结账引擎登记簿中勾稽通过的
-//! 版本（任务 13 契约）；普通查询面只见公开版本，不见未披露总账。
+//! 18:00 照常发布。公开边界只收结账引擎登记簿中勾稽通过的
+//! 版本；普通查询面只见公开版本，不见未披露总账。
 
 mod acquisition;
 mod npc_view;
@@ -52,14 +52,14 @@ use crate::calendar::{CivilDateError, CivilInstant};
 use crate::company::operations::OperationsError;
 use thiserror::Error;
 
-/// 公开信息域错误（类型化，绝不静默；大枚举装箱压缩 Err 值域——任务 12
-/// `DeclaredSide` / 任务 13 `Report` 先例）。
+/// 公开信息域错误（类型化，绝不静默；大枚举装箱压缩 Err 值域，沿用
+/// 合并 `DeclaredSide` 与报表 `Report` 的装箱方式）。
 #[derive(Debug, Error)]
 pub enum InformationError {
     /// 日期算法层错误（排期加法越出 1900–2199 验证窗等）。
     #[error("civil date error: {0}")]
     Date(#[from] CivilDateError),
-    /// 前史/经营装配失败（任务 14 透传，装箱）。
+    /// 前史/经营装配失败（透传公司经营错误，装箱）。
     #[error("operations failure: {0}")]
     Operations(Box<OperationsError>),
     /// 结账登记簿操作失败（快照/登记，装箱）。
@@ -126,9 +126,9 @@ pub enum InformationError {
         actual: CivilInstant,
     },
     /// 公司排期偏移越界（> 7 自然日）。
-    #[error("schedule offset {offset} exceeds the K4 maximum of {SCHEDULE_OFFSET_MAX}")]
+    #[error("披露排期偏移 {offset} 超过最大值 {SCHEDULE_OFFSET_MAX}")]
     IllegalScheduleOffset { offset: u8 },
-    /// 排期基准漂移导致非法窗口（K4 契约守卫：年报 ≤4-30、半年 ≤8-31、
+    /// 排期基准漂移导致非法窗口（披露窗口守卫：年报 ≤4-30、半年 ≤8-31、
     /// Q1 不早于上一年年报；当前常数下结构性成立，漂移时在此显式失败）。
     #[error("schedule window illegal for {kind:?} fiscal {fiscal_year}: {detail}")]
     IllegalScheduleWindow {

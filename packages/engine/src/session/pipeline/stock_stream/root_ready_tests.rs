@@ -116,11 +116,11 @@ fn already_consumed_root_notification_keeps_waiting_for_stock_completion() {
 }
 
 fn consumed_notification_fixture(workers: usize) {
-    let (b_started, _wait_for_b) = mpsc::channel();
+    let (b_started, _wait_for_blocked_root) = mpsc::channel();
     let (release_b, wait_for_release) = mpsc::channel();
     let notifications = StockStreamNotifications::new();
-    // The result may have been consumed during first_ready_batch or P3. The
-    // early notification remains queued when the stock stream starts.
+    // 结果可能已在 first_ready_batch 或 AccountValidation 中被消费；
+    // 股票 stream 启动时，早到的 completion 通知仍保留在队列中。
     notifications.sender.send(TickWorkReady::PlanRoot).unwrap();
     let mut root_notifications = 0;
     let mut completed_stock = false;

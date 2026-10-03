@@ -2,4 +2,10 @@
 import type { PublicReportComparative } from "./PublicReportComparative";
 import type { PublicReportIncomeColumns } from "./PublicReportIncomeColumns";
 
-export type PublicReportIncome = { quarter: PublicReportIncomeColumns, cumulative: PublicReportIncomeColumns, prior_year: PublicReportComparative<PublicReportIncomeColumns>, minority_net_income: string | null, net_income_to_parent: string | null, };
+export type PublicReportIncome = {
+  quarter: PublicReportIncomeColumns;
+  cumulative: PublicReportIncomeColumns;
+  prior_year: PublicReportComparative<PublicReportIncomeColumns>;
+  minority_net_income: string | null;
+  net_income_to_parent: string | null;
+};

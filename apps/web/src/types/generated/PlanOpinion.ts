@@ -2,6 +2,6 @@
 import type { OpinionSource } from "./OpinionSource";
 
 /**
- * 观点快照：综合判断分数（K5a 的 S，由上游计算）与来源。
+ * 观点快照：综合判断分数 S（由上游计算）与来源。
  */
 export type PlanOpinion = { signal_score_bp: number; source: OpinionSource };

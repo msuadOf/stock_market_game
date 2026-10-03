@@ -1,8 +1,8 @@
-//! Complete root-plan scheduling against one P1 observation and incremental typed P3/P4 results.
+//! 用同一 SealAllocationSnapshot 观察与增量 typed AccountValidation/StockProcessing 结果调度完整根计划。
 //!
-//! This module owns plan-fact consumption. ReceiptAggregation/Settlement still receive every receipt once, and Projection must
-//! not repeat parent/PlanBook projection for identities returned in `consumed`. No public event
-//! is inspected to determine a command outcome, including immediately fully filled orders.
+//! 本模块负责消费计划事实；ReceiptAggregation/Settlement 对每条 receipt 仅处理一次。
+//! Projection 不得重复投影 consumed 中身份对应的 parent/PlanBook。
+//! 命令结果来自 typed 事实，即时全成也不通过公共事件推断。
 
 #[cfg(test)]
 use super::DecisionSnapshot;
@@ -350,7 +350,7 @@ impl AdaptivePlanChainCoordinator {
                     && !selected_keys.contains(&fact.candidate_key)
             }) {
                 return Err(invariant(
-                    "P4 returned a plan fact without its typed P3 outcome",
+                    "StockProcessing 返回的计划事实缺少对应的 typed AccountValidation 结果",
                 ));
             }
             for fact in round
@@ -362,7 +362,7 @@ impl AdaptivePlanChainCoordinator {
                     .insert((fact.candidate_key.clone(), fact.sealed_index), fact)
                     .is_some()
                 {
-                    return Err(invariant("P4 returned a duplicate plan command fact"));
+                    return Err(invariant("StockProcessing 返回了重复的计划命令事实"));
                 }
             }
         }
@@ -371,24 +371,26 @@ impl AdaptivePlanChainCoordinator {
             let outcome = match step.result() {
                 CandidateValidationResult::Rejected { reason, .. } => {
                     if step.operation().is_some() {
-                        return Err(invariant("P3-rejected command carries an operation"));
+                        return Err(invariant("AccountValidation 拒绝的命令仍携带 operation"));
                     }
                     PlanRouteOutcome::Rejected(reason.clone())
                 }
                 CandidateValidationResult::Accepted { sealed_index, .. } => {
                     let operation = step
                         .operation()
-                        .ok_or_else(|| invariant("P3-accepted command has no operation"))?;
+                        .ok_or_else(|| invariant("AccountValidation 受理的命令缺少 operation"))?;
                     if operation.candidate_key() != candidate.key()
                         || operation.sealed_index() != *sealed_index
                     {
                         return Err(invariant(
-                            "P3 operation identity disagrees with its candidate result",
+                            "AccountValidation operation 身份与候选结果不一致",
                         ));
                     }
                     let fact = facts
                         .remove(&(candidate.key().clone(), *sealed_index))
-                        .ok_or_else(|| invariant("P3-accepted command has no P4 fact"))?;
+                        .ok_or_else(|| {
+                            invariant("AccountValidation 受理的命令缺少 StockProcessing 事实")
+                        })?;
                     validate_command_fact(candidate, operation, fact)?;
                     route_outcome(&fact.outcome)
                 }
@@ -407,7 +409,7 @@ impl AdaptivePlanChainCoordinator {
             ));
         }
         if !facts.is_empty() {
-            return Err(invariant("P4 returned an extra plan command fact"));
+            return Err(invariant("StockProcessing 返回了额外的计划命令事实"));
         }
         if let Some(round) = round {
             self.project_execution_round(session, round)?;
@@ -439,7 +441,7 @@ impl AdaptivePlanChainCoordinator {
                     && !selected_keys.contains(&fact.candidate_key)
             }) {
                 return Err(invariant(
-                    "auction P4 returned a plan fact without its typed P3 outcome",
+                    "Auction StockProcessing 返回的计划事实缺少对应的 typed AccountValidation 结果",
                 ));
             }
             for fact in round
@@ -452,7 +454,7 @@ impl AdaptivePlanChainCoordinator {
                     .is_some()
                 {
                     return Err(invariant(
-                        "P4 returned a duplicate auction plan command fact",
+                        "StockProcessing 返回了重复的 Auction 计划命令事实",
                     ));
                 }
             }
@@ -463,25 +465,29 @@ impl AdaptivePlanChainCoordinator {
                 CandidateValidationResult::Rejected { reason, .. } => {
                     if step.operation().is_some() {
                         return Err(invariant(
-                            "P3-rejected auction command carries an operation",
+                            "AccountValidation 拒绝的 Auction 命令仍携带 operation",
                         ));
                     }
                     PlanRouteOutcome::Rejected(reason.clone())
                 }
                 CandidateValidationResult::Accepted { sealed_index, .. } => {
-                    let operation = step
-                        .operation()
-                        .ok_or_else(|| invariant("P3-accepted auction command has no operation"))?;
+                    let operation = step.operation().ok_or_else(|| {
+                        invariant("AccountValidation 受理的 Auction 命令缺少 operation")
+                    })?;
                     if operation.candidate_key() != candidate.key()
                         || operation.sealed_index() != *sealed_index
                     {
                         return Err(invariant(
-                            "auction P3 operation identity disagrees with its candidate result",
+                            "Auction AccountValidation operation 身份与候选结果不一致",
                         ));
                     }
                     let fact = facts
                         .remove(&(candidate.key().clone(), *sealed_index))
-                        .ok_or_else(|| invariant("P3-accepted auction command has no P4 fact"))?;
+                        .ok_or_else(|| {
+                            invariant(
+                                "AccountValidation 受理的 Auction 命令缺少 StockProcessing 事实",
+                            )
+                        })?;
                     validate_auction_command_fact(candidate, operation, fact)?;
                     auction_route_outcome(&fact.outcome)
                 }
@@ -500,7 +506,9 @@ impl AdaptivePlanChainCoordinator {
             ));
         }
         if !facts.is_empty() {
-            return Err(invariant("P4 returned an extra auction plan command fact"));
+            return Err(invariant(
+                "StockProcessing 返回了额外的 Auction 计划命令事实",
+            ));
         }
         if let Some(round) = round {
             self.project_auction_execution_round(session, round)?;
@@ -530,13 +538,13 @@ impl AdaptivePlanChainCoordinator {
             .iter()
             .map(|step| {
                 if step.candidate_key() != step.result().key() {
-                    return Err(invariant("P3 result identity disagrees with its candidate"));
+                    return Err(invariant("AccountValidation 结果身份与候选不一致"));
                 }
                 pending
                     .get(step.candidate_key())
                     .cloned()
                     .cloned()
-                    .ok_or_else(|| invariant("P3 result belongs to no pending plan candidate"))
+                    .ok_or_else(|| invariant("AccountValidation 结果不属于任何待处理计划候选"))
             })
             .collect()
     }
@@ -551,7 +559,7 @@ impl AdaptivePlanChainCoordinator {
             .map(|step| (step.candidate_key(), step))
             .collect::<BTreeMap<_, _>>();
         if by_key.len() != steps.len() {
-            return Err(invariant("P3 returned a duplicate plan-chain candidate"));
+            return Err(invariant("AccountValidation 返回了重复的计划链候选"));
         }
         let mut ordered = Vec::with_capacity(steps.len());
         for candidate in &self.pending {
@@ -560,9 +568,7 @@ impl AdaptivePlanChainCoordinator {
             }
         }
         if !by_key.is_empty() {
-            return Err(invariant(
-                "P3 result belongs to a different plan-chain candidate",
-            ));
+            return Err(invariant("AccountValidation 结果属于其他计划链候选"));
         }
         Ok(ordered)
     }
@@ -1019,7 +1025,7 @@ fn project_continuous_causal_start(
             original_qty,
         } => {
             let quotes = quotes.ok_or_else(|| {
-                invariant("P4-rejected continuous place has no pre-operation quote projection")
+                invariant("StockProcessing 拒绝的 Continuous Place 缺少操作前报价投影")
             })?;
             let mut rejection_receipts = round.receipts.iter().filter(|receipt| {
                 receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
@@ -1029,14 +1035,14 @@ fn project_continuous_causal_start(
                     && receipt.kind == ReceiptKind::Reject
             });
             let receipt = rejection_receipts.next().ok_or_else(|| {
-                invariant("P4-rejected continuous place has no matching reject receipt")
+                invariant("StockProcessing 拒绝的 Continuous Place 缺少对应拒绝 receipt")
             })?;
             if rejection_receipts.next().is_some()
                 || receipt.qty_before != *original_qty
                 || receipt.qty_after != *original_qty
             {
                 return Err(invariant(
-                    "P4-rejected continuous place has ambiguous lifecycle provenance",
+                    "StockProcessing 拒绝的 Continuous Place 生命周期来源不唯一",
                 ));
             }
             session.causal_submitted_with_quote(
@@ -1194,7 +1200,7 @@ fn validate_command_fact(
     validate_fact_identity(fact)?;
     if fact.candidate_key != *candidate.key() || fact.sealed_index != operation.sealed_index() {
         return Err(invariant(
-            "P4 fact does not match the yielded candidate/sealed identity",
+            "StockProcessing 事实与已 yield 的 candidate/sealed 身份不一致",
         ));
     }
     let valid = match (candidate.intent(), operation, &fact.outcome) {
@@ -1261,7 +1267,7 @@ fn validate_command_fact(
     if valid {
         Ok(())
     } else {
-        Err(invariant("P4 payload does not match the yielded command"))
+        Err(invariant("StockProcessing payload 与已 yield 的命令不一致"))
     }
 }
 
@@ -1273,7 +1279,7 @@ fn validate_auction_command_fact(
     validate_auction_fact_identity(fact)?;
     if fact.candidate_key != *candidate.key() || fact.sealed_index != operation.sealed_index() {
         return Err(invariant(
-            "auction P4 fact does not match the yielded candidate/sealed identity",
+            "Auction StockProcessing 事实与已 yield 的 candidate/sealed 身份不一致",
         ));
     }
     let valid = match (candidate.intent(), operation, &fact.outcome) {
@@ -1375,7 +1381,7 @@ fn validate_auction_command_fact(
         Ok(())
     } else {
         Err(invariant(
-            "auction P4 payload does not match the yielded command",
+            "Auction StockProcessing payload 与已 yield 的命令不一致",
         ))
     }
 }
@@ -1404,7 +1410,7 @@ fn validate_auction_fact_identity(fact: &AuctionExecutionFact) -> Result<(), Ste
         || allocated != fact.allocated_order_id
     {
         return Err(invariant(
-            "auction P4 fact has inconsistent candidate/sealed/order identity",
+            "Auction StockProcessing 事实的 candidate/sealed/order 身份不一致",
         ));
     }
     Ok(())
@@ -1467,7 +1473,7 @@ fn validate_fact_identity(fact: &ContinuousExecutionFact) -> Result<(), StepFata
     if valid {
         Ok(())
     } else {
-        Err(invariant("P4 fact has inconsistent sealed/order identity"))
+        Err(invariant("StockProcessing 事实的 sealed/order 身份不一致"))
     }
 }
 
@@ -1706,7 +1712,7 @@ mod consumption_tests {
         let error = consumed.prepare_continuous_round(&round).err().unwrap();
         assert_eq!(
             error,
-            invariant("P4 fact has inconsistent sealed/order identity")
+            invariant("StockProcessing 事实的 sealed/order 身份不一致")
         );
         assert_eq!(consumed.operation_count(), 0);
     }

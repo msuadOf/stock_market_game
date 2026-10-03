@@ -1,8 +1,6 @@
-//! Public-surface integration check for the Task 9 evidence producer.
+//! 验证 Escrow 证据 producer 的公开接口。
 //!
-//! Unit tests compile inside the production module. This integration target
-//! deliberately imports only the crate's public API so it cannot create a
-//! second, type-incompatible copy of the evidence module.
+//! 只从 crate public API 导入，避免创建与生产类型不兼容的第二份 evidence 模块。
 
 #[test]
 fn full_update_stream_projection_is_exposed_by_the_engine_crate() {

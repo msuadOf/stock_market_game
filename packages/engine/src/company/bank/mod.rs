@@ -1,21 +1,21 @@
-//! 银行经营会计（K3，任务 9）。
+//! 银行经营会计（银行会计约束）。
 //!
-//! [`BankBooks`] = 权威账套（[`Books`]，任务 6）+ 银行子账（存款合同/贷款
-//! 合同含 ECL 阶段跟踪）+ 外部客户对手方 + 版本化 ECL 政策。与任务 8
+//! [`BankBooks`] = 权威账套（[`Books`]，会计底座）+ 银行子账（存款合同/贷款
+//! 合同含 ECL 阶段跟踪）+ 外部客户对手方 + 版本化 ECL 政策。与工商经营会计
 //! `IndustrialBooks` 同一组合模式：**独立引擎**，不修改 `Company` 注册表壳；
-//! 会话接线在任务 26。
+//! 会话由 `session::company_assembly` 装配。
 //!
 //! 事件处理不变量（每个处理器一致执行）：
 //! 1. **validate → post → apply**：全部业务校验（产品种类/合同条款/对手方/
 //!    子账容量/ECL 情景）先于过账；过账走 [`Books::post_batch`] 原子提交；
 //!    子账变更仅在过账成功后落地——任何拒绝（含 `PaymentFailed`）账套与
 //!    子账**字节不变**（测试逐一断言），事件 id 也不消耗。
-//! 2. K3 红线：存款是负债（2011/2601）不是收入；贷款发放是资产（1301）
+//! 2. 行业会计红线：存款是负债（2011/2601）不是收入；贷款发放是资产（1301）
 //!    不是费用；PD/LGD/EAD 显式情景输入（Fixture 标注），不从股票跌幅推导。
 //! 3. 现金流分类：存/贷/收息/付息/手续费均经营活动（CAS 30 (2026)
 //!    §45–§47——「向客户提供融资」为主要业务活动的归类选择）。
 //! 4. 客户流动性约束：提款/付息超可支付现金 → `PaymentFailed`（类型化，
-//!    银行继续运行；无透支、无自动补钱、K2 无兜底）。
+//!    银行继续运行；无透支、无自动补钱、无资金兜底）。
 //!
 //! [`Books::post_batch`]: crate::accounting::Books::post_batch
 
@@ -33,7 +33,7 @@ mod writeoff;
 #[cfg(test)]
 mod behavior_tests;
 
-pub use chart::bank_chart_v3;
+pub use chart::bank_account_chart;
 pub use config::BankConfig;
 pub use deposits::{DepositAccrualItem, DepositState};
 pub use ecl::{EclPolicy, EclScenario, EclStage, StageTransferRecord};
@@ -161,7 +161,7 @@ impl BankBooks {
         &self.ecl_policy
     }
 
-    /// 报表分类层胶水：总账 → CAS 30 (2026) 银行列报行（任务 13 消费）。
+    /// 报表分类层胶水：总账 → CAS 30 (2026) 银行列报行（结账与报表消费）。
     pub fn presentation_lines(&self) -> Result<BankPresentationLines, AccountingError> {
         bank_presentation_lines(self.books.ledger())
     }
@@ -180,7 +180,7 @@ impl BankBooks {
         Ok(())
     }
 
-    /// 对手方已登记（处理器前置校验；资金流跨边界留痕的 K2 要求）。
+    /// 对手方已登记（处理器前置校验；资金流跨边界留痕要求）。
     pub(super) fn ensure_counterparty(&self, id: &CounterpartyId) -> Result<(), BankError> {
         if self.counterparties.get(id).is_none() {
             return Err(BankError::Company(

@@ -1,4 +1,4 @@
-//! 四大金样 + K2 主金样（单位：注释「元」，执行「分」）。
+//! 四大金样 + 会计金额与资金守恒主金样（单位：注释「元」，执行「分」）。
 //!
 //! 主金样数值（计划 Verification strategy 固定）：
 //! 期初 cash/equity = 1000；借 500；现金收入 200；现金费用 80；计提利息 10；
@@ -8,7 +8,7 @@
 use super::{acct, books, entry, yuan};
 use engine::accounting::{AccountingPeriod, BusinessKind, CashFlowClass, PostingSide};
 
-/// K2 主金样：借贷总额相等、现金/权益滚动、现金流分类全部对账。
+/// 会计金额与资金守恒主金样：借贷总额相等、现金/权益滚动、现金流分类全部对账。
 #[test]
 fn gold_primary_scenario_cash_equity_and_cash_flow() {
     let mut b = books();

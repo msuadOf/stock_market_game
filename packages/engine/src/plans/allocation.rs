@@ -1,4 +1,4 @@
-//! K6 authoritative-cash soft budgeting across one account's plans.
+//! 以权威可用现金为基础，按账户为全部计划分配软预算。
 
 mod experience;
 mod types;

@@ -4,4 +4,12 @@ import type { AccountSnap } from "./AccountSnap";
 import type { PlayerOrderDelta } from "./PlayerOrderDelta";
 import type { TradingPhase } from "./TradingPhase";
 
-export type RuntimeDelta = { seq_from: number, seq_to: number, tick: number, day: number, phase: TradingPhase, accounts: { [key in AccountId]: AccountSnap }, working_orders: PlayerOrderDelta, };
+export type RuntimeDelta = {
+  seq_from: number;
+  seq_to: number;
+  tick: number;
+  day: number;
+  phase: TradingPhase;
+  accounts: { [key in AccountId]: AccountSnap };
+  working_orders: PlayerOrderDelta;
+};

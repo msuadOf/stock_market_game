@@ -1,11 +1,11 @@
-//! 地产开发经营会计集成测试（company-information-npc-intentions W2-Task 11）。
+//! 地产开发经营会计集成测试。
 //!
 //! 政策基线：docs/company-accounting.md §2.5——预售收款先确认为负债
 //! （CAS 14（2017）§39）、交付时点控制权转移确认收入并结转成本
 //! （CAS 14 §4/§13，官方依据均已核验）；**借款费用资本化属版本化游戏假设**
 //! （`game-assumption-borrowing-capitalization`：CAS 17（2006 批）原文两轮取证
-//! 受阻 + 本任务 tfs 令/档通道一次补证仍 404，条款号一律不引用）。
-//! K3 红线：预售不是交付收入；资本化必须暂停/终止，不把利息永远藏进资产。
+//! 受阻 + 地产会计 tfs 令/档通道一次补证仍 404，条款号一律不引用）。
+//! 行业会计红线：预售不是交付收入；资本化必须暂停/终止，不把利息永远藏进资产。
 //!
 //! 金样单位约定：注释写「元」（1 元 = 100 分）便于人读，执行值一律「分」
 //! （AccountingAmount）。利率/暂停阈值参数全部为标注 **Fixture** 的合成游戏
@@ -22,7 +22,9 @@ mod gold;
 
 use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide};
 use engine::calendar::CivilDate;
-use engine::company::real_estate::{real_estate_chart_v5, CapitalizationPolicy, RealEstateConfig};
+use engine::company::real_estate::{
+    real_estate_account_chart, CapitalizationPolicy, RealEstateConfig,
+};
 use engine::company::{CounterpartyId, ExternalCounterparty};
 use engine::company::{CreditLine, OperatingBudget};
 
@@ -50,7 +52,7 @@ pub(crate) fn cent_line(code: &str, side: PostingSide, cents: i128) -> JournalLi
     }
 }
 
-/// 五类对手方：土地出让方 / 施工承包商 / 购房者 / 贷款人（K2 外部对手方）。
+/// 五类对手方：土地出让方 / 施工承包商 / 购房者 / 贷款人（公司域外部对手方）。
 pub(crate) fn counterparties() -> Vec<ExternalCounterparty> {
     use engine::company::CounterpartyKind;
     vec![
@@ -95,7 +97,7 @@ pub(crate) fn fixture_capitalization_policy() -> CapitalizationPolicy {
 /// 项目数上限 2、贷款人授信 20000 元。
 pub(crate) fn base_config() -> RealEstateConfig {
     RealEstateConfig {
-        chart: real_estate_chart_v5(),
+        chart: real_estate_account_chart(),
         as_of: d("2030-01-01"),
         opening_lines: vec![
             cent_line(acct::CASH, PostingSide::Debit, 3_000_000),
@@ -115,7 +117,7 @@ pub(crate) fn base_config() -> RealEstateConfig {
     }
 }
 
-/// 地产科目表 v5 常用科目代码（单一真源 = accounting::reports::real_estate::codes）。
+/// 地产科目表（AccountChart.version=5）常用科目代码（单一真源 = accounting::reports::real_estate::codes）。
 pub(crate) mod acct {
     pub const CASH: &str = "1002"; // 银行存款（现金类）
     pub const AR: &str = "1122"; // 应收账款（尾款）

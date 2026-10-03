@@ -1,4 +1,4 @@
-//! 重构回放等价测试（company-information-npc-intentions W1-Task 3）。
+//! 固定单 worker 场景的回放与存档表示锚点测试。
 //!
 //! 当前锚点固定 ADR-0021/0022 后的受控场景：同一 setup、seed 和单 worker
 //! 调度，必须产出逐字节相同的事件流与权威存档。使用同一生产并行路径，
@@ -22,6 +22,7 @@ const REPLAY_SEED: u64 = 0x5EED_2026_0903;
 const TICKS_PER_DAY: u64 = 240;
 const REPLAY_DAYS: u64 = 3;
 
+/// 以下为 historical 锚点沿革，任务号、旧格式与摘要用于追踪原始证据。
 /// 变更前（commit 0a77d8f，未移动代码）逐字节锚点：FNV-1a 64 位摘要。
 /// 任务 5（自然日时钟）更新说明：事件流锚点不变（tick/RNG/撮合/事件顺序
 /// 零漂移）；两个存档锚点仅因 SaveSlot 新增 civil_clock 字段与 setup 新增
@@ -37,7 +38,7 @@ const REPLAY_DAYS: u64 = 3;
 /// end=190_030_750_827_517_148（详见 issues.md 任务 26 登记）。
 ///
 /// 任务 27（完整存档契约）重钉说明：事件流锚点不变（tick/RNG/撮合/事件
-/// 顺序零漂移）；两个存档锚点仅因 SaveSlot 新增 K7 权威字段（公司域/结账
+/// 顺序零漂移）；两个存档锚点仅因 SaveSlot 新增公司域与个体决策链权威字段（公司域/结账
 /// 登记簿/公开信息库/披露游标/计划簿/个人信息集/信念簿/关注列表/待应用
 /// 事实队列）与时钟冻结日历政策而变化。旧锚（任务 26 时点）：
 /// mid=18_072_312_056_192_250_746、end=5_864_974_982_281_894_531。
@@ -76,9 +77,17 @@ const REPLAY_DAYS: u64 = 3;
 /// 现金、股份、费用、RNG、公司会计等所有既有字段均无漂移。
 /// 更新两个存档锚至现行契约，保留同 seed、restore、真实交易/守恒与扰动断言。
 /// 旧 mid/end：12614318950902945034 / 1202783611822019194。
+/// ADR-0029 命名取证（c0ab429 → 本轮源码，同 fixture/seed/单 worker）：
+/// 两个真实 producer 导出的完整原字节对照复现旧三个锚，事件流逐字节不变。
+/// mid/end 仅改变 schema_version 2→3、runtime_v2→runtime_state、
+/// simulation_policy_id 的职责身份，以及共 23 个 P0Expiry→QuoteExpiry 来源 tag。
+/// 取证工具仅按许可 path 逆替换原文 token；不重排或重序列化 JSON，逆替换后
+/// 完整旧字节精确复现，现金、股份、费用、RNG、策略与公司会计等事实全部相同。
+/// 旧锚保留：events=5948645237561155125、mid=13459915162223779483、
+/// end=7939505419576849145。只更新存档表示锚，原有独立业务断言全部保留。
 const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 13_459_915_162_223_779_483;
-const PINNED_SAVE_END_FNV: u64 = 7_939_505_419_576_849_145;
+const PINNED_SAVE_MID_FNV: u64 = 14_482_572_867_267_443_968;
+const PINNED_SAVE_END_FNV: u64 = 13_430_331_173_908_825_780;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -135,10 +144,10 @@ fn replay_setup() -> SessionSetup {
         history_len: 10,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
-        // K1 双时钟下的场景日期：2030-01-02（周三）起连续三个交易日
+        // 双时钟场景日期：2030-01-02（周三）起连续三个交易日
         // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
 

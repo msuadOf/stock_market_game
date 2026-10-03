@@ -1,9 +1,9 @@
-//! K4 定期披露排期（任务 15）：自然年会计年度的游戏排期表。
+//! 定期披露排期：自然年会计年度的游戏排期表。
 //!
 //! 基准日（+偏移前）：年报 = 次年 3-20、Q1 = 4-20、半年 = 8-15、
 //! Q3 = 10-20，18:00 公布；各公司稳定偏移 0–7 自然日，由 seed+公司 id
-//! 纯函数派生（**从不重采样**——同 seed 同公司恒等，任务 14 rng.rs 的
-//! FNV-1a+SplitMix64 终结器孪生）。法定窗口依据（任务 2 已核验）：年报
+//! 纯函数派生（**从不重采样**——同 seed 同公司恒等，沿用公司经营 rng.rs 的
+//! FNV-1a+SplitMix64 终结器）。法定窗口依据见政策来源清单：年报
 //! ≤4-30、半年报 ≤8-31（证监会令 182 号第十三条）；Q1/Q3 无法定校验来源
 //! （fixture blocked），游戏排期不声称法定。
 //!
@@ -40,7 +40,7 @@ impl ScheduledReportKind {
     /// 全部排期表目（确定序：派发/装配枚举用）。
     pub const ALL: [Self; 4] = [Self::Q1, Self::HalfYear, Self::Q3, Self::Annual];
 
-    /// 排期表目 → 报表种类（任务 13 的窗口形状语义）。
+    /// 排期表目 → 报表种类（决定报表窗口形状）。
     pub fn report_kind(self) -> crate::accounting::reports::ReportKind {
         use crate::accounting::reports::ReportKind;
         match self {
@@ -104,7 +104,7 @@ pub fn stable_company_offset(seed: u64, company: &CompanyId) -> u8 {
 
 /// 排期公布时点：基准日 + 偏移个自然日，18:00 相位。
 ///
-/// 校验（失败 = 类型化拒绝，绝不钳位）：偏移域；K4 契约守卫（年报 ≤
+/// 校验（失败 = 类型化拒绝，绝不钳位）：偏移域；披露窗口守卫（年报 ≤
 /// 次年 4-30、半年 ≤ 8-31、Q1 晚于上一年年报——当前基准下结构性成立，
 /// 基准表漂移时在此显式失败）。非交易日公布合法（civil 域语义）。
 pub fn scheduled_instant(
@@ -120,7 +120,7 @@ pub fn scheduled_instant(
     for _ in 0..offset {
         date = date.next()?;
     }
-    // K4 契约守卫：法定窗口（任务 2 核验）+ Q1 排期先于上一年年报。
+    // 披露窗口守卫：法定窗口（政策来源清单登记）+ Q1 排期晚于上一年年报。
     match kind {
         ScheduledReportKind::Annual => {
             let deadline = CivilDate::from_ymd(fiscal_year + 1, 4, 30)?;

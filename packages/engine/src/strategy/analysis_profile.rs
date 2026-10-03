@@ -1,4 +1,4 @@
-//! 个体混合分析能力档案（K5）：账户身份与主导风格之外的五维分析权重 + 基本面方法链接。
+//! 个体混合分析能力档案：账户身份与主导风格之外的五维分析权重 + 基本面方法链接。
 //!
 //! 权重以基点（bp）表示，五个非负权重总和恰为 10000；零权重表示该分析维度对本
 //! 实例彻底关闭（不运行、无方法）。银行/保险行业的基本面方法按规则恒为权益 ROE
@@ -7,7 +7,7 @@
 
 use crate::company::CompanyKind;
 
-/// 基本面估值方法路径（K5a：三条实质不同的路径）。
+/// 基本面估值方法路径（三条实质不同的路径）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FundamentalMethod {

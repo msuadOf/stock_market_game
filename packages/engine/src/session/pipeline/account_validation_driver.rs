@@ -75,9 +75,9 @@ impl AccountValidatorDriver {
         })
     }
 
-    /// Validates one candidate against the same immutable P1 resource snapshot and private
-    /// account budget as every earlier candidate. It is the one-element form of `consume_round`, so a
-    /// `StepFatal` leaves `checkpoint()` and `output()` unchanged at the previous boundary.
+    /// 用同一不可变 SealAllocationSnapshot 和私有累计账户预算校验一个候选。
+    /// 这是 consume_round 的单元素形式；StepFatal 保持 checkpoint() 与 output()
+    /// 处于上一个成功边界，不泄露部分校验结果。
     pub fn consume(
         &mut self,
         candidate: IntentCandidate,
@@ -85,7 +85,7 @@ impl AccountValidatorDriver {
         let mut outcomes = self.consume_round([candidate])?;
         outcomes
             .pop()
-            .ok_or_else(|| invariant("single-candidate P3 round produced no outcome"))
+            .ok_or_else(|| invariant("AccountValidation 单候选轮次没有产生结果"))
     }
 
     /// Consumes one ready round atomically. Account validation/reservation is completed for the
@@ -107,7 +107,7 @@ impl AccountValidatorDriver {
             if allocated_order_id.is_some() {
                 next_order_id_after = next_order_id_after
                     .checked_add(1)
-                    .ok_or_else(|| invariant("P3 outcome OrderId cursor overflow"))?;
+                    .ok_or_else(|| invariant("AccountValidation 结果的 OrderId 游标溢出"))?;
             }
             outcomes.push(CandidateValidationOutcome {
                 candidate_key,
@@ -120,7 +120,7 @@ impl AccountValidatorDriver {
         }
         if next_order_id_after != round.output().next_order_id_after() {
             return Err(invariant(
-                "P3 outcome OrderId cursor disagrees with cumulative validation output",
+                "AccountValidation 结果的 OrderId 游标与累计校验输出不一致",
             ));
         }
 
@@ -229,7 +229,7 @@ fn validate_candidate_identities(
     let mut seen = BTreeSet::new();
     for candidate in candidates {
         if previous.contains(candidate.key()) || !seen.insert(candidate.key()) {
-            return Err(invariant("P3 driver candidate identity was replayed"));
+            return Err(invariant("AccountValidation driver 重放了候选身份"));
         }
     }
     Ok(())

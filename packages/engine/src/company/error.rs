@@ -1,4 +1,4 @@
-//! 公司域统一错误（K2）。绝不静默吞错（铁律二）：每个变体携带定位与数值上下文。
+//! 公司域统一错误（会计与资金边界）。绝不静默吞错（铁律二）：每个变体携带定位与数值上下文。
 
 use crate::account::StockCode;
 use crate::accounting::AccountingAmount;
@@ -50,7 +50,7 @@ pub enum CompanyError {
     #[error("stock {stock:?} has no issuing company")]
     UnmappedStock { stock: StockCode },
 
-    /// 股本不精确匹配：公司已发行股数 ≠ 股票总股本（K2：固定股本与股票总股本一致）。
+    /// 股本不精确匹配：公司已发行股数 ≠ 股票总股本（会计与资金边界：固定股本与股票总股本一致）。
     #[error(
         "company {company:?} issued {issued_shares} shares but stock {stock:?} has {total_shares}"
     )]
@@ -126,7 +126,7 @@ pub enum CompanyError {
     #[error("duplicate credit line for lender {lender:?}")]
     DuplicateCreditLine { lender: CounterpartyId },
 
-    /// 无授信仍新增借款（K2：借款必须经额度约束，不允许无限信用兜底）。
+    /// 无授信仍新增借款（会计与资金边界：借款必须经额度约束，不允许无限信用兜底）。
     #[error(
         "company {company:?} has no credit line with lender {lender:?}; borrowing {requested} rejected"
     )]

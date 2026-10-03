@@ -2,9 +2,9 @@
 
 use super::*;
 
-mod v2;
+mod saved_runtime;
 #[cfg(test)]
-mod v2_tests;
+mod saved_runtime_tests;
 
 #[cfg(test)]
 #[test]
@@ -177,13 +177,14 @@ fn save_validation_context_preserves_first_error_before_domain_checks() {
         matches!(validate_save_slot(&save), Err(SessionError::InvalidSave(message)) if message == format!("tick {} exceeds the supported trading-day range", save.snapshot.tick))
     );
 }
-pub(super) use v2::{
-    capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
+pub(super) use saved_runtime::{
+    capture_runtime_state, restore_runtime_state, validate_schema_version,
+    validate_schema_version_header,
 };
-pub use v2::{
-    EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2, ReceiptLocalKeyV2,
-    ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2, SaveRuntimeV2,
-    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+pub use saved_runtime::{
+    SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
+    SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
+    SavedRuntimeState, SAVE_SCHEMA_VERSION, SIMULATION_POLICY_ID,
 };
 
 /// 单次 SaveSlot 校验的只读事实：派生值在原门禁位置完成后才组合。
@@ -257,9 +258,9 @@ impl<'a> SaveValidationContext<'a> {
 
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_schema_version(save.schema_version)?;
-    if save.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+    if save.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         return Err(SessionError::InvalidSave(format!(
-            "schema v2 requires simulation policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
+            "schema_version={SAVE_SCHEMA_VERSION} 要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
             save.setup.simulation_policy_id
         )));
     }

@@ -8,14 +8,14 @@ mod intercompany;
 use super::{entry, member, request};
 use engine::accounting::consolidation::{consolidate, ConsolidationError, MemberId};
 use engine::accounting::{AccountChart, Books, BusinessKind, CashFlowClass, PostingSide};
-use engine::company::industrial::industrial_chart_v2;
+use engine::company::industrial::industrial_account_chart;
 use PostingSide::{Credit, Debit};
 
 /// 标准两成员夹具（母 + 80% 子，两个期间 2029-12 + 2030-01 都有分录，
 /// 期间覆盖一致——拒绝必须来自被测守卫本身）。
 pub(crate) fn pair_books() -> (Books, Books) {
     let parent = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             super::entry(
                 1,
@@ -40,7 +40,7 @@ pub(crate) fn pair_books() -> (Books, Books) {
         ],
     );
     let sub = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             super::entry(
                 1,
@@ -162,7 +162,7 @@ fn holding_beyond_issued_is_rejected() {
 fn period_coverage_mismatch_is_rejected() {
     // 母公司覆盖 2029-12 + 2030-01；子公司只有 2029-12。
     let parent = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![
             entry(
                 1,
@@ -187,7 +187,7 @@ fn period_coverage_mismatch_is_rejected() {
         ],
     );
     let sub = super::books_with(
-        industrial_chart_v2(),
+        industrial_account_chart(),
         vec![entry(
             1,
             "2029-12-31",
@@ -277,7 +277,7 @@ fn root_with_holding_is_rejected() {
 #[test]
 fn no_subsidiary_returns_typed_not_applicable() {
     let parent = super::books_with(
-        AccountChart::generic_v1(),
+        AccountChart::generic_account_chart(),
         vec![entry(
             1,
             "2029-12-31",

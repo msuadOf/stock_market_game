@@ -1,4 +1,4 @@
-//! 金样：K5 默认分布逐字钉住、三类风格完整手算样例、工厂重放确定性。
+//! 金样：固定默认分析权重分布、三类风格完整手算样例、工厂重放确定性。
 
 use super::StrictSeqRng;
 use engine::account::AccountKind;
@@ -12,7 +12,7 @@ fn profile_of(style: RetailStyle) -> StrategyProfile {
     StrategyProfile::Retail(style)
 }
 
-/// K5 计划第 129 行的逐字副本（顺序：基本面/趋势/量价/技术/成本经历，bp）。
+/// 默认分析权重分布的独立期望值（顺序：基本面/趋势/量价/技术/成本经历，bp）。
 #[test]
 fn default_table_matches_plan_verbatim() {
     let cases: [(StrategyProfile, [u32; 5]); 13] = [
@@ -146,7 +146,7 @@ fn factory_replay_same_seed_same_ordinal_yields_identical_profile() {
         for ordinal in ordinals {
             let mut build_rng_a = SplitMix64::new(0xA17_0001);
             let mut build_rng_b = SplitMix64::new(0xA17_0001);
-            let strategy_a = StrategyFactory::build_for_market_day_with_ordinal(
+            let first_built_strategy = StrategyFactory::build_for_market_day_with_ordinal(
                 kind,
                 &params,
                 15_300,
@@ -155,7 +155,7 @@ fn factory_replay_same_seed_same_ordinal_yields_identical_profile() {
             )
             .unwrap()
             .unwrap();
-            let strategy_b = StrategyFactory::build_for_market_day_with_ordinal(
+            let repeated_built_strategy = StrategyFactory::build_for_market_day_with_ordinal(
                 kind,
                 &params,
                 15_300,
@@ -164,22 +164,31 @@ fn factory_replay_same_seed_same_ordinal_yields_identical_profile() {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(strategy_a.profile(), strategy_b.profile());
+            assert_eq!(
+                first_built_strategy.profile(),
+                repeated_built_strategy.profile()
+            );
 
             let mut derive_rng_a = SplitMix64::new(0xA17_0002 ^ u64::from(ordinal));
             let mut derive_rng_b = SplitMix64::new(0xA17_0002 ^ u64::from(ordinal));
-            let derived_a =
-                derive_analysis_profile(&strategy_a.profile(), AccountId(41), &mut derive_rng_a)
-                    .unwrap();
-            let derived_b =
-                derive_analysis_profile(&strategy_b.profile(), AccountId(41), &mut derive_rng_b)
-                    .unwrap();
+            let derived_a = derive_analysis_profile(
+                &first_built_strategy.profile(),
+                AccountId(41),
+                &mut derive_rng_a,
+            )
+            .unwrap();
+            let derived_b = derive_analysis_profile(
+                &repeated_built_strategy.profile(),
+                AccountId(41),
+                &mut derive_rng_b,
+            )
+            .unwrap();
             assert_eq!(derived_a, derived_b, "{kind:?} ordinal {ordinal}");
         }
     }
 }
 
-/// 机构 ordinal→风格映射保持原状，且派生走该风格的 K5 默认表。
+/// 机构 ordinal→风格映射保持原状，且派生走该风格的默认分析权重表。
 #[test]
 fn institution_ordinal_mapping_is_preserved_and_feeds_the_style_table() {
     let params = super::sample_params();

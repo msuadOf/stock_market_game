@@ -5,4 +5,14 @@ import type { PlanId } from "./PlanId";
 import type { Side } from "./Side";
 import type { StockCode } from "./StockCode";
 
-export type SaveParentOrderPlan = { code: StockCode, side: Side, target_qty: number, filled_qty: number, child_qty: number, active_child_order_id: OrderId | null, linked_plan_id?: PlanId, limit_price: Money, expires_market_minute: string, };
+export type SaveParentOrderPlan = {
+  code: StockCode;
+  side: Side;
+  target_qty: number;
+  filled_qty: number;
+  child_qty: number;
+  active_child_order_id: OrderId | null;
+  linked_plan_id?: PlanId;
+  limit_price: Money;
+  expires_market_minute: string;
+};

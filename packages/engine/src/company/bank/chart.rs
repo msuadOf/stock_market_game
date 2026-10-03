@@ -1,8 +1,8 @@
-//! 银行科目表 v3（版本化数据表）：银行经营科目（存放中央银行款项/贷款本金/
+//! 银行科目表（AccountChart.version=3）（版本化数据表）：银行经营科目（存放中央银行款项/贷款本金/
 //! 应收利息/贷款减值准备/短期与长期吸收存款/利息收支/手续费及佣金/信用减值
 //! 损失）。科目代码的单一真源在 [`crate::accounting::reports::bank::codes`]
-//! （列报映射与过账共享同一份代码表，杜绝两层漂移）；不改动通用 v1 语义
-//! （任务 6 语义冻结区），恢复优先用存档内科目表。
+//! （列报映射与过账共享同一份代码表，杜绝两层漂移）；不改动通用科目表（AccountChart.version=1）语义
+//! （会计底座语义冻结区），恢复优先用存档内科目表。
 
 use crate::accounting::reports::bank::codes;
 use crate::accounting::{AccountChart, AccountDef, LedgerAccountId};
@@ -12,8 +12,8 @@ pub(crate) mod acct {
     pub use crate::accounting::reports::bank::codes::*;
 }
 
-/// 银行科目表 v3（版本 3；全部科目均由银行处理器/列报使用）。
-pub fn bank_chart_v3() -> AccountChart {
+/// 银行科目表（AccountChart.version=3）（版本 3；全部科目均由银行处理器/列报使用）。
+pub fn bank_account_chart() -> AccountChart {
     use crate::accounting::AccountElement::*;
     let acc = |code: &str, def: AccountDef| (LedgerAccountId(code.to_string()), def);
     let accounts = vec![
@@ -58,5 +58,5 @@ pub fn bank_chart_v3() -> AccountChart {
             AccountDef::new("信用减值损失", Expense),
         ),
     ];
-    AccountChart::new(3, accounts).expect("bank chart v3 is well-formed")
+    AccountChart::new(3, accounts).expect("银行科目表定义合法（AccountChart.version=3）")
 }

@@ -1,5 +1,5 @@
-//! 报表域错误（K3，任务 13）。类型化、绝不静默；透传变体装箱压缩 Err
-//! 值域（任务 12 `DeclaredSide` 先例——错误路径非热路径）。
+//! 报表域错误。类型化、绝不静默；透传变体装箱压缩 Err
+//! 值域（合并域 `DeclaredSide` 先例——错误路径非热路径）。
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::consolidation::ConsolidationError;
@@ -67,7 +67,7 @@ pub enum ReportError {
         period: AccountingPeriod,
         reason: &'static str,
     },
-    #[error("consolidated income mismatch: derived {derived} vs task-12 output {output}")]
+    #[error("合并净利润不一致：报表推导值 {derived}，固定集团合并输出值 {output}")]
     IncomeConsistencyMismatch {
         derived: AccountingAmount,
         output: AccountingAmount,

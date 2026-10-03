@@ -124,7 +124,7 @@ impl ProtocolSession {
                 .auction_orders
                 .values()
                 .any(|orders| !orders.is_empty())
-            || !slot.runtime_v2.live_envelopes.is_empty()
+            || !slot.runtime_state.live_envelopes.is_empty()
             || !slot.npc_order_lifecycles.is_empty()
             || slot.parent_orders.values().any(|plans| !plans.is_empty())
             || !slot.pending_player.is_empty()
@@ -244,8 +244,8 @@ impl ProtocolSession {
         Ok(frame)
     }
 
-    /// Publishes one frame from the normal public protocol path while also
-    /// returning the immutable evidence captured by that frame's committed P9.
+    /// 通过普通公共 protocol 路径发布一帧，同时返回
+    /// 该帧在 CommitTick 成功提交时捕获的不可变证据。
     pub fn step_frame_with_commit_evidence(
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
@@ -595,16 +595,16 @@ mod rollback_tests {
 
         let mut candidate = saved.clone();
         candidate
-            .runtime_v2
+            .runtime_state
             .live_envelopes
-            .push(crate::LiveEnvelopeV2 {
-                key: crate::EnvelopeKeyV2 {
+            .push(crate::SavedLiveEnvelope {
+                key: crate::SavedEnvelopeKey {
                     account: crate::AccountId(0),
                     stock: crate::StockCode("600000".into()),
                     order: crate::OrderId(1),
                     side: crate::Side::Buy,
                 },
-                charged: crate::FeeComponentsV2 {
+                charged: crate::SavedFeeComponents {
                     commission: crate::Money::ZERO,
                     stamp_tax: crate::Money::ZERO,
                     transfer_fee: crate::Money::ZERO,
@@ -981,7 +981,12 @@ mod rollback_tests {
         );
         assert_eq!(
             evidence.next_receipt_index(),
-            observed.game().save().unwrap().runtime_v2.next_receipt_base
+            observed
+                .game()
+                .save()
+                .unwrap()
+                .runtime_state
+                .next_receipt_base
         );
     }
 
@@ -1024,7 +1029,12 @@ mod rollback_tests {
         frame.validate().unwrap();
         assert_eq!(
             evidence.next_receipt_index(),
-            session.game().save().unwrap().runtime_v2.next_receipt_base
+            session
+                .game()
+                .save()
+                .unwrap()
+                .runtime_state
+                .next_receipt_base
         );
     }
 
@@ -1117,13 +1127,13 @@ mod rollback_tests {
         let continued_indices = continued
             .facts
             .iter()
-            .filter(|fact| is_phase_six_session(fact))
+            .filter(|fact| is_session_lifecycle_fact(fact))
             .map(|fact| fact.key.local_event_index())
             .collect::<Vec<_>>();
         let fresh_indices = fresh
             .facts
             .iter()
-            .filter(|fact| is_phase_six_session(fact))
+            .filter(|fact| is_session_lifecycle_fact(fact))
             .map(|fact| fact.key.local_event_index())
             .collect::<Vec<_>>();
         assert!(!continued_indices.is_empty());
@@ -1131,12 +1141,12 @@ mod rollback_tests {
         let preceding_count = first
             .facts
             .iter()
-            .filter(|fact| is_phase_six_session(fact))
+            .filter(|fact| is_session_lifecycle_fact(fact))
             .count() as u64;
         assert_eq!(continued_indices.first(), Some(&preceding_count));
     }
 
-    fn is_phase_six_session(fact: &crate::session::protocol::EventFact) -> bool {
+    fn is_session_lifecycle_fact(fact: &crate::session::protocol::EventFact) -> bool {
         fact.key.phase_rank() == 6
             && fact.key.entity() == &crate::session::pipeline::EntityTag::Session
             && fact.key.source() == crate::session::pipeline::EventSourceIndex::Session

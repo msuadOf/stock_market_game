@@ -1,6 +1,6 @@
-//! 跨 adaptive route 保持的逐股 Continuous P4 shadow。
+//! 跨 adaptive route 保持的逐股 Continuous stock_processing shadow。
 //!
-//! coordinator 从 post-P0 candidate 初始化一次，逐个应用 P3 Accepted 操作。
+//! coordinator 从 post-ExpiryShadow candidate 初始化一次，逐个应用 AccountValidation Accepted 操作。
 //! 全部 route 排空后 consuming finish，ReceiptAggregation/Settlement/Projection 仅消费一次累计 outbox。
 
 #[cfg(test)]
@@ -40,12 +40,12 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
-/// 调用方排空全部 adaptive route 后的累计 P4 输出。
+/// 调用方排空全部 adaptive route 后的累计 stock_processing 输出。
 pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
     pub(in crate::session::pipeline) workers: Vec<ContinuousStockOutput>,
     pub(in crate::session::pipeline) prices: BTreeMap<StockCode, ContinuousClosingPrice>,
     pub(in crate::session::pipeline) execution_facts: Vec<ContinuousExecutionFact>,
-    /// 无对应股票 worker 的 P4 业务拒绝；当前仅包括 P3 接受的未知股票撤单。
+    /// 无对应股票 worker 的 stock_processing 业务拒绝；当前仅包括 AccountValidation 接受的未知股票撤单。
     pub(in crate::session::pipeline) detached_facts: Vec<ContinuousExecutionFact>,
 }
 
@@ -115,21 +115,19 @@ impl IncrementalContinuousStockCoordinator {
         let phase = inputs.first().map(|input| input.phase);
         if inputs.iter().any(|input| Some(input.phase) != phase) {
             return Err(invariant(
-                "incremental P4 stock shadows disagree on the trading phase",
+                "增量 StockProcessing 的股票 shadows 对交易阶段不一致",
             ));
         }
         let mut stocks = BTreeMap::new();
         for input in inputs {
             if !input.operations.is_empty() {
                 return Err(invariant(
-                    "incremental P4 initialization included sealed operations",
+                    "增量 StockProcessing 初始化时包含了 sealed operations",
                 ));
             }
             let code = input.market.code().clone();
             if stocks.contains_key(&code) {
-                return Err(invariant(
-                    "incremental P4 initialized one stock shadow more than once",
-                ));
+                return Err(invariant("增量 StockProcessing 重复初始化同一股票 shadow"));
             }
             let phase = input.phase;
             let config = input.config.clone();
@@ -139,7 +137,7 @@ impl IncrementalContinuousStockCoordinator {
                 || !initialized.output.created_envelopes.is_empty()
             {
                 return Err(invariant(
-                    "operation-free P4 initialization produced an outbox",
+                    "无 operation 的 StockProcessing 初始化产生了 outbox",
                 ));
             }
             stocks.insert(
@@ -179,7 +177,7 @@ impl IncrementalContinuousStockCoordinator {
     ) -> Result<ContinuousExecutionRound, StepFatal> {
         if self.failed {
             return Err(invariant(
-                "failed P4 coordinator cannot accept another round",
+                "已失败的 StockProcessing coordinator 不能受理下一轮",
             ));
         }
         let result = self.apply_round_owned(operations);
@@ -197,7 +195,7 @@ impl IncrementalContinuousStockCoordinator {
         let next_operation_count = self
             .applied_operation_count
             .checked_add(operations.len())
-            .ok_or_else(|| invariant("incremental P4 operation count overflow"))?;
+            .ok_or_else(|| invariant("增量 StockProcessing operation 数量溢出"))?;
 
         let mut grouped = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
         let mut detached = Vec::new();
@@ -237,7 +235,7 @@ impl IncrementalContinuousStockCoordinator {
                     }),
                 }),
                 ValidatedOperation::Place(_) => {
-                    return Err(invariant("P3 accepted a place for an unknown stock"));
+                    return Err(invariant("AccountValidation 为未知股票受理了 Place"));
                 }
             }
         }
@@ -248,7 +246,7 @@ impl IncrementalContinuousStockCoordinator {
                 let shadow = self
                     .stocks
                     .remove(&code)
-                    .ok_or_else(|| invariant("P4 stock partition lost its initialized shadow"))?;
+                    .ok_or_else(|| invariant("StockProcessing 股票分片丢失了已初始化 shadow"))?;
                 Ok((code, shadow, operations))
             })
             .collect::<Result<Vec<_>, StepFatal>>()?;
@@ -307,7 +305,7 @@ impl IncrementalContinuousStockCoordinator {
             for (sealed_index, quotes) in result.operation_quotes {
                 if operation_quotes.insert(sealed_index, quotes).is_some() {
                     return Err(invariant(
-                        "incremental P4 round contains duplicate operation quote identity",
+                        "增量 StockProcessing 本轮包含重复 operation quote 身份",
                     ));
                 }
             }
@@ -351,7 +349,9 @@ impl IncrementalContinuousStockCoordinator {
         ends_day: bool,
     ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
         if self.failed {
-            return Err(invariant("failed P4 coordinator cannot finish a tick"));
+            return Err(invariant(
+                "已失败的 StockProcessing coordinator 不能完成 tick",
+            ));
         }
         let mut workers = Vec::with_capacity(self.stocks.len());
         let mut prices = BTreeMap::new();
@@ -363,13 +363,13 @@ impl IncrementalContinuousStockCoordinator {
             prices.insert(code, price);
             execution_count = execution_count
                 .checked_add(stock_facts.len())
-                .ok_or_else(|| invariant("incremental P4 fact count overflow"))?;
+                .ok_or_else(|| invariant("增量 StockProcessing 事实数量溢出"))?;
             execution_facts.append(&mut stock_facts);
             workers.push(worker);
         }
         if execution_count != self.applied_operation_count {
             return Err(invariant(
-                "incremental P4 did not produce exactly one fact per operation",
+                "增量 StockProcessing 未为每个 operation 产生恰好一个事实",
             ));
         }
         Ok(IncrementalContinuousStockFinish {
@@ -500,14 +500,14 @@ fn validate_new_operation_identities(
             .contains(operation.candidate_key())
             || !candidates.insert(operation.candidate_key().clone())
         {
-            return Err(invariant("incremental P4 replayed a candidate key"));
+            return Err(invariant("增量 StockProcessing 重放了候选 key"));
         }
         if coordinator
             .seen_sealed_indices
             .contains(&operation.sealed_index())
             || !sealed.insert(operation.sealed_index())
         {
-            return Err(invariant("incremental P4 replayed a sealed identity"));
+            return Err(invariant("增量 StockProcessing 重放了 sealed identity"));
         }
     }
     Ok(())
@@ -524,7 +524,7 @@ fn validate_round_identities(
         .collect::<BTreeSet<_>>();
     if fact_ids.len() != facts.len() {
         return Err(invariant(
-            "incremental P4 round contains duplicate typed fact identities",
+            "增量 StockProcessing 本轮包含重复 typed fact 身份",
         ));
     }
     let receipt_ids = receipts
@@ -532,9 +532,7 @@ fn validate_round_identities(
         .map(|receipt| &receipt.local_key)
         .collect::<BTreeSet<_>>();
     if receipt_ids.len() != receipts.len() {
-        return Err(invariant(
-            "incremental P4 round contains duplicate receipt identities",
-        ));
+        return Err(invariant("增量 StockProcessing 本轮包含重复 receipt 身份"));
     }
     Ok(())
 }

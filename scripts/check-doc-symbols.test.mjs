@@ -17,6 +17,8 @@ test("reports a nonexistent documented symbol and refuses empty false PASS", asy
     await writeFile(path.join(root, "packages/engine/src/lib.rs"), "pub fn real_symbol() {}\n");
     await writeFile(path.join(root, "doc.md"), "`engine::real_symbol`\n`engine::invented_symbol`\n");
     const result = await checkDocSymbols(root, ["doc.md"]);
+    assert.equal(result.schema, "engine-doc-symbol-check");
+    assert.equal(result.schema_version, 1);
     assert.equal(result.status, "FAIL");
     assert.deepEqual(result.missing, [{ document: "doc.md", symbol: "invented_symbol" }]);
     await writeFile(path.join(root, "doc.md"), "`engine::real_symbol`\n");

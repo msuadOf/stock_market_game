@@ -3,7 +3,7 @@ import type { Money } from "./Money";
 import type { ReviewResources } from "./ReviewResources";
 
 /**
- * 复核条件（K5a）：触发下次复核的阈值与上次复核基线；是否复核由任务 22 决定。
+ * 复核条件：触发下次复核的阈值与上次复核基线；由会话决策链基于这些条件决定是否复核。
  */
 export type ReviewConditions = {
   min_signal_delta_bp: number;
@@ -11,7 +11,7 @@ export type ReviewConditions = {
   last_review_signal_score_bp: number;
   last_review_trading_day: number;
   /**
-   * Price and personal acquisition count for this issuer at the last actual review.
+   * 上次本人实际复核时该发行人的价格与个人信息获取次数。
    */
   last_review_price: Money | null;
   last_review_acquired_count: number;

@@ -1,6 +1,6 @@
-//! New-engine endpoint for the externally measured paired performance runner.
-//! Compile before measurement. Wall time/RSS belong to the parent runner;
-//! this endpoint reports only actually committed ticks and phase observations.
+//! 外部配对性能测量的当前 engine endpoint。
+//! 测量前完成编译；wall time/RSS 由 parent runner 采集，
+//! endpoint 只报告实际提交的 tick 与 PhaseTimingPhase 观测。
 use engine::{GameSession, SessionSetup};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -15,6 +15,7 @@ use std::{
 #[serde(deny_unknown_fields)]
 struct Request {
     schema: String,
+    schema_version: u32,
     workload: Workload,
     environment_contract: Value,
     source_fingerprint: String,
@@ -33,7 +34,7 @@ struct Workload {
 }
 
 fn execute(request: Request) -> Result<Value, String> {
-    if request.schema != "escrow-perf-endpoint-request-v1" {
+    if request.schema != "escrow-performance-endpoint-request" || request.schema_version != 1 {
         return Err("unsupported endpoint request schema".into());
     }
     if request.source_fingerprint.len() != 64
@@ -107,8 +108,8 @@ fn execute(request: Request) -> Result<Value, String> {
             let mut game =
                 GameSession::new(setup.clone(), seed).map_err(|error| error.to_string())?;
             for _ in 0..workload.completed_ticks / workload.repetitions {
-                // Complete real natural-day operations between trading sessions;
-                // neither invent tick frames nor omit their work from wall time.
+                // 两个交易时段间完成真实自然日操作；
+                // 不生成虚假 TickFrame，也不从 wall time 中扣除这些操作。
                 while game.day()
                     == game
                         .civil_clock()
@@ -121,9 +122,7 @@ fn execute(request: Request) -> Result<Value, String> {
                     .step_with_phase_timing()
                     .map_err(|error| error.to_string())?;
                 for record in timed.timing().records() {
-                    let total = totals
-                        .entry(format!("P{}", record.phase().rank()))
-                        .or_default();
+                    let total = totals.entry(record.phase().name().to_owned()).or_default();
                     *total = total
                         .checked_add(record.wall_time_ns())
                         .ok_or("phase wall overflow")?;
@@ -138,7 +137,7 @@ fn execute(request: Request) -> Result<Value, String> {
         Ok::<_, String>((completed, totals, samples))
     })?;
     if completed != workload.completed_ticks || totals.len() != 10 || samples.is_empty() {
-        return Err("incomplete committed workload or P0-P9 timing".into());
+        return Err("已提交 workload 或全部 PhaseTimingPhase 计时不完整".into());
     }
     let phase_wall_ns = totals
         .into_iter()
@@ -149,7 +148,7 @@ fn execute(request: Request) -> Result<Value, String> {
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     Ok(
-        json!({ "schema": "escrow-perf-sample-v2", "status": "PASS", "workload": request.workload,
+        json!({ "schema": "escrow-performance-sample", "schema_version": 2, "status": "PASS", "workload": request.workload,
         "environment_contract": request.environment_contract, "source_fingerprint": request.source_fingerprint,
         "completed_ticks": completed, "phase_wall_ns": phase_wall_ns, "runnable_samples": samples }),
     )
@@ -182,7 +181,8 @@ mod tests {
     #[test]
     fn rejects_unexecuted_or_mismatched_workload_before_reporting_a_sample() {
         let request = Request {
-            schema: "escrow-perf-endpoint-request-v1".into(),
+            schema: "escrow-performance-endpoint-request".into(),
+            schema_version: 1,
             source_fingerprint: "a".repeat(64),
             environment_contract: json!({"rayon_threads": 1}),
             workload: Workload {

@@ -35,7 +35,7 @@ fn restored_and_uninterrupted_sessions_keep_canonical_events_and_saves_identical
         .end_civil_day()
         .expect("restored civil day settles");
 
-    // Then: all authoritative K7 state remains byte-identical, not merely the visible snapshot.
+    // 恢复后全部权威存档状态必须逐字节一致，不能只比较可见快照。
     assert_eq!(
         serde_json::to_vec(&uninterrupted.save().expect("healthy save")).unwrap(),
         serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()

@@ -115,7 +115,7 @@ fn chain_gold_land_develop_presale_suspend_deliver_wind_down() {
         net_debit(&re, acct::CONTRACT_LIAB).neg().unwrap(),
         yuan(18_000)
     );
-    // K3 红线：预售收款一分钱都不进收入。
+    // 行业会计红线：预售收款一分钱都不进收入。
     assert_eq!(net_debit(&re, acct::REVENUE), amt(0));
 
     let e = re

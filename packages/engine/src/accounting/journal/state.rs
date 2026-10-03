@@ -53,7 +53,7 @@ impl Journal {
         Ok(())
     }
 
-    /// 封账（状态 + 守卫；结账机制在任务 13）。
+    /// 封账（状态 + 守卫；结账机制在 `closing`）。
     pub fn close_period(&mut self, period: AccountingPeriod) -> Result<(), AccountingError> {
         self.periods.close(period)
     }

@@ -3,9 +3,9 @@ use crate::session::player_candidates::PlayerCandidateBatch;
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(in crate::session) enum CandidateCompositionError {
-    #[error("P2 NPC source supplied a non-NPC key {0:?}")]
+    #[error("DecisionShadow NPC 来源提供了非 NPC key {0:?}")]
     NonNpcKey(IntentCandidateKey),
-    #[error("P2 NPC source key {key:?} does not belong to owner {owner:?}")]
+    #[error("DecisionShadow NPC 来源 key {key:?} 不属于 owner {owner:?}")]
     NpcOwnerMismatch {
         key: IntentCandidateKey,
         owner: crate::AccountId,

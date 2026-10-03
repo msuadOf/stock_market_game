@@ -1633,7 +1633,7 @@ fn validated_operations_in_session(
 fn place_draft(operation: &ValidatedOperation) -> &EnvelopeDraft {
     match operation {
         ValidatedOperation::Place(draft) => draft,
-        ValidatedOperation::Cancel { .. } => panic!("expected a P3 place operation"),
+        ValidatedOperation::Cancel { .. } => panic!("预期 AccountValidation Place operation"),
     }
 }
 

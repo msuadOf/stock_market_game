@@ -1,4 +1,4 @@
-//! 在 Continuous private candidate 上执行 P4 收尾与唯一一次 ReceiptAggregation/Projection。
+//! 在 Continuous private candidate 上执行 stock_processing 收尾与唯一一次 ReceiptAggregation/Projection。
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
@@ -78,7 +78,7 @@ impl ContinuousTickBoundary {
     }
 }
 
-/// `session` 是 Continuous 的可丢弃 candidate；P4 在日终清簿前冻结行情与深度。
+/// `session` 是 Continuous 的可丢弃 candidate；stock_processing 在日终清簿前冻结行情与深度。
 /// Settlement 使用原 tick 的 market minute，之后才推进时钟并按既定日界规则解锁 T+1。
 pub(super) fn finalize_continuous_tick(
     session: &mut GameSession,

@@ -1,9 +1,9 @@
-//! 保险列报分类层（K3，任务 10）：总账科目 → CAS 25（2020）§84/§85 保险
+//! 保险列报分类层：总账科目 → CAS 25（2020）§84/§85 保险
 //! 合同资产负债表四项/利润表行 + CAS 30（2026）§55(二) 保险财务损益（经营
 //! 类别）的映射。官方依据已核验（docs/company-accounting.md §2.4）。
 //!
 //! 本模块是**分类层**：只读取总账净借方余额并组合成列报行，不生成完整
-//! 报表、不结账、不触现金（任务 13 的报表生成器消费这里的结果）。
+//! 报表、不结账、不触现金（报表生成器消费这里的结果）。
 //!
 //! 科目代码的单一真源：`codes` 模块同时被 `company::insurance::chart`
 //! （科目表构造）引用——列报映射与过账科目共享同一份代码表，杜绝两层
@@ -16,14 +16,14 @@ use crate::accounting::error::AccountingError;
 use crate::accounting::ledger::Ledger;
 use crate::accounting::ledger::LedgerAccountId;
 
-/// 保险科目表 v4 科目代码（company/insurance/chart.rs 以此构造科目表）。
+/// 保险科目代码（AccountChart.version=4，company/insurance/chart.rs 以此构造科目表）。
 pub mod codes {
     pub const CASH: &str = "1002"; // 银行存款（现金类）
     pub const PREMIUM_RECEIVABLE: &str = "1122"; // 应收保费
     pub const LRC: &str = "2501"; // 未到期责任负债
     pub const LIC: &str = "2502"; // 已发生赔款负债
     pub const CAPITAL: &str = "4001"; // 实收资本
-    pub const PROFIT_CURRENT: &str = "4103"; // 本年利润（结账科目，任务 13）
+    pub const PROFIT_CURRENT: &str = "4103"; // 本年利润（结账科目）
     pub const INSURANCE_REVENUE: &str = "6051"; // 保险服务收入
     pub const INSURANCE_EXPENSE: &str = "6451"; // 保险服务费用
     pub const INSURANCE_FINANCE: &str = "6541"; // 保险财务损益（费用要素）
@@ -77,7 +77,7 @@ pub fn insurance_presentation_lines(
     })
 }
 
-/// 保险归类表（任务 13 报表生成器消费；v4 全量 9 科目）。
+/// 保险归类表（报表生成器消费；AccountChart.version=4 全量 9 科目）。
 pub fn assignments() -> Vec<super::notes::Assignment> {
     use super::income::IncomeLine::{
         InsuranceFinanceExpense, InsuranceRevenue, InsuranceServiceExpense,

@@ -406,7 +406,7 @@ fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
     let error =
         super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
             .err()
-            .expect("P7 sequence exhaustion must fail after the private tail");
+            .expect("DerivationAudit 序号耗尽必须在私有收尾之后失败");
     assert!(
         matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
         if location == "pipeline::event_collection::collect_events" && description.contains("sequence overflow"))

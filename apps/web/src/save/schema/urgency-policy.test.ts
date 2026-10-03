@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { parseSaveSlot } from "../save-schema.ts"
-import { currentSaveFixture } from "../save-v2-test-fixture.ts"
+import { currentSaveFixture } from "../current-save-fixture.ts"
 
 const policy = {
   policy_version: 1,

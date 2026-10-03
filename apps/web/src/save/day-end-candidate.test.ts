@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { currentSaveFixture } from "./save-v2-test-fixture.ts";
+import { currentSaveFixture } from "./current-save-fixture.ts";
 import { validateDayEndCandidate } from "./day-end-candidate.ts";
 
 function candidate() {

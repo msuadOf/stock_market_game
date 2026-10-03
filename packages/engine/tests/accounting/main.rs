@@ -1,11 +1,11 @@
-//! 任务 6（company-information-npc-intentions）：原子复式记账与科目总账底座集成测试。
+//! 原子复式记账与科目总账底座集成测试。
 //!
-//! 政策基线：docs/company-accounting.md（K2/K3——借贷记账法、五要素、CAS 30 列报
-//! 分类）与计划 K2 金额契约（checked i128 分、十进制字符串 serde、整数基点、
-//! 合同累计余数、半偶舍入）。行业科目表落在任务 8–11，本套只用通用 v1 科目表。
+//! 政策基线：docs/company-accounting.md（借贷记账法、五要素、CAS 30 列报
+//! 分类）与会计金额契约（checked i128 分、十进制字符串 serde、整数基点、
+//! 合同累计余数、半偶舍入）。行业科目表独立扩充，本套只用通用科目表（AccountChart.version=1）。
 //!
 //! 金样单位约定（计划 Verification strategy）：注释与断言写「元」便于人读，
-//! 执行值一律「分」。按场景拆分：`gold`（四大金样 + K2 主金样）、`amount_unit`
+//! 执行值一律「分」。按场景拆分：`gold`（四大金样 + 资金守恒主金样）、`amount_unit`
 //! （金额算术/基点余数/serde 十进制字符串）、`failures`（类型化拒绝 + 完整状态
 //! 不变断言）。
 //!
@@ -56,12 +56,12 @@ pub(crate) fn entry(
     }
 }
 
-/// 通用 v1 科目表的空账套。
+/// 通用科目表（AccountChart.version=1）的空账套。
 pub(crate) fn books() -> Books {
-    Books::new(AccountChart::generic_v1())
+    Books::new(AccountChart::generic_account_chart())
 }
 
-/// 通用 v1 科目表常用科目代码（企业会计准则通用科目编号，docs/company-accounting.md §2.1）。
+/// 通用科目代码（AccountChart.version=1，企业会计准则通用科目编号，docs/company-accounting.md §2.1）。
 pub(crate) mod acct {
     pub const CASH: &str = "1002"; // 银行存款（现金类）
     pub const AR: &str = "1122"; // 应收账款

@@ -1,12 +1,12 @@
-//! 合并窗口构造（K3，任务 13）：Σ成员按代码加总 → 任务 12 合并 → 工作底稿
+//! 合并窗口构造：Σ成员按代码加总 → 固定集团合并 → 工作底稿
 //! 抵销折入 + 少数股东拆分事实。
 //!
 //! 语义决定（登记于 issues 的游戏简化）：
-//! - 工作底稿抵销的**流量效应归属合并申报当期**（任务 12 申报不携带期间
+//! - 工作底稿抵销的**流量效应归属合并申报当期**（合并申报不携带期间
 //!   属性；重述/跨期不追溯）。
 //! - 合并资产负债表权益列：实收资本 = **根成员** 4001；归母留存 = 归母权益
 //!   − 根成员实收资本（子公司权益的母公司份额并入留存——固定控制、无并购
-//!   计量模型）；少数股东权益 = 任务 12 拆分。非根成员权益科目在附注的
+//!   计量模型）；少数股东权益由固定集团合并拆分。非根成员权益科目在附注的
 //!   合并拆分披露中单独列示。
 //! - 上年年末比较项的合并拆分按「成员上年权益 × 少数基点」推导。
 
@@ -34,7 +34,7 @@ pub(crate) struct PriorSplit {
     pub root_capital: AccountingAmount,
 }
 
-/// 合并报表所需的任务 12 输出事实。
+/// 合并报表所需的固定集团合并输出事实。
 pub(crate) struct ConsolidationFacts {
     pub root: MemberId,
     pub minority_equity: AccountingAmount,
@@ -320,7 +320,7 @@ mod tests {
     use crate::calendar::CivilDate;
 
     fn books(capital: i128, date: &str) -> Books {
-        let mut books = Books::new(AccountChart::generic_v1());
+        let mut books = Books::new(AccountChart::generic_account_chart());
         books
             .post_batch(vec![JournalEntry {
                 source: BusinessEventId::new(1),

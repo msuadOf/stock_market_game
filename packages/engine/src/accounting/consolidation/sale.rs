@@ -1,4 +1,4 @@
-//! 内部销售抵销（K3，任务 12）：转移价/成本/未售存货申报校验 + 未实现
+//! 内部销售抵销：转移价/成本/未售存货申报校验 + 未实现
 //! 利润计算 + 工作底稿分录生成。
 //!
 //! 未实现利润 = rhe((转移价−成本)×未售存货 / 转移价)（比例分摊假设：
@@ -181,7 +181,7 @@ mod tests {
                 minority_bp: 2000,
             }],
         };
-        let books = Books::new(AccountChart::generic_v1());
+        let books = Books::new(AccountChart::generic_account_chart());
         let members = BTreeMap::from([(root.clone(), &books), (sub.clone(), &books)]);
         let mut sale = IntercompanySale {
             seller: root,

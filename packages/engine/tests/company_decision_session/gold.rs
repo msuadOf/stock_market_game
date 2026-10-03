@@ -6,7 +6,7 @@ use super::*;
 fn decision_chain_runs_attention_information_beliefs_plans_and_orders() {
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     let initial = session.decision_chain_diagnostics();
-    // 前史公开库已播种（任务 15 装配）：信念账户有材料可读。
+    // 前史公开库已播种（information 装配）：信念账户有材料可读。
     assert!(
         initial.library_publications > 0,
         "seeded library must exist"
@@ -45,7 +45,7 @@ fn civil_day_operations_advances_and_disclosures_publish() {
     let before = session.decision_chain_diagnostics();
     run_full_day(&mut session);
     let after = session.decision_chain_diagnostics();
-    // K4 日终顺序全部成功（经营终局 →（非月末）→ 18:00 披露）：
+    // 经营与信息披露日终顺序全部成功（经营终局 →（非月末）→ 18:00 披露）：
     // 1 月排期（Q1/H1/Q3/年报）尚未到期时库不增长——但经营必须前进。
     assert_eq!(
         session.civil_date(),
@@ -118,7 +118,7 @@ fn all_five_institution_styles_and_hot_styles_are_active() {
 
 #[test]
 fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
-    // ComputeBackend 契约（任务 26 后）：纯批量输入 + 稳定顺序输出。
+    // ComputeBackend 会话执行契约：纯批量输入 + 稳定顺序输出。
     use engine::{
         create_backend, ComputeMode, MarketView, SelfView, StockView, StrategyData, TargetPolicy,
     };

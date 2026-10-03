@@ -1,8 +1,8 @@
-//! 购地处理器（K3 地产）：项目建立 + 土地成本入开发存货。
+//! 购地处理器（地产会计约束）：项目建立 + 土地成本入开发存货。
 //!
 //! 分录：Dr 1541 开发存货 / Cr 1002 银行存款（经营活动——土地是开发商品
 //! 的原材料存货，非固定资产投资；CAS 31「投资与筹资之外的活动为经营」的
-//! 归类选择，登记 docs）。新项目受单公司项目数上限约束（K2 需求约束）。
+//! 归类选择，登记 docs）。新项目受单公司项目数上限约束（需求与预算约束）。
 
 use crate::accounting::{
     AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, PostingSide,

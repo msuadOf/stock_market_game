@@ -731,7 +731,7 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, .. }
-            if description == "P3 order ID allocation overflow"
+            if description == "AccountValidation 分配 OrderId 时溢出"
     ));
     assert_eq!(handoff.ledger(), &ledger);
     assert_eq!(game.business_state_hash().unwrap(), before);

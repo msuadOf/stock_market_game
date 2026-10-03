@@ -13,7 +13,7 @@ import type { StockCode } from "./StockCode";
 import type { Urgency } from "./Urgency";
 
 /**
- * 可跨日的个人交易计划（K6）：唯一 per 账户+股票，版本化修订，真实成交计进度。
+ * 可跨日的个人交易计划：每账户+股票唯一、版本化修订、真实成交计进度。
  */
 export type TradingPlan = {
   plan_id: PlanId;

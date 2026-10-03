@@ -123,14 +123,14 @@ fn gold_income_tax_loss_carryforward_current_and_deferred() {
         d("2030-12-15"),
     )
     .expect("expense");
-    let y1 = co
+    let loss_year_tax_accrual = co
         .accrue_income_tax(d("2030-12-31"))
         .expect("loss-year tax accrual");
-    assert_eq!(y1.pretax, yuan(-1_000));
-    assert_eq!(y1.current_tax, AccountingAmount::ZERO);
-    assert_eq!(y1.loss_added, yuan(1_000));
+    assert_eq!(loss_year_tax_accrual.pretax, yuan(-1_000));
+    assert_eq!(loss_year_tax_accrual.current_tax, AccountingAmount::ZERO);
+    assert_eq!(loss_year_tax_accrual.loss_added, yuan(1_000));
     // 递延所得税资产 = 1000 × 25% = 250 元（Dr 1811 / Cr 6801，非现金）。
-    assert_eq!(y1.deferred_delta, yuan(250));
+    assert_eq!(loss_year_tax_accrual.deferred_delta, yuan(250));
     assert_eq!(net_debit(&co, acct::DTA), yuan(250));
     assert_eq!(net_debit(&co, acct::TAX_EXP), yuan(-250));
     // 净利 = −1000 + 250 = −750 元（递延所得税收益调减亏损；合法负值）。
@@ -149,18 +149,18 @@ fn gold_income_tax_loss_carryforward_current_and_deferred() {
         .expect("sale");
     co.collect(&sale.receivable, yuan(9_040), d("2031-07-01"))
         .expect("collection");
-    let y2 = co
+    let profit_year_tax_accrual = co
         .accrue_income_tax(d("2031-12-31"))
         .expect("profit-year tax accrual");
     // 2031 期间税前 = 8000 − 2000 = 6000 元；弥补 2030 年亏损 1000 元（FIFO）；
     // 应税 5000 × 25% = 1250 元当期税；DTA 目标 0 → 转回 250 元。
-    assert_eq!(y2.pretax, yuan(6_000));
-    assert_eq!(y2.loss_offset_used, yuan(1_000));
-    assert_eq!(y2.current_tax, yuan(1_250));
-    assert_eq!(y2.deferred_delta, yuan(-250));
+    assert_eq!(profit_year_tax_accrual.pretax, yuan(6_000));
+    assert_eq!(profit_year_tax_accrual.loss_offset_used, yuan(1_000));
+    assert_eq!(profit_year_tax_accrual.current_tax, yuan(1_250));
+    assert_eq!(profit_year_tax_accrual.deferred_delta, yuan(-250));
     assert_eq!(net_debit(&co, acct::CIT_PAYABLE), yuan(-1_250));
     assert_eq!(net_debit(&co, acct::DTA), AccountingAmount::ZERO);
-    assert_eq!(net_debit(&co, acct::TAX_EXP), yuan(1_250)); // −250（y1 收益）+ 1500（y2 当期+转回）
+    assert_eq!(net_debit(&co, acct::TAX_EXP), yuan(1_250)); // −250（loss_year_tax_accrual 收益）+ 1500（profit_year_tax_accrual 当期+转回）
                                                             // 全周期净利 = 8000 − 2000 − 1000 − 1250（净所得税费用）= 3750 元。
     assert_eq!(co.books().ledger().net_income().expect("ni"), yuan(3_750));
 

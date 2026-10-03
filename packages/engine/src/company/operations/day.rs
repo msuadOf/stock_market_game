@@ -1,4 +1,4 @@
-//! 逐自然日推进循环（K4）：冲击到期/采样 → 到期派发 → 行业经营流 → 次日
+//! 逐自然日推进循环（经营与信息披露）：冲击到期/采样 → 到期派发 → 行业经营流 → 次日
 //! 滚动利息排队。日期严格逐日；任何类型化 `Err` 上抛（经营层内部错误不吞），
 //! `PaymentFailed` 在流内捕获为业务状态。
 
@@ -326,7 +326,7 @@ mod tests {
     };
     use crate::company::events::ShockParams;
     use crate::company::industrial::{
-        industrial_chart_v2, IndustrialBooks, IndustrialConfig, OpeningInventoryItem,
+        industrial_account_chart, IndustrialBooks, IndustrialConfig, OpeningInventoryItem,
     };
     use crate::company::operations::config::{FlowParams, IndustryBooks};
     use crate::company::operations::{
@@ -354,7 +354,7 @@ mod tests {
         };
         let customer = CounterpartyId("CUSTOMER".to_string());
         let books = IndustrialBooks::new(IndustrialConfig {
-            chart: industrial_chart_v2(),
+            chart: industrial_account_chart(),
             as_of: start().prev().expect("前一自然日"),
             opening_lines: vec![
                 line("1002", PostingSide::Debit, 10_000),
@@ -391,7 +391,7 @@ mod tests {
             },
         })
         .expect("工商 Fixture 装配");
-        let mut shock_params = ShockParams::default_v1();
+        let mut shock_params = ShockParams::current_default_parameters();
         shock_params.market_candidate_bp = 0;
         shock_params.industry_candidate_bp = 0;
         shock_params.company_candidate_bp = 0;
