@@ -2,14 +2,15 @@
 
 ## 1. 基线、范围与判定
 
-- 源码基线：`4e64dad8efac7a762108fe4aeb91c7e84f51f6bb`，分支 `fix/synthetic-history-policy`。
-- 本报告补充并优先于 [旧缺口盘点](../../docs/implementation-gaps.md) 的历史完成度描述；不删除旧证据，不把旧 A01–A11 整项重开。
-- 本轮任务是查漏与文档登记，不是实现授权。没有修改游戏代码，没有运行游戏单测、构建、完整回归、浏览器或性能验收；下列“测试”均指已有测试源码或下一步应补的代表性验证。
-- 按最多 20 个并发 subagent、每批 1–3 篇文档全文阅读；长文连续分段读至 EOF。主控用源码搜索定位后阅读原文、调用者和生产实现，并对关键发现安排交叉复核。
-- “全文阅读”与“每个历史断言均已证明”不同。本文把确认缺口、已实现的契约族、未来范围、验收债和不能定性的冲突分别登记，不以未勾选框、旧符号消失或纯函数测试证明生产功能缺失/完成。
-- 这是指定基线、指定文档集合的静态审计，不是“整个程序不再有任何未知缺陷”的保证。后续代码变化需重新核对；行号均指上述基线。
-- 本轮补充逐文档、逐章节/任务的持久化记录见 [全文覆盖索引](coverage-index.md)：142 个现存跟踪 Markdown 路径、3 份历史草稿，另补 2 份已删除历史文档；不再只依赖下文概述族表。各记录把生产链、历史核销、未来范围与未运行的验收分开。
-- 本次不重新联网核验交易所制度，不修改 A 股规则。金额为分、数量为股；界面手数只是换算。DCF、个体策略参数是游戏模型，不冒充交易制度或真实市场校准。
+本报告核对历史需求与生产实现，补充并优先于 [旧缺口盘点](../../docs/implementation-gaps.md) 的完成度描述；保留旧证据，不把 A01–A11 整项重开，也不将审计视为实现授权。
+
+当前源码基线为 `8cf34a1ce2d893f003e1d4c34d7c2bea170dd4cb`，复核日期为 2026-10-03。初次全文审计针对 `4e64dad`，其文档提交为 `b89afb3`；两次之间的更新涉及 494 个文件，其中 340 个为产品、测试和工具源码，正式需求文档与 workflow 未变。复核在 `.worktree/implementation-reaudit`、分支 `docs/implementation-reaudit` 中进行；主工作区随后出现的其他未提交修改没有纳入，后续版本须重新核对。
+
+全文阅读覆盖 142 个跟踪 Markdown 路径、3 份历史草稿及2份已删除文档，采用20个并发 subagent、每批1–3篇连续读至 EOF。更新后的复核承接这份需求映射，重新追踪 owner、调用方和结果消费，而非把对象抽取视为功能完成。第2节给出当前缺口及详细复核记录；R/S/H逐篇记录和第7节历史映射保留原审计基线，来源与版本关系见 [覆盖清单](coverage-index.md)。
+
+“生产已接”仅针对所列契约，不保证整模块无缺陷。确认缺口、待定需求、未来范围、文档漂移与验收证据分别登记，不用未勾选框、旧符号消失或纯函数测试证明生产功能缺失或完成。本轮没有修改游戏代码，没有运行游戏测试、构建、浏览器、完整回归、性能矩阵或发布流程；测试引用仅指已有源码或后续验证方向。
+
+本次未重新联网核验制度，沿用文档中登记的 A 股规则及简化；金额为分、数量为股，界面手数仅作换算。DCF和个体策略参数是游戏模型，不冒充交易制度或真实市场校准。这是指定基线和文档集合的静态审计，不是程序没有未知缺陷的保证。
 
 ### 最新决定优先
 
@@ -23,106 +24,101 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-状态均为“未修复，静态确认”；分组不是运行失败复现或性能优先级证明。
+G01–G39 在当前基线均仍有未完成部分，未核销任何一项，也未确认新增 G 编号。分组不是运行失败复现或性能优先级证明。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G01 | 浏览器远程 HTTP/WS 可用且鉴权；ADR-0005 §6、ADR-0027 | `apps/web/src/host/remote-request.ts:10` 将 token 放 query，`apps/web/src/host/remote-host.ts:42` 使用原生 WebSocket；`apps/server/src/routes.rs:1068` 只读 Authorization。浏览器该构造方式不发送这个自定义头，双方契约不一致。修复必须保留鉴权，不能以放开私有路由代替兼容传输。 |
-| G02 | 三宿主实际倍率；ADR-0005 §5、UX-CONTRACT 模拟控制 | `apps/web/src/host/remote-host.ts:218` 的 GET speed 没有凭据，`apps/server/src/routes.rs:909` 要求凭据；`apps/web/src/App.tsx:523` 是实际消费路径。 |
-| G03 | remote push/pull 都可持续取帧；ADR-0005 §6、ADR-0010 | `apps/web/src/host/remote-host.ts:221` 只切模式/重连，没有生产 GetFrame 发送循环；`apps/server/src/routes.rs:1286` 的 pull 分支等待该命令。服务端测试手动拉帧不证明浏览器适配器已实现。 |
-| G04 | baseline 仅初始化、读档、显式重同步；ADR-0010 §统一更新 | 继续模拟调用 `apps/web/src/App.tsx:725` 的 start；Remote `apps/web/src/host/remote-host.ts:180`、Tauri `apps/web/src/host/tauri-host.ts:171` 重发缓存 baseline，普通协议更新不推进缓存。协调器 `apps/web/src/host/protocol-coordinator.ts:75` 重新安装旧状态，后续 tick/seq 可能不连续。这里“继续”不是从磁盘读档。 |
-| G05 | 心跳失活处理与重连；ADR-0005 §6、ADR-0010 宿主能力 | `apps/server/src/routes.rs:1243` 发 Ping，但无 Pong 到期判据；`apps/web/src/host/remote-host.ts:150` 意外断线转 fatal，没有自动恢复链。手动 start 能重建连接，不应写成完全没有连接能力。 |
-| G18 | Worker uiFrame 背压；ADR-0010 宿主能力/不做 | `apps/web/src/host/wasm-worker.ts:124` 每步直接 postMessage；`apps/web/src/host/worker-host.ts:214` 直接交付 callback，未见可证明有界的消费背压或等价合并机制。定时让出执行机会不等于消费背压；不限定必须ACK，不据此声称已测得卡顿。任何合并只能处理允许覆盖的绘图采样，不删除新协议要求保留的提交帧与交易事实。 |
-| G19 | Tauri 固定高倍率 tick 在 Rust 聚合后约 16ms 发布；ADR-0010 | `apps/desktop/src-tauri/src/actor.rs:670` 固定倍率调用 run_cycle(1)，生产发布直接 emit；`apps/desktop/src-tauri/src/actor.rs:1041` 的聚合 helper 位于 cfg(test)。Fastest 批次已有，不能误报整个宿主完全不聚合。 |
+| G01 | 浏览器远程 HTTP/WS 可用且鉴权；ADR-0005 §6、ADR-0027 | 浏览器 WS query token 与服务端 header 认证仍不一致；`remote-request.ts` → `remote-host.ts` → Server `routes.rs`。 修复须保留鉴权，不得通过开放私有路由绕过契约。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G02 | 三宿主实际倍率；ADR-0005 §5、UX-CONTRACT 模拟控制 | Remote `readSpeedMetrics` GET 仍不附凭据；真实 UI 轮询迁至 `useSpeedMetricsPolling.ts`。  当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G03 | remote push/pull 都可持续取帧；ADR-0005 §6、ADR-0010 | Remote 切 pull 后仍没有 `GetFrame` 发送循环。 服务端测试手动拉帧不证明浏览器适配器已接线。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G04 | baseline 仅初始化、读档、显式重同步；ADR-0010 §统一更新 | `App.tsx:362` 暂停后继续再次 `host.start`，Remote/Tauri 重送旧 baseline；Worker 的 generation 守卫原已存在。 缓存不随 delta 推进，重新交付可能回退状态及游标；这里的继续不是从磁盘读档。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G05 | 心跳失活处理与重连；ADR-0005 §6、ADR-0010 宿主能力 | Server 无 Pong 截止判据，Remote 意外 close 仍转 fatal 而非自动恢复。 手动 start 可以重建连接，但不等于自动恢复。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G18 | Worker uiFrame 背压；ADR-0010 宿主能力/不做 | `WasmTickLoop.publish` 每步发完整更新，仍无消费者驱动的有界背压。 定时让出执行机会不等于消费背压；任何合并不得丢弃协议要求保留的提交帧及交易事实，未实测卡顿。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G19 | Tauri 固定高倍率 tick 在 Rust 聚合后约 16ms 发布；ADR-0010 | Desktop 固定倍率仍 `run_cycle(1)` 后直接 emit；Fastest 批次不等于固定倍率聚合。  当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
 
 ### 2.2 策略、个人信息与估值
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G06 | 五年权益现金流折现；公司计划 K5/K5a，`docs/superpowers/plans/2026-09-10-company-information-npc-intentions.md:150` | `packages/engine/src/strategy/fundamental/valuation.rs:159` 逐年增长 CF，却每年仅除一次 1+r，而终值折现五年。真实路径为个人观察→BeliefBook→cash_flow；不是未使用代码。恒定 FCFE=17,820,000 分、r=10%、g=gt=0，现有 gold=191,648,179 分，逐年折现应约 178,200,000 分，差异不是分级舍入。注释及 gold 同时固化了错误，修复需独立推导而非为过测试改预期。 |
-| G07 | 身份不决定分析能力，散户可分析基本面及五路权重；公司计划 K5、任务17/26，ADR-0016 | `packages/engine/src/session.rs:2120` 仅给机构装配个人分析/信念；散户仍走 `packages/engine/src/strategy/zi_noise.rs:193` 旧行为内核。散户 AnalysisProfile 金样存在不代表真实散户消费。不是要求每个散户都估值，也不是给全部散户套机构执行复杂度。 |
-| G08 | 失败日期与每20交易日无新受挫衰减；ADR-0013 计划契约修订、公司计划 K5 | 散户观察 `packages/engine/src/session/pipeline/decision_snapshot_capture.rs:348` 和成交 `packages/engine/src/session/pipeline/retail_projection.rs:480` 仍走旧 writer；`packages/engine/src/behavior/heuristics.rs:88` 消费未衰减计数。dated writer/failure_influence 有纯逻辑代码但未接此链；机构 ADR-0026 已有自己的衰减，不应重做。 |
-| G09 | 本人已知完整年报及可用中期更新；公司计划 K5a:148 | `packages/engine/src/session/decision_chain.rs:846`、`packages/engine/src/session/decision_chain.rs:904` 只投递新年报；`packages/engine/src/strategy/fundamental/update.rs:254` 拒非年报。历史 issue 将中期更新后置22/26评估，并未取消。需中期补充/修订路径，不可把季报直接当全年报表。 |
-| G20 | 新局从熵取种、测试可固定；ADR-0005 §4 | `apps/web/src/App.tsx:292` 无初始档时固定使用 `apps/web/src/config/defaults.ts:121` 的 42n。存档 RNG、固定 seed 注入已存在；缺的是普通新局取种，不要求自由并发同 seed 整局字节一致。 |
+| G06 | 五年权益现金流折现；公司计划 K5/K5a，`docs/superpowers/plans/2026-09-10-company-information-npc-intentions.md:150` | `strategy/fundamental/valuation.rs:159` 五年显式现金流仍各只折现一次。 恒定 FCFE=17,820,000 分、r=10%、g=gt=0 时，现有 gold=191,648,179 分，逐年折现应约 178,200,000 分；差异不是分级舍入。修复需独立推导，不能只改测试预期。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G07 | 身份不决定分析能力，散户可分析基本面及五路权重；公司计划 K5、任务17/26，ADR-0016 | 基本面认识和五路信号仍只装配到机构链；Retail 仍走 ZiNoise/retail 内核。 不是要求所有散户都估值，也不是赋予全部散户机构执行复杂度。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G08 | 失败日期与每20交易日无新受挫衰减；ADR-0013 计划契约修订、公司计划 K5 | 散户观察/成交仍走 legacy writer，dated writer/衰减没有进入对应消费链；不重做已有机构衰减。 不能用已有机构 ADR-0026 衰减核销散户链路，也不应重复实现机构衰减。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G09 | 本人已知完整年报及可用中期更新；公司计划 K5a:148 | `decision_chain/roots.rs` 仍只将年报投递到信念更新，中期补充链缺失。 中期材料须作为补充或修订，不能直接当全年报告。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G20 | 新局从熵取种、测试可固定；ADR-0005 §4 | `useSessionHostLifecycle.ts:90` 普通新局仍使用固定 `DEFAULT_SEED=42n`。 存档 RNG 和固定 seed 测试注入已存在；不要求自由并发同 seed 整局字节一致。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
 
 ### 2.3 行情显示与日历边界
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G10 | 连续竞价一分钟成交量；DESIGN:88、UX-CONTRACT:47 | `apps/web/src/app/useMarketChartRuntime.ts:16` 用累计量减上一帧，`apps/web/src/mobile/market-model.ts:564` 同分钟替换；同分钟累计100→200→200最终只留0。首个连续点还可能把开盘累计量算入连续分钟。旧 collector 测试没有覆盖这条实际 hook。 |
-| G11 | 新日清旧分时且保留新日已到采样；UX-CONTRACT:81 | `apps/web/src/app/useMarketChartRuntime.ts:109` 重建刚结束交易日帧，后续按分钟键合并，缺日期隔离；新日未覆盖的槽保留旧点，量基数也未重置。读档/新局清理不能代替正常日界清理。 |
-| G12 | 分时量涨红空心、跌绿实心；UX-CONTRACT:54 | `apps/web/src/app/useMarketChartRuntime.ts:23` 连续点固定 buy=true，竞价以价格非空判断；`apps/web/src/mobile/MobileStockDetail.css:126` 红柱仍实心。这里审计的是展示涨跌语义，不把 buy 字段误称真实主动买卖方向。 |
-| G13 | 逐笔展示最近成交；DESIGN:126、移动QA | `apps/web/src/store/store.ts:119` 最新在前，按股票过滤保序，但 `apps/web/src/mobile/MobileStockDetail.tsx:155` slice(-7).reverse 选较旧端。100条带不是全天完整流水，不能通过无限积累来修。 |
-| G14 | 逐笔时间对应真实成交；DESIGN:126 | `apps/web/src/mobile/MobileStockDetail.tsx:220` 所有行统一使用当前 elapsedMinutes，而非各自成交 tick；跨分钟旧成交显示当前时间。 |
-| G15 | 官方年度覆盖替代模拟回退；`docs/simulation-calendar.md:59` | `packages/engine/src/calendar/holidays.rs:76` 官方年度存在但当日不在休市区间时仍叠加模拟假日，无法撤销模拟结果。默认 official_coverage 为空，不能声称默认局已触发；这是非空覆盖输入的代码边界，不要求导入真实市场行情。 |
+| G10 | 连续竞价一分钟成交量；DESIGN:88、UX-CONTRACT:47 | `market-chart-projection.ts` 仍以每帧累计量差替换分钟量，而非累加该分钟量。 同分钟累计100→200→200最终会只留0；首个连续点还可能带入竞价累计量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G11 | 新日清旧分时且保留新日已到采样；UX-CONTRACT:81 | 分时合并仍只按日内槽位，无正常日界隔离。 新日尚未覆盖的分钟槽会保留旧日点；新局或读档清理不能代替正常日界处理。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G12 | 分时量涨红空心、跌绿实心；UX-CONTRACT:54 | 连续点方向固定 true、竞价按非空判方向，涨量柱仍非红色空心。 这里审计价格涨跌展示，不把 buy 字段称为真实主动买卖方向。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G13 | 逐笔展示最近成交；DESIGN:126、移动QA | `MobileIntradayProjection` 仍对最新优先成交数组取 `slice(-7).reverse()`。 100条成交带不是全天流水，不得以无限积累修补方向错误。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G14 | 逐笔时间对应真实成交；DESIGN:126 | 逐笔仍共用当前 `tradeTime`，不取各笔成交时间。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G15 | 官方年度覆盖替代模拟回退；`docs/simulation-calendar.md:59` | `calendar/holidays.rs:72` 官方覆盖当年非假日仍落入模拟回退。 默认 official_coverage 为空；这是非空覆盖输入边界，不声称默认局已触发，也不要求真实行情数据。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
 
 ### 2.4 工程、交互和发布
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G16 | 普通tick不随多年历史线性复制；`docs/superpowers/plans/2026-09-24-single-world-multithreading.md:60` | `packages/engine/src/session.rs:1481` 克隆全部 plans；`packages/engine/src/plans/mod.rs:139` 为普通 BTreeMap，终止只移活跃索引，历史仍在。计划根另有 clone。缺所有权优化，不等于允许删除历史，也不证明已实测性能不达标。 |
-| G17 | Rust指标与Rayon生产加速；ADR-0008 D2 | 指标功能已实现，但 `packages/engine/src/indicators.rs:207` 批量并行函数只有测试调用；三宿主调用单请求顺序计算函数。缺并行生产接线，不把整个A09重报未实现；是否值得对单股并行要先测量。 |
-| G21 | 基线CLI只取setup、不验证其余档字段；`docs/price-volume-simulation-gap-checklist.md:265` | `packages/engine/examples/price_volume_baseline.rs:31` 先完整反序列化SaveSlot，无关快照/订单字段非法也拒绝。该工具已有诊断输出，缺输入投影契约。 |
-| G22 | 表单即时/字段级错误；`docs/error-handling.md:114` | `apps/web/src/App.tsx:797` 校验失败仅全局notice，`apps/web/src/App.tsx:1027` 数量框无字段错误关联。不是静默吞错或全站无错误详情。 |
-| G23 | 进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | `apps/web/src/App.tsx:211` 与返回回调仅更新状态；交易底页有焦点管理，但不能代替详情导航焦点。需浏览器短验收确认修复。 |
-| G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | `apps/web/src/app/useMobileUiController.ts:71` 切换后主动scrollIntoView。与约定冲突，不是信息内容业务未实现。 |
-| G25 | 返回/切股至少44px点击热区；DESIGN:86 | `apps/web/src/mobile/MobileStockDetail.css:190` 后续规则把切股宽度限制22–26px，返回所在列30–35px；未见扩大点击区域。可见图标可以小，点击区域契约仍需实现。未做本轮像素测量。 |
-| G26 | 前端CI warning作为错误；`docs/tech-stack.md:23` | `apps/web/package.json:9` 仅oxlint，配置存在warn，CI直接调用，不设置warning失败门槛。Rust -D warnings已有。不涉及恢复普通commit/PR自动运行。 |
-| G27 | 发布拒绝标签移动；ADR-0028 | `scripts/publish-release.mjs:83` 上传前查SHA，资产上传/校验后 `scripts/publish-release.mjs:109` 直接公开，未在公开前重查。记录的是守卫窗口，不声称线上发生过错误发布；再次查询也不等于平台级原子不可变标签保证。 |
+| G16 | 普通tick不随多年历史线性复制；`docs/superpowers/plans/2026-09-24-single-world-multithreading.md:60` | 全历史 PlanBook 复制移至 `RootReadContext::capture`；Arc 共享该副本不等于消除复制。 缺的是所有权优化，不意味着可以删除历史；未测量性能幅度。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G17 | Rust指标与Rayon生产加速；ADR-0008 D2 | Rust 指标已有，三宿主仍只调单项函数；Rayon batch 仍仅测试调用。 缺批量生产接线，不把指标功能整体重开；是否值得对现有负载并行须先测量。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
+| G21 | 基线CLI只取setup、不验证其余档字段；`docs/price-volume-simulation-gap-checklist.md:265` | `price_volume_baseline.rs:29` 仍完整反序列化 SaveSlot 后才取 setup。 工具输入投影与公共 SaveSlot 深度验证是不同契约，不应放宽业务读档校验。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
+| G22 | 表单即时/字段级错误；`docs/error-handling.md:114` | 表单错误迁至 `useTradingCommands` 后仍只有全局 notice，缺字段关联。 错误并未静默吞掉；缺的是即时、字段级反馈。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G23 | 进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情进入/返回仍只变状态，没有对应导航焦点恢复。 交易底页焦点管理不能代替详情导航；后续需浏览器短验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | 信息 tab 仍调用 `scrollIntoView`。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G25 | 返回/切股至少44px点击热区；DESIGN:86 | 返回/切股横向点击区域仍小于约定 44px。 可见图标可以小，但热区应满足契约；本轮未做像素测量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G26 | 前端CI warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；不涉及恢复普通 commit/PR 自动运行。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
+| G27 | 发布拒绝标签移动；ADR-0028 | 上传前 SHA 校验与资产核对已有，公开 draft 前仍未重新检查 tag 指向。 重查只能缩小竞争窗口，不是平台级原子不可变保证；未声称线上发生过错误发布。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
 
 ### 2.5 补充逐章核对发现
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G28 | 固定集团合并报表进入完整交付；ADR-0016:97、公司计划K3/任务12–13/完成条件 | `packages/engine/src/accounting/closing/mod.rs:332` 生产只构造Standalone；`packages/engine/src/accounting/reports/mod.rs:201` 有Consolidated分支，但未见会话结账/披露构造该请求。合并算法和五产物测试已有，不等于固定集团的生产发布已接线。单层等简化及合并更正不支持，不取消普通合并报告承诺；不要求默认每家公司都有子公司。 |
-| G29 | 无NPC时跳过初始流通盘分配；initial-positions spec§2.4、计划Task3 | `packages/engine/src/session.rs:1095` 对正流通盘的ByKind先要求现存NPC类别有效权重和>0，零NPC必被拒绝；`packages/engine/src/session.rs:1913` 的空NPC早退无法到达。此为可配置新局边界，不声称默认20,007户受影响，也不建议凭空分配给玩家。 |
-| G30 | 图表窗口按钮可见键盘焦点；DESIGN:82、UX-CONTRACT:56 | `apps/web/src/mobile/MobileStockDetail.css:218` 用未定义的--msd-focus覆盖已有outline，计算时失效。应补有效焦点样式；按钮有名称/SSR存在不证明焦点可见。 |
-| G31 | 图表只随当前股票历史刷新；UX-CONTRACT:88 | `apps/web/src/app/useMarketChartRuntime.ts:133` 每批无条件复制当前三组历史数组，`apps/web/src/app/MarketRuntimeProvider.tsx:79` 因新引用广播；当前股票没变化也失去引用隔离。Provider拆分未保证当前股票数据引用隔离；未实测性能幅度。 |
-| G32 | 昨收中轴与0.00%位置一致；DESIGN:90 | `apps/web/src/mobile/MobileStockDetail.tsx:126` 昨收位于SVG中点；`apps/web/src/mobile/MobileStockDetail.css:79` 中轴用整个容器50%，SVG高度却扣除23px时间轴。两坐标系中点差11.5px；此为样式推导，未做浏览器像素验收。 |
-| G33 | 移动端字号随容器宽度响应；DESIGN:64/127 | `apps/web/src/mobile/MobileStockDetail.css:199` 起的后置规则将主报价、报价摘要和盘口字号固定为px，覆盖此前clamp/cqw。部分组件仍响应式，不能误报整个页面都未适配；320/390/430px需代表性验证。 |
-| G34 | 交易底页遵守减少动态效果偏好；DESIGN:104、UX-CONTRACT:95 | `apps/web/src/App.css:524` 底页保留300ms transform transition；唯一reduce覆盖在 `apps/web/src/mobile/MobileStockDetail.css:171`，仅作用详情子树，底页在其外。缺样式覆盖，不声称本轮肉眼观察过动画。 |
+| G28 | 固定集团合并报表进入完整交付；ADR-0016:97、公司计划K3/任务12–13/完成条件 | 日终仍发布 Standalone，未接固定集团合并公开链；等额往来申报仍不保证账面上界。 合并算法和五产物测试已有；单层等简化不取消普通集团报告承诺，也不要求默认每家公司有子公司。Task12 F6要求调用方从真实账簿派生申报，现配对校验仅确认双方等额，不保证未超账面余额；重复成员对双抵及销售金额上界已修，不能混报或声称默认游戏已发生超额抵销。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G29 | 无NPC时跳过初始流通盘分配；initial-positions spec§2.4、计划Task3 | ByKind 正流通盘且零 NPC 仍在 setup 校验阶段拒绝，空 NPC seed 早退不可达。 这是可配置新局边界，不声称默认20,007户受影响，也不应凭空分给玩家。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
+| G30 | 图表窗口按钮可见键盘焦点；DESIGN:82、UX-CONTRACT:56 | 图表窗口按钮仍使用未定义 `--msd-focus`。 按钮名称和 SSR 存在不能证明键盘焦点可见。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G31 | 图表只随当前股票历史刷新；UX-CONTRACT:88 | `MarketChartProjection` accessor 每批重建数组，当前股票未变化也更新引用。 Provider 拆分未保证数据引用隔离；未实测性能幅度。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G32 | 昨收中轴与0.00%位置一致；DESIGN:90 | 昨收中轴与图形中点仍使用不同高度坐标系。 当前样式推导中两中点相差时间轴23px的一半，未做浏览器像素验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G33 | 移动端字号随容器宽度响应；DESIGN:64/127 | 后置 px 字号仍覆盖关键报价响应式规则，不是全部页面不响应。 局部响应式能力旧基线已存在，不算本次修复；320/390/430px仍需代表性验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G34 | 交易底页遵守减少动态效果偏好；DESIGN:104、UX-CONTRACT:95 | reduced-motion 规则仍未覆盖详情外的交易底页。 本轮未运行浏览器观察动画。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 
 
 ### 2.6 公司与计划生产闭环补漏
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G35 | 工商折旧、所得税及商业债务支付进入经营闭环；公司计划K3/任务8、14 | `packages/engine/src/company/operations/industrial.rs:43` 日常流未调用折旧/所得税/付息处理器，`packages/engine/src/session.rs:2453` 期末直接封账；开局已配置固定资产寿命及商业借款（`packages/engine/src/session/company_assembly.rs:355`）。`packages/engine/src/company/operations/dispatch.rs:42` 已接利息计提，不能误写成利息完全未实现；缺的是相应期末处理/支付生产调度，而非股东分红或投资者补钱。 |
-| G36 | 四行业可自定义并经公共报告查询跑通；公司计划K3:104、任务26 | `packages/engine/src/session/company_assembly.rs:296` 全部装配工商；会话封账遍历公司调用books_mut（`packages/engine/src/session.rs:2453`），`packages/engine/src/company/operations/config.rs:40` 对非工商unreachable。银行/保险/地产经营和报表内核已有，但自定义行业的完整会话装配/封账/披露仍未贯通；不要求增加默认股票，也不声称默认局已触发该panic。 |
-| G37 | DEV因果记录关联实际订单ID和计划变化；公司计划任务35 | `packages/engine/src/session/plan_chain_candidates.rs:337` 用观察快照的计划簿记录；`packages/engine/src/session/decision_chain.rs:983` 固定传空events，而order_ids只从events抽取。`apps/web/src/dev/NpcDecisionInspector.tsx:81` 将空列表标“未提交”，不能反映随后真实执行。DEV入口/隔离已实现，缺事实关联，不应把未成交伪装成交或向产品快照泄露私有状态。 |
-| G38 | 本人预算区分已有计划续行与新机会；公司计划K6:165/任务22 | `packages/engine/src/session/decision_chain.rs:1803`、:2040 的生产请求均标ExistingPlan；`packages/engine/src/plans/allocation.rs:115` 有分类优先级却收不到新机会类别。新旧买计划争用本人有限现金时仍按信心排序，未接“续行优先”。这是同一账户软预算，不得扩为跨账户/来源类撮合优先；风险暂停不等于自动强卖。 |
+| G35 | 工商折旧、所得税及商业债务支付进入经营闭环；公司计划K3/任务8、14 | 工商折旧/所得税/商业债务支付调度仍未补齐；已有利息计提、月年封账不重开。 开局已有固定资产寿命与商业借款；缺的是相应处理与支付，不是股东分红或给投资者补钱。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G36 | 四行业可自定义并经公共报告查询跑通；公司计划K3:104、任务26 | 新局仍固定 Industrial，非工商 `books_mut` 不支持；行业不适用冲击仍进入 active 至公告链。 银行/保险/地产经营及报告内核已有，不等于会话装配/封账/披露闭环；不声称默认工商局触发非工商 panic。sample_company_shock 不接收行业类型，银行/保险可能得到不消费的 ProductionInterruption/AssetImpairmentSignal；披露器直接读 active 状态按开始日期公布，丢弃日报告并不能阻止公告。获批只记录的 CreditDeterioration 另列，不视作同一缺口。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G37 | DEV因果记录关联实际订单ID和计划变化；公司计划任务35 | DEV 根诊断仍传空交易 events，无法关联随后真实订单 ID/计划变化。 DEV入口和隔离已有，不得伪造成交或向产品快照泄露私有状态。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
+| G38 | 本人预算区分已有计划续行与新机会；公司计划K6:165/任务22 | 两个生产预算请求仍全标 ExistingPlan，新机会优先级未获实际分类输入。 仅是同一账户软预算分类，不得扩为跨账户撮合优先；AllocationExperience 默认值不单列缺口，避免重复扣减上游已处理的个人信心。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 
 ### 2.7 验收工具契约
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G39 | K7按现行并发受理契约验证；Sept24多线程计划:154 | `scripts/simulation/run-escrow-verification-matrix.mjs:755` 仍要求不同worker完整artifact相等；`packages/engine/examples/escrow_verification_harness/committed.rs:494` 只固定入队脚本，:530调用真实生产step，并未重放同一已发生受理轨迹。`packages/engine/src/session/pipeline/local_admission.rs:282` 保留真实局部受理顺序。故“同seed/脚本”不能保证四类artifact完全一致。此为工具适用契约遗漏，未运行矩阵或声称实际失败；不能为通过而删除断言，应保留守恒/价时/依赖/失败负控，并单独验证同一受理事实的重放。 |
-
-### 补查的集成边界
-
-本轮补查另发现两项需要随既有功能闭环处理的边界，归属既有 G28/G36，不重复编号；详细原文、生产路径与已核销反例见 [S16](coverage/s16.md)：
-
-- **G28 的往来申报上界**：历史 Task12 F6 明确要求 Task13 从账簿派生时保证不超额。当前 `accounting/consolidation/eliminate.rs:85–159` 只校验成员、科目形态和双方申报相等，未核对各自实际账面余额；相等不保证不超额。集成集团报告时必须由真实派生/输入校验兑现该约束。集团目前尚未接入会话，因此不声称默认游戏已发生超额抵销；重复成员对双抵已修，销售成本/未售金额上界也已实现，不能混报。
-- **G36 的行业冲击适用范围**：`company/events.rs:209` 的公司事件采样不接收 CompanyKind，银行/保险仍可能在 `CompanyDayReport.activated` 中出现其经营流不消费的生产中断/资产减值信号。旧 Task14 F-O1 提出的行业过滤尚无实现；完整多行业集成需要明确适用目录或显式仅记录语义。当前会话虽丢弃日报告，但 `session/disclosures.rs:111–124` 另从 active 状态读取当日事件，并原样形成公共公告，未按行业过滤；不能据丢弃日报告核销。尚未运行多行业/浏览器验证，也不是默认工商局失败；保险/地产信用恶化“只记录不自动重估”是另有批准的简化，不得一并误删。
+| G39 | K7按现行并发受理契约验证；Sept24多线程计划:154 | K7 仍比较不同 worker 完整 artifact，未固定同一实际受理轨迹。 不能为通过而删断言；应保留守恒、价时、依赖及失败负控，另验同一受理事实的重放；未运行矩阵。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
 
 ## 3. 候选项与契约冲突：不能冒充已确认漏实现
 
+Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。下表将当前代码事实与需要裁决的契约边界分开，不能把待定方向当成已确认的漏实现。
+
 | ID | 事实与证据 | 处理边界 |
 |---|---|---|
-| Q01 | Money为i64裸JSON整数，`packages/engine/src/money.rs:40`；Web `apps/web/src/host/protocol/wire-values.ts:48` 要求安全整数；配置仅校验现金非负。 | 跨端支持范围未统一登记。需选择共同范围或无损编码，不直接要求删掉Web精度守卫，也不以默认金额小证明无风险。 |
-| Q02 | 公司计划K5要求个人读取公开历史留记录；`packages/engine/src/experience/price_memory.rs:138` 的record_public_history_read仅测试调用，技术日K已用于真实候选。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
-| Q03 | 日历/会计文档要求RegulationProfile冻结；存档已有强制匹配a-share-simulation-v2的simulation_policy_id。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
-| Q04 | UX-CONTRACT:60要求应用标题固定，`apps/web/src/app/useMobileUiController.ts:20` 详情显示股票标题。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |
-| Q05 | 测试清理清单登记部分脚本helper只有测试调用，scripts测试未统一自动发现。 | 验收工具覆盖策略需单独收口；不得凭旧函数名不存在重建已经被新验证器替代的整套工具。 |
-| Q06 | 初始持仓spec§2–3要求ByKind比例和≈1、类内随机；`packages/engine/src/session.rs:1087` 允许正有效权重归一化，散户还筛选eligible并用Pareto分配（:1994）。 | 容差及分布的最新批准依据未定位；先明确当前政策与旧spec关系，不要求为旧算法回退。独立于G29零NPC校验矛盾。 |
-| Q07 | 周K/月K现按5/20交易日分组，`apps/web/src/mobile/market-model.ts:336`；UX仅列周期名称，未明确分组算法。 | 当前已有图表，但是否应按公历周/月及合成负时间历史衔接需明确；不能宣称已核实真实周月口径。 |
-| Q08 | 移动MA及分时均价仍由前端推导，`apps/web/src/mobile/MobileStockDetail.tsx:87`、:135；移动QA要求指标来自引擎。 | MACD/KDJ已由Rust返回；需区分允许的展示派生与权威指标，尤其均价口径。不是凭此证明伪造行情，也不能写“全部指标均来自Rust”。 |
-| Q09 | ADR0006扩展承诺与sealed策略注册；ADR0008的ComputeMode/positions Vec旧路线与现行协议不同。 | 库级接缝不等于生产后端切换；扩展方式与优化范围待文档明确，不自动授权重构或GPU。见R04/R18。 |
+| Q01 | Money 仍是 transparent i64 JSON整数，Web parseMoney 仍要求安全整数；配置只校验现金非负。当前边界见 [基础复核](reaudit-foundations.md)。 | 跨端支持范围未统一登记。需选择共同范围或无损编码，不直接要求删掉Web精度守卫，也不以默认金额小证明无风险。 |
+| Q02 | 个人技术数据已用于候选，但 PersonalPriceMemory::record_public_history_read 仍无生产调用；根观察只记行情观察。当前链见 [策略与公司复核](reaudit-engine.md)。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
+| Q03 | 日历/会计文档要求冻结 RegulationProfile；当前 setup 与恢复均强制校验 simulation_policy_id。实现见 [基础复核](reaudit-foundations.md)。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
+| Q04 | UX-CONTRACT 要求固定应用标题，useMobileUiController 仍在详情展示股票标题。见 [界面复核](reaudit-ui.md)。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |
+| Q05 | scripts 测试存在部分显式入口，但尚无统一发现或完整性清单；获批保留的测试 helper 不必接生产。见 [工具复核](reaudit-tools.md)。 | 验收工具覆盖策略需单独收口；不得凭旧函数名不存在重建已经被新验证器替代的整套工具。 |
+| Q06 | 初始持仓 spec 要求 ByKind 比例和约等于1、类内随机；当前允许正有效权重归一，散户另作 eligibility/Pareto 分配。见 [基础复核](reaudit-foundations.md)。 | 容差及分布的最新批准依据未定位；先明确当前政策与旧spec关系，不要求为旧算法回退。独立于G29零NPC校验矛盾。 |
+| Q07 | 前端 aggregateCandles 仍按5/20交易日分组，UX只列周期名。自然周/月及合成历史衔接口径未裁决。见 [界面复核](reaudit-ui.md)。 | 当前已有图表，但是否应按公历周/月及合成负时间历史衔接需明确；不能宣称已核实真实周月口径。 |
+| Q08 | 移动 MA 与分时均价仍由前端推导；MACD/KDJ由Rust提供，均价代码明确不是撮合均价或VWAP。见 [界面复核](reaudit-ui.md)。 | MACD/KDJ已由Rust返回；需区分允许的展示派生与权威指标，尤其均价口径。不是凭此证明伪造行情，也不能写“全部指标均来自Rust”。 |
+| Q09 | ADR0006扩展承诺与sealed策略注册、ADR0008 ComputeMode/positions Vec旧路线与现行会话协议的关系仍未澄清。见 [基础复核](reaudit-foundations.md) 与历史 [R04](coverage/r04.md)。 | 库级接缝不等于生产后端切换；扩展方式与优化范围待文档明确，不自动授权重构或GPU。见R04/R18。 |
 | Q10（已转G39） | 二次核对fixture→runner→生产step，确认未冻结实际受理轨迹。 | 不再作为未定产品方向；保留编号记录分类变化，运行结果仍待验收。 |
-| Q11 | 公司计划K5a:154允许会计更正/离散违约直接重估并记事件ID；`packages/engine/src/strategy/fundamental/update.rs:26` 有原因原语，生产仅NewMaterial/HorizonExpired。 | 更正年报仍会走普通λ修订，不是完全不更新；没有Correction/CreditDefault专门分发。需明确何时选直接重估与真正违约信号，不能把CreditDeterioration信用恶化自动当违约，不能要求所有公告一律重估。 |
+| Q11 | Correction/CreditDefault 原语存在，生产 InstitutionDecisionRoot 仍只分发 NewMaterial/HorizonExpired；更正年报走普通λ修订。见 [策略与公司复核](reaudit-engine.md)。 | 更正年报仍会走普通λ修订，不是完全不更新；没有Correction/CreditDefault专门分发。需明确何时选直接重估与真正违约信号，不能把CreditDeterioration信用恶化自动当违约，不能要求所有公告一律重估。 |
 
 ## 4. 最小验证缺口与现有测试入口
 
@@ -145,6 +141,9 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G39 | `scripts/simulation/escrow-verification-contracts.test.mjs`、`scripts/simulation/run-escrow-verification-matrix.test.mjs` | 区分固定受理事实重放与自由调度，合法局部顺序差异不误判，同时仍拒绝资金/股份/价时/依赖错误。无需本轮运行完整K7。 |
 
 ## 5. 已实现与旧要求核销
+
+- 更新后的 [核心账户/撮合](reaudit-core-contracts.md)、[Session/pipeline](reaudit-pipeline-contracts.md)、[账套/报告](reaudit-accounting-contracts.md) 复核未确认相应既有契约在重构中丢失；这不是完整回归通过声明。
+- 底层撮合中途溢出的部分写入、房地产计息 post 后子账更新失败在旧基线已有。新测试固定旧失败顺序不等于本次引入故障；Session 候选回滚与底层方法边界须区分。没有证据证明历史要求承诺这些底层方法全部强原子，因此不新增 G。静态追踪未确认正常默认局或存档恢复链存在该复现路径，未运行相关场景。
 
 - A01–A11的主要生产能力已经存在：公开财报、远程查询方法、个体机构风险、冻结UrgencyPolicy、日终最小存档、内存日结回滚、工作台拖拽、错误详情、Rust指标、账户/订单增量及DEV当前宿主诊断。G项是局部断链/边界，不能用局部已实现证明整个宿主或整个策略模块无缺陷。
 - 共同隐藏V/TrackV、资金循环/补钱、公共日内存档、任意挂单配额、旧格式兼容、按来源固定交易优先、自由并发整局字节一致已经被替代或明确排除。
@@ -185,6 +184,8 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 补充全文中发现的旧 API/算术/文案差异也不得机械转成新功能：账户总资产已在会话个人权益计算中消费，不要求恢复同名 `Account::total_assets`；Money 小数解析在 ASCII 和长度校验后使用 `expect`，只是与旧计划的禁用写法不一致，未证明存在可触发的解析 panic；初始 HTML 标题 `web` 在 App 首次 effect 后会更新，启动壳与运行时标题范围需区别。逐项主控复核见 [候选核销记录](candidate-checks.md)。
 
 ## 7. 需求覆盖对照
+
+本节保留初次全文审计建立的契约族映射及原基线代码位置；当前缺口状态和迁移后的调用链统一见第2、3节链接的复核记录，不以历史行号定位新版本。
 
 本节由各批补充的章节/任务对照收口；“已实现”仅表示该契约族存在生产路径，未承诺通过当前基线运行验收。局部反例以G/Q表为准。
 
