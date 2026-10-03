@@ -124,8 +124,7 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
     // 单股、两个 tick 足以生成真实计划，避免短引用校验重复构建五股历史。
     let mut setup = default_five_stock_setup(2, 2);
     setup.stocks.truncate(1);
-    let mut session = GameSession::new(setup, SEED)
-        .expect("representative session constructs");
+    let mut session = GameSession::new(setup, SEED).expect("representative session constructs");
     settle_natural_days(&mut session, 1, 2);
     let save = session.save().expect("healthy save");
     let bytes = serde_json::to_vec(&save).expect("save serializes");

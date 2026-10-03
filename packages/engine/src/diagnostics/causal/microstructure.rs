@@ -37,12 +37,15 @@ impl<'a> DirectionPersistenceAccumulator<'a> {
     }
 
     fn consume(&mut self, index: usize) {
-        if let CausalFactKind::Execution { code, side, .. } = &self.facts[index].kind {
-            if let Some(direction) = side {
-                if let Some(previous) = self.directions.insert(code.clone(), *direction) {
-                    self.pairs += 1;
-                    self.same += u64::from(previous == *direction);
-                }
+        if let CausalFactKind::Execution {
+            code,
+            side: Some(direction),
+            ..
+        } = &self.facts[index].kind
+        {
+            if let Some(previous) = self.directions.insert(code.clone(), *direction) {
+                self.pairs += 1;
+                self.same += u64::from(previous == *direction);
             }
         }
     }
