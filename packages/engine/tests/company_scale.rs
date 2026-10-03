@@ -105,6 +105,65 @@ fn settle_natural_days(session: &mut GameSession, days: u32, ticks_per_day: u64)
     }
 }
 
+fn restore_byte_identically(bytes: &[u8], boundary: &str) -> GameSession {
+    let decoded = engine::decode_save_slot(bytes, &Default::default())
+        .unwrap_or_else(|error| panic!("{boundary}: save decodes: {error}"));
+    let restored = GameSession::restore(&decoded)
+        .unwrap_or_else(|error| panic!("{boundary}: save restores: {error}"));
+    let restored_bytes = serde_json::to_vec(&restored.save().expect("restored save is healthy"))
+        .expect("restored save serializes");
+    assert!(
+        bytes == restored_bytes,
+        "{boundary}: restore followed by immediate resave must preserve every byte"
+    );
+    restored
+}
+
+#[test]
+fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
+    let mut session = GameSession::new(default_five_stock_setup(2, 10), SEED)
+        .expect("representative session constructs");
+    settle_natural_days(&mut session, 1, 10);
+    let save = session.save().expect("healthy save");
+    let bytes = serde_json::to_vec(&save).expect("save serializes");
+    restore_byte_identically(&bytes, "representative checkpoint");
+    let plan_id = save
+        .plans
+        .plan_ids()
+        .next()
+        .expect("fixture retains a plan");
+    let original = serde_json::to_value(&save).expect("save value serializes");
+
+    // 保持 PlanBook 本身可解码，只破坏计划对会话权威账户/股票的引用。
+    for (field, value, expected_error) in [
+        (
+            "account",
+            serde_json::to_value(engine::AccountId(999_999)).unwrap(),
+            "unknown account",
+        ),
+        (
+            "code",
+            serde_json::to_value(StockCode("600999".to_string())).unwrap(),
+            "unknown stock",
+        ),
+    ] {
+        let mut tampered = original.clone();
+        tampered["plans"]["plans"][plan_id.0.to_string()][field] = value;
+        let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered save serializes");
+        let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())
+            .expect("plan reference tampering remains structurally decodable");
+        assert!(
+            matches!(GameSession::restore(&decoded), Err(engine::session::SessionError::InvalidSave(message)) if message.contains(expected_error)),
+            "restore must reject plan {field} reference tampering as {expected_error}"
+        );
+    }
+    assert_eq!(
+        bytes,
+        serde_json::to_vec(&session.save().expect("source save remains healthy")).unwrap(),
+        "rejected restores must leave the source checkpoint unchanged"
+    );
+}
+
 #[test]
 #[ignore = "20k default-five-stock 90-natural-day cross-quarter report and plan retention gate"]
 fn twenty_thousand_accounts_cross_quarter_preserves_reports_and_plans() {
@@ -114,19 +173,12 @@ fn twenty_thousand_accounts_cross_quarter_preserves_reports_and_plans() {
     settle_natural_days(&mut uninterrupted, 45, ticks_per_day);
     let midpoint = uninterrupted.save().expect("healthy save");
     let midpoint_json = serde_json::to_vec(&midpoint).expect("midpoint save serializes");
-    let decoded =
-        engine::decode_save_slot(&midpoint_json, &Default::default()).expect("save decodes");
-    let mut restored = GameSession::restore(&decoded).expect("save restores");
+    let mut restored = restore_byte_identically(&midpoint_json, "45-natural-day checkpoint");
     settle_natural_days(&mut uninterrupted, 45, ticks_per_day);
     settle_natural_days(&mut restored, 45, ticks_per_day);
     let uninterrupted_save = uninterrupted.save().expect("healthy save");
     let restored_save = restored.save().expect("healthy save");
 
-    assert_eq!(uninterrupted_save.snapshot.accounts.len(), 20_008);
-    assert!(
-        uninterrupted_save.plans.plan_ids().next().is_some(),
-        "cross-quarter decision-chain plans must remain authoritative"
-    );
     assert_eq!(
         uninterrupted_save.npc_attention,
         restored_save.npc_attention
@@ -139,11 +191,63 @@ fn twenty_thousand_accounts_cross_quarter_preserves_reports_and_plans() {
         uninterrupted_save.public_library.save(),
         restored_save.public_library.save()
     );
-    assert_eq!(uninterrupted_save.plans, restored_save.plans);
-    assert_eq!(
-        serde_json::to_vec(&uninterrupted_save).unwrap(),
-        serde_json::to_vec(&restored_save).unwrap()
-    );
+    // ADR-0017/0018：自由调度可改变后续 PlanId 分配；逐实例验证已发生事实
+    // 的完整恢复，不能用两个未来时间线的整档相等强加交易受理顺序。
+    let final_date = engine::CivilDate::from_iso("2030-04-07").unwrap();
+    let settled_date = engine::CivilDate::from_iso("2030-04-06").unwrap();
+    let published_through = engine::CivilInstant::from_hms(settled_date, 18, 0, 0).unwrap();
+    for (boundary, save) in [
+        (
+            "uninterrupted 90-natural-day checkpoint",
+            &uninterrupted_save,
+        ),
+        ("restored 90-natural-day checkpoint", &restored_save),
+    ] {
+        assert_eq!(save.snapshot.accounts.len(), 20_008, "{boundary}");
+        assert_eq!(save.civil_clock.current_date, final_date, "{boundary}");
+        assert_eq!(
+            save.civil_clock.settled_through,
+            Some(settled_date),
+            "{boundary}"
+        );
+        assert!(
+            save.plans.plan_ids().next().is_some(),
+            "{boundary}: cross-quarter plans must remain authoritative"
+        );
+        assert!(save.plans.plan_ids().count() >= midpoint.plans.plan_ids().count());
+        for plan_id in save.plans.plan_ids() {
+            let plan = save.plans.plan(plan_id).expect("plan id resolves");
+            assert!(save.snapshot.accounts.contains_key(&plan.account()));
+            assert!(save.snapshot.markets.contains_key(plan.code()));
+        }
+        for plan_id in midpoint.plans.plan_ids() {
+            let before = midpoint
+                .plans
+                .plan(plan_id)
+                .expect("midpoint plan resolves");
+            let retained = save.plans.plan(plan_id).expect("midpoint plan is retained");
+            assert_eq!(retained.account(), before.account());
+            assert_eq!(retained.code(), before.code());
+            assert_eq!(retained.created_trading_day(), before.created_trading_day());
+        }
+        for report in midpoint.public_library.save().reports {
+            assert_eq!(
+                save.public_library
+                    .report(report.id, published_through)
+                    .expect("midpoint report remains published"),
+                &report,
+                "{boundary}: published report versions must remain immutable"
+            );
+        }
+        for report in save.public_library.save().reports {
+            assert!(report.published_at <= published_through);
+            assert!(report.approved_at <= report.published_at);
+        }
+        let bytes = serde_json::to_vec(save).expect("final save serializes");
+        assert!(bytes.len() <= MAX_SAVE_DECODE_BYTES, "{boundary}");
+        // save 校验完整 envelope ledger；decode/restore 再执行跨层权威引用校验。
+        restore_byte_identically(&bytes, boundary);
+    }
     eprintln!(
         "company_scale_resource_measurement scenario=twenty_thousand_cross_quarter accounts=20008 natural_days=90 reports={} plans={} save_bytes={} decode_limit_bytes={MAX_SAVE_DECODE_BYTES} decode_limit_fit={}",
         uninterrupted_save.public_library.report_count(),

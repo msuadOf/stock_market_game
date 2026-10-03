@@ -1318,8 +1318,261 @@ fn twenty_thousand_account_setup() -> SessionSetup {
     large_retail_account_setup(20_000)
 }
 
-fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count: u32) {
-    let setup = large_retail_account_setup(retail_count);
+type MarketResources = (i128, std::collections::BTreeMap<StockCode, u64>);
+type TradeTotals = std::collections::BTreeMap<StockCode, (u64, i128, u64)>;
+
+fn market_resources(session: &GameSession, account_count: usize) -> MarketResources {
+    let mut cash = 0i128;
+    let mut shares = std::collections::BTreeMap::<StockCode, u64>::new();
+    assert_eq!(session.account_count(), account_count);
+    for id in 0..account_count {
+        let account = session.account(AccountId(id as u64)).unwrap();
+        assert!(account.cash() >= Money::ZERO);
+        cash += i128::from(account.cash().cents());
+        for (code, position) in account.positions() {
+            assert!(position.t1_locked() <= position.qty());
+            *shares.entry(code.clone()).or_default() += u64::from(position.qty());
+        }
+    }
+    shares.retain(|_, qty| *qty > 0);
+    (cash, shares)
+}
+
+fn assert_tick_accounting(
+    before: &MarketResources,
+    after: &MarketResources,
+    events: &[Event],
+    receipts: &[engine::session::pipeline::EnvelopeReceipt],
+    trade_totals: &mut TradeTotals,
+) {
+    use engine::session::pipeline::ReceiptKind;
+    let mut emitted = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
+    for event in events {
+        match event {
+            Event::Trade {
+                code, price, qty, ..
+            } => {
+                assert!(*qty > 0 && *price > Money::ZERO);
+                let gross = i128::from(price.cents()) * i128::from(*qty);
+                let totals = emitted.entry(code.clone()).or_default();
+                totals.0 += u64::from(*qty);
+                totals.1 += gross;
+                let daily = trade_totals.entry(code.clone()).or_default();
+                daily.0 += u64::from(*qty);
+                daily.1 += gross;
+                daily.2 += 1;
+            }
+            Event::SettlementError { reason, .. } => panic!("大规模交易日结算失败：{reason}"),
+            _ => {}
+        }
+    }
+    let mut buy_fills = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
+    let mut sell_fills = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
+    let mut charged_cents = 0i128;
+    for receipt in receipts
+        .iter()
+        .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+    {
+        let qty = receipt.qty_before.checked_sub(receipt.qty_after).unwrap();
+        let gross = receipt.value_after.sub(receipt.value_before).unwrap();
+        assert!(qty > 0 && gross > Money::ZERO);
+        for component in [
+            receipt.charged.commission,
+            receipt.charged.stamp_tax,
+            receipt.charged.transfer_fee,
+        ] {
+            assert!(component >= Money::ZERO);
+        }
+        let fee = receipt.charged.total().unwrap();
+        charged_cents += i128::from(fee.cents());
+        let fills = match receipt.envelope.side {
+            Side::Buy => {
+                assert_eq!(receipt.delta.spent.cash, gross.add(fee).unwrap());
+                assert_eq!(receipt.deliver_qty, qty);
+                &mut buy_fills
+            }
+            Side::Sell => {
+                assert_eq!(receipt.deliver_cash, gross.sub(fee).unwrap());
+                assert_eq!(receipt.delta.spent.shares, qty);
+                &mut sell_fills
+            }
+        };
+        let totals = fills.entry(receipt.envelope.stock.clone()).or_default();
+        totals.0 += u64::from(qty);
+        totals.1 += i128::from(gross.cents());
+    }
+    assert_eq!(emitted, buy_fills, "成交事件与买方收据不一致");
+    assert_eq!(emitted, sell_fills, "成交事件与卖方收据不一致");
+    assert_eq!(
+        after.0 + charged_cents,
+        before.0,
+        "现金与实收费用不守恒（单位：分）"
+    );
+    assert_eq!(after.1, before.1, "股份不守恒（单位：股）");
+    // Event 数组位置不表示撮合因果；先汇总该 tick 的全部成交，再核对权威日 K。
+    for event in events {
+        let candles: Vec<_> = match event {
+            Event::PriceTick {
+                code,
+                last_price,
+                daily_candle,
+                ..
+            } => {
+                assert_eq!(daily_candle.close, *last_price);
+                vec![(code, daily_candle)]
+            }
+            Event::DayBoundary {
+                closed_daily_candles,
+                ..
+            } => closed_daily_candles.iter().collect(),
+            _ => Vec::new(),
+        };
+        for (code, candle) in candles {
+            let totals = trade_totals.get(code).copied().unwrap_or((0, 0, 0));
+            let stats = candle
+                .trade_stats
+                .as_ref()
+                .expect("真实交易日日 K 必须有成交统计");
+            assert_eq!(candle.volume, totals.0, "日 K 成交量必须来自实际成交");
+            assert_eq!(
+                i128::from(stats.turnover_cents),
+                totals.1,
+                "日 K 成交额必须来自实际成交"
+            );
+            assert_eq!(stats.trade_count, totals.2, "日 K 笔数必须来自实际成交");
+        }
+    }
+}
+
+fn full_day_accounting_fixture() -> (
+    GameSession,
+    MarketResources,
+    Vec<Event>,
+    Vec<engine::session::pipeline::EnvelopeReceipt>,
+) {
+    let mut session = TestOrderSaveFixture::with_resting_sellers(1, 10_000_000)
+        .restore()
+        .unwrap();
+    let before = market_resources(&session, 2);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockCode("600101".to_owned()),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let (events, evidence) = session.step_with_commit_evidence().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::Trade { qty: 100, .. })));
+    (session, before, events, evidence.receipts().to_vec())
+}
+
+#[test]
+fn full_day_accounting_accepts_real_fills_and_charged_fees() {
+    let (session, before, events, receipts) = full_day_accounting_fixture();
+    let after = market_resources(&session, 2);
+    assert_tick_accounting(&before, &after, &events, &receipts, &mut TradeTotals::new());
+    assert!(after.0 < before.0, "真实成交须收取费用，现金并非简单不变");
+}
+
+#[test]
+#[should_panic(expected = "现金与实收费用不守恒")]
+fn full_day_accounting_rejects_tampered_cash() {
+    let (session, before, events, receipts) = full_day_accounting_fixture();
+    let mut save = session.save().unwrap();
+    let account = save.snapshot.accounts.get_mut(&AccountId(0)).unwrap();
+    account.cash = account.cash.add(Money::from_cents(1)).unwrap();
+    let tampered = GameSession::restore(&save).unwrap();
+    assert_tick_accounting(
+        &before,
+        &market_resources(&tampered, 2),
+        &events,
+        &receipts,
+        &mut TradeTotals::new(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "股份不守恒")]
+fn full_day_accounting_rejects_tampered_shares() {
+    let (session, before, events, receipts) = full_day_accounting_fixture();
+    let mut save = session.save().unwrap();
+    save.snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .get_mut(&StockCode("600101".to_owned()))
+        .unwrap()
+        .qty += 1;
+    let tampered = GameSession::restore(&save).unwrap();
+    assert_tick_accounting(
+        &before,
+        &market_resources(&tampered, 2),
+        &events,
+        &receipts,
+        &mut TradeTotals::new(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "成交事件与买方收据不一致")]
+fn full_day_accounting_rejects_tampered_trade_event() {
+    let (session, before, mut events, receipts) = full_day_accounting_fixture();
+    for event in &mut events {
+        if let Event::Trade { qty, .. } = event {
+            *qty += 1;
+        }
+    }
+    assert_tick_accounting(
+        &before,
+        &market_resources(&session, 2),
+        &events,
+        &receipts,
+        &mut TradeTotals::new(),
+    );
+}
+
+fn assert_completed_market_day(session: &GameSession, boundaries: usize, ticks_per_day: u64) {
+    assert_eq!(boundaries, 1, "每个实例必须恰好完成一次完整交易日日结");
+    assert_eq!(session.day(), 1);
+    assert_eq!(session.tick(), ticks_per_day);
+}
+
+#[test]
+fn full_day_accounting_small_population_roundtrips_and_completes() {
+    let mut setup = large_retail_account_setup(4);
+    setup.ticks_per_day = 6;
+    assert_large_population_roundtrip_and_complete_a_full_market_day(setup);
+}
+
+#[test]
+#[should_panic(expected = "每个实例必须恰好完成一次完整交易日日结")]
+fn full_day_accounting_rejects_a_missing_day_boundary() {
+    let (mut session, _, _, _) = full_day_accounting_fixture();
+    let ticks_per_day = sample_setup().ticks_per_day;
+    let mut final_events = Vec::new();
+    for _ in 1..ticks_per_day {
+        final_events = session.step().unwrap();
+    }
+    assert!(final_events
+        .iter()
+        .any(|event| matches!(event, Event::DayBoundary { day: 1, .. })));
+    final_events.retain(|event| !matches!(event, Event::DayBoundary { .. }));
+    let boundaries = final_events
+        .iter()
+        .filter(|event| matches!(event, Event::DayBoundary { .. }))
+        .count();
+    assert_completed_market_day(&session, boundaries, ticks_per_day);
+}
+
+fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: SessionSetup) {
+    let retail_count = setup.npcs.retail_count;
     let ticks_per_day = setup.ticks_per_day;
     let started = std::time::Instant::now();
     // 玩家 1 人 + 散户 + 5 家机构 + 2 个游资。这里刻意只按实际账户数计数，
@@ -1372,82 +1625,89 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
         "恢复后逐户资产、库存和注意力状态必须保持一致"
     );
 
-    let mut saw_day_boundary = false;
+    // ADR-0017/0018：seed 不记录自由并发受理轨迹，各实例须独立对账，不能强求跨运行字节相等。
     let full_day_started = std::time::Instant::now();
-    for tick in 0..ticks_per_day {
-        let uninterrupted_events = uninterrupted.step().expect("healthy step");
-        let restored_events = restored.step().expect("healthy step");
-        assert_eq!(
-            events_summary(&restored_events),
-            events_summary(&uninterrupted_events),
-            "恢复实例必须在第 {tick} 个 tick 重放不中断实例的事件"
-        );
-        for event in restored_events {
-            if matches!(event, engine::Event::DayBoundary { day: 1, .. }) {
-                saw_day_boundary = true;
+    let mut final_save_sizes = Vec::new();
+    for session in [&mut uninterrupted, &mut restored] {
+        let mut resources = market_resources(session, expected_accounts);
+        let mut trade_totals = TradeTotals::new();
+        let mut day_boundaries = 0;
+        for tick in 0..ticks_per_day {
+            let (events, evidence) = session.step_with_commit_evidence().expect("healthy step");
+            let after = market_resources(session, expected_accounts);
+            assert_tick_accounting(
+                &resources,
+                &after,
+                &events,
+                evidence.receipts(),
+                &mut trade_totals,
+            );
+            resources = after;
+            let price_ticks: std::collections::BTreeSet<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::PriceTick {
+                        code,
+                        tick: event_tick,
+                        ..
+                    } => {
+                        assert_eq!(*event_tick, tick + 1);
+                        Some(code.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                price_ticks.len(),
+                session.market_count(),
+                "每 tick 必须保留每股行情"
+            );
+            for event in &events {
+                if let Event::DayBoundary {
+                    day,
+                    closed_daily_candles,
+                    ..
+                } = event
+                {
+                    assert_eq!(*day, 1);
+                    assert_eq!(tick + 1, ticks_per_day, "不能提前日结");
+                    assert_eq!(closed_daily_candles.len(), session.market_count());
+                    day_boundaries += 1;
+                }
             }
         }
+        assert_completed_market_day(session, day_boundaries, ticks_per_day);
+        let final_save = session.save().expect("healthy save");
+        assert_eq!(final_save.snapshot.accounts.len(), expected_accounts);
+        assert_eq!(final_save.retail_experience.len(), retail_count as usize);
+        assert_eq!(final_save.npc_attention.len(), expected_accounts - 1);
+        let completed_day_json = serde_json::to_vec(&final_save).expect("日后完整存档必须可序列化");
+        final_save_sizes.push(completed_day_json.len());
+        let completed_day_save: engine::SaveSlot =
+            serde_json::from_slice(&completed_day_json).expect("日后完整 JSON 存档必须可反序列化");
+        let reloaded =
+            GameSession::restore(&completed_day_save).expect("日后完整 JSON 存档必须可恢复");
+        assert_eq!(
+            serde_json::to_value(reloaded.save().expect("healthy save")).unwrap(),
+            serde_json::to_value(&final_save).unwrap(),
+            "每个实例日界后的 JSON 存档恢复必须逐户保持一致"
+        );
+        for (code, totals) in &trade_totals {
+            let candle = final_save.snapshot.daily_candles[code].last().unwrap();
+            assert_eq!(candle.volume, totals.0);
+            assert_eq!(
+                i128::from(candle.trade_stats.as_ref().unwrap().turnover_cents),
+                totals.1
+            );
+            assert_eq!(candle.trade_stats.as_ref().unwrap().trade_count, totals.2);
+        }
     }
-    assert!(saw_day_boundary, "默认规模必须能完整推进一个交易日");
-    let uninterrupted_final = uninterrupted.save().expect("healthy save");
-    let restored_final = restored.save().expect("healthy save");
-    let uninterrupted_final_json = serde_json::to_value(&uninterrupted_final).unwrap();
-    let restored_final_json = serde_json::to_value(&restored_final).unwrap();
-    let changed_fields: Vec<_> = [
-        "setup",
-        "seed",
-        "snapshot",
-        "auction_orders",
-        "resting_orders",
-        "price_history",
-        "market_minute_closes",
-        "rng_state",
-        "npc_attention",
-        "retail_experience",
-        "parent_orders",
-        "npc_order_lifecycles",
-        "pending_player",
-        "next_order_id",
-    ]
-    .into_iter()
-    .filter(|field| uninterrupted_final_json[field] != restored_final_json[field])
-    .collect();
-    let changed_attention: Vec<_> = restored_final
-        .npc_attention
-        .iter()
-        .filter_map(|(id, restored_state)| {
-            (uninterrupted_final.npc_attention.get(id) != Some(restored_state)).then_some(*id)
-        })
-        .take(8)
-        .collect();
-    let first_attention_difference = changed_attention.first().map(|id| {
-        (
-            id,
-            uninterrupted_final.npc_attention.get(id),
-            restored_final.npc_attention.get(id),
-        )
-    });
-    assert_eq!(
-        changed_fields,
-        Vec::<&str>::new(),
-        "完整交易日后，恢复实例必须与不中断实例逐户保持完全相同的权威状态；前几个注意力差异账户：{changed_attention:?}，首个差异：{first_attention_difference:?}"
-    );
-    let completed_day_json =
-        serde_json::to_vec(&uninterrupted_final).expect("日后完整存档必须可序列化");
-    let completed_day_save: engine::SaveSlot =
-        serde_json::from_slice(&completed_day_json).expect("日后完整 JSON 存档必须可反序列化");
-    let reloaded = GameSession::restore(&completed_day_save).expect("日后完整 JSON 存档必须可恢复");
-    assert_eq!(
-        serde_json::to_value(reloaded.save().expect("healthy save")).unwrap(),
-        serde_json::to_value(completed_day_save).unwrap(),
-        "日界后的存档恢复也必须逐户保持一致"
-    );
     let decode_limit_bytes = engine::MAX_SAVE_DECODE_BYTES;
     eprintln!(
-        "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} decode_limit_bytes={decode_limit_bytes} decode_limit_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_replay_ms={} total_ms={}",
+        "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} decode_limit_bytes={decode_limit_bytes} decode_limit_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_validation_ms={} total_ms={}",
         initial_json.len(),
-        completed_day_json.len(),
-        completed_day_json.len() <= decode_limit_bytes,
+        final_save_sizes.iter().max().unwrap(),
+        final_save_sizes.iter().all(|bytes| *bytes <= decode_limit_bytes),
         serialize_initial_elapsed.as_millis(),
         decode_elapsed.as_millis(),
         restore_elapsed.as_millis(),
@@ -1476,19 +1736,25 @@ fn twenty_thousand_individual_retailers_stay_inside_the_engine_boundary() {
 #[test]
 #[ignore = "20,007-account full-day release-mode stress gate"]
 fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
-    assert_large_population_roundtrip_and_complete_a_full_market_day(20_000);
+    assert_large_population_roundtrip_and_complete_a_full_market_day(large_retail_account_setup(
+        20_000,
+    ));
 }
 
 #[test]
 #[ignore = "50,007-account full-day release-mode stress gate: cargo test -p engine --release --test session fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture"]
 fn fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
-    assert_large_population_roundtrip_and_complete_a_full_market_day(50_000);
+    assert_large_population_roundtrip_and_complete_a_full_market_day(large_retail_account_setup(
+        50_000,
+    ));
 }
 
 #[test]
 #[ignore = "100,007-account full-day release-mode stress gate: cargo test -p engine --release --test session one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture"]
 fn one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
-    assert_large_population_roundtrip_and_complete_a_full_market_day(100_000);
+    assert_large_population_roundtrip_and_complete_a_full_market_day(large_retail_account_setup(
+        100_000,
+    ));
 }
 
 #[test]
