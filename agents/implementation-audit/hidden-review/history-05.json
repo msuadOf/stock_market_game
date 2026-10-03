@@ -1,0 +1,28 @@
+{
+  "plan": "agents/implementation-audit/hidden-review/history-plan.json",
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "6ef77d1040843a336b36168b99d6e523501c44b70fabd67043604c7bd851185a",
+      "lines": 247,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "7e31653ab038d2492d05bbd7d57e44fca3bb7549ac48e3c584c075ab06faa0cf",
+      "lines": 167,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/reviews/escrow-parallel-engine-r24.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "380e824c146006bd9035d6c25c3d41546a993b32773f4559a113065e26d3584a",
+      "lines": 21,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

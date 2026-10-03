@@ -1,0 +1,81 @@
+{
+  "batch": "006",
+  "owner": 1,
+  "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "covered": [
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/report.md",
+      "sha256": "2bbffb971f1fed5fb1ddd7bda7aaeb00c3d4c38d7ce0ae0ea22693cd91ee4c14",
+      "lines": 1486,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/review.md",
+      "sha256": "c7a6068b628a988042b362b7f2dcc7f99c7b89c181e78fc3319bccf21df32678",
+      "lines": 103,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/pipeline/reader-instructions.md",
+      "sha256": "448d42a9a7612dd730c69ad7632ff3be22ede1ffb7473a242df5d01fee305723",
+      "lines": 17,
+      "eof": true
+    }
+  ],
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "candidate_status": {
+    "implemented_at_head": [
+      "hosts-R2-N01",
+      "hosts-R2-N02",
+      "hosts-R2-N04",
+      "hosts-R2-N05",
+      "hosts-R2-N06",
+      "hosts-R2-N08",
+      "hosts-R2-N10",
+      "hosts-R2-N11",
+      "hosts-R2-N12",
+      "hosts-R2-N13",
+      "hosts-R2-N14",
+      "hosts-R2-N15",
+      "hosts-R2-N16",
+      "hosts-R2-E01",
+      "hosts-R2-N17",
+      "hosts-R2-N18",
+      "hosts-R2-N19",
+      "hosts-R2-N20",
+      "hosts-R2-N21",
+      "hosts-R2-N22"
+    ],
+    "rejected_and_covered_dispositions": "原有拒绝/覆盖处置无当前源码证据推翻；详见 batch-006.md。"
+  },
+  "cross_ledger_findings": [
+    {
+      "status": "仍独立待核",
+      "candidate": "hosts-R2-N18",
+      "ledger": "G61",
+      "evidence": "scripts/performance/market-ui-report.mjs:234,304；agents/implementation-audit/implementation-audit-2026-10-02.md:129",
+      "finding": "资源会话抽取已存在，但顺序清理失败仍可能跳过后续资源，不能作为 G61 清理/deadline 缺口已解决的证据。"
+    },
+    {
+      "status": "概念独立",
+      "candidate": "hosts-R2-N19",
+      "ledger": "G62/G63",
+      "evidence": "scripts/run-full-regression.mjs:179；agents/implementation-audit/implementation-audit-2026-10-02.md:130-131",
+      "finding": "制品 inventory 对象不实现外部进程树 deadline，也不提供 Rust 普通 case 的 10 秒独立 watchdog。"
+    }
+  ],
+  "domain_review": {
+    "status": "无领域规则变更",
+    "basis": "已读 ADR-0017、ADR-0018；对象提取应保留现行边界。未查询交易所/中国结算规则。",
+    "candidate": "hosts-R2-N22",
+    "evidence": "scripts/simulation/escrow-verification-contracts.mjs:241,285",
+    "boundary": "仅验证工具 evidence；现金单位分、数量单位股、BigInt 守恒，不是生产 Money/Qty、撮合或结算权威。"
+  },
+  "validation": {
+    "tests": "未运行",
+    "build": "未运行",
+    "git_mutation": "未执行",
+    "official_rule_lookup": "未执行"
+  },
+  "report": "hidden-review/batch-006.md"
+}

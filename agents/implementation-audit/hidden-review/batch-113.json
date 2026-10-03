@@ -1,0 +1,47 @@
+{
+  "batch_id": 113,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-04.md",
+      "sha256": "a57953d3e8a011350e7e69a212670b0e8144502926a07e061012a9ed38286d45",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-05-recheck.md",
+      "sha256": "21e3ddee4b0acb1bb7d169069b1a6b2198b84c2fb41ed1511fd3b2c8f26cf75a",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-05.md",
+      "sha256": "59cb98bd398fc3f2fcfa803150fdbd02c2e1ac7e1319b3f4aa7d6716ba637278",
+      "lines": 20,
+      "read_to_eof": true
+    }
+  ],
+  "chapter_status": {
+    "final_04": "已完整读取；三项门禁两项通过，一项仅有中文行文润色建议",
+    "final_05_recheck": "已完整读取；三项门禁通过；明确未审源码及未运行测试",
+    "final_05": "已完整读取；范围和领域语义通过，重复词与空格的文面质量未通过"
+  },
+  "caller_G": [
+    {
+      "id": "G48",
+      "status": "保持开放",
+      "evidence": "apps/web/index.html:2 固定 lang=en；implementation-audit-2026-10-02.md 记录 AG Grid 排序辅助文本没有中文 locale",
+      "relation": "本批来源只复核中文化 diff，不构成该缺口的修复或核销"
+    }
+  ],
+  "candidate_counterevidence": [
+    "final-04 的文字建议针对历史 group-04.diff，不要求产品源码变更。",
+    "final-05 的文字质量拒绝针对历史 group-05.diff；final-05-recheck 对同一 diff 的受限复核未发现有效漏译或语义误译。该分歧不是产品承诺证据。",
+    "ADR-0007 §2 与 docs/open-questions.md Q6 已确立首发全中文且不引入 i18n 框架；不能把旧审阅材料扩展成多语言实施承诺。",
+    "apps/web/src/App.tsx:552-566 与 apps/web/src/mobile/MobileStockDetail.tsx:142-159 展示中文 UI 文案，但不能核销 G48 的文档语言及辅助文本缺口。"
+  ],
+  "result": "未发现本批范围内新的已批准承诺遗漏或错误旧核销；未改产品代码，未运行测试/回归。"
+}

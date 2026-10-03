@@ -1,0 +1,51 @@
+{
+  "batch_id": 54,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-company-05.md",
+      "lines_read": 31,
+      "sha256": "dd7f0490ddd1a1ddc7cb77502f73437ba4eadbe667f1145321fa4ccfeb543c6c",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["指纹与基线", "三项门禁", "源码中仍存在的两项风险"],
+      "caller_line_evidence": ["packages/engine/src/company/scheduler.rs", "packages/engine/src/company/spec.rs", "agents/implementation-audit/reaudit-engine.md:G35-G36"],
+      "g_association": "G35/G36 仍是范围独立的运营与行业接线缺口；scheduler ID 唯一性和序号溢出仍是来源所述风险，不代表已关闭。",
+      "new_candidate": false,
+      "counterevidence": "来源复核明确记录 B01/B02 尚未修复，也未声称运行测试或做运行时验证。当前 caller 矩阵没有断言它们已修复。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-foundation-01.md",
+      "lines_read": 33,
+      "sha256": "d7738652428da77dac02fbde5075d7488ae7529e6a77738ae503b5d863e0b162",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["范围与结论", "指纹与证据沿革", "三项复核门禁", "结论边界"],
+      "caller_line_evidence": ["packages/engine/src/account.rs", "agents/implementation-audit/coverage-index.md", "agents/implementation-audit/reaudit-engine.md"],
+  "g_association": "A02 分类 delta 保留了原始提议，不代表已经实现，也不会核销账户边界发现。",
+      "new_candidate": false,
+  "counterevidence": "该记录明确将复用的来源结论限定为历史基线证据，并准确指出该次复核仅重新读取 account.rs。没有将任何已批准遗漏描述为已交付。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-foundation-02-delta-evidence.md",
+      "lines_read": 49,
+      "sha256": "c48e021709cccd28f870444580030b2b2d86776630c1a66dcf1a229f6ff606b8",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["逐文件复核", "domain-delta 独立复核", "门禁结论"],
+      "caller_line_evidence": ["agents/implementation-audit/reaudit-engine.md:G08", "agents/implementation-audit/reaudit-engine.md:Q02", "agents/implementation-audit/reaudit-engine.md:Q11"],
+      "g_association": "机构经历能力不会核销散户 G08；公开历史与更正/默认生产边界仍由当前矩阵中的 Q02/Q11 跟踪。",
+      "new_candidate": false,
+      "counterevidence": "来源复核保留了旧有部分变更和反馈恢复限制，并明确说明可达性/验证边界；它没有声称测试了运行时路径，也没有声称更广泛的 G/Q 项已关闭。"
+    }
+  ],
+  "current_rules_read": ["AGENTS.md", "docs/principles.md", "docs/open-questions.md", "docs/decisions/0016-fundamental-factor-model.md", "docs/decisions/0026-individual-institution-experience.md", "docs/decisions/0013-retail-experience-memory.md"],
+  "approved_omission_found": false,
+  "erroneous_old_closure_found": false,
+  "new_candidates": [],
+  "tests_or_regression_run": false,
+  "product_code_changed": false
+}

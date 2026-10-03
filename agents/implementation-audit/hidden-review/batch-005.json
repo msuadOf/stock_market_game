@@ -1,0 +1,107 @@
+{
+  "batch": 5,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "worktree": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "output": "agents/implementation-audit/hidden-review/batch-005.md",
+  "coverage": {
+    "source_count": 3,
+    "full_read_to_eof": 3,
+    "line_count": 75,
+    "sources": [
+      {
+        "path": "agents/oop-refactor-audit/challenge-2026-10-03/frontend/review-revisions.md",
+        "sha256": "2c9cd3c58d7ccd9eb493578fb3cf3fb334dcce7670cea5cc6e8d0fc39535ca9b",
+        "line_count": 11,
+        "full_read_to_eof": true,
+        "chapters": ["1–5修订记录"]
+      },
+      {
+        "path": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/preliminary-review.md",
+        "sha256": "13474239a422cbff3d8e05884df966a07e364993fa80a6d553786ad680016b54",
+        "line_count": 55,
+        "full_read_to_eof": true,
+        "chapters": ["证据完整性与三门结论", "N01–N22/E01裁定", "HR-01–HR-07修订门禁"]
+      },
+      {
+        "path": "agents/oop-refactor-audit/challenge-2026-10-03/hosts/reader-instructions.md",
+        "sha256": "b86c2ec9d2f2602ed1ca89c68ff21329b5f96453aab9cf32b0d98cef10dbceb5",
+        "line_count": 9,
+        "full_read_to_eof": true,
+        "chapters": ["历史阅读与记录方法"]
+      }
+    ]
+  },
+  "rules_read": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/architecture.md",
+    "docs/open-questions.md",
+    "docs/decisions/0010-unified-host-protocol-and-local-refresh.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0019-draft-market-scope-and-capacity.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md"
+  ],
+  "review_findings": [
+    {
+      "id": "frontend-R2-N02",
+      "classification": "历史证据/修订合理",
+      "counter_evidence": "apps/web/src/host/remote-host.ts:201-209已有切换连接身份、关闭旧socket及运行中重连；强制重复baseline属于新增行为主张。"
+    },
+    {
+      "id": "frontend-R2-N03",
+      "classification": "调查记录修订",
+      "counter_evidence": "初始化失败时 timeline、snapshot 与 epoch 有先后次序；不能概括成原子安装成功。"
+    },
+    {
+      "id": "hosts-R2-N14",
+      "classification": "已实现；G缺口独立存在",
+      "counter_evidence": "apps/server/src/routes.rs:1077-1250有WsPublisherConnection及状态转换；run_ws:1262+保留socket I/O。此提取不关闭G01-G05/G18/G19。"
+    },
+    {
+      "id": "hosts-R2-N16",
+      "classification": "已实现/旧观察时间漂移",
+      "counter_evidence": "apps/server/tests/ws.rs:50-69持有server_task；:100-110显式abort并await，另逐项清理session。"
+    },
+    {
+      "id": "hosts-R2-N17",
+      "classification": "已实现",
+      "counter_evidence": "scripts/desktop/build-matrix.mjs:86-95由route.preflightChecks生成文字，printPlan与:247+执行循环都消费同一列表。"
+    },
+    {
+      "id": "hosts-R2-N18",
+      "classification": "现行候选/conditional",
+      "counter_evidence": "尚未找到证据证明market-ui-report.mjs的资源申请、部分初始化失败清理与释放形成单一生命周期owner；范围只应限四类资源。"
+    },
+    {
+      "id": "hosts-R2-N19",
+      "classification": "已实现；验收工具缺口仍在",
+      "counter_evidence": "scripts/run-full-regression.mjs:179-239已有ArtifactInventory值及校验；文件写入独立于值对象。不能核销G61-G63。"
+    },
+    {
+      "id": "hosts-R2-N22",
+      "classification": "已实现；执行验证未重做",
+      "counter_evidence": "scripts/simulation/escrow-verification-contracts.mjs:241-380有Resource/EnvelopeConservation；:382+验证全局receipt与账户汇总。静态结构不代表本轮测试通过。"
+    },
+    {
+      "id": "hosts-R2-E01",
+      "classification": "历史提案已收窄",
+      "counter_evidence": "报告已删去CaptureArtifact::write_to以维持既有Writer副作用所有权；不另建第二个写入者。"
+    }
+  ],
+  "gap_crosswalk": {
+    "current_G_ledger": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "host_gaps": ["G01", "G02", "G03", "G04", "G05", "G18", "G19", "G20", "G40", "G53", "G66"],
+    "tooling_gaps": ["G39", "G60", "G61", "G62", "G63"],
+    "independent_other": ["G56"],
+    "result": "本批不增删G01–G68或正式Q；窄OOP owner已实现不等于其调用链的生产/验收承诺已闭合。"
+  },
+  "limitations": [
+    "仅做静态代码与规则文档复核，未运行测试、构建或回归。",
+    "未重新执行历史报告中记录的测试和完整diff复核。",
+    "A股语义仅涉及确认escrow验证单位与阶段边界；未查阅新的交易所规则，因为本批没有交易行为改动。"
+  ]
+}

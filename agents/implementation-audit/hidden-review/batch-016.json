@@ -1,0 +1,93 @@
+{
+  "batch": "016",
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/frontend/review.md",
+      "planned_lines": 31,
+      "read_lines": 31,
+      "read_to_eof": true,
+      "sha256": "d12e0fcbf88a139b2b805c4f3a7d8bf877a3fc91564d0bcdfd4e3a87a2822ada",
+      "section_status": "已核三门、证据、有效发现、修订后复核、执行偏差；候选未实施状态被当前源码反证"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/hosts/reader-instructions.md",
+      "planned_lines": 7,
+      "read_lines": 7,
+      "read_to_eof": true,
+      "sha256": "dbad9531a619a2b5e6b523ee53ab478f35906cf8856321decdb895da532a15f6",
+      "section_status": "全文读完；历史审计指令，不执行"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/hosts/report.md",
+      "planned_lines": 100,
+      "read_lines": 100,
+      "read_to_eof": true,
+      "sha256": "f42e8e9795774d6d23190a159fa93c104420d44100d57cf135e81e8dc846aa6e",
+      "section_status": "全文读完；N01-N08均与当前已存在owner重叠"
+    }
+  ],
+  "coverage": {
+    "source_docs": "三篇逐篇连续阅读至 EOF，计划行数/实读行数一致，sha256 全匹配",
+    "repo_guidance": ["AGENTS.md", "docs/principles.md"],
+    "current_source": "静态核对 HEAD 43b1aa5 的 owner 与 callers；不运行测试/构建",
+    "g_q_ledger": "参照 G01-G68/Q 汇总；未核销或改动 G/Q 状态",
+    "later_adr": "以当前 ADR 和正式规则优先；本批无交易语义替代决定"
+  },
+  "candidate_status": {
+    "hosts_N01_N08": "对应 owner 均已存在，须从待实施候选改为已有实现对照；缺陷边界不能视为已修复",
+    "frontend_N01_N09": "核心 owner 均已存在，需按当前源码重新核对 report/actions/coverage",
+    "frontend_E01_E02": "对应 hooks 与 App caller 已存在",
+    "frontend_E03": "未在本批独立核实，不据此作存在性结论"
+  },
+  "findings": [
+    {
+      "id": "F016-01",
+      "classification": "候选反证",
+      "subject": "hosts N01-N08",
+      "current_paths": [
+        "apps/desktop/src-tauri/src/actor.rs:142",
+        "apps/server/src/actor.rs:308",
+        "apps/server/src/web_ui.rs:18",
+        "packages/engine/tests/information_acquisition/fixture.rs:128",
+        "packages/engine/tests/publications/weekend_publish.rs:40",
+        "packages/engine/tests/save_contract/main.rs:116",
+        "apps/server/tests/deployment_cli.rs:5",
+        "scripts/simulation/escrow-performance-harness.mjs:325",
+        "scripts/run-with-deadline.mjs:44"
+      ],
+      "recommendation": "按已有 owner 重新分类；不要把 owner 存在表述为行为缺陷已解决或测试通过"
+    },
+    {
+      "id": "F016-02",
+      "classification": "候选反证",
+      "subject": "frontend review 的 N01-N09 和 E01-E02 未实施结论",
+      "current_paths": [
+        "apps/web/src/host/report-query-context.ts:4",
+        "apps/web/src/components/price-chart-runtime.ts:23",
+        "apps/web/src/components/market-grid-row-synchronizer.ts:7",
+        "apps/web/src/host/wasm-session-slot.ts:18",
+        "apps/web/src/host/wasm-tick-loop.ts:24",
+        "apps/web/src/host/worker-request.ts:26",
+        "apps/web/src/host/remote-command-registry.ts:6",
+        "apps/web/src/mobile/market-model.ts:625",
+        "apps/web/src/mobile/market-model.ts:699",
+        "apps/web/src/app/useSpeedMetricsPolling.ts:50",
+        "apps/web/src/app/usePausePreferences.ts:55",
+        "apps/web/src/App.tsx:310",
+        "apps/web/src/App.tsx:324"
+      ],
+      "recommendation": "依据当前源码重审 review 与最终 report/actions/coverage 状态"
+    }
+  ],
+  "a_share": {
+    "status": "未发现交易语义漂移",
+    "basis": "docs/principles.md 与 docs/trading-rules.md；未重新核验官方规则",
+    "g01_g68_q": "没有核销"
+  },
+  "limitations": [
+    "未运行测试、构建或性能测量",
+    "未独立核实 frontend E03",
+    "静态 owner/caller 复核不证明行为等价已验证"
+  ]
+}

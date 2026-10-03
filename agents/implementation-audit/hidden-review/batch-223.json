@@ -1,0 +1,29 @@
+{
+  "batch_id": 223,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现可证实的已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-06.md",
+      "sha256": "974a8526d64294e9c1e2f6f9b54126a361de67801d175d57ef929fd17b8ccc9e",
+      "lines": 11,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-07-binding-final.md",
+      "sha256": "67838bc82a27e62992970bb77f61068873d810d22db0e4f54dfc5f943802a697",
+      "lines": 30,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-07-depth-final.md",
+      "sha256": "ace0861e95c73214b069807b907bb4028a12d906cab3f5d5b56297be0a205fcf",
+      "lines": 26,
+      "read_to_eof": true
+    }
+  ],
+  "limitations": [
+    "未读取计划之外的 items/modules、其他 receipt 或产品源码；没有独立验证材料引用的源码事实和早期整体审查结论。"
+  ]
+}

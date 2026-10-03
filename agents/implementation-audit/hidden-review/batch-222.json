@@ -1,0 +1,29 @@
+{
+  "batch_id": 222,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现可证实的已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-05-model-final.md",
+      "sha256": "be5755710e4b2258c4a15e8ede9db1f7ac3194a213efdbde27deffc044b8f4af",
+      "lines": 20,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-05.md",
+      "sha256": "586283bb61bd4f22cc06ca38799fc8289f93ae0841571cb74c94b5630491d9c7",
+      "lines": 12,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-06-final.md",
+      "sha256": "fdb1b2b4d6c9b9ea393fe0563afd633e24e1b79ec841a95862a47098eb999d87",
+      "lines": 28,
+      "read_to_eof": true
+    }
+  ],
+  "limitations": [
+    "未复核来源所引 items/modules、其他 receipts 或完整 web 审查；未验证浏览器时序。"
+  ]
+}

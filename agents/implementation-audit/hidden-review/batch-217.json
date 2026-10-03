@@ -1,0 +1,33 @@
+{
+  "batch_id": 217,
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-area-final.md",
+      "sha256": "bc8af431f885d453ff4ec41bcbf8164cf1023883992d3a003493b76a2d00afce",
+      "lines": 32,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-01-app-final.md",
+      "sha256": "6cda44ac704ea922b9978a3be55c1b3dd6cd78c2c92cea633e797d19426c8948",
+      "lines": 35,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-01-chart-final.md",
+      "sha256": "8f9ce2b7a354233287d3816b2695e4b812c3c91944b4cef824c07ba205973d5a",
+      "lines": 36,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_status": {
+    "historical_oop_reviews": "设计审查结论不替代43b1aa5 caller现状或运行验证",
+    "tooling_escrow_verification_run": "基线已实现；validator containment-before-read 缺口由G72覆盖",
+    "web_chart_findings": "G10、G12、G31按现行总账保留",
+    "web_app_findings": "G22与G68按现行总账保留；服从ADR-0025日终持久化契约",
+    "new_G_or_Q": "none",
+    "closed_G_or_Q": "none"
+  }
+}

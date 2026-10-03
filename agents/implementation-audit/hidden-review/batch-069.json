@@ -1,0 +1,43 @@
+{
+  "batch_id": 69,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-01-rereview.md",
+      "sha256": "44aeb5c585f1304419972d70861d9541eadd34a08fdd3d9907857d4c88b1ff0d",
+      "lines": 26,
+      "read_to_eof": true,
+      "expected_sha256": "44aeb5c585f1304419972d70861d9541eadd34a08fdd3d9907857d4c88b1ff0d",
+      "expected_lines": 26
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-01.md",
+      "sha256": "751d20ba2dd2a6ecdbe39ee1e748bc98568b43127169e7b757e52319676d0fa7",
+      "lines": 13,
+      "read_to_eof": true,
+      "expected_sha256": "751d20ba2dd2a6ecdbe39ee1e748bc98568b43127169e7b757e52319676d0fa7",
+      "expected_lines": 13
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-02-manager-final.md",
+      "sha256": "25045874a92a27bd84c0eab32b649e4b7edc0ec442ca40a3d15df0ff1fbce517",
+      "lines": 27,
+      "read_to_eof": true,
+      "expected_sha256": "25045874a92a27bd84c0eab32b649e4b7edc0ec442ca40a3d15df0ff1fbce517",
+      "expected_lines": 27
+    }
+  ],
+  "conclusion": "来源均完整校验；未发现足以推翻策略-01后续最终复核的反证。结论仅限历史方案、生产 owner/caller/consumer 与 G/Q 关联核对；G07/G08 保持独立未完成，测试未运行。",
+  "related_gaps": ["G07", "G08"],
+  "related_open_question": "Q11 需区分 ADR-0026 已定机构策略补充与实现审计内部更正/违约 cause 路由问题",
+  "checks": {
+    "a_share_semantics": "符合既有账户/路由器受理边界；未发现交易单位、费用、T+1 或成交语义变化；机构参数按 ADR-0026 属游戏假设",
+    "necessity_and_scope": "strategy-01 仅 A01 为 OOP action；strategy-02 无 OOP actions；行为缺陷线索保持独立",
+    "omissions_and_cross_layer": "生产 caller 与状态 owner/consumer 分工一致；测试 caller 未穷尽，历史 delta 复核只继承未重做"
+  },
+  "not_run": ["tests", "build", "git commands"],
+  "artifacts": {
+    "markdown": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-069.md",
+    "json": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-069.json"
+  }
+}

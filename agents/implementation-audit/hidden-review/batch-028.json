@@ -1,0 +1,65 @@
+{
+  "batch_id": 28,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/21.md",
+      "expected_lines": 20,
+      "measured_lines": 20,
+      "expected_sha256": "2abd1a3fb10f5854ed2164ef7daa69405f61a646b83b601a17135162fa03f274",
+      "measured_sha256": "2abd1a3fb10f5854ed2164ef7daa69405f61a646b83b601a17135162fa03f274",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["plans 反查结论", "调用、语义与验证锚点"],
+      "finding": "未发现遗漏；既有候选与测试边界提示未构成新缺陷。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/22.md",
+      "expected_lines": 19,
+      "measured_lines": 19,
+      "expected_sha256": "968f1838332307a36a061547b7bac47d39101083c25d297c8be581e01310ec4b",
+      "measured_sha256": "968f1838332307a36a061547b7bac47d39101083c25d297c8be581e01310ec4b",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["分文件判断", "迁移顺序和验证边界"],
+      "finding": "保留 TradingPlan state owner 与 A01 边界；version overflow、D02 及 review preview 边界未被错误核销。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/23.md",
+      "expected_lines": 27,
+      "measured_lines": 27,
+      "expected_sha256": "1c242f28f981a70ef1218b2dedc930144d31757927c84e2a0f3d1a1cb44b4513",
+      "measured_sha256": "1c242f28f981a70ef1218b2dedc930144d31757927c84e2a0f3d1a1cb44b4513",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["文件结论", "跨文件核验", "发现与验证边界"],
+      "finding": "无新增 OOP action；测试缺口提示不冒充产品缺陷。G06-G09、G38 仍按既有独立链路保留。"
+    }
+  ],
+  "caller_code_evidence": [
+    "packages/engine/src/plans/validation.rs:12-14,121-143",
+    "packages/engine/src/plans/state.rs:193-262",
+    "packages/engine/src/plans/mod.rs:380-503",
+    "packages/engine/src/session.rs:1839-1893",
+    "packages/engine/src/strategy/beliefs.rs:89-100,247-290"
+  ],
+  "current_decisions": [
+    "docs/decisions/0016-fundamental-factor-model.md",
+    "docs/decisions/0021-strategy-position-choice-and-noise-pricing.md",
+    "docs/decisions/0022-symbolic-limit-prices.md",
+    "docs/decisions/0026-individual-institution-experience.md"
+  ],
+  "related_current_items": ["G06", "G07", "G08", "G09", "G38"],
+  "related_item_disposition": "不核销；当前实现审计将其列为独立生产链路缺口，本批 OOP 职责判断不解决这些问题。",
+  "new_candidates": [],
+  "counterevidence": [
+    "当前 owner/caller 代码路径仍存在且与审计描述对应。",
+    "审计中提及的边界测试均被原文明确限定为测试提示，并非声称当前产品行为缺失。",
+    "旧审计或未来能力描述不覆盖 ADR-0016 修订及 ADR-0026 等现行决策。"
+  ],
+  "limitations": ["未运行测试或构建；不声明测试通过或覆盖充分。", "未核查全项目交易规则；未提出交易制度改动。"]
+}

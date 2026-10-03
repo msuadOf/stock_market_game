@@ -1,0 +1,108 @@
+{
+  "batch": "135",
+  "owner": 5,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-foundation-02.md",
+      "lines": 52,
+      "sha256": "e293dfc270059893c341058232d5c8a83f1fa011a7282ac67fa092bd57cbe1ef",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-foundation-03.md",
+      "lines": 21,
+      "sha256": "167ff694aa710382472355dd2f489e031ef48fa4bc7347ce81500ab40a3c0006",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-foundation-04.md",
+      "lines": 31,
+      "sha256": "aa7ce64f6f12e431a7f989d563fe8aa11728c39f672d34e44b4ab85d7c04a646",
+      "read_to_eof": true
+    }
+  ],
+  "review": {
+    "status": "passed_document_review",
+    "findings_unresolved": 0,
+    "summary": "三篇未实施候选设计记录与当前生产 owner/caller 边界相符。明确记录 PersonalPriceMemory::prune 尚无生产调用，避免把局部 helper/测试覆盖误读为生命周期接线完成。",
+    "confirmed_g_mapping": [
+      {
+        "id": "G42",
+        "relationship": "相关生产缺口条目；旧总账基线为 08e4fc7，本审读仅独立确认 PersonalPriceMemory::prune 在 43b1aa5 无生产 caller，未重验该 G 项的全部条件。"
+      }
+    ],
+    "confirmed_open_q_mapping": [],
+    "latest_adr_checked": "ADR-0028",
+    "limitations": [
+      "scan-plan.json batch 135 的三个相对路径、行数和哈希均已核对；caller worktree 与 source_root 是同一 HEAD，但 caller worktree 不含这三份未跟踪翻译记录，全文审读来自 source_root，生产代码边界在 caller worktree 检查。",
+      "只审读指定三篇候选文档与核验调用关系所需的当前代码；不等于所有提及源码逐文件全文复审。",
+      "未运行测试、构建、性能测量或 A 股官方规则复核；本批不改变交易语义。",
+      "实现审计总账基线与本次 43b1aa5 不同，G42 仅用于编号/背景参考，不宣称旧总账状态已全面复验。"
+    ],
+    "code_evidence": [
+      {
+        "path": "packages/engine/src/session.rs",
+        "lines": "1148-1157,1439,1922-1923",
+        "supports": "GameSession 持有权威会话状态、诊断 collector 与个人 watchlist/price-memory 状态。"
+      },
+      {
+        "path": "packages/engine/src/session/causal.rs",
+        "lines": "6-16",
+        "supports": "session facade 将事实交给 collector，并由事实投影 causal report。"
+      },
+      {
+        "path": "packages/engine/src/session/decision_chain/roots.rs",
+        "lines": "486",
+        "supports": "生产路径调用 watchlist.prune；没有调用 PersonalPriceMemory::prune。"
+      },
+      {
+        "path": "apps/web-wasm/src/lib.rs",
+        "lines": "435-439",
+        "supports": "WASM consumer 调用 engine::indicators::calculate_indicators。"
+      },
+      {
+        "path": "apps/server/src/routes.rs",
+        "lines": "632-646",
+        "supports": "Server consumer 调用相同 engine 指标函数。"
+      },
+      {
+        "path": "apps/desktop/src-tauri/src/lib.rs",
+        "lines": "60-64",
+        "supports": "Desktop consumer 调用相同 engine 指标函数。"
+      },
+      {
+        "path": "packages/engine/src/verification_evidence/phase_timing.rs",
+        "lines": "1-12",
+        "supports": "phase timing 的 Rayon registry 容量、重叠 span 与非 CPU 利用率语义。"
+      },
+      {
+        "path": "packages/engine/examples/production_entry_performance.rs",
+        "lines": "151-169",
+        "supports": "性能 example 在真实 GameSession tick 消费 opt-in phase timing。"
+      }
+    ],
+    "docs_evidence": [
+      {
+        "path": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+        "lines": "7,49-54,127,150",
+        "supports": "旧 G/Q 状态的源代码基线与 G42 个人价格记忆修剪记录。"
+      },
+      {
+        "path": "docs/open-questions.md",
+        "lines": "94-138",
+        "supports": "Q11/Q12 的现行更新与解决状态。"
+      },
+      {
+        "path": "docs/decisions/0028-tagged-release-and-static-pages.md",
+        "lines": "1-5",
+        "supports": "本次检查范围内最新 ADR 为 0028，主题为发布与静态 Pages，与本批无直接关联。"
+      }
+    ],
+    "tests_or_builds_run": false,
+    "product_source_modified": false
+  }
+}

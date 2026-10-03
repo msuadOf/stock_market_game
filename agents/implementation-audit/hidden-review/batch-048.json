@@ -1,0 +1,166 @@
+{
+  "batch_id": 48,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/tooling-05.md",
+      "expected_sha256": "355cb23b14e9c20fa902f6cdb45cf6418826a71db62e1a85d6697f5ecb7ab5b5",
+      "observed_sha256": "355cb23b14e9c20fa902f6cdb45cf6418826a71db62e1a85d6697f5ecb7ab5b5",
+      "expected_lines": 158,
+      "observed_lines": 158,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "tooling-05：simulation 验收工具",
+        "逐文件核销 / escrow-performance-harness.test.mjs",
+        "逐文件核销 / escrow-source-manifest.mjs",
+        "逐文件核销 / escrow-source-manifest.test.mjs",
+        "逐文件核销 / escrow-verification-contracts.mjs",
+        "逐文件核销 / escrow-verification-contracts.test.mjs",
+        "逐文件核销 / prepare-escrow-performance-config.mjs",
+        "逐文件核销 / prepare-escrow-performance.test.mjs",
+        "逐文件核销 / run-escrow-verification-matrix.mjs",
+        "逐文件核销 / run-escrow-verification-matrix.test.mjs",
+        "逐文件核销 / verify-simulation-artifacts.mjs",
+        "逐文件核销 / verify-simulation-artifacts.test.mjs",
+        "跨模块边界",
+        "最终动作分类"
+      ],
+      "caller_paths": [
+        "scripts/simulation/run-escrow-verification-matrix.mjs:367-418",
+        "scripts/simulation/run-escrow-verification-matrix.mjs:557-576",
+        "scripts/simulation/run-escrow-verification-matrix.mjs:660,727,809-810",
+        "scripts/simulation/verify-simulation-artifacts.mjs",
+        "docs/decisions/0017-escrow-parallel-tick.md",
+        "docs/decisions/0018-long-running-immutable-timeline.md"
+      ],
+      "g_associations": ["G39", "G61", "G62", "G63"],
+      "new_candidate": false,
+      "counterevidence": "EscrowVerificationRun 的对象聚合与原 A01 候选一致；matrix artifact 校验不证明 K7 同实际受理轨迹验收（G39），也不由此证明外部期限/子进程树/普通 case deadline（G61-G63）。原 D01 读前 symlink 检查明确为未来独立修复，不是原对象迁移的已批准动作；当前 validateArtifacts 仍在 realpath/readFile 后做 containment 检查。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/tooling-07.md",
+      "expected_sha256": "e5a96a91ec8d93ce2f1c13c6ab08ffdf9ced4ff2b5e3716009e778f48da6ab9b",
+      "observed_sha256": "e5a96a91ec8d93ce2f1c13c6ab08ffdf9ced4ff2b5e3716009e778f48da6ab9b",
+      "expected_lines": 31,
+      "observed_lines": 31,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "tooling-07：历史 WASM 公开报告验证脚本",
+        "已有对象化设计",
+        "需要聚合的对象及方法",
+        "保留独立流程与理由",
+        "调用关系与契约",
+        "迁移步骤与验证"
+      ],
+      "caller_paths": [
+        ".omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs",
+        "apps/web/src/host/serde-normalize.ts",
+        "apps/web/src/config/defaults.ts"
+      ],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "源文件认定无 OOP 候选，脚本是历史 WASM 导出契约验证而非产品交易 caller。异常路径跳过句柄释放、unknown 查询同时 page_size=0 是源记录的非 OOP 边界，本轮没有宣称已修复或增加承诺遗漏。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-01.md",
+      "expected_sha256": "bf4bab880b04584e14dc4ee56c36577312ed8086afccc1580bb9c45d4b685ded",
+      "observed_sha256": "bf4bab880b04584e14dc4ee56c36577312ed8086afccc1580bb9c45d4b685ded",
+      "expected_lines": 314,
+      "observed_lines": 314,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "web-01：Web UI 与启动/图表视图对象化调查",
+        "跨模块组合关系",
+        "逐文件核销 / company-information.spec.ts",
+        "逐文件核销 / mobile-layout.spec.ts",
+        "逐文件核销 / trading-workflows.spec.ts",
+        "逐文件核销 / playwright.config.ts",
+        "逐文件核销 / pages-isolation.js",
+        "逐文件核销 / App.tsx",
+        "逐文件核销 / HostStatusViews.tsx",
+        "逐文件核销 / LocalRefreshViews.tsx",
+        "逐文件核销 / MarketRuntimeProvider.tsx",
+        "逐文件核销 / StartupScreen.tsx",
+        "逐文件核销 / WorkspaceGrid.tsx",
+        "逐文件核销 / app-error-wiring.test.ts",
+        "逐文件核销 / app-persistence-wiring.test.ts",
+        "逐文件核销 / app-startup-wiring.test.ts",
+        "逐文件核销 / app-workspace-wiring.test.ts",
+        "逐文件核销 / error-details.test.ts",
+        "逐文件核销 / error-details.ts",
+        "逐文件核销 / error-feedback.test.ts",
+        "逐文件核销 / host-status-views.test.ts",
+        "逐文件核销 / local-amount-render.test.ts",
+        "逐文件核销 / market-chart-runtime.test-support.tsx",
+        "逐文件核销 / market-chart-runtime.test.ts",
+        "逐文件核销 / portfolio-selector.ts",
+        "逐文件核销 / startup-recovery.test.ts",
+        "逐文件核销 / startup-save-source.test.ts",
+        "逐文件核销 / startup-screen.test.ts",
+        "逐文件核销 / useMarketChartRuntime.ts",
+        "逐文件核销 / useMobileUiController.ts",
+        "本批限制与未实施声明"
+      ],
+      "caller_paths": [
+        "apps/web/src/App.tsx:41-43,212-215,287-300,352-360",
+        "apps/web/src/app/useSessionHostLifecycle.ts:55-105,218-232",
+        "apps/web/src/app/useSaveCommands.ts:52-89,95-143,161-240",
+        "apps/web/src/app/useTradingCommands.ts:22-140",
+        "apps/web/src/app/useMarketChartRuntime.ts:15-29,51-101",
+        "apps/web/src/app/market-chart-projection.ts:55-105",
+        "apps/web/src/app/LocalRefreshViews.tsx:120-129",
+        "apps/web/src/App.tsx:352-360"
+      ],
+      "g_associations": ["G04", "G10", "G11", "G20", "G31", "G47", "G68"],
+      "new_candidate": false,
+      "counterevidence": "App lifecycle/save/trading and MarketChartProjection candidates are present in the caller worktree; their histories/fixtures do not close unrelated production G items. G10/G11/G31/G47 remain listed for graph projection/rendering boundaries. LocalRefreshViews TradeMarketControls still reads DEFAULT_SETUP while useTradingCommands validates with activeSetup; the related non-default configuration issue is already G68. No behavior tests were run."
+    }
+  ],
+  "current_policy": {
+    "read": [
+      "AGENTS.md",
+      "docs/principles.md",
+      "docs/decisions/0004-frontend-state-redux-toolkit.md",
+      "docs/decisions/0007-three-deployment-frontend-framework.md",
+      "docs/decisions/0010-unified-host-protocol-and-local-refresh.md",
+      "docs/decisions/0017-escrow-parallel-tick.md",
+      "docs/decisions/0018-long-running-immutable-timeline.md",
+      "docs/decisions/0025-day-end-only-persistence.md",
+      "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+      "docs/trading-rules.md",
+      "agents/implementation-audit/implementation-audit-2026-10-02.md"
+    ],
+    "not_applicable": [],
+    "decision": "历史 OOP 建议按当前 caller 源码核销；获批动作已落地的不得重复登记。ADR-0017/0018 界定 escrow 与并行验收语义，ADR-0025 界定只在日终持久化，ADR-0010/0027 界定宿主与图表更新边界；G68 与现行交易规则约束 setup/类别问题。未因源材料旧指令扩大工作范围。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G04", "G10", "G11", "G20", "G31", "G39", "G47", "G61", "G62", "G63", "G68"],
+    "candidate_counts": {
+      "tooling-05_object_migration": 1,
+      "tooling-07_object_migration": 0,
+      "web-01_object_migration": 4,
+      "approved_oop_candidates_found_implemented": 5,
+      "separate_future_security_candidates": 1
+    },
+    "notes": "tooling-05 的 D01（validateArtifacts 在读取内容之后才做 containment 校验）仍是明确的历史独立安全修复线索，但原文限定它不属于 A01 OOP 迁移步骤；本批不将其升格为获批承诺遗漏或新 G。G39/G61-G63 仅作相关工具验收边界，不因已存在 matrix runner 或 EscrowVerificationRun 核销。G68 仍覆盖 TradeMarketControls 对活动非默认 setup 的配置消费问题。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "builds_run": false,
+    "regressions_run": false,
+    "git_operations": false
+  }
+}

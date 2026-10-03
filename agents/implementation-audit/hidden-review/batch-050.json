@@ -1,0 +1,117 @@
+{
+  "batch_id": 50,
+  "owner": 5,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "output_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-05.md",
+      "expected_sha256": "f9861b343c7bf19ec1a4381a24a828769960fff2d363133a97805db0ad3c20a6",
+      "observed_sha256": "f9861b343c7bf19ec1a4381a24a828769960fff2d363133a97805db0ad3c20a6",
+      "expected_lines": 509,
+      "observed_lines": 509,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "web-05 模块调查",
+        "apps/web/src/mobile 与 K 线/市场模型",
+        "apps/web/src/save schema 与日终持久化",
+        "pages isolation、render-app 与跨文件关系",
+        "全批验证边界"
+      ],
+      "caller_paths": [
+        "apps/web/src/App.tsx:695",
+        "apps/web/src/App.tsx:700-704",
+        "apps/web/src/app/useMarketChartRuntime.ts",
+        "apps/web/src/mobile/market-model.test.ts",
+        "apps/web/src/save/day-end-persistence.ts",
+        "apps/web/src/save/day-end-candidate.ts",
+        "apps/web/src/save/day-end-targets.ts"
+      ],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "MinutePointCollector/AuctionPointCollector 仅确认测试构造，生产 useMarketChartRuntime 走独立 upsert；DayEndPersistence 则由 App ref 持有并有明确 invalidate/idle 调用。没有证据支持把两个 collector 说成生产事实 owner，也没有证据支持把保存协调器退化成无状态 helper。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-07.md",
+      "expected_sha256": "e4488f07ce41193d20c95e8af780eacb24bc36c6c48043c17d7e279335b1f50b",
+      "observed_sha256": "e4488f07ce41193d20c95e8af780eacb24bc36c6c48043c17d7e279335b1f50b",
+      "expected_lines": 436,
+      "observed_lines": 436,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "web-07 模块核销",
+        "逐文件核销 / save schema、runtime 与 snapshot",
+        "逐文件核销 / session replacement 与 Redux store",
+        "逐文件核销 / host 投影、formatter、交易 helper、生成声明与 Vite",
+        "跨文件关系",
+        "限制"
+      ],
+      "caller_paths": [
+        "apps/web/src/App.tsx:167",
+        "apps/web/src/App.tsx:694-695",
+        "apps/web/src/app/useTradingCommands.ts:67",
+        "apps/web/src/host/worker-host.ts:354",
+        "apps/web/src/host/wasm-worker.ts:211,229",
+        "apps/web/src/host/protocol-coordinator.ts:81,120",
+        "apps/web/src/store/store.ts:43-55",
+        "apps/web/src/store/market-depth-sync.ts",
+        "apps/web/src/utils/symbolic-limit-order.ts",
+        "apps/web/src/utils/trade-input.ts"
+      ],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "InitialSaveSource、SessionReplacementGate、Redux state 和严格 save DTO 的实际 owner/caller 与文档相符；setSnapshot 与 installProtocolSnapshotBaseline 写集不同。applyPriceTickMarket 目前只确认由测试调用，不能以测试导入推断生产接线。G68 等已有 UI 规则消费缺口不由这些对象化材料核销。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-08.md",
+      "expected_sha256": "a4cd2a0694cce0bbb6f5b84d0c5c9a414b00e43fbfafa6d58adc2c7159f02072",
+      "observed_sha256": "a4cd2a0694cce0bbb6f5b84d0c5c9a414b00e43fbfafa6d58adc2c7159f02072",
+      "expected_lines": 120,
+      "observed_lines": 120,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "web-08：HTML 入口与含内联脚本的原型",
+        "apps/web/index.html",
+        "apps/web/inspector.html",
+        "design/ui/mobile/mobile-stock-detail.html",
+        "design/ui/mobile/mobile-trading-concept.html"
+      ],
+      "caller_paths": [
+        "apps/web/index.html",
+        "apps/web/inspector.html",
+        "design/ui/mobile/mobile-stock-detail.html",
+        "design/ui/mobile/mobile-trading-concept.html"
+      ],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "MobileTradingConceptController 被标为可选原型 candidate；页面价格、盘口、资金流均是静态示例，不是生产行情或 A 股规则。静态入口与 DOM 装配没有生产领域生命周期，不支持把原型示例当作产品功能或交易规则。"
+    }
+  ],
+  "g_associations": [],
+  "q_associations": [],
+  "adr_reviewed": [
+    "ADR-0023",
+    "ADR-0024",
+    "ADR-0025",
+    "ADR-0026",
+    "ADR-0027",
+    "ADR-0028"
+  ],
+  "a_share_semantics": "没有更改交易规则。UI 的元文本/分、股/手及类别校验只是前置校验，engine 仍为委托受理权威；Highest/Lowest 按 ADR-0022 在受理时解释。交易所/中国结算法源无需本批更新。",
+  "validation": {
+    "tests": "not_run",
+    "build": "not_run",
+    "regression": "not_run",
+    "source_integrity": "verified"
+  },
+  "findings": [],
+  "conclusion": "三份材料审读通过；不构成 Web 全源码复审、G01-G68 全量核销或产品验收。"
+}

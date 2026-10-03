@@ -1,0 +1,50 @@
+{
+  "batch": "087",
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/final-review.md",
+      "sha256": "18987da124ca2fa885f34a84b861462e72490e69053513ef6ba3efc78a1930c5",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/reader-instructions.md",
+      "sha256": "8aa1d7cd31d53586a7511fa3e34aa0357aaba9c24c229c272cbbfc67be5ab4d4",
+      "lines": 10,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/reviews/engine-pipeline-11.md",
+      "sha256": "cd8da5e3decf6fe4625dd26f97c9da06f2f0dca5ad81222be4566009e4987749",
+      "lines": 29,
+      "read_to_eof": true
+    }
+  ],
+  "coverage": {
+    "caller_owner_consumer": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad: continuous_tick_transaction.rs, auction_tick_transaction.rs, pre_open_transaction.rs -> drive_stock_stream -> StockStreamCoordinator<S>/StockShard",
+    "ledger_and_decisions": "已核对当前 implementation-audit 总账、ADR-0017 与 ADR-0019；ADR-0018 整体仍为 proposed，仅适用后续明确接受的具体条款；ADR-0020 仍为 proposed。",
+    "g_q": "未提出、升级、修改或关闭任何 G/Q。",
+    "a_share": "未改变交易行为或规则主张；未重新核查官方来源。"
+  },
+  "findings": [
+    {
+      "id": "F087-01",
+      "claim": "StockStreamCoordinator<S> 仍是尚未实施的 OOP 候选。",
+      "result": "historical_status_stale",
+      "evidence": [
+        "packages/engine/src/session/pipeline/stock_stream.rs:271-302,323-404",
+        "packages/engine/src/session/pipeline/continuous_tick_transaction.rs:227-233",
+        "packages/engine/src/session/pipeline/auction_tick_transaction.rs:210-216",
+        "packages/engine/src/session/pipeline/pre_open_transaction.rs:236-242"
+      ],
+      "recommendation": "不得将已存在的 coordinator 提取重新登记为待办，也不得仅由其存在推断性能验收通过。"
+    }
+  ],
+  "limitations": [
+    "仅做静态复核；未运行测试、构建、运行时或性能验证。",
+    "未重新核查交易所或中国结算官方来源。",
+    "未更改 G/Q 总账状态。"
+  ]
+}

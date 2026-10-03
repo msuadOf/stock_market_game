@@ -1,0 +1,74 @@
+{
+  "batch": "021",
+  "owner": 1,
+  "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "covered": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/completeness-2026-10-03/session/independent-review.md",
+      "sha256": "f487aaa8851a60a303a5fe8b526998df44321808144159329679828271daf559",
+      "lines": 19,
+      "eof": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/completeness-2026-10-03/session/parts/01.md",
+      "sha256": "51a1977419282669b3cf9ba661527f7e399cd56cc2727ad88d046d8c61c13cb4",
+      "lines": 15,
+      "eof": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/completeness-2026-10-03/session/parts/02.md",
+      "sha256": "0cf63ea0dfa9d8b61400dcf06a5e7131204ec8596cc999aef656b66fbd8b257d",
+      "lines": 9,
+      "eof": true
+    }
+  ],
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "candidate_status": {
+    "implemented_at_head": [
+      "session-N01",
+      "session-N02"
+    ],
+    "partially_implemented_or_optional_enhancement": [
+      {
+        "candidate": "CommittableSessionState 内部的 NPC 注意力状态/调度聚合增强",
+        "status": "状态表与调度堆已纳入同一可提交 owner，scheduler 仍只拥有 heap，配对更新仍分散由 Session/流水线编排；可留在原 owner 动作范围评估，不视为产品缺陷或新权威状态。",
+        "evidence": [
+          "packages/engine/src/session.rs:1147",
+          "packages/engine/src/session.rs:1160",
+          "packages/engine/src/session.rs:1937",
+          "packages/engine/src/session.rs:2859",
+          "packages/engine/src/session/attention.rs:263",
+          "packages/engine/src/session/attention.rs:321",
+          "packages/engine/src/session/pipeline/decision_snapshot_capture.rs:228"
+        ]
+      }
+    ],
+    "retained": [
+      "AccountBook 保留结论；无当前代码反证"
+    ]
+  },
+  "cross_ledger_findings": [
+    {
+      "status": "概念独立，未核销",
+      "ledger": "G16",
+      "finding": "OOP owner 结构不能证明长期历史/计划复制已消除；继续按实现审计总账跟踪。"
+    },
+    {
+      "status": "无其他核销主张",
+      "ledger": "G01–G68/Q",
+      "finding": "本批三个历史源不构成相关产品缺口已修复或待修复的证据；依现行总账状态，不从对象抽取推断行为验收。"
+    }
+  ],
+  "domain_review": {
+    "status": "未引入领域规则变更",
+    "basis": "核对 ADR-0015、ADR-0017、ADR-0018、ADR-0025；后续明确取代优先。不执行官方规则查询。",
+    "boundary": "保留金额分、数量股、真实母单受理/成交/撤单生命周期、撮合层交易规则、日终公共存档门禁与协议内存 checkpoint 边界。"
+  },
+  "validation": {
+    "tests": "未运行",
+    "build": "未运行",
+    "git_mutation": "未执行",
+    "official_rule_lookup": "未执行"
+  },
+  "report": "hidden-review/batch-021.md"
+}

@@ -1,0 +1,80 @@
+{
+  "batch": 47,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "read_status": "full_text_to_eof",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/tooling-01.md",
+      "plan_lines": 37,
+      "actual_lines": 37,
+      "sha256": "541e792ab362b6f51437cc3a5dcb078bae2e9a9654db752896a41eab50599edf",
+      "sections": ["边界依据", "逐文件核销", "跨文件关系和迁移顺序"],
+    "eof": "连续 cat 读取至末尾的无测试/构建说明；wc -l 与计划一致。",
+    "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/tooling-02.md",
+      "plan_lines": 59,
+      "actual_lines": 59,
+      "sha256": "fb77ce6d0f4b2288d728e1a091ce9ff39831db2531186b10a9ff20633cd4b2db",
+      "sections": ["现有对象聚合与总体结论", "文件核销与具体设计", "调用关系与不可漂移的契约", "迁移步骤与验证建议"],
+    "eof": "连续 cat 读取至末尾的无测试/构建说明；wc -l 与计划一致。",
+    "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/tooling-04.md",
+      "plan_lines": 41,
+      "actual_lines": 41,
+      "sha256": "208b50cbf56e48cb6f305fc4e2a0bfecbd93b9fcbb609226ef654fcbd771262a",
+      "sections": ["scripts/simulation/baseline-run.mjs", "scripts/simulation/baseline-run.test.mjs", "scripts/simulation/escrow-performance-harness.mjs", "文件关系与范围"],
+    "eof": "连续 cat 读取至末尾的文件范围说明；wc -l 与计划一致。",
+    "read_to_eof": true
+    }
+  ],
+  "baseline_findings": [
+    {
+      "subject": "SimulationBatchContext A01 集合候选",
+      "status": "implemented",
+      "evidence": "scripts/simulation/baseline-run.mjs:1291-1376; callers captureAfter:1378-1394 and captureSensitivity:1397-1420",
+      "counterevidence": "历史来源将其称为尚未实施的候选；当前基线已包含该 context。不据此声称其他资源缺陷也已修复。"
+    },
+    {
+      "subject": "BuildRun and BuildArtifactPublisher",
+      "status": "implemented",
+      "evidence": "scripts/build-targets.mjs:154-217 and :219-256; executeBuild caller :338-340; supervisor :343-361",
+      "counterevidence": "supervisor 硬计时器会退出进程，不能证明该路径已完成清理；嵌套进程树问题仍由 G62 单独跟踪。"
+    },
+    {
+      "subject": "性能 sampler rejection 清理",
+      "status": "still_present; G61",
+      "evidence": "scripts/simulation/escrow-performance-harness.mjs:383-401; caller chain :418-420, :492-504, :596-605; G61 ledger implementation-audit-2026-10-02.md:129",
+      "counterevidence": "ProcessSampleRun 已存在，但 start 在等待 child close 后才处理 sampler rejection；实例所有权不代表清理完整。"
+    },
+    {
+      "subject": "嵌套进程树终止",
+      "status": "separate_open_ledger_item_G62",
+      "evidence": "implementation-audit-2026-10-02.md:130; exhaustive-review/resolution.md:40",
+      "counterevidence": "BuildRun 的 finally 清理针对目录，不证明逃逸的后代进程均已终止。"
+    }
+  ],
+  "ledger_links": {
+    "G": ["G61", "G62"],
+    "Q": [],
+    "notes": "来源报告没有为 OOP 提案指定正式 G/Q 编号。G61 涵盖性能 sampler/deadline 生命周期；G62 涵盖嵌套进程树监督。没有 Q 与这些所有权提案直接对应。"
+  },
+  "scope": {
+    "product_files_modified": false,
+    "tests_or_builds_run": false,
+    "git_commands_run": false,
+    "trade_rule_change": false,
+    "unverified": [
+      "未重新读取历史审计列出的全部生产/测试来源。",
+      "未确认 runtime.rs 中的 WorkspacePathPolicy/CaptureArtifactWriter 与历史候选等价。",
+      "未逐行重新审计当前静态打包与 CDP 行为。",
+      "未运行测试；覆盖说明仍是文档陈述，不是本轮执行结果。"
+    ]
+  },
+  "report": "batch-047.md"
+}

@@ -1,0 +1,39 @@
+{
+  "batch": 148,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-09.md",
+      "sha256": "a5864cd625343d117ad22e4dd5425063cc956ed4fe1cc0443c787c89f5f7faf1",
+      "lines": 38,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-10.md",
+      "sha256": "372b00900f8e47343c0d14608967c772bf671515d848d98371d725ff758b0377",
+      "lines": 35,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-11.md",
+      "sha256": "47844bc4d82610333d7320dcdb8f218e3882eb73b4d9aadc7d609aa1be05b6d1",
+      "lines": 29,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    }
+  ],
+  "findings": [],
+  "collateral": {
+    "misread_source": "agents/oop-refactor-audit/reviews/root_scan_148.json",
+    "description": "先前误读了另一任务分配的三个生产 .rs 文件；不构成本批覆盖证据。",
+    "counted_as_batch_coverage": false
+  },
+  "limitations": [
+    "三篇计划来源在 baseline 43b1aa5 中均不存在，无法比较其基线版本。",
+    "未运行测试或构建；未据历史复核推断未分配实现状态。"
+  ]
+}

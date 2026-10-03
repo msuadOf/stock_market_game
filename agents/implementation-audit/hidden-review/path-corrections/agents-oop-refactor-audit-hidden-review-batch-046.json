@@ -1,0 +1,96 @@
+{
+  "batch": "046",
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-01.md",
+      "planned_lines": 67,
+      "read_lines": 67,
+      "eof": true,
+      "sha256": "3c547aacdad8ac3f52a1e3ad4b31b1e23c69fb7ed1136c8e4f2f966b6eae8fc7",
+      "sections": ["按文件核销", "聚合边界与具体迁移建议", "调用关系与必须保持的契约", "H01修订", "迁移步骤与验证", "完整阅读范围与限制", "单文件复核收尾修订"],
+      "status": "historical_candidate_a01_a02_implemented; g19_behavior_gap_remains"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-02.md",
+      "planned_lines": 63,
+      "read_lines": 63,
+      "eof": true,
+      "sha256": "baa7fcdf5932a48c7627a31a62cf2646f95bc3c6c60a8fd1fb6d5ab0ef123805",
+      "sections": ["已有对象化设计", "候选聚合与方法迁移", "文件逐项核销", "调用关系与必须保持的契约", "迁移步骤与验证", "未核实边界"],
+      "status": "optional_module_organization_only; stale_ws_comment_still_present"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-03.md",
+      "planned_lines": 75,
+      "read_lines": 75,
+      "eof": true,
+      "sha256": "c60d43279a7085f21d6aa297fca2be9ce375eda7b58b31c4b76cd25f5797d104",
+      "sections": ["模块结论", "deployment_routes.rs", "healthz.rs", "pause_security.rs", "protocol_updates.rs", "publisher.rs", "ws.rs", "web-wasm/src/lib.rs", "protocol_tests.rs", "跨模块边界"],
+      "status": "historical_candidate_registry_implemented; q20_handle_wrap_remains"
+    }
+  ],
+  "coverage": {
+    "source_review": "三篇连续全文读至EOF并逐篇核验行数、SHA与章节族；详情见batch-046.md",
+    "baseline_source": "43b1aa5生产caller/owner路径静态核对：Desktop/Server SessionHandles、Server WS订阅、Desktop run_cycle、WASM SessionRegistry及其导出调用",
+    "ledger": "核对G01-G05、G18-G20、G40与Q20相关状态；不变更G/Q状态；OOP提取不算行为缺口修复",
+    "decisions": "核对docs/decisions/至ADR-0028与docs/open-questions.md；未见取代相关约束的新ADR",
+    "tests": "未运行产品测试、构建或回归"
+  },
+  "findings": [
+    {
+      "id": "F046-01",
+      "severity": "有效状态更正",
+      "claim": "hosts-01-A01/A02、hosts-03-A01仍待实施",
+      "counterevidence": [
+        "apps/desktop/src-tauri/src/actor.rs:333-336",
+        "apps/server/src/actor.rs:606-625",
+        "apps/server/src/routes.rs:1269-1275",
+        "apps/web-wasm/src/lib.rs:43-115",
+        "agents/oop-refactor-audit/completeness-2026-10-03/hosts/report.md:86"
+      ],
+      "recommendation": "按基线已有实现处理，不重复建立候选；保留各宿主独立所有权和协议边界。"
+    },
+    {
+      "id": "F046-02",
+      "severity": "有效未解决行为线索",
+      "claim": "历史对象候选已完成意味着关联真实行为也已实现",
+      "counterevidence": [
+        "apps/desktop/src-tauri/src/actor.rs:832-887",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:40",
+        "apps/web-wasm/src/lib.rs:57-62",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:158"
+      ],
+      "recommendation": "G19固定倍率聚合与Q20句柄耗尽仍独立保留；不以OOP抽取核销。"
+    },
+    {
+      "id": "F046-03",
+      "severity": "有效注释不一致",
+      "claim": "WS接收侧只用于存活/pong",
+      "counterevidence": [
+        "apps/server/src/routes.rs:1256-1261",
+        "apps/server/src/routes.rs:1414-1420"
+      ],
+      "recommendation": "可作为独立源码文案修正；本批只记录，不把路由模块拆分当作修复。"
+    }
+  ],
+  "candidate_status": {
+    "hosts-01-A01": "current_implementation_confirmed",
+    "hosts-01-A02": "current_implementation_confirmed",
+    "hosts-02_routes_module_split": "optional_organization_note_not_oop_action",
+    "hosts-03-A01": "current_implementation_confirmed",
+    "hosts-01-D01_fixed_event_aggregation": "not_implemented_or_not_demonstrated; G19 remains",
+    "q20_handle_exhaustion": "unresolved; registry register still fetch_add and insert"
+  },
+  "a_share": {
+    "status": "无生产改动或交易语义变化；保留现行A股语义与适用ADR边界",
+    "basis": "AGENTS.md、docs/principles.md、docs/decisions/、docs/open-questions.md及实施审计主账；本批未重新查询交易所规则",
+    "g01_g68_q_ledger": "未核销；G19与Q20相关缺口仍独立保留"
+  },
+  "limitations": [
+    "仅静态审计基线源码与文档，不证明运行时行为或缺陷可达性",
+    "未运行产品测试、构建、性能测量或完整回归",
+    "hosts-02其余分配源码没有在本批逐一重读；仅核验所述生产caller与关键边界",
+    "未重新核验交易所官方规则原文；本批没有提出规则变更"
+  ]
+}

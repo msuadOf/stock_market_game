@@ -1,0 +1,34 @@
+{
+  "batch_id": 131,
+  "owner": 1,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/history/final-review.md",
+      "sha256": "0d9b56f1b12b0c3ad297d2a6191b9f4d7a51381a2ed068a5bae233e308c97b1b",
+      "lines": 33,
+      "read_to_eof": true,
+      "candidate_status": "仅复核 OOP 可行性审计文档；明确不构成源码兼容性、性能、覆盖计数或 A 股规则认证，未批准候选迁移。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/history/report.md",
+      "sha256": "33a83c7512b6b437528c19c3c8c28fb09ddde959edfcb3363d21ddfed3e59265",
+      "lines": 80,
+      "read_to_eof": true,
+      "candidate_status": "Account/Position、Web session、decision context、候选事务等均为静态审计后的条件性 OOP 方向；未实施、未测试，不是产品承诺或缺口修复。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/history/summary-review.md",
+      "sha256": "22cd59951158f320bff9473442f919713f5dea5b12b6e31e2a4694870af2a1b4",
+      "lines": 23,
+      "read_to_eof": true,
+      "candidate_status": "仅验证汇总材料忠实保留原结论与限制；不认证源码状态、不把历史候选升级为现行承诺。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "oop_extraction_is_fix": false,
+    "status": "历史提案不是产品需求；当前调用链已实现若干候选边界，但仍需按现行 G/Q 与已接受 ADR 分别判定。总账状态不变，无本批可核销项。"
+  }
+}

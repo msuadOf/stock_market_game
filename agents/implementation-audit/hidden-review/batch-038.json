@@ -1,0 +1,128 @@
+{
+  "batch_id": "038",
+  "owner": 3,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-foundation-01.md",
+      "sha256": "3edd7b79e3179c0b385fe2410e836d1a2fb0a9d523b1db319e5fe21e7a7f58d5",
+      "planned_lines": 116,
+      "read_lines": 116,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": [
+        "总体判断与领域边界",
+        "Account A02/A03 与调用方迁移",
+        "StoredStrategy、行为决策与纯 helpers",
+        "公历日历、农历事实、TradingCalendar 与政策校验",
+        "ComputeBackend 与 GameConfig",
+        "迁移验证及独立发现"
+      ],
+      "status": "完整全文读取、行数及 SHA 匹配。A03 为历史候选；当前实现已封装账户/持仓字段，现行 caller 保留 AccountBook 校验缓存失效。G15/G17 是相关既有缺口且仍有效。source 提及的 digest、CivilInstant serde 与费用注释风险未找到本批范围内已批准实现承诺，不升级为新 G。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-foundation-02.md",
+      "sha256": "48637660bf53efe3257b119fd1bd77459f8ddd370be3cc6f980719a88dd8af52",
+      "planned_lines": 52,
+      "read_lines": 52,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": [
+        "诊断/因果 collector 与聚合",
+        "零售/机构经历与个人记忆对象",
+        "反馈生命周期、追加历史与关注列表",
+        "指标 API、调用关系与数据契约",
+        "未来迁移/验证边界"
+      ],
+      "status": "完整全文读取、行数及 SHA 匹配。保留现有 owner 不证明 G08/G42/G37 已完成；其生产消费/诊断 caller 契约仍独立管理。writer 失败部分变更与历史长度理论边界无已批准新增原子性承诺或运行证据。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-foundation-03.md",
+      "sha256": "b984a76d2e252e41ccb6ee9b6bb506c33c5f3ff5fb2a3a6f53fdd4ac7167a388",
+      "planned_lines": 21,
+      "read_lines": 21,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": [
+        "模块边界与 Market 生命周期",
+        "Money、observation、OrderBook 与索引",
+        "verification evidence、调用路径与数据契约",
+        "候选迁移、验证及依据范围"
+      ],
+      "status": "完整全文读取、行数及 SHA 匹配。OrderBook/Market 保留判断不是单笔原子回滚保证；ADR-0017 的 P9 整 tick候选提交不能外推至单笔操作。没有提出新的已批准需求或容量配额。"
+    }
+  ],
+  "current_code_checks": [
+    {
+      "action_ids": ["engine-foundation-01-A03"],
+      "status": "implemented",
+      "evidence": [
+        "packages/engine/src/account.rs:95-112 Account 与 AccountState 字段私有",
+        "packages/engine/src/account.rs:114-149 只读访问器与恢复 balances",
+        "packages/engine/src/account.rs:152-154 受控 strategy 恢复",
+        "packages/engine/src/account.rs:604-645 Position 字段私有及 getters",
+        "packages/engine/src/session/pipeline/npc_state_projection.rs:200-206 通过受控方法替换 strategy"
+      ],
+      "new_candidate_status": "none"
+    },
+    {
+      "action_ids": ["G15"],
+      "status": "still_missing_existing_ledger_item",
+      "evidence": [
+        "packages/engine/src/calendar/holidays.rs:72-91 官方覆盖未命中时仍运行 simulated_holiday_kind",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:66",
+        "agents/implementation-audit/reaudit-foundations.md:13"
+      ],
+      "scope_note": "默认空 official coverage 不代表默认局触发；未把 simulated fallback 称作官方规则。",
+      "new_candidate_status": "none"
+    },
+    {
+      "action_ids": ["G17"],
+      "status": "still_missing_existing_ledger_item",
+      "evidence": [
+        "packages/engine/src/indicators.rs:237-249 单项计算入口",
+        "packages/engine/src/indicators.rs:251-269 Rayon batch API",
+        "apps/web-wasm/src/lib.rs:435-437 生产仍调用单项 API",
+        "apps/server/src/routes.rs:632-646 生产仍调用单项 API",
+        "apps/desktop/src-tauri/src/lib.rs:60-64 生产仍调用单项 API",
+        "docs/decisions/0008-gpu-and-compute-offload.md §1 D2 待落地",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:76"
+      ],
+      "scope_note": "保留指标代码、存在 batch API 或上轮测试源码不能证明三宿主已接入生产批量计算；G17 不核销。",
+      "new_candidate_status": "none"
+    }
+  ],
+  "ledger_boundary": {
+    "reference": "agents/implementation-audit/implementation-audit-2026-10-02.md、reaudit-foundations.md 及既有 hidden-review/batch-001.md",
+    "finding": "A03 的历史候选已有当前代码及 batch 001 实施证据；本批不核销 G15/G17，不重判 G08/G42/G37，未发现遗漏的已批准实现承诺或旧 G 错误关闭。",
+    "candidate_disposition": "digest 未绑定 source_digest、CivilInstant 派生 Deserialize 可越过构造校验、账户费用注释漏列过户费，以及失败路径部分变更均作历史/独立风险线索记录；当前没有本批相关的批准修复承诺与运行证据，故不新增 G、不声称复现或解决。"
+  },
+  "governance_read": {
+    "caller_instructions": ["AGENTS.md", "docs/principles.md"],
+    "relevant_decisions": [
+      "docs/decisions/0008-gpu-and-compute-offload.md",
+      "docs/decisions/0013-retail-experience-memory.md",
+      "docs/decisions/0016-fundamental-factor-model.md",
+      "docs/decisions/0017-escrow-parallel-tick.md",
+      "docs/decisions/0019-draft-market-scope-and-capacity.md",
+      "docs/decisions/0021-strategy-position-choice-and-noise-pricing.md",
+      "docs/decisions/0024-shrinking-investor-cash-pool.md",
+      "docs/decisions/0025-day-end-only-persistence.md",
+      "docs/decisions/0026-individual-institution-experience.md"
+    ],
+    "historical_agent_instructions_used_as_current_authority": false,
+    "trading_rule_research_performed": false
+  },
+  "validation": {
+    "full_source_reads_to_eof": true,
+    "all_planned_hashes_match": true,
+    "all_planned_line_counts_match": true,
+    "tests_run": false,
+    "build_run": false,
+    "regression_run": false,
+    "git_write": false,
+    "product_files_changed": false
+  }
+}

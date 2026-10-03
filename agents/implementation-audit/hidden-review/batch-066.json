@@ -1,0 +1,28 @@
+{
+  "batch_id": 66,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-05-manager-delta.md",
+      "sha256": "cb02eb6d615dd1665df9f4ade0a11860311603f3e87c2623c27985edfa02cfe6",
+      "actual_lines": 22,
+      "eof_read": true,
+      "new_candidate": "none"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-05.md",
+      "sha256": "0ea767653f49d4fd1cc491ebb8fe5f992c247ee10b3782952cfa23f84c6c1099",
+      "actual_lines": 13,
+      "eof_read": true,
+      "new_candidate": "none"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-06-manager-delta.md",
+      "sha256": "ad9f22aa6ec3e48a90ccb1611c84bbefc5e8d8f207145653e4c2844e86b97c32",
+      "actual_lines": 40,
+      "eof_read": true,
+      "new_candidate": "none"
+    }
+  ],
+  "new_candidate_status": "none; later engine-session-06-retention-final.md resolves the eight retained_symbols target wording issue. Scheduling perturbation and out-of-order typed outcome remain test-boundary suggestions, not confirmed product defects."
+}

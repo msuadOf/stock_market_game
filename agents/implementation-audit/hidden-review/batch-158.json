@@ -1,0 +1,31 @@
+{
+  "batch_id": 158,
+  "owner": 3,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-05.md",
+      "sha256": "853cdbc8430e5d29031510e63bc41f7fb3ae50b0b9c81f3f33362e1cd0e68256",
+      "lines": 57,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-07.md",
+      "sha256": "4364c432e4ffbffe2785039cae8a6ff2ced36589b665b92307a5ea6a33681cd9",
+      "lines": 100,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-08.md",
+      "sha256": "a72c9cac8c1faac0b2cadae42f6900fd36f5fd1a9b599990f04747e767843396",
+      "lines": 87,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "missed_approved_commitment": false,
+    "status": "所列材料明确区分候选与已实施契约，未发现遗漏已批准承诺或错误历史核销的证据；结论限于所列材料，不代表生产实现或运行时验证。"
+  }
+}

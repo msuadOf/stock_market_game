@@ -1,0 +1,25 @@
+{
+  "id": 132,
+  "owner": 2,
+  "caller_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/history/summary.md",
+      "sha256": "d8460ee9962a0dd5658c1887f3665aa056706cdc95e8b8dfe56d8598e3821960",
+      "lines": 130,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-01.md",
+      "sha256": "1a53dba5b64e3c643e013093c7032554c91993d785b9a8043b4619f4e3d177d6",
+      "lines": 249,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-02-before-projection-final.md",
+      "sha256": "6250f159290f75ba9c48a748e8870b4f7611a9da780f54caf58f7b40807cec86",
+      "lines": 557,
+      "read_to_eof": true
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "batch_id": 83,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-04-tauri-final.md",
+      "expected_lines": 35,
+      "measured_lines": 35,
+      "expected_sha256": "3aeb425d1536fd8818810504a0a80178f3790908c6fc3c76db4f41c522016bad",
+      "measured_sha256": "3aeb425d1536fd8818810504a0a80178f3790908c6fc3c76db4f41c522016bad",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["结论", "大 A 语义", "必要性与范围", "边界与独立发现", "复核状态与限制"],
+      "finding": "OOP归属复核通过；初始化listener/session资源清理被明确列为独立风险，未声称修复。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-04-wasm-final.md",
+      "expected_lines": 29,
+      "measured_lines": 29,
+      "expected_sha256": "88972f9b55980a1a4eb64429eaeea4161e1b958631d13adbc35bb3fb81ec1767",
+      "measured_sha256": "88972f9b55980a1a4eb64429eaeea4161e1b958631d13adbc35bb3fb81ec1767",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["结论", "核实事实与判断", "独立后续边界", "限制"],
+      "finding": "重复create覆盖旧handle被保留为独立生命周期边界；未承诺作为OOP归属改动处理。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-04-worker-final.md",
+      "expected_lines": 20,
+      "measured_lines": 20,
+      "expected_sha256": "9ede7fe9b4328d820faeed6097ea1b5c836c1395762e4cf4f9e24fe2d1a65ed7",
+      "measured_sha256": "9ede7fe9b4328d820faeed6097ea1b5c836c1395762e4cf4f9e24fe2d1a65ed7",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["复核范围", "最终材料指纹", "结论", "复核发现", "限制"],
+      "finding": "load晚到写回、barrierPaused校验范围及同步postMessage失败清理均作为既有边界说明，未宣称修复。"
+    }
+  ],
+  "caller_code_evidence": [
+    "apps/web/src/host/tauri-host.ts:113-141",
+    "apps/web/src/host/worker-host.ts:182-184",
+    "apps/web/src/host/worker-host.ts:226-228",
+    "apps/web/src/host/worker-host.ts:353-364",
+    "apps/web/src/host/wasm-worker.ts:133-150",
+    "apps/web/src/host/worker-request.ts:43-73",
+    "agents/implementation-audit/exhaustive-review/luna29.md:33-37",
+    "agents/implementation-audit/exhaustive-review/luna59.md:24",
+    "agents/implementation-audit/exhaustive-review/luna61.md:53-54",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md:37,87",
+    "agents/implementation-audit/reaudit-host.md:16"
+  ],
+  "current_decisions": [
+    "docs/decisions/0010-unified-host-protocol-and-local-refresh.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/open-questions.md"
+  ],
+  "related_current_items": ["G04", "G51", "Worker restore generation monotonicity in luna29"],
+  "related_item_disposition": "既有 OOP 来源没有声称核销 G04、G51 或 Worker restore 单调性；关联生命周期风险保留其独立范围。",
+  "new_candidates": [],
+  "counterevidence": [
+    "Tauri初始化清理、WASM重复create、Worker load迟到写回及请求清理问题均由来源明确列为独立风险或范围限制，不构成对象归属承诺遗漏。",
+    "Caller现有G51只针对dispose时stop_session rejection；不应错误地视为初始化失败清理的同一问题或核销。",
+    "常规路径是否可触发WASM重复create没有运行证据；历史luna61明确未据此断言用户可达泄漏。"
+  ],
+  "limitations": [
+    "未运行测试、构建、行为复现或Git操作。",
+    "未重新核查交易规则法源；本批结论不涉及交易制度或交易语义变化。",
+    "静态调用链核对不能证明并发/生命周期场景的实际运行可达性或资源释放结果。"
+  ]
+}

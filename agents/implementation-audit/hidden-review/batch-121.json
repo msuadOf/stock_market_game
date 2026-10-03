@@ -1,0 +1,53 @@
+{
+  "batch_id": "121",
+  "candidate_status": [
+    {
+      "id": "tooling-build-owner-extraction",
+      "status": "partially_reflected_in_current_code",
+      "evidence": "scripts/build-targets.mjs:154-216,219-351 定义了 BuildArtifactPublisher 和 BuildRun；结构提取不能证明清理逻辑正确。"
+    },
+    {
+      "id": "tooling-pages-symlink-containment",
+      "status": "candidate_reconfirmed_for_main_review",
+      "evidence": "scripts/smoke-pages.mjs:12-25 使用 path.resolve 后调用 readFile，但未对 canonical target 做 containment 检查。"
+    },
+    {
+      "id": "tooling-deadline-process-tree-confirmation",
+      "status": "candidate_reconfirmed_for_main_review",
+      "evidence": "scripts/run-with-deadline.mjs:13-22 请求 taskkill/SIGKILL；仅发出 signal 请求不能证明子孙进程已退出。"
+    },
+    {
+      "id": "other-tooling-defect-leads",
+      "status": "not_reaudited_in_this_batch",
+      "evidence": "CDP pending settlement、sampler 子进程清理、打包及 artifact writer 线索不在三份来源审查范围内；需要复核当前 caller。"
+    },
+    {
+      "id": "metadata-label-localization",
+      "status": "historical_document_diff_only",
+      "evidence": "metadata-labels-final.md 未声称存在来源 caller 或产品行为。"
+    }
+  ],
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/reviews/hosts-tooling-a.md",
+      "sha256": "218e5ba167e7648fd70d85e92c0222fb9a234db8fde9dcda531d24091b6a09bb",
+      "lines": 27,
+      "read_to_eof": true,
+      "candidate_status": "historical_document_diff_only"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/reviews/hosts-tooling-b.md",
+      "sha256": "6db1714362c21d043461c54ff7f3fb739aad43cfe63ac8c5b909a4b8aea6ff1c",
+      "lines": 28,
+      "read_to_eof": true,
+      "candidate_status": "historical_document_diff_only"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/reviews/metadata-labels-final.md",
+      "sha256": "cf5ff15061f81823f6e358520006f2d824b099168f0f4294427be33b43e2eedd",
+      "lines": 11,
+      "read_to_eof": true,
+      "candidate_status": "historical_document_diff_only"
+    }
+  ]
+}

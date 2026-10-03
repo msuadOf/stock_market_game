@@ -1,0 +1,65 @@
+{
+  "batch": 149,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-12.md",
+      "sha256": "10511f8477e6ee05bfd8bf4ea74f61561bf0e40e13f4506d37992b822ccc7c6e",
+      "lines": 28,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution.md",
+      "sha256": "5b2dfb2caab216689f22612996aff9a24d564f28ba6a1abdc98c7a1affaf6170",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-contracts-01.md",
+      "sha256": "ff6417b99019cd80591d5d8e27de32fa628238b110a66e8d901eefe73704966c",
+      "lines": 29,
+      "read_to_eof": true
+    }
+  ],
+  "source_integrity": {
+    "method": "逐份连续读取当前来源至 EOF，并与 scan-plan.json 中的行数和 SHA-256 核对。",
+    "plan_matches": 3,
+    "plan_total": 3,
+    "sources": [
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-12.md",
+        "sha256": "10511f8477e6ee05bfd8bf4ea74f61561bf0e40e13f4506d37992b822ccc7c6e",
+        "lines": 28,
+        "read_to_eof": true
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution.md",
+        "sha256": "5b2dfb2caab216689f22612996aff9a24d564f28ba6a1abdc98c7a1affaf6170",
+        "lines": 15,
+        "read_to_eof": true
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-contracts-01.md",
+        "sha256": "ff6417b99019cd80591d5d8e27de32fa628238b110a66e8d901eefe73704966c",
+        "lines": 29,
+        "read_to_eof": true
+      }
+    ],
+    "baseline_limitation": "三条来源路径均不在 Git 提交 43b1aa5 中，因此无法从基线提交独立取得原始字节。当前工作树文件与计划元数据一致。"
+  },
+  "review": {
+    "historical_instructions_treated_as_context": true,
+    "current_owner_and_consumer_checks": [
+      "FillTransition 仍是单成交腿纯计算边界，由 stock_auction.rs 和 continuous_matching.rs 调用；当前相关测试也使用该 API。",
+      "生成的 Web Event 被 apps/web/src/types/engine.ts 别名引用，并由 host protocol 的解析、验证、effects 及更新/事件 DTO 消费。",
+      "被忽略的工作树 bindings 目录中存在 bindings/Event.ts；其历史来源和实际消费者仍未核实，与被审记录中的限制一致。"
+    ],
+    "findings": [],
+    "scope_limitations": [
+      "本批复核历史审计记录及关键当前所有权/调用关系；没有重做 256 个文件的完整 contracts 审计，也没有重新通读 engine-pipeline-12 的两份完整源码。",
+      "未运行测试或构建。"
+    ],
+    "product_files_modified": false,
+    "git_state_modified": false
+  }
+}

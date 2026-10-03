@@ -1,0 +1,29 @@
+{
+  "batch_id": 226,
+  "owner": 1,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现可证实的已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/final-review.md",
+      "sha256": "e19329a00873240fa07cb95f83b91ed28218f973f07493c7996f9dbde41dc899",
+      "lines": 24,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/reader-instructions.md",
+      "sha256": "c36f4515730c80fd229d225b3fb0f7c48dc1fbcf34b9a687d0600f6f12f05465",
+      "lines": 10,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/report.md",
+      "sha256": "86df98c628b01efcee6c9e75e54c4e60e935a5566b43a9f493786f90a0597161",
+      "lines": 12,
+      "read_to_eof": true
+    }
+  ],
+  "limitations": [
+    "未读取引用的完整逐批报告、closure、summary、审计对象或产品源码；未独立核验调查计数与实际 UI 语言覆盖。"
+  ]
+}

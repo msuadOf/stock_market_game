@@ -1,0 +1,44 @@
+{
+  "batch_id": 172,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-08.md",
+      "sha256": "1970d44cf7c751cde7a534df6d40f7814968b00ee2c0a864376a81fd2f860041",
+      "lines": 120,
+      "read_to_eof": true,
+      "candidate_status": "controller_candidate_subsequently_present_in_prototype; static_dom_setup_retained"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reader-guide.md",
+      "sha256": "a7bf8efa3110d237e32c4d172eb73591e252bde44e53f1ad72a1c3cc114f90f5",
+      "lines": 36,
+      "read_to_eof": true,
+      "candidate_status": "process_guidance_not_product_contract"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/relationships.md",
+      "sha256": "be14d17c1965b19ef31284c64edfb6d3408fa921ba7938d9e0febbbc80e2e2be",
+      "lines": 80,
+      "read_to_eof": true,
+      "candidate_status": "dom_owner_and_prototype_boundary_reconfirmed"
+    }
+  ],
+  "cross_read_files": [
+    "design/ui/mobile/mobile-trading-concept.html",
+    "apps/web/src/mobile/mobile-trading-concept.test.ts",
+    "agents/implementation-audit/exhaustive-review/sweep62.md",
+    "agents/implementation-audit/exhaustive-review/luna60.md",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "docs/decisions/0004-redux-toolkit.md",
+    "docs/decisions/0009-call-auction-chart-axis.md",
+    "docs/decisions/0014-closing-auction.md"
+  ],
+  "finding": "原型 controller 当前已实现并有定向测试；controller 只拥有概念页 DOM 交互，正式行情消费链独立。未发现可据此新增或关闭 G/Q 的证据，也未发现交易语义变化。",
+  "limitations": [
+    "未运行测试、构建或浏览器验收。",
+    "原型 HTML 与其 VM 测试不证明正式行情 UI 的浏览器呈现或交易规则符合性；正式生产缺口仍按最新实现总账处理。",
+    "未重新查阅交易所官方规则；本批只核对原型和既有 UI 分层，不提出交易制度变更。"
+  ]
+}

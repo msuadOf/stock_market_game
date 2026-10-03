@@ -1,0 +1,68 @@
+{
+  "batch": 12,
+  "owner": 2,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-b.md",
+      "planned_lines": 34,
+      "actual_lines": 34,
+      "planned_sha256": "b9bba5fbbdaf00ebf9d97ac0075c279249648e7e22c8a990414a6a4c2cfd06b2",
+      "actual_sha256": "b9bba5fbbdaf00ebf9d97ac0075c279249648e7e22c8a990414a6a4c2cfd06b2",
+      "eof": true,
+      "coverage": "全文：结论、A股语义、必要性、边界测试/复杂度、复核范围。N02/N03 实施约束；没有提出新 G/Q。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-c.md",
+      "planned_lines": 26,
+      "actual_lines": 26,
+      "planned_sha256": "9840e0d7dd16dbfccc5618a4f4c123c25538a30787b3780572e4ef36becc26b5",
+      "actual_sha256": "9840e0d7dd16dbfccc5618a4f4c123c25538a30787b3780572e4ef36becc26b5",
+      "eof": true,
+      "coverage": "全文：三门结论、N04 逐项核对、anchor/hash 元数据阻断。N04 是保留行业差异的可选内聚候选。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-closure.md",
+      "planned_lines": 25,
+      "actual_lines": 25,
+      "planned_sha256": "0a1cd6bdfe61ea115738ffd77192cc5d2e0ba113064d18d340249ab46015245d",
+      "actual_sha256": "0a1cd6bdfe61ea115738ffd77192cc5d2e0ba113064d18d340249ab46015245d",
+      "eof": true,
+      "coverage": "全文：资料/修订闭合、三门结论。声明 147 路径全读及元数据修复，并明确未实施、未测试、未重新取证法源。"
+    }
+  ],
+  "current_code_evidence": [
+    "packages/engine/src/orderbook.rs:351-368,370-438",
+    "packages/engine/src/market.rs:258-319,533,548,569",
+    "packages/engine/src/session.rs:2762",
+    "packages/engine/src/session/pipeline/auction_day_end.rs:1424",
+    "packages/engine/src/company/bank/config.rs:18-51",
+    "packages/engine/src/company/bank/mod.rs:109-119",
+    "packages/engine/src/company/insurance/config.rs:37-65",
+    "packages/engine/src/company/insurance/mod.rs:104-114",
+    "packages/engine/src/company/real_estate/config.rs:43-81",
+    "packages/engine/src/company/real_estate/mod.rs:82-97"
+  ],
+  "g_q_association": {
+    "new_g": [],
+    "new_q": [],
+    "existing": "N02/N03/N04 属 owner 封装与候选迁移，不是现行产品缺口。"
+  },
+  "new_candidate": {
+    "id": "DOC-12-01",
+    "severity": "文案准确性建议，不登记 G/Q",
+    "evidence": "行业 Config 注释把黑名单检查概述成只允许现金/权益；实现仅拒绝列举科目，其他科目交由过账与 Chart 校验。",
+    "counterevidence": "后续 Books::post_batch/Chart 仍会验证过账；此歧义未证明错误科目能成功入账，也未证明默认游戏发生账务错误。"
+  },
+  "verification_limits": [
+    "未运行测试或构建",
+    "未运行 Git 命令",
+    "未重查交易所/中国结算官方规则的现行效力",
+    "静态调用链核对不等于运行时行为验证"
+  ],
+  "outputs": [
+    "agents/implementation-audit/hidden-review/batch-012.md",
+    "agents/implementation-audit/hidden-review/batch-012.json"
+  ]
+}

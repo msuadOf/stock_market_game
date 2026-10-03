@@ -1,0 +1,43 @@
+{
+  "batch_id": 67,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "status": "reviewed",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-06.md",
+      "planned_lines": 13,
+      "observed_lines": 13,
+      "sha256": "d91a7c13a380eb641aad577d610317edc935595dbcc0b620c16d11a386e968e7",
+      "eof_confirmed": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-07-binding-final.md",
+      "planned_lines": 24,
+      "observed_lines": 24,
+      "sha256": "b761c60abbe310b35eec8c96e32da49e1d36aabed962f062e114af07ddbedba0",
+      "eof_confirmed": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-07-manager-delta.md",
+      "planned_lines": 27,
+      "observed_lines": 27,
+      "sha256": "56eece3c90c289dc04a9e9bbfe3f07b13e1a7b41bc8b4d8a10eadb3b4c6452e0",
+      "eof_confirmed": true
+    }
+  ],
+  "findings": {
+    "large_a_semantics": "未见交易制度变更；未重新核验官方规则",
+    "oop_actions": "未发现实际 OOP actions；不据此认定实现缺失",
+    "test_gap": "behavior_market_observation 与 account_risk_observations_for 缺直接输出断言；属于覆盖缺口，不是生产能力缺失",
+    "runtime_delta": "空 accounts patch 合法；玩家账户存在性由 public_runtime_state 快照单独约束",
+    "active_candle": "缺活动 candle 的零成交观察由 session 生命周期支持",
+    "ledger": "G06-G09、G16、G28、G35-G38、Q02/Q11 按当前总账保留；本批不核销",
+    "tests_run": false,
+    "unverified": [
+      "未重读历史完整 engine-session 源码复核的全部文件",
+      "未运行测试、构建或性能测量",
+      "未访问 GitHub 或重验历史测试结果"
+    ]
+  }
+}

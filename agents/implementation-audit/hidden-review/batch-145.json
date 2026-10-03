@@ -1,0 +1,70 @@
+{
+  "batch": 145,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-12.md",
+      "sha256": "3e48df345266ac33d03ee2b70fb3af89be170f91841fdd35e002c93634747cc7",
+      "lines": 45,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-01.md",
+      "sha256": "ebda0069b094de4c498d555cf25217472116fa5aff8ef0eabc43963bf745fb7b",
+      "lines": 52,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-02.md",
+      "sha256": "bb7652fc20cbc4aaf0d6c83f705cbf54db015b0a0058a8ed0d5c793597386441",
+      "lines": 45,
+      "read_to_eof": true
+    }
+  ],
+  "sources_verified": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-12.md",
+      "lines_expected": 45,
+      "lines_actual": 45,
+      "sha256_expected": "3e48df345266ac33d03ee2b70fb3af89be170f91841fdd35e002c93634747cc7",
+      "sha256_actual": "3e48df345266ac33d03ee2b70fb3af89be170f91841fdd35e002c93634747cc7",
+      "aliases": 4,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-01.md",
+      "lines_expected": 52,
+      "lines_actual": 52,
+      "sha256_expected": "ebda0069b094de4c498d555cf25217472116fa5aff8ef0eabc43963bf745fb7b",
+      "sha256_actual": "ebda0069b094de4c498d555cf25217472116fa5aff8ef0eabc43963bf745fb7b",
+      "aliases": 2,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-02.md",
+      "lines_expected": 45,
+      "lines_actual": 45,
+      "sha256_expected": "bb7652fc20cbc4aaf0d6c83f705cbf54db015b0a0058a8ed0d5c793597386441",
+      "sha256_actual": "bb7652fc20cbc4aaf0d6c83f705cbf54db015b0a0058a8ed0d5c793597386441",
+      "aliases": 3,
+      "read_to_eof": true
+    }
+  ],
+  "conclusions": {
+    "a_share_semantics": "未提议交易规则变化；费用/receipt 语义与 ADR-0017、资金池范围与 ADR-0024 一致。本轮未重新查询官方规则来源。",
+    "scope": "FillTransition、买卖输入 DTO 及其纯计算已在基线实现；无新增对象化必要性。",
+    "current_callers": [
+      "packages/engine/src/session/pipeline/stock_auction.rs::fill_receipt",
+      "packages/engine/src/session/pipeline/continuous_matching.rs 的成交处理路径"
+    ],
+    "state_owners_and_consumers": "订单簿、阶段、撮合顺序及 envelope 仍由外围撮合/事务 owner 控制；ReceiptDelta、费用审计和交付值被封装进 EnvelopeReceipt，后续 receipt/settlement 流程消费。",
+    "g_q": "不核销或更改 G/Q。独立 P3 identity 预检失败未锁存 coordinator 的缺口已由 candidate-resolution-03 裁定为独立候选，建议独立 G，不归入本批。",
+    "test_execution": "未运行测试、构建或回归。"
+  },
+  "limitations": [
+    "仅覆盖 scan-plan 指定三篇来源及相关局部生产调用点，不代表 engine 全面审计。",
+    "未重新检索交易所或中国结算官方规则。",
+    "静态代码审查不等于测试或运行时验收。"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "batch": "100",
+  "owner": 5,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-tests-04.md",
+      "lines": 22,
+      "sha256": "5d7f8e0a260133598f967a303de8edd9977152d3192d0d222ecb174722c42b16",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-tests-05.md",
+      "lines": 22,
+      "sha256": "afbf92f9f415710d78cc2daae4fe63da833c786d75852fb462ef35beb30637ce",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-tests-06.md",
+      "lines": 22,
+      "sha256": "6c21053c975fcf0b5846ee8de8be6112570c7a30eb7e556e253f59a36fdea013",
+      "read_to_eof": true
+    }
+  ],
+  "review": {
+    "status": "passed_document_review",
+    "findings_unresolved": 0,
+    "summary": "三篇材料边界、中文化复核绑定与当前测试支撑分类一致；未发现未处理的文档错误或应迁移的生产对象。",
+    "confirmed_g_mapping": [],
+    "confirmed_open_q_mapping": [],
+    "related_tracking_without_new_mapping": ["G28", "G29", "G35", "R08", "R09", "R12", "R13"],
+    "limitations": [
+      "implementation-audit-2026-10-02.md 的产品基线为 08e4fc7；本次目标源码基线为 43b1aa5。G/Q 仅作编号与范围对照，不声称已在目标基线全量重审。",
+      "本审读不等于重做 04/05/06 完整源码审计、产品测试、G/Q 全量复核或官方规则核验。"
+    ],
+    "code_evidence": [
+      {
+        "path": "packages/engine/src/config.rs",
+        "lines": "79,132,234",
+        "supports": "基线中 GameConfig 持有配置、校验与 transfer_fee 行为；config 测试支撑真实生产 API。"
+      },
+      {
+        "path": "packages/engine/src/money.rs",
+        "lines": "42,210",
+        "supports": "Money 与 apply_rate 生产 owner 存在，测试不承载生产状态。"
+      },
+      {
+        "path": "packages/engine/src/market.rs",
+        "lines": "50,93,143-191,287-467",
+        "supports": "Market 持有价格界限解析、下单、撤单和深度消费；price_limits 测试通过父模块 helper 验证配置范围。"
+      },
+      {
+        "path": "packages/engine/src/orderbook.rs",
+        "lines": "283,338,489",
+        "supports": "OrderBook 持有 place/cancel 行为；OrderBook 测试调用生产接口。"
+      },
+      {
+        "path": "packages/engine/tests/industrial_accounting/main.rs",
+        "lines": "1-40",
+        "supports": "工业会计测试明确将未核验税率标为 blocked，采用显式合成 Fixture，不声称真实税率。"
+      },
+      {
+        "path": "packages/engine/tests/insurance_accounting/main.rs",
+        "lines": "1-35",
+        "supports": "保险测试明确将贴现等参数标为 Fixture 合成假设，不声称真实精算参数。"
+      }
+    ],
+    "docs_evidence": [
+      {
+        "path": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+        "lines": "7,27-28,34-35,126-131,179-181,248-258",
+        "supports": "记录产品基线、现行 G/Q 范围与测试目标的追踪关系；测试证据不等于生产入口完整验收。"
+      },
+      {
+        "path": "docs/open-questions.md",
+        "lines": "94-138",
+        "supports": "核对相关决定和历史描述，没有本批涉及的未决 Q。"
+      },
+      {
+        "path": "docs/decisions/0022-symbolic-limit-prices.md",
+        "lines": "1-25",
+        "supports": "指定价语义和交易层独立检查边界。"
+      },
+      {
+        "path": "docs/decisions/0023-synthetic-history-and-matching-only.md",
+        "lines": "1-20",
+        "supports": "游戏行情由实际受理与撮合产生的既定范围。"
+      },
+      {
+        "path": "docs/decisions/0026-individual-institution-experience.md",
+        "lines": "1-10,65-76",
+        "supports": "策略行为模型不改变交易制度，交易制度边界继续引用正式规则文档。"
+      }
+    ],
+    "tests_or_builds_run": false,
+    "product_source_modified": false
+  }
+}

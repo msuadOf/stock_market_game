@@ -1,0 +1,59 @@
+{
+  "batch_id": 13,
+  "owner": 3,
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-d.md",
+      "expected_lines": 28,
+      "measured_lines": 28,
+      "expected_sha256": "a0dcd43fabae07a112083d8ea1143235a75f49edbef49c7c2449baeb786b6580",
+      "measured_sha256": "a0dcd43fabae07a112083d8ea1143235a75f49edbef49c7c2449baeb786b6580",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["结论", "三门复核", "清单与报告元数据核对", "建议的完成条件"],
+      "g_association": "N06；可选重构与审计清单问题，不构成产品行为故障",
+      "new_candidate": null,
+      "counterevidence": "历史复核明确算法保持现状即可；caller 也已存在政策方法和公开入口相关实现迹象，本批无新的运行证据。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-e.md",
+      "expected_lines": 19,
+      "measured_lines": 19,
+      "expected_sha256": "80ca210a4dc95d2e6bbed636bad5594f8fa67880dc837bc42e630b5412f9c958",
+      "measured_sha256": "80ca210a4dc95d2e6bbed636bad5594f8fa67880dc837bc42e630b5412f9c958",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["核对结果", "三门结论"],
+      "g_association": "E01 扩展既有 A03；未发现新遗漏",
+      "new_candidate": null,
+      "counterevidence": "审阅已确认直接写入口/fixture 关系；静态材料明确没有声称测试运行或新产品问题。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-n07.md",
+      "expected_lines": 29,
+      "measured_lines": 29,
+      "expected_sha256": "0f295d111911c19432a367fcf934fee3f6709ee2daa709d1599e623c6d60f8dd",
+      "measured_sha256": "0f295d111911c19432a367fcf934fee3f6709ee2daa709d1599e623c6d60f8dd",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["结论", "复核依据与写口清点", "三门审查", "限界"],
+      "g_association": "N07；caller 已实现观察/stale 清理 owner 转移",
+      "new_candidate": null,
+      "counterevidence": "packages/engine/src/experience/feedback/lifecycle.rs:12,59 实现目标 writer；packages/engine/src/session/institutional_behavior.rs:16 传入 policy threshold；institutional_transition_tests.rs:31,102 覆盖相关边界。"
+    }
+  ],
+  "current_rules": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/decisions/0013-retail-experience-memory.md",
+    "docs/decisions/0026-individual-institution-experience.md"
+  ],
+  "findings": [],
+  "validation": "仅静态读取与行数/hash核验；未运行产品测试/构建，未执行Git写操作。"
+}

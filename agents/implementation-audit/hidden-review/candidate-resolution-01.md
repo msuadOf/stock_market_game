@@ -1,0 +1,25 @@
+# 隐藏候选裁定 01
+
+## 基线与裁定口径
+
+- 对照基线为 `43b1aa5`（caller/worktree：`.worktree/implementation-reaudit`）；已读根 `AGENTS.md`、`docs/principles.md`，并逐字读完 `batch-037.md`、`batch-042.md`、`batch-068.md`。本记录只作静态复核，不改产品代码、不运行测试。
+- 总账记录 G01–G68 共 67 个未结项（G27 已核销）；总账自身说明 G01–G39 复核后除 G27 外仍有未完成部分，新增 G40–G68。逐项对照后，本批候选没有与任一 G 的承诺等价项；不得把这些候选计入 67G，也不据此核销任何 G。
+- “保存可编辑”来自 `docs/principles.md:28`、ADR-0019 §存档编辑（`docs/decisions/0019-draft-market-scope-and-capacity.md:34`）：允许编辑资产事实，不要求证明其由历史交易产生。此许可不豁免保存对象自身结构/引用/计数器不变量；但不得把“编辑后不再像完整历史”本身视为错误。
+
+## 候选逐项
+
+| 候选 | 裁定 | 证据及边界 |
+|---|---|---|
+| `PublicLibrary` ID 内部空洞 | **拒绝作为产品缺陷；仅注释/实现范围含混。** `public_view.rs:151-203` 恢复会校验各 ID 小于 `next_seq`、跨 reports/announcements 重复、逐项形状和 `next_seq == max_id + 1`；它不验证序号集合连续。`public_view.rs:15-17` 与 `:186-188` 的“无删除路径 ⇒ 无空隙”是生产生命周期推论，不是可编辑 save 的普遍事实。已接受编辑语义允许用户删除历史条目；保留下来的 IDs 仍唯一且小于高水位，继续分配也不复用 ID。原则没有承诺历史 ID 连续，因此 ID 0、2、`next_seq=3` 不证明产品行为违反已接受契约。要主张拒绝空洞，需单独确立 PublicLibrary 历史不可删的保存契约；当前无此证据。**Q：** 不新增；可在文档/注释措辞收敛时记录契约澄清，但不是既有 G。 |
+| `TradingPlan` horizon=0 / 期限溢出恢复 | **确定缺口，应进入独立候选/G 维护流程；当前不映射既有 G/Q。** `plans/validation.rs:197-200` 明确开户拒绝 horizon 0；但 `TradingPlan` 在 `plans/state.rs:164-167` 派生 Deserialize，字段只限 `crate::plans` 可见性不是 serde 边界。`PlanBook::from_parts` 在 `plans/mod.rs:244-283` 校验 ID、review、索引等，却没有校验非零 horizon 或期限可表示性；`last_valid_trading_day` 在 `plans/state.rs:336-339` 直接算 `created + horizon - 1`。因此恢复构造可跳过开户不变量：零会减一，正期限也能超过 u64 上界；消费查询可 panic/错误结果，违反外部存档输入必须校验的原则（`docs/principles.md:20-28`）。范围是恢复及安全期限查询，不是 A 股有效期制度变更。总账 G16 是复制性能，不等价；本次总账 Q17 是 ClosingEngine 更正报告原子性，不相关；产品 `docs/open-questions.md:94` 的 Q11 是 NPC 策略问题，亦不相关。建议登记为独立恢复契约候选，不在本审计直接改号台账。 |
+| Industrial opening inventory seed 漏检 | **确定的公开构造 API 校验缺口，独立候选，不等于现有 G。** `IndustrialConfig` / `OpeningInventoryItem` 是公开类型（`industrial/config.rs:27-66`），`IndustrialBooks::new` 是公开入口（`industrial/mod.rs:83-119`）；其注释承诺“子账种子与总账逐科目精确对账”。但 `seed_inventory`（`industrial/config.rs:98-117`）只遍历 seed 出现过的账户：合法构造调用可在 `opening_lines` 为库存科目 1403/1405 提供非零余额、同时 `opening_inventory` 留空，最终成功返回总账有库存余额、`InventoryLedger` 无对应库存的账套。校验职责正是拒绝这样的非法输入，不能以调用者违反目标不变量反证 validator 完备。存档编辑原则允许改资产事实，但不要求子账与总账失配；此处反例直接通过 public new API。G35/G36分别是期末流程和行业会话装配/披露，不覆盖开局账套一致性；G58 已证明总账也把合法公开 API 的参数/边界行为列作独立缺口，但不与本项去重。无对应现有 G/Q；建议独立入候选台账。 |
+| Scheduler 恢复重复 ID | **确定的外部存档恢复缺口，独立候选。** `CompanyOperations` 派生 `Deserialize` 且包含 `OperatingScheduler`（`company/operations/core.rs:128-142`）；完整 `SaveSlot` 序列化该对象（`session.rs:409-465,2594-2659`），公开 `decode_save_slot` 反序列化并由 `GameSession::restore` 调 `validate_save_slot`（`session/persistence.rs:963-977`、`:936`、`session.rs:2716-2719`）。`OperatingScheduler` 自定义 Deserialize 的注释明确保存恢复需校验篡改存档（`scheduler.rs:221-233`），但 `from_parts` 只核排序、key、id 上界及 settled floor（`:179-218`），不核不同待办的 ID 唯一。`CompanyOperationsClockWiring::mirror_is_exact` 将 pending ID 收集进 `BTreeSet`（`session/company_operations.rs:97-105`），重复 ID 会折叠；`validate_company_domain` 随后按日期/种类多重集消费 clock due（`session/persistence.rs:1011-1041`），同日期同类型两条也能由两条 clock due 匹配。因此若重复 ID 均小于 next_seq、排序合法、时钟具有对应两项，存档反序列化与 session validator 都未拒绝该重复身份。属于现行保存恢复信任边界的真实缺口；不是 A 股委托 ID。总账无等价 G/Q；不归入 G16/Q17。 |
+| Scheduler `next_seq` 耗尽 | **确定的外部恢复后可达边界缺口，独立候选。** 同上，`OperatingScheduler` 是 `SaveSlot.company_operations` 的持久化成员；自定义 Deserialize 只检查 pending ids `< next_seq`，所以空 pending 且 `next_seq=u64::MAX` 合法恢复。`GameSession::restore` 接受后，公开 `CompanyOperations::submit_due` 转调 `scheduler.submit`（`company/operations/injections.rs:13-22`），其 `next_seq += 1`（`scheduler.rs:146-148`）会在溢出检查构建 panic/否则回绕。恢复输入确实能注入该边界，不能以正常 submit 从未造出该值为由拒绝输入校验问题。未证明默认旅程会耗尽序号；准确范围是损坏/编辑存档的恢复不变量及后续 API 鲁棒性。无等价 G/Q。 |
+| 保险 `apply_release` 部分失败原子性 | **合法运行状态下未证实 apply 溢出；但外部存档校验缺口与可观察部分写入已证实，独立于 Q17。** 合法创建组入口（`insurance/premium.rs:62-110,156`）校验组建立参数；`preview_release`（`groups.rs:249-295`）与 `unit_release`（`csm.rs:56-87`）限制正常释放额，故正常 API 生命周期中没有证据表明 apply 的扣减会越界。可是 `ContractGroupState::Deserialize` 只复制快照字段、不做语义验证（`groups.rs:488-520`），`InsuranceBooks` 与 `CompanyOperations` 也派生 Deserialize；SaveSlot 会持久化整个 `company_operations`，而 `validate_company_domain` 未校验保险组子账（`session.rs:409-465`；`persistence.rs:976-1049`）。更强的可达证据是既有 `behavior_tests.rs:224-248`：把一份正常组序列化后将 `released_revenue` 改为 `AccountingAmount::MAX`，`ContractGroupState` serde 仍接受；`release_service` 先完成 posting，再在 `apply_release` 累计 revenue 时返回溢出，测试明确观察到账已过账、四组件已扣减、units 尚未推进。因而用户编辑/损坏存档能把此状态注入 SaveSlot，而正式 decode/restore 缺少拒绝它的保险组校验；这是外部输入契约缺口，并导致后续公开释放 API 失败时留有部分状态。候选应以“恢复校验拒绝不一致保险组状态”为首要 owner，同时记录此失败后果；不能泛称合法保险组都需事务化。Q17 的确只针对 `ClosingEngine::correct` 重述/报告失败（总账 `implementation-audit-2026-10-02.md:155`），对象与 caller 不同，不能将保险恢复校验并入 Q17；当前 G/Q 均无等价条目。 |
+
+## 汇总
+
+- 当前确认四项互不重复的校验候选：`TradingPlan` 期限恢复、Industrial opening seed 对账、scheduler 重复 ID/序号耗尽恢复、保险组损坏存档校验。它们不等于 G16/Q17/Q11，也不因没有运行测试而消失。
+- `PublicLibrary` 内部 ID 空洞仍不违反已接受的 ID 唯一/不复用契约；Industrial public constructor 的漏 seed 校验、scheduler 外部恢复的重复 ID 与 `next_seq` 耗尽则各有不同可达反例，均为独立于当前 G/Q 的候选缺口。
+- 保险正常建组/释放值域未证明 apply 溢出；但编辑 SaveSlot 可经无语义检查的 serde 注入已知失败态，且正式测试证明过账后子账局部变化。按外部存档校验缺口独立保留候选，不把合法运行域扩大为全事务保证；它与 Q17 对象不同，不能去重或以 Q17 覆盖。
+- 本次不调整 G01–G68、Q 编号或交易规则。A 股语义无涉；没有把 OOP 候选/建议测试当作批准需求。

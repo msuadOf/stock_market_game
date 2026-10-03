@@ -1,0 +1,27 @@
+{
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "243ffc0dc826dd9289eed8171278a12130f8340e175e6ace215cfba1750ebd9c",
+      "lines": 332,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/pre-edit-failure.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ae7445dcf854e22cf87c624ed410ff28009e7472b18403042e0512a7b3bb2ad9",
+      "lines": 13,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "a9a738f16f77ae455f39e3cf19aa8ccb3c4fbdf2e0395e855dc0f817528fe05b",
+      "lines": 109,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

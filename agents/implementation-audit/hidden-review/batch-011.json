@@ -1,0 +1,120 @@
+{
+  "batch_id": 11,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "files": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/action-index.md",
+      "full_read": true,
+      "read_ranges": [[1, 2067]],
+      "lines": 2067,
+      "sha256": "70b1050b78346fb48b63b29e663b15a98a657dbd950d3bc9da8fb90811bf059b",
+      "eof": true,
+      "coverage": "全文：OOP action 索引及 G01–G68/Q 映射、状态与关联证据。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/report.md",
+      "full_read": true,
+      "read_ranges": [[1, 265]],
+      "lines": 265,
+      "sha256": "f0b4c38abc5ab7e98be2e11053c6f8100b5a1876a4705b2b5fe9f5a9e49d13fc",
+      "eof": true,
+      "coverage": "全文：domain 动作/差异、实现建议与当前缺口对应关系。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review-a.md",
+      "full_read": true,
+      "read_ranges": [[1, 23]],
+      "lines": 23,
+      "sha256": "bcb189719b42430ea7974585412712f4bd4f2dfd771c2726b3c95a31ee2af283",
+      "eof": true,
+      "coverage": "全文：domain 初审结论及所列资料/元数据问题。"
+    }
+  ],
+  "reviewed_items": [
+    "engine-foundation-01-A03",
+    "domain-N01",
+    "domain-N02",
+    "domain-N03",
+    "domain-N04",
+    "domain-N05",
+    "domain-N06",
+    "domain-N07"
+  ],
+  "matrix": {
+    "source_claim_state": "指定来源将相关动作列为尚未实施的历史快照；基线 43b1aa5 中 refactor(engine) 提交 8cf34a1 已实施全仓 OOP 状态与行为聚合。不能将来源旧状态直接用作基线实现状态。",
+    "covered_action_status": "已实现的 owner 与生产 caller 均可在基线源码对应；未发现这些动作仍作为当前未实现产品缺口的证据。",
+    "chapters": [
+      {"name": "A03 账户/持仓封装", "items": ["engine-foundation-01-A03"]},
+      {"name": "domain 行为与状态 owner", "items": ["domain-N01", "domain-N02", "domain-N03", "domain-N04", "domain-N05", "domain-N06", "domain-N07"]}
+    ]
+  },
+  "product_evidence": [
+    {
+      "path": "packages/engine/src/indicators.rs",
+      "lines": [179, 285],
+      "symbols": ["KdjAccumulator"],
+      "finding": "KDJ 累计状态及其两个生产 caller 已使用 accumulator owner。"
+    },
+    {
+      "path": "packages/engine/src/orderbook.rs",
+      "lines": [179, 215, 346, 368],
+      "symbols": ["OrderProgress"],
+      "finding": "订单进度状态由 owner 聚合并在订单簿流程中使用。"
+    },
+    {
+      "path": "packages/engine/src/market.rs",
+      "lines": [256, 277, 411, 426],
+      "symbols": ["Market"],
+      "finding": "Market 有限 crate 写入口及相关生产路径已存在；竞价 caller 位于 session/pipeline/auction_day_end.rs:1422-1435。"
+    },
+    {
+      "path": "packages/engine/src/company/bank/config.rs",
+      "lines": [18, 51],
+      "symbols": ["BankConfig"],
+      "finding": "银行 Config 守卫由对应 Books 构造路径调用；保险与地产亦有同类配置 owner。"
+    },
+    {
+      "path": "packages/engine/src/accounting/reports/consolidated_window.rs",
+      "lines": [142, 149],
+      "symbols": ["Accumulator::add_current_worksheet"],
+      "finding": "合并窗口 worksheet 累计入口归属 Accumulator 并由报表流程调用。"
+    },
+    {
+      "path": "packages/engine/src/accounting/tax.rs",
+      "lines": [74, 158],
+      "symbols": ["VAT/CIT policy methods", "compatibility facade"],
+      "finding": "VAT/CIT policy 行为已方法化，既有兼容 facade 保持调用边界。"
+    },
+    {
+      "path": "packages/engine/src/session/institutional_behavior.rs",
+      "lines": [16, 29],
+      "symbols": ["RetailExperienceState"],
+      "finding": "机构观察由经验状态方法接入；session.rs:1547-1583 执行观察与持仓清理。"
+    }
+  ],
+  "implementation_constraints": {
+    "account_position": "A03 账户字段私有、只读 getter、受控恢复及 cfg(test) fixture setters 已提供；Position 私有字段及恢复构造保留既有 serde 接受集。未发现该重构改变交易校验或交易语义。",
+    "g_q_non_closure": [
+      "G17：Rust Rayon batch 未生产接线；KDJ accumulator 不构成核销。",
+      "G08：专指 retail dated experience 链；机构观察 N07 不构成核销。",
+      "G35/Q23：经营税务调用时机仍是独立边界；税务 policy 方法化不构成核销。",
+      "Q17：ClosingEngine 整体失败边界仍未由这些 owner 抽取解决。"
+    ],
+    "a_share_semantics": "未发现账户/持仓封装或所审 domain owner 改变 A 股金额分、股数、T+1、价格时间优先语义。ADR-0026 将机构经验界定为游戏策略假设，不是交易所规则；本批未重新查证官方规则现行效力。"
+  },
+  "prior_review_closure": "review-a.md 中针对 review.md 链接与 hash 转抄的初审阻断，在后续 canonical domain/review.md 中声明两处复读已闭合且三门通过；其 report hash 与本批指定来源核对一致。故不作为当前阻断。",
+  "new_G_or_Q": [],
+  "tests_run": false,
+  "git_write": false,
+  "product_files_modified": false,
+  "verification_limits": [
+    "未运行测试或构建；测试仅作源码静态核对。",
+    "未重新进行全局 A 股官方规则取证。",
+    "结论仅覆盖指定来源动作及列明的现行 G/Q 交叉边界，不代表全局 OOP 或 G01–G68 验收。"
+  ],
+  "outputs": [
+    "agents/implementation-audit/hidden-review/batch-011.md",
+    "agents/implementation-audit/hidden-review/batch-011.json"
+  ]
+}

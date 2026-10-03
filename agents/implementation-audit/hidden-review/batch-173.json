@@ -1,0 +1,30 @@
+{
+  "batch_id": 173,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/area-engine-company.md",
+      "sha256": "0f2552b4f7f95a1b7e09e699d6b153df084bb0bae23d6685ff7bfe70d25c14c2",
+      "lines": 31,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/area-engine-foundation.md",
+      "sha256": "8011a6ef34f4949c81a63c0db0f3ff8c00fab0b07de3b6c849dd75f85120a23f",
+      "lines": 29,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/contracts-01-final.md",
+      "sha256": "fe742d3847b94c805f0b388ef6088f6623d1b31a8b995517d415912809abeb72",
+      "lines": 31,
+      "read_to_eof": true
+    }
+  ],
+  "finding": "未发现可由本批来源证明的已批准承诺遗漏或错误历史核销。",
+  "limitations": [
+    "三篇分配来源路径在 source_baseline 中均不存在，无法从该基线核验来源内容；只执行了只读 git cat-file -e 检查。",
+    "未重新读取源码、area 正文或官方交易规则；未运行测试、构建。"
+  ]
+}

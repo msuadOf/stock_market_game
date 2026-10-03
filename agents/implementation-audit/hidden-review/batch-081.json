@@ -1,0 +1,27 @@
+{
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-01-app-final.md",
+      "revision": "43b1aa5",
+      "sha256": "449d5eaf5644204b796d733be7acee1c0a2fc316fb2ea67f1078bbce81b8d0d6",
+      "lines": 35,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-01-chart-final.md",
+      "revision": "43b1aa5",
+      "sha256": "ac34330f32191a44cf2c2748c3052f5201f5061d55f25a2f746510edc98f4396",
+      "lines": 36,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-02-final.md",
+      "revision": "43b1aa5",
+      "sha256": "7967282680907bd1252d968414a961db75a44860970cbc1a3d886fdf7937b242",
+      "lines": 25,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_status": "未发现新候选；既有设计发现获得佐证；G10/G12/G22/G31 仍为彼此独立的开放缺口"
+}

@@ -1,0 +1,74 @@
+{
+  "batch_id": 39,
+  "owner": 4,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-foundation-04.md",
+      "planned_lines": 31,
+      "read_lines": 31,
+      "planned_sha256": "77fdfa180c45f3152ecf2097be231dc9b98c829da93964cf383307f68cc9ab37",
+      "observed_sha256": "77fdfa180c45f3152ecf2097be231dc9b98c829da93964cf383307f68cc9ab37",
+      "eof": true,
+      "aliases": 1,
+      "chapters": ["candidate_and_phase_timing", "file_disposition", "callers_and_contract", "migration_and_verification"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-pipeline-07.md",
+      "planned_lines": 100,
+      "read_lines": 100,
+      "planned_sha256": "c93078ece118deb4d371949abf63ed182ad2a8224d2ad8087785302b7ec18563",
+      "observed_sha256": "c93078ece118deb4d371949abf63ed182ad2a8224d2ad8087785302b7ec18563",
+      "eof": true,
+      "aliases": 1,
+      "chapters": ["object_disposition", "file_by_file_audit", "coordinator_to_projection_call_graph", "migration_and_validation_boundary"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-pipeline-09.md",
+      "planned_lines": 47,
+      "read_lines": 47,
+      "planned_sha256": "f23f1619dde5508ee71c1b51fc1d5445434033b1fba515d046cdd53009f3d94f",
+      "observed_sha256": "f23f1619dde5508ee71c1b51fc1d5445434033b1fba515d046cdd53009f3d94f",
+      "eof": true,
+      "aliases": 1,
+      "chapters": ["domain_and_phase_semantics", "sixteen_file_audit", "ownership_and_migration_diagram", "verification_status"]
+    }
+  ],
+  "matrix_coverage": {
+    "g": "G01-G68",
+    "q": "Q01-Q23",
+    "directly_closed_by_sources": [],
+    "confirmed_historical_false_clearings": [],
+    "new_approved_omissions": []
+  },
+  "evidence": {
+    "phase_timing": ["packages/engine/src/verification_evidence/phase_timing.rs:1-14", "packages/engine/src/verification_evidence/phase_timing.rs:20-90", "packages/engine/src/verification_evidence/phase_timing.rs:146-220"],
+    "envelope": ["packages/engine/src/session/pipeline/envelope.rs:5-33", "packages/engine/src/session/pipeline/envelope.rs:114-168"],
+    "stock_coordinator": ["packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:59-84", "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:99-218"],
+    "projection_caller": ["packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:101-105", "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:230-237"],
+    "event_collection": ["packages/engine/src/session/pipeline/event_collection.rs:27-59", "packages/engine/src/session/pipeline/event_collection.rs:61-93"],
+    "experience_consumer": ["packages/engine/src/session/pipeline/account_settlement.rs:190-220"]
+  },
+  "candidate_boundaries": [
+    {
+      "topic": "phase timing thread-local cleanup after panic unwind",
+      "status": "unverified risk only; caller recovery policy unknown",
+      "promoted_to_gap": false
+    },
+    {
+      "topic": "Envelope apply failure atomicity",
+      "status": "copy-validate-replace confirmed for this method only; no broader caller guarantee inferred",
+      "promoted_to_gap": false
+    }
+  ],
+  "validation": {
+    "static_review": true,
+    "tests_build_regression": "not run",
+    "git_write": false,
+    "product_file_changes": false,
+    "a_share_rule_change": false
+  },
+  "report": "batch-039.md"
+}

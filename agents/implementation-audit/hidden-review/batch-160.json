@@ -1,0 +1,50 @@
+{
+  "batch": 160,
+  "owner": 5,
+  "source_baseline": "43b1aa5",
+  "worktree_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-02.md",
+      "sha256": "fbbce68d223a1242973303aca6c071699cad78c583b1e2f15d2c572db6d67337",
+      "lines": 94,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-03.md",
+      "sha256": "0e51f060e3b3b90e5b021c8b96469e2b7799897da13413fa1d8500f02f407f37",
+      "lines": 70,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-04.md",
+      "sha256": "206fdf1ea1b3df432e40efde0ef577dc69f9ebab7fd39071ced6cfa3cbff4725",
+      "lines": 145,
+      "read_to_eof": true
+    }
+  ],
+  "current_owner_and_consumer_checks": [
+    "SessionCandleBook 由 SessionState 持有，并用于 GameSession 的更新/提交路径；save 和 snapshot 仍分别投影 daily_candles 与 active_daily_candles。",
+    "DecisionChainObservation、RootReadContext 和 InstitutionDecisionRoot 已实现；plan_chain_candidates 是生产 root caller，adaptive coordinator 会等待 typed route outcomes，再重新收集 lifecycle actions。",
+    "CivilClock::register_due 递增 u32 cursor 时未使用 checked arithmetic；CompanyOperationsClockWiring::sync 在可能失败的注册之前修改 mirrored，并逐项提交注册。",
+    "CivilClock::end_day 在可能失败的次日 calendar 查询之前移除到期条目；GameSession::end_civil_day 提供外层 checkpoint rollback。from_parts 在本地不会拒绝零 cursor 或重复 pending IDs。"
+  ],
+  "gap_ledger_and_rule_review": {
+    "existing_gq_matches": [],
+    "candidate_findings": [
+      "due sequence 耗尽可能在 debug 下 panic，或在 release 下回绕。",
+      "CompanyOperationsClockWiring::sync 在 registration 失败时可能使 mirrored 与 clock 只提交一部分。"
+    ],
+    "other_local_boundary_observations": [
+      "若后续 next day_status 失败，CivilClock::end_day 不会在本地回滚已分发的 due；生产 civil-day 路径由外层 GameSession checkpoint 保护。",
+      "CivilClock::from_parts 在本地允许零 sequence cursor 和重复 pending ID；本批不推断所有 restore cross-validation 的结论。"
+    ],
+    "adr_and_semantics": "未修改交易规则。已对照已接受的 ADR-0011、ADR-0014、ADR-0017、ADR-0019、ADR-0025、ADR-0026、仍为 proposed 的 ADR-0018 及 docs/trading-rules.md。未重新检索官方来源。"
+  },
+  "scope_limitations": [
+    "仅作静态源码/caller 检查；未运行测试、构建或复现运行时行为，也未完整审计 session/company-operations。",
+    "按具体主题对照现有编号缺口/问题；两个候选发现均未分配 G/Q 编号。"
+  ],
+  "product_files_modified": false,
+  "git_state_modified": false
+}

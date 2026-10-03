@@ -1,0 +1,68 @@
+{
+  "batch_id": 124,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reading-records-19-26.md",
+      "sha256": "d488b5a67875997b28b2b81096e125da8a2583b16524a967dab81d681571d92f",
+      "lines": 56,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reviews-01.md",
+      "sha256": "5cb197967384175b93cff16b590bf9d0984ace565594bc763fce6fd47ce2dee0",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reviews-02.md",
+      "sha256": "09375e9fa387e687adaa093e2c6ead7f52777bf88a7eca205ba9bfc2b193efa2",
+      "lines": 20,
+      "read_to_eof": true
+    }
+  ],
+  "sources_verified": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reading-records-19-26.md",
+      "expected_lines": 56,
+      "actual_lines": 56,
+      "expected_sha256": "d488b5a67875997b28b2b81096e125da8a2583b16524a967dab81d681571d92f",
+      "actual_sha256": "d488b5a67875997b28b2b81096e125da8a2583b16524a967dab81d681571d92f",
+      "result": "match"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reviews-01.md",
+      "expected_lines": 19,
+      "actual_lines": 19,
+      "expected_sha256": "5cb197967384175b93cff16b590bf9d0984ace565594bc763fce6fd47ce2dee0",
+      "actual_sha256": "5cb197967384175b93cff16b590bf9d0984ace565594bc763fce6fd47ce2dee0",
+      "result": "match"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reviews-02.md",
+      "expected_lines": 20,
+      "actual_lines": 20,
+      "expected_sha256": "09375e9fa387e687adaa093e2c6ead7f52777bf88a7eca205ba9bfc2b193efa2",
+      "actual_sha256": "09375e9fa387e687adaa093e2c6ead7f52777bf88a7eca205ba9bfc2b193efa2",
+      "result": "match"
+    }
+  ],
+  "current_consumer_status": {
+    "application_runtime_consumers_found": false,
+    "archival_references": [
+      "reading-records-19.json 至 reading-record-26.json 引用 reading-records-19-26.md",
+      "reading-records.json 为 reading-records-19-26.md 及其指纹台账建立索引",
+      "tool-review.md 在 bind_reviews 审计中将 reviews-01.md 作为历史示例引用"
+    ]
+  },
+  "historical_findings_current_check": {
+    "reviews_01_role_translation": "present-day exhaustive review uses manager/unit role identifiers; old translation defect not present in checked example",
+    "reviews_01_spacing": "present-day contracts-01-final.md says 独立 Luna 复核者; old spacing issue not present in checked example",
+    "reviews_02_scope": "明确限定为文档翻译复核；不是当前源码或交易规则审计"
+  },
+  "baseline_limitation": "已将清单指纹与当前检出内容核对；未确认 Git 祖先关系，也未核实其是否与基线提交 43b1aa5 相同。",
+  "unavailable_sources": [],
+  "tests_run": false,
+  "product_files_edited": false
+}

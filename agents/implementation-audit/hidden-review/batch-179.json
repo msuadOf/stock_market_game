@@ -1,0 +1,29 @@
+{
+  "batch": 179,
+  "owner": 4,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01-recheck2.md",
+      "sha256": "0fd5e5f56925599e4d09b018678e1bb588c76f0a03591ee04fdeab26af6f6185",
+      "lines": 36,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01.md",
+      "sha256": "b250894f6bfaf96f8f1cc76ea273caa6492779d69274b75f06336009157eb1f2",
+      "lines": 33,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-02-delta-evidence.md",
+      "sha256": "dd5088151ff7bfa5de20265b8f0fe66880ac06090cfcaffa423156c8d005cbb9",
+      "lines": 49,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    }
+  ],
+  "finding": "来源 SHA-256 与行数核验通过。三份材料均为 43b1aa5 之后的历史复核文档，不构成基线下已批准或已完成事项的证据。基线可定位 Account/AccountBook、NPC 策略投影与 calendar policy digest 的 owner 和消费者；未发现可仅凭本批材料确认的已批准承诺遗漏。本批不构成交易语义或实现完成审查。"
+}

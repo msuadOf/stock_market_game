@@ -1,0 +1,77 @@
+{
+  "batch_id": 22,
+  "owner": 2,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "output_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review",
+  "read_method": "连续行全文读取至 EOF；搜索仅用于随后 caller/owner/consumer 复核",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/03.md",
+      "lines_expected": 11,
+      "lines_actual": 11,
+      "sha256_expected": "4e6d3905d8d2e4cec0a34b89f57ed575b5b28f319b0a18c5239802a16171292d",
+      "sha256_actual": "4e6d3905d8d2e4cec0a34b89f57ed575b5b28f319b0a18c5239802a16171292d",
+      "eof": true,
+      "sections": [
+        {"lines": "1-3", "topic": "五文件范围、既有 state owner 与 OOP 裁定、已登记缺口及改善项"},
+        {"lines": "4-11", "topic": "逐文件结果引用、未编辑源码及未运行测试/构建声明"}
+      ],
+      "review": "未发现新增持久 owner 必要性；撤单额外测试建议须回读本批清单以外的 03.json 才能核具体场景。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/04.md",
+      "lines_expected": 37,
+      "lines_actual": 37,
+      "sha256_expected": "9b39d4ca78ddddd917a6ea86dbdd23bf936cda4296bebd10177a97870b4a57e5",
+      "sha256_actual": "9b39d4ca78ddddd917a6ea86dbdd23bf936cda4296bebd10177a97870b4a57e5",
+      "eof": true,
+      "sections": [
+        {"lines": "1-4", "topic": "对象核销与既有对象"},
+        {"lines": "5-13", "topic": "DecisionChainObservation、RootReadContext、InstitutionDecisionRoot 及迁移边界"},
+        {"lines": "14-28", "topic": "保留函数、状态与事务契约"},
+        {"lines": "29-37", "topic": "迁移步骤与验证范围"}
+      ],
+      "review": "对象建议限定在共享不可变观察、窄只读输入和临时单账户 root；lifecycle/quote/route 留在 coordinator 与 candidate。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/05.md",
+      "lines_expected": 37,
+      "lines_actual": 37,
+      "sha256_expected": "4de8fc1a1edf4400eaff94231b42ad2de627925bd360558656bf87a46d15e5df",
+      "sha256_actual": "4de8fc1a1edf4400eaff94231b42ad2de627925bd360558656bf87a46d15e5df",
+      "eof": true,
+      "sections": [
+        {"lines": "1-7", "topic": "结论与 RootReadContext 字段收紧"},
+        {"lines": "8-13", "topic": "核对依据清单"},
+        {"lines": "14-27", "topic": "六项反查发现"},
+        {"lines": "28-37", "topic": "对象边界、迁移次序及交易语义保护"}
+      ],
+      "review": "真实读取清单决定 root context 字段；diagnostics 发布、lifecycle 重收集、route/quote 仍由现有 coordinator/candidate 管理。"
+    }
+  ],
+  "current_callers": [
+    {"symbol": "DecisionChainObservation", "location": "packages/engine/src/session/decision_chain.rs:63-87", "consumer": "packages/engine/src/session/plan_chain_candidates.rs:304-326"},
+    {"symbol": "RootReadContext::capture / InstitutionDecisionRoot::observe", "location": "packages/engine/src/session/decision_chain/roots.rs:6-29,188-250", "consumer": "packages/engine/src/session/plan_chain_candidates.rs:319-326"},
+    {"symbol": "diagnostics install", "location": "packages/engine/src/session/plan_chain_candidates.rs:371-378", "consumer": "packages/engine/src/session/decision_chain.rs:754-770"},
+    {"symbol": "PlanLifecycleReview", "location": "packages/engine/src/session/decision_chain.rs:840-848", "consumer": "packages/engine/src/session/decision_chain/lifecycle.rs:60-125"}
+  ],
+  "ledger_relations": {
+    "G16": "保留；roots.rs:25 仍复制完整 PlanBook，RootReadContext 抽取及 Arc worker 共享不能消除该复制。",
+    "G38": "保留；decision_chain.rs:972,1236 两个生产 AllocationRequest 仍标 ExistingPlan。",
+    "Q02": "相邻但未由本批审计；个人历史读取留痕问题不能因 root 对象存在而核销。",
+    "new_candidates": [],
+    "rejected_or_unverified_candidates": [
+      "03.md 所提撤单额外测试场景：本批只读取 03.md，未核该文外链的 03.json 细节；视为测试改善待核，不升级为产品缺口。"
+    ]
+  },
+  "limitations": [
+    "未核验官方现行交易所法源；沿用既有 ADR 与 trading-rules 文档。",
+    "未运行测试、构建或性能测量；来源明确声明未运行。",
+    "03.json、04.json、05.json 不属于 scan-plan 本批来源。"
+  ],
+  "created_files": [
+    "agents/implementation-audit/hidden-review/batch-022.md",
+    "agents/implementation-audit/hidden-review/batch-022.json"
+  ]
+}

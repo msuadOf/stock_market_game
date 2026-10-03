@@ -1,0 +1,56 @@
+{
+  "batch_id": 227,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现可确认的现行已批准承诺遗漏；保留一项未能由本批材料证明已修订的历史测试审查发现，不升级 G/Q",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/reviews/engine-tests-10.md",
+      "sha256": "ed6717dc219c5c1caed690870b5e2477e525ea1da6c02cc875587dbf88a9f278",
+      "lines": 45,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/summary-review.md",
+      "sha256": "a4e4478945b371d23c1624552b839fe216413a61f9c83802d791b83c014286af",
+      "lines": 39,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/summary.md",
+      "sha256": "20e274c5dc14c68c8bfe1a295aa8ae6ee0c0a0f69d9b7cbc5160778cac43bd84",
+      "lines": 103,
+      "read_to_eof": true
+    }
+  ],
+  "cross_checks": {
+    "caller_baseline": "43b1aa5",
+    "implementation_ledger": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "current_caller_limits": "当前总账优先于历史候选；本批没有重新读取测试源码或追踪生产 owner/caller/consumer，不声称独立验证当前实现",
+    "adr": [
+      {
+        "id": "ADR-0015",
+        "status": "accepted",
+        "result": "真实成交、撤单和日终失效才回写计划；测试 fixture 不等价于生产交易保证"
+      },
+      {
+        "id": "ADR-0018",
+        "status": "proposed",
+        "result": "不作为变更现行交易语义的授权"
+      }
+    ],
+    "a_share": "历史 review 指出多板块合成 StockView 不能证明板块涨跌幅规则；本批未重新查验官方规则"
+  },
+  "findings": [
+    {
+      "type": "historical_document_follow_up",
+      "description": "engine-tests-10.md 要求修订跨文件通用契约描述，并限定 strategy.rs 多板块选股 fixture 的语义；本批来源未包含模块报告修订版，不能确认发现关闭。",
+      "disposition": "仅保留历史审查候选，不升级 G/Q，不据此推断产品缺陷"
+    }
+  ],
+  "limitations": [
+    "未读取测试模块报告修订版、测试源码或本批以外的历史 OOP 材料。",
+    "未重新追踪生产 owner、caller、consumer；当前状态以指定 caller 总账为准。",
+    "未运行测试、构建、Git 命令或官方规则查询。"
+  ]
+}

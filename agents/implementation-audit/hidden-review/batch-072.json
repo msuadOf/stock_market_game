@@ -1,0 +1,50 @@
+{
+  "batch": 72,
+  "owner": 2,
+  "target_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "report": "agents/implementation-audit/hidden-review/batch-072.md",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-03.md",
+      "lines": 60,
+      "sha256": "f3f5e464b6601f9fb6e625874d09f6e41a70c0f5f0a3e3d396f4bd6904f1c34b",
+      "read_to_eof": true,
+      "sections": ["结论/绑定核验", "28 个文件逐项核对", "初审发现与修订", "大 A 语义/范围边界"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-04.md",
+      "lines": 49,
+      "sha256": "1fa4ddba7628d83b5b74208a70616acd64b33900585b99640849258f839ea2ef",
+      "read_to_eof": true,
+      "sections": ["复核 2 结论", "20 个文件逐项核对", "设计/语义与初审修正", "绑定核验"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-05.md",
+      "lines": 47,
+      "sha256": "c5221029c0940c4e8cba56a98d52464913feb8b7b8b7391291611f2fd3c0170e",
+      "read_to_eof": true,
+      "sections": ["修订后结论", "22 个文件逐项核对", "四项初审发现及关闭", "设计/语义与绑定核验"]
+    }
+  ],
+  "findings": {
+    "unresolved_internal_issue": false,
+    "product_change": false,
+    "a_share_rule_change": false,
+    "oop_action_implemented": false,
+    "tests_run": false,
+    "g_ledger_items_closed": false,
+    "retirement_mapping_found": false,
+    "details": [
+      "各来源将静态审计、修订后复核和未运行测试明确区分。",
+      "测试与 fixture 保留为 support 符合最小范围；历史审计通过不能核销 G 项。",
+      "G06–G09、G28、G35 等总账测试位置有交叉关联，但不是本批复核结论或核销证据。",
+      "ADR-0017 仅限定 replay 确定性锚；未发现本批材料要求改变 ADR 或现行 A 股语义。"
+    ]
+  },
+  "limitations": [
+    "未在目标 HEAD 重新全文审计三篇材料提及的产品源码。",
+    "未重新验证 items/modules 文件或运行测试、构建。",
+    "caller/owner/consumer 追踪限于审计文档链接和测试 harness 边界。"
+  ],
+  "conclusion": "历史审计文档全文复核通过；不构成 OOP 实施、G 项核销、完整产品复审或测试验收。"
+}

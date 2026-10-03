@@ -1,0 +1,77 @@
+{
+  "batch": "195",
+  "owner": 5,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-06.md",
+      "sha256": "ccd85de479b3cf0a518efdf1bc8b99d1775bc9a1e164c0e17010b5ac999b366b",
+      "lines": 13,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-07-binding-final.md",
+      "sha256": "71bb600e6ef0e59d85d0a1c917c33f0071bb16230a972adb609e569c833a8857",
+      "lines": 24,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-07-manager-delta.md",
+      "sha256": "909c22d606a63f79456210af9852383dc5f816beed8131e3600027024da7130e",
+      "lines": 27,
+      "read_to_eof": true
+    }
+  ],
+  "docs_read": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/open-questions.md",
+    "docs/decisions/0011-market-time-observations-and-position-risk.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md"
+  ],
+  "source_binding_finding": {
+    "status": "review_hashes_do_not_match_baseline",
+    "recorded_views_sha256": "6114abc8a50ced1a658517dafea80a555a40c9b310ef2e567933302fca947e0a",
+    "baseline_views_sha256": "f4df3b745f6aa229a8b84c930a5266725c39d0a148e8c88d02168473534a58e0",
+    "recorded_views_lines": 318,
+    "baseline_views_lines": 333,
+    "recorded_delta_sha256": "b461f02fbba12a321f1a5a98455d7aec777e5796ab5883da31d1f88d9616f0d6",
+    "baseline_delta_sha256": "22f002390487087585f718c0d51fc06296f8d83b3b46eabeb9ec565e468b316f",
+    "recorded_delta_lines": 263,
+    "baseline_delta_lines": 278,
+    "impact": "关键 owner、caller 和契约已在指定基线重新核对；旧源码指纹不能作为本基线验证证据。"
+  },
+  "candidate_disposition": [
+    {
+      "id": "engine-session-06",
+      "status_at_baseline": "retained_existing_owners",
+      "evidence": "PlanChainOperationBatch 保有候选队列和 typed route continuation；GameSession 保有计划权威事实；ProtocolSession 保有发布事务 checkpoint/rollback。"
+    },
+    {
+      "id": "engine-session-07-views",
+      "status_at_baseline": "retained_owned_observations",
+      "evidence": "MarketView 和价格路径观察供 decision_chain、decision_snapshot_capture 等 engine 调用方消费；未发现 UI 展示闭环由该投影替代。"
+    },
+    {
+      "id": "engine-session-07-delta",
+      "status_at_baseline": "retained_protocol_contract",
+      "evidence": "RuntimeDelta 验证允许空 accounts patch；public_runtime_state 单独要求本地基线存在 AccountId(0)；Web reducer 消费 delta。"
+    }
+  ],
+  "coverage_notes": [
+    "behavior_market_observation 与 account_risk_observations_for 仍为 cfg(test) helper，当前 views.rs 内联测试未直接断言其输出。",
+    "G16 的 PlanBook 全量复制成本仍开放；本批不核销任何 G 或 Q。",
+    "Q10 已转 G39，沿用当前主账分类。"
+  ],
+  "large_a_semantics": "未发现交易规则、现金分、股数、T+1 锁定或卖出预留语义变化；未新增制度主张，也未重新查询官方规则。",
+  "tests_or_builds_run": false,
+  "product_source_modified": false,
+  "git_write_operations": false
+}

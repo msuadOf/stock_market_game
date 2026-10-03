@@ -1,0 +1,101 @@
+{
+  "batch_id": "001",
+  "owner": 1,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/challenge-2026-10-03/action-index.md",
+      "sha256": "6b59fb4543c073ac65ca626ae48b77667c8328c59cf8966be0c9bdd109f07880",
+      "planned_lines": 7980,
+      "read_lines": 7980,
+      "read_to_eof": true,
+      "chapter_families": [
+        "公司与引擎基础域",
+        "执行流水线",
+        "会话、协议与策略",
+        "Web 与生成契约",
+        "宿主、工具链与独立测试"
+      ],
+      "status": "历史 OOP 方案；开头未实施描述不是 43b1aa5 当前状态。前三项所涉 A03、N01、N02、N03 已由当前源码证实实施。未发现新候选。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/challenge-2026-10-03/domain/final-review.md",
+      "sha256": "902587d89ddb204e9e2a485ba61ad4bb83f17700e59d461f9f4ec24654d920bb",
+      "planned_lines": 86,
+      "read_lines": 86,
+      "read_to_eof": true,
+      "chapter_families": [
+        "终审范围与产物绑定",
+        "三道门结论",
+        "阅读边界与动作处置摘要"
+      ],
+      "status": "历史静态调查终审，不是实施批准、产品验收或官方规则重新核验。未发现新候选。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/challenge-2026-10-03/domain/reader-instructions.md",
+      "sha256": "f65dec498616810f768ea342899f34cefc4ae8835991ace30d24a87c01fda40c",
+      "planned_lines": 11,
+      "read_lines": 10,
+      "read_to_eof": true,
+      "chapter_families": [
+        "历史 reader 流程",
+        "全文/哈希记录",
+        "报告字段与领域语义"
+      ],
+      "status": "实测 10 行，与计划的 11 行数不符；sha256 一致且确已到 EOF。旧输出限制不覆盖当前任务。未发现产品候选。"
+    }
+  ],
+  "current_code_checks": [
+    {
+      "action_ids": ["engine-foundation-01-A03"],
+      "status": "implemented",
+      "evidence": [
+        "packages/engine/src/account.rs:95 Account 私有身份与状态",
+        "packages/engine/src/account.rs:103 私有 AccountState",
+        "packages/engine/src/account.rs:114 受控只读、恢复访问器",
+        "packages/engine/src/account.rs:609 Position 私有状态及读取接口"
+      ],
+      "new_candidate_status": "none"
+    },
+    {
+      "action_ids": ["domain-N01"],
+      "status": "implemented",
+      "evidence": [
+        "packages/engine/src/indicators.rs:180 KdjAccumulator",
+        "packages/engine/src/indicators.rs:218 kdj_ohlc 调用 accumulator"
+      ],
+      "new_candidate_status": "none"
+    },
+    {
+      "action_ids": ["domain-N02"],
+      "status": "implemented",
+      "evidence": [
+        "packages/engine/src/orderbook.rs:170 Order 成交进度字段",
+        "packages/engine/src/orderbook.rs:181 validate_progress 与 checked 进度方法",
+        "packages/engine/src/orderbook.rs:356 OrderBook 入簿校验 caller"
+      ],
+      "new_candidate_status": "none"
+    },
+    {
+      "action_ids": ["domain-N03"],
+      "status": "implemented",
+      "evidence": [
+        "packages/engine/src/market.rs:253 restore_prices/apply_auction_price 有限写口",
+        "packages/engine/src/market.rs:411 restore_filled_orders crate 内入口",
+        "packages/engine/src/session.rs:2787 恢复 caller"
+      ],
+      "new_candidate_status": "none"
+    }
+  ],
+  "ledger_boundary": {
+    "reference": "agents/implementation-audit/reaudit-engine.md 与 re-audit core/foundations/host/accounting/pipeline/tools/ui 记录",
+    "finding": "本批 OOP 状态不核销任何 G01-G68/Q；领域报告明确追踪的 G06-G09、G16、G28、G35-G38、Q02、Q11 仍按各自现行总账状态管理。",
+    "new_candidate_status": "none"
+  },
+  "validation": {
+    "tests_run": false,
+    "build_run": false,
+    "git_write": false,
+    "product_files_changed": false
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "batch_id": 18,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/pipeline/rejected-reader.md",
+      "sha256": "e4343a1c3d59882e1516181e015dec9cc341e44dd679f85a58e9d5f8fd010f36",
+      "lines": 5,
+      "read_to_eof": true,
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["全文：拒绝的 p39 / p01 reader 记录"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/pipeline/report.md",
+      "sha256": "fc0ca39c79559d20332b2bb1378b58729be55950857a7b59f7b9d816f7cfd7b4",
+      "lines": 245,
+      "read_to_eof": true,
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["领域与行为边界", "pipeline-N01", "pipeline-N02", "原动作覆盖与跨组归属", "计数纠正与未解决事项", "111 文件逐项反向核销", "核销与独立复核"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/pipeline/review-n01.md",
+      "sha256": "cc25d7eeb8138a572513c994213aee3a5f4c7b3c085fbc7b453870a79a074c70",
+      "lines": 23,
+      "read_to_eof": true,
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["范围", "现场核验", "三门审查", "结论"]
+    }
+  ],
+  "current_code_paths": [
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:125",
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:137",
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:152",
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:238",
+    "packages/engine/src/session/pipeline/continuous_lifecycle_projection.rs:287",
+    "packages/engine/src/session/pipeline/auction_day_end.rs:940",
+    "packages/engine/src/session/pipeline/auction_day_end.rs:947",
+    "packages/engine/src/session/pipeline/auction_day_end.rs:1017",
+    "packages/engine/src/session/pipeline/auction_tick_transaction.rs:230",
+    "packages/engine/src/session/pipeline/auction_tick_transaction.rs:231",
+    "packages/engine/src/session/pipeline/auction_day_end.rs:897",
+    "packages/engine/src/session/pipeline/stock_stream.rs:180"
+  ],
+  "g_association": "pipeline-N02 boundary is distinct from session-N01 ParentOrderPlan projection ownership; no duplicate state authority observed.",
+  "findings": [],
+  "counterevidence": [
+    "Source report says N01/N02 were candidates not yet implemented at the time; caller code now contains both implementations and production wiring, so this is historical status rather than a current omission.",
+    "Old report table suggested retaining auction_tail_boundaries as a function; the later N02 finding explicitly refines that classification, and the checked value now exists."
+  ],
+  "tests_run": false,
+  "product_code_modified": false,
+  "git_write_operations": false
+}

@@ -1,0 +1,80 @@
+{
+  "batch": 150,
+  "owner": 5,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-01.md",
+      "sha256": "886a2197b8b1d24c0beb34c664209b2ece262f6f48588bf676866da1f1cb789a",
+      "lines": 48,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-02.md",
+      "sha256": "c6e8c51c52daba9e2895f286b3e91813a55b76b112a3f926cf117f063824f5ec",
+      "lines": 92,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-03.md",
+      "sha256": "3a4be758be7521d65e183cb0c78e395570ec3e826ca8225e299cb592972bae9d",
+      "lines": 53,
+      "read_to_eof": true
+    }
+  ],
+  "source_integrity": {
+    "method": "逐份从首行连续读取至 EOF，并将行数与 SHA-256 和 scan-plan.json 对照。",
+    "plan_matches": 3,
+    "plan_total": 3,
+    "baseline_limitation": "三条来源路径均不存在于 Git 提交 43b1aa5，无法从该提交独立恢复历史字节。",
+    "sources": [
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-01.md",
+        "sha256": "886a2197b8b1d24c0beb34c664209b2ece262f6f48588bf676866da1f1cb789a",
+        "lines": 48,
+        "read_to_eof": true
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-02.md",
+        "sha256": "c6e8c51c52daba9e2895f286b3e91813a55b76b112a3f926cf117f063824f5ec",
+        "lines": 92,
+        "read_to_eof": true
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-03.md",
+        "sha256": "3a4be758be7521d65e183cb0c78e395570ec3e826ca8225e299cb592972bae9d",
+        "lines": 53,
+        "read_to_eof": true
+      }
+    ]
+  },
+  "review": {
+    "historical_instructions_treated_as_context": true,
+    "owner_caller_consumer_checks": [
+      "App 持有启动日期与 speed metrics state，并把 setter、polling gate 传给抽取后的 hook/command；与 web-01 的描述一致。",
+      "MarketChartProjection 持有可变图表 accumulator；纯点位/历史投影与 upsertFrames 的原地更新已准确区分。",
+      "AutoOrderManager 的 nextId 位于模块作用域且 clear() 不重置；与 App/Redux ID 投影及 runtime consumer 的关系描述准确。",
+      "web-03 的关系描述与检查到的 runtime 接线相符；本批未重读该 review 引用的全部 29 个来源文件。"
+    ],
+    "findings": [
+      {
+        "severity": "known-domain-risk",
+        "status": "已准确披露，尚未解决",
+        "description": "快捷涨跌停按钮从 DEFAULT_SETUP 读取证券类别，下单预检则使用 activeSetup。自定义局类别不同时，界面显示的涨跌停价可能与实际下单校验采用不同类别。来源记录将其保留为既存限制，没有声称已修复。"
+      }
+    ],
+    "principles_and_decisions_checked": [
+      "docs/principles.md：状态权威与独立复核要求",
+      "ADR-0004：engine 权威及 Redux UI/结果快照边界",
+      "ADR-0007 §2 与 open-questions Q6：首发中文界面且不引入 i18n 框架；增加第二语言须另行决策"
+    ],
+    "a_share_basis": "本批未改变或新主张交易规则。基线 UI 与下单预检调用方确认存在类别来源不一致。本批未重新核验交易所或中国结算官方规则。",
+    "scope_limitations": [
+      "本批复核三份指定审计记录及关键 owner/caller/consumer 关系，没有重审完整 web 审计或产品 diff。",
+      "本批没有重读 web-03 引用的全部 29 个来源文件。",
+      "未运行测试或构建。"
+    ],
+    "product_files_modified": false,
+    "git_state_modified": false
+  }
+}

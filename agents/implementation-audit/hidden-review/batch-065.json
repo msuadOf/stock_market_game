@@ -1,0 +1,75 @@
+{
+  "batch_id": 65,
+  "owner": 5,
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "caller_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-03.md",
+      "lines": 13,
+      "sha256": "3e21e59b4390b4825cd0335445e335d48cccaf7b7a28067388d69b733738f1fc",
+      "aliases": 1,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-04-manager-delta.md",
+      "lines": 27,
+      "sha256": "75fc970869d556baa1bc4690fea6a81b436124dded5643c1cbe8e2898652bd84",
+      "aliases": 1,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-04.md",
+      "lines": 13,
+      "sha256": "419896cef61b4eba3c50d2ad89894e571eb28c0aec8a9303da8bdf335c5819a8",
+      "aliases": 1,
+      "read_to_eof": true
+    }
+  ],
+  "caller_instructions_read": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/open-questions.md",
+    "docs/trading-rules.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0023-synthetic-history-and-matching-only.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0026-individual-institution-experience.md",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "agents/implementation-audit/reaudit-engine.md"
+  ],
+  "baseline_code_paths": [
+    "packages/engine/src/session/decision_chain.rs",
+    "packages/engine/src/session/decision_chain/personal_state.rs",
+    "packages/engine/src/session/decision_chain/roots.rs",
+    "packages/engine/src/session/plan_chain_candidates.rs",
+    "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+    "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+    "packages/engine/src/session/pipeline/ready_ingress.rs",
+    "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+    "packages/engine/src/session/execution/orders.rs",
+    "packages/engine/src/session/execution/reconcile_plan.rs",
+    "packages/engine/src/session/execution/records.rs",
+    "packages/engine/src/session/institutional_behavior.rs",
+    "packages/engine/src/session/minimal_snapshot.rs"
+  ],
+  "g_associations": {
+    "G16": "仍开放：ES03-A01 的 RootReadContext 已在基线落地，但 capture 仍复制完整 PlanBook；owner/input 抽取不等于消除历史复制缺口。",
+    "Q02": "仍按开放问题登记，与本批没有直接因果。",
+    "Q11": "ADR-0026 已解决其中机构个人风险/经验方向；现行的更正或违约原因分发边界仍按审计台账记录。本批没有新增 Q/G。"
+  },
+  "candidate_disposition": "三份来源 hash/行数正确。ES03 来源中的‘候选调查未实施’是历史状态；batch064 与本轮基线源码核验确认 ES03-A01 的 RootReadContext/InstitutionDecisionRoot 及 start_ready_accounts 调用链已在 43b1aa5 落地。保留 typed continuation owner 与直接测试缺口；G16 因 capture 仍克隆完整 PlanBook 而继续开放。不将静态复核等同于测试或整体实现验收。",
+  "state_correction_evidence": {
+    "historical_source": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-03.md:5-13 描述候选调查及其记录时未实施，不代表 43b1aa5 当前状态。",
+    "independent_batch": ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-064.md:18-25,30,39 与 batch-064.json 的 engine-session-03-A01 disposition 确认基线已实施且 G16 仍开放。",
+    "baseline_code": [
+      "packages/engine/src/session/decision_chain/roots.rs:6-29",
+      "packages/engine/src/session/decision_chain/roots.rs:188-221",
+      "packages/engine/src/session/plan_chain_candidates.rs:290-339"
+    ]
+  },
+  "validation": "仅只读静态审查；未运行测试、构建或回归；未写产品代码或执行 Git 写操作。"
+}

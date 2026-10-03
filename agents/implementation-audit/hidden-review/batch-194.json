@@ -1,0 +1,30 @@
+{
+  "batch_id": 194,
+  "owner": 4,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-05.md",
+      "sha256": "a9abb0ff3fe9bf4a3d0ed21a3729d05d09fdbcfbc8dda2ad484bcb44e2f7cf5d",
+      "lines": 13,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-06-manager-delta.md",
+      "sha256": "3ec158bdaddaea3b9459f3f1bfb46d210485980b6d1b232bc0ff4f11a3bbff42",
+      "lines": 40,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-06-retention-final.md",
+      "sha256": "6fd5508eef1b677dbe0d2ab8e81fb1c363d9dd870548a60d7cc0b1f6f8e4aa25",
+      "lines": 25,
+      "read_to_eof": true
+    }
+  ],
+  "result": "未发现可确认的已批准承诺遗漏或历史核销错误",
+  "baseline_source_paths_present": false,
+  "current_owners_and_consumers_checked": true,
+  "tests_run": false,
+  "product_files_modified": false
+}

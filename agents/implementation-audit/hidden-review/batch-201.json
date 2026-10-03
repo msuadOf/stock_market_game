@@ -1,0 +1,26 @@
+{
+  "batch": 201,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-03.md",
+      "sha256": "0af9b263cdf82cf04559d0753c489fb4828c112239db7d3c63e940c3c1b1a01a",
+      "lines": 13,
+      "read_to_eof": true,
+      "candidate_status": "ST03-A01：历史候选已在当前 ZiNoiseStrategy 投影实现中再证；不重新提议实现。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-area-final.md",
+      "sha256": "550e1fca7ddc7dcb9ba3dc5b57c1a14efde80db62af4301788e54c1883b36cf2",
+      "lines": 30,
+      "read_to_eof": true,
+      "candidate_status": "ST01-A01：保留历史候选记录；期限恢复/校验线索由后续 G69 具体化，旧通过结论不代表缺陷已修复。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-area-reference-final.md",
+      "sha256": "9c6b2799a3e3cb8b2aa2376de35c972796769f94828a32c346f0699ae3c11b6e",
+      "lines": 24,
+      "read_to_eof": true,
+      "candidate_status": "引用/hash 绑定的历史复核；只对当时区域正文引用关系有效，不替代当前 G/Q 审计或源码结论。"
+    }
+  ]
+}

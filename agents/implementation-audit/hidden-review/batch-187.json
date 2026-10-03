@@ -1,0 +1,28 @@
+{
+  "batch": 187,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-09-final.md",
+      "sha256": "b111f914af4d8ca6bfa896db043f0cae4215bd8d3bc95960360aab2dba195d53",
+      "lines": 42,
+      "read_to_eof": true,
+      "candidate_status": "历史Delta调查归属与计数复核再证；plan局部消费不构成新增权威状态缺口"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-10-chain-full.md",
+      "sha256": "a3d1a648fb9f8b456efe9c10944b269faf81b59f4e23be8a704c8b79e6631645",
+      "lines": 32,
+      "read_to_eof": true,
+      "candidate_status": "A01候选调用链补核再证；不代表候选已实施"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-10-final.md",
+      "sha256": "77aa7d45f2d3e366b30944126de4cb33676235c1cd8ed0aeeffdd55a1ee963f3",
+      "lines": 26,
+      "read_to_eof": true,
+      "candidate_status": "A01候选最终复核范围与未实施边界再证；无历史核销问题"
+    }
+  ],
+  "overall_candidate_status": "当前调用链与历史记录边界一致；未发现需新增或核销G/Q的证据，不将候选设计视为实现完成"
+}

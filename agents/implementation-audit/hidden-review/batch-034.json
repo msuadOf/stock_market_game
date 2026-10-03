@@ -1,0 +1,70 @@
+{
+  "batch_id": 34,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/frontend-review-notes.md",
+      "expected_sha256": "7001068743f8b6b6180282fe4a8672a6336ebe38729f754b182ac33d27efb960",
+      "observed_sha256": "7001068743f8b6b6180282fe4a8672a6336ebe38729f754b182ac33d27efb960",
+      "expected_lines": 3,
+      "observed_lines": 3,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["审查记录文字校注"],
+      "caller_paths": [],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "仅修正合同声明总表的索引文字，总数不变；未提供新的产品需求或 caller 证据。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/frontend.md",
+      "expected_sha256": "f884da543b85cf3e18780b65f3ae41169897d672e4d3cb04442626316659bd75",
+      "observed_sha256": "f884da543b85cf3e18780b65f3ae41169897d672e4d3cb04442626316659bd75",
+      "expected_lines": 33,
+      "observed_lines": 33,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["范围与状态", "范围与回读入口", "四个实质对象化落点", "亲自核实与关闭的重点", "独立审查证据"],
+      "caller_paths": [
+        "apps/web/src/app/useSessionHostLifecycle.ts",
+        "apps/web/src/app/useSaveCommands.ts",
+        "apps/web/src/app/useTradingCommands.ts",
+        "apps/web/src/app/useMarketChartRuntime.ts",
+        "apps/web/src/app/MarketRuntimeProvider.tsx",
+        "apps/web/src/app/LocalRefreshViews.tsx"
+      ],
+      "g_associations": ["G01-G68", "Q01-Q23"],
+      "new_candidate": false,
+      "counterevidence": "四项候选提取在 43b1aa5 有真实 caller 和消费链；对象不拥有 engine/Redux/存档 authority，不能据结构推断相关 G/Q 完成。旧材料的候选未实施状态已被当前代码取代。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/hosts_tooling.md",
+      "expected_sha256": "a9ca212e9a9b4896a46e041ca0e39d949c0bce662c8db6e56ff38ff3981908f8",
+      "observed_sha256": "a9ca212e9a9b4896a46e041ca0e39d949c0bce662c8db6e56ff38ff3981908f8",
+      "expected_lines": 19,
+      "observed_lines": 19,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["亲自核查", "分类与闭环"],
+      "caller_paths": ["apps/server/src/actor.rs", "apps/server/src/routes.rs", "apps/desktop/src-tauri/src/actor.rs"],
+      "g_associations": ["G01-G68", "Q01-Q23"],
+      "new_candidate": false,
+      "counterevidence": "这是历史管理者收尾记录，声明仅属审计交接；sender、工具类和测试存在均不替代生产调用或验收证据。Server 时序结论不外推到恢复后 generation。"
+    }
+  ],
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G01-G68", "Q01-Q23"],
+    "notes": "无 G/Q 因本批材料而核销或新增。G27维持现行已核销状态；Q10是转入G39的编号历史。矩阵为全章交叉检查，非重做完整生产缺口审计。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "git_operations": false
+  }
+}

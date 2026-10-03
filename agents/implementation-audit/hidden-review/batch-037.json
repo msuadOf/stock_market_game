@@ -1,0 +1,90 @@
+{
+  "batch_id": "037",
+  "owner": 2,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-company-03.md",
+      "sha256": "e44ba4796c261a4d91cee63e9029450ddf24d7150e7b6f4577dff700e5e253b1",
+      "planned_lines": 424,
+      "read_lines": 424,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["整体判断与领域/调用契约", "公司 defaults/error/events", "industrial capex/chart/config/error/expenses/interest/loans/mod/production/purchasing/repayment/sales", "insurance chart/claims/config/csm/error/groups/mod/premium/remeasure/service_release", "company/mod", "可复用验证矩阵", "批次关系与限制"],
+      "status": "全文至 EOF；行数与 SHA 匹配。D01 缺失 seed 时非零库存总账未比较在当前实现中仍可见，作为独立构造校验候选；没有视作 OOP 迁移或批准承诺遗漏。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-company-04.md",
+      "sha256": "e141477f5f4e133433fe2595db2520150d1533f7ea1b2318ee60a138491e1f74",
+      "planned_lines": 308,
+      "read_lines": 308,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["模块判断", "§1 opening", "§2 operations façade", "§3 bank", "§4 config", "§5 core", "§6 day", "§7 dispatch", "§8 error", "§9 history", "§10 industrial", "§11 injections", "§12 insurance", "§13 real_estate flow", "§14 state", "§15 query", "§16 borrowing_costs", "§17 chart", "§18 config", "§19 debt_service", "§20 delivery", "§21 development", "§22 error", "§23 impairment", "§24 land", "§25 loans", "§26 mod", "§27 presales", "§28 projects", "§29 rng"],
+      "status": "全文至 EOF；行数与 SHA 匹配。各 owner/caller 按当前账套与经营调度路径追踪；不从过账接缝外推多阶段整体原子性。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/modules/engine-company-05.md",
+      "sha256": "4d811ca7bf9dd5208d2ba6c8a251faaa6f5db27cdd5cc9ee69606f03467391a8",
+      "planned_lines": 43,
+      "read_lines": 43,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["概览", "scheduler.rs owner/调用/既有测试", "恢复时重复 ID 候选", "序号耗尽候选", "spec.rs 身份与发行股数契约及测试", "领域语义与范围"],
+      "status": "全文至 EOF；行数与 SHA 匹配。重复调度 ID 恢复守卫与 u64 序号耗尽显式原子失败仍为独立候选，不属于沪深委托队列语义。"
+    }
+  ],
+  "current_code_checks": [
+    {
+      "finding": "工业开局库存 seed 对账候选",
+      "status": "candidate_still_present",
+      "evidence": ["packages/engine/src/company/industrial/config.rs:98-125 仅遍历 seeded keys", "packages/engine/src/company/industrial/mod.rs:83-119 IndustrialBooks::new 局部构造及校验调用", "packages/engine/tests/industrial_accounting/failures/guards.rs:279-299 有 seed 金额不符用例"],
+      "caller_owner_consumer": "IndustrialOpeningReconciliation 负责 seed reconciliation；IndustrialBooks::new 是构造入口；CompanyOperations/day 与 industrial_accounting tests/fixtures 是消费者。",
+      "candidate_boundary": "测试支持的 1403 或 1405 总账非零、缺少对应 seed 时，构造应返回 OpeningSeedMismatch 且 seeded 为零；保留现有有 seed 错配断言。"
+    },
+    {
+      "finding": "保险 ContractGroupState 本地应用失败原子性",
+      "status": "unproven_boundary",
+      "evidence": ["packages/engine/src/company/insurance/groups.rs:389 apply_release", "packages/engine/src/company/insurance/service_release.rs:24-99 release_service prepares/posts then applies state"],
+      "caller_owner_consumer": "ContractGroupState 持有合同组计量、服务和理赔状态；InsuranceBooks 持有会计账务，release_service 负责释放；经营调度负责消费。",
+      "scope_note": "逐调用检查 checked arithmetic 与值域可达性；不把结构 owner 推成回滚保证。"
+    },
+    {
+      "finding": "scheduler 重复 ScheduledDueId 恢复与序号耗尽",
+      "status": "candidate_still_present",
+      "evidence": ["packages/engine/src/company/scheduler.rs:123-158 submit increments next_seq with += 1", "packages/engine/src/company/scheduler.rs:179-238 from_parts and Deserialize validate order/key/id range/floor but not unique IDs", "CompanyOperations submit_due/dispatch_due_on and session clock wiring are consumers"],
+      "candidate_boundary": "from_parts/serde reject repeated pending IDs; sync validates uniqueness before mutating mirrored or clock state; submit checked-adds sequence before writes and returns explicit error on exhaustion."
+    },
+    {
+      "finding": "发行人映射股数契约",
+      "status": "current_contract_confirmed_with_input-boundary_followup",
+      "evidence": ["packages/engine/src/company/spec.rs CompanySpec::validate_set", "packages/engine/src/company/mod.rs:203-246 CompanyRegistry::new and validate_issuer_mapping", "packages/engine/tests/company_opening/failures/registry.rs issuer mapping boundaries"],
+      "scope_note": "issued_shares means total issued ordinary shares and equals stock total_shares; duplicate tuple input upstream constraints were not fully traced."
+    }
+  ],
+  "ledger_boundary": {
+    "reference": "agents/implementation-audit/implementation-audit-2026-10-02.md and docs/open-questions.md",
+      "finding": "这些历史结构调查与现有 G/Q 条目没有直接对应关系。G28/G35/Q23 仍分别由合并、经营调用方及税务时点描述管理；G39/K7 与此无关。本次未新增、关闭或重新分类任何 G/Q。",
+      "candidate_disposition": "工业开局缺少 seed 时的比较、保险本地失败原子性以及 scheduler 重复 ID/序号耗尽均保留为候选或未证实边界；本次未能证明其中任一项构成已批准实现承诺的遗漏。"
+  },
+  "governance_read": {
+    "instructions": ["AGENTS.md", "docs/principles.md"],
+    "decisions_checked": ["docs/decisions/0016-fundamental-factor-model.md", "docs/decisions/0019-draft-market-scope-and-capacity.md", "docs/decisions/0024-shrinking-investor-cash-pool.md"],
+    "open_questions_and_ledger_checked": ["docs/open-questions.md", "agents/implementation-audit/implementation-audit-2026-10-02.md"],
+    "historical_source_instructions_used_as_current_authority": false,
+    "trading_rule_research_performed": false
+  },
+  "validation": {
+    "full_source_reads_to_eof": true,
+    "all_planned_hashes_match": true,
+    "all_planned_line_counts_match": true,
+    "tests_run": false,
+    "build_run": false,
+    "regression_run": false,
+    "git_write": false,
+    "product_files_changed": false,
+    "output_files": ["batch-037.md", "batch-037.json"]
+  }
+}

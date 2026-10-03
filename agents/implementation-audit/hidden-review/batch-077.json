@@ -1,0 +1,33 @@
+{
+  "batch": 77,
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/root-audit-tools.md",
+      "sha256": "b2f651104cb0bec8732c2a0dcc6cdf979db78290b516b5c4fe79513a0845f1f6",
+      "lines": 22,
+      "verified_full_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/root-closure-tool-final.md",
+      "sha256": "3e784f8e0df8e7d5c524448c6b86b184e7c22961bfd2c8d59b2e3b09c3abf70e",
+      "lines": 17,
+      "verified_full_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/root-closure-tool.md",
+      "sha256": "9d1278580f82d09b963b38eb561d33c7cd887eaefe458e8d9817a08e1f8bba3e",
+      "lines": 16,
+      "verified_full_eof": true
+    }
+  ],
+  "findings": [],
+  "checks": {
+    "large_a_semantics": "未发现产品交易语义变化或现行规则主张；审查材料仅讨论历史审计工具。",
+    "necessity_and_scope": "没有证据新增产品 G/Q；历史 closure digest finding 在后续来源中记载为已修复，但当前基线不含受审工具，不能确认持续状态。",
+    "cross_layer_and_tests": "当前产品树没有这三个审计工具的 caller/owner/consumer；与 Q05/G21/G26/G27/G39 所属的产品工具契约分开。未运行测试。"
+  },
+  "tests_run": false,
+  "network_or_official_rule_check": false
+}

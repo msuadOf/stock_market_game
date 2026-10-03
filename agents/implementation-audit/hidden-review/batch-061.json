@@ -1,0 +1,67 @@
+{
+  "batch": "061",
+  "owner": 1,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-10-tests-full.md",
+      "lines": 29,
+      "sha256": "1b86de2bf3c83d9cef19dce0cc3919f04fcdb8ab1a631b0ea0633e653fdd0d10",
+      "read_to_eof": true,
+      "chapter_family": "A01 结算测试、证据绑定、覆盖审计与复核门禁"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-11-auction-full.md",
+      "lines": 40,
+      "sha256": "a71414de66d2fd59692ce67086ff23afa9cba1366a479ca32e41676b70056c8c",
+      "read_to_eof": true,
+      "chapter_family": "stock_auction.rs 全文审查、归因、交易语义、门禁与哈希"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-11-final.md",
+      "lines": 34,
+      "sha256": "939bd21e53646f983a2c06bff48d951ce467a0d24940c07bd13512e5c8d43cf1",
+      "read_to_eof": true,
+      "chapter_family": "unit024/045 增量、继承边界、增量复核、门禁与记录哈希"
+    }
+  ],
+  "review": {
+    "status": "passed_document_review",
+    "findings_unresolved": 0,
+    "summary": "三篇历史复核的事实与43b1aa5产品caller吻合；两个主要OOP候选已实现，stock auction无需新抽取。",
+    "confirmed_g_mapping": [],
+    "confirmed_open_q_mapping": [],
+    "candidate_status": [
+      {
+        "candidate": "engine-pipeline-10-A01 ExperienceUpdateMode",
+        "status": "already_implemented_at_baseline",
+        "evidence": "packages/engine/src/session/pipeline/retail_projection.rs:322-344; account_settlement.rs:84-100,196-205; institutional_experience_projection.rs:9-54",
+        "limitation": "不核销G08散户dated writer/衰减缺口。"
+      },
+      {
+        "candidate": "engine-pipeline-11-A01 StockStreamCoordinator<S>",
+        "status": "already_implemented_at_baseline",
+        "evidence": "packages/engine/src/session/pipeline/stock_stream.rs:271-312；生产 callers 位于 continuous_tick_transaction.rs:227-233、auction_tick_transaction.rs:210-216、pre_open_transaction.rs:236-242"
+      },
+      {
+      "candidate": "stock_auction.rs 局部状态与 helper",
+        "status": "no_new_extraction_required",
+        "evidence": "packages/engine/src/session/pipeline/stock_auction.rs:17-37,91-113,557-567; auction_day_end.rs:1451"
+      }
+    ],
+    "docs_evidence": [
+    "docs/principles.md（92 行，已读至 EOF）",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md:51（G08 边界）",
+    "docs/open-questions.md:94-138（Q11/Q12 当前状态）",
+      "docs/decisions/0017-escrow-parallel-tick.md",
+      "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0023-synthetic-history-and-matching-only.md 至 docs/decisions/0028-tagged-release-and-static-pages.md"
+    ],
+    "large_a_semantics": "未发现语义变化；沿用项目已有沪深竞价约定及明确标注的游戏简化。本轮未重新核验官方规则。",
+    "tests_or_builds_run": false,
+    "product_source_modified": false
+  }
+}

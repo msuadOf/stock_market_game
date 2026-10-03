@@ -1,0 +1,35 @@
+{
+  "batch_id": 130,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/web.md",
+      "sha256": "03377ccaee5e9a8447b81f8add4183334b9b7a1c2caa5f7f20a47c4d01ac4354",
+      "lines": 41,
+      "read_to_eof": true,
+      "candidate_status": "原文明确为未实施候选；当前生命周期、存档/交易命令和图表投影已有窄 owner；G31/G68 为独立现存缺口。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/constraint-index.md",
+      "sha256": "d3000ace4bdcb84a4ede208e94fe138a22943c0cccc7eba1f8bb3b5767d44980",
+      "lines": 218,
+      "read_to_eof": true,
+      "candidate_status": "非代码材料按配置、静态资源、架构与产品约束分类；分类不构成生产实现或验收证明。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/chinese-localization/before/exhaustive/file-index.md",
+      "sha256": "4c943c519c1869f4ccda41ec34e1f7672bd231742122ffaf6f58f5a9dbea2763",
+      "lines": 1192,
+      "read_to_eof": true,
+      "candidate_status": "代码文件逐项指向调查正文；迁移动作只是候选，测试/入口支撑分类不是生产闭环证明。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "oop_extraction_is_fix": false,
+    "retained_g": ["G31", "G68"],
+    "status": "当前生产代码已实现若干窄 UI owner，但不自动核销相关 G/Q；确认图表数组引用问题 G31 与活动 setup 未被快捷涨跌停控件消费 G68 仍需独立保留。未发现本批材料误宣称候选已实施或修复缺口。"
+  }
+}

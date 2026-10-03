@@ -1,0 +1,38 @@
+{
+  "batch_id": 174,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/contracts-01.md",
+      "sha256": "104766941bb0109de500fbcf01cc8b6b3440af7dbed520ef5563a3c473022cf9",
+      "lines": 11,
+      "read_to_eof": true,
+      "baseline_path_exists": false,
+      "candidate_status": "historical_review_of_unimplemented_candidate"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/contracts-area-final.md",
+      "sha256": "d18c11ff16f5e7b11630e9e2ff3fde7e741ec0c5624bb8781104f9b1a605c50b",
+      "lines": 20,
+      "read_to_eof": true,
+      "baseline_path_exists": false,
+      "candidate_status": "historical_document_consistency_review_of_unimplemented_candidate"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/domain-closure.md",
+      "sha256": "f05c08660bbb44216a165ab8c75cbbd14c1c38c3626b8eef64be3af2b02a6eb7",
+      "lines": 26,
+      "read_to_eof": true,
+      "baseline_path_exists": false,
+      "candidate_status": "historical_classification_and_fingerprint_closure"
+    }
+  ],
+  "current_owners_callers_consumers": "未发现这些文件的运行时 owner/caller/consumer；未检出仓库内其他文件按确切文件名引用它们。它们是历史审查记录，文内引用 contracts 候选、area/module、generator-origin 与 domain closure 文档。",
+  "finding": "未发现本批可证明的产品实现承诺遗漏或错误核销；历史文档通过结论不证明源码实现、运行行为、生成输出或现行 A 股规则已核验。",
+  "limitations": [
+    "三份来源路径在 43b1aa5 中均不存在；只验证工作区内容与计划记录的 SHA-256 和行数。",
+    "未重新读取引用的源码、area/module 正文、生成器输出或官方交易规则。",
+    "未运行测试、构建或生成器。"
+  ]
+}

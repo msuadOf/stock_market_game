@@ -1,0 +1,27 @@
+{
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "scripts/desktop/README.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "bd8227358f6b8f843c3596fc6d71a73bbfc32ee0880ecb5c01d89f70ffe6fd0a",
+      "lines": 28,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/evidence/resolve-blockers-wayland/task-3-wayland-evidence.md",
+      "revision": "bb16fc8d4df101d86912baf9a809a5320df61db7",
+      "sha256": "3e1dce6bdbf1a6e14622345491a577e1f0730174e01c00a0f63b2b28ed5902a3",
+      "lines": 28,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/evidence/resolve-blockers-wayland/task-3-wayland.run-20260913-144406/task-3-wayland.review.md",
+      "revision": "bb16fc8d4df101d86912baf9a809a5320df61db7",
+      "sha256": "05ce1d0de11090073f6653a3f246e79c401151bb508c6b6e2608e04fc9151bbc",
+      "lines": 54,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

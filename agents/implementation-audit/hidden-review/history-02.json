@@ -1,0 +1,27 @@
+{
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": ".omo/notepads/desktop-build-matrix/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "8a09544bd5ae93b7efee1b93630058b51d5ebcef5e40cc57d68959fe0e9d6b3f",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ab17924e6bfc464957fd25f2dd2070cd0ec7fad9abef3b9cdd62e33f762b3080",
+      "lines": 166,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "130532a65f5be803b1ea13c32e9d8c4b4c09e3396047c979881ed87b5b7dfe57",
+      "lines": 448,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

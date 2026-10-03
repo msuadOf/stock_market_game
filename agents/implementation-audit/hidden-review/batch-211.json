@@ -1,0 +1,43 @@
+{
+  "batch": 211,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/hosts-03.md",
+      "sha256": "f02b1d133849585219bb312305cc071c7331446e7eb526c4d154f4e90838b39f",
+      "lines": 38,
+      "read_to_eof": true,
+      "candidate_status": "SessionRegistry 已实施并经独立静态复核；NEXT 回绕/句柄覆盖仍作为 Q20 独立未修事项，统一运行验收待完成。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/hosts-area-final.md",
+      "sha256": "175cced1d6e2efdd05dc6954a0900bcde5c018d01bddb9621361f91d01500c68",
+      "lines": 31,
+      "read_to_eof": true,
+      "candidate_status": "三项 hosts 封装候选均已由后续工作区记录为已实施并独立静态复核；运行验收待完成，既有 G 项不因对象提取核销。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/relationships-before-final-cache-correction.md",
+      "sha256": "2d8ffd1bd7083b038428f23ecb446c9ebcccc934d15c2a9d5b1bb9a887f07f96",
+      "lines": 80,
+      "read_to_eof": true,
+      "candidate_status": "关系与职责边界总体再证；旧的未实施时态由后续 OOP 实施状态取代，但不改变 G/Q、ADR 或运行验收结论。"
+    }
+  ],
+  "result": {
+    "a_share_semantics": "未发现 A 股交易语义变化；ProtocolSession/engine 保持领域权威，未重新核验官方规则。",
+    "scope": "历史候选的封装范围仍有依据；后续 OOP 实施不是缺陷修复或功能缺口核销。",
+    "current_evidence": [
+      "apps/web-wasm/src/lib.rs:43-117,328-350,475-530",
+      "apps/web-wasm/src/protocol_tests.rs:199-275",
+      "agents/oop-refactor-implementation/hosts/server/status.md:9,18-19",
+      "agents/oop-refactor-implementation/hosts/review-server.md",
+      "agents/oop-refactor-implementation/hosts/review-actors.md",
+      "agents/implementation-audit/implementation-audit-2026-10-02.md:36-45,168",
+      "docs/decisions/0010-unified-host-protocol-and-local-refresh.md:56-73"
+    ],
+    "gq_disposition": "不新增、不核销、不重分类 G/Q；相关宿主 G 条目保持总账状态，Q20 仍开放。",
+    "tests_run": false,
+    "new_candidate": false
+  }
+}

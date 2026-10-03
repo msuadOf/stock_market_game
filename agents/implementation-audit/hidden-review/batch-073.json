@@ -1,0 +1,82 @@
+{
+  "batch_id": 73,
+  "owner": 3,
+  "product_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "read_method": "连续全文读取至 EOF；逐源核对 SHA-256、行数、章节与 aliases；核对当前 caller、G/Q、原则及相关 ADR",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-06.md",
+      "lines_expected": 72,
+      "lines_actual": 72,
+      "sha256_expected": "98830c0703baaf5136fc274c4b5cfa90fb2670bab12629e97ec178d26ab39eac",
+      "sha256_actual": "98830c0703baaf5136fc274c4b5cfa90fb2670bab12629e97ec178d26ab39eac",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-10", "topic": "修订后结论与初审问题历史"},
+        {"lines": "11-31", "topic": "修订后复核与测试源码逐项映射（23项）"},
+        {"lines": "32-34", "topic": "复核边界及文档绑定复核"},
+        {"lines": "35-72", "topic": "最终 items/module 绑定及 schema metadata 复核"}
+      ],
+      "review": "原 A 股语义概括曾过宽；历史记录称修订后限于通用 Market fixture 参数并明示未覆盖市场类别差异。只说明测试文档边界，不提供当前生产缺陷证据。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-08.md",
+      "lines_expected": 86,
+      "lines_actual": 86,
+      "sha256_expected": "e3ba87fb8be70d88e952145e315c644fc60425be58af26c9d4ae5108a40f8513",
+      "sha256_actual": "e3ba87fb8be70d88e952145e315c644fc60425be58af26c9d4ae5108a40f8513",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-25", "topic": "初审结论与十个测试文件逐项核对"},
+        {"lines": "26-34", "topic": "对象值相等与字节相等描述问题、清单核验及修订复核"},
+        {"lines": "35-59", "topic": "文档绑定复核，包含 fixture rationale 错配发现"},
+        {"lines": "60-76", "topic": "fixture 错配修正后的最终绑定复核"},
+        {"lines": "77-86", "topic": "schema metadata 绑定复核"}
+      ],
+      "review": "历史记录称地产拒绝路径已改为完整状态值相等、存档路径才称序列化字节相等，且 SaveSlot fixture rationale 错配已修订；仅是审计文档准确性核销。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-09.md",
+      "lines_expected": 36,
+      "lines_actual": 36,
+      "sha256_expected": "1d5411eee8c7ffa09eea81450fb0277b8836dc11fd021e47c91c7c5a1207dc6e",
+      "sha256_actual": "1d5411eee8c7ffa09eea81450fb0277b8836dc11fd021e47c91c7c5a1207dc6e",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-13", "topic": "修订后源码边界复核与最终文档绑定"},
+        {"lines": "14-36", "topic": "初审完整覆盖、失败原子性措辞发现及其历史证据"}
+      ],
+      "review": "非法存档用例只断言 restore 返回 InvalidSave；restore 接收不可变 SaveSlot 并构造新 session，未证明既有 session 失败原子性。历史记录称过宽措辞已修正。"
+    }
+  ],
+  "current_callers": [
+    {"symbol": "GameSession::restore", "location": "packages/engine/src/session.rs:2716-2720", "evidence": "接收 &SaveSlot，先做 urgency policy 与 validate_save_slot 校验，然后创建新的 GameSession。"},
+    {"symbol": "validate_save_slot", "location": "packages/engine/src/session/persistence.rs:258", "evidence": "当前存档边界校验入口；非法输入拒绝不等同于既有运行会话的失败原子性。"},
+    {"symbol": "implementation-audit engine gap ledger", "location": "agents/implementation-audit/reaudit-engine.md:14-26", "evidence": "G06-G09、G16、G28、G35-G38 等生产缺口按当前实现另行登记；本批测试审计来源不足以核销。"}
+  ],
+  "ledger_relations": {
+    "G": "未发现新生产缺口；G06-G09、G16、G28、G35-G38 等维持 re-audit engine 总账结论。测试文档审计不能作为生产路径修复证据。",
+    "Q": "Q02/Q11 与其当前规则和 ADR-0016 保持原状态；本批没有提出新的产品决策。",
+    "new_candidates": [],
+    "rejected_or_unverified_candidates": [
+      "将 engine-tests-06 通用 Market fixture 描述当成现行 A 股全类别规则覆盖缺陷：历史文档称描述已收窄，fixture 本就不声称覆盖全部类别。",
+      "将 engine-tests-08 对象相等、fixture rationale 错配当成当前产品运行缺陷：来源称均已修订，问题属于审计材料准确性。",
+      "将 engine-tests-09 非法存档拒绝测试当成既有会话失败原子性保证：测试与 GameSession::restore API 均不支持该主张，且历史记录称描述已纠正。"
+    ]
+  },
+  "limitations": [
+    "未运行测试、构建或回归；不声称测试通过或产品行为已运行验证。",
+    "未查交易所、中国结算等官方规则来源；没有将本批解释为 A 股制度取证。",
+    "源文档历史绑定所指 items/module 版本未在本批重新全文核验，因此将历史修订视为来源所载结论，不提升为当前测试文档新验证。",
+    "未更改产品代码、G/Q 台账或正式规则文档。"
+  ],
+  "created_files": [
+    "agents/implementation-audit/hidden-review/batch-073.md",
+    "agents/implementation-audit/hidden-review/batch-073.json"
+  ]
+}

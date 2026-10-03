@@ -1,0 +1,25 @@
+{
+  "batch": 97,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-session-05.md",
+      "sha256": "1d2d1f47d1c48093e54b36baaa82f94115c754407ccc5de84cbf44f6c762c87d",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-session-06.md",
+      "sha256": "10390ff33e0e14a2688fa2507a650622b3aa48dbde065fab24462f6d61b2787c",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-session-07.md",
+      "sha256": "bcacda5f9d26da359f7a7a60113ea5a66c8cf3000ccdc1bc0ef9e9a29000bc21",
+      "lines": 22,
+      "read_to_eof": true
+    }
+  ]
+}

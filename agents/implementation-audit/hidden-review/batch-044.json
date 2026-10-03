@@ -1,0 +1,51 @@
+{
+  "batch_id": 44,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-05.md",
+      "lines_expected": 236,
+      "lines_read": 236,
+      "sha256_expected": "592118fe5ed2291ae3a96f035b9cb8ba767a882120d813d3afdf5655b6a0e8bb",
+      "sha256_observed": "592118fe5ed2291ae3a96f035b9cb8ba767a882120d813d3afdf5655b6a0e8bb",
+      "eof": true,
+      "chapters": ["scope", "fundamental_beliefs", "industrial_accounting", "industry_reports", "cross_file_constraints"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-06.md",
+      "lines_expected": 246,
+      "lines_read": 246,
+      "sha256_expected": "14588092dfe98b050385ef1743f3fd792f0b4b86ee557693b8c2ccdde8d41fb3",
+      "sha256_observed": "14588092dfe98b050385ef1743f3fd792f0b4b86ee557693b8c2ccdde8d41fb3",
+      "eof": true,
+      "chapters": ["industry_reports", "information_acquisition", "insurance_accounting", "market_and_price_limits", "money_observations_orderbook_pipeline", "cross_file_constraints"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-07.md",
+      "lines_expected": 255,
+      "lines_read": 255,
+      "sha256_expected": "baf4e638761adb1b7432332c64c4d8119de26fb4ea08f4a531f0b43dc28b0ab6",
+      "sha256_observed": "baf4e638761adb1b7432332c64c4d8119de26fb4ea08f4a531f0b43dc28b0ab6",
+      "eof": true,
+      "chapters": ["plan_allocation", "plans", "policy_manifest", "protocol", "publications", "limitations"]
+    }
+  ],
+  "matrix": {
+    "coverage_index_sections_checked": ["G01-G68", "Q01-Q23", "verification_mapping"],
+    "primary_cross_refs": ["G06", "G09", "G28", "G35", "G36", "G38", "G59", "Q19", "Q23"],
+    "new_unrecorded_findings": 0,
+    "historical_findings_reversed_by_baseline": 0
+  },
+  "review": {
+    "product_baseline": "43b1aa5",
+    "current_owner_callers_consumers_checked": true,
+    "official_rule_revalidation": false,
+    "tests_or_build_run": false,
+    "product_files_modified": false,
+    "git_write_operations": false,
+    "artifact_paths": [
+      ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-044.md",
+      ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-044.json"
+    ]
+  }
+}

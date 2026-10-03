@@ -1,0 +1,124 @@
+{
+  "batch_id": 30,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "output": "agents/implementation-audit/hidden-review/batch-030.md",
+  "status": "complete_with_stale_source_evidence",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/29.md",
+      "expected_lines": 11,
+      "measured_lines": 11,
+      "expected_sha256": "a5c7f712164a7ec90d8fb7f2cdd6fb48ef0884a945e87badfc125ab889b6ce10",
+      "measured_sha256": "a5c7f712164a7ec90d8fb7f2cdd6fb48ef0884a945e87badfc125ab889b6ce10",
+      "read_status": "complete_to_eof",
+      "chapters": ["engine-session-05", "support and restore contract"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/30.md",
+      "expected_lines": 7,
+      "measured_lines": 7,
+      "expected_sha256": "931172892870f64fbd0ee4a4f19a4bfb19ad0e8d1d7e256ee73ab2c42c75c780",
+      "measured_sha256": "931172892870f64fbd0ee4a4f19a4bfb19ad0e8d1d7e256ee73ab2c42c75c780",
+      "read_status": "complete_to_eof",
+      "chapters": ["engine-session-06", "PlanChain ownership"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/31.md",
+      "expected_lines": 65,
+      "measured_lines": 65,
+      "expected_sha256": "b1a57e3a736a9bc7cae4399cb0f0612366ed45a8e2ddbea976ec77f5170f840f",
+      "measured_sha256": "b1a57e3a736a9bc7cae4399cb0f0612366ed45a8e2ddbea976ec77f5170f840f",
+      "read_status": "complete_to_eof",
+      "chapters": ["engine-session-06", "types, candidates, protocol, civil adapter"]
+    }
+  ],
+  "rules_read": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/open-questions.md",
+    "docs/decisions/0015-parent-order-execution.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0019-draft-market-scope-and-capacity.md",
+    "docs/decisions/0020-native-allocator-for-concurrent-ticks.md",
+    "docs/decisions/0025-day-end-only-persistence.md"
+  ],
+  "classification": {
+    "current_owner_supported": ["PlanChain coordination", "protocol DTO validation", "player candidate queue transfer"],
+    "support_classification_supported": ["persistence v2 tests", "protocol and candidate tests"],
+    "historical_source_evidence_stale": true,
+    "prior_action_covered_with_caller_description_correction": ["civil update checkpoint / rollback"],
+    "new_oop_candidates": []
+  },
+  "source_code_checks": [
+    {
+      "path": "packages/engine/src/session/persistence/v2_tests.rs",
+      "reported_lines": 1273,
+      "baseline_lines": 1375,
+      "reported_sha256": "8bd7e238773c966ef6df907032759375424f5749b6bb831b08699ed5cf43a2c6",
+      "baseline_sha256": "2f84d83557af16f2c00036cc904d1b556efe39c2f5261d8ed1dde23951393032",
+      "disposition": "仍符合当前仅用于测试的角色；旧来源证据已过时"
+    },
+    {
+      "path": "packages/engine/src/session/plan_chain_candidates/adaptive.rs",
+      "reported_sha256": "531ae1754383fd5f9bbf39b97bc0c622f901100223954dabd4a1b304deb93b62",
+      "baseline_sha256": "6fae566e176b623f579cb67e16afbc4fe80c3b3837bf8e3c3849e2587081855f",
+      "disposition": "owner 概念有当前实现支持；历史字段/hash 已过时"
+    },
+    {
+      "path": "packages/engine/src/session/plan_execution/types.rs",
+      "reported_sha256": "2c67f1a835c3f4fe189bd89a09e948fe83d6e22751719100e843d08ec869770c",
+      "baseline_sha256": "2c67f1a835c3f4fe189bd89a09e948fe83d6e22751719100e843d08ec869770c",
+      "disposition": "source hash matches"
+    },
+    {
+      "path": "packages/engine/src/session/plan_execution/commands.rs",
+      "reported_sha256": "229eb4ba457470f59fe2281ecee65362eba2edf052d1417b5ed232a34750cb55",
+      "baseline_sha256": "229eb4ba457470f59fe2281ecee65362eba2edf052d1417b5ed232a34750cb55",
+      "disposition": "source hash matches"
+    },
+    {
+      "path": "packages/engine/src/session/player_candidates.rs",
+      "reported_sha256": "d3397969fd067d24789f9775c6ee98fd248ee631247b63fefebe9ebf8b98a1cb",
+      "baseline_sha256": "2807798b1657b758aaad803f2ca1354e4a5ec9e2994c1f1745c5765cb3d4eb40",
+      "disposition": "recheck caller; owner still owns queue transfer"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/civil/mod.rs",
+      "reported_sha256": "6d747f4ef78d63188a19d8973261d7c7f2fd0e469e8729a2c503dcefc487e2d5",
+      "baseline_sha256": "b475e6436fa19198cb8c03b8344731d3300361a51dd1400794db94db0f885ab1",
+      "disposition": "当前 caller 可见性与历史发现不同；由 ProtocolSession 外层事务保护"
+    },
+    {
+      "path": "packages/engine/src/session/protocol.rs",
+      "reported_sha256": "c41c7aa7e152b5a705d1e8b0c423672ca7b800cfdcc3da49cbfb0a7eda8f3a02",
+      "baseline_sha256": "c41c7aa7e152b5a705d1e8b0c423672ca7b800cfdcc3da49cbfb0a7eda8f3a02",
+      "disposition": "source hash matches"
+    }
+  ],
+  "current_code_evidence": [
+    "packages/engine/src/session/plan_chain_candidates.rs:90-96,105-125",
+    "packages/engine/src/session/plan_execution/interpreter.rs:29-65",
+    "packages/engine/src/session/player_candidates.rs:3-11",
+    "packages/engine/src/session/pipeline/ready_ingress.rs:33-48",
+    "packages/engine/src/session/protocol/civil/mod.rs:164-234",
+    "packages/engine/src/session/protocol/civil/session.rs:283-329"
+  ],
+  "ledger_crosscheck": {
+    "ledger": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "result": "OOP 范围不关闭任何 G01–G68/Q 项；保留总账现有处置。G27 已记为关闭；本批不重新审查无关缺口行为。"
+  },
+  "counterevidence": [
+    "PlanChain pending route is keyed by account and stock and consumed by typed outcomes; no additional owner is evidenced.",
+    "civil GameSession adapter 为私有实现，其生产 caller 是 ProtocolSession::end_civil_day_update；该调用会为外层操作建立检查点并在失败时回滚。",
+    "v2 persistence 测试模块只拥有测试局部 fixture；生产恢复权威仍属于现有 session 校验与恢复路径。"
+  ],
+  "limitations": [
+    "仅作静态审查；未运行测试或构建。",
+    "若干历史来源的 hash/行数与基线 43b1aa5 不符，因此未将其旧源码阅读声明作为当前证据。",
+    "未改变交易行为，也未提出新的交易所规则主张。"
+  ]
+}

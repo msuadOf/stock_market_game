@@ -1,0 +1,82 @@
+{
+  "batch_id": 24,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/09.md",
+      "lines": 15,
+      "sha256": "740d4d7d1d69bb4266d38f8a080ac655d0c8cd3920b299d62742e532ba815b64",
+      "aliases": 1,
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-3范围与源文件；L5-7 retain及恢复/保存调用关系；L9-11领域/测试；L13-15限制和结论。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/10.md",
+      "lines": 11,
+      "sha256": "fd0c246592275a9493a7d3bceb596fa8a6880cf6959e483c220eb3014a0269ce",
+      "aliases": 1,
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-3 runtime v2范围/符号复核；L5-7 restore事务/caller/费用边界；L9-11测试锚点与结论。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/11.md",
+      "lines": 15,
+      "sha256": "57bbbf97e5c1e814657d99833a7afebf4c24c04146b3e839705fce1fc152fa88",
+      "aliases": 1,
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-3 coordinator retain；L5-7 worker/identity/测试边界；L9-11大A与符号归属；L13-15限制及结论。"
+    }
+  ],
+  "current_instructions": {
+    "caller_agents_md": ".worktree/implementation-reaudit/AGENTS.md",
+    "principles": ".worktree/implementation-reaudit/docs/principles.md",
+    "relevant_current_decisions": [
+      ".worktree/implementation-reaudit/docs/decisions/0017-escrow-parallel-tick.md",
+      ".worktree/implementation-reaudit/docs/decisions/0018-long-running-immutable-timeline.md",
+      ".worktree/implementation-reaudit/docs/decisions/0019-draft-market-scope-and-capacity.md",
+      ".worktree/implementation-reaudit/docs/decisions/0025-day-end-only-persistence.md"
+    ],
+    "adr_0018_status": "整体仍为 proposed；仅引用第 7 节和 11.2.3 节中明确决定的事务顺序子项；accepted ADR-0017 仍适用"
+  },
+  "review": {
+    "topics": [
+      "base SaveSlot validation and saved-order validation",
+      "strict runtime v2 DTO and atomic local restore preparation",
+      "single-tick plan-root and adaptive candidate coordination"
+    ],
+    "result": "no_new_oop_candidate_no_new_production_gap",
+    "g_q_association": {
+      "persistence": ["G21 distinct CLI projection", "G29 distinct zero-NPC setup boundary", "G36/Q19 distinct industry assembly and bank recovery", "Q17 distinct ClosingEngine correction failure boundary"],
+      "plan_chain": ["G16 PlanBook history copy remains", "G37 actual-order diagnostic association remains", "G38 allocation class remains distinct", "Q22 actual acceptance trace remains independent"],
+      "state_changes": "none; no G/Q item is closed or reclassified"
+    },
+    "current_code_evidence": [
+      ".worktree/implementation-reaudit/packages/engine/src/session.rs:2716-2720,2806,2984",
+      ".worktree/implementation-reaudit/packages/engine/src/session/failure.rs:85-89",
+      ".worktree/implementation-reaudit/packages/engine/src/session/persistence.rs:258,1541",
+      ".worktree/implementation-reaudit/packages/engine/src/session/persistence/v2.rs:122,372-431",
+      ".worktree/implementation-reaudit/packages/engine/src/session/plan_chain_candidates.rs:27-72,89-103,127-165,342-384,445-458,487-502",
+      ".worktree/implementation-reaudit/packages/engine/src/session/plan_chain_candidates/adaptive.rs:75-115,273-309,339-383,544-565",
+      ".worktree/implementation-reaudit/packages/engine/src/session/pipeline/adaptive_plan_chain_tests.rs:848-895,997-1058",
+      ".worktree/implementation-reaudit/agents/implementation-audit/implementation-audit-2026-10-02.md:75,77,116-119,155,157,160",
+      ".worktree/implementation-reaudit/agents/implementation-audit/reaudit-engine.md:49-75"
+    ],
+  "finding": "没有发现额外的生产对象或行为缺口。来源第 11 部分笼统声称未测试 typed outcome 重排，但该说法相对于基线已过时：独立股票的反序事实和乱序分段反馈已有覆盖。实际 root-worker 完成/poll 调度和同股到达顺序仍可作为定向测试改进候选；pending-route collision 断言没有专门的负向测试，也未确认生产触发路径。不要强制跨调度固定 candidate ID 或全局交易顺序。",
+  "a_share_semantics": "持久化仍会校验分、股、已配置的单笔数量规则、手数、T+1、可卖数量、资源预留和零股约束。解码字节上限和 strategy held+8 不是任意订单数量配额。Candidate generation identity 用于 continuation 关联，不是交易优先级。ADR-0017/0018 允许独立请求的实际到达顺序随调度变化；本次未重新核验官方交易规则。",
+    "tests_run": false,
+    "builds_run": false,
+    "git_operations_run": false,
+    "product_files_changed": false,
+    "g_q_state_changed": false
+  },
+  "limitations": [
+    "已将计划中的三份 Markdown 来源读至 EOF，并核对准确行数和 SHA-256；未重新读取历史摘要引用的每份 JSON 或完整源码。",
+    "仅作静态 caller/source 复核；未运行测试、构建、运行时错误路径检查，也未查询官方规则。"
+  ]
+}

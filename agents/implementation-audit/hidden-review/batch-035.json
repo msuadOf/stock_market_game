@@ -1,0 +1,68 @@
+{
+  "batch_id": 35,
+  "owner": 5,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/personal-state-encapsulation-evidence.md",
+      "expected_sha256": "d93290c1ac4045368ad987e7e3a0cfec5fba88a2e4103dbedd94ba449af33539",
+      "observed_sha256": "d93290c1ac4045368ad987e7e3a0cfec5fba88a2e4103dbedd94ba449af33539",
+      "expected_lines": 30,
+      "observed_lines": 30,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["核对范围", "可观察事实", "收窄判断", "借用拆分约束", "待 Sol 核对", "结论"],
+      "caller_paths": ["packages/engine/src/session/decision_chain.rs", "packages/engine/src/session/decision_chain/roots.rs", "packages/engine/src/session/plan_chain_candidates.rs"],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "现有 take/install 已显式移交/恢复账户状态；字段由 pub(super) 限定在 decision_chain 子树，子模块消费也仍属该 owner 子树。未证明新增 service/getter 会收窄真实可变能力。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/session_strategy.md",
+      "expected_sha256": "7b39adab41e0ebdf7d14188e74056e8dcb5f33078102466b99ef64acb440d73e",
+      "observed_sha256": "7b39adab41e0ebdf7d14188e74056e8dcb5f33078102466b99ef64acb440d73e",
+      "expected_lines": 13,
+      "observed_lines": 13,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["候选设计/整合状态", "最终 OOP 候选", "实际 caller 与边界", "历史复核", "独立既有源码问题", "工作与验证限制"],
+      "caller_paths": ["packages/engine/src/session/decision_chain.rs", "packages/engine/src/session/decision_chain/roots.rs", "packages/engine/src/plans/state.rs", "packages/engine/src/plans/revision.rs"],
+      "g_associations": ["G06", "G07", "G08", "G09", "G38", "G42", "G43"],
+      "new_candidate": false,
+      "counterevidence": "材料自述是候选/历史审计记录且没有实施代码；它列出的真实行为缺口需按当前 implementation-audit 总账跟踪，不因封装候选关闭。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/trading-plan-encapsulation-evidence.md",
+      "expected_sha256": "9927b7bdf7b38be5842e3994e21e1a457de4197416652c4ca0f9342cce8e903c",
+      "observed_sha256": "9927b7bdf7b38be5842e3994e21e1a457de4197416652c4ca0f9342cce8e903c",
+      "expected_lines": 33,
+      "observed_lines": 33,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["核对范围与结论", "状态转移证据", "具体迁移形状", "序列化与公开 DTO", "边界与待 Sol 核查"],
+      "caller_paths": ["packages/engine/src/plans/state.rs", "packages/engine/src/plans/revision.rs", "packages/engine/src/plans/mod.rs", "packages/engine/src/session/decision_chain.rs"],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "基线已实现字段查询 getter 和 TradingPlan receiver 转移；调用方使用 getter。字段仍 pub(in crate::plans)，最窄私有化将改变 sibling module 方法访问，不构成独立获批承诺。"
+    }
+  ],
+  "current_policy": {
+    "read": ["AGENTS.md", "docs/principles.md", "docs/open-questions.md", "docs/decisions/0026-individual-institution-experience.md"],
+    "not_applicable": [],
+    "decision": "Q11 的策略方向已解决；本批只是历史 OOP 证据核对，不改变交易规则。G06-G09/G38/G42-G43 是独立业务链缺口。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G06", "G07", "G08", "G09", "G38", "G42", "G43"],
+    "notes": "未发现本批对应的直接 G 缺口；上述 G 关联仅说明相邻业务状态仍开放，不代表对象封装能解决它们。TradingPlan 字段已限于 plans 模块范围，但尚非 state 模块私有；额外收窄需评估方法归属与权限变化。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "git_operations": false
+  }
+}

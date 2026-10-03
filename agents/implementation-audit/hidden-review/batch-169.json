@@ -1,0 +1,40 @@
+{
+  "batch": 169,
+  "owner": 4,
+  "baseline": "43b1aa5",
+  "conclusion": "no_confirmed_approved_commitment_omission_or_incorrect_historical_clearance",
+  "effective_findings": [],
+  "current_candidates": [
+    {
+      "area": "TradeMarketControls",
+      "status": "historically_recorded_and_still_present",
+      "summary": "快捷涨跌停使用 DEFAULT_SETUP 的类别，而 order preflight 使用 activeSetup 的类别；保存的 setup 允许类别不同。"
+    },
+    {
+      "area": "smoke-pages symlink containment",
+      "status": "historically_recorded_and_still_present",
+      "summary": "词法路径包含检查在 readFile 前执行，但 readFile 会跟随 symlink；未验证目标是否仍位于允许目录内。"
+    }
+  ],
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/tooling-06.md",
+      "sha256": "871a7f8f9d0c9486c22b9f65d8a56cf26680fd7a11855584212a90a4a0e48e95",
+      "lines": 47,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/tooling-07.md",
+      "sha256": "a82124ec095e32e61f82c58609ba7771456f4ce8d7d0cbc131b5977a78bab97b",
+      "lines": 31,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-01.md",
+      "sha256": "0d77da52954538f64ea09af40c00a37e5cb32a92529b869e67ba34312bb9e338",
+      "lines": 314,
+      "read_to_eof": true
+    }
+  ],
+  "tests_run": false
+}

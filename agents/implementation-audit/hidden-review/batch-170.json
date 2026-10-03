@@ -1,0 +1,46 @@
+{
+  "batch": 170,
+  "owner": 5,
+  "baseline": "43b1aa5",
+  "conclusion": "no_confirmed_approved_commitment_omission_or_incorrect_historical_clearance",
+  "effective_findings": [],
+  "current_candidates": [
+    {
+      "area": "worker-host load stale/dispose 边界",
+      "status": "historically_recorded_and_still_present_unconfirmed_reachability",
+      "summary": "load 在 await 后应用 restore 响应 generation 和 snapshot，却没有类似 save 的 await 后 stale/disposed 检查；UI 会话替换 gate 不能证明公开 EngineHost.load 在并发或 dispose 后安全。"
+    },
+    {
+      "area": "worker-request postMessage 同步抛错后的清理",
+      "status": "historically_recorded_and_still_present",
+      "summary": "同步 postMessage 抛错会使 Promise reject，但不会立即清除已安装的 timeout 或移除 message listener。"
+    },
+    {
+      "area": "remote baseline generation 顺序",
+      "status": "historically_recorded_protocol_contract_unresolved",
+      "summary": "Remote baseline 处理会直接替换缓存，不比较 generation 顺序；现有证据不能证明 stale baseline 会送达，也不能证明服务端提供顺序保证。"
+    }
+  ],
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-02.md",
+      "sha256": "9fdd1e9c59ad38945d17a1f267c450409ab52bee8a7ef6621012d6ba307ceb36",
+      "lines": 450,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-03.md",
+      "sha256": "ebcf8fe180e83f9cc8d43b4836e00bce0a56ba792723795ab98ff50094a12dce",
+      "lines": 156,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-04.md",
+      "sha256": "61742ca0d4ca1ad52ede483bd28718ed8dc66594aa1cafa5f7834c440154aa8a",
+      "lines": 400,
+      "read_to_eof": true
+    }
+  ],
+  "tests_run": false,
+  "product_files_modified": false
+}

@@ -1,0 +1,41 @@
+{
+  "batch_id": 62,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-12.md",
+      "lines": 28,
+      "sha256": "61402239baa74e253724cdd9499d79b39ea4e221ed60eea9f06b82240ab59e4f",
+      "full_read_to_eof": true,
+      "sections": ["# engine-pipeline-12 独立复核", "## 实际覆盖", "## 语义依据、必要性与发现", "## 文件 SHA256"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-area-final.md",
+      "lines": 44,
+      "sha256": "3cb3d2ce73e6099159a9fb9bd2fddea1040d6c36efc712f3f296de456751089a",
+      "full_read_to_eof": true,
+      "sections": ["# engine-pipeline area 正文独立复核（2026-10-03）", "## 阅读范围与版本指纹", "## 核对结果", "## 三项门禁"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-closure-final.md",
+      "lines": 55,
+      "sha256": "5b136a2e83888d6b3683ee817e30898ad5c2cc98c0b2b64e3f7b5677a0b35cce",
+      "full_read_to_eof": true,
+      "sections": ["# engine-pipeline 最终闭合复核（2026-10-03）", "## 范围与指纹", "## Unit 与发现处置", "## 三项门禁"]
+    }
+  ],
+  "conclusion": "来源为审计复核记录；当前 area/总账仍将六项动作标为未实施候选。transition 批次维持 retain；未发现支持引入额外状态对象的新证据。",
+  "new_candidate": null,
+  "contradictions": [],
+  "related_checks": {
+    "latest_owner_consumer_caller": "exhaustive/areas/engine-pipeline.md 与 exhaustive/managers/execution.md；engine-pipeline-08-caller-final 用于 caller 范围限定",
+    "ledger": "exhaustive/areas/execution-closure.json 及 exhaustive/managers/execution.md",
+    "adr": {
+      "0017": "accepted",
+      "0018": "proposed"
+    },
+    "retired_candidates": ["05-A02", "08-A02"]
+  },
+  "not_verified": ["未重新读取 111 个 manifest 源文件", "未逐项重审全部 12 批和 15 个 unit", "未运行测试、构建或 Git 命令"]
+}

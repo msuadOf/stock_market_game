@@ -1,0 +1,34 @@
+{
+  "batch_id": 86,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-07-snapshot-final.md",
+      "sha256": "73fa3bc5b6d6ff321658e5fb21c31cd19d3691bca0439b1f9c5f1eae322d1f47",
+      "lines": 21,
+      "full_read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/short-scan-guide.md",
+      "sha256": "c13c337280573ba64efd31a061a86197e459839096def8a3dacc34188b78e69e",
+      "lines": 12,
+      "full_read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/unit-guide.md",
+      "sha256": "bef6f6f3b41b0fba9dfd0245248d9d7b633d5f8c62e327578e996a49abcd94a3",
+      "lines": 11,
+      "full_read_to_eof": true
+    }
+  ],
+  "baseline_commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "covered_path": "apps/web/src/store/store.ts snapshotSlice/setSnapshot",
+  "current_code_paths": [
+    "apps/web/src/store/store.ts:43-53",
+    "apps/web/src/host/protocol-coordinator.ts:74-85,117-127",
+    "apps/web/src/app/useMarketChartRuntime.ts:25-29,51-70,78-84"
+  ],
+  "chapter_family_status": "G01-G68 是产品实现审计章节族；G27 已核销，其余总账仍记有未完成部分。OOP web-07 候选无直接 G 映射，不据此核销缺口。Q11/Q12 与 ADR-0023-0028 均无本 snapshot writer 决定的替代或冲突。",
+  "candidate_status": "既有 snapshot delta 结论经当前生产 caller 再证：setSnapshot 与协议 baseline 语义不同，baseline 双派发和 runtime delta/frame 分支描述准确；候选通过其限定范围复核。",
+  "new_counterevidence": [],
+  "limits": "未完成 G01-G68 全量源码审计、web-07 完整 diff 审查或行为测试验收；未提出产品修复。"
+}

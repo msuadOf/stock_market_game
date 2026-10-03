@@ -1,0 +1,32 @@
+{
+  "batch_id": 76,
+  "owner": 1,
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/hosts-03.md",
+      "sha256": "b8fe95ea7ba9b0b2c80e63eb38cc4e0551b6c49f0fdf7bcd6c644c468f263769",
+      "lines": 38,
+      "read_to_eof": true,
+      "candidate_status": "SessionRegistry OOP 候选已落地；NEXT 回绕修复为仍开放 Q20 的独立 defect lead"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/hosts-area-final.md",
+      "sha256": "9fe178a7cbdad8ea606f4322b1f85358fed986b8b4f377229478910221b31590",
+      "lines": 31,
+      "read_to_eof": true,
+      "candidate_status": "三项 hosts OOP 候选分类仍准确；不新增待实施候选，G19/Q20 边界保留"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/root-audit-tools-final.md",
+      "sha256": "70bbc85d1d244f28901e0f0a3b9ca997a13081d7c987a06a335a26d93f7841a4",
+      "lines": 62,
+      "read_to_eof": true,
+      "candidate_status": "限定范围内的元数据/索引复核结论仍适用；G61/G62 是独立行为缺口，不构成新 OOP 候选"
+    }
+  ],
+  "result": "no_new_oop_candidate",
+  "open_registers": ["G19", "G61", "G62", "Q20"],
+  "tests_run": false,
+  "product_changes": false
+}

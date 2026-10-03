@@ -1,0 +1,57 @@
+{
+  "batch_id": 56,
+  "owner": 1,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-01-final.md",
+      "sha256": "99300a3a697c77b5a7bd3f9877ded97583370255ecc24c904371d443fb75e25a",
+      "lines": 23,
+      "eof_confirmed": true,
+      "candidate_status": "A01 lane-staging 增量措辞已确认；拟议重构尚未实施"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-01-full-supplement.md",
+      "sha256": "b06fb8979345893e6fd3bfde39066daa8e91e9b8795d27eb4dac1ae8c9ab5537",
+      "lines": 33,
+      "eof_confirmed": true,
+      "candidate_status": "A01 全文补充再次确认 owner 提案及当前 staging 语义；尚未实施"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-02.md",
+      "sha256": "8d11cbb6e2e7fcb61cd2d86a847198fc1791a6089dc140d281396e6207844211",
+      "lines": 45,
+      "eof_confirmed": true,
+      "candidate_status": "D01 预校验失败状态缺陷再次确认；最终增量准确限定 finish 行为；尚未修复"
+    }
+  ],
+  "findings": [
+    {
+      "id": "A01",
+      "status": "proposed_unimplemented",
+      "current_code": "packages/engine/src/session/pipeline/account_validation.rs:662-680,683-714,770-776,1139",
+      "caller": "packages/engine/src/session/pipeline/ready_stock_stream.rs:78,114,182",
+      "result": "私有 AccountBudget 写入 owner 的提取仍是 OOP 提案；未映射 G/Q，也不声称产品问题已修复。"
+    },
+    {
+      "id": "D01",
+      "status": "confirmed_unfixed",
+      "current_code": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:305-328,544-566,865-875",
+      "result": "Prevalidation 的 Err 早退不会设置 failed；仅就 failed 状态保护而言，next_ready_batch 仍可用，而 finish 会独立检查是否耗尽及是否仍有 pending。仍缺少 P3 早退后禁用的覆盖。"
+    }
+  ],
+  "ledger_and_decisions": {
+    "g_total": "G01–G68；G27 已关闭；当前有 67 项开放缺口",
+    "q_mapping": "这些 OOP 发现尚未建立直接 G/Q 映射；Q11/Q12 已有后续决策记录",
+    "later_adr_check": "ADR-0023 至 ADR-0028 未取代本次审查的私有 owner 或 coordinator 失败状态边界",
+    "semantic_scope": "未提出新的 A 股规则主张；未重新核验官方规则"
+  },
+  "validation": {
+    "tests_run": false,
+    "build_run": false,
+    "product_files_modified": false
+  }
+}

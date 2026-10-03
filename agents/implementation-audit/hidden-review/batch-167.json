@@ -1,0 +1,26 @@
+{
+  "batch_id": 167,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/hosts-03.md",
+      "sha256": "4a1a6dfb2a41d65086effae32dcb60cab7c111e46e7c99df2c7b0f84d398e168",
+      "lines": 75,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/tooling-01.md",
+      "sha256": "6cf7bbb9de82d67ea7167730a351e7e68133bd2d5bda9fd59ad10d81aa19d0ed",
+      "lines": 37,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/tooling-02.md",
+      "sha256": "a14cc0bbe87dcdecf10bcbe5ee7a62dbac4aceb8703387de1a9f9d288733f8da",
+      "lines": 59,
+      "read_to_eof": true
+    }
+  ],
+  "result": "未发现可确认的遗漏承诺或错误历史核销；候选缺陷线索保留待总账独立裁定，不升降 G/Q。"
+}

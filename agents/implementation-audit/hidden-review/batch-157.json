@@ -1,0 +1,31 @@
+{
+  "batch_id": 157,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-foundation-04.md",
+      "sha256": "42b3aca78f79895adb8ce72fda584a3ef76414d10108953a15db42532d28798b",
+      "lines": 31,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-01.md",
+      "sha256": "26a19ca337c7bfe10841b30b5f3984a979af2dd5101baea7cae38b6ccf3917c2",
+      "lines": 77,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-04.md",
+      "sha256": "a812c6571dd5344a09d53b9b10a89bf2a620b4a5676360094af5b02b07fef012",
+      "lines": 111,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "missed_approved_commitment": false,
+    "status": "A01 预算封装已存在于基线；三份历史来源未证明新的已批准承诺漏接或交易语义偏移，不升级或修改 G/Q。"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "batch_id": 108,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "plan_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/scan-plan.json",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-08.md",
+      "sha256": "c517b31b2c5b2dba92dca4143806de9b49c70752970993be1a7d299132ee126a",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/final-review.md",
+      "sha256": "cec15822f4a692fdb3e6a66c1d811bd600a3fccef7296ac939e77b6da148a6bc",
+      "lines": 59,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/README.md",
+      "sha256": "ad02a0cc18f97391df0317ce5bb39b832c92f7259bd5ed2feaaac58b4be351aa",
+      "lines": 17,
+      "read_to_eof": true
+    }
+  ],
+  "constraints_read": [
+    "caller AGENTS.md",
+    "caller docs/principles.md",
+    "caller docs/open-questions.md",
+    "caller ADR-0007",
+    "caller docs/implementation-audit-2026-10-02.md"
+  ],
+  "chapters": {
+    "web-08.md": "范围限中文化差异；冻结原文语义审查不外推。",
+    "final-review.md": "中文化与版本绑定范围结论；不代表源码风险修复、候选实施或产品验收。",
+    "README.md": "术语和版本证据约定；明确历史语义结论、产品验证限制。"
+  },
+  "candidate_checks": {
+    "approved_omission": false,
+    "bad_historical_closure": false,
+    "new_product_defect": false,
+    "counterevidence": "caller G48 仍记页面 lang 与 AG Grid 辅助文本的中文一致性缺口；生产代码 format.ts:155-169 和 defaults.ts:27-34 有中文 UI 文案，但不能核销 G48 或替代全量译文版本复核。来源 pass 限于文档中文化和版本绑定。"
+  },
+  "a_share_semantics": "本批仅审计文档中文化/版本绑定，没有交易实现或规则变更；未重新查阅官方规则。",
+  "validation": "未运行测试、构建、回归或 Git 写操作；仅写本批复核记录。"
+}

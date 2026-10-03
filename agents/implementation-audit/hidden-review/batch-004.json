@@ -1,0 +1,59 @@
+{
+  "batch_id": 4,
+  "source_baseline": "43b1aa5",
+  "review_type": "historical source challenge and current product baseline comparison",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/frontend/report.md",
+      "lines": 386,
+      "sha256": "015ee906af21b3a61650ded908eb3130251b253bd1443b5c6c2e47c4944fb84e",
+      "read": "continuous full text, chunks 1-130, 131-260, 261-386",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/frontend/review-findings-61.md",
+      "lines": 175,
+      "sha256": "00296fa0ad48a99966fe51f4b925e1da215e7e2a26ebf7f79f9b620388f59ddb",
+      "read": "continuous full text, chunks 1-100, 101-175",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/frontend/review-model-correction.md",
+      "lines": 5,
+      "sha256": "ead224db4bc0fcccfffa484048d6c70f62fa107006b6cf0422711be02a9be099",
+      "read": "full text",
+      "eof": true
+    }
+  ],
+  "findings": {
+    "historical_candidates": [
+      "frontend-R2-N01",
+      "frontend-R2-N02",
+      "frontend-R2-N03",
+      "frontend-R2-N04"
+    ],
+    "baseline_status": "产品基线中已包含对应的四类 owner 和生产组合入口",
+    "current_open_boundary": {
+      "gaps": ["G66"],
+      "details": [
+        "RemotePublisherState.beginBaselineWait 会替换唯一 waiter，但不会结束前一个 waiter",
+        "RemoteHost.dispose 会拒绝当前 baseline waiter，但不会拒绝 command registry 中的 pending 项",
+        "RemoteHost socket 的 onerror 会调用共享 fail，但未校验当前 connection identity"
+      ],
+      "status": "该已知边界仍开放；owner 提取既未引入也未修复此问题"
+    },
+    "gaps_or_questions_closed_by_batch": [],
+    "tests_run": false,
+    "product_files_modified": false,
+    "trade_rules_modified": false
+  },
+  "chapter_matrix": {
+    "2.1_host_remote": {"gaps": ["G01-G05", "G18-G20", "G40", "G53", "G66"], "questions": [], "relation": "对应 N02；G66 边界仍开放"},
+    "2.2_strategy_memory_valuation": {"gaps": ["G06-G09", "G20", "G42-G43"], "questions": ["Q02", "Q11"], "relation": "none"},
+    "2.3_market_display_calendar": {"gaps": ["G10-G15", "G44", "G46-G47"], "questions": [], "relation": "N01 不拥有市场规则或指标公式"},
+    "2.4_engineering_interaction_release": {"gaps": ["G16-G17", "G21-G26", "G45", "G48-G52", "G54-G56", "G64-G68"], "questions": ["Q01", "Q04-Q09"], "relation": "none"},
+    "2.5_additional_chapter_findings": {"gaps": ["G28-G38", "G41", "G49-G52", "G57-G59", "G64-G68"], "questions": ["Q12-Q23"], "relation": "无直接关联；G66 已列于 2.1"},
+    "2.6_company_plan_production_gaps": {"gaps": ["G28", "G35-G38", "G41-G43", "G58-G59", "G67-G68"], "questions": ["Q02", "Q11-Q23"], "relation": "N04 只管理 query tickets"},
+    "2.7_acceptance_tool_contracts": {"gaps": ["G26-G27", "G39", "G60-G63"], "questions": ["Q05"], "relation": "未运行测试；状态未变"}
+  }
+}

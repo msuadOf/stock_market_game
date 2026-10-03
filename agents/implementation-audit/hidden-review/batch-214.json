@@ -1,0 +1,31 @@
+{
+  "batch": 214,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-scope.md",
+      "sha256": "a55ee0e1e309c859dbf7f43102550990d740ac73863f35cf097f2048aab4a1a4",
+      "lines": 54,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/session-strategy-document-binding-final.md",
+      "sha256": "44a39d3e885a9c415b33209c55a5064dbac4570878609029123ea4d4e19a7d7a",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-01.md",
+      "sha256": "fb8c4265b2e864e4c4a73638de6df5048f640e70167eb3b3fcf0d19b6d1bb081",
+      "lines": 65,
+      "read_to_eof": true
+    }
+  ],
+  "summary": "指定来源是历史审计记录，不是当前产品 owner 或 caller。来源自身的范围声明仍然重要；当前审计产物 owner 和选定的生产 caller 已列于 batch-214.md。",
+  "findings": [],
+  "limits": [
+    "未重新运行历史范围枚举。",
+    "未独立重新复核 session/strategy 实现来源，也未重新审计 deadline/build 行为。",
+    "这些记录没有确立新的 A 股语义问题。"
+  ]
+}

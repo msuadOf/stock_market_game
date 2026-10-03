@@ -1,0 +1,122 @@
+{
+  "batch_id": 164,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-04.md",
+      "expected_sha256": "70cf0a2bf1b331e88c08cd3452f18221ce23aef1e641e6701bd3c4f497166624",
+      "observed_sha256": "70cf0a2bf1b331e88c08cd3452f18221ce23aef1e641e6701bd3c4f497166624",
+      "expected_lines": 157,
+      "observed_lines": 157,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "engine-tests-04：测试支撑审计",
+        "Compute 与 Config 测试",
+        "Consolidation 与 diagnostics 测试",
+        "event mapping、experience、experience_feedback 与 replay 测试",
+        "fundamental_beliefs 测试",
+        "跨文件关系",
+        "迁移与验证"
+      ],
+      "caller_paths": [
+        "packages/engine/src/compute.rs:25-90",
+        "packages/engine/src/config.rs:234-238",
+        "packages/engine/src/account.rs:312-335,422-452",
+        "packages/engine/src/behavior/mod.rs:93",
+        "packages/engine/src/strategy/zi_noise.rs:192",
+        "packages/engine/src/strategy/fundamental/valuation.rs:156-170",
+        "packages/engine/src/session/decision_chain/roots.rs:430-447"
+      ],
+      "g_associations": ["G06", "G07", "G08", "G09", "G17", "G28", "G39", "G57"],
+      "new_candidate": false,
+      "counterevidence": "测试固定组件、单 worker replay、diagnostic baseline 或纯函数契约；不证明批量 compute 的生产 session 接线、估值全链消费、生产合并披露、G39 的实际受理轨迹矩阵或 causal DTO 大整数输出。关联问题已在现行总账登记。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-05.md",
+      "expected_sha256": "d82891183597cee83561102cebe8fc98858e444c4dcc01dc1df4eada61a7e35f",
+      "observed_sha256": "d82891183597cee83561102cebe8fc98858e444c4dcc01dc1df4eada61a7e35f",
+      "expected_lines": 236,
+      "observed_lines": 236,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "fundamental_beliefs/failures、gold、hand、main、per_share、priors",
+        "industrial_accounting/assets_gold、chain_gold、failures、main、subledgers、tax_gold",
+        "industry_reports/consolidated_gold、correction_restatement、failures、fixture",
+        "跨文件关系与适用约束"
+      ],
+      "caller_paths": [
+        "packages/engine/src/strategy/fundamental/valuation.rs:156-170",
+        "packages/engine/src/session/decision_chain/roots.rs:430-447",
+        "packages/engine/src/company/operations/industrial.rs:85-100",
+        "packages/engine/src/company/operations/day.rs:79-85",
+        "packages/engine/src/accounting/consolidation/mod.rs:85",
+        "packages/engine/src/session/disclosures.rs:182-191"
+      ],
+      "g_associations": ["G06", "G09", "G28", "G35", "G36", "G59"],
+      "q_associations": ["Q23"],
+      "new_candidate": false,
+      "counterevidence": "估值端到端 fixture 与独立账套/报表金样不证明实际 session 消费、期末税折旧支付调度或合并报告交付；VAT/CIT 使用合成税率且 CAS 18 明确为简化。对应生产边界已登记。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-06.md",
+      "expected_sha256": "4b607cb06b43f72f47f48a2146ece484e6c1baaa98dd4702f2bed29a3a22bd20",
+      "observed_sha256": "4b607cb06b43f72f47f48a2146ece484e6c1baaa98dd4702f2bed29a3a22bd20",
+      "expected_lines": 246,
+      "observed_lines": 246,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "industry_reports 金样与生命周期",
+        "information_acquisition 获取、视图、拒绝与 fixture",
+        "insurance_accounting claims、guards、gold、remeasure",
+        "market、price_limits、money、observations、orderbook、pipeline_contract",
+        "跨文件关系",
+        "迁移与验证"
+      ],
+      "caller_paths": [
+        "packages/engine/src/accounting/reports/mod.rs:187",
+        "packages/engine/src/accounting/consolidation/mod.rs:85",
+        "packages/engine/src/session/disclosures.rs:182-191",
+        "packages/engine/src/company/operations/insurance.rs:62-76",
+        "packages/engine/src/market.rs:479-568",
+        "packages/engine/src/config.rs:234-238",
+        "packages/engine/src/account.rs:312-335,422-452"
+      ],
+      "g_associations": ["G28", "G35", "G36", "G39", "G59"],
+      "new_candidate": false,
+      "counterevidence": "来源明示未查询官方交易所规则。Market 限价 fixture 只固定通用参数，保险/报告/信息获取测试不能单独证明真实生产 session 或披露接线完整；局部 coverage 边界已有现行总账记录。"
+    }
+  ],
+  "current_policy": {
+    "read": [
+      "agents/implementation-audit/implementation-audit-2026-10-02.md §3-4（G/Q 总账及验证入口）",
+      "packages/engine/src/compute.rs、config.rs、account.rs、market.rs、behavior/mod.rs、strategy/zi_noise.rs、strategy/fundamental/valuation.rs、session/decision_chain/roots.rs、company/operations/industrial.rs、company/operations/day.rs、company/operations/insurance.rs、accounting/reports/mod.rs、accounting/consolidation/mod.rs、session/disclosures.rs"
+    ],
+    "not_applicable": [
+      "未重新查询交易所或中国结算官方规则；本批未实施交易制度变更。"
+    ],
+    "decision": "历史 OOP 与测试支撑材料不构成生产迁移批准，也不等同本轮测试验收。A 股限价 fixture 明示不覆盖交易所/板块/证券类别差异；会计金样的合成税率与明确简化不作为现行法定参数或完整准则背书。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G06", "G07", "G08", "G09", "G17", "G28", "G35", "G36", "G39", "G57", "G59", "Q02", "Q23"],
+    "notes": "测试支撑源建议保留独立断言和 fixture，没有提出已批准但遗漏的生产对象迁移。所列 G/Q 仅表达局部测试证据不能核销相应生产/跨层边界，不扩张编号范围。过户费源码核对确认买卖结算消费当前配置；本轮未核验其官方法源。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "builds_run": false,
+    "regressions_run": false,
+    "git_operations": false
+  }
+}

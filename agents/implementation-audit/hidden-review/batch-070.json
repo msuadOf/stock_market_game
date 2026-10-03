@@ -1,0 +1,39 @@
+{
+  "batch": 70,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-02.md",
+      "sha256": "672fb5c1b4623f9738c5da806a305a97b5cd6ad00b25c8948d3b0f8f4cf4793c",
+      "lines": 13,
+      "verified_full_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-03-manager-delta.md",
+      "sha256": "4b57e91234c38047a938343be3adcc42d8288b3160984a76b12791ba05fa62d6",
+      "lines": 21,
+      "verified_full_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-03.md",
+      "sha256": "80836d9c446fd7835680341b2a32aab4d689522c36576b3eb307290ef3396958",
+      "lines": 13,
+      "verified_full_eof": true
+    }
+  ],
+  "findings": [
+    {
+      "severity": "documentation-status",
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-03.md",
+      "summary": "审查入口称候选未实施，但基线已在 ZiNoiseStrategy::strategy_data 中集中映射，三个调用入口均使用且存在参数投影测试。同步更新入口及 delta 状态。"
+    }
+  ],
+  "checks": {
+    "large_a_semantics": "通过；未发现策略重构改动交易语义，沿用项目已记录 A 股边界。",
+    "necessity_and_scope": "strategy-02 保留结论适当；A01 范围窄且已在基线实现，文档状态不一致须同步。",
+    "cross_layer_and_tests": "当前调用与 owner 边界相符；未运行测试。G/Q 缺口不由这些审查核销。"
+  },
+  "tests_run": false,
+  "network_or_official_rule_check": false
+}

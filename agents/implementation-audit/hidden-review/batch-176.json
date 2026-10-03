@@ -1,0 +1,26 @@
+{
+  "batch_id": 176,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-02-projection-first-recheck.md",
+      "sha256": "7e6fa8b2f6789e9f08882319504a33ab2cd04c748b1456847508e40190134313",
+      "lines": 25,
+      "read_to_eof": true,
+      "candidate_status": "历史措辞delta复核；结论已与后一版模块文案及当前代码交叉确认"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-02.md",
+      "sha256": "0f28925e76fff62d76cceec0fac59440de62dacf6110dbfc0200c0c6712ec2af",
+      "lines": 25,
+      "read_to_eof": true,
+      "candidate_status": "历史措辞delta复核；StatementWindows与财报DTO可写边界仍成立"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-03.md",
+      "sha256": "1238e86e76114c277e043275cb48ce551e5db4216988f82753805d7112c874d7",
+      "lines": 70,
+      "read_to_eof": true,
+      "candidate_status": "对象边界结论大体再证；D01及064/071/078行为候选仍未解决，非OOP迁移"
+    }
+  ]
+}

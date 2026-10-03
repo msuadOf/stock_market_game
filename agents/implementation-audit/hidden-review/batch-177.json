@@ -1,0 +1,26 @@
+{
+  "batch": 177,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-04.md",
+      "sha256": "641155d6ee5c8de68206999ef479f857afbcedaa1919eeec531fe118602319c8",
+      "lines": 23,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-05.md",
+      "sha256": "6e7ee0a53e25b7b3be55b54bdd84ac6042369a7f1b9755f81fc04b73bb8cbe56",
+      "lines": 31,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01-delta-a.md",
+      "sha256": "97434123556e0c34d6167db264231ba9b74cf924bcc269239c2eba6e2b620443",
+      "lines": 38,
+      "read_to_eof": true
+    }
+  ],
+  "finding": "三篇材料没有单独证明已批准承诺遗漏或错误历史核销；记录的 scheduler、状态边界与术语问题保留为候选，不升级 G/Q。"
+}

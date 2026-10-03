@@ -1,0 +1,48 @@
+{
+  "batch_id": 109,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "plan_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/scan-plan.json",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/closure-links-final.md",
+      "sha256": "215730f01c49b894d1384edf29fae654321fd71a1f5a9b86c9943b7e37e1cacb",
+      "lines": 23,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/domain-company-a.md",
+      "sha256": "db9bc609951edb5a3b409919103a1b4c6368b5916bb021a1e9e3dbd38946efb3",
+      "lines": 56,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/domain-company-b.md",
+      "sha256": "1140be9d94d2a00a3d32045748db2442f6e8d4ae497d401e6285f38ff1855df4",
+      "lines": 44,
+      "read_to_eof": true
+    }
+  ],
+  "constraints_read": [
+    "caller AGENTS.md",
+    "caller docs/principles.md",
+    "caller docs/open-questions.md",
+    "caller ADR-0007",
+    "caller agents/implementation-audit/implementation-audit-2026-10-02.md"
+  ],
+  "chapters": {
+    "closure-links-final.md": "两个链接当前仍解析到存在文件；记录的目标 SHA-256 已过期，不再绑定当前字节。",
+    "domain-company-a.md": "限公司账务/银行审计材料中文化复核；未重新核验源码或会计/交易规则。",
+    "domain-company-b.md": "限 engine-company-03/04/05 材料中文化复核；保留领域差异及未实施风险，不代表源码修复。"
+  },
+  "candidate_checks": {
+    "approved_omission": false,
+    "bad_historical_closure": false,
+    "new_product_defect": false,
+    "counterevidence": "目标路径当前存在，且现行 area/implementation audit 仍单列公司域行为缺口。历史 closure SHA-256 与当前目标不同，故历史指纹不构成当前版本绑定；不因文档翻译核销生产 G 项。"
+  },
+  "a_share_semantics": "本批仅复核审计文档中文化及链接版本证据，无交易实现变更；未重新查阅官方规则。",
+  "validation": "未运行测试、构建、回归、官方规则查询或 Git 写操作；仅写本批复核记录。"
+}

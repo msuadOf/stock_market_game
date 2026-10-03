@@ -1,0 +1,32 @@
+{
+  "batch_id": 203,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "result": "未发现已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-04.md",
+      "sha256": "2da855336517058c900b6ff3548e89dd8fec1fc4bfca44854bbb7b16c740b911",
+      "lines": 49,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-05.md",
+      "sha256": "a15cdfb7c766f5760ffe142a1659e47520173a7886cd8b975487cec19b8e87ba",
+      "lines": 47,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-06.md",
+      "sha256": "a9ca5816ce7a9b13622de92735cfc0d332d16f089f3a616df09b6fc59554985c",
+      "lines": 72,
+      "read_to_eof": true
+    }
+  ],
+  "findings": [],
+  "limitations": [
+    "未重新检查来源所引用的 items、modules 或生产测试源码。",
+    "未运行测试或构建。",
+    "未查询官方规则来源；不确认来源中规则依据的现行性。"
+  ]
+}

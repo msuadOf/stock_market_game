@@ -1,0 +1,26 @@
+{
+  "batch_id": 220,
+  "owner": 5,
+  "source_baseline": "43b1aa5",
+  "finding": "Remote/Tauri 复核事实与基线代码一致；WASM Worker 复核准确识别重复 create 风险，但未覆盖同一 worker-host.ts 中已记录的 load 响应 stale/dispose 边界，不能视作完整生命周期复核",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-04-remote-final.md",
+      "sha256": "f57d188916f81833d31e8dc344942347fe1f446a87f3788f839c49db13d8ba9b",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-04-tauri-final.md",
+      "sha256": "cb9632ce3c95c56a5af5d4f8fbafd436fd7afe826e148e72f3934f9f507889a7",
+      "lines": 35,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-04-wasm-final.md",
+      "sha256": "4974b39e8bb192e1bc0b2373a774b255d3c0860e81ea2e07dfc8d7a14e1cd8b6",
+      "lines": 29,
+      "read_to_eof": true
+    }
+  ]
+}

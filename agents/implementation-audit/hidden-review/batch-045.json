@@ -1,0 +1,72 @@
+{
+  "batch_id": "batch-045",
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "reviewed_files": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-08.md",
+      "line_count": 146,
+      "sha256": "e11510ce778d7168c7c7c81958d555e74e2dec1510ca034dde47906882ceee31",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-09.md",
+      "line_count": 49,
+      "sha256": "f1e4b5ef293705390b193f4a957bb0b11ff7e1ab77f9aba324e02a84faa58c15",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-tests-10.md",
+      "line_count": 220,
+      "sha256": "90649647fb93ebd784d107a676b71afda80201fb9476c09c74cadeb07d274cc6",
+      "read_to_eof": true
+    }
+  ],
+  "cross_reads": [
+    "docs/principles.md",
+    "docs/open-questions.md",
+    "docs/trading-rules.md",
+    "docs/decisions/0006-npc-strategy-module.md",
+    "docs/decisions/0016-fundamental-factor-model.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0019-draft-market-scope-and-capacity.md",
+    "docs/decisions/0021-strategy-position-choice-and-noise-pricing.md",
+    "docs/decisions/0022-symbolic-limit-prices.md",
+    "docs/decisions/0023-synthetic-history-and-matching-only.md",
+    "docs/decisions/0024-shrinking-investor-cash-pool.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0026-individual-institution-experience.md",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md"
+  ],
+  "findings": [
+    {
+      "classification": "documentation_drift",
+      "source": "engine-tests-09.md:7,49",
+      "evidence": "当前 packages/engine/tests/session.rs 共 5080 行，SHA-256 为 c918e224bc55c3cea3b76e995f75ab46607e9b2f3ab4995cc936a14f3a0426ce；模块记录的旧数据为 4637 行及 aa91aa9fe2a6ee9f2cac9a4ea0e9bba4337ca02ee89415a91d64dde13cd3cb33。",
+      "effect": "嵌入的源码摘要/hash 属于历史证据，不是当前 checkout 清单。将逐测试覆盖描述重用于当前状态前，应先重建基线。"
+    },
+    {
+      "classification": "current_gap",
+      "source": "agents/implementation-audit/implementation-audit-2026-10-02.md:102; engine-tests-09.md:16,39",
+      "evidence": "G29 仍存在正流通盘、零 NPC setup 的缺口。现有 ByKind 用例覆盖了其他条件，但当前 session.rs 未发现零 NPC 用例；被 ignore 的长人口测试不属于已执行证据。",
+      "effect": "不得依据本次 OOP 审计将 G29 标记为完成。"
+    },
+    {
+      "classification": "historical_evidence",
+      "source": "engine-tests-08.md:144-146; engine-tests-09.md:45-49; engine-tests-10.md:1-3,215-220",
+      "evidence": "这些模块描述测试支撑/候选设计，并明确声明未实现或运行测试。",
+      "effect": "这些材料可用于索引测试职责，但不能独立关闭 G01–G68 或 Q01–Q23。"
+    }
+  ],
+  "classification_summary": {
+    "implemented_by_this_batch": [],
+    "current_gaps": ["G29 zero-NPC positive-float setup validation and missing boundary test"],
+    "documentation_drift": ["engine-tests-09 source line count/hash and summary need rebaseline"],
+    "pending_questions": "Q01–Q23 维持当前实施审计中的分类；这些仅涉及测试的模块没有解决任何问题。",
+    "a_share_semantics": "未提出语义变更。A 股描述保留手数/T+1/集合竞价/符号价格边界，并明确标注合成策略限制及房地产资本化假设的适用范围。"
+  },
+  "validation": {
+    "tests_run": false,
+    "build_run": false,
+    "git_write": false
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "batch_id": "batch-206",
+  "owner": 1,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/frontend-closure-final.md",
+      "sha256": "d8233e31e8183d399672d0b62e68a2a19b8b2a44c2ac688346966d3e6dbf9c98",
+      "lines": 21,
+      "read_to_eof": true,
+      "section_family": "frontend closure 的计数、hash 引用绑定、web-07/web-08 交接及范围限制"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/history/engine-session-01-before-manager.md",
+      "sha256": "b282457b51d1156f90a96675aacdaf24c675d67ee860bb81f5f065c735fc6e03",
+      "lines": 33,
+      "read_to_eof": true,
+      "section_family": "GameSession 权威状态、market-tick candidate publication、账户组合与 P9 修订"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/history/engine-session-02-before-manager.md",
+      "sha256": "27589aa305a1e7f47cd0e61607e208eeb090dacf2d3ba13ff7b637060649dcb6",
+      "lines": 33,
+      "read_to_eof": true,
+      "section_family": "SessionCandleBook/SaveSlot 边界、CivilClock A05 与 operations sync A07"
+    }
+  ],
+  "current_code_evidence": [
+    "packages/engine/src/session.rs:1125-1160",
+    "packages/engine/src/session.rs:2056-2097",
+    "packages/engine/src/session.rs:2100-2109",
+    "packages/engine/src/session.rs:2518-2532",
+    "packages/engine/src/session/candles.rs:90-110",
+    "packages/engine/src/session/snapshot.rs:215-227",
+    "packages/engine/src/session/account_book.rs:18-30",
+    "packages/engine/src/session/civil_clock.rs:330-351",
+    "packages/engine/src/session/company_operations.rs:60-86",
+    "apps/web/src/host/wasm-worker.ts:254"
+  ],
+  "candidate_status": [
+    {
+      "id": "frontend-closure-metadata-review",
+      "status": "historical_metadata_only",
+      "result": "来源本身明确不构成源码复核；web-07旧收据hash笔误已按binding-final披露纠正。"
+    },
+    {
+      "id": "engine-session-01-P9-scope",
+      "status": "confirmed_narrow_scope",
+      "result": "仅描述tick候选发布；玩家入队、civil_clock_mut与日终checkpoint是不同权威边界。"
+    },
+    {
+      "id": "engine-session-02-SessionCandleBook",
+      "status": "already_implemented",
+      "result": "历史与活动日K有单一内部owner，SaveSlot仍保持daily_candles和active_daily_candles独立投影。"
+    },
+    {
+      "id": "engine-session-02-A05-sequence-exhaustion",
+      "status": "risk_confirmed_policy_undecided",
+      "result": "u32序号递增未检查溢出；MAX哨兵政策不是已决ADR要求，不属于OOP抽取。"
+    },
+    {
+      "id": "engine-session-02-A07-sync-atomicity",
+      "status": "local_failure_risk_confirmed_scope_limited",
+      "result": "sync先插入mirrored再注册clock due；批量失败可部分修改独立调用，但生产日终调用受GameSession checkpoint保护。"
+    }
+  ],
+  "gq_disposition": "未核销或重开G01-G68/Q；G16按主账独立保留，不由状态或candle owner抽取核销。",
+  "large_a_semantics": "未提出交易制度新主张或改变A股语义；没有重新查询交易所/中国结算官方规则。",
+  "tests_or_builds_run": false,
+  "product_source_modified": false,
+  "git_write_operations": false,
+  "overall": "来源边界诚实，P9和SaveSlot结论与当前源码相符；主要对象候选已实施。A05/A07仍为非OOP独立风险且须区分未决策略及日终外层回滚。无G/Q核销。"
+}

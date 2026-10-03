@@ -1,0 +1,34 @@
+{
+  "batch": 105,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/tooling-06.md",
+      "sha256": "cc2885dc520b5da0b300695c64835805717cacfa3a85a39f5b35c18245cd2039",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/tooling-07.md",
+      "sha256": "6a512f99c590a75eddce61a3a99b270b1613a9e0ab6720cd4174540fa7159e20",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-01.md",
+      "sha256": "ad599bd41d569164d838348178a5558e8ebfa8456b4d378356128bebf20d3e38",
+      "lines": 22,
+      "read_to_eof": true
+    }
+  ],
+  "result": "通过（仅限已批准承诺遗漏/旧核销错误核对）",
+  "sections": {
+    "input_integrity": "三份来源均连续读取至 EOF，实测行数和 SHA-256 与 scan-plan 一致，aliases 均为 1。",
+    "caller_and_current_rules": "核对 docs/principles.md、docs/open-questions.md、当前 G/Q 总账及 ADR-0010、0017、0025、0027、0028。",
+    "approved_commitments": "未发现本批已批准 OOP 承诺遗漏或错误核销；历史中文化通过不代表源码/测试重新通过。",
+    "candidate_counterevidence": "web-01 四个对象候选在 caller 基线有 owner/接线；G10/G11/G22/G31/G47/G68 仍有效。tooling-06 symlink 路径线索仍在，作为未分配工具候选交总审计确认，不由 G39 核销。",
+    "a_share_semantics": "未改变或重新裁决 A 股规则、金额/股数单位、撮合及存档语义。",
+    "validation": "未运行测试、构建或回归，未执行 Git 写操作，未修改产品代码。"
+  }
+}

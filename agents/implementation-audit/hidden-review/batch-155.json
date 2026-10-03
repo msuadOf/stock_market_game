@@ -1,0 +1,63 @@
+{
+  "batch": 155,
+  "owner": 5,
+  "status": "complete",
+  "conclusion": "未发现历史 OOP 候选曾被批准为生产交付承诺；D01 的 version 下限缺乏正式依据，D02 未证明标准发布路径可达；ECL 恢复 C02 由最新审计精确保留，不能与 D01 混同。",
+  "source_baseline": "43b1aa5",
+  "product_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-company-02.md",
+      "sha256": "9a8d763e3878975a0f9e3df88fd16c3ab0e58820545a9e6ee2442d5889f88436",
+      "lines": 557,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-company-03.md",
+      "sha256": "b128746b8c8e6e814c8f16be5e587d8fa52fdfda2c7737f8cbbe6b3cc35ad405",
+      "lines": 424,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-company-04.md",
+      "sha256": "648fad39160d094c1e94dd97094ae28c1743be6f7839e086cafbc3cc10b8d1d0",
+      "lines": 308,
+      "read_to_eof": true
+    }
+  ],
+  "current_candidates": [
+    {
+      "candidate": "D01：EclPolicy::validate 未验证版本下限。",
+      "evidence": "当前 EclPolicy::validate 校验两张情景表、单项字段和权重总和；BankBooks::new 在新建路径调用它。没有找到 version >= 1 的正式契约依据。",
+      "classification": "不确认为缺陷；版本字段存在不足以推出 0 非法。"
+    },
+    {
+      "candidate": "恢复的 BankBooks 可携带无效 ECL policy，正式恢复路径没有验证后置条件。",
+      "evidence": "BankBooks derive Deserialize；BankBooks::new 不经 serde 恢复调用。agents/implementation-audit/exhaustive-review/luna52.md C02 已核对 session persistence::validate_company_domain 未验证银行 ECL policy，并记录空 stage1_default 恢复后 issue_loan 可成功。",
+      "classification": "独立恢复边界候选，需由总审计决定处置；不能由 D01 或重复 issue-time 校验替代。"
+    },
+    {
+      "candidate": "build_notes 对缺失分类回退至实收资本。",
+      "evidence": "accounting/reports/notes.rs 的 consolidation_split_items 构造存在 unwrap_or(PaidInCapital)；标准 generate_report_set 先构建并校验分类，拆分事实来自成员账簿。",
+      "classification": "内部输入一致性候选；本批未证明标准发布路径可达，不升级为已确认发布缺陷。"
+    },
+    {
+      "candidate": "工业授信按全部贷款余额而非指定贷款人余额检查。",
+      "evidence": "正式总账 implementation-audit-2026-10-02.md 将 IndustrialBooks::borrow/available_credit 该边界记为 G58；ContractBook::outstanding_borrowings 按 counterparty 聚合不等于工业账套已使用它。",
+      "classification": "既有 G58，避免重复登记；本批 OOP 来源不能核销。"
+    }
+  ],
+  "related_existing_scope": [
+    "G28：集团披露/合并范围的既有遗漏",
+    "G35：工商税务、折旧、债务支付等既有业务范围",
+    "G36：非工商会话装配与行业接线既有遗漏",
+    "G58：工业授信贷款人过滤问题",
+    "C02：银行 ECL policy 正式存档恢复校验候选，详见 exhaustive-review/luna52.md"
+  ],
+  "limitations": [
+    "caller 与 consumer 核对为定向静态检查，不构成穷尽全仓调用图。",
+    "未证明 build_notes 缺项分支能由标准发布路径触发。",
+    "未重新核验 CAS 等会计依据或沪深交易所规则。",
+    "未运行测试或构建；不修改产品代码及正式 G/Q 总账。"
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "batch_id": 58,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-05-shadow-full.md",
+      "expected_lines": 32,
+      "measured_lines": 32,
+      "expected_sha256": "0ad3922173aa52a695e1d84cf432dd77bf83567d83fb95147e35b4027a2c21bc",
+      "measured_sha256": "0ad3922173aa52a695e1d84cf432dd77bf83567d83fb95147e35b4027a2c21bc",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["范围与完整性", "核对结果", "三门禁"],
+      "finding": "coordinator 在跨 continuation 的 consuming finish 负责累计账本和事实核验；当前 caller 保留该职责，无批准承诺遗漏。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-05-worker-full.md",
+      "expected_lines": 39,
+      "measured_lines": 39,
+      "expected_sha256": "418dee669e2c9a799c16e61d1f43c243f52db11223eb810f78c81522ea354cb7",
+      "measured_sha256": "418dee669e2c9a799c16e61d1f43c243f52db11223eb810f78c81522ea354cb7",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["范围与阅读", "全文复核结论", "三项门禁"],
+      "finding": "worker processor 保持单轮候选边界；standalone/initial 检查与 coordinator 累计最终检查未混淆。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-pipeline-06-metadata-final.md",
+      "expected_lines": 27,
+      "measured_lines": 27,
+      "expected_sha256": "0b4400e73fa3acc652dbe9265331a23e7cb9995fdd428fccc59cc5a2cb90465d",
+      "measured_sha256": "0b4400e73fa3acc652dbe9265331a23e7cb9995fdd428fccc59cc5a2cb90465d",
+      "aliases": 2,
+      "read_status": "complete_to_eof",
+      "chapters": ["限定范围", "精确差异与版本哈希", "三项门禁"],
+      "finding": "metadata delta 仅镜像既有 cross_file_notes；未引入生产承诺或交易语义变化。"
+    }
+  ],
+  "caller_code_evidence": [
+    "packages/engine/src/session/pipeline/continuous_matching.rs:245-256",
+    "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:60-75",
+    "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:349-377",
+    "agents/implementation-audit/reaudit-pipeline-contracts.md"
+  ],
+  "current_decisions": [
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0020-native-allocator-for-concurrent-ticks.md",
+    "docs/open-questions.md"
+  ],
+  "related_current_items": ["G39"],
+  "related_item_disposition": "G39 保持未解决：K7 跨 worker 完整产物比较仍未按同一实际受理轨迹校验；本批 OOP/metadata 复核不解决该独立工具门禁，也不构成新的 engine 生产缺口。",
+  "new_candidates": [],
+  "counterevidence": [
+    "当前 caller 仍由 ContinuousStockRoundProcessor 持有单轮候选状态，由 IncrementalContinuousStockCoordinator 持有跨轮股票状态并在 consuming finish 汇总和核验。",
+    "现行 reaudit-pipeline-contracts 追踪 Session/pipeline 正式 caller、state owner 与 consumer，没有把未运行测试写成实现完成或缺失。",
+    "engine-pipeline-06 来源仅核对 metadata 镜像，不包含新的生产行为承诺。",
+    "ADR-0020 状态为 proposed 且范围是原生 allocator，不可作为已批准的 worker/coordinator 改造要求。"
+  ],
+  "limitations": [
+    "未运行测试、构建或性能测量；不声明测试通过或覆盖充分。",
+    "未核查全项目交易所/中国结算规则；本批未改变交易制度或交易语义。"
+  ]
+}

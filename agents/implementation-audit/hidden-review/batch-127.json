@@ -1,0 +1,28 @@
+{
+  "batch_id": 127,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/contracts.md",
+      "sha256": "23e7cdf2dc132f444caa1c037ba5e3f08bfe21f3a5fb0395a74f1ffca61789c7",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-company.md",
+      "sha256": "adef5a4d53f3b5261db6554347acd4b2d6611305f733276634cf9322251e17fe",
+      "lines": 59,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-foundation.md",
+      "sha256": "30feb41345b02cc4098c9b1a451d226357b6f5d010b64a86dd5763559678da5c",
+      "lines": 45,
+      "read_to_eof": true
+    }
+  ],
+  "conclusion": "三份来源完整阅读且行数和 SHA-256 与 scan-plan 一致；候选与反证均保留原状态，没有升级或修改 G/Q。"
+}

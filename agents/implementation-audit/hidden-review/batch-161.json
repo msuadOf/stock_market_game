@@ -1,0 +1,53 @@
+{
+  "batch_id": 161,
+  "owner": 1,
+  "source_baseline": "43b1aa5",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-05.md",
+      "sha256": "21c57fd6ab743315c5034f7a99f5138bf8e013fd1e0bca929411e8a0df4a1e24",
+      "lines": 61,
+      "read_to_eof": true,
+      "candidate_status": "维持保留结论；无新 OOP 候选"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-06.md",
+      "sha256": "a21eefe4d946eea4e4db5071556aeb64cf2bbd08ceaa4846914069bd95e83cca",
+      "lines": 195,
+      "read_to_eof": true,
+      "candidate_status": "维持保留结论；无新 OOP 候选"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-07.md",
+      "sha256": "a22e2747aa1377afe70b71bdf4b40aa92823ed72235827037b36838430919d81",
+      "lines": 105,
+      "read_to_eof": true,
+      "candidate_status": "维持保留结论；无新 OOP 候选"
+    }
+  ],
+  "review": {
+    "result": "no_new_candidate_no_new_G",
+    "current_code_evidence": [
+      "packages/engine/src/session/failure.rs:85-89",
+      "packages/engine/src/session.rs:2716-2721,2765-2793",
+      "packages/engine/src/session/persistence/v2.rs:370-443",
+      "packages/engine/src/session/plan_chain_candidates.rs:31-76,90-96,342-383,452-463",
+      "packages/engine/src/session/plan_chain_candidates/adaptive.rs:105-112,339-355",
+      "packages/engine/src/session/protocol/civil/session.rs:175-184,225-280,283-329",
+      "packages/engine/src/session/decision_chain.rs:687-729"
+    ],
+    "relevant_decisions": [
+      "docs/decisions/0017-escrow-parallel-tick.md:32-45,130",
+      "docs/decisions/0018-long-running-immutable-timeline.md:755-780",
+      "docs/decisions/0025-day-end-only-persistence.md:12-33"
+    ],
+  "ledger_crosscheck": "G01–G68 与 Q01–Q23；未发现直接对应的 OOP 缺口。G16、G39 和 Q17/Q22/Q23 各自独立，仍以当前总账为准。",
+    "finding": "现有存档/协议/计划协调 owner 与生产调用链支持 retain 结论。须保留真实并行结果回收可能影响候选到达/同股受理次序的边界；裸 GameSession 日结 adapter 不应被描述为具备 ProtocolSession 的外层发布 rollback。未发现新的已批准承诺遗漏。",
+    "a_share_semantics": "没有交易语义改动。现金以分、数量以股；T+1、资源冻结与订单簿受理边界保持。generation_index、event seq 和 DTO 排序是身份或协议语义，不是跨实体交易优先级。未重新联网核验官方规则。",
+    "tests_run": false,
+    "builds_run": false,
+    "git_operations_run": false
+  }
+}

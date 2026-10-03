@@ -1,0 +1,33 @@
+{
+  "batch_id": 192,
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-03-manager-delta.md",
+      "sha256": "487feb5ceb44f0665f8fdf9ca7925efc51ca1633d36cf1db5550acf08945a1c3",
+      "lines": 27,
+      "read_to_eof": true,
+      "candidate_status": "限定 delta 审查通过；A01 窄只读上下文与 A02 生命周期 coordinator 边界符合来源审查范围，不代表实现/测试通过"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-03-target-final.md",
+      "sha256": "21fefb40e6bed690b8d8a75a1e971376a326c19db16caf51ca1dd7e54c750b66",
+      "lines": 11,
+      "read_to_eof": true,
+      "candidate_status": "限定 target 精度复核通过；继承既有结论，不重新审查源码"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-03.md",
+      "sha256": "afad49f4cc0280ebe3efa261dd975d83cdd0a2bc8cfcc54f892ec5a3390435a9",
+      "lines": 13,
+      "read_to_eof": true,
+      "candidate_status": "最终复核入口；仅列 A01 为 OOP action，声明调查未实施，现状由 caller baseline 独立核对"
+    }
+  ],
+  "candidate_status": {
+    "A01": "caller HEAD 已有 DecisionChainObservation、RootReadContext、InstitutionDecisionRoot 与 worker/coordinator 接线；不新增缺口或核销 G/Q；G16 完整 PlanBook 复制仍开放",
+    "A02": "生命周期 action 留在 coordinator 的边界与当前 caller 相符；未发现交易优先级变化证据",
+    "new_G_or_Q": "none"
+  }
+}

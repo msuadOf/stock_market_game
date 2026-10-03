@@ -1,0 +1,49 @@
+{
+  "batch": 151,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-04.md",
+      "sha256": "c561d0dfbc3720027be4f84e0f86df67e2022d0cd35db0a80d14d1ba8b55fb4a",
+      "lines": 73,
+      "read_to_eof": true,
+      "candidate_status": "再次确认：remote 在 baseline 前的 pause generation 仍未经协议核实；worker 的 postMessage 同步抛错后清理仍延迟至 timeout；Tauri gate 仍仅由测试使用"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-05.md",
+      "sha256": "6ace739c528079e2ac8d090c266ea198c007b49deff482b315526d6bc18fcf30",
+      "lines": 65,
+      "read_to_eof": true,
+      "candidate_status": "保留历史结论作为既有证据；本批未重新审查完整产品调用路径"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/frontend-before/reviews-web-06.md",
+      "sha256": "2d757549d4beababfbe2c4f7ce41b1b40a45ed5ef986120b9a42715e9256e451",
+      "lines": 50,
+      "read_to_eof": true,
+      "candidate_status": "保留历史结论作为既有证据；本批未重新审查完整 parser 调用链"
+    }
+  ],
+  "findings": [
+    {
+      "status": "protocol_unverified",
+      "path": "apps/web/src/host/remote-host.ts:192",
+      "summary": "publisher baseline 尚不存在时，pause preferences 使用 generation 1；当前生命周期在 host.start 前发送 preferences，但 Server 契约语义尚未核实。"
+    },
+    {
+      "status": "candidate_reconfirmed",
+      "path": "apps/web/src/host/worker-request.ts:43",
+      "summary": "postMessage 同步抛错会使 Promise reject，但不会立即清理；listener 和 pending entry 会保留至 timeout。生产代码中的 WorkerHost 使用该 scope。"
+    },
+    {
+      "status": "not_a_production_gap",
+      "path": "apps/web/src/host/tauri-event-coordinator.ts:6",
+      "summary": "Timeline gate 目前仅由其单元测试引用；生产 Tauri listener 独立检查 session、timeline 和 disposed 状态。"
+    }
+  ],
+  "limitations": [
+    "未核对 Server 对 baseline 前 pause preference 的处理实现及端到端消息顺序。",
+    "未完整复核 web-05、web-06 所覆盖的所有产品源码；对应结论仅沿用其历史证据。",
+    "未运行测试、构建或验证命令。"
+  ]
+}

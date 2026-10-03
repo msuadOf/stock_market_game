@@ -1,0 +1,36 @@
+{
+  "batch_id": 112,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-03-recheck.md",
+      "sha256": "d61a6ec4ad162d2a88b5e4eb69c9392a3da2891565c5c7e0be52120b3e9ceed8",
+      "lines": 17,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-03.md",
+      "sha256": "e4de09a377252ef80387e28df2c1b96367b27a660dd4145e47e38a5ee2bc6b19",
+      "lines": 11,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-04-recheck.md",
+      "sha256": "3e08de6e6b531bd4446fc708384e6707c04a97682075acab076f55aa355a7566",
+      "lines": 19,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "note": "存在 group-03 中文文案意见与 recheck 概括结论的分歧；仅记录为历史文案候选，不改动 G/Q。"
+  },
+  "verification": {
+    "product_changes": false,
+    "tests_run": false,
+    "official_rules_rechecked": false,
+    "caller_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  }
+}

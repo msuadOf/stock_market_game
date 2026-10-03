@@ -1,0 +1,35 @@
+{
+  "batch_id": 216,
+  "owner": 1,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-05.md",
+      "sha256": "be908bf401da8892190a6d8cf0e06485afe2debca004832d9a4383a3f9e76f14",
+      "lines": 81,
+      "read_to_eof": true,
+      "candidate_status": "A01对象聚合对应当前EscrowVerificationRun；validator D01属独立G72，不因对象化关闭"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-06.md",
+      "sha256": "e0c4ade9f8c734699a0f01edc183f97ca28bccfa6042413463ac0cc2d889da1e",
+      "lines": 45,
+      "read_to_eof": true,
+      "candidate_status": "Pages symlink为硬化观察，按candidate-resolution-03不登记G；薄入口metadata不证明构建验收"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-07.md",
+      "sha256": "9ab08c1d0907f67d4f41676aaf9e07863bc678fd95b93f4a88afcfd9d7e31134",
+      "lines": 17,
+      "read_to_eof": true,
+      "candidate_status": "无OOP动作；D01/D02仅为历史手写harness风险，不构成当前兼容性验收或G/Q变更"
+    }
+  ],
+  "candidate_status": {
+    "tooling_05_A01": "对应聚合已实现；不核销validator缺口",
+    "matrix_validator_D01": "已由G72登记；本批不重复新增",
+    "pages_symlink": "非确定G；仅可选硬化观察",
+    "tooling_07_D01_D02": "历史harness风险；无新G/Q或核销依据",
+    "new_G_or_Q": "none"
+  }
+}

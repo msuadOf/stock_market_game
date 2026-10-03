@@ -1,0 +1,33 @@
+{
+  "batch_id": 126,
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/session-strategy.md",
+      "sha256": "6bc757c3d05cca91bed9438b75ebbd97ddc9262db6cf7d9d1a644ec786cc4120",
+      "lines": 49,
+      "read_to_eof": true,
+      "candidate_status": "历史中文化复核记录；结论仅限其记录范围，不等于当前产品审计或源码验收"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/tool-review.md",
+      "sha256": "cbb9a39490c033e793d585e6914b25e67bf24aeb8af7317ff91c58395fe4f6c4",
+      "lines": 202,
+      "read_to_eof": true,
+      "candidate_status": "版本绑定工具设计与机械证据复核；不替代产品语义/运行验收，历史增量初查问题在后续条目记为已修复"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/action-index.md",
+      "sha256": "5673b086887e83e298339484ef7a7936d5376383ba9ff3f54b9ca64354f905a6",
+      "lines": 1187,
+      "read_to_eof": true,
+      "candidate_status": "历史 proposed 候选全集；当前代码可见对应抽取，但抽取不代表修复 G/Q 或领域缺陷"
+    }
+  ],
+  "current_code_baseline": "43b1aa5",
+  "current_candidates": "索引列出的候选目标在对应当前源码中均有实现锚点；静态状态，不代替实现独立复核或行为验收",
+  "g_q_cross_check": "G01-G39 重核（G27 核销、其余38仍有缺口），G40-G68 新增；Q10 转 G39，其他现行 Q 依 43b1aa5 裁定维持。未以 OOP 抽取核销任何 G/Q。",
+  "a_share_semantics": "未改领域实现或交易规则；沿用沪深 A 股已登记概念、单位及竞价/整手/T+1/FIFO边界。未重新查询官方规则。",
+  "tests_run": false
+}

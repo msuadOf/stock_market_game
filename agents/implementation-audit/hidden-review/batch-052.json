@@ -1,0 +1,116 @@
+{
+  "batch_id": 52,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/contracts-01-final.md",
+      "expected_sha256": "36d38fdac95145b8dc1b04b5f35cb1fb0422d2dd774b492b6ad1dcd52bead093",
+      "observed_sha256": "36d38fdac95145b8dc1b04b5f35cb1fb0422d2dd774b492b6ad1dcd52bead093",
+      "expected_lines": 31,
+      "observed_lines": 31,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "contracts-01 候选 delta 独立最终复核",
+        "审查范围与证据",
+        "领域语义、必要性与边界",
+        "继承范围",
+        "最终核验指纹"
+      ],
+      "current_callers_owners_consumers": [
+        "docs/decisions/0007-three-deployment-frontend-framework.md:33-42",
+        "package.json:17-18（types:generate/types:check）",
+        "apps/web/src/types/engine.ts（WasmApi契约；依批次036当前源码核对）"
+      ],
+      "g_associations": [],
+      "q_associations": [
+        "Q01（Money JSON整数与跨端安全范围；仍开放，不由本批核销）"
+      ],
+      "candidate_status": "候选未实施；受限范围的生成配置/检查结论仍可用。未发现已批准 OOP 实现遗漏。根 bindings 来源、消费者和线格式等价未证实。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/contracts-area-final.md",
+      "expected_sha256": "2d14bae64f778d2fbd953fbc3a6993f8076cb7e8ef6d05cb0890684a9b1ebd06",
+      "observed_sha256": "2d14bae64f778d2fbd953fbc3a6993f8076cb7e8ef6d05cb0890684a9b1ebd06",
+      "expected_lines": 20,
+      "observed_lines": 20,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "contracts 区域候选最终文档复核",
+        "结论",
+        "核对结果",
+        "范围限制与指纹"
+      ],
+      "current_callers_owners_consumers": [
+        "docs/decisions/0007-three-deployment-frontend-framework.md:33-42",
+        "package.json:17-18（当前类型生成/检查入口）"
+      ],
+      "g_associations": [],
+      "q_associations": [
+        "Q01（相关但不覆盖）"
+      ],
+      "candidate_status": "只确认指定文档间一致性，未核源码或完整 caller；SaveSlot/ProtocolSession职责描述不升级为实现事实。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/domain-closure.md",
+      "expected_sha256": "8e94cb86d025914fafe5e999b675dea13851286e8b8aa5ad58df4d52245c9fff",
+      "observed_sha256": "8e94cb86d025914fafe5e999b675dea13851286e8b8aa5ad58df4d52245c9fff",
+      "expected_lines": 26,
+      "observed_lines": 26,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "Domain closure 最终独立复核",
+        "最终指纹与追溯",
+        "核验",
+        "三项门禁与范围限制"
+      ],
+      "current_callers_owners_consumers": [
+        "agents/implementation-audit/implementation-audit-2026-10-02.md（G01-G68/Q01-Q23当前总账；Q01见:139）",
+        "packages/engine/src/session.rs:1-5（engine纯逻辑边界）"
+      ],
+      "g_associations": [],
+      "q_associations": [
+        "Q01（整数跨端边界，仍开放）"
+      ],
+      "candidate_status": "仅确认 A02/A03 分类与记录指纹；另外八批只比历史指纹，不是本轮源码/语义复核。"
+    }
+  ],
+  "current_policy": {
+    "read": [
+      "AGENTS.md",
+      "docs/principles.md",
+      "docs/decisions/0007-three-deployment-frontend-framework.md",
+      "agents/implementation-audit/implementation-audit-2026-10-02.md"
+    ],
+    "decision": "ADR-0007 固定了 handle API 与 TS 生成边界；当前 package scripts 会调用 ts-rs 导出测试并检查 Web 生成目录。现行总账 Q01 对跨运行时安全整数范围的问题仍开放，旧复核结论不能解决该问题。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": [
+      "Q01"
+    ],
+    "candidate_counterevidence": [
+      "历史 root bindings 的生成来源、命令、消费者及 serde 等价性均未得到验证。",
+      "DTO/type 存在不证明运行时校验已实现。",
+      "Domain closure 重新审查了 A02 分类与总账指纹，但没有重新核对另外八个批次或当前源码语义。"
+    ],
+    "notes": "不得由历史审查通过推断当前源码已验证；保留 Q01，也不要仅凭这些文档候选新增 G。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "build_run": false,
+    "git_operations": false,
+    "written_files": [
+      ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-052.md",
+      ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-052.json"
+    ]
+  }
+}

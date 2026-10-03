@@ -1,0 +1,29 @@
+{
+  "batch_id": 171,
+  "owner": 1,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-05.md",
+      "sha256": "6d41f7a1d5bb1cbf86dda8c3d15054bd9ce6a15e08f31e582f8ae194e9653b38",
+      "lines": 509,
+      "read_to_eof": true,
+      "candidate_status": "reconfirmed_oop_boundary_no_new_product_fix"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-06.md",
+      "sha256": "23e862e1f185cdb3278d7bd6c074ff22aab5102d88aad3e449ef7b3b1ffef672",
+      "lines": 65,
+      "read_to_eof": true,
+      "candidate_status": "reconfirmed_oop_boundary_picker_cleanup_is_separate_behavior_candidate"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/web-07.md",
+      "sha256": "9bded863a11de2ea74191d8481c1bcd084bfa9c292879349995fab67fb4c46fc",
+      "lines": 436,
+      "read_to_eof": true,
+      "candidate_status": "reconfirmed_oop_boundary_existing_gaps_remain_separately_tracked"
+    }
+  ],
+  "conclusion": "三篇来源路径、行数、SHA-256 与唯一 scan-plan id=171 匹配；生产 callers 支持保留真实生命周期 owner 与 plain DTO/parser/reducer 边界。OOP 提取不构成修复，未据此新增或关闭 G/Q。"
+}

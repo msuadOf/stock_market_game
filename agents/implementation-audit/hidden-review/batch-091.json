@@ -1,0 +1,30 @@
+{
+  "batch_id": 91,
+  "owner": 1,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-foundation-03.md",
+      "sha256": "3a1dcb16ab32b891325512d1802bdd29e7b5c3b9b3f36d1d98c02addaf9f2dac",
+      "lines": 22,
+      "read_to_eof": true,
+      "new_candidate_status": "无；旧风险边界复核后仍仅属底层既有风险，未形成 OOP 抽取候选"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-foundation-04.md",
+      "sha256": "e3df810f0333667131e4e66e24196b70c27e4422957bc78b41f359b7af3ae70b",
+      "lines": 22,
+      "read_to_eof": true,
+      "new_candidate_status": "无；phase timing owner 边界成立，unit-037 的错误映射与 panic 清理局限仍准确"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-pipeline-01.md",
+      "sha256": "3b631b0f31e86fc8c32a48bc94b1141cd8a8b4e74202a0d820a76bbd26be88c4",
+      "lines": 22,
+      "read_to_eof": true,
+      "new_candidate_status": "A01 已实现：AccountBudget 已封装快照装载、更新与 cash/share lane patch API；无剩余迁移候选"
+    }
+  ],
+  "g_q_status": "未核销或重分类 G01-G68/Q01-Q23；G16、Q02、Q11 与本批无直接关联",
+  "tests_run": false
+}

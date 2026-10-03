@@ -1,0 +1,26 @@
+{
+  "batch_id": 182,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "conclusion": "no_new_accepted_commitment_omission_or_candidate_found; historical_public_visibility_claim_is_stale_at_baseline",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-03-recheck3.md",
+      "sha256": "e0fe3861c44c3b5b91f1e6019be5a3089f758b4138d6bb2d5000e03633d96551",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-03.md",
+      "sha256": "6004bdd0bbe79f9adc34513ae7f00c45cfe79d34079ae9242e8d1463f206e19e",
+      "lines": 32,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-04-recheck.md",
+      "sha256": "b2b076bd50bedfd0db125a24d7793782788cf4b1f3d7057671a84fdcdca6343f",
+      "lines": 9,
+      "read_to_eof": true
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "batch_id": 185,
+  "owner": 5,
+  "baseline": "43b1aa5",
+  "conclusion": "no_approved_commitment_omission_or_erroneous_historical_conclusion_found",
+  "scope_limit": "复核三篇历史记录的范围与承诺表述，并对照 43b1aa5 当前 worker/coordinator owner 与调用边界；未重做其继承的完整源码、测试或官方规则审查。",
+  "current_consumers": "三篇历史 Markdown 不属于运行时输入；当前生产调用与状态 owner 位于 packages/engine/src/session/pipeline。",
+  "candidates": [],
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-05-shadow-full.md",
+      "sha256": "fc4f6fff7a101db6f95555ed68ae800c8e59c2470e02119276b33a0822f31b0e",
+      "lines": 32,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-05-worker-full.md",
+      "sha256": "3164badc825a71ba6b7d9b6cb075cccc9ab53662c7ffaa5a449bfd2b06c688aa",
+      "lines": 39,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-06-metadata-final.md",
+      "sha256": "8423e48b72cde32a78d2ccd16a25a283f42713caa62cbc1f79d77b7002c1cf25",
+      "lines": 27,
+      "read_to_eof": true
+    }
+  ]
+}

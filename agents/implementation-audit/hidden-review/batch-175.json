@@ -1,0 +1,87 @@
+{
+  "batch": 175,
+  "owner": 5,
+  "status": "complete",
+  "source_baseline": "43b1aa5",
+  "product_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-01-rereview.md",
+      "sha256": "5e46f4f56a8574b93f21d18e79b637370144efc8304a55f02717f067a3cbdd6c",
+      "lines": 54,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-01.md",
+      "sha256": "64862be10c2f36704f52f480db2e296a51768092119984381f464d9863e312f7",
+      "lines": 32,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-02-delta-first.md",
+      "sha256": "2c2c67befc96c239377a0ebfd9aa839ac9febca82f463cb8f737441adb1611ee",
+      "lines": 35,
+      "read_to_eof": true
+    }
+  ],
+  "source_integrity": {
+    "method": "连续读取当前来源至 EOF，并以 scan-plan.json 核对 SHA-256 与行数；三份来源均不在 baseline commit 中，不能独立恢复历史字节。",
+    "plan_matches": 3,
+    "plan_total": 3,
+    "sources": [
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-01-rereview.md",
+        "sha256": "5e46f4f56a8574b93f21d18e79b637370144efc8304a55f02717f067a3cbdd6c",
+        "lines": 54,
+        "read_to_eof": true,
+        "present_in_baseline": false
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-01.md",
+        "sha256": "64862be10c2f36704f52f480db2e296a51768092119984381f464d9863e312f7",
+        "lines": 32,
+        "read_to_eof": true,
+        "present_in_baseline": false
+      },
+      {
+        "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-company-02-delta-first.md",
+        "sha256": "2c2c67befc96c239377a0ebfd9aa839ac9febca82f463cb8f737441adb1611ee",
+        "lines": 35,
+        "read_to_eof": true,
+        "present_in_baseline": false
+      }
+    ]
+  },
+  "review": {
+    "historical_scope_represented_accurately": true,
+    "current_owner_caller_consumer_checks": [
+      "consolidation::consolidate -> reports::consolidated_window::consolidated -> reports::generate_report_set；D01 对非正金额未校验的静态判断成立。",
+      "IndustrialBooks::purchase 先过账后 receipt；CompanyOperations 工商日常经营路径可调用 purchase。write_off_receivable 先过账后子账核销，当前生产源码未见 caller。",
+      "ClosingEngine::close_year 先封存十二月月报再生成年报，GameSession 日终路径调用；correct 先过账再记录 restatement/生成更正版，当前生产源码未见 caller。"
+    ],
+    "existing_gq": [
+      "G77：D01 非正往来申报候选已由主控登记；本批复核沿用该登记，不重复新增。",
+      "G28: 集团生产披露接线及往来申报账面上界，非 D01 非正金额检查的同义项。",
+      "G70: 工商开局库存子账与总账对账，非 D02 的一般跨层事务保证。",
+      "Q17: ClosingEngine::correct 的条件失败部分提交边界；不覆盖 close_year 可达性或验证状态。"
+    ],
+    "new_gq_candidate": "无；D01 候选已由主控登记为 G77，本批不重复登记。",
+    "principles_and_decisions_checked": [
+      "AGENTS.md 与 docs/principles.md：独立复核、诚实报告与公司会计/交易语义区分",
+      "docs/company-accounting.md：会计依据状态及合并简化范围",
+      "docs/decisions/0016-fundamental-factor-model.md：公司经营与报表交付边界",
+      "docs/decisions/0024-shrinking-investor-cash-pool.md：投资者资金池决策，与本批会计部分提交无直接关联",
+      "docs/open-questions.md 与 agents/implementation-audit/implementation-audit-2026-10-02.md：Q17、G28、G70"
+    ],
+    "a_share_basis": "未发现沪深交易规则变化或新制度主张；本批限定为公司会计与报告静态语义，未重新核验 CAS 或交易所/中国结算官方原文。",
+    "limitations": [
+      "历史审计来源不在 baseline commit，完整性只能对照当前字节与冻结计划。",
+      "caller/owner/consumer 检查为定向静态检查，不是穷尽会计模块调用图。",
+      "未验证 D03 后置失败分支的确定可达性；D02 极值构造属于条件输入，不声称常规旅程已触发。",
+      "未运行测试、构建或官方规则联网核查。"
+    ],
+    "product_files_modified": false,
+    "gq_ledger_modified": false,
+    "git_state_modified": false
+  }
+}

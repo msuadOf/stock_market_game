@@ -1,0 +1,57 @@
+{
+  "batch_id": 53,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-company-01.md",
+      "lines_read": 32,
+      "sha256": "83ff36ebf962140bf76f82332f9f2365c8c7e4694c5e2adcfd9f09f8d702a777",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["三项旧阻断", "领域、范围与遗留风险门禁"],
+      "caller_line_evidence": [
+        "packages/engine/src/company/industrial/purchasing.rs:45-115",
+        "packages/engine/src/company/operations/industrial.rs:146",
+        "packages/engine/src/company/industrial/sales.rs:214-249",
+        "agents/implementation-audit/reaudit-engine.md:G35",
+        "agents/implementation-audit/exhaustive-review/resolution.md:G35"
+      ],
+      "g_association": "G35 remains for its existing operating-cycle omissions; source-described D01-D03 are not claimed closed by caller.",
+      "new_candidate": false,
+      "counterevidence": "Historical review explicitly says purchase overflow remains unfixed and untested at the caller. Current engine audit preserves G35 and does not state that this failure boundary was fixed or closed."
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-company-02-projection-first-recheck.md",
+      "lines_read": 25,
+      "sha256": "b830f5e59cbd4c09f8b008cfed54ae9aa45ada71f618e7c849b9f82d5932b383",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["本轮范围与证据", "三项门禁"],
+      "caller_line_evidence": ["agents/implementation-audit/reaudit-engine.md:G35"],
+      "g_association": "No approved product commitment or erroneous G closure found for the historical documentation wording issue.",
+      "new_candidate": false,
+      "counterevidence": "The subsequent engine-company-02.md records the terminology delta as closed; the discrepancy is limited to audit prose and is outside the current approved-commitment omission scope."
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-company-02.md",
+      "lines_read": 25,
+      "sha256": "80f1ad82f6e1344b0b2659afe4e0ecf344bce9c5ff1f35a2a98dc1b3f7867291",
+      "eof": true,
+      "aliases": 1,
+      "sections": ["当前材料及引用证据", "三项门禁"],
+      "caller_line_evidence": ["agents/implementation-audit/reaudit-engine.md:G35"],
+      "g_association": "No new G; caller's relevant operating gap remains G35.",
+      "new_candidate": false,
+      "counterevidence": "The source concludes only that a constrained documentation wording delta passed and explicitly does not claim source risks fixed."
+    }
+  ],
+  "current_rules_read": ["AGENTS.md", "docs/principles.md", "docs/open-questions.md", "docs/decisions/0016-fundamental-factor-model.md", "docs/company-accounting.md"],
+  "approved_omission_found": false,
+  "erroneous_old_closure_found": false,
+  "new_candidates": [],
+  "tests_or_regression_run": false,
+  "product_code_changed": false
+}

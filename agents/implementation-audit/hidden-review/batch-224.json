@@ -1,0 +1,25 @@
+{
+  "batch": 224,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-07-runtime-final.md",
+      "sha256": "3306dcf8b26eb1568279a109ec9f403aec534a7ab77d4e0ccce6ef4973dba002",
+      "lines": 21,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-07-snapshot-final.md",
+      "sha256": "062531cc446215441c25da63a281fd280a7725e3fd0195257288e392a94a941e",
+      "lines": 21,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-07.md",
+      "sha256": "d9cbd255632f5704a76bcd5419448a1bd78e6ddc99c3c13c4368b01d836c8804",
+      "lines": 16,
+      "read_to_eof": true
+    }
+  ],
+  "findings": "三份均为历史审查材料；runtime-v2 parser、Redux snapshot writers 与 coordinator/chart 消费边在 43b1aa5 基线静态核对。没有基于这些材料建议的产品改动；未运行测试。"
+}

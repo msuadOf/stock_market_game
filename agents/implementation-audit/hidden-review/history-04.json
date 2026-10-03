@@ -1,0 +1,29 @@
+{
+  "sources": [
+    {
+      "index": 9,
+      "path": ".omo/notepads/escrow-parallel-engine/todo-2a-protocol-resolution.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ca81240befe30ce2837d167aeabfdbc54075b4a999a2381ddea53884a536acad",
+      "lines": 7,
+      "read_to_eof": true
+    },
+    {
+      "index": 10,
+      "path": ".omo/notepads/resolve-blockers-wayland/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "e79824b56d460a6f0fc3d7cdf9c54ac4e130a9b8c949584dc49a987563d98f4e",
+      "lines": 16,
+      "read_to_eof": true
+    },
+    {
+      "index": 11,
+      "path": ".omo/notepads/resolve-blockers-wayland/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "39e26ed9a168d02ddf770e7c3d4c6fee4a776dffb4e0997117a3a9a78f1dd141",
+      "lines": 221,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

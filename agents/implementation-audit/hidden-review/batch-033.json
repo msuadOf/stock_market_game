@@ -1,0 +1,96 @@
+{
+  "batch_id": 33,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/areas/tooling.md",
+      "expected_sha256": "adab7d170cff03055cc0b592eee694bb543779ceaa106066aa19a21928aee39e",
+      "observed_sha256": "adab7d170cff03055cc0b592eee694bb543779ceaa106066aa19a21928aee39e",
+      "expected_lines": 38,
+      "observed_lines": 38,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "区域结论",
+        "子模块对象归属与跨文件调用",
+        "建议迁移顺序",
+        "最终分类、复核与限制"
+      ],
+      "caller_paths": [
+        "scripts/performance/market-ui-report.mjs:120-154",
+        "scripts/run-with-deadline.mjs:10-24",
+        "scripts/smoke-pages.mjs:15-25"
+      ],
+      "g_associations": ["G61", "G62", "G63"],
+      "new_candidate": false,
+      "counterevidence": "候选迁移均标明未实施且非批准承诺；BuildRun/supervisor 有当前实现路径，不能把历史区域描述直接视为现状。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/domain.md",
+      "expected_sha256": "a0144776b0b8b48599a5bb4ac7e7a14f7d9f324e90e49b2bb8b7efc7dabf1ffd",
+      "observed_sha256": "a0144776b0b8b48599a5bb4ac7e7a14f7d9f324e90e49b2bb8b7efc7dabf1ffd",
+      "expected_lines": 20,
+      "observed_lines": 20,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "领域管理者交接（管理范围与产物）",
+        "最终分类与审查边界",
+        "Root 回看清单",
+        "最终限制与交接结论"
+      ],
+      "caller_paths": [],
+      "g_associations": [],
+      "new_candidate": false,
+      "counterevidence": "内容是 engine-company/foundation 的历史对象审计交接，与当前工具调用链无关；旧 review 通过不等价于运行时行为验收。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/managers/execution.md",
+      "expected_sha256": "d07ebd27ba8ff7d6a75e7aa0d5a4a219b42bbd8b8ecb5d847c3efc47ca03faf3",
+      "observed_sha256": "d07ebd27ba8ff7d6a75e7aa0d5a4a219b42bbd8b8ecb5d847c3efc47ca03faf3",
+      "expected_lines": 15,
+      "observed_lines": 15,
+      "aliases": 1,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": [
+        "执行域范围与审查交接",
+        "最终动作与历史执行限制",
+        "未决行为边界和证据限制"
+      ],
+      "caller_paths": [
+        "scripts/simulation/escrow-performance-harness.mjs:383-400"
+      ],
+      "g_associations": ["G61", "G62", "G63"],
+      "new_candidate": false,
+      "counterevidence": "交接记录明确是旧审计材料且没有源码验收；它没有批准或要求本轮实施额外 OOP 迁移。"
+    }
+  ],
+  "current_policy": {
+    "read": [
+      "AGENTS.md",
+      "docs/principles.md",
+      "docs/testing.md",
+      "docs/decisions/0028-tagged-release-and-static-pages.md"
+    ],
+    "not_applicable": ["docs/decisions/0019-draft-market-scope-and-capacity.md"],
+    "decision": "ADR-0028 未废止适用的测试与进程清理契约；未发现已批准 OOP 候选遗漏。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G61", "G62", "G63"],
+    "notes": "G61 sampler/UI failure cleanup, G62 external process-tree supervision, and G63 ordinary Rust per-case deadlines remain open in the caller ledger; association does not create new scope. Pages symlink containment remains an observed boundary, not a new approved OOP action."
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "git_operations": false
+  }
+}

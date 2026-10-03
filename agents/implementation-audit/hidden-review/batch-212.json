@@ -1,0 +1,55 @@
+{
+  "batch": 212,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-audit-tools-final.md",
+      "sha256": "3ef3780148874672216af394d007591ef146c7f82525303ae6972c9efbe9c4d5",
+      "lines": 62,
+      "read_to_eof": true,
+      "candidate_status": "历史最终复核绑定其记录的工具指纹与受控元数据，明确不证明源码语义或调查真实性；当前同名工具指纹已变化，旧结论不可外推。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-audit-tools.md",
+      "sha256": "a417aca3fb29fa8fb06a3d887ce0bc925682ea58e847dc809f70fceb0bf4b54f",
+      "lines": 22,
+      "read_to_eof": true,
+      "candidate_status": "已记载 inventory/renderer 对受控清单的路径及 schema 限制；当前 validator 仍有相同受控输入假设，属于审计工具边界，不据此升级产品 G/Q。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-closure-tool-final.md",
+      "sha256": "dc57c959378131ba35d248271241fae3d56e61d2104d3cfb8ad69648b8ec446a",
+      "lines": 17,
+      "read_to_eof": true,
+      "candidate_status": "缺少 review digest 的窄范围修复有历史代码审查记录；当前同名脚本已为其他指纹，本批未运行或独立复核当前版本，不宣称当前版本验收通过。"
+    }
+  ],
+  "result": {
+    "a_share_semantics": "不涉及交易代码或沪深交易制度；工具仅处理审计材料与源码字节指纹，未重新查验官方规则。",
+    "scope": "历史审计工具复核及其受控输入边界；不是产品功能、生产调用链或市场语义验收。",
+    "current_evidence": [
+      "agents/oop-refactor-audit/exhaustive/validate_inventory.py",
+      "agents/oop-refactor-audit/exhaustive/render_indexes.py",
+      "agents/oop-refactor-audit/exhaustive/verify_closures.py",
+      "agents/oop-refactor-audit/exhaustive/reviews/root-audit-tools-final.md",
+      "agents/oop-refactor-audit/exhaustive/reviews/root-audit-tools.md",
+      "agents/oop-refactor-audit/exhaustive/reviews/root-closure-tool-final.md",
+      ".worktree/implementation-reaudit/agents/implementation-audit/implementation-audit-2026-10-02.md:136-160",
+      "docs/decisions/0001-record-architecture-decisions.md",
+      "docs/decisions/0027-runtime-deployment-and-build-targets.md"
+    ],
+    "gq_disposition": "不新增、不核销、不重分类 G/Q；G39 与 Q05 保持总账状态，且与本批 inventory 工具分开。",
+    "historical_tool_hashes": {
+      "validate_inventory.py": "65cbbf0636b69a7bf8a3d6d6aae38bab7b05e189207ed5b96b13d6d21ab1b4b3",
+      "render_indexes.py": "61d839d06bd96458693eaa8ed44b292cd3c935f081ac3a0922799d930dd9aa9b",
+      "verify_closures.py": "b26bc45b432c5fb9a9b2f13c8b970981a547097f66d5d5c1d3ab5fec08648117"
+    },
+    "current_same_name_tool_hashes": {
+      "validate_inventory.py": "e302a0c9a65eae09608aca99bf4c1cc42b9b83b9ddf9530585ea4b9f31b69ea4",
+      "render_indexes.py": "0bf61b30d1124d39a47c572417170a8a3185607ef4ef32f3fa8d9bcb991e669e",
+      "verify_closures.py": "27be253dad339848eb9034b6dfdf79e674701859316bcf5ac15d3fd385ae1aed"
+    },
+    "tests_run": false,
+    "new_candidate": false
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "batch_id": 139,
+  "owner": 4,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-classification-before/areas-engine-foundation.md",
+      "sha256": "ec415169ed7b6166fb322be3e95eabd308067c5ba947ab3b80bd36b0a9fdd16c",
+      "lines": 45,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-classification-before/managers-domain.md",
+      "sha256": "f5d46c1d1d0420d65a57f1fdf8f6c61318ce4dd94e90b66993e8936af9a28a44",
+      "lines": 20,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-classification-before/modules-engine-foundation-01.md",
+      "sha256": "089db6c91f24df1039b290eceab1e4b8365d393be461c8dec4691882792559ea",
+      "lines": 116,
+      "read_to_eof": true
+    }
+  ],
+  "current_baseline": {
+    "checkout": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+    "all_sources_available": true,
+    "source_hashes_and_line_counts_match_plan": true,
+    "product_files_edited": false,
+    "tests_or_builds_run": false,
+    "official_a_share_rules_reverified": false
+  },
+  "findings": [
+    {
+      "status": "historical_candidate_already_present_in_baseline",
+      "subject": "Account field encapsulation and controlled mutation",
+      "evidence": "Account/account 状态字段为 private；存在只读 accessor 和 crate-private restore_balances/restore_strategy；NPC 替换仍经 AccountBook::get_mut。历史材料将此视为未实现候选，但相对指定基线已过时。"
+    },
+    {
+      "status": "still_present_source_risk",
+      "subject": "Calendar policy digest 未包含 OfficialCoverageEntry.source_digest",
+      "evidence": "Validation 要求 source_digest 非空，但 compute_content_digest 未将其纳入。仅更改该值不会改变计算所得的 policy digest。"
+    },
+    {
+      "status": "still_present_source_risk",
+      "subject": "CivilInstant deserialize 绕过秒内时刻校验",
+      "evidence": "CivilInstant 派生 serde::Deserialize，但 CivilInstant::new 会强制 second_of_day < 86400。"
+    },
+    {
+      "status": "still_present_documentation_mismatch",
+      "subject": "Account 结算注释遗漏过户费",
+      "evidence": "apply_buy 文档称金额为 gross 加 commission，apply_sell 文档称 gross 减 commission 和 stamp tax；实现还会收取 transfer_fee。"
+    },
+    {
+      "status": "configuration_boundary_limitation",
+      "subject": "GameConfig 构造/反序列化后不保证有效",
+      "evidence": "字段仍为 public 且派生 Deserialize；caller 必须在消费边界调用 validate。未独立核验任何费率或 A 股规则。"
+    }
+  ],
+  "scope_limitations": [
+    "Static caller/consumer search only; no dynamic reachability validation.",
+    "未运行测试或构建，也未复核官方来源。",
+    "The batch contains historical architecture/domain audit documents, not a complete product-source inventory."
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "status": "来源没有证明已批准承诺遗漏或 G/Q 被错误核销；A03 当前已由基线实现，另外三项代码/文档风险仍可复现，提交 caller 总账评估。"
+  }
+}

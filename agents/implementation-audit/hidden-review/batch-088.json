@@ -1,0 +1,55 @@
+{
+  "batch_id": 88,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/summary-review.md",
+      "expected_lines": 42,
+      "observed_lines": 42,
+      "expected_sha256": "b675db69f101d5363d20e29210c72fbbc198bde1c813c39997cdfc5a1263b37e",
+      "observed_sha256": "b675db69f101d5363d20e29210c72fbbc198bde1c813c39997cdfc5a1263b37e",
+      "aliases": 1,
+      "eof": true,
+      "status": "verified"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/contracts-01.md",
+      "expected_lines": 22,
+      "observed_lines": 22,
+      "expected_sha256": "b6ea49f1c4d337213e9ea8ff8a9dcb24701ae0e265cbad4f66ea4ca80cb0b72c",
+      "observed_sha256": "b6ea49f1c4d337213e9ea8ff8a9dcb24701ae0e265cbad4f66ea4ca80cb0b72c",
+      "aliases": 1,
+      "eof": true,
+      "status": "verified"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-company-01.md",
+      "expected_lines": 22,
+      "observed_lines": 22,
+      "expected_sha256": "dbbd689a4068fdd5f5d6b31a877a0635258b5b9bc028f27689ac9d34fc4e1abd",
+      "observed_sha256": "dbbd689a4068fdd5f5d6b31a877a0635258b5b9bc028f27689ac9d34fc4e1abd",
+      "aliases": 1,
+      "eof": true,
+      "status": "verified"
+    }
+  ],
+  "current_caller_instructions_read": [
+    ".worktree/implementation-reaudit/AGENTS.md",
+    ".worktree/implementation-reaudit/docs/principles.md",
+    ".worktree/implementation-reaudit/docs/decisions/0016-fundamental-factor-model.md",
+    ".worktree/implementation-reaudit/docs/decisions/0024-shrinking-investor-cash-pool.md",
+    ".worktree/implementation-reaudit/docs/open-questions.md"
+  ],
+  "findings": [],
+  "conclusion": "本批来源是入口/中文化审查，并明确限定了审查范围；没有证据支持已批准承诺遗漏或旧核销错误。未把候选建议或无运行证据的风险列为发现。",
+  "code_relationships": [
+    "package.json:17-18; .cargo/config.toml:19; scripts/check-generated-types.mjs:3-13",
+    "packages/engine/src/company/mod.rs:54; packages/engine/src/session/company_operations.rs:11-12,46-110",
+    "packages/engine/src/session/disclosures.rs:53,157-192"
+  ],
+  "product_changes": false,
+  "tests_or_regression_run": false,
+  "git_write": false
+}

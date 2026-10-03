@@ -1,0 +1,59 @@
+{
+  "batch_id": 98,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "plan_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/scan-plan.json",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-strategy-01.md",
+      "aliases": 1,
+      "eof": true,
+      "lines": 22,
+      "planned_lines": 22,
+      "sha256": "745d2790341198613bdc1d7ba8621ebfb751a7e9fdf18d3b4ecb09b8d5da5be0",
+      "planned_sha256": "745d2790341198613bdc1d7ba8621ebfb751a7e9fdf18d3b4ecb09b8d5da5be0",
+      "summary": "翻译版映射和有限范围校对记录；不重新审查源码语义。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-strategy-02.md",
+      "aliases": 1,
+      "eof": true,
+      "lines": 22,
+      "planned_lines": 22,
+      "sha256": "d30e5310239ec0395c7a1c16feb337d9420018c61e83181af565709bdd1e9662",
+      "planned_sha256": "d30e5310239ec0395c7a1c16feb337d9420018c61e83181af565709bdd1e9662",
+      "summary": "翻译版映射记录；语义审查结论仅对应冻结原文。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-strategy-03.md",
+      "aliases": 1,
+      "eof": true,
+      "lines": 22,
+      "planned_lines": 22,
+      "sha256": "32afc1a1b07993941bb03a548de195c231121998e1245c8bcc640dfd58f8be3a",
+      "planned_sha256": "32afc1a1b07993941bb03a548de195c231121998e1245c8bcc640dfd58f8be3a",
+      "summary": "翻译版映射记录；没有生产源码或交易规则变化。"
+    }
+  ],
+  "constraints_read": [
+    "caller AGENTS.md",
+    "caller docs/principles.md",
+    "caller docs/open-questions.md",
+    "ADR-0006",
+    "ADR-0012",
+    "ADR-0013",
+    "ADR-0016",
+    "ADR-0021",
+    "ADR-0026"
+  ],
+  "candidate_checks": {
+    "G06-G09": "继续未结。策略中文复核文件并非源码语义复核；caller总账和reaudit-engine均记录现行缺口，未发现错误旧核销。",
+    "Q11": "继续开放。生产cause分发的边界与caller reaudit-engine一致；本批不新建产品缺口。",
+    "new_approved_omission": false,
+    "bad_historical_closure": false,
+    "counterevidence": "批次记录把自身范围限定为翻译差异，且引用的旧语义review仅适用于冻结原文；不能将‘通过’外推为产品实现完成。caller生产行及现行总账对G06-G09、Q11均提供仍开放证据。"
+  },
+  "validation": "未运行测试、构建、回归或官方规则查询；只写本批审计记录。"
+}

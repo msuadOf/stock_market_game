@@ -1,0 +1,72 @@
+{
+  "batch": "064",
+  "owner": 4,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-02-manager-delta.md",
+      "lines": 26,
+      "sha256": "7286017b37d84c2d1aa5138e5e4b0f306d8a5c69bf79abb9524fcf3c2ad31b97",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-02.md",
+      "lines": 13,
+      "sha256": "910eaad88597795a57c107faaff77dadba1978710b5fd0398c232fa603f2a3a3",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-03-manager-delta.md",
+      "lines": 27,
+      "sha256": "1288105e2ad99f99f8435812b37074eed36a274304d753e2d1eebec46d3f04eb",
+      "read_to_eof": true
+    }
+  ],
+  "docs_read": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/decisions/0011-market-time-observations-and-position-risk.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0019-draft-market-scope-and-capacity.md",
+    "docs/decisions/0023-synthetic-history-and-matching-only.md",
+    "docs/decisions/0024-shrinking-investor-cash-pool.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0026-individual-institution-experience.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md"
+  ],
+  "candidate_disposition": [
+    {
+      "id": "engine-session-02-A03",
+      "status_at_baseline": "already_implemented",
+      "evidence": "packages/engine/src/session/candles.rs::SessionCandleBook; GameSession wrappers; continuous_tick_finalizer and auction_day_end callers; snapshot/SaveSlot two-field projection"
+    },
+    {
+      "id": "engine-session-03-A01",
+      "status_at_baseline": "already_implemented",
+      "evidence": "packages/engine/src/session/decision_chain/roots.rs::RootReadContext/InstitutionDecisionRoot; plan_chain_candidates.rs::start_ready_accounts uses Arc<RootReadContext>"
+    },
+    {
+      "id": "engine-session-03-A02",
+      "status_at_baseline": "retained_boundary",
+      "evidence": "adaptive coordinator consumes typed route outcomes and applies lifecycle operations against the current private candidate"
+    }
+  ],
+  "confirmed_g_mapping": [
+    {
+      "id": "G16",
+      "status": "remains_open",
+      "reason": "RootReadContext::capture still clones the full PlanBook; root extraction does not prove the history/plan copy cost resolved"
+    }
+  ],
+  "confirmed_open_q_mapping": [],
+  "large_a_semantics": "未发现交易语义变化；仅核对当前 owner 与既有撮合/历史契约，没有提出新规则主张或重新查询官方规则。",
+  "tests_or_builds_run": false,
+  "product_source_modified": false,
+  "git_write_operations": false
+}

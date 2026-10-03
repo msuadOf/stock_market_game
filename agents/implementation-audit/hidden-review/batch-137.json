@@ -1,0 +1,25 @@
+{
+  "batch": 137,
+  "owner": 2,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-company-04.md",
+      "sha256": "dbc30f8ab22e15f61b50e5d8cc2165e707804fbd987e6c53706cbb5318c520f4",
+      "lines": 43,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-company-05.md",
+      "sha256": "45105038e826404ebb1e7867df7778ae404c8510fc24a98c4ebeff5733cd767a",
+      "lines": 23,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-foundation-01.md",
+      "sha256": "00a3c6da08a3078a662397c950ef7fa3c659beffdc7ae8ae23ec3b31131f1921",
+      "lines": 29,
+      "read_to_eof": true
+    }
+  ]
+}

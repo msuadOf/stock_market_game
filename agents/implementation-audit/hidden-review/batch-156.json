@@ -1,0 +1,28 @@
+{
+  "batch": 156,
+  "owner": 1,
+  "baseline_commit": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-foundation-01.md",
+      "sha256": "ae454b343b4f1dd5e318bc61ce3243b9b84a1611dbff8a424533d4801fb5907c",
+      "lines": 116,
+      "read_to_eof": true,
+      "candidate_status": "Account A03 已由 8cf34a1 落实；retain 结论保留；费用注释缺口与日历摘要完整性风险仍待总审计分类。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-foundation-02.md",
+      "sha256": "ac9120574197fc6c2df34dec8cb6d7a56a5287a3f4804bff25392299f0daac06",
+      "lines": 52,
+      "read_to_eof": true,
+      "candidate_status": "OOP retain 判断成立；经历 public 字段、restore validation、legacy writer 部分失败原子性仍是需去重和核实入口的候选。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-foundation-03.md",
+      "sha256": "67d1ff8c84e997867fbcb0168ac38a9920a9016ba3373dcde14a72553ed6a7ca",
+      "lines": 21,
+      "read_to_eof": true,
+      "candidate_status": "Market/OrderBook 等 retain 判断成立；旧 public 价格写口已被后续代码收窄；低层撮合部分修改后出错仍属既有、具边界的原子性限制。"
+    }
+  ]
+}

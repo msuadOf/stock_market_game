@@ -1,0 +1,27 @@
+{
+  "batch_id": 215,
+  "owner": 5,
+  "baseline": "43b1aa5",
+  "conclusion": "历史审查材料与基线源码相符；未发现应由本批触发的产品改动遗漏",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-02.md",
+      "sha256": "3fa6237ff6f02c190f8429c3860695bc7707e398b5ed7151491bd56f893da097",
+      "lines": 68,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-03.md",
+      "sha256": "59fa037bc57e58cf1f83ea64e8ec571fc610bc105a8d8ac4ce09a38708e417bd",
+      "lines": 48,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/tooling-04.md",
+      "sha256": "a0a40f72840cd6902937bf8526b29d2b011e89478b5bf9f6af287dd593bfa723",
+      "lines": 65,
+      "read_to_eof": true
+    }
+  ],
+  "findings": "已对照 43b1aa5 的打包、CDP/子进程、baseline evidence 与 escrow sampler 实现及其消费边界。材料区分当前缺陷、候选修复和未覆盖测试；确认未把逐 seed 发布顺序写成矩阵原子事务。ADR-0017/0027/0028 与 open-questions 未要求改变工具行为或 A 股语义。大 A 语义、必要性/最小范围及边界描述均通过。未运行测试或构建；不代表源码缺陷已修复。"
+}

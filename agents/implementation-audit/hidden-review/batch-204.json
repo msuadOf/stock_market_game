@@ -1,0 +1,89 @@
+{
+  "batch_id": 204,
+  "owner": 4,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "caller_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "status": "complete_with_limits",
+  "read_status": "all_sources_read_to_eof",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-07.md",
+      "sha256": "db77997e8b3999a12261b4c7b534e67670c0be938dce4d40a1b3c14df10e7110",
+      "lines": 86,
+      "eof": true,
+      "aliases": 2,
+      "baseline_tracked": false,
+      "current_owner_callers_consumers": [
+        "packages/engine/tests/plan_allocation/main.rs",
+        "packages/engine/tests/publications/",
+        "packages/engine/tests/protocol_acceptance.rs",
+        "packages/engine/tests/protocol_civil.rs",
+        "packages/engine/tests/protocol_host_restore.rs",
+        "packages/engine/tests/protocol_projection.rs",
+        "packages/engine/tests/protocol_runtime_delta.rs"
+      ]
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-08.md",
+      "sha256": "f8abff0fe606c7f07eb688b198d6795e61896c32bff5ce0fe5fec914a060b6a6",
+      "lines": 86,
+      "eof": true,
+      "aliases": 1,
+      "baseline_tracked": false,
+      "current_owner_callers_consumers": [
+        "packages/engine/tests/real_estate_accounting/main.rs",
+        "packages/engine/tests/save_contract/main.rs",
+        "packages/engine/tests/scale_restore_limits.rs"
+      ]
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-09.md",
+      "sha256": "2ffef988d7d7a9a8599d3e0d172974f2170d408d6a4e71dda88276685d0c9b6e",
+      "lines": 36,
+      "eof": true,
+      "aliases": 1,
+      "baseline_tracked": false,
+      "current_owner_callers_consumers": [
+        "packages/engine/tests/session.rs"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "B204-01",
+      "status": "confirmed",
+      "type": "historical_source_not_in_baseline",
+      "summary": "三份 review 文件当前存在且 hash/行数与计划相符，但均无法从指定基线 43b1aa5 读取；其基线归属和提交来源无法据本批确认。",
+      "paths": [
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-07.md",
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-08.md",
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-09.md"
+      ]
+    },
+    {
+      "id": "B204-02",
+      "status": "confirmed_limit",
+      "type": "historical_review_not_current_source_audit",
+      "summary": "历史材料分别记录 allocation 用例数、地产 fixture 说明和 restore 拒绝边界的修订过程；本批未重开所有关联 item/module 和生产/测试源码，亦未重新验证测试行为。",
+      "paths": [
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-07.md",
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-08.md",
+        "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-09.md"
+      ]
+    }
+  ],
+  "a_share_semantics": {
+    "status": "limited_historical_context_only",
+    "summary": "无交易规则实现或官方来源查询；不对现行沪深交易规则正确性作结论。地产资本化阈值按历史记录所述为游戏假设。"
+  },
+  "validation": {
+    "tests_run": false,
+    "builds_run": false,
+    "external_rules_checked": false,
+    "git_write_operations": false,
+    "product_source_modified": false,
+    "baseline_source_paths_read": false,
+    "current_test_entrypoints_checked": true
+  }
+}

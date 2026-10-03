@@ -1,0 +1,29 @@
+{
+  "batch_id": 184,
+  "owner": 4,
+  "baseline": "43b1aa5",
+  "conclusion": "no_approved_commitment_omission_or_erroneous_historical_closure_found",
+  "scope_limit": "仅复核三份历史审查记录的范围与承诺表述；未重新审查其继承范围内全部源码、外部规则依据或历史测试。",
+  "current_consumers": "未发现这些历史 Markdown 被生产代码消费；生产路径以当前 packages/engine/src/session/pipeline 实现及调用者为准。",
+  "candidates": [],
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-04-final.md",
+      "sha256": "48b0b1edcaa0fd381f49975ab5e7be24d5a622ca7bfc2bd09ca4c65e399020d3",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-04-full-supplement.md",
+      "sha256": "da71a6fb90a41a8db32467e43eadcdbc02331ec59a7454ccc6a249f6276dbaff",
+      "lines": 31,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-05-final.md",
+      "sha256": "924d5eeb9af329e08564bf1c52efe439112f6c1717abb094d96324a72c328c4e",
+      "lines": 33,
+      "read_to_eof": true
+    }
+  ]
+}

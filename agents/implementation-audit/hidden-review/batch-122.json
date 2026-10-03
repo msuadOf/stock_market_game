@@ -1,0 +1,25 @@
+{
+  "id": 122,
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/pipeline-manager.md",
+      "sha256": "3f0bc477b65d0fcace18aae7ddad3dbf4e88244838b5b0a8a2066243a7049132",
+      "lines": 78,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/pipeline-redo03.md",
+      "sha256": "5e795cbf1bb83e578c1f514b6e5a6c0c075c5b7ea71f98ca5df65520c924acc3",
+      "lines": 58,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/pipeline-sol-domain.md",
+      "sha256": "95d9660888b405269d1e485aa2ae83681b981ad0f4ac18296804e4e871fd3ab5",
+      "lines": 129,
+      "read_to_eof": true
+    }
+  ]
+}

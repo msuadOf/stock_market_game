@@ -1,0 +1,48 @@
+{
+  "batch_id": 133,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "plan_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/scan-plan.json",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-02.md",
+      "sha256": "37114692840d2b1150297ed88c18b009a50513e1e514db39d2e2d97cb0baf733",
+      "lines": 551,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-03.md",
+      "sha256": "3a71a1fc6b3ef592b309597c6a4fd4a6f9981139762d4490782fd41ada5e1837",
+      "lines": 416,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-04.md",
+      "sha256": "4ad35d6c658851c6b5c25b0f149c2af0d47e6d1162236a5c1a5f05d6f50146de",
+      "lines": 302,
+      "read_to_eof": true
+    }
+  ],
+  "constraints_read": [
+    "current AGENTS.md",
+    "docs/principles.md",
+    "docs/architecture.md",
+    "docs/open-questions.md",
+    "ADR-0016",
+    "ADR-0024",
+    "ADR-0026",
+    "docs/company-accounting.md",
+    "docs/implementation-gaps.md"
+  ],
+  "candidate_checks": {
+    "D01_EclPolicy_version_floor": "旧材料明确为独立行为缺陷线索而非对象化承诺；未找到当前 ADR/Q 中单独批准此具体校验行为的依据，不确认为遗漏。",
+    "D02_build_notes_classification_fallback": "旧材料限定为标准校验发布路径不可达的内部输入一致性边界；未找到单独批准的修复承诺，不确认为遗漏。",
+    "D01_seed_inventory_missing_seed": "旧材料明确为改变构造行为的候选；当前实现缺口文档保留未支持开局子账种子的简化/拒绝边界，未发现批准该修复或已错误核销的证据。",
+    "new_approved_omission": false,
+    "bad_historical_closure": false,
+    "counterevidence": "三份源记录均标明候选且未实施，没有声称候选已交付；候选 bug fix 不能替代用户批准。相关 ADR、开放问题及实现缺口登记未证明这些具体候选曾成为批准承诺或被错误核销。"
+  },
+  "validation": "未运行测试、构建、回归或官方规则查询；仅写本批审计记录。"
+}

@@ -1,0 +1,26 @@
+{
+  "batch_id": 219,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "finding": "未发现历史复核结论与当前协议代码调用关系存在实质冲突；其范围限制仍需保留",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-03-date-final.md",
+      "sha256": "f6d5cb642bf6be4583c4bd478085c7b646c83de8f2f048f1399403fa24a0478d",
+      "lines": 16,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-03-parse-final.md",
+      "sha256": "166b5d5b5ae8f2f75a682864af64c25b92bec08fd0bf396bcd4549e3e7343aa5",
+      "lines": 28,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-03.md",
+      "sha256": "184a7a9e7dd1d220b883e7de3dd61c4fbbec6f350677eb840d0ed144a2be0d7a",
+      "lines": 12,
+      "read_to_eof": true
+    }
+  ]
+}

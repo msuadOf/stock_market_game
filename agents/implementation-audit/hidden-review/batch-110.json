@@ -1,0 +1,35 @@
+{
+  "batch_id": 110,
+  "owner": 5,
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/domain-foundation-a.md",
+      "sha256": "ed78fc1584b74ed699e22a84e4593bcffe3d6714e29b6a5296bbce0158ffe3a2",
+      "lines": 43,
+      "read_to_eof": true,
+      "candidate_status": "仅复核 engine-foundation-01/02 中文化；不证明生产 caller 或官方规则取证。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/domain-foundation-b.md",
+      "sha256": "dc36f9ecd0a4ca2df001af19c45572382b4b85de0ed92b4c97b40e1a9b968fd6",
+      "lines": 46,
+      "read_to_eof": true,
+      "candidate_status": "仅复核中文化差异；明确未改源码、未运行测试或重新取得官方规则依据。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-01-recheck.md",
+      "sha256": "d31278eb8e843ab95e9f41fe0eb9b2ce9020abed52c14a81833636e29e707b44",
+      "lines": 17,
+      "read_to_eof": true,
+      "candidate_status": "仅复核 group-01 中文化措辞，不覆盖源码、产品行为或历史依据。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "oop_extraction_is_fix": false,
+    "status": "三篇文案复核不改变当前 caller 总账；G15/G28/G35/G36 与 Q01/Q03 仍依基线状态管理，不由中文化 pass 核销。"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "batch": 55,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-foundation-02.md",
+      "sha256": "d3bb55b7d36bc8743373d140167c5066c822ac5dd3a4f65b228ad87272358e68",
+      "lines": 40,
+      "aliases": 1,
+      "full_read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-foundation-03-delta-evidence.md",
+      "sha256": "5a070cb97d0e350e65f3d6ff4cff295b0e25a11221220c3229fefd64829c555b",
+      "lines": 29,
+      "aliases": 1,
+      "full_read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-foundation-03.md",
+      "sha256": "22bfe1427caa8a334a3a458d6e62b8244fbb570ef2ea0a3d1d630f0189030ee9",
+      "lines": 32,
+      "aliases": 1,
+      "full_read_to_eof": true
+    }
+  ],
+  "review": {
+    "result": "通过，附一项历史 API 可见性漂移说明",
+    "a_share_semantics": "通过；未提出制度变化或新官方规则主张",
+    "scope": "通过；未提出额外 OOP 或源码改动要求",
+    "current_baseline_observation": "set_last_price/set_last_close 对应基线入口为 crate-private fixture setter；record_filled_order 为 pub(crate)，生产 consumer 位于 auction_day_end.rs",
+    "g_q_mapping": "没有可确认的直接映射；不按 engine 关键词硬配编号",
+    "tests_or_builds_run": false,
+    "product_code_modified": false
+  }
+}

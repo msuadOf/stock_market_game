@@ -1,0 +1,53 @@
+{
+  "batch_id": 114,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-06-recheck.md",
+      "sha256": "6e33363e7e72d14da2150550dfb4b6a9985c543bc48d8fbc45eb65b4e12f7221",
+      "lines": 14,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-06.md",
+      "sha256": "ad0ba5363ce21b896ece2e1a227d8cedfc905575f48484bb77418f48b61026c9",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-07-recheck.md",
+      "sha256": "ed0d319c82396a51b2b41eedce9ea420efdff8e56ffb0d7542b3066ed801f5d5",
+      "lines": 20,
+      "read_to_eof": true
+    }
+  ],
+  "chapter_status": {
+    "final_06_recheck": "指纹、14 行和 EOF 均吻合；仅复核 Group 06 最终中文化 diff，结论通过且不声称源码重审。",
+    "final_06": "指纹、15 行和 EOF 均吻合；历史审阅指出 Group 06 文案中重复词及空格问题。",
+    "final_07_recheck": "指纹、20 行和 EOF 均吻合；复核 Group 07 中文化 diff，结论通过且未发现阻断问题。"
+  },
+  "current_owners_callers_consumers": [
+    {
+      "artifact": "agents/oop-refactor-audit/chinese-localization/review-diffs/final/group-06.diff",
+      "relationship": "由 final-review-groups.json 第 101 项登记；reviews.json 的 recheck06 记录将其列为被复核 diff，并登记 10 个 accepted_paths。",
+      "current_check": "差异中已见自然修订后的目标语句；当前 engine-session-07-binding-final.md 中相关句子为‘与 items、unit-074/unit-087 及 manager delta 复核记录一致’，未见历史报告所指出的‘记录’重复。"
+    },
+    {
+      "artifact": "agents/oop-refactor-audit/chinese-localization/review-diffs/final/group-07.diff",
+      "relationship": "由 final-review-groups.json 第 118 项登记；reviews.json 的 recheck07 记录将其列为被复核 diff，并登记 8 个 accepted_paths。",
+      "current_check": "对应登记的最终差异仍可读；其复核记录限定于文档中文化，不代表重新审查 engine 源码。"
+    },
+    {
+      "artifact": "agents/oop-refactor-audit/chinese-localization/reviews.json",
+      "relationship": "当前文档化复核消费者；independent_reviews 中有 final-06-recheck 与 final-07-recheck 条目，passed=true，并分别绑定最终 diff SHA-256。"
+    },
+    {
+      "artifact": "agents/oop-refactor-audit/challenge-2026-10-03/root/frozen-history-manifest.json",
+      "relationship": "历史归档清单登记三份来源及对应 Group 06/07 diff 路径；属于历史材料索引，不是产品运行时 caller。"
+    }
+  ],
+  "result": "三份来源均存在于 baseline checkout 并与计划指纹一致。final-06.md 的文面发现是历史初审结论；当前最终 diff 与目标文档显示重复词已修正，final-06-recheck 仅确认所审中文化 diff，不提升为源码复审。final-07-recheck 通过。未发现本批材料提出新的产品承诺、实现要求或大 A 规则变化；本批只涉及审计记录中文化，不适用交易规则核验。未修改产品文件，未运行测试。"
+}

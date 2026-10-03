@@ -1,0 +1,124 @@
+{
+  "batch": "049",
+  "owner": 4,
+  "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-02.md",
+      "sha256": "44400da019792d6392695c86110aaed6e8eb875457f6d923288a788472c848a9",
+      "lines": 450,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-03.md",
+      "sha256": "c241b88aad53aa71fb27245bcfc72c763e8dbe6738c9f67608a46e86d2b67daf",
+      "lines": 156,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/web-04.md",
+      "sha256": "e465951ecf959428a37700a4f8e1864d5364b81ceb1e76e87e9634580a534f13",
+      "lines": 400,
+      "read_to_eof": true
+    }
+  ],
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "chapter_families": {
+    "web-02": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "apps/web/src/components/auto-order-manager.ts:28-48",
+        "apps/web/src/App.tsx:217-225",
+        "apps/web/src/host/company-query-coordinator.ts:55",
+        "apps/web/src/host/protocol-coordinator.ts:26-53",
+        "apps/web/src/host/worker-request-scope.test.ts:56-68"
+      ],
+      "notes": "AutoOrderManager、CompanyQueryCoordinator 与 ProtocolCoordinator 均有生产 owner/caller。MarketGrid、CompanyPanel、PriceChart 的组件生命周期不需包装；其行为缺口仍由对应 G 项独立跟踪。"
+    },
+    "web-03": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "apps/web/src/host/protocol-coordinator.ts:26-75",
+        "apps/web/src/App.tsx:217-230",
+        "apps/web/src/host/protocol/reduce.ts",
+        "apps/web/src/store/store.ts"
+      ],
+      "notes": "ProtocolCoordinator 由 App 生产路径创建并连接 reducer、Redux dispatch 与消费者 callbacks；协议转换与 DTO 仍为无状态函数/值。协调器/Redux 的活动委托值是不同边界投影。"
+    },
+    "web-04": {
+      "status": "retain_reverified_with_source_correction",
+      "current_evidence": [
+        "apps/web/src/host/remote-host.ts:192-198",
+        "apps/web/src/host/worker-host.ts:79-94,336-364",
+        "apps/web/src/host/worker-request.ts:43-73",
+        "apps/web/src/host/worker-request-scope.test.ts:56-68",
+        "apps/web/src/host/tauri-host.ts:113-141,165-175",
+        "apps/web/src/host/tauri-event-coordinator.test.ts:1-17"
+      ],
+      "notes": "worker-request 同步 postMessage 抛错路径已有测试，原文称无测试覆盖不准确；测试锁定 timeout 后清理的当前行为。G53 generation 递增缺口仍成立。Remote baseline 乱序语义待确认。Tauri 初始化失败清理存在未复现的静态风险，未升级为确认缺陷。"
+    }
+  },
+  "candidate_status": {
+    "necessary_oop_candidates": [],
+    "optional_internal_refinements": [],
+    "status": "未发现待实施必要 OOP 动作；保留已有状态 owner 与纯函数边界。"
+  },
+  "cross_ledger_findings": [
+    {
+      "ledger": "G01–G68",
+      "status": "无核销主张",
+      "covered_ids": [
+        "G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10", "G11", "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19", "G20", "G21", "G22", "G23", "G24", "G25", "G26", "G27", "G28", "G29", "G30", "G31", "G32", "G33", "G34", "G35", "G36", "G37", "G38", "G39", "G40", "G41", "G42", "G43", "G44", "G45", "G46", "G47", "G48", "G49", "G50", "G51", "G52", "G53", "G54", "G55", "G56", "G57", "G58", "G59", "G60", "G61", "G62", "G63", "G64", "G65", "G66", "G67", "G68"
+      ],
+      "finding": "所有编号均按对应主账状态保持；G27维持既有核销。G53 的 nextGeneration 递增校验缺口得到当前代码再次支持。宿主/UI 层对象存在不能核销其外部行为契约。"
+    },
+    {
+      "ledger": "Q01–Q23",
+      "status": "无核销主张",
+      "covered_ids": [
+        "Q01", "Q02", "Q03", "Q04", "Q05", "Q06", "Q07", "Q08", "Q09", "Q10", "Q11", "Q12", "Q13", "Q14", "Q15", "Q16", "Q17", "Q18", "Q19", "Q20", "Q21", "Q22", "Q23"
+      ],
+      "finding": "本批没有决策或实现变更解决任何 Q；无依据按模块/概念关键词绑定 Q。"
+    }
+  ],
+  "source_corrections_and_risks": [
+    {
+      "subject": "WorkerRequestScope 同步 postMessage 抛错测试",
+      "status": "source_counter_evidence",
+      "evidence": "worker-request-scope.test.ts:56-68 显式测试抛错、timeout 前资源仍在 pending、timeout 后 listener/pending 清除。"
+    },
+    {
+      "subject": "Worker load generation 与 stale response",
+      "status": "G53_retained; stale_response_unverified",
+      "evidence": "worker-host.ts:353-362 在 restore await 后无原 generation/disposed 检查；nextGeneration 仅正安全整数校验。"
+    },
+    {
+      "subject": "Remote baseline generation 顺序",
+      "status": "contract_unresolved",
+      "evidence": "remote-wire 校验形状，remote-host handler 接收 baseline；未证明服务端会送达乱序旧 baseline。"
+    },
+    {
+      "subject": "Tauri host 初始化失败资源收尾",
+      "status": "static_risk_unreproduced",
+      "evidence": "tauri-host.ts:113-141 监听注册位于初始化 try 外；后续初始化失败 catch unlisten 但未 stop 已创建 session。"
+    }
+  ],
+  "adr_status": {
+    "ADR-0007": "accepted；React/Redux 与统一 EngineHost 架构边界适用。",
+    "ADR-0010": "accepted；baseline/delta、命令确认、局部刷新与宿主差异为现行契约，优先于早期历史草稿。",
+    "later_decisions": ["ADR-0023", "ADR-0024", "ADR-0025", "ADR-0026", "ADR-0027", "ADR-0028"],
+    "summary": "采用较新已接受决策；ADR-0028 发布仅构建/打包/核验/部署。本批无领域规则变更。"
+  },
+  "domain_review": {
+    "status": "未引入领域规则变更",
+    "official_rule_lookup": "未执行",
+    "boundary": "单位保持金额分、数量股；不重开撮合、T+1、资金池、真实行情校准、个体策略或日终存档决定。"
+  },
+  "validation": {
+    "tests": "未运行；仅静态读取已有测试源码",
+    "build": "未运行",
+    "git_mutation": "未执行",
+    "official_rule_lookup": "未执行"
+  },
+  "report": ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-049.md"
+}

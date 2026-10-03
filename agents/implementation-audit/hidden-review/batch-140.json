@@ -1,0 +1,60 @@
+{
+  "batch_id": 140,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-classification-before/reviews-domain-closure.md",
+      "sha256": "88880099dcfdaa0e1cf6c56ba8789570bc8fa5852738005085abac20536d294b",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-classification-before/reviews-engine-foundation-01.md",
+      "sha256": "8e4cb5f484c852b4032073537aac6e25582e343baefcedf3776c9d8bd62bafdd",
+      "lines": 35,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain.md",
+      "sha256": "a74684394e2ce3e31f4d3c0b836790b2076cff7cb49af13613acf18bdb7d89ed",
+      "lines": 20,
+      "read_to_eof": true
+    }
+  ],
+  "current_baseline": {
+    "checkout": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+    "all_sources_available": true,
+    "source_hashes_and_line_counts_match_plan": true,
+    "product_files_edited": false,
+    "tests_or_builds_run": false,
+    "official_a_share_rules_reverified": false
+  },
+  "findings": [
+    {
+      "status": "historical_candidate_already_present_in_baseline",
+      "subject": "Account A03 controlled mutation and recovery boundary",
+      "evidence": "Account 与 AccountState 字段均为私有；cash 和 positions 是只读 accessor；restore_balances 与 restore_strategy 为 crate-private。生产结算基于 receipts 准备 Account shadow，并在接受 patch 前执行内部结算。不得将旧 A03 候选措辞视为生产缺口尚未实现的证据或实施授权。"
+    },
+    {
+      "status": "historical_document_fingerprint_mismatch",
+      "subject": "Closure review handoff digest differs from specified domain.md",
+      "evidence": "reviews-domain-closure.md 记录的 managers/domain.md SHA-256 为 f5d46c1d1d0420d65a57f1fdf8f6c61318ce4dd94e90b66993e8936af9a28a44；scan-plan 指定的本地化 managers/domain.md 哈希为 a74684394e2ce3e31f4d3c0b836790b2076cff7cb49af13613acf18bdb7d89ed。只有区分路径/修订版本后，两者才各自与其来源相符；closure 声明不能为计划指定文件的指纹背书。"
+    },
+    {
+      "status": "historical_rng_boundary_consistent",
+      "subject": "Decision functions consume caller RNG explicitly",
+      "evidence": "Strategy 决策 API 接收 &mut dyn Rng，Session 持有序列化 RNG 状态。可复现性以输入和 RNG 初始状态相同为条件；这不等于无状态/无副作用执行，也不表示随机数由 strategy 持有。"
+    }
+  ],
+  "scope_limitations": [
+    "Static caller/consumer search only; no dynamic reachability validation.",
+    "未运行测试、构建或官方来源复核。",
+    "未修改产品文件、源材料或 Git 内容。"
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "status": "A03 已由当前封装与受控结算路径实现；历史 closure 交接摘要与 scan-plan 选定的本地化 domain.md 不匹配。本批不新增或关闭 G/Q；将指纹差异交主审计总账处理。"
+  }
+}

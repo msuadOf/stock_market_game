@@ -1,0 +1,40 @@
+{
+  "batch": 190,
+  "owner": 5,
+  "result": "no_effective_finding",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-unchanged-binding.md",
+      "sha256": "1f9f602bfb71c0af934dfa08106a4d8739e338f62046bfb3549889247db5cd9f",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-01-manager-delta.md",
+      "sha256": "872ff0063ec56674d4181166929db98d37a63a1d120cfce2cc9c435b12d8173e",
+      "lines": 35,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-01.md",
+      "sha256": "30e719a3c86304ff8bb35b58656eacdcf034ae4d5e45740ead416bf6f3783482",
+      "lines": 13,
+      "read_to_eof": true
+    }
+  ],
+  "baseline": "43b1aa5",
+  "checks": {
+    "baseline_owner": "GameSession 只持有一个 CommittableSessionState；clone 与 commit 分别委托给 clone_for_shadow 和 commit_from。",
+    "caller": "TickShadow 持有 Option<GameSession>，阶段事务失败时会消费候选状态。",
+    "consumers": "Session accessor、enqueue、日终 checkpoint、save projection 和 pipeline consumer 共用同一状态 owner。",
+    "adr": "ADR-0018 仍为 proposed；已接受的 ADR-0013 将 retail_experience 视为权威持久状态。",
+    "open_questions": "未发现直接冲突的开放问题。"
+  },
+  "findings": [],
+    "limitations": [
+    "未重新阅读继承的完整源码审查或 item/module 材料。",
+    "未重复 binding 报告记载的六项 pipeline artifact snapshot 比对。",
+    "未运行测试、构建或回归验证。",
+    "本次审查不是新的外部 A 股规则审计，也不是实现验收。"
+  ]
+}

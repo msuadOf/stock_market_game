@@ -1,0 +1,104 @@
+{
+  "batch": "041",
+  "owner": 1,
+  "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "covered": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-04.md",
+      "sha256": "0c0c42c0026789a03e6c1c8c4b1732f423755242a9138c4d0e822a6e9b1acacd",
+      "lines": 145,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-06.md",
+      "sha256": "72b02b3d8bbbdc09ec6aeba1b5731b76af0fb2974a39e27fb8c7f078eee9a550",
+      "lines": 195,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-07.md",
+      "sha256": "a0ab6bc3b4f4a64272fbfb917a8ee5b69926c061981c71c75a3eca0e23163b9f",
+      "lines": 105,
+      "eof": true
+    }
+  ],
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "chapter_families": {
+    "engine-session-04": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "packages/engine/src/session/decision_chain/roots.rs:187-221",
+        "packages/engine/src/session/decision_chain/quote.rs:4",
+        "packages/engine/src/session/decision_chain/urgency.rs:50",
+        "packages/engine/src/session/disclosures.rs:58-65,99-151",
+        "packages/engine/src/session/envelope_projection.rs:14-38",
+        "packages/engine/src/session/execution/orders.rs:11-17",
+        "packages/engine/src/session.rs:2073-2128"
+      ],
+      "notes": "PlanPersonalState 由 InstitutionDecisionRoot 持有；旧材料指出的调用边界已在当前实现中存在。列举的未覆盖测试边界仍非已运行验证或已确认产品缺陷。"
+    },
+    "engine-session-06": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "packages/engine/src/session/plan_chain_candidates/adaptive.rs:74-122",
+        "packages/engine/src/session/pipeline/adaptive_plan_chain.rs:260,421,514",
+        "packages/engine/src/session/plan_execution.rs:25-60",
+        "packages/engine/src/session/plan_execution/actions.rs:130-175",
+        "packages/engine/src/session/plan_execution/synchronization.rs:10-79",
+        "packages/engine/src/session/execution/records.rs:5-117",
+        "packages/engine/src/session/protocol/civil/session.rs:225-330"
+      ],
+      "notes": "候选队列、typed continuation、pending fact 同步与协议 checkpoint 均有生产 owner/caller。可选方法归整不构成新候选。"
+    },
+    "engine-session-07": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "packages/engine/src/session/protocol/commit.rs:7-49",
+        "packages/engine/src/session/protocol/delta.rs:20,182",
+        "packages/engine/src/session/protocol/facts.rs:10,16",
+        "packages/engine/src/session/protocol/replay.rs:10,16",
+        "packages/engine/src/session/protocol/player_orders.rs:29",
+        "packages/engine/src/session/snapshot.rs:46,126",
+        "packages/engine/src/session/views.rs:127"
+      ],
+      "notes": "协议值类型、只读投影与测试支撑继续按各自边界保留；静态存在不表示建议的全部边界测试已验收。"
+    }
+  },
+  "candidate_status": {
+    "necessary_oop_candidates": [],
+    "optional_internal_refinements": [
+      "PlanQuoteInputs 参数包",
+      "PlanExecutionInterpreter 窄边界",
+      "ProtocolSession checkpoint 字段分组"
+    ],
+    "status": "未发现待实施必要 OOP 动作；不新增产品缺陷。"
+  },
+  "cross_ledger_findings": [
+    {
+      "ledger": "G01–G68/Q",
+      "status": "无核销主张",
+      "finding": "未发现可由职责保留/对象抽取直接核销的当前 G 或 Q 项；其他主账状态照旧。"
+    },
+    {
+      "ledger": "G16",
+      "status": "保持独立跟踪",
+      "finding": "长期历史复制/性能目标不是 OOP owner 的存在性证明，未被本批核销。"
+    }
+  ],
+  "adr_status": {
+    "ADR-0017": "accepted；P0–P9 和 P9 单点提交仍适用；历史来源排序/全局顺序条款由 ADR-0018 已明确决定的局部冲突规则取代。",
+    "ADR-0018": "proposed 整体未接受；仅已明确并同步写入 ADR-0017 的条款适用。",
+    "later_decisions": ["ADR-0019", "ADR-0024", "ADR-0025", "ADR-0026"]
+  },
+  "domain_review": {
+    "status": "未引入领域规则变更",
+    "official_rule_lookup": "未执行",
+    "boundary": "金额/数量单位、撮合权威、T+1、受理顺序和日终保存边界依正式规则及现行 ADR；输出身份不形成跨实体优先级。"
+  },
+  "validation": {
+    "tests": "未运行",
+    "build": "未运行",
+    "git_mutation": "未执行"
+  },
+  "report": "hidden-review/batch-041.md"
+}

@@ -1,0 +1,69 @@
+{
+  "batch_id": 84,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "output_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-05-evidence-final.md",
+      "sha256": "23e5d77725f380be7f2d06166193fe956529d13344ffaebedab0ace7e21f6004",
+      "lines": 27,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-05-model-final.md",
+      "sha256": "a8827e9d4243655970530755d9de7c103d9b1ee30b9b31cd6968feb577a64857",
+      "lines": 20,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-06-final.md",
+      "sha256": "dcc6b7023f44a7c8c44f3fbd3b30c60111726f513b256bc2029261fa8c0aa63e",
+      "lines": 28,
+      "read_to_eof": true
+    }
+  ],
+  "baseline_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "verified_owner_callers_consumers": [
+    "apps/web/src/App.tsx",
+    "apps/web/src/mobile/MobileRunToggle.tsx",
+    "apps/web/src/mobile/MobileSpeedSelect.tsx",
+    "apps/web/src/mobile/MobileStockDetail.tsx",
+    "apps/web/src/save/day-end-targets.ts",
+    "apps/web/src/save/day-end-targets.test.ts",
+    "apps/web/src/save/save-file.ts",
+    "apps/web/src/mobile/market-model.ts",
+    "apps/web/src/mobile/market-model.test.ts",
+    "apps/web/src/app/useMarketChartRuntime.ts",
+    "apps/web/src/app/market-chart-projection.ts"
+  ],
+  "ledger_crosscheck": {
+    "G01-G68": "未核销任何条目；G10-G14 生产分时路径缺口仍适用，旧 collector/evidence review 不覆盖生产 consumer。",
+    "Q": "open-questions.md 的 Q7/Q8 已有各自决定与边界；implementation-audit-2026-10-02.md 的内部 Q07/Q08 是另一套编号（周/月 K 线聚合、移动详情均价口径），仍按主账状态处理，本批均未裁决。"
+  },
+  "decisions_reviewed": [
+    "docs/decisions/0004-frontend-state-redux-toolkit.md",
+    "docs/decisions/0007-three-deployment-frontend-framework.md",
+    "docs/decisions/0010-unified-host-protocol-and-local-refresh.md",
+    "docs/decisions/0025-day-end-only-persistence.md"
+  ],
+  "findings": [
+    "三篇旧复核在声明的 delta 范围内没有发现事实反证；均不得扩大解释成当前产品完整验收。",
+    "loadViaUpload 的未触发 focus listener 在成功/失败后仍未主动清理；来源已披露该独立风险。",
+    "生产分时实际消费者是 MarketChartProjection；测试 collector 不在生产 hook 调用链中，G10-G14 仍保持主账状态。"
+  ],
+  "domain_review": {
+    "status": "无交易制度或 A 股语义改动",
+    "official_rule_lookup": "未执行",
+    "basis": "静态复核既有 Web UI、浏览器文件读取、日终写入和行情展示边界；没有新增交易制度主张。"
+  },
+  "validation": {
+    "tests": "未运行",
+    "build": "未运行",
+    "browser": "未运行",
+    "git_mutation": "未执行"
+  },
+  "report": "batch-084.md"
+}

@@ -1,0 +1,63 @@
+{
+  "batch": "146",
+  "owner": 1,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-03.md",
+      "sha256": "dab955dfb69c01f208a54855bff6391be20d9690bb5c3195dd1b3ae114430ae9",
+      "lines": 16,
+      "read_to_eof": true,
+    "chapter_family": "Auction coordinator/shadow owner、生命周期投影、保留函数、交易与收尾语义、测试"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-04.md",
+      "sha256": "2df321576489a9aa36601d17ad618996c73c47cdc6231506eaa88a93ef3a928b",
+      "lines": 19,
+      "read_to_eof": true,
+    "chapter_family": "Commit/P9、receipt、守恒、投影与生命周期边界；来源/测试文件的保留结论"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-05.md",
+      "sha256": "5599c761541a972fc6ff6b8aa730006642b09ed40285253a3485a6de8bf21c11",
+      "lines": 30,
+      "read_to_eof": true,
+    "chapter_family": "连续轮次处理器、adapter、receipt、生命周期批次、finalizer 与跨文件生命周期差异"
+    }
+  ],
+  "review": {
+    "status": "reviewed",
+    "findings_unresolved": 0,
+    "summary": "三篇历史 review 的主要状态归属和交易/提交边界与 43b1aa5 当前调用链相符；OOP 候选已部分落地，旧审查指令不作为新实现授权。",
+    "candidate_status": [
+      {
+      "candidate": "engine-pipeline-03-AuctionStockShadow 的 round/finish 与 AuctionLifecycleProjector",
+        "status": "implemented_at_baseline",
+        "evidence": "packages/engine/src/session/pipeline/auction_day_end.rs:301,444,479,503,1779,2140；生产 finish caller 为 auction_tick_transaction.rs:231"
+      },
+      {
+      "candidate": "engine-pipeline-03 将无状态边界聚合为 AuctionDayEndTransaction",
+        "status": "rejected_by_historical_review_and_not_needed",
+        "evidence": "apply_finished_candidate 与 validate_worker_finalizers 仍为独立函数；没有共同状态不变量，历史 review 明确不建议空壳对象。"
+      },
+      {
+      "candidate": "engine-pipeline-04 保留真实 owner、纯函数与测试 fixture，不增加无状态对象",
+        "status": "retain_decision_confirmed",
+        "evidence": "候选提交/P9、事实投影及局部 helper 仍使用分层函数/DTO 边界；本批未发现需新建常驻 owner 的状态。"
+      },
+      {
+      "candidate": "engine-pipeline-05 的 ContinuousStockRoundProcessor 与 coordinator 跨轮 finish",
+        "status": "implemented_at_baseline",
+        "evidence": "packages/engine/src/session/pipeline/continuous_matching.rs:250,254,272; incremental_continuous_stock_shadow.rs:176,342,349,385,443"
+      }
+    ],
+    "confirmed_g_mapping": [],
+    "confirmed_open_q_mapping": [],
+    "large_a_semantics": "本批为状态 owner/生命周期边界核对，未发现改变沪深交易阶段、同股受理、费用、Money/股单位、T+1 或结算语义的候选；未重新查询官方规则。ADR-0017 accepted 为契约依据，ADR-0018 proposed 内容不作为已批准变更。",
+    "tests_or_builds_run": false,
+    "product_source_modified": false
+  }
+}

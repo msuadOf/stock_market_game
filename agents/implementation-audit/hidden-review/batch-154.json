@@ -1,0 +1,49 @@
+{
+  "batch": 154,
+  "owner": 4,
+  "status": "complete",
+  "conclusion": "未发现来源证明的已批准承诺遗漏或错误历史核销；确认来源提及的三项独立会计行为风险在 baseline 仍可见，但不属于 OOP 候选承诺。",
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/trading-plan-encapsulation-evidence.md",
+      "sha256": "ef3c1d46657b7b39c7b0c8a98ad9f7cd531114bafad4808ab3e0d6ada3dd1a42",
+      "lines": 33,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/contracts-01.md",
+      "sha256": "63b1dc5898c2cd5012f9221b392dd01e8b047d79a76b93875b024f2c27163659",
+      "lines": 296,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-company-01.md",
+      "sha256": "03f008ca32c6035e5f5084b1bebe76975f9d120f03d9581ed01ead3acef4c532",
+      "lines": 261,
+      "read_to_eof": true
+    }
+  ],
+  "current_candidates": [
+    {
+      "candidate": "若 checked total-cost addition 溢出，InventoryLedger::receipt 可能已部分修改 quantity；IndustrialBooks::purchase 会在调用 receipt 前提交 Books。",
+      "evidence": "packages/engine/src/accounting/inventory.rs::InventoryItemState::receipt; packages/engine/src/company/industrial/purchasing.rs::IndustrialBooks::purchase; existing unit test receipt_cost_overflow_preserves_quantity_write_order asserts quantity becomes 2 while total cost stays i128::MAX.",
+      "classification": "独立行为候选，不是 OOP 承诺；现有测试明确固定了该行为。"
+    },
+    {
+      "candidate": "TradeOpenLedger::write_off 在 checked 累加 written_off_total 前清除 open_amount；IndustrialBooks::write_off_receivable 会先提交 Books。",
+      "evidence": "packages/engine/src/accounting/receivables.rs::TradeOpenLedger::write_off; packages/engine/src/company/industrial/sales.rs::IndustrialBooks::write_off_receivable.",
+      "classification": "独立的失败原子性候选，不是 OOP 承诺；本次未运行溢出边界，也未独立复现。"
+    },
+    {
+      "candidate": "Consolidation balance declaration 没有 consumer 侧正数校验，因此检查路径会接受成对相等的零值或负值金额。",
+      "evidence": "packages/engine/src/accounting/consolidation/eliminate.rs::precheck_balance and balance_entry check member/account/pair shape and equality but not positivity; worksheet lines use decl.amount directly.",
+      "classification": "独立的输入校验候选，不是 OOP 承诺；本次审计未测试。"
+    }
+  ],
+  "limitations": [
+    "TradingPlan caller 搜索是定向检查，并非对全仓所有 public consumer 的证明。",
+    "Did not revalidate accounting assumptions against official sources or run tests/builds.",
+    "未确认 ClosingEngine 多步骤失败窗口是否可确定性触发。"
+  ]
+}

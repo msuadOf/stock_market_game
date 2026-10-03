@@ -1,0 +1,26 @@
+{
+  "batch_id": 188,
+  "owner": 3,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-10-retail-full.md",
+      "sha256": "c9937eb0c03d301a3f67618d3917cd99996d4a43d7703b51b473ef87f72f78e8",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-10-tests-full.md",
+      "sha256": "56d051088d29cbddbe466bb88d8ae0effc0352bb5ae4cc34b68b5d3bd962b037",
+      "lines": 29,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-11-auction-full.md",
+      "sha256": "5825cfa5a95198da69b54c86f1ebe2fcb8737c31f6040df5d8c1b4db8dbcdad6",
+      "lines": 40,
+      "read_to_eof": true
+    }
+  ],
+  "finding_count": 0,
+  "conclusion": "未发现已批准承诺的遗漏或错误历史核销。"
+}

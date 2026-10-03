@@ -1,0 +1,28 @@
+{
+  "batch": 186,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-07-final.md",
+      "sha256": "45e396bf4f4c6db1986cb3fa3e6d858b135b5852f0656614a3e73748320958ad",
+      "lines": 27,
+      "read_to_eof": true,
+      "candidate_status": "历史文档增量复核；两处修正为非产品缺口，未发现新增G/Q"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-08-caller-final.md",
+      "sha256": "385a127ca2878df9214ca91a229da499fac97a3349b14e06da0d77e99c6f90d5",
+      "lines": 39,
+      "read_to_eof": true,
+      "candidate_status": "当前生产phase caller有限生命周期结论再证；不外推未来caller"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-08-final.md",
+      "sha256": "b2620c97923410e41c413b73e67661b27f3079332ab90aa0de43f37042958241",
+      "lines": 36,
+      "read_to_eof": true,
+      "candidate_status": "职责归属及失败边界再证；private ledger caller仍须各自承担candidate整体丢弃"
+    }
+  ],
+  "overall_candidate_status": "未发现新增或核销G/Q；不把OOP提取当作行为缺陷修复；未穷举全部private ledger caller"
+}

@@ -1,0 +1,47 @@
+{
+  "batch_id": 197,
+  "owner": 2,
+  "product_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "read_method": "连续全文读取至 EOF；逐源核对 SHA-256 与行数；核对 caller owner/consumer、现行总账及 ADR",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-delta-final.md",
+      "sha256": "c5e834be970f6135cfd09b01042657ba79d88ed07aa52f5f268b584d087dc723",
+      "lines": 14,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-fields-final.md",
+      "sha256": "235ff426983ab1d14ac84813645d51b53f0e4aa23b6d8afaf585f33425ab1d87",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-final.md",
+      "sha256": "9354070e21adbab2972bb78a90a94a045dc6ea8cacc03624e7bdd68907508b18",
+      "lines": 56,
+      "read_to_eof": true
+    }
+  ],
+  "caller_findings": {
+    "owner": "TradingPlan 持有 horizon 与有效期末日查询；字段限制为 pub(in crate::plans)，不保留旧稿所述 crate 外直接改写理由。",
+    "consumers": "PlanBook::from_parts 与 Session validate_plan_contract 未校验期限；revision 生命周期路径消费 last_valid_trading_day 裸算术。",
+    "ledger": "G69 已记录期限有效性缺口；本批不重复登记、不改 G/Q 状态。G16 是独立的历史计划簿复制问题。",
+    "adr": "ADR-0016 将期限作为持续交易意图，但未固定 u64 边界，也未改变 A 股订单有效期或交易制度。"
+  },
+  "candidate_and_counterevidence": {
+    "candidate": "独立 serde 输入、计划簿/Session 恢复校验遗漏及可能溢出的裸查询算术，支持现行 G69 的期限有效性候选。",
+    "counterevidence": "TradingPlan 字段已限制 crate 可见范围，故旧终审关于外部任意改写字段的论据过时；未实际复现坏存档运行失败。"
+  },
+  "limitations": [
+    "未运行测试、构建或坏存档复现。",
+    "没有新增官方 A 股规则主张；本问题属于期限恢复与 API 输入校验。",
+    "仅记录原文与当前调用链关系，不升级或核销 G/Q。"
+  ],
+  "created_files": [
+    "agents/implementation-audit/hidden-review/batch-197.md",
+    "agents/implementation-audit/hidden-review/batch-197.json"
+  ]
+}

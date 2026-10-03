@@ -1,0 +1,29 @@
+{
+  "batch_id": 196,
+  "owner": 1,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-07.md",
+      "sha256": "18e8e7110273781ab4fe09e4684df82def3f0958ca26949d2887110ad14e6caf",
+      "lines": 13,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-session-area-final.md",
+      "sha256": "f6d8328b293670bc5f53dffb95eb41aae6d76d66c20cea7c0de0b4c03cecef81",
+      "lines": 24,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-caller-final.md",
+      "sha256": "fe2ae7fbeeba916177282273046d9e28d565e51eadb6ee29028b6b5f2805b514",
+      "lines": 10,
+      "read_to_eof": true
+    }
+  ],
+  "baseline_source_paths_present": false,
+  "candidate_status": "三项 OOP 候选在基线中均已实施；未发现可确认的新遗漏或需重复实施的候选。G16、Q02 与实现账本 Q11 等相关边界独立保留。",
+  "tests_run": false,
+  "product_files_modified": false
+}

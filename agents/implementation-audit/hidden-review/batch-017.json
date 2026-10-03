@@ -1,0 +1,45 @@
+{
+  "batch_id": 17,
+  "owner": 2,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/hosts/review.md",
+      "lines": 54,
+      "sha256": "7a2739cd582607498118e98fd771a37194d9bb497b0eaef3f75fa9b1466eb136",
+      "full_read_to_eof": true,
+      "matrix": "L1-5 复核对象与范围；L7-23 总体覆盖；L25-36 N01-N08；L38-40 N05权重修订；L42-49 二次复核；L51-54 身份与指纹更正。候选审查不证明当前代码未实现。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/pipeline/independent-review.md",
+      "lines": 25,
+      "sha256": "41d16202fb04e1e83f2d93a3944a6aec588098c272613b6ded286d6d05f3a958",
+      "full_read_to_eof": true,
+      "matrix": "L1-3 范围和方法；L5-10 两名reviewer判断表；L12-13 候选计划审查限制；L15-25 管理者声明和历史文件指纹。与Host代码无直接关联。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/pipeline/reader-instructions.md",
+      "lines": 13,
+      "sha256": "e0d1abda9aa9db2b6be7f93d3f791a4eeeffb76ead504a75f34c4664d69b4cf6",
+      "full_read_to_eof": true,
+      "matrix": "L1-4 reader范围和必读资料；L6-8 反向挑战方法；L10-13 冻结契约与交付要求。属于历史工作指令，不是现行产品承诺。"
+    }
+  ],
+  "review": {
+    "candidate_ids": ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08"],
+    "current_status": "八项owner及调用接线均已在43b1aa5现行产品树或其测试/工具代码中出现；没有因此证明相关全部行为边界已关闭。N05为可选低优先级结构整理。",
+    "g_q_relation": "无由这三篇来源支持的新产品G。G01-G05/G18-G20/G40/G53/G66等现行宿主缺口与这些结构迁移分开核实；N07 sampler rejection与Windows taskkill树终止属于未关闭工具行为/验收边界，不冒充A股规则问题。",
+    "counterevidence": [
+      "exhaustive-review/sweep64.md:36-40,50-53 证明N03/N04/N05等测试场景被消费，并提醒fixture不等于生产领域行为。",
+      "exhaustive-review/sweep65.md:10,27,35-36 证明ProcessSampleRun、pacing owners及StaticAssetRoot已存在，保留sampler失败清理边界。",
+      "exhaustive-review/sweep66.md:26,38-39 证明BoundedCommandRun与真实脚本caller已接，且Windows树终止确认被排除在结构迁移之外。"
+    ],
+    "a_share_semantics": "没有提出或更改交易制度主张。WeekendScenario是合成测试排期；不将周末fixture当法定披露期限。未进行官方交易所规则联网核验。"
+  },
+  "limitations": [
+    "本次未运行测试、构建或完整回归。",
+    "没有重新展开所有宿主源码，仅核对指定owner/caller及总账相关位置。",
+    "没有动态验证sampler rejection时child终止或Windows taskkill后进程树退出；维持为未核实行为边界。",
+    "代码与caller的现场行号来自/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit现行树。"
+  ]
+}

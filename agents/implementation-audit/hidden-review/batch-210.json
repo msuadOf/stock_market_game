@@ -1,0 +1,38 @@
+{
+  "batch": 210,
+  "owner": 5,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/hosts_tooling-closure-final.md",
+      "sha256": "389bf01c07f9ee601bc5ad722b9dfad35a85e1295d1c234bf49a5a194160d13e",
+      "lines": 40,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/hosts-01.md",
+      "sha256": "ca41a96710fc42bffeba8db9286b737bda8bd00296503519a52151be87b2395b",
+      "lines": 57,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/hosts-02.md",
+      "sha256": "18b32126fc82d2496899af1f303b0ddbdd62d3d6014bd0a3a758cc24947f4d82",
+      "lines": 40,
+      "read_to_eof": true
+    }
+  ],
+  "findings": {
+    "new_oop_candidates": [],
+    "existing_behavior_test_suggestions": [],
+    "related_current_items": ["G09", "G38", "Q02", "Q11"],
+    "related_item_status_changed": false,
+    "a_share_semantics_changed": false
+  },
+  "limitations": [
+    "未运行测试、构建或 Git 命令",
+    "本批仅复核三份历史记录与相关当前调用边界，不是完整源码审查",
+    "未重新核验交易所或中国结算现行规则",
+    "hosts-01 记录的一次只读 git diff 程序违规作为历史事实保留"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "batch_id": 119,
+  "result": "conditional_pass",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/group-11-current-final.md",
+      "expected_lines": 30,
+      "observed_lines": 30,
+      "expected_sha256": "4b7b6b55bd8aae7516dd69e6311a4bbbfc5713b4b62d1602f87c5d94849417f0",
+      "observed_sha256": "4b7b6b55bd8aae7516dd69e6311a4bbbfc5713b4b62d1602f87c5d94849417f0",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/hosts-hosts.md",
+      "expected_lines": 33,
+      "observed_lines": 33,
+      "expected_sha256": "6eea1d9d8640085cd9b1ef02527b1c1899dfe8a9f9d8102acb6e163f6da22a42",
+      "observed_sha256": "6eea1d9d8640085cd9b1ef02527b1c1899dfe8a9f9d8102acb6e163f6da22a42",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/hosts-tests-a.md",
+      "expected_lines": 36,
+      "observed_lines": 36,
+      "expected_sha256": "7edbb740c7620cb3001726fe1e3010641ac9dd80951e3923c1fcf95cc1c93021",
+      "observed_sha256": "7edbb740c7620cb3001726fe1e3010641ac9dd80951e3923c1fcf95cc1c93021",
+      "read_to_eof": true
+    }
+  ],
+  "artifact_binding": {
+    "hosts_current_hashes_match": true,
+    "engine_tests_current_hashes_match": true,
+    "group_11_diff_hash_matches_report": true,
+    "group_11_diff_present_in_baseline_43b1aa5": false
+  },
+  "current_symbols_and_consumers_checked": [
+    "apps/server/src/lib.rs::init_tracing",
+    "apps/server/src/main.rs::init_tracing caller",
+    "apps/server/src/actor.rs::SessionManager and event_tx.subscribe",
+    "apps/desktop/src-tauri/src/actor.rs::SessionManager"
+  ],
+  "scope": "Historical audit/localization records only; no product changes or new A-share rule assertions reviewed.",
+  "limitations": [
+    "Group 11 diff 不在基线 43b1aa5 中，因此无法从该基线重建其声称的完整 delta 和目标内容。"
+  ],
+  "tests_run": false
+}

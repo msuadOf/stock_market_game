@@ -1,0 +1,73 @@
+{
+  "batch_id": 36,
+  "owner": 1,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/contracts-01.md",
+      "expected_sha256": "69a9c4895c92213151f45f875cafee92d41a587c110947d4a8dfae61aa7ee44a",
+      "observed_sha256_before": "69a9c4895c92213151f45f875cafee92d41a587c110947d4a8dfae61aa7ee44a",
+      "observed_sha256_after": "69a9c4895c92213151f45f875cafee92d41a587c110947d4a8dfae61aa7ee44a",
+      "expected_lines": 296,
+      "observed_lines": 296,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["结论", "关键现有分层与调用契约", "双生成目录差异", "迁移方向与验证", "逐文件覆盖（256项）", "调用方、测试及限制"],
+      "current_caller_paths": ["apps/web/src/types/engine.ts（WasmApi接口）", "package.json::types:generate", "apps/web/src/types/generated（生成检查覆盖目录）"],
+      "g_associations": [],
+      "q_associations": ["Q01（Money跨JS安全整数契约，关联但本批不重新裁定）"],
+      "candidate_status": "未发现已批准OOP遗漏；类型DTO无生命周期，不新增类候选。双生成目录差异不等价于已验证镜像，也无依据手改同步。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-company-01.md",
+      "expected_sha256": "11c7501d3f8032a794969fac834d4f16934c1a2c1fe417757a7e31f14ff82321",
+      "observed_sha256_before": "11c7501d3f8032a794969fac834d4f16934c1a2c1fe417757a7e31f14ff82321",
+      "observed_sha256_after": "11c7501d3f8032a794969fac834d4f16934c1a2c1fe417757a7e31f14ff82321",
+      "expected_lines": 261,
+      "observed_lines": 261,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["约束与会计语义", "已有对象与逐文件判断（24文件）", "行为缺陷与待验证窗口线索", "迁移顺序与复核"],
+      "current_caller_paths": ["packages/engine/src/session.rs:2181-2235", "packages/engine/src/accounting/inventory.rs:85-99", "packages/engine/src/company/industrial/purchasing.rs:103-115", "packages/engine/src/accounting/receivables.rs:130-147", "packages/engine/src/company/industrial/sales.rs:214-245", "packages/engine/src/company/operations/day.rs", "packages/engine/src/company/operations/dispatch.rs"],
+      "g_associations": ["G35（工商日常/期末闭环仍不完整）", "G36（行业会话与披露边界）"],
+      "q_associations": ["Q17（结账/更正后置失败契约范围）", "Q23（年度税时机、重复调用与幂等边界）"],
+      "candidate_status": "所有权保留结论继续成立；库存/应收后置提交失败边界已有历史记录，不能由单批Books原子性外推整操作事务保证；无新G。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-company-02.md",
+      "expected_sha256": "4577c6145924e8b85e093da572220df3d4ba1d6bd2fe81996f8a93b97989c773",
+      "observed_sha256_before": "4577c6145924e8b85e093da572220df3d4ba1d6bd2fe81996f8a93b97989c773",
+      "observed_sha256_after": "4577c6145924e8b85e093da572220df3d4ba1d6bd2fe81996f8a93b97989c773",
+      "expected_lines": 557,
+      "observed_lines": 557,
+      "read_completeness": "complete",
+      "eof_reached": true,
+      "chapters_read": ["文件范围及历史摘要纠正", "独立行为缺陷线索 D01/D02", "文件评估（25文件）", "跨文件关系与领域契约", "阅读依据与限制"],
+      "current_caller_paths": ["packages/engine/src/accounting/reports/validate.rs（ReportSet与比较项独立校验）", "packages/engine/src/company/bank/ecl.rs:87-93", "packages/engine/src/company/bank/mod.rs:107-130", "packages/engine/src/session/company_assembly.rs:331-345", "packages/engine/src/session.rs:2181-2235"],
+      "g_associations": ["G35（未接入完整工商期末处理）", "G36（银行/保险/地产实现不构成会话闭环）", "G58（工业借款人授信边界，与银行owner独立）", "G59（保险保障期/赔案日程边界）"],
+      "q_associations": ["Q17", "Q19（BankBooks独立serde的ECL验证边界，不表示公共日终档损坏）", "Q23"],
+      "candidate_status": "现有纯函数/值对象/BankBooks聚合无需额外OOP封装。D01的ECL版本下限在当前来源和ADR中无明确最低值契约，保留待定，不升格G；D02缺分类回退未证明可经标准report路径到达。无新G或错误旧核销。"
+    }
+  ],
+  "current_policy": {
+    "read": ["AGENTS.md", "docs/principles.md", "docs/decisions/0016-fundamental-factor-model.md", "docs/decisions/0024-shrinking-investor-cash-pool.md", "docs/decisions/0025-day-end-only-persistence.md", "docs/decisions/0026-individual-institution-experience.md", "agents/implementation-audit/implementation-audit-2026-10-02.md", "agents/implementation-audit/reaudit-engine.md"],
+    "decision": "ADR-0016的已批准计划契约固定四行业交付；ADR-0024核销投资者资金池循环要求但维持公司经营现金独立；ADR-0025限定公共持久化只接受成功日终候选；不替代G35/G36或Q19边界。"
+  },
+  "findings": {
+    "approved_commitment_omission": false,
+    "incorrect_old_closeout": false,
+    "new_candidate": false,
+    "existing_open_associations": ["G35", "G36", "G58", "G59", "Q17", "Q19", "Q23"],
+    "candidate_counterevidence": ["合并金额和子账失败顺序已有历史登记，且未证明已有端到端原子契约", "EclPolicy version最低值未见明确accepted依据", "build_notes缺分类分支未证明可通过标准校验生产路径到达", "TS bindings双目录差异未证明构成已批准生成/消费承诺遗漏"],
+    "notes": "G01-G68/Q总账仍按原有逐项状态；本批不修改状态。对象已存在、测试存在、历史候选存在均不作为产品缺口的完成或失败证据。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "build_run": false,
+    "git_operations": false,
+    "written_files": [".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-036.md", ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review/batch-036.json"]
+  }
+}

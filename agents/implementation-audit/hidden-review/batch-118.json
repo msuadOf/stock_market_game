@@ -1,0 +1,27 @@
+{
+  "batch": 118,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-12-recheck.md",
+      "sha256": "7fa2e1201809face732aa638559af8246d3a99bb8fcc935df4f9a6f0631a163a",
+      "lines": 17,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-12.md",
+      "sha256": "ad9140401a7abea1a72373dd9a9b32a80390575435bcb2bb8e553fde7b463a5b",
+      "lines": 15,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/frontend.md",
+      "sha256": "ffd58e684d92b841f819ceeb3efed2053bba9e098def788dd901bb99013e0e6e",
+      "lines": 56,
+      "read_to_eof": true
+    }
+  ],
+  "conclusion": "未发现已批准承诺遗漏或错误历史核销",
+  "review_scope_limit": "仅审阅中文化复核记录；未重新验证完整产品 diff 或源码事实"
+}

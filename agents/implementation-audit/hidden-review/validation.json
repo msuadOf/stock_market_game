@@ -1,0 +1,61 @@
+{
+  "source_baseline": "43b1aa5",
+  "review_date": "2026-10-04",
+  "validation_scope": "只进行文档、来源凭证和源码差异的短静态检查，未运行游戏测试、构建或完整回归",
+  "concurrency": 3,
+  "per_command_deadline_ms": 10000,
+  "source_inventory": {
+    "paths": 1110,
+    "unique_texts": 933,
+    "new_batches": 227,
+    "owners": [
+      46,
+      46,
+      45,
+      45,
+      45
+    ],
+    "remaining_batches": 0,
+    "source_fingerprint_changes": 0,
+    "missing_proofs": 0,
+    "active_g": 78,
+    "closed_g": [
+      "G27"
+    ]
+  },
+  "initial_parallel_results": [
+    {
+      "label": "source-and-ledger",
+      "exit_code": 0,
+      "wall_time_seconds": 0.193213619,
+      "output": "{\"paths\":1110,\"unique\":933,\"currentG\":78,\"missingReports\":0,\"changedSources\":0,\"allEOF\":true}\n"
+    },
+    {
+      "label": "json-and-links",
+      "exit_code": 1,
+      "wall_time_seconds": 0.186357638,
+      "output": "[stdin]:1\nconst fs=require('fs'),path=require('path'),base=process.cwd()+'/agents/implementation-audit';const bad=[],markdown=[];let json=0;function walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=dir+'/'+entry.name;if(entry.isDirectory())walk(file);else if(file.endsWith('.json')){JSON.parse(fs.readFileSync(file,'utf8'));json++;}else if(file.endsWith('.md'))markdown.push(file);}}walk(base);for(const file of markdown){const text=fs.readFileSync(file,'utf8');for(const match of text.matchAll(/\\[[^\\]\\n]*\\]\\(([^)\\n]+)\\)/g)){const target=match[1].trim().replace(/^<|>$/g,'').split('#')[0];if(!target||/^[a-z]+:\\/\\//i.test(target)||target.startsWith('mailto:'))continue;if(!fs.existsSync(path.resolve(path.dirname(file),decodeURIComponent(target))))bad.push({file:file.slice(base.length+1),target});}}if(bad.length)throw Error(JSON.stringify(bad));console.log(JSON.stringify({jsonParsed:json,markdownChecked:markdown.length,brokenLinks:0}));\n                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ^\n\nError: [{\"file\":\"hidden-review/batch-062.md\",\"target\":\"../areas/engine-pipeline.md\"},{\"file\":\"hidden-review/batch-062.md\",\"target\":\"../areas/execution-closure.json\"},{\"file\":\"hidden-review/batch-155.md\",\"target\":\"packages/engine/src/company/bank/ecl.rs\"},{\"file\":\"hidden-review/batch-155.md\",\"target\":\"agents/implementation-audit/exhaustive-review/luna52.md\"},{\"file\":\"hidden-review/batch-155.md\",\"target\":\"packages/engine/src/accounting/reports/notes.rs\"}]\n    at [stdin]:1:845\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [stdin]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_stdin:51:5\n    at ReadStream.<anonymous> (node:internal/process/execution:205:5)\n    at ReadStream.emit (node:events:508:20)\n\nNode.js v25.8.2\n"
+    },
+    {
+      "label": "diff-and-code",
+      "exit_code": 2,
+      "wall_time_seconds": 0.198447195,
+      "output": "agents/implementation-audit/hidden-review/batch-009.md:46: new blank line at EOF.\nagents/implementation-audit/hidden-review/batch-099.md:16: new blank line at EOF.\nagents/implementation-audit/hidden-review/batch-136.md:29: new blank line at EOF.\nagents/implementation-audit/hidden-review/batch-152.md:25: new blank line at EOF.\nagents/implementation-audit/hidden-review/batch-195.md:44: new blank line at EOF.\n"
+    }
+  ],
+  "corrections": [
+    "修正batch062按历史来源相对目录写出的不可用链接，改为明确原文路径",
+    "修正batch155的三条代码/审计记录相对链接",
+    "清理009/099/136/152/195终尾空白行；没有改变断言或来源内容",
+    "英文EOF说明译中文后，047补显式read_to_eof字段，保留连续读完的原凭证"
+  ],
+  "successful_recheck": {
+    "json_files_parsed": 246,
+    "markdown_files_checked": 475,
+    "broken_links": 0,
+    "diff_whitespace_errors": 0,
+    "product_code_diff_from_08e4fc7": [],
+    "note": "文件计数为该轮检查时快照，后续增加本校验记录和独立复核记录不倒填旧结果"
+  },
+  "git_or_release_actions": "该次校验时尚未提交或推送；独立完整diff门禁完成后创建本地提交"
+}

@@ -1,0 +1,83 @@
+{
+  "batch": "082",
+  "owner": 2,
+  "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "covered": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-03-date-final.md",
+      "sha256": "a68c4ae020c9a23baf5946d18b1b03a3a6bfacaecbef8481974dfafe3f085b8b",
+      "lines": 16,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-03-parse-final.md",
+      "sha256": "ef4b4ddeb507cc56c96ddc5eff990419ac47a6925c0b75d43bbabe799a867e41",
+      "lines": 28,
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-04-remote-final.md",
+      "sha256": "d08fe8a8d1f262d4c0cde42773a0233d1d843456ddd541b543f7a88aac504bdd",
+      "lines": 19,
+      "eof": true
+    }
+  ],
+  "code_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "chapter_families": {
+    "web-03-date-final": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "apps/web/src/host/protocol/validate.ts:128-148,199-205",
+        "apps/web/src/host/protocol/parse.ts:204-207",
+        "apps/web/src/host/protocol/wire-values.ts:34-45"
+      ],
+      "notes": "生产未知输入先经 parseIsoDate 验证日期形状、真实日历日期和 1900–2199 范围，再进入 typed validator。nextDate 是相邻民用日校验，不是交易日历。直接伪造 DTO 调 validator 的边界不在 parser 保证内；未据此新增候选。"
+    },
+    "web-03-parse-final": {
+      "status": "retain_reverified",
+      "current_evidence": [
+        "apps/web/src/host/protocol/parse.ts:31-41,47-123,204-207"
+      ],
+      "notes": "四组 wire 标签清单有对应的 event、stable key、IntentRejected 与 CivilUpdate 消费点。无状态 allowlist 不需要抽取为对象；SettlementError.reason 文本与 IntentRejected.reason enum 继续分开。"
+    },
+    "web-04-remote-final": {
+      "status": "retain_reverified_with_protocol_boundary",
+      "current_evidence": [
+        "apps/web/src/app/useSessionHostLifecycle.ts:136-140",
+        "apps/web/src/host/remote-host.ts:30-45,192-195",
+        "apps/web/src/host/remote-publisher-state.ts:13-14,52-70",
+        "apps/web/src/host/remote-wire.ts:53-68"
+      ],
+      "notes": "无初始存档时 host.start 前发送 generation 1 有历史 Server 交叉核实支撑。已识别 Baseline 解析不比较 generation 新旧、host 安装直接覆盖缓存；乱序 baseline 语义仍未核实，保留协议边界而不推导修复策略。测试源码不等于实际 host 时序已运行验收。"
+    }
+  },
+  "candidate_status": {
+    "necessary_oop_candidates": [],
+    "optional_internal_refinements": [],
+    "status": "无待实施必要 OOP 动作；日期、allowlist 与 Remote generation 既有 owner/caller 足以支撑 retain。"
+  },
+  "cross_ledger_findings": [
+    {
+      "ledger": "G01–G68/Q",
+      "status": "无核销主张",
+      "finding": "本批没有核销 G/Q。Remote generation 1 事实只解除新局前置偏好合法性的旧疑问，不修复 G01–G05、G18–G20，也不改变 G04 重发旧 baseline 的缺口记录；web-03 来源不新增 G/Q。"
+    }
+  ],
+  "adr_status": {
+    "ADR-0010": "当前宿主协议依据；baseline 用于初始化、读档和显式重同步。",
+    "ADR-0027": "较新的运行部署决策，不改变本批日期/标签/Remote generation 语义。",
+    "ADR-0028": "较新的静态发布决策，不改变本批语义。",
+    "ADR-0018": "整体 proposed；不从中引入未接受的额外约束。"
+  },
+  "domain_review": {
+    "status": "未引入领域规则变更",
+    "official_rule_lookup": "未执行",
+    "boundary": "UTC 相邻日期运算不是交易日历；wire enum 与 generation 不构成证券类别、撮合或受理优先级。"
+  },
+  "validation": {
+    "tests": "未运行",
+    "build": "未运行",
+    "git_mutation": "未执行"
+  },
+  "report": "agents/implementation-audit/hidden-review/batch-082.md"
+}

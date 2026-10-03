@@ -1,0 +1,63 @@
+{
+  "batch_id": 142,
+  "owner": 2,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-03.md",
+      "sha256": "992daea3d7ea3eeb7faf8fd9bffa17811aa3380fb369bf8f83be77968a307b94",
+      "lines": 67,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-04.md",
+      "sha256": "54df9b4938a5a630488ba47d7373a5f11021df7b5c7f42fbc5b16654435a89f0",
+      "lines": 111,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-05.md",
+      "sha256": "679dce655fd01f0beaf5e9c9a70f0e618c735834b504d9238376abbba01909dc",
+      "lines": 57,
+      "read_to_eof": true
+    }
+  ],
+  "current_policy": {
+    "reviewed": [
+      "AGENTS.md",
+      "docs/principles.md",
+      "docs/open-questions.md",
+      "docs/architecture.md",
+      "docs/decisions/0009-call-auction-and-intraday-axis.md",
+      "docs/decisions/0014-closing-call-auction.md",
+      "docs/decisions/0017-escrow-parallel-tick.md",
+      "docs/decisions/0018-long-running-immutable-timeline.md",
+      "docs/decisions/0019-draft-market-scope-and-capacity.md",
+      "docs/trading-rules.md",
+      "agents/implementation-audit/implementation-audit-2026-10-02.md"
+    ],
+    "caller_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+    "decision": "历史 OOP 候选按基线 caller/owner/consumer 复核；不构成新实现授权。ADR-0017 accepted 为契约依据，ADR-0018 proposed 内容不覆盖已定的局部受理规则。未重新查询官方法源。"
+  },
+  "findings": {
+    "candidate_status": {
+      "engine_pipeline_03_stock_owner_and_lifecycle_projector": "implemented_at_baseline",
+      "engine_pipeline_03_stateless_transaction_wrapper": "not_needed; retain focused functions",
+      "engine_pipeline_04_commit_projection_and_conservation_boundaries": "retain_decision_confirmed",
+      "engine_pipeline_05_round_processor_and_cross_round_coordinator": "implemented_at_baseline"
+    },
+    "existing_open_associations": ["G17", "G39", "R02"],
+    "new_candidate": false,
+    "counterevidence": "历史记录中的测试建议不是测试运行证据；caller 实现存在也不核销 G17 的批量生产接线或 G39 的 K7 固定受理轨迹验收缺口。",
+    "large_a_semantics": "本批为 pipeline owner / 生命周期核对；没有发现改变沪深交易阶段、同股受理、费用、Money/股单位、T+1 或结算语义的候选。"
+  },
+  "actions": {
+    "product_code_changed": false,
+    "tests_run": false,
+    "builds_run": false,
+    "git_operations": false,
+    "g_q_modified": false
+  }
+}

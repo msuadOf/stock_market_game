@@ -1,0 +1,100 @@
+{
+  "batch_id": "031",
+  "owner": 1,
+  "product_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/completeness-2026-10-03/session/report.md",
+      "sha256": "814399a7fa5297751f465419232539718f45358b0532cc28a3a5f096f2611f20",
+      "planned_lines": 184,
+      "read_lines": 184,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["范围与指纹说明", "session-N01 ParentOrderPlan", "session-N02 ProtocolState", "原动作已涵盖与保留结论", "逐文件三栏", "独立复核范围"],
+      "status": "全文至 EOF；行数与 SHA 匹配。内容审计范围为 engine-session/strategy，不将其当作 company 生产行为证据。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/action-index.md",
+      "sha256": "e293789ffe326c06a759a7a9f3ac0d10cf9790404abbf8c2ba4eed55ab257e34",
+      "planned_lines": 1187,
+      "read_lines": 1187,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["engine-foundation", "engine-pipeline", "engine-session", "engine-strategy", "hosts", "tooling", "web"],
+      "status": "全文至 EOF；行数与 SHA 匹配。索引是跨域候选动作集合；未把其他区域候选移作 company 动作。"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/oop-refactor-audit/exhaustive/areas/engine-company.md",
+      "sha256": "6bf58f7b5723cfaedfe95dca2a1249f0a8d877ee0b2375a3b5ddd17e5b02691d",
+      "planned_lines": 59,
+      "read_lines": 59,
+      "aliases": 1,
+      "read_to_eof": true,
+      "chapter_families": ["五批材料与复核", "跨批次唯一归属", "等价重构判断/依赖", "独立行为缺陷候选", "覆盖与未完成事项"],
+      "status": "全文至 EOF；行数与 SHA 匹配。原 disposition 88 retain、18 support、106 总数，无 refactor action。"
+    }
+  ],
+  "current_code_checks": [
+    {
+      "finding": "公司聚合对象与经营生命周期归属",
+      "status": "historical_retain_conclusion_confirmed",
+      "evidence": ["packages/engine/src/company/industrial/mod.rs:55-119：IndustrialBooks 聚合及局部构造/对账", "packages/engine/src/company/operations/day.rs:79-85：OperatingDayRun 阶段顺序", "packages/engine/src/company/operations/industrial.rs:85-176：工业企业日常流程"],
+      "caller_owner_consumer": "CompanyOperationsClockWiring::run_day_end 调用自然日经营流程；行业分发选择对应公司流程；没有证据要求增加通用 manager。"
+    },
+    {
+      "finding": "工业企业库存期初对账遗漏无 seed 的非零 ledger account",
+      "status": "candidate_still_present",
+      "evidence": ["packages/engine/src/company/industrial/config.rs:97-124 仅遍历已提供的 seed key", "packages/engine/src/company/industrial/mod.rs:78-119：IndustrialBooks::new 返回前调用对账", "tests/industrial_accounting/failures/guards.rs:279-299 覆盖已提供 seed 不匹配，但未覆盖缺少 seed"],
+      "candidate_boundary": "对于受支持且期初 ledger balance 非零、但没有对应 seed 的 1403/1405，预期返回 OpeningSeedMismatch 并将 seed 视为零；保留现有已提供 seed 不匹配的覆盖。"
+    },
+    {
+      "finding": "OperatingScheduler 的 pending ID 重复与序号耗尽",
+      "status": "candidate_still_present",
+      "evidence": ["packages/engine/src/company/scheduler.rs:123-158：submit 使用 += 1 递增 next_seq", "packages/engine/src/company/scheduler.rs:179-238：restore 检查排序、key、ID 范围及 floor，但未检查重复 ScheduledDueId"],
+      "caller_owner_consumer": "CompanyOperations::submit_due/dispatch_due_on 与 session company clock wiring 消费或镜像经营 due ID；这些属于自然日公司经营事项，不是交易所订单。"
+    },
+    {
+      "finding": "保险 ContractGroupState 局部应用失败时的原子性",
+      "status": "unproven_boundary",
+      "evidence": ["packages/engine/src/company/insurance/groups.rs:389：apply_release", "packages/engine/src/company/insurance/service_release.rs:24-99：在应用状态前先准备并入账"],
+      "scope_note": "提取 owner 不证明顺序执行的 checked mutation 可整体 rollback；合法值域下是否可达仍未核实。"
+    },
+    {
+      "finding": "公司 shock 的行业适用范围",
+      "status": "current_G36_boundary_persists",
+      "evidence": ["packages/engine/src/company/operations/day.rs:115-133：industry shock 按 CompanySpec.industry 过滤", "packages/engine/src/company/operations/day.rs:135-145：sample_company_shock 激活时未按行业过滤", "agents/implementation-audit/reaudit-engine.md:61-65：记录事件适用范围与披露路径"],
+      "scope_note": "不要据此推断默认 session 运行失败；这仍是生产披露/适用范围边界。"
+    },
+    {
+      "finding": "issuer mapping 与 issued-share 术语",
+      "status": "current_contract_confirmed_with_input_boundary_followup",
+      "evidence": ["packages/engine/src/company/spec.rs：CompanySpec::validate_set", "packages/engine/src/company/mod.rs:203-246：CompanyRegistry::new 与 issuer mapping 校验"],
+      "scope_note": "issued_shares 不等于可交易流通股；重复 tuple 的上游约束仍是独立后续事项。"
+    }
+  ],
+  "ledger_boundary": {
+    "reference": "agents/implementation-audit/implementation-audit-2026-10-02.md; agents/implementation-audit/reaudit-engine.md; docs/open-questions.md",
+    "finding": "当前 implementation audit 中公司相关的 G28、G35、G36 仍开放；G41、G58、G59 是独立的 caller 专属缺口。内部审计 Q23 涉及税务时机/idempotency，与 docs/open-questions.md 的 Q 编号体系不同。没有历史结构候选可直接映射到 G/Q 项。",
+    "candidate_disposition": "保留工业企业缺少 seed、保险局部原子性、scheduler 重复 ID/序号候选；不新增、关闭或重编号 G/Q 项。"
+  },
+  "governance_read": {
+    "instructions": ["AGENTS.md", "docs/principles.md"],
+    "decisions_checked": ["docs/decisions/0016-fundamental-factor-model.md", "docs/decisions/0019-draft-market-scope-and-capacity.md", "docs/decisions/0024-shrinking-investor-cash-pool.md", "docs/decisions/0026-individual-institution-experience.md", "docs/decisions/0027-runtime-deployment-and-build-targets.md"],
+    "open_questions_and_ledger_checked": ["docs/open-questions.md", "agents/implementation-audit/implementation-audit-2026-10-02.md", "agents/implementation-audit/reaudit-engine.md"],
+    "historical_source_instructions_used_as_current_authority": false,
+    "trading_rule_research_performed": false
+  },
+  "validation": {
+    "full_source_reads_to_eof": true,
+    "all_planned_hashes_match": true,
+    "all_planned_line_counts_match": true,
+    "tests_run": false,
+    "build_run": false,
+    "regression_run": false,
+    "git_write": false,
+    "product_files_changed": false,
+    "output_files": ["batch-031.md", "batch-031.json"]
+  }
+}

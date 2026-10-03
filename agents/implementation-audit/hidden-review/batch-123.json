@@ -1,0 +1,31 @@
+{
+  "batch": 123,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现有依据的已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/pipeline-sol-execution.md",
+      "sha256": "35d3412550ac9219698241d53bdeb25cf9cddb68cd228ce93fb9e23f87fa8baf",
+      "lines": 106,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reading-records-01-09.md",
+      "sha256": "05d20883f05b8a207a479e181d8166b1ef52f70bafb0a6d92edaa48de05a11a5",
+      "lines": 21,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/reading-records-10-18.md",
+      "sha256": "d0f3525068e17bdbed6a8988590930691de2590b31fa69f52907b0853073e4a3",
+      "lines": 322,
+      "read_to_eof": true
+    }
+  ],
+  "notes": [
+    "三份审查记录均不在 baseline 43b1aa5 中。",
+    "当前 Q6 与 ADR-0007 §2 将全中文界面限定为首发产品界面范围；未来第二语言须另行 ADR。",
+    "本结论仅核对历史复核陈述与范围，不证明生产源码正确或交易规则已重新核验。"
+  ]
+}

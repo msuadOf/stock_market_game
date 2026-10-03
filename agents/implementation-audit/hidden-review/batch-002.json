@@ -1,0 +1,64 @@
+{
+  "batch": 2,
+  "owner": 2,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/domain/report.md",
+      "lines_expected": 2706,
+      "lines_measured": 2706,
+      "sha256_expected": "614936394a7ac13b13f9d64ae259c4f0263ff2f0f8885c7f3042ed0d7136b94d",
+      "sha256_measured": "614936394a7ac13b13f9d64ae259c4f0263ff2f0f8885c7f3042ed0d7136b94d",
+      "read_to_eof": true,
+      "chapters": ["范围、方法与声明", "候选处置表", "domain-R2-N01 至 N41 具名提案", "147 文件覆盖索引说明", "独立复核与限制"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/domain/review.md",
+      "lines_expected": 20,
+      "lines_measured": 20,
+      "sha256_expected": "0c61b54a4529ba8359509c684226a5e935f24bf8d1ab72584991ce30504d6ed7",
+      "sha256_measured": "0c61b54a4529ba8359509c684226a5e935f24bf8d1ab72584991ce30504d6ed7",
+      "read_to_eof": true,
+      "chapters": ["preliminary review identity and corrections", "domain and scope judgments", "final review requirement"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/file-index.md",
+      "lines_expected": 1232,
+      "lines_measured": 1232,
+      "sha256_expected": "97271e86b138981a86060e9669b0d9d258e46f25de9378d57b920538c2c7002f",
+      "sha256_measured": "97271e86b138981a86060e9669b0d9d258e46f25de9378d57b920538c2c7002f",
+      "read_to_eof": true,
+      "unicode_characters_measured": 864825,
+      "limitation": "逐字符已读 L1-185；之后 Unicode 字符 offset 182870-864825 连续核读至 EOF，涵盖 worker request scope/lifecycle、移动端 market model/UI state、save schema、generated DTO、simulation matrix、smoke tests、workspace scripts 与 workflow 条目。全文共 864825 个 Unicode 字符，剩余 0；本索引审读不等于逐文件实现复核或产品行为验证。",
+      "last_cursor_unicode_offset": 864825,
+      "verified_unicode_ranges_appended": [[488870, 494870], [494870, 500870], [500870, 506870]],
+      "verified_unicode_ranges_appended_later": [[506870, 512870], [512870, 518870]],
+      "verified_unicode_ranges_appended_next": [[518870, 524870]],
+      "verified_unicode_ranges_appended_final": [[524870, 530870], [530870, 536870], [536870, 542870], [542870, 548870], [548870, 554870], [554870, 560870], [560870, 566870], [566870, 572870], [572870, 578870], [578870, 584870], [584870, 590870], [590870, 596870], [596870, 602870], [602870, 608870], [608870, 614870], [614870, 620870], [620870, 626870], [626870, 632870], [632870, 638870], [638870, 644870], [644870, 650870], [650870, 656870], [656870, 662870], [662870, 668870], [668870, 674870], [674870, 680870], [680870, 686870], [686870, 692870], [692870, 698870], [698870, 704870], [704870, 710870], [710870, 716870], [716870, 722870], [722870, 728870], [728870, 734870], [734870, 740870], [740870, 746870], [746870, 752870], [752870, 758870], [758870, 764870], [764870, 770870], [770870, 776870], [776870, 782870], [782870, 788870], [788870, 794870], [794870, 800870], [800870, 806870], [806870, 812870], [812870, 818870], [818870, 824870], [824870, 830870], [830870, 836870], [836870, 842870], [842870, 848870], [848870, 854870], [854870, 860870], [860870, 864825]],
+      "verified_unicode_ranges_appended_eof": [[860870, 864825]],
+      "verified_unicode_ranges": [[182870, 188870], [188870, 194870], [194870, 200870], [200870, 206870], [206870, 212870], [212870, 218870], [218870, 224870], [224870, 230870], [230870, 236870], [236870, 242870], [242870, 248870], [248870, 254870], [254870, 260870], [260870, 266870], [266870, 272870], [272870, 278870], [278870, 284870], [284870, 290870], [290870, 296870], [296870, 302870], [302870, 308870], [308870, 314870], [314870, 320870], [320870, 326870], [326870, 332870], [332870, 338870], [338870, 344870], [344870, 350870], [350870, 356870], [356870, 362870], [362870, 368870], [368870, 374870], [374870, 380870], [380870, 386870], [386870, 392870], [392870, 398870], [398870, 404870], [404870, 410870], [410870, 416870], [416870, 422870], [422870, 428870], [428870, 434870], [434870, 440870], [440870, 446870], [446870, 452870], [452870, 458870], [458870, 464870], [464870, 470870], [470870, 476870], [476870, 482870], [482870, 488870]],
+      "attempted_continuous_ranges": [[1, 10], [11, 15], [16, 20], [21, 25], [26, 30], [31, 35], [36, 45], [46, 50], [51, 55], [56, 60], [61, 65], [66, 70], [71, 75], [76, 80], [81, 85], [86, 90], [91, 95], [96, 100], [101, 105], [106, 110], [111, 115], [116, 120], [121, 125], [126, 130], [131, 135], [136, 140], [141, 145], [146, 150], [151, 155], [156, 160], [161, 165], [166, 170], [171, 175], [176, 180], [181, 185]],
+      "chapter_lines": [5, 157, 273, 391, 917, 1219]
+    }
+  ],
+  "candidate_summary": {
+    "new_proposals": ["domain-R2-N01", "domain-R2-N02", "domain-R2-N03", "domain-R2-N04", "domain-R2-N06", "domain-R2-N07", "domain-R2-N08", "domain-R2-N10", "domain-R2-N11", "domain-R2-N12", "domain-R2-N13", "domain-R2-N14", "domain-R2-N16", "domain-R2-N18", "domain-R2-N19", "domain-R2-N20", "domain-R2-N22", "domain-R2-N25", "domain-R2-N26", "domain-R2-N27", "domain-R2-N28", "domain-R2-N30", "domain-R2-N31", "domain-R2-N32", "domain-R2-N34", "domain-R2-N35", "domain-R2-N37", "domain-R2-N38", "domain-R2-N39", "domain-R2-N40", "domain-R2-N41"],
+    "extensions": ["domain-R2-E03 extends domain-N07"],
+    "covered": ["C05-2 => domain-N06", "14-position-ledger => engine-foundation-01-A03", "19-indicators => domain-N01"],
+    "rejected": ["C05-1", "04-income-column-behavior", "08-trade-cycle", "08-manufacturing-run", "10-operations-hash-projection", "11-shock-cohort", "12-real-estate-transaction-coordination", "12-query-projection", "13-rng", "14-retail-decision-policy", "16-1", "17-stock-summary", "17-ensemble-summary", "experience_input_snapshot", "19-history", "20-market-price-boundary", "20-observation-domain-modules"]
+  },
+  "cross_ledger": [
+    {"candidate": "N01", "reference": "implementation-audit-2026-10-02.md:155", "item": "Q17", "status": "报告生成失败后的部分状态变更仍是独立问题"},
+    {"candidate": "N12/N11", "reference": "implementation-audit-2026-10-02.md:157", "item": "Q19", "status": "银行状态恢复与校验仍是独立问题"},
+    {"candidate": "N16", "reference": "implementation-audit-2026-10-02.md:161", "item": "Q23", "status": "重复税务调用语义仍是独立问题"},
+    {"candidate": "E03", "reference": "implementation-audit-2026-10-02.md:51", "item": "G08", "status": "散户带日期写入与衰减缺少调用方的问题仍开放"},
+    {"candidate": "N35", "reference": "implementation-audit-2026-10-02.md:54", "item": "G42", "status": "价格记忆清理与恢复范围缺口仍开放"}
+  ],
+  "verification": {
+    "product_changes": false,
+    "tests_run": false,
+    "official_rules_rechecked": false,
+    "index_full_text_verified": true
+  },
+  "deliverable": "batch-002.md"
+}

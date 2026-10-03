@@ -1,0 +1,67 @@
+{
+  "batch": 144,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-09.md",
+      "sha256": "b1e10feb42a32f322bfd3bd119612667eaec6b9c631fa703356ab76c2edd9c04",
+      "lines": 47,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-10.md",
+      "sha256": "e995084608fc2e24d7fa55676da438335b64544b416d78b84db3bce9201a74f8",
+      "lines": 38,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-11.md",
+      "sha256": "6c7ea859affd69ed56876b3d92db5c9c1e99286518ef001dfb66b038cf277fac",
+      "lines": 85,
+      "read_to_eof": true
+    }
+  ],
+  "sources_verified": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-09.md",
+      "lines_expected": 47,
+      "lines_actual": 47,
+      "sha256_expected": "b1e10feb42a32f322bfd3bd119612667eaec6b9c631fa703356ab76c2edd9c04",
+      "sha256_actual": "b1e10feb42a32f322bfd3bd119612667eaec6b9c631fa703356ab76c2edd9c04",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-10.md",
+      "lines_expected": 38,
+      "lines_actual": 38,
+      "sha256_expected": "e995084608fc2e24d7fa55676da438335b64544b416d78b84db3bce9201a74f8",
+      "sha256_actual": "e995084608fc2e24d7fa55676da438335b64544b416d78b84db3bce9201a74f8",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-11.md",
+      "lines_expected": 85,
+      "lines_actual": 85,
+      "sha256_expected": "6c7ea859affd69ed56876b3d92db5c9c1e99286518ef001dfb66b038cf277fac",
+      "sha256_actual": "6c7ea859affd69ed56876b3d92db5c9c1e99286518ef001dfb66b038cf277fac",
+      "read_to_eof": true
+    }
+  ],
+  "conclusions": {
+    "a_share_semantics": "历史主张与项目明确的语义区分一致，但未独立重新核对官方规则来源/日期",
+    "scope": "历史候选对应当前已实现的 InstitutionalFacts(ExperienceMoment) 和 StockStreamCoordinator<S>",
+    "current_consumers": [
+      "continuous_tick_transaction.rs 构造 ReadyStockStream 并调用 drive_stock_stream",
+      "auction_tick_transaction.rs 构造 ReadyStockStream 并调用 drive_stock_stream",
+      "pre_open_transaction.rs 构造 ReadyStockStream 并调用 drive_stock_stream",
+      "settlement/projection 路径使用带必需 ExperienceMoment 的 project_institutional_receipts"
+    ],
+    "test_execution": "未运行；历史文档也报告未运行测试",
+    "follow_up": "确认 engine-pipeline-11 所述 closed receiver 与 worker payload-send failure 边界在当前测试中的覆盖情况"
+  },
+  "limitations": [
+    "未重新审计历史文档枚举的每个 Rust 文件",
+    "did not read full ADRs or independently query exchange/CSDC official rules",
+    "未改动现有未跟踪工作区目录"
+  ]
+}

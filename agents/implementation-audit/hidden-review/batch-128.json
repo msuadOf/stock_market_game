@@ -1,0 +1,34 @@
+{
+  "batch_id": 128,
+  "owner": 3,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-pipeline.md",
+      "sha256": "91e539447534404e6b3078978ccd387057e3b64aa2152e41ea71f498461e225e",
+      "lines": 85,
+      "read_to_eof": true,
+      "candidate_status": "区域整合明确标为候选设计、未实施；六项提取是行为等价提议，02-D01仍记为未修复源码事项。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-session.md",
+      "sha256": "f59ef71256be41b061ca68a1b17ddab0931f37255e123874d482e4d518403e91",
+      "lines": 50,
+      "read_to_eof": true,
+      "candidate_status": "区域整合明确为静态审计与候选迁移路径；指出的多个行为缺口仍是独立契约线索，没有宣称修复或验收。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-strategy.md",
+      "sha256": "86dafe3c908c68be378003d8512d470f8029c9321c5ca8f83f55e27b20f81977",
+      "lines": 44,
+      "read_to_eof": true,
+      "candidate_status": "两项重构均是候选迁移；文档明确将已知行为线索与 OOP 候选区分，且未声称实现或测试通过。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "oop_extraction_is_fix": false,
+    "status": "本批来源均未批准或实施所列 OOP 提案，也未宣称这些提案核销缺口；没有发现其导致已批准承诺遗漏或错误历史核销的证据。既有 G/Q 状态不因本批材料变化。"
+  }
+}

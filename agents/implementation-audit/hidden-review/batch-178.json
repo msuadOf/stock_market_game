@@ -1,0 +1,26 @@
+{
+  "batch": 178,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01-delta-b.md",
+      "sha256": "e733c38b70339d58d1d847a0a57d3ebbedf38011c9f14118164ff44a106bacb2",
+      "lines": 46,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01-delta-schema.md",
+      "sha256": "c81f084c28ba54127c00c0b6548291a8174dd1e32331a6ee8bd79996a42ee75f",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-01-recheck.md",
+      "sha256": "3a0bdc7eb2176a61ecaeb939012be4823231e2128b77422d2519232ddb5544a4",
+      "lines": 33,
+      "read_to_eof": true
+    }
+  ],
+  "finding": "未发现可确认的已批准承诺遗漏或错误历史核销。旧复核指出的 A03 候选边界遗漏已在现行 item/module 记录中补齐；未证实存在已批准实施承诺或虚报完成。"
+}

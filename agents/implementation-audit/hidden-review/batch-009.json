@@ -1,0 +1,77 @@
+{
+  "batch_id": 9,
+  "source_baseline": "43b1aa5",
+  "files": [
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/root/summary-proposed.md",
+      "full_read": true,
+      "read_ranges": [[1, 69]],
+      "lines": 69,
+      "sha256": "4333c3700fa4670745bfa80b5eb279135ffc5faf258cd913e507aef77cbb736e",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/scope/report.md",
+      "full_read": true,
+      "read_ranges": [[1, 65]],
+      "lines": 65,
+      "sha256": "a1fc4f5fab6e4c6639469ee1cc55be95fb6fbc2714580e5c7d0b8893fa2193f6",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/challenge-2026-10-03/session/reader-instructions.md",
+      "full_read": true,
+      "read_ranges": [[1, 9]],
+      "lines": 9,
+      "sha256": "4c06983aca82847304c61e54d120c62f8f61d32aedef467f474a28c26e8f1817",
+      "eof": true
+    }
+  ],
+  "matrix": {
+    "G_total": 68,
+    "G_open": 67,
+    "G_closed": [27],
+    "chapters": [
+      {"name": "宿主与远程链路", "items": ["G01-G05", "G18-G20", "G40", "G53", "G66"]},
+      {"name": "策略、个人信息与估值", "items": ["G06-G09", "G42-G43", "Q02", "Q11"]},
+      {"name": "行情显示、日历", "items": ["G10-G15", "G44", "G46-G47"]},
+      {"name": "工程、交互与发布", "items": ["G16-G17", "G21-G26", "G45", "G48-G52", "G54-G56", "G64-G65", "G67-G68"]},
+      {"name": "公司经营、合并与诊断", "items": ["G28-G39", "G57-G63", "Q01", "Q03-Q10", "Q12-Q23"]}
+    ],
+    "Q10": "已转 G39；其余 Q 的开放/限定状态沿用总账，不在此批重分类"
+  },
+  "product_evidence": [
+    {
+      "path": "packages/engine/src/company/operations/day.rs",
+      "lines": [79, 85, 135, 145],
+      "symbols": ["CompanyDayRun::advance", "sample_and_activate_shocks"],
+      "finding": "日推进阶段顺序明确；公司级 shock 逐公司抽取并激活，聚合重构需保留顺序与适用边界。"
+    },
+    {
+      "path": "apps/web/src/host/engine-host.ts",
+      "lines": [38, 55],
+      "symbols": ["EngineHost"],
+      "finding": "start/stop/setSpeed 为 void，不能将 OOP 清单或接口存在视作宿主副作用已获确认。"
+    },
+    {
+      "path": ".github/workflows/build-web.yml",
+      "lines": [14, 23],
+      "symbols": ["jobs.build"],
+      "finding": "配置调用 distributions reusable workflow，无独立产品状态对象。"
+    },
+    {
+      "path": "package.json",
+      "lines": [11, 23],
+      "symbols": ["scripts"],
+      "finding": "根 scripts 串联工具命令，不据此引入产品业务对象。"
+    }
+  ],
+  "conclusion": {
+    "new_G_or_Q": [],
+    "contradicted_old_conclusions": [],
+    "oop_batch_009_status": "调查材料；未实施；不构成代码或测试验收",
+    "a_share_semantics": "未见明确改变交易语义的证据；未审完整 128 项方案且未查现行官方法源，不作全量通过认证",
+    "tests_run": false,
+    "product_files_modified": false
+  }
+}

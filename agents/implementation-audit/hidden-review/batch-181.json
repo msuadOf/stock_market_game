@@ -1,0 +1,29 @@
+{
+  "batch": 181,
+  "owner": 1,
+  "worktree_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-03-delta-evidence.md",
+      "sha256": "4819a96e1ef24dcde4397ed9cb3a0d6480da231307814478f018f0eec703213f",
+      "lines": 29,
+      "read_to_eof": true,
+      "candidate_status": "未发现新候选；普通撮合部分变更及 candidate restore 局部提交保证结论复证；public setter/record-filled 描述不适用于当前基线"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-03-recheck.md",
+      "sha256": "530f9ac2ee43f44660a38ee6b3f5184a4288600991b1824046841972c2bdabf2",
+      "lines": 17,
+      "read_to_eof": true,
+      "candidate_status": "旧的 UpdateStreamProjector::default 与 Sha256Provider::digest_hex inventory 阻断已由后续材料修复；无新候选"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-03-recheck2.md",
+      "sha256": "b61a99bc374dc6ff903e30a79e85902ee6e243095b53cc6eb40e7f9aaad497c7",
+      "lines": 19,
+      "read_to_eof": true,
+      "candidate_status": "旧的 atomic consistency 误导风险已在当前 JSON/Markdown 明确修订；无新候选"
+    }
+  ],
+  "conclusion": "本批是历史 OOP 审阅材料复核；不核销 G01–G68，不改变交易语义，不产生新的对象提取候选。"
+}

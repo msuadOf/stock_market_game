@@ -1,0 +1,36 @@
+{
+  "batch": 71,
+  "owner": 1,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-area-final.md",
+      "sha256": "a20be83027fc9b743145814c10ca2b70f87232456c92fe313dd83734b43b3d82",
+      "lines": 30,
+      "verified_full_eof": true,
+      "candidate_status": "既有策略 owner/投影审查为限定范围通过；ST03-A01 在基线已有 strategy_data 投影，不新增动作。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-area-reference-final.md",
+      "sha256": "e92ad7cb3bd532b3b72a7de175e534dc471e4c0047accfce4cd47fcd4cc6ba18",
+      "lines": 24,
+      "verified_full_eof": true,
+      "candidate_status": "只绑定引用角色/哈希，不构成源码候选；不重审源码的边界仍有效。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-tests-01.md",
+      "sha256": "ad3b4a01cc35aff76989da49fb6882447edfbfd19079b372d03e2cf4119c4754",
+      "lines": 86,
+      "verified_full_eof": true,
+      "candidate_status": "测试支持材料分类的最终绑定通过，18 项 support/actions 空；无产品修复候选，未执行测试。"
+    }
+  ],
+  "findings": [],
+  "checks": {
+    "large_a_semantics": "通过；本批无交易制度变更主张，未独立核验官方规则。",
+    "necessity_and_scope": "通过；旧 OOP 候选与测试清单审计不产生新增产品动作。",
+    "cross_layer_and_tests": "通过（静态复核）；核对当前 strategy_data owner/caller；G/Q 未被本批核销，测试未运行。"
+  },
+  "tests_run": false,
+  "network_or_official_rule_check": false
+}

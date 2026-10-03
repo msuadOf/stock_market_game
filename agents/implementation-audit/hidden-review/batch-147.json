@@ -1,0 +1,25 @@
+{
+  "batch": 147,
+  "owner": 2,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-06.md",
+      "sha256": "1f688b62b83dba3dd8c409ec8d48e834747d487c9eae747bb3bd6ce59094e872",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-07.md",
+      "sha256": "0465813c121b287c42dae7197e4e4b76431f7f427b2da6eaedeafdbd29768ef4",
+      "lines": 10,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/reviews/engine-pipeline-08.md",
+      "sha256": "7056c1c29cf5a230e0d30da6e0c94d933d4e08c16ee876bdc741f5b6d49c1c16",
+      "lines": 38,
+      "read_to_eof": true
+    }
+  ]
+}

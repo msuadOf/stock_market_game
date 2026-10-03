@@ -1,0 +1,26 @@
+{
+  "batch": 102,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "caller_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-tests-10.md",
+      "sha256": "7de28af59dacfa80ccd837d28f6e486a170686023de50c6d3964e70557e640ce",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/hosts-01.md",
+      "sha256": "853a792d666ffdeda9ef6ceebc81a1278997341dca91890ac622edc53b4e0b88",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/hosts-02.md",
+      "sha256": "e6d7cf7cf31c81e6749c7b5f9badbf5c467dda05b9404a15c7bb5ad6b1c2d5b0",
+      "lines": 22,
+      "read_to_eof": true
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "batch": 79,
+  "owner": 4,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-02.md",
+      "sha256": "f211b4dbbfb0ab8b3c2fb524321a1f13f431e48305c13e15ffbdf2c329a8e905",
+      "lines": 68,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-03.md",
+      "sha256": "74c6e6bafa459d1598412e48bc2dcf7e8e1cf2346483e11efe3350f9fc84bbb2",
+      "lines": 48,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-04.md",
+      "sha256": "d60ba828c953aa8990793d8f936860e1089e0343cae18919a914781e01aa1443",
+      "lines": 65,
+      "read_to_eof": true
+    }
+  ],
+  "findings": [],
+  "checks": {
+    "large_a_semantics": "未发现交易语义或资金/股份单位变化；工具审计不引入新的 A 股规则主张。",
+    "necessity_and_scope": "没有新增实现承诺。baseline-run 的 SimulationBatchContext 已在基线实现；sampler cleanup 与对象提取分开，现有性能及监督缺口沿用 G61/G62。",
+    "cross_layer_and_tests": "G39、G63 与 Q05 均不因历史 OOP review 或发布通过而核销；未运行测试、构建或平台动态验证。"
+  },
+  "tests_run": false,
+  "network_or_official_rule_check": false
+}

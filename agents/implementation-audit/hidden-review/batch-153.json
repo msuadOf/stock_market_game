@@ -1,0 +1,26 @@
+{
+  "batch": 153,
+  "owner": 3,
+  "status": "complete",
+  "conclusion": "未发现来源证明的已批准承诺遗漏或错误历史核销。来源记载的是候选 OOP 设计，未构成生产交付义务。",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/hosts_tooling.md",
+      "sha256": "f1d680d30b900b9c47e6b80a1d4ddd414bf53fdc050b07a5e409294bde494b3a",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/personal-state-encapsulation-evidence.md",
+      "sha256": "d56abe4bd89887a3a5220b44bf0f80f584a06b78e55c2e08adfd88e652876013",
+      "lines": 30,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/session_strategy.md",
+      "sha256": "e51fe4db848d6cc36518b8a5d633609fadf6e5454107f2f443197ca18d26a26b",
+      "lines": 13,
+      "read_to_eof": true
+    }
+  ]
+}

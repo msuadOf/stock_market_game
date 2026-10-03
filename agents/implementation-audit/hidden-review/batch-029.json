@@ -1,0 +1,123 @@
+{
+  "batch_id": 29,
+  "baseline": "43b1aa5",
+  "source_eof_verified": true,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/25.md",
+      "lines": 9,
+      "sha256": "ad3fdb4f9da2067604420ec51e9d22dc589db27f6c80b4edc10828e15bf0cafa",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/26.md",
+      "lines": 27,
+      "sha256": "d9669a610a198be8a716e5176f0f1f2633db9cae52aa547a269b9540c783b908",
+      "eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/28.md",
+      "lines": 17,
+      "sha256": "ebcc29de49f83f8859fc1fc19932b170cf0e4f484a2bf7659ad43fe879597d47",
+      "eof": true
+    }
+  ],
+  "current_code_findings": [
+    {
+      "candidate": "A03 SessionCandleBook",
+      "status": "already implemented; production owner confirmed",
+      "evidence": [
+        "packages/engine/src/session/candles.rs:90-129",
+        "packages/engine/src/session/candles.rs:131-189",
+        "packages/engine/src/session.rs:1143",
+        "packages/engine/src/session.rs:2583-2590",
+        "packages/engine/src/session.rs:2811-2820"
+      ],
+      "boundary": "GameSession retains candidate and publish control; explicit follow-up validation candidates include zero-volume mark, first and later trades, overflow, candidate isolation, and saving/restoring both history and active candle maps. Tests were not run."
+    },
+    {
+      "candidate": "NPC attention owner and scheduler",
+      "status": "retain conclusion supported; no new candidate",
+      "evidence": [
+        "packages/engine/src/session/attention.rs:14-25",
+        "packages/engine/src/session/attention.rs:253-257",
+        "packages/engine/src/session/attention.rs:261-329"
+      ],
+      "boundary": "NpcAttentionState owns per-NPC RNG/candidate tick; scheduler owns only heap and GameSession filters stale entries."
+    },
+    {
+      "candidate": "causal facade",
+      "status": "retain conclusion supported; no new candidate",
+      "evidence": [
+        "packages/engine/src/session/causal.rs:16-37",
+        "packages/engine/src/session/causal.rs:40-91",
+        "packages/engine/src/session/causal.rs:94-120"
+      ],
+      "boundary": "Facade 读取 session clock、market、parent order、issuer registry 并写入 collector；只提取 facade 不会迁移这些 owner。"
+    },
+    {
+      "candidate": "AccountPagedMap",
+      "status": "generic storage container; no domain service candidate",
+      "evidence": [
+        "packages/engine/src/session/account_paged_map.rs:14-18",
+        "packages/engine/src/session/account_paged_map.rs:31-67",
+        "packages/engine/src/session/account_paged_map.rs:70-84"
+      ]
+    },
+    {
+      "candidate": "strategy sizing functions",
+      "status": "pure shared helpers; no durable object owner; current callers confirmed",
+      "evidence": [
+        "packages/engine/src/strategy/sizing.rs:6-69",
+        "packages/engine/src/strategy/institution.rs:5,41-53",
+        "packages/engine/src/strategy/zi_noise.rs:259-279",
+        "packages/engine/src/strategy/retail.rs:52-65,117-127",
+        "packages/engine/src/strategy/hot.rs:30-45,80-94",
+        "packages/engine/src/strategy/mod.rs:51",
+        "packages/engine/src/session/decision_chain/quote.rs:198",
+        "packages/engine/src/session/decision_chain.rs:2164-2185"
+      ],
+      "boundary": "只计算拟申报股数和现金可负担性。reservation、同账户竞争和最终受理仍由 Account acceptance 负责（sizing.rs:30-31）；这不会核销任何 G 项。"
+    },
+    {
+      "candidate": "StrategyState",
+      "status": "closed production snapshot validation/restoration owner; payload remains owned by individual strategies",
+      "evidence": [
+        "packages/engine/src/strategy/state.rs:6-35",
+        "packages/engine/src/strategy/state.rs:91-169",
+        "packages/engine/src/account/strategy.rs:48-68",
+        "packages/engine/src/account.rs:211",
+        "packages/engine/src/session/account_book.rs:39-69",
+        "packages/engine/src/session/pipeline/decision_snapshot.rs:30,64-101",
+        "packages/engine/src/session/pipeline/npc_decisions.rs:175-201",
+        "packages/engine/src/session/persistence/v2.rs:315-339,393-409"
+      ],
+      "boundary": "Account/session are production consumers for validated snapshots, decision capture, shadow clone and v2 persistence restore; this does not replace per-strategy payload ownership."
+    },
+    {
+      "candidate": "technical indicator kernels",
+      "status": "pure calculation owner; production observation adapter and session caller confirmed",
+      "evidence": [
+        "packages/engine/src/strategy/technical.rs:43-46,81,111,152",
+        "packages/engine/src/observation/technical.rs:49-114",
+        "packages/engine/src/session/decision_chain.rs:90-123",
+        "packages/engine/src/session/decision_chain.rs:690-725"
+      ],
+      "boundary": "Observation adapter validates daily order/as-of constraints and excludes no-trade days before invoking kernels; session supplies historical candle bars. Indicator functions do not own calendar/history selection."
+    }
+  ],
+  "matrix": {
+    "G01-G68": "未发现直接的条目映射。不得仅凭对象或测试存在就标记缺口关闭。保持台账状态；G27 已在当前台账中单独记为关闭。",
+    "engine_focus_G06-G09_G16_G28_G35-G38": "未发现相同 owner 或相同受理边界；保持当前重新审计台账结论。",
+    "G15": "官方日历覆盖与模拟 fallback 的区别；与 sizing helpers 或指标公式归属无关。",
+    "Q01-Q23": "未发现直接映射；保持开放问题及处置台账状态，包括 reaudit-engine.md 跟踪的 Q02/Q11。上述 OOP owner 或测试均未核销 G/Q 项。"
+  },
+  "conclusion": {
+    "new_oop_actions": [],
+    "old_conclusion_contradicted": false,
+    "a_share_rule_change": false,
+    "tests_run": false,
+    "product_files_modified": false,
+    "git_write": false
+  }
+}

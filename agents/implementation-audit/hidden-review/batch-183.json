@@ -1,0 +1,26 @@
+{
+  "batch_id": 183,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "conclusion": "未发现已批准承诺遗漏或错误历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-04.md",
+      "sha256": "22459dcc81110f738d5eb1533bcbdf1b043f36752b5adfda451921592f195a27",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-01-final.md",
+      "sha256": "25e7cddefdfd2c964a5b95f5fc8c251c80f428414ca0096f5d5011df736cf48f",
+      "lines": 23,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-pipeline-01-full-supplement.md",
+      "sha256": "8fb97e1b13a643467cbd161f071bc9acde32c1ea1904af612ce10125718cfe77",
+      "lines": 33,
+      "read_to_eof": true
+    }
+  ]
+}

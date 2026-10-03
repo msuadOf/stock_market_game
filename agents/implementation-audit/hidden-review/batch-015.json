@@ -1,0 +1,94 @@
+{
+  "batch": "015",
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "output_root": ".worktree/implementation-reaudit/agents/implementation-audit/hidden-review",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/final-review.md",
+      "planned_lines": 48,
+      "read_lines": 48,
+      "eof": true,
+      "sha256": "f29248c54bf68fbef9b4c0b6f6ed4dcfd1a813b557d2bc4866392deef1bfb074",
+      "status": "historical_final_review_full_read"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/frontend/report.md",
+      "planned_lines": 600,
+      "read_lines": 600,
+      "eof": true,
+      "sha256": "d7879d0f45106a71ed96c2a253f6f774f291d66de6f4deda99ab3a96eaf74673",
+      "status": "candidate_unimplemented_claim_contradicted_by_baseline"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/frontend/review-final.md",
+      "planned_lines": 34,
+      "read_lines": 34,
+      "eof": true,
+      "sha256": "2a58b3674fefb3ad024a2597c6840d727951cc19028febb3906a866625e7dbb4",
+      "status": "metadata_review_full_read_baseline_owner_status_not_checked"
+    }
+  ],
+  "coverage": {
+    "source_review": "三源全文读至EOF，行数与SHA记录",
+    "baseline_source": "静态核对43b1aa5的12个owner定义及生产caller",
+    "ledger": "交叉核对G10-G14/G18/G31/G64；不改变G/Q状态",
+    "tests": "未运行产品测试或构建"
+  },
+  "findings": [
+    {
+      "id": "F015-01",
+      "severity": "有效",
+      "claim": "N01-N09/E01-E03仍是未实施候选",
+      "counterevidence": [
+        "apps/web/src/host/report-query-context.ts:4",
+        "apps/web/src/components/price-chart-runtime.ts:23",
+        "apps/web/src/components/market-grid-row-synchronizer.ts:7",
+        "apps/web/src/host/wasm-session-slot.ts:18",
+        "apps/web/src/host/wasm-tick-loop.ts:24",
+        "apps/web/src/host/worker-request.ts:26",
+        "apps/web/src/host/remote-command-registry.ts:6",
+        "apps/web/src/mobile/market-model.ts:625",
+        "apps/web/src/mobile/market-model.ts:699",
+        "apps/web/src/app/useSpeedMetricsPolling.ts:50",
+        "apps/web/src/app/usePausePreferences.ts:55",
+        "apps/web/src/App.tsx:310"
+      ],
+      "recommendation": "重分类为基线已有owner的实现对照；未解决的G/Q或行为缺口另行记录。"
+    },
+    {
+      "id": "F015-02",
+      "severity": "边界澄清",
+      "claim": "owner存在即可证明关联行为契约已满足",
+      "counterevidence": [
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:39",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:61",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:104",
+        "apps/web/src/mobile/market-model.ts:655"
+      ],
+      "recommendation": "保留主账行为缺口；不以对象提取作为修复或测试通过证据。"
+    }
+  ],
+  "current_owners": [
+    "ReportQueryContext",
+    "PriceChartRuntime",
+    "MarketGridRowSynchronizer",
+    "WasmSessionSlot",
+    "WasmTickLoop",
+    "WorkerRequestScope",
+    "RemoteCommandRegistry",
+    "MobileIntradayProjection",
+    "MobileKlineProjection",
+    "useSpeedMetricsPolling",
+    "usePausePreferences"
+  ],
+  "a_share": {
+    "status": "未发现交易语义变化；现行图表简化及行为缺口仍按主账处理",
+    "basis": "AGENTS.md、docs/principles.md、docs/trading-rules.md、现行ADR和implementation-audit主账；未重新访问官方规则原文",
+    "g01_g68_q_ledger": "不核销；owner存在与G/Q行为状态分开"
+  },
+  "limitations": [
+    "未运行测试、构建或性能测量",
+    "静态确认owner/caller不证明行为正确或缺陷已修复",
+    "不强行给每个候选分配G/Q"
+  ]
+}

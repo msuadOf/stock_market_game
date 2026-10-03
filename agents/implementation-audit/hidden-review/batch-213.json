@@ -1,0 +1,26 @@
+{
+  "batch_id": 213,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "findings": [],
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-closure-tool.md",
+      "sha256": "a5676d774b4cc7a3a0e159b0a8f7d37c6b6016a30aad459008d557957c4d75ca",
+      "lines": 16,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-relationships-final.md",
+      "sha256": "64ea88bc03d709a52fec5c0551aa2b43d5ed6cc58379eb672d814f6d3e60c90c",
+      "lines": 17,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/root-relationships.md",
+      "sha256": "2b20d823e0989164fceca2ea63b4468b4129b0200269e9c67b16dc502a63424b",
+      "lines": 16,
+      "read_to_eof": true
+    }
+  ]
+}

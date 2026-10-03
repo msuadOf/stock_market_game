@@ -1,0 +1,57 @@
+{
+  "batch": 115,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-07.md",
+      "lines_expected": 22,
+      "lines_measured": 22,
+      "sha256_expected": "309c013845c1f8a3eeb929d60cd801e8d95466658e6ba9ec30298a310d86aeba",
+      "sha256_measured": "309c013845c1f8a3eeb929d60cd801e8d95466658e6ba9ec30298a310d86aeba",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-08-recheck.md",
+      "lines_expected": 14,
+      "lines_measured": 14,
+      "sha256_expected": "aebe98888f262ac38eeab01330a24302026f1b231b26cd37859659e25826f01a",
+      "sha256_measured": "aebe98888f262ac38eeab01330a24302026f1b231b26cd37859659e25826f01a",
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-08.md",
+      "lines_expected": 22,
+      "lines_measured": 22,
+      "sha256_expected": "d83f4cc8bd29bef49b60f42b589466ea9e6fab72397c69af0e3fca661b823238",
+      "sha256_measured": "d83f4cc8bd29bef49b60f42b589466ea9e6fab72397c69af0e3fca661b823238",
+      "read_to_eof": true
+    }
+  ],
+  "cross_ledger": [
+    {
+      "reference": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+      "note": "其声明产品代码基线为08e4fc7；未将其G/Q状态冒充43b1aa5全量复核。"
+    },
+    {
+      "reference": "docs/decisions/0028-tagged-release-and-static-pages.md",
+      "note": "最新ADR不影响review命名、交易语义或计划生产调用链。"
+    },
+    {
+      "reference": "packages/engine/src/plans/state.rs; packages/engine/src/plans/mod.rs; packages/engine/src/session/decision_chain.rs",
+      "note": "确认review字段/accessor及写入API由PlanBook持有/转发，决策链有生产调用并消费。"
+    }
+  ],
+  "findings": [
+    "final-07对review代码概念误译的发现获当前caller/owner/consumer静态证据支持。",
+    "final-08-recheck的整体通过与final-08的不通过/多项修订结论相冲突；未见diff指纹或修订证据足以消解。"
+  ],
+  "verification": {
+    "product_changes": false,
+    "tests_run": false,
+    "official_rules_rechecked": false,
+    "source_files_read_to_eof": true,
+    "independent_reaudit_complete": true
+  },
+  "deliverable": "batch-115.md"
+}

@@ -1,0 +1,50 @@
+{
+  "batch": 27,
+  "owner": 2,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/18.md",
+      "lines": 14,
+      "sha256": "df9eaf5698db28732d8a37eb4b1eecaa491034cbee3b6902541171a25b5b0cdc",
+      "read_to_eof": true,
+      "sections": ["第18组 OOP 反查：全文单章节，含结论、snapshot/views 边界与测试建议"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/19.md",
+      "lines": 21,
+      "sha256": "393cf13ac8060bfdbe1b0feeecbd32dd152b207cbba03a1a9e19deefa2eac13b",
+      "read_to_eof": true,
+      "sections": ["第19组 OOP 反查：范围/结论、逐文件反查、迁移顺序与验证边界"]
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/20.md",
+      "lines": 23,
+      "sha256": "87c579b1eed49d93e2c8e76611bb51e57e3e5950e3720cdb5595fb852f0b33fb",
+      "read_to_eof": true,
+      "sections": ["第20组 OOP 完整性反查：范围/结论、9文件表格、迁移与验证边界"]
+    }
+  ],
+  "current_ledgers": [
+    "agents/oop-refactor-audit/summary.md",
+    "agents/oop-refactor-audit/summary-review.md",
+    ".worktree/implementation-reaudit/agents/implementation-audit/implementation-audit-2026-10-02.md",
+    ".worktree/implementation-reaudit/agents/implementation-audit/reaudit-engine.md"
+  ],
+  "findings": {
+    "new_oop_candidates": [],
+    "existing_behavior_test_suggestions": [
+      "snapshot 两种订单簿同时有单时的 reserved_cash / reserved_sell_qty 聚合与 t1_locked 边界",
+      "test-only 市场等权聚合、Retail 过滤及合法成本/峰值边界"
+    ],
+    "related_current_items": ["G09", "Q02", "Q11", "G38"],
+    "related_item_status_changed": false,
+    "a_share_semantics_changed": false
+  },
+  "limitations": [
+    "未运行测试、构建或 Git 命令",
+    "未对全部生产源文件做本批全文重读或运行时验证",
+    "未重新核验交易所/中国结算现行法源",
+    "来源提及的 18.json、19.json、20.json 不在本批清单内，未读取"
+  ]
+}

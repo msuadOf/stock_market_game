@@ -1,0 +1,27 @@
+{
+  "batch_id": 198,
+  "owner": 3,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-manager-delta.md",
+      "sha256": "8b4247066d09e71c3b6427f973d1a60769f6e8653103bd16493fd7282de0ea0b",
+      "lines": 19,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-rereview.md",
+      "sha256": "028b0e9baaf683b170a68cc80ac1d7f9685577fbb1a7c760116f175d83c30cb0",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-strategy-01-summary-final.md",
+      "sha256": "fe7fdf1374381b2ba4c645af8ccd233d9fed3f377726b4e587970dd4f232162a",
+      "lines": 11,
+      "read_to_eof": true
+    }
+  ],
+  "finding_count": 0,
+  "conclusion": "未确认已批准承诺遗漏或错误历史核销。manager-delta 内部状态标签矛盾，但后续复核与最终摘要记录通过；仅据本批来源无法将其认定为错误历史核销，故不列为有效发现。未审查批外来源、产品实现或完整改动 diff。"
+}

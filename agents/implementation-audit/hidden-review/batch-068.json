@@ -1,0 +1,77 @@
+{
+  "batch_id": 68,
+  "owner": 3,
+  "product_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "read_method": "连续全文读取至 EOF；逐源核对 SHA-256、行数、章节与 aliases；caller 追踪源码路径与约束",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-session-07.md",
+      "lines_expected": 13,
+      "lines_actual": 13,
+      "sha256_expected": "b4cf6c14aa2295fbf246b2ddd9ff7f9083f10e69906b7c405738a30d678a73f3",
+      "sha256_actual": "b4cf6c14aa2295fbf246b2ddd9ff7f9083f10e69906b7c405738a30d678a73f3",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-13", "topic": "结论、历史复核引用、文档审阅范围与未实现/未测试限制"}
+      ],
+      "review": "历史独立通过仅表示调查文档准确，不表示方案实现或测试通过；记录实际 OOP actions 为无。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-01-delta-final.md",
+      "lines_expected": 14,
+      "lines_actual": 14,
+      "sha256_expected": "7b9193b2e4552a4be405678f44b988da6d1e374a2828ec706086ed43b3c1c23b",
+      "sha256_actual": "7b9193b2e4552a4be405678f44b988da6d1e374a2828ec706086ed43b3c1c23b",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-14", "topic": "期限溢出与恢复完整性 delta 的范围、D01/D02 依据、未实施声明"}
+      ],
+      "review": "D02 指出的 serde/PlanBook 恢复边界及期限查询溢出在 caller 仍有对应代码路径。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/engine-strategy-01-final.md",
+      "lines_expected": 56,
+      "lines_actual": 56,
+      "sha256_expected": "65697e402856d4726918ce082ec7bb24e8a82e54f02aad0294735fb971302f06",
+      "sha256_actual": "65697e402856d4726918ce082ec7bb24e8a82e54f02aad0294735fb971302f06",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-56", "topic": "更新终审、A03 阻断项、23 文件核对、大 A 语义与验证限制"}
+      ],
+      "review": "期限绕过结论仍成立；旧文关于 TradingPlan 所有字段为 pub 的事实描述过时，caller 字段为 pub(in crate::plans)。"
+    }
+  ],
+  "current_callers": [
+    {"symbol": "TradingPlan Deserialize", "location": "packages/engine/src/plans/state.rs:164-180", "consumer": "独立反序列化可绕开 PlanBook::from_parts"},
+    {"symbol": "PlanBook::from_parts", "location": "packages/engine/src/plans/mod.rs:244-283", "consumer": "恢复计划簿；现有校验未检查期限合法性"},
+    {"symbol": "TradingPlan::last_valid_trading_day", "location": "packages/engine/src/plans/state.rs:337-339", "consumer": "packages/engine/src/plans/revision.rs:71-76,302-306,323+ 裸算术依赖"},
+    {"symbol": "PublicLibrary::from_parts", "location": "packages/engine/src/information/public_view.rs:151-203", "consumer": "公开报告/公告恢复与索引/digest 重建；当前读到的检查覆盖 ID、报告形状、公告时点及 max-id 计数器"}
+  ],
+  "ledger_relations": {
+    "G16": "保留且不相关：历史 PlanBook 全量复制目标不等于计划期限恢复校验缺口。",
+    "G_other": "当前 G01-G68 总账与 re-audit 清单未发现独立登记此期限恢复/查询缺口的 G 项。",
+    "Q11": "ADR-0016 已细化持续交易计划概念；期限算术恢复缺口不改变策略方向/交易规则契约。",
+    "new_candidates": [
+      "TradingPlan 独立 serde 输入可绕过 validate_open；PlanBook::from_parts 不检查 horizon 非零/最后有效日可表示性；last_valid_trading_day 使用可溢出的裸 u64 算术。作为缺陷线索交总审计维护者评估是否登记；未复现运行失败。"
+    ],
+    "rejected_or_unverified_candidates": [
+      "旧终审声称外部调用者能直接改写所有 TradingPlan 字段；当前字段是 pub(in crate::plans)，该理由已过时。",
+      "PublicLibrary D01 更正链完整性未由本批进一步建立新证据；不基于历史建议单独登记。"
+    ]
+  },
+  "limitations": [
+    "未运行测试或构建，不声称坏期限已在生产运行中复现。",
+    "没有涉及交易所制度变化；未重新查验外部交易所法源。",
+    "仅核验本批三来源及其直接 caller/owner/约束，不将未来方案或无运行证据事项报告为当前运行缺陷。",
+    "未修改产品代码，也未更改 G/Q 状态。"
+  ],
+  "created_files": [
+    "agents/implementation-audit/hidden-review/batch-068.md",
+    "agents/implementation-audit/hidden-review/batch-068.json"
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "batch_id": 78,
+  "owner": 3,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/root-relationships.md",
+      "expected_lines": 16,
+      "measured_lines": 16,
+      "expected_sha256": "87fc20cb05feb0bc1b52e882d697af932690551045a640bc737d3baf6dee8646",
+      "measured_sha256": "87fc20cb05feb0bc1b52e882d697af932690551045a640bc737d3baf6dee8646",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["前轮记录", "本轮复核", "结论"],
+      "finding": "文档证据措辞复核；不构成源码、交易规则或候选行为等价性验证。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/session-strategy-document-binding-final.md",
+      "expected_lines": 19,
+      "measured_lines": 19,
+      "expected_sha256": "9aa67778cb4b0a3828806eb2b0c00d00cec05c99b1fa3b59f9a418ead7545a68",
+      "measured_sha256": "9aa67778cb4b0a3828806eb2b0c00d00cec05c99b1fa3b59f9a418ead7545a68",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["范围与方法", "文档绑定核对", "结论"],
+      "finding": "ES04、ES07、ST01 文档哈希/既有结论 binding；不扩张或核销生产源码 G。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-01.md",
+      "expected_lines": 65,
+      "measured_lines": 65,
+      "expected_sha256": "07f43486d3e4477ab5111e06d5420917717a17730412af22c5589cb78fc4e950",
+      "measured_sha256": "07f43486d3e4477ab5111e06d5420917717a17730412af22c5589cb78fc4e950",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "chapters": ["三轮独立复核及前轮处置", "第四轮独立复核", "第五轮独立 delta 复核", "第六轮独立 delta 复核", "Metadata 身份/hash 更正"],
+      "finding": "既有工具 findings 与当前 G21/G26/G27/G39/Q05 大体对齐；早轮也提及 timeout 误称整树已终止，当前 caller 仍存在该文案。"
+    }
+  ],
+  "caller_code_evidence": [
+    "scripts/run-with-deadline.mjs:10-25,80-89,118-129",
+    "scripts/build-targets.mjs:12-15,63-107",
+    "docs/testing.md:89-101",
+    "docs/decisions/0028-tagged-release-and-static-pages.md:15-35,84-93",
+    "agents/implementation-audit/reaudit-tools.md:1-65",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md:27,82,126,143"
+  ],
+  "current_decisions": [
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md",
+    "docs/open-questions.md",
+    "docs/testing.md"
+  ],
+  "related_current_items": ["G21", "G26", "G27", "G39", "Q05"],
+  "related_item_disposition": "G21/G26/G39/Q05 保持当前复核判断；G27 按 ADR-0028 核销。timeout 文案问题尚未在 caller 工具复核中登记，建议作为待分配候选。",
+  "new_candidates": [
+    {
+      "id": "unassigned",
+      "description": "scripts/run-with-deadline.mjs 的 execution/hard timeout 错误消息仍声称 process tree was terminated；实现只请求 kill，hard deadline 也可能在 direct child close 前 settle。改为准确报告 termination requested/unconfirmed 状态。",
+      "evidence": ["scripts/run-with-deadline.mjs:10-25", "scripts/run-with-deadline.mjs:80-86", "scripts/run-with-deadline.mjs:118-129", "docs/testing.md:91-100"],
+      "limitations": "静态可确认错误文案与实现能力不一致；未运行 timeout 场景，未证明具体后代存活或运行失败。"
+    }
+  ],
+  "counterevidence": [
+    "Tooling-01 最终 delta binding 仅复核 items/module/review 的关系表述，不能证明 caller 的 timeout 文案已改正。",
+    "现行 ADR-0028 明确发布仅构建，发布不运行测试属于已批准边界。",
+    "Caller 对 G39 已区分自由调度不变量与固定受理事实重放，旧来源不构成核销依据。",
+    "其余未运行的测试、未来 containment 设计和历史文档建议均未被升级为产品运行缺陷。"
+  ],
+  "limitations": [
+    "未运行测试、构建或进程终止验证。",
+    "未重新核查交易规则法源；当前候选仅涉及工具错误文案，不涉及 A 股语义。",
+    "完整来源中的哈希审查仅证明版本完整性，不证明源码覆盖或行为等价。"
+  ]
+}

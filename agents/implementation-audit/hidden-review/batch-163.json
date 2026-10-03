@@ -1,0 +1,27 @@
+{
+  "batch": 163,
+  "owner": 3,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-01.md",
+      "sha256": "156f427443a862cfad4df3e5556cfaadb66b1dc10302058a22cb5044ddc23ca4",
+      "lines": 292,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-02.md",
+      "sha256": "da5f59793c5e345f92148d565281bc2d3e6aa3f8a00272afc01e78df2e426628",
+      "lines": 135,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-tests-03.md",
+      "sha256": "0b56404a4405c97b6450a6a723d203ee94e508d0955ed1a60677a2502ff64193",
+      "lines": 343,
+      "read_to_eof": true
+    }
+  ],
+  "finding_count": 0,
+  "conclusion": "未发现本批来源可证实的已批准承诺遗漏或实现错误；来源为未实施候选审计记录。"
+}

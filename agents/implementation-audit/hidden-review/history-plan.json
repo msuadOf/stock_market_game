@@ -1,0 +1,131 @@
+{
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": ".omo/notepads/desktop-build-matrix/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "e04395d06a58a64f4eb16f69be3714e3ff52a20848b8fe70e9de572d74aa4aad",
+      "bytes": 1620,
+      "lines": 11
+    },
+    {
+      "path": ".omo/notepads/desktop-build-matrix/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "43cea4bb37b6e25f400d7862ec143cc82736f9f89b382013ec57b0f293a1efe6",
+      "bytes": 127,
+      "lines": 5
+    },
+    {
+      "path": ".omo/notepads/desktop-build-matrix/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "d9e30caa47bc53db1edfcd6bf5d0808aa92cd6f48276cbdd365165c3fbad5bcd",
+      "bytes": 1097,
+      "lines": 9
+    },
+    {
+      "path": ".omo/notepads/desktop-build-matrix/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "8a09544bd5ae93b7efee1b93630058b51d5ebcef5e40cc57d68959fe0e9d6b3f",
+      "bytes": 3347,
+      "lines": 15
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ab17924e6bfc464957fd25f2dd2070cd0ec7fad9abef3b9cdd62e33f762b3080",
+      "bytes": 17919,
+      "lines": 166
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "130532a65f5be803b1ea13c32e9d8c4b4c09e3396047c979881ed87b5b7dfe57",
+      "bytes": 41954,
+      "lines": 448
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "243ffc0dc826dd9289eed8171278a12130f8340e175e6ace215cfba1750ebd9c",
+      "bytes": 42524,
+      "lines": 332
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/pre-edit-failure.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ae7445dcf854e22cf87c624ed410ff28009e7472b18403042e0512a7b3bb2ad9",
+      "bytes": 293,
+      "lines": 13
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "a9a738f16f77ae455f39e3cf19aa8ccb3c4fbdf2e0395e855dc0f817528fe05b",
+      "bytes": 11383,
+      "lines": 109
+    },
+    {
+      "path": ".omo/notepads/escrow-parallel-engine/todo-2a-protocol-resolution.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "ca81240befe30ce2837d167aeabfdbc54075b4a999a2381ddea53884a536acad",
+      "bytes": 680,
+      "lines": 7
+    },
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "e79824b56d460a6f0fc3d7cdf9c54ac4e130a9b8c949584dc49a987563d98f4e",
+      "bytes": 1255,
+      "lines": 16
+    },
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "39e26ed9a168d02ddf770e7c3d4c6fee4a776dffb4e0997117a3a9a78f1dd141",
+      "bytes": 18984,
+      "lines": 221
+    },
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "6ef77d1040843a336b36168b99d6e523501c44b70fabd67043604c7bd851185a",
+      "bytes": 58314,
+      "lines": 247
+    },
+    {
+      "path": ".omo/notepads/resolve-blockers-wayland/problems.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "7e31653ab038d2492d05bbd7d57e44fca3bb7549ac48e3c584c075ab06faa0cf",
+      "bytes": 14787,
+      "lines": 167
+    },
+    {
+      "path": ".omo/reviews/escrow-parallel-engine-r24.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "380e824c146006bd9035d6c25c3d41546a993b32773f4559a113065e26d3584a",
+      "bytes": 1272,
+      "lines": 21
+    },
+    {
+      "path": "scripts/desktop/README.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "bd8227358f6b8f843c3596fc6d71a73bbfc32ee0880ecb5c01d89f70ffe6fd0a",
+      "bytes": 2096,
+      "lines": 28
+    },
+    {
+      "path": ".omo/evidence/resolve-blockers-wayland/task-3-wayland-evidence.md",
+      "revision": "bb16fc8d4df101d86912baf9a809a5320df61db7",
+      "sha256": "3e1dce6bdbf1a6e14622345491a577e1f0730174e01c00a0f63b2b28ed5902a3",
+      "bytes": 2818,
+      "lines": 28
+    },
+    {
+      "path": ".omo/evidence/resolve-blockers-wayland/task-3-wayland.run-20260913-144406/task-3-wayland.review.md",
+      "revision": "bb16fc8d4df101d86912baf9a809a5320df61db7",
+      "sha256": "05ce1d0de11090073f6653a3f246e79c401151bb508c6b6e2608e04fc9151bbc",
+      "bytes": 4888,
+      "lines": 54
+    }
+  ]
+}

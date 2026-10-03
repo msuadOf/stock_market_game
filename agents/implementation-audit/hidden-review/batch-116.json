@@ -1,0 +1,47 @@
+{
+  "batch": 116,
+  "owner": 1,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "caller_worktree": ".worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-09-recheck.md",
+      "sha256": "d92560ac5cd08642816458ae3f5decafffb27a3cea079415e161b01a795dbd12",
+      "lines": 11,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-09.md",
+      "sha256": "20c53051b2f73debc6f8e7037271818642e28214bd4c8ec8f2154d73f720e3e4",
+      "lines": 18,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/final-10-recheck.md",
+      "sha256": "7b65b4f4079f633ce6edbf412b619ccb2759fb6afa9abd94354da95e2cd8452b",
+      "lines": 17,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_status": {
+    "status": "closed_by_later_review",
+    "summary": "group-09 历史语言发现由 final-09-recheck 复核关闭；group-10 两处 current 漏译已在当前 tooling-01/tooling-05 终态记录中翻译，并由中文化 final-review 记录后续复核通过。该 OOP 中文化复核不核销任何产品 G/Q，也不构成实现修复。",
+    "evidence": [
+      "agents/oop-refactor-audit/chinese-localization/reviews/final-09-recheck.md:7-11",
+      "agents/oop-refactor-audit/chinese-localization/reviews/final-10-recheck.md:11,15-16",
+      "agents/oop-refactor-audit/exhaustive/reviews/tooling-01.md:65",
+      "agents/oop-refactor-audit/exhaustive/reviews/tooling-05.md:81",
+      "agents/oop-refactor-audit/chinese-localization/final-review.md:3,9,21,59"
+    ]
+  },
+  "gq_adr_review": {
+    "ledger": "agents/implementation-audit/implementation-audit-2026-10-02.md:27-28,34-161",
+    "disposition": "不核销或新增 G01-G68 / Q01-Q23；纯文档中文化没有生产 caller 修复。产品 open-question Q11 的后续决定见 ADR-0026，与本批无关。ADR-0023 至 ADR-0028 未取代本批文档终态证据。未新增 A 股交易制度主张。"
+  },
+  "validation": {
+    "tests": "not_run",
+    "build": "not_run",
+    "git_write": "not_performed",
+    "product_code_modified": false
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "batch_id": 94,
+  "owner": 4,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-pipeline-08.md",
+      "sha256": "a7d82988b2d51cf00a52323e64e429876fbf864eff52a7790961569d9417d950",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-pipeline-09.md",
+      "sha256": "036dfb252d14152ddea0f8c7005671bc94513f266b9e4541ea5b844254ff63cb",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/engine-pipeline-10.md",
+      "sha256": "40a32d634843949e1f77ac07bd55d9f4fd54d114cc7a373b1f4df3235d3da41e",
+      "lines": 22,
+      "read_to_eof": true
+    }
+  ],
+  "review": {
+    "result": "通过，保留 caller 生命周期限制；engine-pipeline-10 的 Option 候选已被现行必需 ExperienceMoment 接口取代",
+    "product_files_modified": false,
+    "tests_run": false,
+    "git_write_operations": false
+  }
+}

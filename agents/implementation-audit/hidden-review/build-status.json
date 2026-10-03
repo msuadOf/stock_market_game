@@ -1,0 +1,44 @@
+{
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-implementation/hosts/build/status.md",
+      "sha256": "449570c1df5bc6bc036276bb1b9ca220e7e07f21fc6e52887f85dd8ac1faaa18",
+      "lines": 95,
+      "bytes": 12875,
+      "read_to_eof": true
+    }
+  ],
+  "reviewed_actions": [
+    "tooling-01-A02",
+    "tooling-01-A01",
+    "tooling-04-A01",
+    "tooling-05-A01",
+    "hosts-R2-N17",
+    "hosts-R2-N20",
+    "hosts-R2-E01"
+  ],
+  "candidates": [],
+  "existing_gaps_preserved": [
+    {
+      "id": "G39",
+      "reason": "批次资源/身份固定不保证自由 rerun 的实际受理轨迹一致或完整 stdout SHA 比较通过。"
+    },
+    {
+      "id": "G61",
+      "reason": "构建生命周期重构不实现性能工具及 sampler 的整体期限和异常资源收尾。"
+    },
+    {
+      "id": "G62",
+      "reason": "构建 supervisor 的验证不证明嵌套 POSIX detached 进程组可由外层终止。"
+    },
+    {
+      "id": "G63",
+      "reason": "选定 Rust case 的通过结果不实现普通 Rust case 独立 10 秒硬监督。"
+    }
+  ],
+  "result": "未发现新候选；本来源对应的六项动作与 E01 未核销 G39、G61、G62、G63。"
+}

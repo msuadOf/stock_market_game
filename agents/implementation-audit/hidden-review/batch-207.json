@@ -1,0 +1,70 @@
+{
+  "batch_id": "batch-207",
+  "owner": 2,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad"
+  },
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/history/engine-session-03-before-manager.md",
+      "sha256": "05e0dbd8f020b3d189bcdd91da3d2c171a2f60e1209d6316fe96e69406002d56",
+      "lines": 21,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/history/engine-session-04-before-manager.md",
+      "sha256": "d3e9a62598c507b2dcc72b20a797e32a3f91be960d2255e40dd89253255cd553",
+      "lines": 167,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/history/engine-session-05-before-manager.md",
+      "sha256": "29133c4b732298bc4abf2014b95c236286526ccc0fc563029d61565f62350c34",
+      "lines": 41,
+      "read_to_eof": true
+    }
+  ],
+  "current_code_evidence": [
+    "packages/engine/src/session.rs:2071-2110",
+    "packages/engine/src/session.rs:2184",
+    "packages/engine/src/session/plan_chain_candidates.rs",
+    "packages/engine/src/session/decision_chain.rs",
+    "packages/engine/src/session/pipeline/plan_chain_candidates/adaptive.rs",
+    "packages/engine/src/session/hash_contract_tests.rs"
+  ],
+  "decision_evidence": [
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0026-individual-institution-experience.md"
+  ],
+  "candidate_status": [
+    {
+      "id": "session-03-R1-stale-lifecycle-action",
+      "status": "historically_corrected",
+      "result": "后续历史复核确认 root 不再返回 lifecycle action；路线 ready 并消费 typed outcome 后由 coordinator 重收。未列为新 G。"
+    },
+    {
+      "id": "session-04-day-end-closing-order-doc-drift",
+      "status": "historically_corrected_documentation",
+      "result": "当前生产调用为经营日终、到期月年封账、披露、事件登记；该顺序不核销 G35/G36。"
+    },
+    {
+      "id": "session-04-hash-contract-test-count",
+      "status": "historically_corrected",
+      "result": "历史复核确认 JSON/module 的测试计数统一为 13；不构成当前实现缺口。"
+    },
+    {
+      "id": "session-05-owner-extraction",
+      "status": "no_new_owner_candidate",
+      "result": "当前调用链及 ADR 支持保留局部 coordinator、暂态个人状态与日终存档边界；不升级或核销 G/Q。"
+    }
+  ],
+  "gq_disposition": "本批不升级或核销 G/Q；G16、G35、G36、G39继续按总账各自定义跟踪。",
+  "large_a_semantics": "未提出新的沪深 A 股制度主张或交易行为变更；没有查询交易所/中国结算官方规则。",
+  "tests_or_builds_run": false,
+  "product_source_modified": false,
+  "git_write_operations": false,
+  "overall": "三份历史复核中的主要发现均标明已修订，现行调用与 ADR 支持相应 ownership、continuation、封账和存档边界；本批不产生新的 G/Q 裁定。"
+}

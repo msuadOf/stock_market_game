@@ -1,0 +1,25 @@
+{
+  "batch": 225,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-08.md",
+      "sha256": "26bb10f86e4536e65e67616f0a211155ff686a58707670600724fc91d5886dc2",
+      "lines": 17,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/short-scan-guide.md",
+      "sha256": "4242930abd301b2072d6775c199515d47861f7308e83cba940562afe8504b238",
+      "lines": 10,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/unit-guide.md",
+      "sha256": "d6a97f9ecad55591fef616413cdc07e648c5f265325e0945a108aaf273bdbe71",
+      "lines": 9,
+      "read_to_eof": true
+    }
+  ],
+  "findings": "历史复核对其复核的四份静态 HTML 与交互契约表达准确，未发现冲突。基线当前已有 MobileTradingConceptController，且有测试直接消费该设计稿；mobile-stock-detail 静态稿与生产 React 组件相互独立。Q6 全中文界面由 ADR-0007 解决，最新 ADR-0028 未改变静态图稿与生产交易语义的边界。未运行测试、构建或浏览器验证。"
+}

@@ -1,0 +1,45 @@
+{
+  "batch_id": 141,
+  "owner": 1,
+  "worktree_head": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "review_status": "historical_oop_conclusion_confirmed_defect_lead_unresolved",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/areas/engine-pipeline.md",
+      "sha256": "6c8502a7c6843e6ad461a9c2d0fb38e5af0a2f767ad49bef505caed8523d928c",
+      "lines": 108,
+      "read_to_eof": true,
+      "candidate_status": "area汇总；OOP候选未实施；retain边界维持"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-01.md",
+      "sha256": "62cde996380fe4cb0d68707b65fb63d6ad9d7457a5224d83c1b3cf846f6c6a30",
+      "lines": 77,
+      "read_to_eof": true,
+      "candidate_status": "AccountBudget 窄 API 仅为未实施候选；当前未形成必需的 OOP 动作"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/execution-before/modules/engine-pipeline-02.md",
+      "sha256": "3e38086b7904bacd9ade60884f20392df44ff59cfe7427e64d555fdac6b3e50c",
+      "lines": 50,
+      "read_to_eof": true,
+      "candidate_status": "保留coordinator的OOP结论成立；P3身份预校验早退未置failed的defect lead仍存在"
+    }
+  ],
+  "current_code": {
+    "path": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+    "entry_lines": "305-333",
+    "identity_prevalidation_lines": "544-568",
+    "failure_state_lines": "879-892",
+    "finding": "两个续行入口仅在身份预校验后续advance_*_batch出错时锁存failed；outcomes_in_plan_identity_order的?早退会留下可继续使用的coordinator。"
+  },
+  "callers": [
+    "packages/engine/src/session/pipeline/ready_stock_stream.rs:78",
+    "packages/engine/src/session/pipeline/ready_stock_stream.rs:114",
+    "packages/engine/src/session/pipeline/ready_stock_stream.rs:182"
+  ],
+  "test_gap": "adaptive_plan_chain_tests.rs:720-746覆盖后续P4身份错误，不覆盖P3预校验早退后停用状态；本轮未运行测试。",
+  "decision_crosscheck": "ADR-0017 已接受；ADR-0018 整体仍为提议状态，其§7 续行依赖仍相关；ADR-0019 已接受。未找到后续 ADR 明确取代对象归属或 defect 线索。",
+  "g_q_mapping": "三篇材料未直接映射到G01-G68或未决Q；不可按engine/session关键词强行归类。",
+  "scope": "静态审读；未运行测试或构建；未修改产品代码；未进行Git写操作。"
+}

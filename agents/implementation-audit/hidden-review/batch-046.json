@@ -1,0 +1,63 @@
+{
+  "batch": "046",
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-01.md",
+      "lines": 67,
+      "read_lines": 67,
+      "eof": true,
+      "sha256": "3c547aacdad8ac3f52a1e3ad4b31b1e23c69fb7ed1136c8e4f2f966b6eae8fc7",
+      "candidate_status": "hosts-01 的 A01 与 A02 已实现；G19 仍开放"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-02.md",
+      "lines": 63,
+      "read_lines": 63,
+      "eof": true,
+      "sha256": "baa7fcdf5932a48c7627a31a62cf2646f95bc3c6c60a8fd1fb6d5ab0ef123805",
+      "candidate_status": "route-module-split-is-optional-organization-note"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/hosts-03.md",
+      "lines": 75,
+      "read_lines": 75,
+      "eof": true,
+      "sha256": "c60d43279a7085f21d6aa297fca2be9ce375eda7b58b31c4b76cd25f5797d104",
+      "candidate_status": "hosts-03 的 A01 已实现；Q20 仍开放"
+    }
+  ],
+  "coverage": {
+    "source_review": "三篇均逐篇全文连续读取至EOF；path、行数、SHA及章节族见batch-046.md",
+    "remeasurement": "主工作区重新wc -l与sha256sum hosts-03.md：75行，SHA-256 c60d43279a7085f21d6aa297fca2be9ce375eda7b58b31c4b76cd25f5797d104（64位）；JSON与Markdown此前哈希值均有误，均已更正",
+    "baseline_callers": [
+      "apps/desktop/src-tauri/src/actor.rs:333-336",
+      "apps/server/src/actor.rs:606-625",
+      "apps/server/src/routes.rs:1269-1275",
+      "apps/server/src/routes.rs:1414-1420",
+      "apps/web-wasm/src/lib.rs:43-115",
+      "apps/web-wasm/src/lib.rs:331-350",
+      "apps/web-wasm/src/lib.rs:473-529"
+    ],
+    "ledger": "G19与Q20相关条目复核；不更改G/Q状态；对象抽取不算行为修复",
+    "tests": "未运行测试、构建或回归"
+  },
+  "candidate_status": {
+    "hosts-01-A01": "implemented",
+    "hosts-01-A02": "implemented",
+    "hosts-02-route-module-split": "可选的代码组织建议，不属于 OOP 动作",
+    "hosts-03-A01": "implemented",
+    "G19": "仍未解决；没有证据表明已实现固定 speed 的发布聚合",
+    "Q20": "仍未解决；handle counter 仍先 fetch_add 再 insert"
+  },
+  "a_share": {
+    "status": "无产品修改或交易语义变化",
+    "basis": "AGENTS.md、docs/principles.md、现行ADR及implementation-audit G/Q主账；未重新核查官方规则原文",
+    "ledger_effect": "none"
+  },
+  "limitations": [
+    "静态核验不能证明运行时行为或缺陷可达性",
+    "未运行产品测试、构建或回归",
+    "未重新核查交易所官方规则原文"
+  ]
+}

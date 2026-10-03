@@ -1,0 +1,38 @@
+{
+  "batch": 85,
+  "owner": 5,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "inputs": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-07-binding-final.md",
+      "lines": 30,
+      "sha256": "4ebc0423dd3e6b82eeb3fe92d45b048acba897f90cb6a61dcefd551bc4e87e86",
+      "scan_plan_match": true,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-07-depth-final.md",
+      "lines": 26,
+      "sha256": "994d30d16a552f71c232cb9f27297cfbd6533e784b2ae92b2cf3bd48bdaafbd2",
+      "scan_plan_match": true,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/web-07-runtime-final.md",
+      "lines": 21,
+      "sha256": "eb95e99d7228dc002863d17d7946d641db0c8c9b80230af573ec596a280e4bad",
+      "scan_plan_match": true,
+      "read_to_eof": true
+    }
+  ],
+  "result": "通过（限定于三份 delta 报告所声明范围）",
+  "findings": [
+    "market-depth-sync helper 在基线中只有直接单测引用，未发现 production caller；报告正确保留限制。",
+    "缺失盘口错误与空盘口 best 值为 null 的边界未被指定测试覆盖，报告已披露。",
+    "runtime-v2 parser 的 root consumer、DTO 字段及精确编码/基点边界摘要与基线吻合。",
+    "store snapshot 写入双路径与 ADR-0004、ADR-0010 的前端状态/host 协议边界无冲突。",
+    "G46 桌面盘口档位标签缺口仍独立存在；三条 delta 不核销该项，也不关联未决 Q。"
+  ],
+  "a_share_semantics": "本次仅复核既有盘点报告，没有交易制度、价格单位、撮合或费用语义变更。",
+  "validation": "未运行测试、构建或回归。"
+}

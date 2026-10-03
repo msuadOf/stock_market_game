@@ -1,0 +1,104 @@
+{
+  "batch_id": 75,
+  "owner": 5,
+  "product_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "read_method": "连续全文读取至 EOF；逐源核对 SHA-256、行数、章节和 aliases；交叉核对当前 caller、owner、consumer、G/Q 与 ADR",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/hosts_tooling-closure-final.md",
+      "lines_expected": 40,
+      "lines_actual": 40,
+      "sha256_expected": "4f5d890a36092401e537000b4f93938c83359025844222ce79a36201962dc56b",
+      "sha256_actual": "4f5d890a36092401e537000b4f93938c83359025844222ce79a36201962dc56b",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-8", "topic": "范围和材料绑定"},
+        {"lines": "9-29", "topic": "批次、unit、area closure 对照"},
+        {"lines": "30-35", "topic": "三门结论"},
+        {"lines": "36-40", "topic": "限制与最终结论"}
+      ],
+      "review": "仅静态核验 closure/审计材料及其绑定，不重新审查全部产品源码；其边界说明与 hosts-01/02 结论相容。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/hosts-01.md",
+      "lines_expected": 57,
+      "lines_actual": 57,
+      "sha256_expected": "7ebb896bc3265f2a4c61030276ef4ebf4546cf1484e037b8d9cc46ce4d52ee89",
+      "sha256_actual": "7ebb896bc3265f2a4c61030276ef4ebf4546cf1484e037b8d9cc46ce4d52ee89",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-40", "topic": "首轮逐文件复核、来源与限制"},
+        {"lines": "41-52", "topic": "hosts-01 短 delta 独立复核"},
+        {"lines": "53-57", "topic": "A02 caller metadata delta"}
+      ],
+      "review": "sender 私有化建议保持最小 API 边界，enum 可见性不等于可发送；caller metadata 已区分广播订阅测试与 ws baseline 用例，并披露先前只读 Git 误用。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/hosts-02.md",
+      "lines_expected": 40,
+      "lines_actual": 40,
+      "sha256_expected": "b53eb04c7948bd469be9ea6581e2c5091ce85f4c565443aa33f8dce89af75bf2",
+      "sha256_actual": "b53eb04c7948bd469be9ea6581e2c5091ce85f4c565443aa33f8dce89af75bf2",
+      "eof": true,
+      "aliases": 1,
+      "sections": [
+        {"lines": "1-28", "topic": "逐文件复核、依据及边界"},
+        {"lines": "30-34", "topic": "最终 delta 独立复核"},
+        {"lines": "36-40", "topic": "routes metadata delta"}
+      ],
+      "review": "routes 抽取被正确登记为组织建议；run_ws 注释对客户端命令的描述与实际处理分支不一致，作为源码注释缺陷保留，不改变协议结论。"
+    }
+  ],
+  "current_callers": [
+    {
+      "symbol": "SessionHandles::set_speed / routes::api_speed",
+      "location": "apps/server/src/actor.rs:815-828; apps/server/src/routes.rs:862-882",
+      "evidence": "routes 将速度命令交给受控 handles 方法；不会直接投递 SessionCommand。"
+    },
+    {
+      "symbol": "SessionHandles::subscribe_events / routes::run_ws",
+      "location": "apps/server/src/actor.rs:610-624; apps/server/src/routes.rs:1262-1272,1416",
+      "evidence": "WS 初连和 Resync 均通过 handles 取得 Receiver；订阅先于 baseline 查询，保留事件/基线对齐顺序。"
+    },
+    {
+      "symbol": "SessionActor event publisher",
+      "location": "apps/server/src/actor.rs:1005-1012,1241-1281",
+      "evidence": "actor 持有广播发布端并负责发布 EngineUpdate；外部 handles 只提供 Receiver 订阅方法。"
+    },
+    {
+      "symbol": "SessionHandles command sender",
+      "location": "apps/server/src/actor.rs:632-640; apps/desktop/src-tauri/src/actor.rs:334-338",
+      "evidence": "server 与 desktop 的 cmd_tx 均私有；公开 SessionCommand 类型本身不开放投递能力。"
+    }
+  ],
+  "ledger_relations": {
+    "G": "不核销 G01-G05、G18-G20、G40、G53、G66 等宿主条目；对象化与 sender 可见性建议不解决对应生产链路缺口。run_ws 注释误导已在 hosts-02 记为 defect lead，不重复建 G。",
+    "Q": "未触及 implementation-audit-2026-10-02.md 中 Q01-Q23 决策状态；不以本批关闭宿主验收或协议问题。",
+    "new_candidates": [],
+    "rejected_or_unverified_candidates": [
+      "把公开 SessionCommand 等同于外部持有命令 sender：sender 字段私有，类型可见性不开放命令写入。",
+      "把 hosts-02 的 routes 抽取组织建议视为新 OOP action 或已完成的源码改造：材料明确标为 organization_notes，候选未实施。",
+      "把 run_ws 过时注释视为 WS 协议实现错误：源码处理 Resync/GetFrame/SubmitIntent；当前证据支持的是注释缺陷。"
+    ]
+  },
+  "adr_relations": [
+    "ADR-0010：baseline/delta、序号和重同步边界；宿主实现传输差异继续保留。",
+    "ADR-0017：actor/tick 数据流与更新发布边界。",
+    "ADR-0025：日终持久化与 actor-mediated restore。",
+    "ADR-0027：可选 web-ui 服务面和独立部署边界。"
+  ],
+  "limitations": [
+    "未运行测试、构建或回归，不声称候选行为已运行验证或源码重构已实施。",
+    "只静态核对指定三份来源、相关 caller、G/Q 索引与 ADR；没有重新扫描全部宿主源码。",
+    "本批未提出交易所规则主张，未重新认证官方 A 股法源；交易规则仍以 engine 和正式规则文档为准。",
+    "未修改产品代码、G/Q 台账或正式规则文档。"
+  ],
+  "created_files": [
+    "agents/implementation-audit/hidden-review/batch-075.md",
+    "agents/implementation-audit/hidden-review/batch-075.json"
+  ]
+}

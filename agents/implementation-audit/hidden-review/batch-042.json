@@ -1,0 +1,166 @@
+{
+  "batch": 42,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-strategy-01.md",
+      "lines": 248,
+      "sha256": "3a8bcea31cfa8033835fee479423c1cd63afb1dcbff2b72ec6cc0edc469947b9",
+      "aliases": 1,
+      "eof": true,
+      "chapters": [
+        "information/acquisition.rs",
+        "information/mod.rs",
+        "information/npc_view.rs",
+        "information/prehistory.rs",
+        "information/public_view.rs",
+        "information/publication.rs",
+        "information/queries.rs",
+        "information/schedule.rs",
+        "plans/allocation.rs",
+        "plans/allocation/experience.rs",
+        "plans/allocation/types.rs",
+        "plans/candidates.rs",
+        "plans/candidates/signals.rs",
+        "plans/candidates/targets.rs",
+        "plans/candidates/types.rs",
+        "plans/mod.rs",
+        "plans/quote_policy.rs",
+        "plans/quote_policy/validation.rs",
+        "plans/revision.rs",
+        "plans/state.rs",
+        "plans/urgency.rs",
+        "plans/urgency/policy.rs",
+        "plans/urgency/risk.rs",
+        "内联测试复核",
+        "D01/D02 潜在缺陷线索",
+        "跨文件关系",
+        "限制"
+      ],
+      "chapter_matrix": "所有对象/状态所有权章节均保留现有 owner 或纯函数/值契约；A01 已在基线实现。D01/D02 是独立行为线索，不属于重构任务。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-strategy-02.md",
+      "lines": 343,
+      "sha256": "17e17cf8b54910d01cb9b0cf9c58224a4f60f831cb450bcc89e7a67c53ef700b",
+      "aliases": 1,
+      "eof": true,
+      "chapters": [
+        "总体判断",
+        "plans/validation.rs",
+        "strategy/analysis_profile.rs",
+        "strategy/beliefs.rs",
+        "strategy/data.rs",
+        "strategy/factory.rs",
+        "strategy/factory_profiles.rs",
+        "strategy/fundamental/facts.rs",
+        "strategy/fundamental/forecast.rs",
+        "strategy/fundamental/mod.rs",
+        "strategy/fundamental/update.rs",
+        "strategy/fundamental/valuation.rs",
+        "strategy/hot.rs",
+        "strategy/institution.rs",
+        "strategy/institution_experience_policy.rs",
+        "strategy/mod.rs",
+        "strategy/momentum.rs",
+        "strategy/params.rs",
+        "strategy/profile.rs",
+        "strategy/retail.rs",
+        "strategy/sampling.rs",
+        "strategy/sizing.rs",
+        "strategy/state.rs",
+        "strategy/technical.rs",
+        "跨模块关系",
+        "限制"
+      ],
+      "chapter_matrix": "BeliefBook、strategy 实例、policy 与 StrategyState 持有持久状态。纯算法核心和 DTO 仍保持函数与值的形态。恢复身份、计划期限和算术问题是行为候选；没有必要增加 OOP 包装层。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-strategy-03.md",
+      "lines": 46,
+      "sha256": "e8e34d31b03eb97ffe968219e0b7527bed2f0343bfd8e0a7e3b50ed4046a245b",
+      "aliases": 1,
+      "eof": true,
+      "chapters": [
+        "strategy/value.rs",
+        "strategy/zi_noise.rs",
+        "文件关系与范围",
+        "阅读范围与限制"
+      ],
+      "chapter_matrix": "逐账户 strategy 实例持有各自参数；纯 target、decision、intent 函数保持无状态。ZiNoise 投影候选 A01 已实现。"
+    }
+  ],
+  "baseline_evidence": {
+    "implemented_a01": [
+      "TradingPlan 字段限制在 crate::plans 内访问：packages/engine/src/plans/state.rs:167-190；生命周期 receiver 方法和只读 getter 位于 :193-297；PlanBook 持有查找/索引/原子事件路由：packages/engine/src/plans/mod.rs:244-282,397。",
+      "ZiNoiseStrategy::strategy_data 映射全部实例字段：packages/engine/src/strategy/zi_noise.rs:40-52；直接投影测试位于 :296；当前复审确认全部入口均使用该方法，见 agents/implementation-audit/reaudit-engine.md:96。"
+    ],
+    "current_callers_and_owners": [
+      "BeliefBook 构造与 session 所有权：packages/engine/src/session.rs:1901,2672；存档校验：packages/engine/src/session/persistence.rs:1104-1234；生产 cause 调度：packages/engine/src/session/decision_chain/roots.rs:438,456。",
+      "PublicLibrary 恢复 owner 与校验：packages/engine/src/information/public_view.rs:151-203。",
+      "Plan 恢复 owner/caller：packages/engine/src/plans/mod.rs:173,244；期限查询：packages/engine/src/plans/state.rs:336-339。"
+    ]
+  },
+  "ledger_links": {
+    "related_existing": [
+      "G07/G08/Q02 仍按 agents/implementation-audit/reaudit-engine.md:14-16,24 记录；纯 strategy 测试或 A01 均不能证明或关闭其生产 consumer 缺口。",
+      "G09/Q11 仍按 agents/implementation-audit/reaudit-engine.md:17,25 记录；material/cause 基元不能证明所有生产调度均已接线。",
+      "G16 仍按 agents/implementation-audit/reaudit-engine.md:18 记录；PlanBook 的 owner 归属不能证明历史数据复制已消除。",
+      "当前复核直接确认：D01/D02 与 BeliefBook profile 身份线索在已审现行总账中均无已证实的精确 G/Q 对应项；不得强行映射。"
+    ],
+    "no_new_g_or_q": true
+  },
+  "candidate_leads": [
+    {
+      "id": "D01-continuity",
+      "status": "retain-as-existing-independent-behavior-lead",
+      "evidence": "PublicLibrary::from_parts 在 packages/engine/src/information/public_view.rs:186-201 比较 next_seq 与最大 id + 1。即使内部 ID 有缺号，也可能通过该检查（ID 为 0、2，next_seq 为 3）。",
+      "owner": "PublicLibrary",
+      "caller": "session persistence restore path; restore method at information/public_view.rs:151-203",
+      "gq": null,
+      "counterevidence": "当前代码确实检查每个 ID 小于 next_seq、重建索引并要求 next_seq 大于最大值；这不能证明所有错误更正链或跨类型重复值都能由生产路径触发。"
+    },
+    {
+      "id": "D02-expiry-overflow",
+      "status": "retain-as-existing-independent-behavior-lead",
+      "evidence": "last_valid_trading_day 在 packages/engine/src/plans/state.rs:336-339 使用未经检查的 u64 加减。TradingPlan 派生 Deserialize，PlanBook::from_parts 在 plans/mod.rs:173,244 恢复已存计划，因此仅有 PlanOpen 校验不能建立覆盖所有路径的不变量。",
+      "owner": "TradingPlan / PlanBook restore-query boundary",
+      "caller": "PlanBook restore plus expiry and validity consumers",
+      "gq": null,
+      "counterevidence": "正常 PlanOpen 创建路径有校验；A01 的字段可见性收窄和 receiver 方法虽已实现，但没有覆盖反序列化，也未为查询提供类型化错误通道。"
+    },
+    {
+      "id": "belief-profile-identity",
+      "status": "unverified-do-not-promote",
+      "evidence": "来源提出可能存在跨对象身份不匹配。当前存档校验在 packages/engine/src/session/persistence.rs:1222-1227 检查 book.npc() 是否等于 belief_books 的键。",
+      "owner": "BeliefBook and session restore validator",
+      "caller": "session persistence restoration",
+      "gq": null,
+      "counterevidence": "键与 owner 不匹配已被检查。本批未完成对全部 profile/account/family 恢复路径的追踪，也未证明生产恢复会接受无效元组；没有确认新的缺陷。"
+    },
+    {
+      "id": "VersionOverflow-partial-write",
+      "status": "known-explicitly-preserved-boundary",
+      "evidence": "apply_revision mutates plan fields before checked version increment at packages/engine/src/plans/revision.rs:221-258.",
+      "owner": "TradingPlan receiver",
+      "caller": "PlanBook direct and atomic event paths",
+      "gq": null,
+      "counterevidence": "该边界已明确记录为保留范围，见 exhaustive-review/sweep73.md:47-49、sweep74.md:50，并在 luna72.md:22 讨论；这不是新发现，原子批次路径另有分阶段 owner。"
+    }
+  ],
+  "a_share_review": {
+    "status": "no-trading-rule-change",
+    "basis": "本批仅复核对象所有权与存档；ADR-0006/0016/0021/0026 保持逐账户 strategy、个人知识、股数/货币单位以及权威账户/路由执行边界。",
+    "official_source_recheck_required": false
+  },
+  "actions": {
+    "product_changes": 0,
+    "docs_changes": 0,
+    "tests_or_builds_run": false,
+    "git_operations": false,
+    "new_g_or_q": false
+  }
+}

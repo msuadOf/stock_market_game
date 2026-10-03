@@ -1,0 +1,98 @@
+{
+  "batch_id": 25,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/12.md",
+      "lines": 12,
+      "sha256": "e914f8c6005f1730050950c45625910876d0cb85d4b213dd2e747cb89f1c5ab1",
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-L12全文：基本面路径 retain 与历史行为/命名差异。作为交接要求的旁证材料，不是batch25主来源。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/13.md",
+      "lines": 15,
+      "sha256": "9b293e94c5b1b2d4c9719613ffd2f66c11ed6a7dc9f81d396431fb763f5bd4e7",
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-L15全文：plan chain owner、自由调度语义与测试缺口。作为旁证，不是batch25主来源。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/14.md",
+      "lines": 25,
+      "sha256": "37ae1e44e2f660086d18e8fecc39e6afa932d5bfee042c012fcbe88f33a1b2d8",
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1-L25全文：plan execution owner、continuation 与静态审查边界。作为旁证，不是batch25主来源。"
+    }
+  ],
+  "collateral": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/session/parts/25.md",
+      "lines": 9,
+      "sha256": "ad3fdb4f9da2067604420ec51e9d22dc589db27f6c80b4edc10828e15bf0cafa",
+      "read_complete": true,
+      "read_to_eof": true,
+      "chapter_status": "L1范围与方法；L3-L5总体retain结论；L7证据定位；L9限制。非batch源旁证，不计入plan.sources。"
+    }
+  ],
+  "current_instructions": {
+    "caller_agents_md": ".worktree/implementation-reaudit/AGENTS.md",
+    "principles": ".worktree/implementation-reaudit/docs/principles.md",
+    "open_questions": ".worktree/implementation-reaudit/docs/open-questions.md",
+    "relevant_current_decisions": [
+      "docs/decisions/0006-npc-strategy-module.md",
+      "docs/decisions/0012-retail-observation-to-target-position-loop.md",
+      "docs/decisions/0013-retail-experience-memory.md",
+      "docs/decisions/0021-strategy-position-choice-and-noise-pricing.md",
+      "docs/decisions/0026-individual-institution-experience.md"
+    ]
+  },
+  "review": {
+    "candidate": "NPC strategy object ownership and strategy/helper boundaries",
+    "result": "retain_supported_no_new_oop_candidate",
+    "classification": {
+      "implemented": [
+        "InstitutionExperiencePolicy 持有冻结的个体 policy 值，并负责与可序列化 DTO 互转。",
+        "Strategy 是生产决策契约；MomentumStrategy 持有实例级可序列化参数。",
+        "StrategyParams 校验类别分布；StrategyFactory 为每个实例抽样参数。",
+        "散户策略 kernel 与抽样 helper 仍是输入驱动的计算，没有独立的持久生命周期。"
+      ],
+      "existing_gaps": [
+        "G07/G08 的行为接线问题与策略值/状态 owner 是否存在相互独立；当前保留边界的证据不能关闭这两项。"
+      ],
+      "open_questions": [
+        "Q11 的 NPC 策略总体方向和 ADR-0026 的机构策略方向均已确定。",
+        "Q02 中主动读取公开历史是否留痕是独立开放边界，不是本批的 OOP 发现。"
+      ],
+      "doc_drift_or_historical_evidence": [
+        "ADR-0006 含有 hidden-V/strategy 的历史措辞，后续状态已有更新；不要将其当作当前精确的实现契约。",
+        "Part 25 仅记录静态完整性审查，不代表测试或构建验收。"
+      ]
+    },
+    "current_code_evidence": [
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/institution_experience_policy.rs:40-75,77-119,217-249",
+      ".worktree/implementation-reaudit/packages/engine/src/session/institutional_behavior.rs:31-64,75-110",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/mod.rs:192-283",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/momentum.rs:16-33,93-132",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/params.rs:7-73",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/profile.rs:1-81",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/retail.rs:11-65",
+      ".worktree/implementation-reaudit/packages/engine/src/strategy/factory.rs:36-161",
+      ".worktree/implementation-reaudit/agents/implementation-audit/reaudit-engine.md:14-16,31-45"
+    ],
+    "a_share_semantics": "本批未改变交易规则。当前散户卖出仍受 sellable_qty 限制，并在 strategy/retail.rs:47-62 保留 T+1 处理。本批未重新核查官方规则来源。",
+    "tests_run": false,
+    "builds_run": false,
+    "git_operations_run": false
+  },
+  "limitations": [
+    "本次为静态审查，未验证运行时行为或测试结果。",
+    "未重新核验交易所/中国结算官方来源。",
+    "按此前交接要求将 Parts 12–14 读至 EOF；这些材料与本批25的范围无关，不扩大本批审查范围。"
+  ]
+}

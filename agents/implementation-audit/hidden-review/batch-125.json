@@ -1,0 +1,34 @@
+{
+  "batch_id": 125,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/root-documents.md",
+      "sha256": "6238e2d41e7a196ad7ff7333418c8f4e1e23ee2d40890ab2137fddda90fadeff",
+      "lines": 40,
+      "read_to_eof": true,
+      "candidate_status": "历史 root 文档中文化审查；仅对当时指定文档范围作结论。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/session-a.md",
+      "sha256": "80e0802e1e5971550259e0e64ff56c5a28c60c953d93a5f7e35fcc9a4ee796a6",
+      "lines": 55,
+      "read_to_eof": true,
+      "candidate_status": "历史 engine-session-01/02/03/05 中文化审查；明确不等同于源码行为验收。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/reviews/session-b.md",
+      "sha256": "4fac8039b04ccb2753587a2ea92e3f6f2ba88291ac1b991b3b7c3587bd95a53e",
+      "lines": 38,
+      "read_to_eof": true,
+      "candidate_status": "历史 engine-session-04/06/07 中文化审查；保存修订与审查范围边界。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "missed_approved_commitment": false,
+    "status": "当前调用方/owner/consumer 抽查与治理核对未发现三篇材料所涉关系存在遗漏的已接受承诺或错误 G/Q 核销；结论不代表生产全审或行为验收。"
+  }
+}

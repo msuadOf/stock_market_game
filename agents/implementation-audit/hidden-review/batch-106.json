@@ -1,0 +1,37 @@
+{
+  "batch": 106,
+  "owner": 1,
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-02.md",
+      "sha256": "b6306dfae57909f007edcbdf1c17937c9230083b3535ee2db113933a3683d910",
+      "lines": 22,
+      "read_to_eof": true,
+      "candidate_status": "历史 MarketGrid delta retain 仍适用；并非完整源文件语义重审或产品验证。当前 G48/G64 为后续独立的无障碍/本地化候选，不由此来源核销。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-03.md",
+      "sha256": "6d287b142000697a2c05919c8a348e04faaa893aac8a105c84e380fc427775dd",
+      "lines": 22,
+      "read_to_eof": true,
+      "candidate_status": "历史 parser 常量清单 retain 与当前消费点一致；仅指定 delta，不能据此推出所有协议边界完整。未发现此来源可新增或核销的 G/Q。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-04.md",
+      "sha256": "90c7c8291062cbd3fc38fad78227a7ff4024da386f2a608c9de58696745dab9c",
+      "lines": 22,
+      "read_to_eof": true,
+      "candidate_status": "pause preference 新局 generation=1 的指定结论仍与 caller 一致；旧代 baseline 乱序语义仍未核实。当前 G04 是 pause-resume 重送缓存 baseline，属相关但独立候选；G01-G05/G52 不由来源核销。"
+    }
+  ],
+  "result": "通过（仅限三篇中文化记录声明的指定 delta/版本对应范围；未重新执行完整产品语义审计）",
+  "sections": {
+    "input_integrity": "三篇来源全文连续读取至 EOF，行数、SHA-256 与 scan-plan batch 106 相符，aliases 均为 1。",
+    "caller_and_rules": "已阅读 caller AGENTS.md、docs/principles.md、docs/open-questions.md，并核对 ADR-0005、ADR-0007、ADR-0010。Q06 的未来第二语言仍开放；现行中文界面约定已定。未发现后续 ADR 将来源边界改为已实现承诺。",
+    "chapter_families": "web-02 MarketGrid delta retain 与当前 synchronizer/模拟指数实现相符；web-03 wire enum allowlist retain 与当前 parser 消费点相符；web-04 新局 generation=1 仍成立，Remote 旧代 baseline 乱序仍是未决边界。",
+    "candidate_counterevidence": "G48/G64 是组件层独立本地化/无障碍候选；G01-G05 与 G52 是远程宿主/协议错误候选。G04 的 pause-resume 缓存 baseline 重送与 web-04 未决乱序语义相关但不同，均不能由历史 retain 核销。",
+    "a_share_semantics": "来源无交易规则、撮合、价格或金额/股数单位改动；未引入新的大 A 语义候选。",
+    "validation": "未改产品代码或 Git 状态；未运行测试、构建、回归或官方规则查询。旧 review 仅按本批引用的指定范围复核。"
+  }
+}

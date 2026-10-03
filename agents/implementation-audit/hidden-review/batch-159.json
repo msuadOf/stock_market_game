@@ -1,0 +1,39 @@
+{
+  "batch": 159,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-09.md",
+      "sha256": "b9179cb1a6e5f4adf38ab2aebf6b1060ce9d156ea77632eb61782225c6c8c087",
+      "lines": 47,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-pipeline-11.md",
+      "sha256": "bfa17310c2e772910c8de99008455c655fd5c170e83e65150135f9218f2e0801",
+      "lines": 85,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/modules/engine-session-01.md",
+      "sha256": "95a0fbd60a833396a07efd96cebaa922adb9c0f0e36a75f88c364ffc19138fb3",
+      "lines": 82,
+      "read_to_eof": true
+    }
+  ],
+  "current_owner_and_consumer_checks": [
+    "StockStreamCoordinator 的 owner 位于 stock_stream.rs，由 drive_stock_stream 构造；continuous、auction 和 PreOpen transaction 会调用该 stream，并在 drain 后保留阶段 finalization。",
+    "NPC projection 和 quote expiry 的生产 consumer 位于 npc_tick_preparation.rs 与 quote_expiry.rs。",
+    "CommittableSessionState 是唯一的 GameSession 状态 owner；shadow clone/commit 委托给它，而 TickShadow/TickShadowPlan 和独立 authority 入口仍保持区分。"
+  ],
+  "findings": [],
+  "new_candidates": [],
+  "scope_limitations": [
+    "未运行 Git 命令，因此未独立核验基线提交中的历史来源字节；当前源码文件与 scan-plan 元数据一致。",
+    "This rechecked the three assigned historical reviews and key current owner/caller/consumer references; it did not redo the full pipeline/session audit.",
+    "未运行测试或构建，也未实时查询 A 股官方规则。"
+  ],
+  "product_files_modified": false,
+  "git_state_modified": false
+}

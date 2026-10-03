@@ -1,0 +1,12 @@
+{
+  "batch": 32,
+  "owner": 2,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {"path":"agents/oop-refactor-audit/exhaustive/areas/engine-foundation.md","lines":45,"sha256":"c837cf61bc5ee1a17054a0dca271c928ef1ea51a46483bdbe830b49757f93ed8","full_read_to_eof":true},
+    {"path":"agents/oop-refactor-audit/exhaustive/areas/engine-tests.md","lines":35,"sha256":"9cb816412b741e61838cce4a22cfd2eb9f3f4fc37283f9358decde5783b1ee55","full_read_to_eof":true},
+    {"path":"agents/oop-refactor-audit/exhaustive/areas/hosts.md","lines":51,"sha256":"4dc8f3492995ce40db24c70d4e085a96ad2f93fb1021747ee0db4d5963d274c1","full_read_to_eof":true}
+  ],
+  "conclusion": "来源均为候选设计/验证导航而非已批准实施契约；没有因 OOP 提取建议或未在本审计运行测试而形成的新缺口。现有总账关联 G15/G16/G17/G18/G19、G39、G40、G53、G66，以及既有候选风险；无新增 G/Q。",
+  "unverified": ["未执行测试或构建；未重新核对 A 股交易规则法源（本批仅为结构/验证材料）。"]
+}

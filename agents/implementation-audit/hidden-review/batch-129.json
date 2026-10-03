@@ -1,0 +1,34 @@
+{
+  "batch_id": 129,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/engine-tests.md",
+      "sha256": "84897422522b9a521562e318b78ca100646cb9d078e3f05af9cc12df437be44c",
+      "lines": 35,
+      "read_to_eof": true,
+      "candidate_status": "历史材料将 10 批测试归为 support/retain 且无 OOP action，明确没有运行测试或声称通过。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/hosts.md",
+      "sha256": "e15e92fea1a812cd60f3f94605b996285454db8d7a5ac784d09a7ce63e6c14c8",
+      "lines": 51,
+      "read_to_eof": true,
+      "candidate_status": "历史材料明确候选设计未实施，区分桌面、Server、WASM 的状态所有权和协议边界；当前源码已有 SessionRegistry，故历史状态不可外推为现状。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/areas/tooling.md",
+      "sha256": "94a87ad1e66975f185d34b710473c946fbe41b347b445bd5a6501512f7bad4e0",
+      "lines": 38,
+      "read_to_eof": true,
+      "candidate_status": "历史材料将聚合提案与未修复缺陷线索分开且未声称验证；当前源码已含若干命名候选对象，需查现行实现及总账判断状态。"
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "oop_extraction_is_fix": false,
+    "status": "三篇来源只证明历史审计时的候选与覆盖边界，没有证据表明其将候选错误记为已实施或已核销。有限当前源码抽查发现多个候选对象后来已实现，故历史状态不得用于当前实现判断。没有据此新增 G 或关闭既有 G/Q；未运行测试。"
+  }
+}

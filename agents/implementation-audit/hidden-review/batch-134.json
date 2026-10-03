@@ -1,0 +1,44 @@
+{
+  "batch_id": 134,
+  "owner": 4,
+  "source_baseline": "43b1aa5",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "plan_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit/agents/implementation-audit/hidden-review/scan-plan.json",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-company-05.md",
+      "sha256": "046953d4d719b904a972585735de1898f836a9f11127cac86058b457c97ac313",
+      "lines": 43,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-foundation-01-before-rng-final.md",
+      "sha256": "a4ec47e6624acdd6a4cf80d744e3b675c44dc54ddf2ca94081caee35411a5895",
+      "lines": 116,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/modules-engine-foundation-01.md",
+      "sha256": "4a9bc271c28dd0fe75daa887769072132520319a2653f8e8e1f0e7759e3df45e",
+      "lines": 104,
+      "read_to_eof": true
+    }
+  ],
+  "current_consumer_checks": {
+    "OperatingScheduler": "通过 CompanyOperations submit/dispatch 和 CompanyOperationsClockWiring 接入 session。",
+    "CompanySpec": "通过 CompanySpec::validate_set 与 CompanyRegistry::validate_issuer_mapping 用于公司/证券装配。",
+    "Account": "Account::apply_settlement 由 session pipeline settlement 调用。",
+    "CalendarPolicy": "CalendarPolicy digest 由 policy validation/recovery 路径检查。"
+  },
+  "candidate_checks": {
+    "scheduler_duplicate_id_and_sequence_exhaustion": "历史材料明确作为独立运行时/恢复缺陷候选，而非批准的 OOP 交付承诺；未找到证据表明具体修复曾获单独批准或被错误核销。",
+    "account_field_encapsulation_and_settlement_helper": "材料明确为候选设计；现行决策约束账户与 T+1/receipt 领域契约，但本次未发现批准私有化/抽取这些具体实现的记录。",
+    "calendar_source_digest_and_deserialization_edges": "材料登记为独立技术缺陷候选；未找到批准这些具体行为修改或错误历史完成状态的证据。",
+    "new_approved_omission": false,
+    "bad_historical_closure": false,
+    "counterevidence": "三份材料将内容标为候选、未实施，没有声称候选已交付；对象重构建议与行为缺陷建议均不能替代用户/ADR 对具体交付的批准。"
+  },
+  "limitations": "未重新审查所有生产实现；未运行测试、构建或官方交易规则查询。未把候选缺陷状态推断为已修复。",
+  "validation": "仅写本批审计记录；未改产品文件或 Git。"
+}

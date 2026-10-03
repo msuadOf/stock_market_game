@@ -1,0 +1,60 @@
+{
+  "batch_id": 51,
+  "product_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reader-guide.md",
+      "sha256": "d4c5dfee17939b6ee2ff9a67e3c132b6dd33cbdadeb331f92e49c818d8a3e8cf",
+      "lines": 36,
+      "eof_confirmed": true,
+      "chapter_family": ["调查范围", "交付 schema", "对象化限制"],
+      "status": "历史说明；不作为本轮实施指令"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/area-engine-company.md",
+      "sha256": "55b0de2212bf830d502f5964565afc328d45ccb4f912e80899d2e5624c2ce6e0",
+      "lines": 31,
+      "eof_confirmed": true,
+      "chapter_family": ["指纹与范围", "正文核对", "需更正的文档问题"],
+      "status": "主要结论仍限原复核范围成立；domain-closure 链接死链再证"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/area-engine-foundation.md",
+      "sha256": "2f92c5b4afa236031ca33468076cf529d0e57bafeef596ccc99a20e60d661fdf",
+      "lines": 29,
+      "eof_confirmed": true,
+      "chapter_family": ["指纹与范围", "核对结论", "必须修正的材料引用"],
+      "status": "owner/A02 边界无反证；foundation-02/03 复核链接死链再证"
+    }
+  ],
+  "current_product_paths": [
+    {"path": "packages/engine/src/account.rs", "lines": [95, 117, 119, 173, 609, 675], "role": "Account/AccountState、受控读写、Position 股数与金额事实"},
+    {"path": "packages/engine/src/session/account_book.rs", "lines": [15, 33], "role": "账户页存储与验证缓存 owner"},
+    {"path": "packages/engine/src/session.rs", "lines": [1125, 1150], "role": "GameSession/CommittableSessionState 持有账户与市场"},
+    {"path": "packages/engine/src/market.rs", "lines": [50, 66, 270, 277, 419, 430], "role": "Market 组合 OrderBook；fixture 写口限测试，成交身份 caller 为 crate 内"},
+    {"path": "packages/engine/src/orderbook.rs", "lines": [283, 345], "role": "OrderBook 持簿状态、序号与 tick"},
+    {"path": "packages/engine/src/session/pipeline/continuous_matching.rs", "lines": [246, 276], "role": "生产连续撮合创建并执行 ContinuousStockRoundProcessor"},
+    {"path": "packages/engine/src/session/pipeline/auction_day_end.rs", "lines": [1434, 1434], "role": "收盘竞价生产消费者记录成交订单身份"},
+    {"path": "packages/engine/src/money.rs", "lines": [42, 42], "role": "Money 金额值类型定义"}
+  ],
+  "ledger_and_decisions": {
+    "ledger": "agents/implementation-audit/implementation-audit-2026-10-02.md",
+    "status": "未发现本批来源可直接映射的新 G/Q；G16、Q01、Q09 等维持总账状态",
+    "adrs": [
+      {"path": "docs/decisions/0018-long-running-immutable-timeline.md", "status": "proposed；全套架构提案不是现行必做授权"},
+      {"path": "docs/decisions/0023-synthetic-history-and-matching-only.md", "status": "accepted"},
+      {"path": "docs/decisions/0024-shrinking-investor-cash-pool.md", "status": "accepted"},
+      {"path": "docs/decisions/0025-day-end-only-persistence.md", "status": "accepted"},
+      {"path": "docs/decisions/0026-individual-institution-experience.md", "status": "accepted"}
+    ]
+  },
+  "candidate_status": {
+    "new_product_candidates": [],
+    "reconfirmed_document_findings": [
+      "engine-company.md 引用的 exhaustive/areas/domain-closure.json 不存在",
+      "engine-foundation.md 引用的 engine-foundation-02.md 与 engine-foundation-03.md 不存在；增量证据文件有 delta-evidence 后缀"
+    ],
+    "oop_extraction_counts_as_fix": false
+  },
+  "validation": "仅静态阅读；未运行测试、构建或 Git；未改产品与正式文档；未重新核验官方 A 股规则。"
+}

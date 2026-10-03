@@ -1,0 +1,43 @@
+{
+  "batch_id": 205,
+  "owner": 5,
+  "conclusion": "通过（审计材料范围）",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-10.md",
+      "sha256": "050662267bc4978dcc512a02fdd49127731ec58d08522e309a83a86bb1532a85",
+      "lines": 75,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-tests-area-final.md",
+      "sha256": "e4b094b167e4107aa38b4a7209b9ba2206f5c685c2b808f53a82065570604881",
+      "lines": 36,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/frontend-area-final.md",
+      "sha256": "1dc4e1e070d920d0054fc05f5b4e6ab745e3581fec1dbfd1b5f87fc2f4790605",
+      "lines": 28,
+      "read_to_eof": true
+    }
+  ],
+  "checks": {
+    "baseline": "43b1aa5",
+    "current_callers_owners_consumers_checked": true,
+    "related_open_questions_and_current_adrs_checked": [
+      "Q6 / ADR-0007",
+      "Q9 / ADR-0005",
+      "Q11 / ADR-0006"
+    ],
+    "trading_rules_checked": true,
+    "tests_or_build_run": false,
+    "product_code_modified": false
+  },
+  "gates": {
+    "a_share_semantics": "通过；合成 fixtures 与游戏策略参数未被表述为全市场规则验收。",
+    "necessity_and_minimal_scope": "通过；未从测试支撑或审计候选推导不必要的生产对象变更。",
+    "boundaries_and_cross_layer_consistency": "通过；材料明确审计限制，baseline 与当前调用链一致。"
+  },
+  "findings": []
+}

@@ -1,0 +1,28 @@
+{
+  "plan": "agents/implementation-audit/hidden-review/history-plan.json",
+  "source_baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": ".omo/notepads/desktop-build-matrix/decisions.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "e04395d06a58a64f4eb16f69be3714e3ff52a20848b8fe70e9de572d74aa4aad",
+      "lines": 11,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/desktop-build-matrix/issues.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "43cea4bb37b6e25f400d7862ec143cc82736f9f89b382013ec57b0f293a1efe6",
+      "lines": 5,
+      "read_to_eof": true
+    },
+    {
+      "path": ".omo/notepads/desktop-build-matrix/learnings.md",
+      "revision": "c139a69d2a09220e349912376d4be83d8859795f",
+      "sha256": "d9e30caa47bc53db1edfcd6bf5d0808aa92cd6f48276cbdd365165c3fbad5bcd",
+      "lines": 9,
+      "read_to_eof": true
+    }
+  ],
+  "candidates": []
+}

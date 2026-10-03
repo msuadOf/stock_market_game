@@ -1,0 +1,126 @@
+{
+  "batch_id": "batch-040",
+  "owner": 5,
+  "baseline": {
+    "worktree": ".worktree/implementation-reaudit",
+    "commit": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+    "date": "2026-10-03"
+  },
+  "review_files": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-01.md",
+      "lines": 82,
+      "sha256": "fa40343d0f8474db0390fc639ed4c7ba35d83d3ad587dc3a168d220b9472f9dc",
+      "full_read_to_eof": true,
+      "classification": "候选对象已在 baseline 实施，提案状态已过时",
+      "findings": [
+        {
+          "claim": "可提交会话字段应由唯一 CommittableSessionState 组合值拥有。",
+          "result": "已实施",
+          "counterevidence": "packages/engine/src/session.rs:1125-1160 定义 GameSession.state: CommittableSessionState；:1328-1340 将 tick clone/commit 委托给 clone_for_shadow/commit_from。poison 与测试故障钩子仍在 GameSession。"
+        },
+        {
+          "claim": "clone_for_plan_roots 应改为窄只读 root context。",
+          "result": "已迁移，旧函数不存在",
+          "counterevidence": "packages/engine/src/session/decision_chain/roots.rs:6-29 定义并捕获 RootReadContext；packages/engine/src/session/plan_chain_candidates.rs:294-335 为 root 批次捕获 Arc 并调用 InstitutionDecisionRoot。"
+        }
+      ],
+      "gq_relation": "没有由状态容器本身核销的 G/Q；历史复制单列 G16。",
+      "source_refs": [
+        "packages/engine/src/session.rs:1125-1160",
+        "packages/engine/src/session.rs:1328-1340",
+        "packages/engine/src/session/decision_chain/roots.rs:6-29",
+        "packages/engine/src/session/plan_chain_candidates.rs:294-335"
+      ]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-02.md",
+      "lines": 94,
+      "sha256": "3be9a25efbc40b8c1d8dfdd592ceeee49b8d53e9e32621570162946ef933cbb2",
+      "full_read_to_eof": true,
+      "classification": "主要 OOP 候选已实施；独立失败边界仍有效",
+      "findings": [
+        {
+          "claim": "将活动日 K 和历史 map 合为 SessionCandleBook。",
+          "result": "已实施",
+          "counterevidence": "packages/engine/src/session/candles.rs:90-205 显示 histories/active 唯一 owner、record_trade_or_mark 与 commit_active；snapshot 仍将 daily_candles 与 active_daily_candles 分别投影。"
+        },
+        {
+          "claim": "CompanyOperationsClockWiring::sync 在失败时应保持 clock/mirrored 原样。",
+          "result": "缺陷仍存在，批次部分更新可达",
+          "counterevidence": "packages/engine/src/session/company_operations.rs:60-73 先 mirrored.insert 后 register_due?；前项成功、后项失败会留下部分状态。仅改成单条 register-first 不能保证整批原子。"
+        },
+        {
+          "claim": "CivilClock::register_due 的序号耗尽需要明确定义。",
+          "result": "代码风险成立，拒绝 u32::MAX/保留哨兵是待定政策",
+          "counterevidence": "packages/engine/src/session/civil_clock.rs:330-351 以 next_due_seq += 1 推进；该递增无 checked overflow。ADR 未敲定新 ID 耗尽政策。"
+        },
+        {
+          "claim": "CivilClock::end_day 的所有错误均不改变状态。",
+          "result": "材料正确限定该说法",
+          "counterevidence": "packages/engine/src/session/civil_clock.rs:431-449 先 extract_if 移除当天 due，再调用可失败的 calendar.day_status(next)。"
+        }
+      ],
+      "gq_relation": "会话对象抽取不核销 G/Q；AccountPagedMap 局部部分修改为独立缺陷线索。",
+      "source_refs": [
+        "packages/engine/src/session/candles.rs:90-205",
+        "packages/engine/src/session/company_operations.rs:60-73",
+        "packages/engine/src/session/civil_clock.rs:330-351",
+        "packages/engine/src/session/civil_clock.rs:431-449"
+      ]
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/modules/engine-session-03.md",
+      "lines": 70,
+      "sha256": "b562d61f0e7971494773b77d1614a178af49828b7f0e8a84d8c85d402100fe40",
+      "full_read_to_eof": true,
+      "classification": "观察/root 聚合已实施；生命周期消费边界保留",
+      "findings": [
+        {
+          "claim": "引入 DecisionChainObservation、RootReadContext 与单账户 InstitutionDecisionRoot。",
+          "result": "已实施",
+          "counterevidence": "packages/engine/src/session/decision_chain.rs:63-87 定义共享只读观察；packages/engine/src/session/decision_chain/roots.rs:6-29 定义 RootReadContext，:188 起定义 InstitutionDecisionRoot。"
+        },
+        {
+          "claim": "生命周期动作须等待对应 typed route outcome，再从当前私有 candidate 重收集。",
+          "result": "现有 caller 符合设计边界",
+          "counterevidence": "packages/engine/src/session/plan_chain_candidates/adaptive.rs:82-180 按 ready/pending 路由处理，并在结果接入后调用 collect_plan_lifecycle_actions 与 apply_plan_lifecycle_actions；root worker 仅生产账户 typed 结果。"
+        },
+        {
+          "claim": "RootReadContext 对象化意味着完整历史复制问题已消除。",
+          "result": "不能成立；G16 仍独立存在",
+          "counterevidence": "packages/engine/src/session/decision_chain/roots.rs:18-29 克隆 PlanBook；packages/engine/src/session/decision_chain.rs:88-105 遍历完整 candle histories 建技术观察。抽取对象没有证明复制工作被消除。"
+        }
+      ],
+      "gq_relation": "与 G16 有明确交集，但未核销；实现总账 Q02/Q11 需要独立核验消费链。不得将其与 docs/open-questions.md 的产品 Q11 混淆。",
+      "source_refs": [
+        "packages/engine/src/session/decision_chain.rs:63-105",
+        "packages/engine/src/session/decision_chain/roots.rs:6-29",
+        "packages/engine/src/session/decision_chain/roots.rs:188-226",
+        "packages/engine/src/session/plan_chain_candidates.rs:294-335",
+        "packages/engine/src/session/plan_chain_candidates/adaptive.rs:82-180",
+        "agents/implementation-audit/implementation-audit-2026-10-02.md:75,139-160"
+      ]
+    }
+  ],
+  "normative_sources": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/open-questions.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0019-draft-market-scope-and-capacity.md",
+    "docs/decisions/0023-synthetic-history-and-matching-only.md",
+    "docs/decisions/0024-shrinking-investor-cash-pool.md",
+    "docs/decisions/0025-day-end-only-persistence.md",
+    "docs/decisions/0026-individual-institution-experience.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md"
+  ],
+  "overall": "三个主要候选对象在 43b1aa5 已存在；应更新候选稿的实施状态。确认 sync 部分更新、序号溢出与 end_day 局部错误边界仍需分别跟进。没有因本次重构审读核销 G/Q 或改变 A 股交易规则。",
+  "limitations": [
+    "未运行测试、构建或性能测量。",
+    "未重新完整审计 G01–G68/Q01–Q23；仅交叉核对直接关联项。",
+    "未查询交易所/中国结算资料；未提出交易制度变化。"
+  ]
+}

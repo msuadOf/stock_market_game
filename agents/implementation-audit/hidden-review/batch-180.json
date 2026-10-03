@@ -1,0 +1,29 @@
+{
+  "batch": 180,
+  "owner": 5,
+  "baseline": "43b1aa5",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-02-recheck.md",
+      "sha256": "76d5026dcbf8b435af95e6fb01e066eb0d669ffc55776a98c1e82685105da63e",
+      "lines": 30,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-02-recheck2.md",
+      "sha256": "96e7eaf2247a6e8aa20c51df9731c827289192f4e9af42f8abab2fbbc36fdb7b",
+      "lines": 26,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/engine-foundation-02.md",
+      "sha256": "99369ebaef6efed1d30801e9a3b98c47ffa788a9319634539be7b6b501b674d4",
+      "lines": 40,
+      "read_to_eof": true,
+      "present_at_baseline": false
+    }
+  ],
+  "finding": "来源 SHA-256 与行数核验通过，三篇材料均不在基线 43b1aa5。其结论历史演进可追溯：当前 lifecycle.rs 已将注释限定为仅 feedback 在 legacy writer 成功后提交，但 legacy 失败仍可能留下部分状态变化；最终 review 对此风险及运行时客户端发布证据缺口的限定准确。当前 RetailExperienceState 仍是经历与 feedback owner，session/机构观察为其 caller，session 恢复对账调用其清理方法；domain-N07 已记录收敛动作。材料不表明交易制度改变，不构成完整源 diff 或运行时发布审查。"
+}

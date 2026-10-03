@@ -1,0 +1,24 @@
+{
+  "batch": 107,
+  "owner": 2,
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-05.md",
+      "sha256": "194646aa5187ed243808e2b19418fb8c35bd1245b16f2eba180bf68925be3b05",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-06.md",
+      "sha256": "f74aee0242f068e4ca1b4cc5f922200fcbae53ead55d1183e947f61e56c7f1b8",
+      "lines": 22,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/batch-reviews/web-07.md",
+      "sha256": "2ad45f40e915cced32352fd7bb9f1e55b18e0649d02f2539f91fa98b4eee114a",
+      "lines": 22,
+      "read_to_eof": true
+    }
+  ]
+}

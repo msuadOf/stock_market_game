@@ -1,0 +1,98 @@
+{
+  "batch_id": 80,
+  "owner": 5,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "status": "complete",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-05.md",
+      "expected_lines": 81,
+      "measured_lines": 81,
+      "expected_sha256": "9dfb7b463488f43946aa177515c42fafcbb21daddecdf96daf52cb8dd6c7be96",
+      "measured_sha256": "9dfb7b463488f43946aa177515c42fafcbb21daddecdf96daf52cb8dd6c7be96",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "finding": "Matrix validateArtifacts 的 symlink 读前检查缺陷仍成立；EscrowVerificationRun 在基线已实现，故来源中的未实施状态已过时。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-06.md",
+      "expected_lines": 45,
+      "measured_lines": 45,
+      "expected_sha256": "23896b7b99e608869e97b13d917f3d9ebe587e862cb3105fef580d40890312f2",
+      "measured_sha256": "23896b7b99e608869e97b13d917f3d9ebe587e862cb3105fef580d40890312f2",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "finding": "smoke-pages 仅做词法路径 containment 后 readFile，symlink 可使静态 smoke 读取 root 外目标；测试缺口被准确登记。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/exhaustive/reviews/tooling-area-final.md",
+      "expected_lines": 32,
+      "measured_lines": 32,
+      "expected_sha256": "1b00d13fd6e82f28655e4dc486c98347210cc794c7558518ac12d1164d6b926b",
+      "measured_sha256": "1b00d13fd6e82f28655e4dc486c98347210cc794c7558518ac12d1164d6b926b",
+      "aliases": 1,
+      "read_status": "complete_to_eof",
+      "finding": "区域 action/defect 分类与历史文件吻合；4-action 和 proposed 汇总不能代表基线状态，tooling-05 action 已实现。"
+    }
+  ],
+  "caller_evidence": [
+    "scripts/simulation/run-escrow-verification-matrix.mjs:367-405,557-810,856-874",
+    "scripts/simulation/escrow-source-manifest.mjs:23-66",
+    "scripts/simulation/prepare-escrow-performance-config.mjs:84-85",
+    "scripts/simulation/verify-simulation-artifacts.mjs:79-123,380-422,487-547",
+    "scripts/smoke-pages.mjs:10-31,94-99",
+    "scripts/smoke-deployment.mjs",
+    "scripts/wasm-build.sh",
+    "scripts/wasm-build.bat",
+    "scripts/frontend-build.mjs",
+    "scripts/workspace-paths.mjs",
+    "agents/implementation-audit/implementation-audit-2026-10-02.md:27,91,126,200,220",
+    "agents/implementation-audit/reaudit-tools.md",
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md",
+    "docs/open-questions.md",
+    "docs/testing.md"
+  ],
+  "related_current_items": ["G39"],
+  "related_item_disposition": "G39 只覆盖 K7 自由调度输出相等验收问题，不核销 artifact/path symlink 缺陷。未发现准确代表两项 symlink 风险的现行 G/Q；保持未分配并交主审计判断。open-questions 无相关待决项。",
+  "findings": [
+    {
+      "id": "unassigned-matrix-artifact-symlink",
+      "description": "validateArtifacts 在 readFile 之前未 lstat/reject symlink/canonical containment；内部链接可解析到 output 内其他文件，外部链接的目标字节可能在 containment 拒绝前已读取。",
+      "evidence": ["scripts/simulation/run-escrow-verification-matrix.mjs:367-405", "agents/oop-refactor-audit/exhaustive/reviews/tooling-05.md"],
+      "status": "baseline_defect_confirmed",
+      "limitations": "静态审查；未运行路径攻击 fixture 或测试。"
+    },
+    {
+      "id": "unassigned-pages-smoke-symlink",
+      "description": "smokePages 将请求路径做词法 containment 后直接 readFile，root 内 symlink 可指向 root 外文件。",
+      "evidence": ["scripts/smoke-pages.mjs:10-31", "agents/oop-refactor-audit/exhaustive/reviews/tooling-06.md"],
+      "status": "baseline_defect_confirmed",
+      "limitations": "静态审查；没有看到 smoke-pages 专用 symlink 行为测试，未运行测试。"
+    },
+    {
+      "id": "stale-tooling05-action-status",
+      "description": "tooling-05 来源将 EscrowVerificationRun 作为未实施候选；基线已包含 class 且公开 runner 创建并执行它。",
+      "evidence": ["scripts/simulation/run-escrow-verification-matrix.mjs:557-810"],
+      "status": "baseline_source_contradicts_historical_status",
+      "limitations": "仅核对该类及公共入口存在；没有以此宣称行为测试通过或 D01 已修复。"
+    }
+  ],
+  "current_decisions": [
+    "docs/decisions/0017-escrow-parallel-tick.md",
+    "docs/decisions/0018-long-running-immutable-timeline.md",
+    "docs/decisions/0027-runtime-deployment-and-build-targets.md",
+    "docs/decisions/0028-tagged-release-and-static-pages.md",
+    "docs/open-questions.md",
+    "docs/testing.md"
+  ],
+  "limitations": [
+    "未运行测试、构建、长验收或交易规则核验。",
+    "审查仅限三份 review 来源与其 caller/owner/consumer 交叉证据。",
+    "SHA-256 和 EOF 行数只证明来源版本完整，不证明源码行为测试通过。"
+  ]
+}

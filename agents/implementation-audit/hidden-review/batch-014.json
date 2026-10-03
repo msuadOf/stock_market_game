@@ -1,0 +1,120 @@
+{
+  "batch_id": 14,
+  "owner": 4,
+  "source_root": "/data1/baiyifan/workplace/stock_market_game",
+  "caller_root": "/data1/baiyifan/workplace/stock_market_game/.worktree/implementation-reaudit",
+  "baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/review.md",
+      "expected_lines": 39,
+      "measured_lines": 39,
+      "expected_sha256": "1c0ccba993caf5a24abdd1126f0447418ee78b58d251cb3010ae4b7f15cbd57a",
+      "measured_sha256": "1c0ccba993caf5a24abdd1126f0447418ee78b58d251cb3010ae4b7f15cbd57a",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["复核结论", "候选修订", "三门复核", "交付文件与来源声明"],
+      "g_association": "N01-N07；均为已有候选状态与边界复核，无新增G",
+      "new_candidate": null,
+      "counterevidence": "review.md 报告明确记录历史有效发现已修订，最终 canonical 报告、coverage 与 actions 已由独立 closure reviewer 全文复核；当前基线可见 N01-N07 相关实现及真实 caller。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/domain/worker-instructions.md",
+      "expected_lines": 1,
+      "measured_lines": 1,
+      "expected_sha256": "0dd2206879d6d0ea580d19288db4a4bdc980e567c35237f178e311d2ab50adde",
+      "measured_sha256": "0dd2206879d6d0ea580d19288db4a4bdc980e567c35237f178e311d2ab50adde",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["审计指令"],
+      "g_association": "规定本批独立复核范围，不直接构成产品候选",
+      "new_candidate": null,
+      "counterevidence": "仅要求依据分配任务静态审查，不扩展为运行验收或源码修改。"
+    },
+    {
+      "path": "agents/oop-refactor-audit/completeness-2026-10-03/file-index.md",
+      "expected_lines": 1211,
+      "measured_lines": 1211,
+      "expected_sha256": "5594ccf2f0b5a58776d3a7416cc8ba8e42cc856eb48555b00e221c016be6e989",
+      "measured_sha256": "5594ccf2f0b5a58776d3a7416cc8ba8e42cc856eb48555b00e221c016be6e989",
+      "aliases": 1,
+      "read_complete": true,
+      "eof": true,
+      "chapters": ["文件清单与前后分类索引"],
+      "g_association": "N01-N07关联的engine文件与已有动作索引",
+      "new_candidate": null,
+      "counterevidence": "文件索引将关联文件纳入既有候选/action；当前代码已定位对应owner、caller与测试，不见独立新G证据。"
+    }
+  ],
+  "current_rules": [
+    "AGENTS.md",
+    "docs/principles.md",
+    "docs/decisions/"
+  ],
+  "current_code_matrix": [
+    {
+      "candidate": "N01",
+      "status": "已有动作已涵盖",
+      "owner": "packages/engine/src/indicators.rs::KdjAccumulator",
+      "caller": "指标计算入口在 indicators.rs 消费聚合状态",
+      "test_boundary": "原候选测试边界；本批未运行测试",
+      "domain_boundary": "指标状态聚合，不涉及交易制度"
+    },
+    {
+      "candidate": "N02",
+      "status": "已有动作已涵盖",
+      "owner": "packages/engine/src/orderbook.rs::Order::validate_progress",
+      "caller": "撮合订单入口校验进度",
+      "test_boundary": "原候选测试边界；本批未运行测试",
+      "domain_boundary": "订单进度校验，不改变撮合规则"
+    },
+    {
+      "candidate": "N03",
+      "status": "已有动作已涵盖",
+      "owner": "packages/engine/src/market.rs::MarketDelta; Market::apply_changed_orders",
+      "caller": "session pipeline 产生并应用受限 delta",
+      "test_boundary": "保留盘口差异断言；未发现须公开任意 setter 的证据",
+      "domain_boundary": "受限写入口，不扩大市场写权限"
+    },
+    {
+      "candidate": "N04",
+      "status": "已有动作已涵盖",
+      "owner": "BankBooks、InsuranceBooks、RealEstateBooks 构造守卫",
+      "caller": "各行业 Books::new 接收并验证行业配置",
+      "test_boundary": "行业各自的配置校验边界；本批未运行测试",
+      "domain_boundary": "保留各行业差异，不合并成统一默认规则"
+    },
+    {
+      "candidate": "N05",
+      "status": "已有动作已涵盖",
+      "owner": "packages/engine/src/accounting/reports/window.rs::Accumulator::add_current_worksheet",
+      "caller": "packages/engine/src/accounting/reports/consolidated_window.rs",
+      "test_boundary": "window.rs 内含空输入、累加和溢出边界测试；本批未运行",
+      "domain_boundary": "财务报表累计逻辑，不变更会计简化政策"
+    },
+    {
+      "candidate": "N06",
+      "status": "已有动作已涵盖",
+      "owner": "packages/engine/src/accounting/tax.rs::TaxPolicy 及子 policy",
+      "caller": "工业 Books 持有与消费 policy；accounting/mod.rs 保留 facade",
+      "test_boundary": "历史复核已补正测试路径清单；本批未运行测试",
+      "domain_boundary": "policy 封装不代表税务规则或法源重新验收"
+    },
+    {
+      "candidate": "N07",
+      "status": "已有动作已涵盖",
+      "owner": "RetailExperienceState::observe_institution_position_dated / clear_stale_institutional_holding",
+      "caller": "packages/engine/src/session/institutional_behavior.rs",
+      "test_boundary": "packages/engine/src/experience/feedback/lifecycle/institutional_transition_tests.rs 覆盖门槛、时序和清理",
+      "domain_boundary": "机构专用阈值独立于零售衰减/失败策略"
+    }
+  ],
+  "g_association": [
+    "N01-N07 不新增G候选；静态材料没有提供新行为缺陷证据。",
+    "G08 不因 N07 核销；G35/G36/G58/G59、Q19/Q23 边界保持不变。"
+  ],
+  "findings": [],
+  "validation": "静态文件完整性核对及基线源码定位；未运行产品测试/构建，未执行Git操作，未改产品源码。"
+}

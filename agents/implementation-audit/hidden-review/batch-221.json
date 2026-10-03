@@ -1,0 +1,26 @@
+{
+  "batch_id": 221,
+  "owner": 1,
+  "source_baseline": "43b1aa5",
+  "finding": "未发现已批准承诺遗漏或错误的历史核销",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-04-worker-final.md",
+      "sha256": "f9e08b8569526915c95cbc161d34353e20f3804dfbc2e7dce048b5e85dd6fd3a",
+      "lines": 20,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-04.md",
+      "sha256": "49cc4d0f62fb47fb30ab42ce403f150d60e1480c8ac0e0c17fce4ec2413a189d",
+      "lines": 14,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/reviews/web-05-evidence-final.md",
+      "sha256": "d2d2a973f72dee2427654c49f0b6f81e20998b5a752ca6d66fba3809929f04de",
+      "lines": 27,
+      "read_to_eof": true
+    }
+  ]
+}

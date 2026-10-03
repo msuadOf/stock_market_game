@@ -1,0 +1,30 @@
+{
+  "batch_id": 138,
+  "owner": 3,
+  "source_baseline": "43b1aa5f25226c72976ca172d32f4a8eeb2272ad",
+  "sources": [
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-foundation-02.md",
+      "sha256": "8613a57424d7e7b4bd74fc7ce1f9642fb0ff8614355e6bfbf0aa693e94522be6",
+      "lines": 26,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-foundation-03.md",
+      "sha256": "ce761b8b0ebe94b2aa8d05eb98258204d58b028374d1cd3ec3aee13ea166c93f",
+      "lines": 17,
+      "read_to_eof": true
+    },
+    {
+      "path": "agents/oop-refactor-audit/chinese-localization/before/exhaustive/managers/domain-before/reviews-engine-foundation-04.md",
+      "sha256": "753b62f419766293fa81beba9f5be124cd6ad86458fa2dd2fb09e0f010f79e7b",
+      "lines": 9,
+      "read_to_eof": true
+    }
+  ],
+  "candidate_summary": {
+    "new_g": false,
+    "incorrectly_closed_g_or_q": false,
+    "status": "指定历史复核记录未证明已批准承诺遗漏或 G/Q 被错误核销；没有新增或可关闭条目，既有状态沿用 caller 总账。"
+  }
+}
