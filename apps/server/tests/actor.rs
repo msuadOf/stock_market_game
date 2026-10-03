@@ -129,16 +129,15 @@ async fn actor_diagnostics_rejects_stale_generation_without_records() {
         .expect_err("stale diagnostics must be explicitly rejected");
 
     // actor 直接使用 engine 的 feature 能力；过期 generation 始终必须拒绝。
-    if cfg!(feature = "simulation-diagnostics") {
-        assert_eq!(
-            current,
-            NpcDecisionDiagnostics::Supported {
-                records: Vec::new()
-            }
-        );
-    } else {
-        assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
-    }
+    #[cfg(feature = "simulation-diagnostics")]
+    assert_eq!(
+        current,
+        NpcDecisionDiagnostics::Supported {
+            records: Vec::new()
+        }
+    );
+    #[cfg(not(feature = "simulation-diagnostics"))]
+    assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
     assert!(
         matches!(stale, server::SendCommandError::Rejected(ref reason)
         if reason == "STALE_SESSION_GENERATION: requested 0; current generation is 1")
