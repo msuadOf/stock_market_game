@@ -100,19 +100,36 @@ fn absence_is_not_a_zero_metric() {
     assert_eq!(report.direction_persistence, None);
 }
 
-#[test]
-fn npc_execution_reconciles_every_share_and_preserves_provenance() {
+fn npc_execution_session() -> GameSession {
+    const TRADING_DAYS: u32 = 3;
     let mut setup = fixture::setup();
     setup.stocks[0].code = StockCode("000812".to_owned());
     setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
     setup.stocks[0].initial_price = Money::from_cents(285);
-    setup.stocks[0].total_shares = 1_000_000;
+    // 与默认公司 fixture 的发行股份及 ST 主板类别一致，避免失真的估值分母。
+    setup.stocks[0].total_shares = 1_052_631_579;
+    setup.stocks[0].category = engine::SecurityCategory::StMainBoard;
+    setup.stocks[0].limit_pct = setup.stocks[0].category.limit_pct();
     setup.stocks[0].float_shares = 400_000;
+    setup.npcs.retail_count = 24;
     setup.npcs.inst_count = 20;
+    let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, 7).unwrap();
-    for _ in 0..600 {
-        session.step().expect("healthy step");
+    for _ in 0..TRADING_DAYS {
+        while session.civil_clock().phase() == engine::session::CivilPhase::ClosedDay {
+            session.end_civil_day().expect("休市日正常日结");
+        }
+        for _ in 0..ticks_per_day {
+            session.step().expect("healthy step");
+        }
+        session.end_civil_day().expect("交易日正常日结");
     }
+    session
+}
+
+#[test]
+fn npc_execution_reconciles_every_share_and_preserves_provenance() {
+    let session = npc_execution_session();
     let report = session.causal_diagnostics().unwrap();
     assert!(report.submitted_qty > 0);
     assert!(!report.impacts.is_empty());
@@ -211,17 +228,7 @@ fn restore_reports_missing_observation_history_without_fabricating_origins() {
 
 #[test]
 fn real_fill_stream_rejects_duplicate_fill_and_wrong_execution_price() {
-    let mut setup = fixture::setup();
-    setup.stocks[0].code = StockCode("000812".to_owned());
-    setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
-    setup.stocks[0].initial_price = Money::from_cents(285);
-    setup.stocks[0].total_shares = 1_000_000;
-    setup.stocks[0].float_shares = 400_000;
-    setup.npcs.inst_count = 20;
-    let mut session = GameSession::new(setup, 7).unwrap();
-    for _ in 0..600 {
-        session.step().expect("healthy step");
-    }
+    let session = npc_execution_session();
     let original = session.causal_facts();
     let fill = original
         .iter()

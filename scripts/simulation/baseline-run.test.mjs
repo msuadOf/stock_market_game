@@ -572,6 +572,19 @@ describe("Task 38 simulation acceptance capture contracts", () => {
           });
         } finally {
           await rm(stagedPath, { force: true });
+          const descendantPid = Number(await readFile(pidPath, "utf8"));
+          // SIGKILL 后的 close 不保证 OS 已 reap descendant；zombie 仍保留 PID。
+          // 把 fixture 的 reap 等待计入原共享 cleanup reserve，再验证 ESRCH。
+          while (true) {
+            try {
+              process.kill(descendantPid, 0);
+            } catch (error) {
+              if (error?.code === "ESRCH") break;
+              throw error;
+            }
+            assert.ok(deadline.cleanupRemainingMs() > 0, "fixture descendant was not reaped within the total batch deadline");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
         }
       }),
       /shared 500ms deadline/i,
@@ -600,6 +613,10 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     const hangingExec = async (file, args, options) => {
       if (!isFakeSimulationExecutable(file)) return base(file, args, options);
       return new Promise((_, reject) => {
+        if (options.signal.aborted) {
+          reject(options.signal.reason);
+          return;
+        }
         options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
       });
     };
@@ -609,9 +626,10 @@ describe("Task 38 simulation acceptance capture contracts", () => {
         outputDir: path.join(outputDir, "deadline"),
         exec: hangingExec,
         repoRoot: "D:/repo",
-        batchTimeoutMs: 25,
+        // fixture 的真实 mkdir 与 cleanup 共享预算；不能依赖 5ms 内完成 I/O。
+        batchTimeoutMs: 500,
       }),
-      /shared 25ms deadline/i,
+      /shared 500ms deadline/i,
     );
     assert.ok(Date.now() - startedAt < SIMULATION_ORDINARY_TEST_MAX_MS);
   });
@@ -649,7 +667,9 @@ describe("Task 38 simulation acceptance capture contracts", () => {
     const target = path.join(outputDir, "publication-deadline");
     const atomicWrite = async (filePath, content, { finalPath = filePath, signal } = {}) => {
       if (finalPath === path.join(target, "manifest.json")) {
-        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        if (!signal.aborted) {
+          await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        }
         assert.equal(signal.aborted, true);
         await writeFile(filePath, content);
         return;
@@ -663,10 +683,11 @@ describe("Task 38 simulation acceptance capture contracts", () => {
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
-        batchTimeoutMs: 250,
+        // deadline 后故意执行真实 write/rm，给这些 cleanup I/O 留出代表性预算。
+        batchTimeoutMs: 1000,
         atomicWrite,
       }),
-      /shared 250ms deadline/i,
+      /shared 1000ms deadline/i,
     );
     await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
     assert.equal((await readdir(target)).some((name) => name.includes("deadline-stage")), false);
