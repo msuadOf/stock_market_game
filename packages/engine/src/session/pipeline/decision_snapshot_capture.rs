@@ -273,7 +273,7 @@ fn validate_market_view_inputs(
 enum CapturedExperienceObservation {
     NoExperience,
     Captured {
-        experience: RetailExperienceState,
+        experience: Arc<RetailExperienceState>,
         risk_positions: Option<BTreeMap<StockCode, RiskPositionInput>>,
         self_positions: BTreeMap<StockCode, PositionView>,
     },
@@ -364,7 +364,7 @@ impl CapturedExperienceObservation {
         experience.prune_watchlist(&held);
         let risk_positions = (entry.kind() == AccountKind::Retail).then_some(risk_positions);
         Ok(Self::Captured {
-            experience,
+            experience: Arc::new(experience),
             risk_positions,
             self_positions,
         })
@@ -418,7 +418,7 @@ impl CapturedExperienceObservation {
                 Ok(CapturedAccountObservation {
                     self_view,
                     account_risk,
-                    experience: Some(Arc::new(experience)),
+                    experience: Some(experience),
                 })
             }
         }

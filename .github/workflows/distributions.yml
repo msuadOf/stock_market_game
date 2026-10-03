@@ -73,8 +73,6 @@ jobs:
           version: v0.13.1
       - name: Verify wasm-pack version
         run: test "$(wasm-pack --version)" = 'wasm-pack 0.13.1'
-      - name: Check distribution build contracts
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/build-targets.test.mjs scripts/frontend-build.test.mjs scripts/distribution-workflow.test.mjs scripts/distribution-macos-cache.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs scripts/pages-isolation.test.mjs scripts/release-policy.test.mjs scripts/publish-release.test.mjs scripts/package-static-web.test.mjs
       - name: Build shared production UI
         run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
       - name: Upload current-run frontend
@@ -93,11 +91,6 @@ jobs:
         if: inputs.product == 'all' || inputs.product == 'web'
         working-directory: apps/web
         run: node ../../scripts/run-long-validation.mjs 300000 -- node node_modules/vite/bin/vite.js build --mode pages --base "${{ env.PAGES_BASE }}" --outDir dist-pages
-      - name: Smoke Pages without origin isolation headers
-        if: inputs.product == 'all' || inputs.product == 'web'
-        run: |
-          pnpm --filter web exec playwright install chromium
-          node scripts/run-with-deadline.mjs 10000 -- node scripts/smoke-pages.mjs --input apps/web/dist-pages --base "${{ env.PAGES_BASE }}"
       - name: Package static Web
         if: inputs.product == 'all' || inputs.product == 'web'
         env:
@@ -139,8 +132,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
-      - name: Test cache retention and workflow contracts
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/prune-actions-cache.test.mjs scripts/cache-workflow.test.mjs
       - name: Remove superseded cache snapshots
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,9 +248,6 @@ jobs:
             ~/.cargo/git
             target/build-cache/${{ matrix.product }}
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
-      - name: Smoke native deployment (no game regression)
-        if: matrix.product != 'desktop'
-        run: node scripts/run-with-deadline.mjs 10000 -- node scripts/smoke-deployment.mjs ${{ matrix.product }} --input target/build-artifacts/${{ matrix.product }}
       - name: Package unsigned distributions
         run: node scripts/run-long-validation.mjs 300000 -- node scripts/package-distributions.mjs ${{ matrix.product }} --input target/build-artifacts/${{ matrix.product }} --output target/distributions/${{ matrix.product }} --target ${{ env.NATIVE_TARGET }}
       - name: Upload unsigned native distributions

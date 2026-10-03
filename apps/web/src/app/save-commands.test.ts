@@ -93,3 +93,55 @@ test("新局日期错误不进入替换；合法新局只请求重建并保留�
   assert.equal(f.setup()?.start_date, "2031-02-03"); assert.equal(f.setup()?.config.price_cage_enabled, false);
   let reads = 0; assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { reads++; return f.archive; }), null); assert.equal(reads, 0);
 });
+
+test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同一入口可以重新读档", async () => {
+  for (const kind of ["load", "loadFile"] as const) {
+    const f = fixture();
+    const previousMetrics = f.ports.speedMetricsRequestGateRef.current.capture();
+    f.host.load = async () => { f.calls.push("load-failed"); throw new Error("日终存档恢复失败"); };
+
+    await f.commands[kind]();
+
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load-failed", "poll:2", "baseline"]);
+    assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
+    assert.equal(f.ports.speedMetricsRequestGateRef.current.isCurrent(previousMetrics), false);
+    assert.match(f.notices.at(-1)!, /读档失败.*日终存档恢复失败/);
+    assert.equal(f.setup(), null);
+
+    f.calls.length = 0;
+    f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
+    await f.commands[kind]();
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "orders-refresh"]);
+    assert.match(f.notices.at(-1)!, /第 4 个交易日/);
+  }
+});
+
+test("读档失败后的 baseline 同步期间更换宿主，晚到的同步错误不影响新会话", async () => {
+  for (const kind of ["load", "loadFile"] as const) {
+    const f = fixture();
+    const entered = deferred<void>(), baseline = deferred<void>();
+    f.host.load = async () => { throw new Error("旧会话恢复失败"); };
+    f.host.refreshBaseline = async () => {
+      f.calls.push("baseline-pending");
+      entered.resolve();
+      await baseline.promise;
+      throw new Error("旧会话同步失败");
+    };
+
+    const loading = f.commands[kind]();
+    await entered.promise;
+    const replacementHost = commandHostFixture();
+    f.ports.hostRef.current = replacementHost;
+    f.ports.sessionReplacementGateRef.current.invalidate();
+    const replacementGeneration = f.ports.sessionReplacementGateRef.current.begin();
+    assert.notEqual(replacementGeneration, null);
+    baseline.resolve();
+    await loading;
+
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "poll:2", "baseline-pending"]);
+    assert.deepEqual(f.notices, []);
+    assert.equal(f.ports.hostRef.current, replacementHost);
+    assert.equal(f.ports.sessionReplacementGateRef.current.isCurrent(replacementGeneration!), true);
+    assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
+  }
+});

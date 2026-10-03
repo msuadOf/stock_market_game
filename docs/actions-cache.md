@@ -2,7 +2,7 @@
 
 目标是不超过 10 GB（10,000,000,000 bytes），不额外购买容量。只清理可重建的
 重复旧编译快照，不删除 Actions artifacts、发行包、源码或游戏存档，不改 A 股
-交易语义、构建参数或回归门禁。
+交易语义或构建参数。CI 保留为独立手动开发诊断，标签发布仅构建。
 
 `scripts/prune-actions-cache.mjs` 识别现有 `distribution-native-v1` 和
 `sealed-cargo-v2-no-debug` 滚动 key，按分支 ref、平台、架构、产品各保留最新
@@ -23,15 +23,19 @@ node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.
 
 ## 自动清理
 
-`ci.yml` 和 `distributions.yml` 已接入独立的 `prune-caches` 收尾 job，分别等待
+手动 `ci.yml` 和 `distributions.yml` 接入独立的 `prune-caches` 收尾 job，分别等待
 `build` 和 `frontend/native/server` 的全部任务结束（包含 cache action 的 post
 步骤），构建失败也可清理；workflow 被取消或由 PR 触发时不执行清理。
-两个 job 共用仓库级 `actions-cache-prune` concurrency group，不互相取消。
+标签发布由 `release.yml` 收尾统一清理，等待分发、Release 发布和 Pages 部署结束；
+成功公开 Release 后退休本标签缓存，失败保留最新编译进度。分发 workflow 的清理
+job 在标签 run 中跳过，避免提前退休缓存。三个清理 job 共用仓库级
+`actions-cache-prune` concurrency group，不互相取消。
 只有清理 job 获得 `actions: write`，构建步骤没有新增删除权限，PR 不获得删除权限。
 
-每次清理先在 10000ms 进程树 deadline 内执行缓存策略和 workflow 契约短测，
-保留默认文件进程隔离，并发上限 4（目前两个测试文件可并行）；再在 300000ms
-进程树 deadline 内调用上述 `--apply` 命令。
+产品构建和标签发布的清理直接在 300000ms 进程树 deadline 内调用 `--apply`，
+保留活动 run 检查、删除前重读计划和清理后容量核验，不运行缓存契约测试。
+手动 CI 的清理仍先在 10000ms 进程树 deadline 内执行缓存策略和 workflow 契约
+短测，保留默认文件进程隔离，并发上限 4；再调用受限清理命令。
 有其他活动 workflow 时明确延期，由之后的收尾任务再次尝试；若最后结束的是 PR
 或取消的 workflow，可能需要等待下一次非 PR 构建或手动执行清理命令。
 不安装 Rust/pnpm，不重新编译或额外执行完整回归。

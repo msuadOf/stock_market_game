@@ -14,7 +14,9 @@ test("ordinary commits and pull requests trigger no workflow; release alone subs
       assert.doesNotMatch(text, /branches:/);
     } else assert.doesNotMatch(text, /^  push:/m, filename);
   }
-  for (const filename of ["ci.yml", "distributions.yml"]) assert.match(workflow(filename), /workflow_call:/);
+  assert.match(workflow("distributions.yml"), /workflow_call:/);
+  assert.match(workflow("ci.yml"), /workflow_dispatch:/);
+  assert.doesNotMatch(workflow("ci.yml"), /workflow_call:/);
 });
 
 test("seven independent manual entries cover individual products and all products with Pages", () => {
@@ -47,18 +49,31 @@ test("seven independent manual entries cover individual products and all product
   assert.doesNotMatch(all, /if: always\(\)|continue-on-error/);
 });
 
-test("release gates all distributions and Pages on validation and CI, publishes only current-run verified assets", () => {
+test("发布从标签校验直接构建十组制品，只公开本轮核验的资产并部署 Pages", () => {
   const text = workflow("release.yml");
-  assert.match(text, /uses: \.\/\.github\/workflows\/ci.yml/);
+  const jobs = [...text.split("jobs:\n")[1].matchAll(/^  ([a-z][a-z-]*):$/gm)].map((match) => match[1]);
+  assert.deepEqual(jobs, ["validate", "distributions", "publish", "pages", "prune-caches"]);
+  assert.doesNotMatch(text, /workflows\/ci\.yml|\bci\b/);
   assert.match(text, /uses: \.\/\.github\/workflows\/distributions.yml/);
-  assert.match(text, /needs: \[validate, ci\]/);
+  assert.match(text, /distributions:\s+needs: validate/);
+  assert.match(text, /product: all/);
   assert.match(text, /needs: \[validate, distributions\]/);
   assert.match(text, /scripts\/publish-release.mjs/);
   assert.match(text, /contents: write/);
   assert.match(text, /actions\/download-artifact@v4/);
   assert.doesNotMatch(text, /merge-multiple: true|continue-on-error|release create.*\$\{\{/);
   assert.match(text, /uses: \.\/\.github\/workflows\/build-web.yml/);
+  assert.match(text, /pages:\s+needs: publish/);
+  assert.match(text, /reuse-site: true/);
+  assert.match(text, /needs: \[distributions, publish, pages\]/);
+  assert.match(text, /RELEASE_SHA: \$\{\{ needs\.validate\.outputs\.sha \}\}/);
   assert.match(text, /cancel-in-progress: false\s+queue: max/);
+});
+
+test("所有构建与发布入口均不执行 CI、测试、lint、Clippy 或浏览器及部署 smoke", () => {
+  for (const filename of readdirSync(workflows).filter((name) => name.endsWith(".yml") && name !== "ci.yml")) {
+    assert.doesNotMatch(workflow(filename), /workflows\/ci\.yml|--test(?:\b|-)|\.test\.[cm]?[jt]s|run-full-regression|smoke-(?:pages|deployment)|playwright|cargo (?:test|clippy)|pnpm[^\n]*(?: test(?::|\b)| lint\b)/, filename);
+  }
 });
 
 test("release accepts only numeric versions or nonempty safe test suffixes", async () => {

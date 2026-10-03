@@ -54,7 +54,7 @@ test("frontend is built once with pinned tools and native targets reuse only the
   assert.doesNotMatch(text, /continue-on-error: true|run-full-regression/);
 });
 
-test("pure Server job does not set up Node, pnpm, WASM or UI and packaging smoke is short", () => {
+test("纯 Server 无前端工具依赖，构建直接进入受限打包且不执行 deployment smoke", () => {
   const text = workflow();
   const steps = text.split(/^  native:/m)[1].split(/^      - name: /m).slice(1);
   for (const step of steps.filter((entry) => /actions\/setup-node|pnpm\/action-setup|Install pinned Tauri|actions\/download-artifact/.test(entry))) {
@@ -62,9 +62,19 @@ test("pure Server job does not set up Node, pnpm, WASM or UI and packaging smoke
   }
   assert.match(text, /scripts[\\/]build\.bat server/);
   assert.match(text, /scripts\/build\.sh server/);
-  assert.match(text, /run-with-deadline\.mjs 10000 -- node scripts\/smoke-deployment\.mjs/);
+  assert.doesNotMatch(text, /smoke-deployment\.mjs/);
   assert.match(text, /availableParallelism|NUMBER_OF_PROCESSORS/);
   assert.match(text, /run-long-validation\.mjs 300000 -- node scripts\/package-distributions\.mjs/);
+});
+
+test("分发保留生产前端、静态 Web 和版本校验，移除测试与 Playwright smoke", () => {
+  const text = workflow();
+  assert.match(text, /run: node scripts\/frontend-build\.mjs --jobs/);
+  assert.match(text, /wasm-pack --version/);
+  assert.match(text, /vite\.js build --mode pages --base/);
+  assert.match(text, /package-static-web\.mjs/);
+  assert.match(text, /actions\/upload-pages-artifact@v3/);
+  assert.doesNotMatch(text, /--test|\.test\.mjs|playwright|smoke-pages\.mjs|smoke-deployment\.mjs/);
 });
 
 test("Windows MSI uses a Chinese-compatible code page for the existing Chinese product name", () => {

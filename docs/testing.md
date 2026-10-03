@@ -121,6 +121,10 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 
 ### GitHub CI 构建与类型门禁
 
+`ci.yml` 仅通过 `workflow_dispatch` 手动运行开发诊断，产品构建和标签发布不调用
+该工作流，也不运行测试、lint、Clippy 或 smoke。以下测试和类型门禁仍由独立 CI
+执行；生产构建继续进行 TypeScript 编译与制品完整性校验。
+
 2026-10-02 标签冷启动实测中，Windows 四核原生依赖和测试二进制的合并冷编译
 触及原 300000ms 上限，编译持续推进且未报告 compiler error。Windows CI 因此在
 恢复密封 Cargo 缓存后增加独立的原生 workspace 库预编译阶段：默认生产 features、

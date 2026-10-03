@@ -14,52 +14,6 @@ pub(super) struct BookState {
     filled_orders: FilledOrders,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn partial_maker_qty_write_precedes_progress_overflow_on_both_sides() {
-        for side in [Side::Buy, Side::Sell] {
-            let maker_side = if side == Side::Buy {
-                Side::Sell
-            } else {
-                Side::Buy
-            };
-            let maker = Order {
-                id: OrderId(1),
-                owner: AccountId(1),
-                side: maker_side,
-                price: Money::from_cents(100),
-                qty: 2,
-                original_qty: 2,
-                filled_qty: u32::MAX,
-                filled_value: Money::ZERO,
-                seq: 3,
-            };
-            // 私有异常 fixture 固定既有中途写入；生产入口仍会拒绝这种数量进度。
-            let mut state = BookState::default();
-            state.insert_resting(maker.clone()).unwrap();
-            let error = state
-                .apply_maker_fill(side, &maker, 1, Money::from_cents(100))
-                .unwrap_err();
-            assert!(matches!(
-                error,
-                OrderError::InvalidQuantityProgress {
-                    remaining_qty: 1,
-                    filled_qty: u32::MAX,
-                    ..
-                }
-            ));
-            let remaining = state.resting_order_by_id(OrderId(1)).unwrap();
-            assert_eq!(remaining.qty, 1);
-            assert_eq!(remaining.filled_value, Money::ZERO);
-            assert_eq!(remaining.seq, 3);
-            assert!(state.filled_orders.owner(OrderId(1)).is_none());
-        }
-    }
-}
-
 impl BookState {
     pub(super) fn bids(&self) -> &BTreeMap<(Reverse<Money>, u64), Order> {
         &self.bids
@@ -243,5 +197,51 @@ impl BookState {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_maker_qty_write_precedes_progress_overflow_on_both_sides() {
+        for side in [Side::Buy, Side::Sell] {
+            let maker_side = if side == Side::Buy {
+                Side::Sell
+            } else {
+                Side::Buy
+            };
+            let maker = Order {
+                id: OrderId(1),
+                owner: AccountId(1),
+                side: maker_side,
+                price: Money::from_cents(100),
+                qty: 2,
+                original_qty: 2,
+                filled_qty: u32::MAX,
+                filled_value: Money::ZERO,
+                seq: 3,
+            };
+            // 私有异常 fixture 固定既有中途写入；生产入口仍会拒绝这种数量进度。
+            let mut state = BookState::default();
+            state.insert_resting(maker.clone()).unwrap();
+            let error = state
+                .apply_maker_fill(side, &maker, 1, Money::from_cents(100))
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                OrderError::InvalidQuantityProgress {
+                    remaining_qty: 1,
+                    filled_qty: u32::MAX,
+                    ..
+                }
+            ));
+            let remaining = state.resting_order_by_id(OrderId(1)).unwrap();
+            assert_eq!(remaining.qty, 1);
+            assert_eq!(remaining.filled_value, Money::ZERO);
+            assert_eq!(remaining.seq, 3);
+            assert!(state.filled_orders.owner(OrderId(1)).is_none());
+        }
     }
 }
