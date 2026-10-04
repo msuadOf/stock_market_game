@@ -60,6 +60,8 @@ fn stock(
 
 pub(crate) fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),

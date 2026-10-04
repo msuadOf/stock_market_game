@@ -12,6 +12,7 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_groups;
 mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
@@ -68,6 +69,7 @@ pub use civil_clock::{
     CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
     DueBusinessId, DueKind,
 };
+pub use company_groups::{GroupHolding, GroupStructure};
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
@@ -414,6 +416,8 @@ pub struct SaveSlot {
     #[ts(type = "import(\"../../save/schema/runtime-v2\").SaveRuntimeV2")]
     pub runtime_v2: SaveRuntimeV2,
     pub setup: SessionSetup,
+    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
+    pub groups: Vec<GroupStructure>,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub seed: u64,
@@ -461,7 +465,7 @@ pub struct SaveSlot {
     ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
     /// 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
     /// 余额在反序列化重放边界校验）。
-    #[ts(skip)]
+    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperations")]
     pub company_operations: crate::company::operations::CompanyOperations,
     /// 结账版本登记簿（不可变期间版本 + 重述底稿）。
     #[ts(skip)]
@@ -915,6 +919,14 @@ pub struct NpcSetup {
 #[ts(export)]
 pub struct SessionSetup {
     pub stocks: Vec<StockSpec>,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperationsConfig | null")]
+    pub company_operations: Option<crate::company::operations::CompanyOperationsConfig>,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
+    pub groups: Vec<GroupStructure>,
     pub npcs: NpcSetup,
     pub config: GameConfig,
     pub strategy_params: StrategyParams,
@@ -1096,7 +1108,9 @@ impl SessionSetup {
                 }
             }
             if self.stocks.iter().any(|stock| stock.float_shares > 0)
-                && (self.npcs.retail_count > 0 || self.npcs.inst_count > 0 || self.npcs.hot_count > 0)
+                && (self.npcs.retail_count > 0
+                    || self.npcs.inst_count > 0
+                    || self.npcs.hot_count > 0)
             {
                 let effective_weight = [
                     (self.npcs.retail_count, *retail),
@@ -1167,10 +1181,11 @@ struct CommittableSessionState {
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
     /// 自然日经营编排（任务 14；前史已推进到开局日）。
     operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+    groups: Vec<GroupStructure>,
     /// 结账版本登记簿（任务 13）。
-    closing: crate::accounting::closing::ClosingEngine,
+    closing: std::sync::Arc<crate::accounting::closing::ClosingEngine>,
     /// 公开信息库（任务 15；前史已播种）。
-    library: crate::information::PublicLibrary,
+    library: std::sync::Arc<crate::information::PublicLibrary>,
     /// 经营 ↔ 时钟到期镜像。
     ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标。
@@ -1402,6 +1417,9 @@ impl GameSession {
             library,
             ..
         } = prehistory;
+        company_groups::validate_groups(&setup.groups, &ops).map_err(|error| {
+            SessionError::InvalidSetup(format!("company groups invalid: {error}"))
+        })?;
         let mut civil_clock = civil_clock;
         let mut ops_wiring = CompanyOperationsClockWiring::new();
         ops_wiring
@@ -1418,6 +1436,7 @@ impl GameSession {
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
+                groups: setup.groups.clone(),
                 setup,
                 rng,
                 seed,
@@ -1442,8 +1461,8 @@ impl GameSession {
                 attention_scheduler: NpcAttentionScheduler::default(),
                 company_registry: std::sync::Arc::new(registry),
                 operations: std::sync::Arc::new(ops),
-                closing,
-                library,
+                closing: std::sync::Arc::new(closing),
+                library: std::sync::Arc::new(library),
                 ops_wiring,
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
@@ -1513,6 +1532,11 @@ impl GameSession {
 
     fn initialize_retail_experience(&mut self) -> Result<(), SessionError> {
         let market_minute = self.current_market_minute();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: self.state.civil_clock.current_date(),
+            market_minute,
+            trading_day: u64::from(self.state.day),
+        };
         let retail_ids: Vec<_> = self
             .state
             .accounts
@@ -1539,7 +1563,7 @@ impl GameSession {
                 })
                 .collect();
             for (code, reference, current) in holdings {
-                experience.initialize_holding(&code, reference, current, market_minute)?;
+                experience.initialize_holding_dated(&code, reference, current, moment)?;
             }
             self.state.retail_experience.insert(id, experience);
         }
@@ -1547,7 +1571,18 @@ impl GameSession {
     }
 
     fn reconcile_institutional_holdings(&mut self) -> Result<(), SessionError> {
-        let account_ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
+        let account_ids: Vec<_> = self
+            .state
+            .belief_participants
+            .iter()
+            .filter_map(|(id, participant)| {
+                matches!(
+                    participant.belief().profile(),
+                    StrategyProfile::Institution(_)
+                )
+                .then_some(*id)
+            })
+            .collect();
         let moment = crate::experience::ExperienceMoment {
             civil_date: self.state.civil_clock.current_date(),
             market_minute: self.current_market_minute(),
@@ -1874,17 +1909,18 @@ impl GameSession {
                 // 个人信息集 + 关注列表。RNG 纪律（extraction_replay 教训）：
                 // 全部使用 seed ^ FNV1a(账户派生标签) 的独立流，绝不用 self.state.rng。
                 let profile = acc.strategy().expect("just set").profile();
-                if kind == AccountKind::Inst
-                    && matches!(
-                        profile,
-                        StrategyProfile::Institution(
-                            crate::strategy::InstitutionStyle::DeepValue
-                                | crate::strategy::InstitutionStyle::Growth
-                                | crate::strategy::InstitutionStyle::Balanced
-                                | crate::strategy::InstitutionStyle::Defensive
-                                | crate::strategy::InstitutionStyle::ActiveTrader
-                        )
-                    )
+                if kind == AccountKind::Retail
+                    || (kind == AccountKind::Inst
+                        && matches!(
+                            profile,
+                            StrategyProfile::Institution(
+                                crate::strategy::InstitutionStyle::DeepValue
+                                    | crate::strategy::InstitutionStyle::Growth
+                                    | crate::strategy::InstitutionStyle::Balanced
+                                    | crate::strategy::InstitutionStyle::Defensive
+                                    | crate::strategy::InstitutionStyle::ActiveTrader
+                            )
+                        ))
                 {
                     let mut analysis_rng = SplitMix64::new(decision_chain::derived_stream(
                         self.state.seed,
@@ -1901,23 +1937,25 @@ impl GameSession {
                     ));
                     let mut belief =
                         crate::strategy::BeliefBook::new(id, profile, analysis, &mut belief_rng);
-                    let style = acc
-                        .strategy()
-                        .expect("institution strategy exists")
-                        .institution_style()
-                        .expect("institution belief strategy has a style");
-                    // 个体执行参数使用独立随机流，不改变已有估值假设的六次采样纪律。
-                    let mut policy_rng = SplitMix64::new(decision_chain::derived_stream(
-                        self.state.seed,
-                        "institution-experience-policy",
-                        id,
-                    ));
-                    belief.set_institution_policy(
-                        crate::strategy::InstitutionExperiencePolicy::sample(
-                            style,
-                            &mut policy_rng,
-                        ),
-                    );
+                    if kind == AccountKind::Inst {
+                        let style = acc
+                            .strategy()
+                            .expect("institution strategy exists")
+                            .institution_style()
+                            .expect("institution belief strategy has a style");
+                        // 个体执行参数使用独立随机流，不改变已有估值假设的六次采样纪律。
+                        let mut policy_rng = SplitMix64::new(decision_chain::derived_stream(
+                            self.state.seed,
+                            "institution-experience-policy",
+                            id,
+                        ));
+                        belief.set_institution_policy(
+                            crate::strategy::InstitutionExperiencePolicy::sample(
+                                style,
+                                &mut policy_rng,
+                            ),
+                        );
+                    }
                     self.state.belief_participants.insert(
                         id,
                         BeliefParticipantState::new(
@@ -2116,14 +2154,16 @@ impl GameSession {
             .run_day_end(DayEndDisclosureCtx {
                 report: &report,
                 ops: &self.state.operations,
-                closing: &mut self.state.closing,
-                library: &mut self.state.library,
+                groups: &self.state.groups,
+                closing: std::sync::Arc::make_mut(&mut self.state.closing),
+                library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;
         self.state
             .ops_wiring
             .prune_dispatched(&self.state.operations);
         self.record_civil_day_events(&mut report, disclosures)?;
+        self.prune_all_personal_memories();
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(report.disclosure_instant);
         }
@@ -2224,18 +2264,23 @@ impl GameSession {
             };
             let books = company.books_mut();
             let result = if year_end {
-                self.state
-                    .closing
+                std::sync::Arc::make_mut(&mut self.state.closing)
                     .close_year(books, &member, industry, settled.year())
                     .map(|_| ())
             } else {
-                self.state
-                    .closing
+                std::sync::Arc::make_mut(&mut self.state.closing)
                     .close_month(books, &member, industry, period)
                     .map(|_| ())
             };
             result.map_err(SessionError::Closing)?;
         }
+        company_groups::record_group_periods(
+            &self.state.groups,
+            &self.state.operations,
+            std::sync::Arc::make_mut(&mut self.state.closing),
+            period,
+        )
+        .map_err(|error| SessionError::InvalidSetup(format!("group closing failed: {error}")))?;
         Ok(())
     }
 
@@ -2659,8 +2704,9 @@ impl GameSession {
             civil_clock: self.state.civil_clock.save(),
             // K7（任务 27）：公司域与个体决策链权威状态全量入档。
             company_operations: self.state.operations.as_ref().clone(),
-            closing_registry: self.state.closing.clone(),
-            public_library: self.state.library.clone(),
+            groups: self.state.groups.clone(),
+            closing_registry: self.state.closing.as_ref().clone(),
+            public_library: self.state.library.as_ref().clone(),
             ops_wiring: self.state.ops_wiring.clone(),
             disclosures: self.state.disclosures.clone(),
             plans: self.state.plans.clone(),
@@ -2928,12 +2974,8 @@ impl GameSession {
         // K7（任务 27）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
         // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
-        let expected_issuers: BTreeSet<&crate::company::CompanyId> = save
-            .setup
-            .stocks
-            .iter()
-            .filter_map(|stock| sess.state.company_registry.issuer_of(&stock.code))
-            .collect();
+        let expected_issuers: BTreeSet<&crate::company::CompanyId> =
+            sess.state.operations.companies.keys().collect();
         let saved_issuers: BTreeSet<&crate::company::CompanyId> =
             save.company_operations.companies.keys().collect();
         if expected_issuers != saved_issuers {
@@ -2941,6 +2983,13 @@ impl GameSession {
                 "saved company set does not exactly match the issuers rebuilt from setup"
                     .to_string(),
             ));
+        }
+        for (id, company) in &save.company_operations.companies {
+            if company.spec() != sess.state.operations.companies[id].spec() {
+                return Err(SessionError::InvalidSave(format!(
+                    "saved company {id:?} spec differs from setup"
+                )));
+            }
         }
         // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
         // 重建信念机构集合）：缺失任一账户的个人状态 = 不完整存档。
@@ -2955,8 +3004,9 @@ impl GameSession {
             )));
         }
         sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
-        sess.state.closing = save.closing_registry.clone();
-        sess.state.library = save.public_library.clone();
+        sess.state.groups = save.groups.clone();
+        sess.state.closing = std::sync::Arc::new(save.closing_registry.clone());
+        sess.state.library = std::sync::Arc::new(save.public_library.clone());
         sess.state.ops_wiring = save.ops_wiring.clone();
         sess.state.disclosures = save.disclosures.clone();
         sess.state.plans = save.plans.clone();
@@ -3036,6 +3086,8 @@ mod candle_open_tests {
 
     fn gap_stock_setup() -> SessionSetup {
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600999".to_string()),
                 exchange: StockExchange::Shanghai,
@@ -3342,6 +3394,8 @@ mod npc_working_quote_tests {
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
         let code = StockCode("600888".to_string());
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: code.clone(),
                 exchange: StockExchange::Shanghai,
@@ -4101,6 +4155,7 @@ impl CommittableSessionState {
             attention_scheduler,
             company_registry,
             operations,
+            groups,
             closing,
             library,
             ops_wiring,
@@ -4149,6 +4204,7 @@ impl CommittableSessionState {
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
             company_registry: company_registry.clone(),
+            groups: groups.clone(),
             operations: operations.clone(),
             closing: closing.clone(),
             library: library.clone(),
@@ -4195,6 +4251,7 @@ impl CommittableSessionState {
             attention_scheduler,
             company_registry,
             operations,
+            groups,
             closing,
             library,
             ops_wiring,
@@ -4239,6 +4296,7 @@ impl CommittableSessionState {
         self.attention_scheduler = attention_scheduler;
         self.company_registry = company_registry;
         self.operations = operations;
+        self.groups = groups;
         self.closing = closing;
         self.library = library;
         self.ops_wiring = ops_wiring;

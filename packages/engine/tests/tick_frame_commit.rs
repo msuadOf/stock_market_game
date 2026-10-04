@@ -12,6 +12,8 @@ fn session() -> ProtocolSession {
 fn session_on(date: &str) -> ProtocolSession {
     ProtocolSession::new(
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600001".into()),
                 exchange: StockExchange::Shanghai,

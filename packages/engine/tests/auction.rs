@@ -13,6 +13,8 @@ struct AuctionFixture {
 impl AuctionFixture {
     fn quiet(auction_ticks: u64, seed: u64) -> Self {
         let setup = SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600000".to_string()),
                 exchange: StockExchange::Shanghai,
@@ -73,6 +75,8 @@ impl AuctionFixture {
             float_shares: 1_000_000,
         };
         let setup = SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![
                 stock("600101", 1_120, SecurityCategory::MainBoard),
                 stock("002156", 2_735, SecurityCategory::MainBoard),

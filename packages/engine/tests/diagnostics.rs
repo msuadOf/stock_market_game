@@ -7,6 +7,8 @@ use engine::{
 fn diagnostic_setup() -> SessionSetup {
     let code = StockCode("600101".to_string());
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: code.clone(),
             exchange: StockExchange::Shanghai,

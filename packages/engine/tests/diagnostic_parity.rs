@@ -9,6 +9,8 @@ use engine::{
 
 pub fn setup() -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_owned()),
             exchange: StockExchange::Shanghai,

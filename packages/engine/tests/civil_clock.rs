@@ -37,6 +37,8 @@ fn date(iso: &str) -> CivilDate {
 
 fn civil_setup(start: &str) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,

@@ -91,6 +91,7 @@ impl WeekendScenario {
         let out = self
             .dispatch
             .run_day_end(DayEndDisclosureCtx {
+                groups: &[],
                 report: &report,
                 ops: &self.seeded.ops,
                 closing: &mut self.seeded.closing,
@@ -273,6 +274,7 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
     let again = scenario
         .dispatch
         .run_day_end(DayEndDisclosureCtx {
+            groups: &[],
             report: &saturday_report,
             ops: &scenario.seeded.ops,
             closing: &mut scenario.seeded.closing,

@@ -8,6 +8,40 @@ mod v2_tests;
 
 #[cfg(test)]
 #[test]
+fn direct_save_slot_rejects_missing_consolidated_parent_income() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut save = session.save().unwrap();
+    assert!(GameSession::restore(&save).is_ok());
+    save.closing_registry =
+        crate::accounting::closing::ClosingEngine::missing_parent_income_test_fixture();
+    assert!(
+        matches!(GameSession::restore(&save), Err(SessionError::InvalidSave(message))
+        if message.contains("closing registry") && message.contains("income.net_income_to_parent"))
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn retail_restore_rejects_institution_account_risk_pause() {
+    let session =
+        GameSession::new(super::npc_working_quote_tests::retail_quote_setup(), 41).unwrap();
+    let save = session.save().unwrap();
+    let account = save.belief_books.keys().next().unwrap().0.to_string();
+    let mut encoded = serde_json::to_value(save).unwrap();
+    assert_eq!(
+        encoded["belief_books"][&account]["institution_account_risk_paused"],
+        false
+    );
+    encoded["belief_books"][&account]["institution_account_risk_paused"] = serde_json::json!(true);
+    let edited: SaveSlot = serde_json::from_value(encoded).unwrap();
+    assert!(
+        matches!(GameSession::restore(&edited), Err(SessionError::InvalidSave(message))
+        if message.contains("institution account risk pause"))
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn institution_account_latch_save_is_required_strict_and_preserved_on_restore() {
     let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let save = session.save().unwrap();
@@ -975,10 +1009,81 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
 
 /// 公司域权威状态校验：经营编排集合/推进时点、镜像与时钟到期一致性。
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
+    save.closing_registry
+        .validate_consolidated_parent_income()
+        .map_err(|error| {
+            SessionError::InvalidSave(format!(
+                "saved closing registry is missing consolidated parent income: {error}"
+            ))
+        })?;
+    for date in save.company_operations.payment_failures.keys() {
+        if *date < save.civil_clock.policy.init_only_min_start
+            || *date > save.civil_clock.policy.runtime_max_end
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "payment failure date {date} is outside the calendar policy"
+            )));
+        }
+    }
+    save.company_operations
+        .validate_payment_history()
+        .map_err(|error| {
+            SessionError::InvalidSave(format!("saved payment history is inconsistent: {error}"))
+        })?;
+    if save.groups != save.setup.groups {
+        return Err(SessionError::InvalidSave(
+            "saved groups differ from setup".to_string(),
+        ));
+    }
+    super::company_groups::validate_groups(&save.groups, &save.company_operations).map_err(
+        |error| SessionError::InvalidSave(format!("saved company groups invalid: {error}")),
+    )?;
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
     for (id, company) in &save.company_operations.companies {
+        if company
+            .economy()
+            .active()
+            .iter()
+            .any(|shock| !shock.kind.applies_to(company.spec().kind))
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "saved company {id:?} has an industry-inapplicable active shock"
+            )));
+        }
+        if let Some(real_estate) = company.books().as_real_estate() {
+            for (contract, loan) in real_estate.loans() {
+                if loan.maturity_date() < save.civil_clock.policy.init_only_min_start
+                    || loan.maturity_date() > save.civil_clock.policy.runtime_max_end
+                {
+                    return Err(SessionError::InvalidSave(format!(
+                        "saved company {id:?} project loan {contract:?} maturity is outside the calendar policy"
+                    )));
+                }
+            }
+        }
+        if let Some(insurance) = company.books().as_insurance() {
+            insurance.validate_restore().map_err(|error| {
+                SessionError::InvalidSave(format!(
+                    "saved company {id:?} has an invalid Insurance state: {error}"
+                ))
+            })?;
+        }
         if let Some(industrial) = company.books().as_industrial() {
+            industrial
+                .validate_trade_counterparty_events()
+                .map_err(|error| {
+                    SessionError::InvalidSave(format!(
+                        "saved company {id:?} has invalid Industrial trade counterparties: {error}"
+                    ))
+                })?;
+            industrial
+                .validate_inventory_source_events()
+                .map_err(|error| {
+                    SessionError::InvalidSave(format!(
+                        "saved company {id:?} has invalid Industrial inventory sources: {error}"
+                    ))
+                })?;
             industrial.validate_credit_state().map_err(|error| {
                 SessionError::InvalidSave(format!(
                     "saved company {id:?} has an invalid Industrial credit state: {error}"
@@ -993,9 +1098,7 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             })?;
         }
         let Some(listed) = company.spec().listed_stock.as_ref() else {
-            return Err(SessionError::InvalidSave(format!(
-                "saved company {id:?} has no listed stock mapping"
-            )));
+            continue;
         };
         let Some(stock) = save.setup.stocks.iter().find(|s| &s.code == listed) else {
             return Err(SessionError::InvalidSave(format!(
@@ -1177,12 +1280,18 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
         }
     }
     for (id, watchlist) in &save.watchlists {
-        let cap = save
-            .setup
+        let protected: BTreeSet<_> = save.snapshot.accounts[id]
+            .positions
+            .keys()
+            .chain(save.plans.active_codes(*id))
+            .collect();
+        if watchlist
             .stocks
-            .len()
-            .saturating_add(crate::MAX_UNHELD_WATCHLIST_STOCKS);
-        if watchlist.stock_count() > cap {
+            .keys()
+            .filter(|code| !protected.contains(*code))
+            .count()
+            > crate::MAX_UNHELD_WATCHLIST_STOCKS
+        {
             return Err(SessionError::InvalidSave(format!(
                 "account {id:?} watchlist exceeds the held+8 eviction bound"
             )));
@@ -1196,12 +1305,18 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
         }
     }
     for (id, memory) in &save.price_memories {
-        let cap = save
-            .setup
+        let protected: BTreeSet<_> = save.snapshot.accounts[id]
+            .positions
+            .keys()
+            .chain(save.plans.active_codes(*id))
+            .collect();
+        if memory
             .stocks
-            .len()
-            .saturating_add(crate::MAX_UNHELD_WATCHLIST_STOCKS);
-        if memory.stock_count() > cap {
+            .keys()
+            .filter(|code| !protected.contains(*code))
+            .count()
+            > crate::MAX_UNHELD_WATCHLIST_STOCKS
+        {
             return Err(SessionError::InvalidSave(format!(
                 "account {id:?} price memory exceeds the held+8 eviction bound"
             )));
@@ -1240,10 +1355,40 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
                 book.npc()
             )));
         }
-        if book.institution_policy().is_none() {
+        let expected_kind = if id.0 <= u64::from(save.setup.npcs.retail_count) {
+            AccountKind::Retail
+        } else if id.0
+            <= u64::from(save.setup.npcs.retail_count) + u64::from(save.setup.npcs.inst_count)
+        {
+            AccountKind::Inst
+        } else {
+            AccountKind::Hot
+        };
+        let profile_matches = matches!(
+            (expected_kind, book.profile()),
+            (AccountKind::Retail, StrategyProfile::Retail(_))
+                | (AccountKind::Inst, StrategyProfile::Institution(_))
+        );
+        if !profile_matches {
+            return Err(SessionError::InvalidSave(format!(
+                "account {id:?} belief profile conflicts with account kind"
+            )));
+        }
+        let institution = matches!(book.profile(), StrategyProfile::Institution(_));
+        if institution && book.institution_policy().is_none() {
             return Err(SessionError::InvalidSave(format!(
                 "institution account {} has no frozen experience policy",
                 id.0
+            )));
+        }
+        if !institution && book.institution_policy().is_some() {
+            return Err(SessionError::InvalidSave(format!(
+                "non-institution account {id:?} has institution experience policy"
+            )));
+        }
+        if !institution && book.institution_account_risk_paused() {
+            return Err(SessionError::InvalidSave(format!(
+                "non-institution account {id:?} has institution account risk pause"
             )));
         }
         let experience = book.experience();

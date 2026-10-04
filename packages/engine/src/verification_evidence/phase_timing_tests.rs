@@ -15,6 +15,8 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
 
     crate::GameSession::new(
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600888".to_owned()),
                 exchange: StockExchange::Shanghai,

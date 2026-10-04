@@ -112,7 +112,9 @@ export function currentSaveFixture(): JsonObject {
         },
       },
     },
+    groups: [],
     company_operations: {
+      payment_failures: {},
       seed: "0",
       shock_params: {
         version: 1,

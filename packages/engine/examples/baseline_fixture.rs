@@ -159,6 +159,8 @@ fn matrix_setup() -> SessionSetup {
         ),
     ];
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,
@@ -233,6 +235,8 @@ fn compressed_setup() -> SessionSetup {
         })
         .collect();
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,

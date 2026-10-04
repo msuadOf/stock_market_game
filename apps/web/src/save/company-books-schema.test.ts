@@ -10,8 +10,34 @@ const bank = { Bank: { books, deposits: {}, loans: {}, counterparties, ecl_polic
 const insurance = { Insurance: { books, groups: {}, counterparties, discount: { version: 1, rate_bp: 400 }, next_event_id: 2 } }
 const realEstate = { RealEstate: { books, projects: {}, presales: {}, loans: {}, receivables: { items: {}, written_off_total: "0.00" }, counterparties, budget: { operating_cash_floor: "0.00", credit_lines: {} }, capitalization_policy: { version: 1, suspension_min_days: 90 }, max_projects: 2, next_event_id: 2 } }
 
+test("RealEstate 贷款保留到期日，允许逾期并拒绝缺失或非法日期", () => {
+  const loan = { outstanding: "1.00", accrued_unpaid: "0.00", carried_cap: "0", carried_exp: "0", last_accrual_date: "2030-01-02", maturity_date: "2030-01-01", lender: "EXT", project: null, debt_account: "2001", annual_rate_bp: 365 }
+  const saved = { RealEstate: { ...realEstate.RealEstate, loans: { LOAN: loan } } }
+  assert.deepEqual(parseIndustryBooks(saved, "books"), saved)
+  const { maturity_date: _removed, ...missing } = loan
+  for (const invalid of [missing, { ...loan, maturity_date: "2030-02-30" }, { ...loan, maturity_date: null }]) assert.throws(() => parseIndustryBooks({ RealEstate: { ...realEstate.RealEstate, loans: { LOAN: invalid } } }, "books"), /maturity_date/)
+})
+
 test("parseIndustryBooks preserves a populated Industrial slice", () => {
   assert.deepEqual(parseIndustryBooks(industrial, "save.company_operations.companies.C-000812.books"), industrial)
+})
+
+test("IndustrialBooks 严格保存交易归属身份而非派生金额", () => {
+  const events = [{ event: 1, counterparty: "PARTY", account: "1122" }]
+  const saved = { Industrial: { ...industrial.Industrial, trade_counterparty_events: events } }
+  assert.deepEqual(parseIndustryBooks(saved, "books"), saved)
+  const { trade_counterparty_events: _removed, ...missing } = saved.Industrial
+  assert.throws(() => parseIndustryBooks({ Industrial: missing }, "books"), /trade_counterparty_events/)
+  for (const invalid of [{ ...events[0], event: "1" }, { ...events[0], amount: "1.00" }]) assert.throws(() => parseIndustryBooks({ Industrial: { ...saved.Industrial, trade_counterparty_events: [invalid] } }, "books"), /trade_counterparty_events/)
+})
+
+test("IndustrialBooks 严格保存库存来源身份而非派生金额或数量", () => {
+  const events = [{ event: 1, item: "RAW", account: "1403" }]
+  const saved = { Industrial: { ...industrial.Industrial, inventory_source_events: events } }
+  assert.deepEqual(parseIndustryBooks(saved, "books"), saved)
+  const { inventory_source_events: _removed, ...missing } = saved.Industrial
+  assert.throws(() => parseIndustryBooks({ Industrial: missing }, "books"), /inventory_source_events/)
+  for (const invalid of [{ ...events[0], event: "1" }, { ...events[0], amount: "1.00" }, { ...events[0], quantity: 1 }]) assert.throws(() => parseIndustryBooks({ Industrial: { ...saved.Industrial, inventory_source_events: [invalid] } }, "books"), /inventory_source_events/)
 })
 
 test("parseIndustryBooks rejects malformed industrial inventory structures with paths", () => {
@@ -40,7 +66,7 @@ test("parseIndustryBooks rejects malformed exact nested fields and wire scalars"
 test("parseIndustryBooks accepts fully populated source-shaped subledgers", () => {
   const populatedBank = { Bank: { ...bank.Bank, deposits: { "DEP-1": { principal: "100.00", accrued_payable: "1.00", carried: "0", last_accrual_date: "2030-01-01", rate_bp: 150, counterparty: "EXT-DEP", start_date: "2030-01-01", maturity_date: "2030-01-11" } }, loans: { "LN-1": { principal: "80.00", accrued_receivable: "1.00", carried: "0", last_accrual_date: "2030-01-01", rate_bp: 400, counterparty: "EXT-BOR", stage: "Stage2", allowance: "4.00", written_off: false, recoverable: "0.00", transfers: [{ date: "2030-01-02", from_stage: "Stage1", to_stage: "Stage2", reason: "fixture" }] } } } }
   const populatedInsurance = { Insurance: { ...insurance.Insurance, groups: { "GRP-1": { policyholder: "EXT-POL", premium: "60.00", premium_collected: "50.00", expected_claims_remaining: "40.00", risk_adjustment_remaining: "3.00", csm: "7.00", loss_component: "0.00", finance_remaining: "1.00", units_total: 30, units_released: 5, coverage_start: "2030-01-01", coverage_end: "2030-01-31", day_one_loss: "0.00", released_revenue: "10.00", released_finance: "0.00", remeasure_finance: "0.00", remeasure_loss: "0.00", reestimated_csm: "0.00", carried_claims: "0", carried_risk_adjustment: "0", carried_csm: "0", carried_finance: "0", carried_loss: "0", claims: { "CLM-1": { incurred: "10.00", paid: "4.00", date_incurred: "2030-01-02" } } } } } }
-  const populatedRealEstate = { RealEstate: { ...realEstate.RealEstate, projects: { "P-1": { total_units: 8, remaining_units: 6, land_cost: "2000.00", development_cost: "500.00", capitalized_interest: "10.00", remaining_cost: "1882.50", carried_out_cost: "627.50", dev_started_on: "2030-01-02", interrupted_on: null, interruptions: [{ start: "2030-01-03", end: "2030-01-04" }], completed_on: null } }, presales: { "PS-1": { project: "P-1", buyer: "EXT-BUYER", units: 2, price_total: "600.00", collected: "300.00", delivered: false } }, loans: { "LN-1": { outstanding: "500.00", accrued_unpaid: "1.00", carried_cap: "0", carried_exp: "0", last_accrual_date: "2030-01-02", lender: "EXT-LEND", project: "P-1", debt_account: "2001", annual_rate_bp: 365 } } } }
+  const populatedRealEstate = { RealEstate: { ...realEstate.RealEstate, projects: { "P-1": { total_units: 8, remaining_units: 6, land_cost: "2000.00", development_cost: "500.00", capitalized_interest: "10.00", remaining_cost: "1882.50", carried_out_cost: "627.50", dev_started_on: "2030-01-02", interrupted_on: null, interruptions: [{ start: "2030-01-03", end: "2030-01-04" }], completed_on: null } }, presales: { "PS-1": { project: "P-1", buyer: "EXT-BUYER", units: 2, price_total: "600.00", collected: "300.00", delivered: false } }, loans: { "LN-1": { outstanding: "500.00", accrued_unpaid: "1.00", carried_cap: "0", carried_exp: "0", last_accrual_date: "2030-01-02", maturity_date: "2030-01-01", lender: "EXT-LEND", project: "P-1", debt_account: "2001", annual_rate_bp: 365 } } } }
   assert.deepEqual(parseIndustryBooks(populatedBank, "save.books"), populatedBank)
   assert.deepEqual(parseIndustryBooks(populatedInsurance, "save.books"), populatedInsurance)
   assert.deepEqual(parseIndustryBooks(populatedRealEstate, "save.books"), populatedRealEstate)

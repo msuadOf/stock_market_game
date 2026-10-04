@@ -6,6 +6,8 @@ use engine::{
 
 fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>> {
     Ok(SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600001".to_owned()),
             exchange: StockExchange::Shanghai,

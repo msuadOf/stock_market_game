@@ -766,6 +766,8 @@ fn event_comparison_tags_keep_phase_four_five_and_six_distinct() {
 fn civil_protocol_session() -> ProtocolSession {
     ProtocolSession::new(
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600001".to_owned()),
                 exchange: StockExchange::Shanghai,

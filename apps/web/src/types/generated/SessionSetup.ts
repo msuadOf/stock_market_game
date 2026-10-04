@@ -11,6 +11,10 @@ import type { StrategyParams } from "./StrategyParams";
  */
 export type SessionSetup = {
   stocks: Array<StockSpec>;
+  company_operations?:
+    | import("../../save/schema/company/operations").CompanyOperationsConfig
+    | null;
+  groups?: import("../../save/schema/company/groups").GroupStructure[];
   npcs: NpcSetup;
   config: GameConfig;
   strategy_params: StrategyParams;

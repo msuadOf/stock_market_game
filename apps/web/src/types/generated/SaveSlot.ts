@@ -25,83 +25,100 @@ import type { UrgencyPolicy } from "./UrgencyPolicy";
  * 前端分时采样属于派生 UI 数据，不进入权威存档；日 K 由 engine 持久化。
  */
 export type SaveSlot = {
-/**
- * 存档契约版本。v1 及缺失版本均显式拒绝，不提供迁移器。
- */
-schema_version: number,
-/**
- * escrow 并行 tick 新增的权威运行时状态。TypeScript 形状由 Web 严格存档
- * parser 共同维护，避免把策略私有结构扩成通用宿主命令。
- */
-runtime_v2: import("../../save/schema/runtime-v2").SaveRuntimeV2, setup: SessionSetup, seed: string, snapshot: SaveSnapshot,
-/**
- * 日内存档恢复集合竞价所需的完整委托队列。
- */
-auction_orders: { [key in StockCode]: Array<AuctionOrderSnap> },
-/**
- * 连续竞价未成交委托。
- */
-resting_orders: { [key in StockCode]: Array<Order> },
-/**
- * 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
- * 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
- */
-book_next_sequences: Record<string, string>,
-/**
- * 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
- */
-filled_orders: { [key in StockCode]: Array<FilledOrderSnap> },
-/**
- * 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
- */
-price_history: { [key in StockCode]: Array<Money> },
-/**
- * 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
- * 到日界后清空，跨日窗口读取已经完成的日 K。
- */
-market_minute_closes: { [key in StockCode]: Array<MarketMinuteClose> },
-/**
- * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
- */
-rng_state: string,
-/**
- * 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
- */
-npc_attention: { [key in AccountId]: NpcAttentionState },
-/**
- * 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
- */
-retail_experience: { [key in AccountId]: RetailExperienceState },
-/**
- * 机构策略已经形成、但尚未完全成交的母单执行计划。
- * 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
- */
-parent_orders: { [key in AccountId]: { [key in StockCode]: SaveParentOrderPlan } },
-/**
- * NPC 连续竞价普通限价单的可恢复主动撤单时间。
- */
-npc_order_lifecycles: Array<NpcOrderLifecycle>,
-/**
- * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
- */
-pending_player: Array<[AccountId, Intent]>,
-/**
- * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
- */
-pending_npc: PendingNpcBatch | null,
-/**
- * 保持订单 id/到达序继续单调递增。
- */
-next_order_id: number,
-/**
- * K1 自然日经营时钟权威状态（任务 27 起随档携带冻结日历政策）。
- */
-civil_clock: CivilClockSave,
-/**
- * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
- */
-plans: PlanBook, urgency_policy: UrgencyPolicy,
-/**
- * 信念机构账户的个人关注列表。
- */
-watchlists: { [key in AccountId]: PersonalWatchlist }, price_memories: { [key in AccountId]: PersonalPriceMemory }, };
+  /**
+   * 存档契约版本。v1 及缺失版本均显式拒绝，不提供迁移器。
+   */
+  schema_version: number;
+  /**
+   * escrow 并行 tick 新增的权威运行时状态。TypeScript 形状由 Web 严格存档
+   * parser 共同维护，避免把策略私有结构扩成通用宿主命令。
+   */
+  runtime_v2: import("../../save/schema/runtime-v2").SaveRuntimeV2;
+  setup: SessionSetup;
+  groups: import("../../save/schema/company/groups").GroupStructure[];
+  seed: string;
+  snapshot: SaveSnapshot;
+  /**
+   * 日内存档恢复集合竞价所需的完整委托队列。
+   */
+  auction_orders: { [key in StockCode]: Array<AuctionOrderSnap> };
+  /**
+   * 连续竞价未成交委托。
+   */
+  resting_orders: { [key in StockCode]: Array<Order> };
+  /**
+   * 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
+   * 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
+   */
+  book_next_sequences: Record<string, string>;
+  /**
+   * 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
+   */
+  filled_orders: { [key in StockCode]: Array<FilledOrderSnap> };
+  /**
+   * 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
+   */
+  price_history: { [key in StockCode]: Array<Money> };
+  /**
+   * 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
+   * 到日界后清空，跨日窗口读取已经完成的日 K。
+   */
+  market_minute_closes: { [key in StockCode]: Array<MarketMinuteClose> };
+  /**
+   * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
+   */
+  rng_state: string;
+  /**
+   * 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
+   */
+  npc_attention: { [key in AccountId]: NpcAttentionState };
+  /**
+   * 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
+   */
+  retail_experience: { [key in AccountId]: RetailExperienceState };
+  /**
+   * 机构策略已经形成、但尚未完全成交的母单执行计划。
+   * 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
+   */
+  parent_orders: {
+    [key in AccountId]: { [key in StockCode]: SaveParentOrderPlan };
+  };
+  /**
+   * NPC 连续竞价普通限价单的可恢复主动撤单时间。
+   */
+  npc_order_lifecycles: Array<NpcOrderLifecycle>;
+  /**
+   * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
+   */
+  pending_player: Array<[AccountId, Intent]>;
+  /**
+   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
+   */
+  pending_npc: PendingNpcBatch | null;
+  /**
+   * 保持订单 id/到达序继续单调递增。
+   */
+  next_order_id: number;
+  /**
+   * K1 自然日经营时钟权威状态（任务 27 起随档携带冻结日历政策）。
+   */
+  civil_clock: CivilClockSave;
+  /**
+   * ── K7（任务 27）：公司域与个体决策链权威状态。全部必填；缺失任一字段
+   *    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
+   * 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
+   * 余额在反序列化重放边界校验）。
+   */
+  company_operations:
+    import("../../save/schema/company/operations").CompanyOperations;
+  /**
+   * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
+   */
+  plans: PlanBook;
+  urgency_policy: UrgencyPolicy;
+  /**
+   * 信念机构账户的个人关注列表。
+   */
+  watchlists: { [key in AccountId]: PersonalWatchlist };
+  price_memories: { [key in AccountId]: PersonalPriceMemory };
+};

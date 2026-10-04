@@ -14,6 +14,8 @@ pub(crate) const TICKS_PER_DAY: u64 = 120;
 /// 压缩会话 setup（start 由调用方给）。
 pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,

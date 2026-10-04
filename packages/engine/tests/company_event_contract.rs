@@ -13,6 +13,8 @@ const TICKS_PER_DAY: u64 = 12;
 
 fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,

@@ -17,6 +17,8 @@ use engine::{FloatAllocation, GameConfig, StrategyParams};
 fn trading_session() -> GameSession {
     let stocks = default_stock_specs();
     let setup = SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 64,

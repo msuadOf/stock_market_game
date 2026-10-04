@@ -96,6 +96,8 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
 pub(super) fn setup() -> crate::SessionSetup {
     use crate::*;
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".into()),
             exchange: StockExchange::Shanghai,

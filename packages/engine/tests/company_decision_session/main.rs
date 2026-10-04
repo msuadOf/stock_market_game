@@ -35,6 +35,8 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 /// 压缩时钟的多风格场景（默认 5 股票 × 真实默认股本——公司域默认表命中）。
 pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),

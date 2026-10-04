@@ -12,6 +12,8 @@ mod company_fixtures;
 
 fn setup(retail_count: u32) -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,

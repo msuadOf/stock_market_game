@@ -84,6 +84,8 @@ fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
     let second = StockCode("600889".to_string());
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             StockSpec {
                 code: first.clone(),

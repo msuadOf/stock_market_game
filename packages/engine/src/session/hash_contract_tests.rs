@@ -11,6 +11,34 @@ fn game() -> GameSession {
 }
 
 #[test]
+fn ordinary_tick_shadow_shares_report_histories_and_isolates_mutation() {
+    let game = game();
+    let mut shadow = game.clone_for_tick_shadow().unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.closing,
+        &shadow.state.closing
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.library,
+        &shadow.state.library
+    ));
+    let before = game.state.closing.hash_projection().unwrap();
+    let report = game.state.library.save().reports[0].reports.clone();
+    std::sync::Arc::make_mut(&mut shadow.state.closing)
+        .record(report)
+        .unwrap();
+    assert!(!std::sync::Arc::ptr_eq(
+        &game.state.closing,
+        &shadow.state.closing
+    ));
+    assert_eq!(game.state.closing.hash_projection().unwrap(), before);
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.library,
+        &shadow.state.library
+    ));
+}
+
+#[test]
 fn tick_shadow_shares_immutable_company_registry_without_changing_hashes() {
     let game = game();
     let shadow = game.clone_for_tick_shadow().unwrap();
@@ -230,7 +258,9 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
         .reports
         .clone();
 
-    game.state.closing.record(report).unwrap();
+    std::sync::Arc::make_mut(&mut game.state.closing)
+        .record(report)
+        .unwrap();
 
     let business_after = game.business_state_hash().unwrap();
     assert_ne!(business_after, business_before);
@@ -240,7 +270,7 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
 #[test]
 fn closing_projection_clone_mutations_are_isolated_and_serde_stable() {
     let game = game();
-    let mut authority = game.state.closing.clone();
+    let mut authority = game.state.closing.as_ref().clone();
     let expected = authority.hash_projection().unwrap();
     let mut cloned = authority.clone();
     let reports = game.state.library.save().reports;
@@ -277,7 +307,7 @@ fn closing_projection_clone_mutations_are_isolated_and_serde_stable() {
 #[test]
 fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
     let game = game();
-    let mut authority = game.state.library.clone();
+    let mut authority = game.state.library.as_ref().clone();
     let warmed = authority.hash_projection();
     assert!(
         !authority.save().reports.is_empty(),
