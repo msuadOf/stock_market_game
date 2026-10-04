@@ -93,8 +93,41 @@ fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
     // Then: the immutable library entry is publicly queryable and precedes one date transition.
     let publication_index = events
         .iter()
-        .position(|event| matches!(event, Event::CompanyDisclosurePublished { .. }))
+        .position(|event| {
+            matches!(
+                event,
+                Event::CompanyDisclosurePublished {
+                    kind: CompanyDisclosureKind::Report { .. },
+                    ..
+                }
+            )
+        })
         .expect("a newly due report must emit its publication event");
+    let announcement_index = events
+        .iter()
+        .position(|event| matches!(event, Event::CompanyDisclosurePublished { .. }))
+        .expect("the fixture must publish an announcement before its scheduled report");
+    let Event::CompanyDisclosurePublished {
+        publication_id: announcement_id,
+        company: announcement_company,
+        published_at: announcement_instant,
+        kind: CompanyDisclosureKind::Announcement,
+        ..
+    } = &events[announcement_index]
+    else {
+        panic!("the first publication in this fixture must be an announcement");
+    };
+    assert!(announcement_index < publication_index);
+    let saved = session.save().expect("healthy save");
+    let announcement = saved
+        .public_library
+        .announcement(*announcement_id, *announcement_instant)
+        .expect("preceding announcement must resolve in the immutable public library");
+    assert_eq!(&announcement.company, announcement_company);
+    assert_eq!(announcement.published_at, *announcement_instant);
+    assert!(events
+        .windows(2)
+        .all(|pair| pair[0].seq() < pair[1].seq()));
     let advance_index = events
         .iter()
         .position(|event| matches!(event, Event::CivilDateAdvanced { .. }))

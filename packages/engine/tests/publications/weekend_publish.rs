@@ -12,7 +12,8 @@ use engine::information::{
     PublicationOrigin, ScheduledReportKind,
 };
 use engine::session::{
-    CivilDayEndReport, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch, GameSession,
+    CivilDayEndReport, CompanyDisclosureKind, DayEndDisclosureCtx, DayEndDisclosures,
+    DisclosureDispatch, Event, GameSession,
 };
 
 /// 找到「Q1 基准日 + 该公司真实偏移」落在周六、且其前一自然日（周五）是
@@ -145,6 +146,7 @@ fn weekend_report_publishes_without_trade() {
     let seq_before = scenario.session.seq();
     let (day_before, tick_before) = (scenario.session.day(), scenario.session.tick());
     let snapshot_before = scenario.session.snapshot();
+    let save_before = scenario.session.save().expect("healthy closed-day save");
 
     let (saturday_report, saturday_out) = scenario.settle_and_dispatch();
     assert_eq!(saturday_report.disclosure_instant.date(), q1_instant.date());
@@ -152,12 +154,59 @@ fn weekend_report_publishes_without_trade() {
     // 零市场副作用：只有共享 civil 事件推进 seq，交易日计数、tick、市场快照不变。
     assert_eq!(
         scenario.session.seq(),
-        seq_before + 1,
-        "closed-day settlement emits exactly the shared civil-date event"
+        seq_before + saturday_report.events.len() as u64,
+        "closed-day sequence advances only for committed civil events"
     );
+    let save_after = scenario.session.save().expect("healthy settled save");
+    assert_eq!(save_after.rng_state, save_before.rng_state);
+    assert_eq!(save_after.npc_attention, save_before.npc_attention);
+    assert!(saturday_report.events.len() > 1);
+    for (index, event) in saturday_report.events.iter().enumerate() {
+        assert_eq!(event.seq(), seq_before + index as u64 + 1);
+        match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                company,
+                published_at,
+                kind,
+                ..
+            } => {
+                assert!(index < saturday_report.events.len() - 1);
+                match kind {
+                    CompanyDisclosureKind::Announcement => {
+                        let announcement = save_after
+                            .public_library
+                            .announcement(*publication_id, *published_at)
+                            .expect("civil announcement resolves in the immutable public library");
+                        assert_eq!(&announcement.company, company);
+                        assert_eq!(announcement.published_at, *published_at);
+                    }
+                    CompanyDisclosureKind::Report { report_revision } => {
+                        let report = save_after
+                            .public_library
+                            .report(*publication_id, *published_at)
+                            .expect("civil report resolves in the immutable public library");
+                        assert_eq!(&report.company, company);
+                        assert_eq!(report.published_at, *published_at);
+                        assert_eq!(report.reports.version.sequence, *report_revision);
+                    }
+                }
+            }
+            Event::CivilDateAdvanced {
+                settled_date,
+                next_date,
+                ..
+            } => {
+                assert_eq!(index, saturday_report.events.len() - 1);
+                assert_eq!(*settled_date, saturday_report.settled_date);
+                assert_eq!(*next_date, saturday_report.next_date);
+            }
+            other => panic!("closed-day disclosure must not emit market events: {other:?}"),
+        }
+    }
     assert!(matches!(
-        saturday_report.events.as_slice(),
-        [engine::Event::CivilDateAdvanced { .. }]
+        saturday_report.events.last(),
+        Some(Event::CivilDateAdvanced { .. })
     ));
     assert_eq!(
         (scenario.session.day(), scenario.session.tick()),
