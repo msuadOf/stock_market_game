@@ -36,6 +36,17 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
     let mut session = GameSession::new(setup, 8).unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: session.state.setup.stocks[0].code.clone(),
+                side: Side::Buy,
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
+                qty: 100,
+            },
+        )
+        .unwrap();
     complete_opening_auction(&mut session);
     session
         .state
@@ -43,6 +54,7 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .get_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
+    super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, account);
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
     session.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut session).unwrap();

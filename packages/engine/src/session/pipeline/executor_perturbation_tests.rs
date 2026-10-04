@@ -11,6 +11,11 @@ fn fixture(auction: bool) -> GameSession {
     setup.closing_auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: game.civil_date(),
+        market_minute: game.current_market_minute(),
+        trading_day: u64::from(game.day()),
+    };
     // 保持生产 StrategyState 已安装。外部测试候选仍走真实
     // DecisionShadow/AccountValidation 路径，不替换生产 dispatcher。
     for account in [AccountId(1), AccountId(2)] {
@@ -20,6 +25,17 @@ fn fixture(auction: bool) -> GameSession {
                 .get_mut(&account)
                 .unwrap()
                 .grant_position(code.clone(), 1_000, Money::from_cents(1_000_000))
+                .unwrap();
+            game.state
+                .retail_experience
+                .get_mut(&account)
+                .unwrap()
+                .initialize_holding_dated(
+                    code,
+                    Some(Money::from_cents(1_000_000)),
+                    Money::from_cents(1_000),
+                    moment,
+                )
                 .unwrap();
         }
     }

@@ -49,6 +49,10 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
 #[test]
 fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling() {
     let (mut session, npc, code) = npc_session();
+    crate::session::pipeline::npc_state_projection_tests::use_buy_imbalance_analysis(
+        &mut session,
+        npc,
+    );
     session.state.pending_npc = None;
     crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
     prepare_continuous_tick(&mut session).unwrap().commit();
@@ -83,6 +87,23 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         .get_mut(&npc)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
+        .unwrap();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: session.civil_date(),
+        market_minute: session.current_market_minute(),
+        trading_day: u64::from(session.day()),
+    };
+    session
+        .state
+        .retail_experience
+        .get_mut(&npc)
+        .unwrap()
+        .initialize_holding_dated(
+            &code,
+            Some(Money::from_cents(100_000)),
+            Money::from_cents(1_000),
+            moment,
+        )
         .unwrap();
     session.seed_order_for_test(
         npc,

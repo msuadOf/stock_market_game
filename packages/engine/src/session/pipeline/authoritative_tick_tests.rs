@@ -228,6 +228,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
             .get_mut(&account)
             .unwrap()
             .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
+        super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, account);
         let observed_tick = session.tick();
         crate::session::npc_working_quote_tests::force_attention_candidate(
             &mut session,
