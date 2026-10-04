@@ -106,17 +106,21 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   超时前已输出的进度保留在 CI 日志中，用于定位后续瓶颈；增加诊断本身不表示 Windows 构建超时已经解决。
 - `scripts/run-full-regression.mjs execute --inventory <workspace-.tmp-path>` 另起独立 300000ms
   硬期限；先验证 inventory 自校验、当前源码指纹和每个二进制哈希，再按 `os.availableParallelism()`
-  的可用 CPU 预算最多并发 8 个预构建 Rust test binaries，每个并发 binary 至少分到 2 个 CPU 预算，
-  余数分配给前几个 worker（128 CPU 时每 binary 为 12 个 harness threads + 4 个 Rayon threads，总预算 128；
-  4 CPU 时为两个各 1+1 的 worker）。单核时 harness 与 Rayon 各至少 1 线程，日志如实记录配置线程数为 2，
-  不宣称未超卖。独立执行的必跑 ignored 长用例使用 1 个 harness thread 和其余可用 CPU 对应的 Rayon threads。
-  执行开始即记录各 worker 和长用例的预算；任一 binary 失败即终止在途 siblings；同一执行期限随后覆盖 workspace doctests 和上述多进程 Web 普通测试入口，其中 Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
+  的可用 CPU 预算最多并发 8 个预构建 Rust test binaries 的 case 清单查询；分别读取完整清单与 ignored 清单，取差集，不运行 ignored 普通 case。
+  每个普通 case 用独立进程执行 `--exact --test-threads=1`，进程外 watchdog 为 `min(10000ms, 批次剩余时间)`；
+  case 并发数为 `min(case 数量, max(1, floor(CPU 数量 / 2)))`，每个 case 分配一个 harness thread 和其 CPU 预算余量对应的 Rayon threads。
+  例如 128 CPU 最多并发 64 个各 1+1 的 case，4 CPU 最多并发两个各 1+1 的 case；单核时仍各至少 1 线程，不宣称未超卖。
+  独立执行的必跑 ignored 长用例使用 1 个 harness thread 和其余可用 CPU 对应的 Rayon threads。
+  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case；同一执行期限随后覆盖 workspace doctests 和上述多进程 Web 普通测试入口，其中 Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
   这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。
 - 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段，但任何一个长阶段都不得超过 5 分钟。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
 - K7 的 `before` 语料已密封，只保留可测的解析兼容层；CLI 明确拒绝重跑，不将它当作当前长验收。
 - K7 当前验收先在独立 300000ms 构建 deadline 内构建一次 fixture，再由 after/sensitivity 在各自的 300000ms 总 deadline 内直接执行预构建二进制；每个 K7 批次遵循 299000ms 执行/发布 + 1000ms 收尾预留。二进制哈希和编译时嵌入的源指纹必须与当前密封源一致，否则在启动矩阵前失败。
+- K7 的自由 rerun 分别保存并校验原始证据，不要求不同 worker、执行扰动或恢复后的自由继续运行产生相同整局字节。
+  `determinism.checkpoint.json` 的 `k7-determinism-receipt-v2` 同时绑定首份 `seed-<seed>.json` 和 `rerun.json` 的 SHA-256，并如实记录 `identical`；复用与独立 root verifier 均验证两份原始数据的来源、配置及业务覆盖。
+  Escrow 每次 capture 仍独立验证每 tick 的收据重放、守恒及失败负控，立即保存/恢复的状态等价不变；这里不把自由 rerun 当作固定受理事实重放。
 - 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
 
 ### GitHub CI 构建与类型门禁

@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐28项，剩余51项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐32项，剩余47项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -138,10 +138,10 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 |---|---|---|
 | G39 | K7按现行并发受理契约验证；Sept24多线程计划:154 | K7仍比较不同worker完整artifact；after/sensitivity的baseline-run rerun与root verifier还要求自由重跑stdout SHA完全一致，均未固定同一实际受理轨迹。新增Session/规模测试已区分立即恢复等价与自由调度后各自对账，未修这些工具门禁。应保留守恒、价时、依赖及失败负控，另验同一受理事实的重放；未运行矩阵。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
 | G57 | 诊断输出潜在大u64无损十进制字符串；diagnostics/量价CLI契约 | causal_runs的seed、qty等字段直接Serialize为JSON数字，CLI包装未转字符串；合法u64大seed已能超JS安全整数。旧price_volume转换已实现，不能核销新增causalDTO边界；独立于Q01 Money范围。见 [序列化](exhaustive-review/luna13.md)。 |
-| G60 | 性能工具通过现行启动选择进入游戏；性能README/正式命令 | 默认Vite为非e2e模式，启动只显示选择页；market-ui-report先等.app-root却没有确认启动操作，正式命令旅程不可达。修工具步骤，不改产品启动选择政策。见 [旅程](exhaustive-review/luna48.md)。 |
-| G61 | 性能工具整体deadline及异常资源收尾闭合；测试/清理规则 | UI性能正式入口裸node、CDP挂起无整体外部期限，cleanup一处失败跳过后续；性能harness sampler提前reject却先等child close，未即时终止owned child。正常结束清理和失败不生成PASS已有，不核销异常树收尾。见 [UI工具](exhaustive-review/luna48.md) 与 [采样](exhaustive-review/luna64.md)。 |
-| G62 | 进程外deadline终止整个嵌套进程树并诚实报告；AGENTS/testing | POSIX各层runBoundedCommand均detached，外层只kill直接PGID，孙进程另建组可逃离终止；事件循环正常计时不证明阻塞时收敛。Windows taskkill异步不验结果；run-with-deadline只请求kill或等直接child关闭，却称process tree已终止，hard timer还可先于close拒绝。需区分请求、已确认退出和未确认状态，不声称每次超时都留后代。见 [树监督](exhaustive-review/sweep64.md) 与 [文案裁定](hidden-review/candidate-resolution-02.md)。 |
-| G63 | 普通Rust case独立10秒硬上限；AGENTS/testing | run-full-regression只给binary共享长阶段剩余期限与test-threads，没有普通case独立watchdog；最新验收记录也明确承认。整批PASS不证明逐case满足，ignored必要长用例仍按长验收分类。见 [runner](exhaustive-review/sweep81.md) 与 [发布复核](exhaustive-review/luna77.md)。 |
+| G60 | 已补齐：性能工具通过现行启动选择进入游戏；性能README/正式命令 | 性能工具明确选择本地并提交现有启动操作，已启动时不重复启动，不修改产品启动政策。与G61共33项短测通过，非作者完整diff复核通过；没有跑真实浏览器性能矩阵。实现见 [验收工具](../implementation-gap-implementation/acceptance-tools.md)，原证据见 [旅程](exhaustive-review/luna48.md)。 |
+| G61 | 已补齐：性能工具整体deadline及异常资源收尾闭合；测试/清理规则 | 正式性能入口用进程外300000ms supervisor；CDP失败显式拒绝，资源逐项收尾并聚合错误，sampler失败立即终止owned tree。与G60共33项短测通过、非作者复核通过；真实矩阵与跨平台收尾未实跑，不宣称其通过。见 [实施与复核](../implementation-gap-implementation/acceptance-tools-review.md)，原证据见 [UI工具](exhaustive-review/luna48.md) 与 [采样](exhaustive-review/luna64.md)。 |
+| G62 | 已补齐：进程外deadline终止嵌套owned进程树并诚实报告；AGENTS/testing | 嵌套supervisor继承owned进程组，终止前枚举后代；Linux核对已观察PID退出，Windows等待并校验taskkill结果，未确认状态不冒称已终止，清理错误与原执行错误同时保留。22项相关短测通过，含真实阻塞child及detached孙进程，非作者再审通过；任意瞬时reparent及macOS/Windows实机仍未验证。见 [实施与复核](../implementation-gap-implementation/acceptance-tools-review.md)，原证据见 [树监督](exhaustive-review/sweep64.md) 与 [文案裁定](hidden-review/candidate-resolution-02.md)。 |
+| G63 | 已补齐：普通Rust case独立10秒硬上限；AGENTS/testing | 普通与ignored清单取差集，每个普通case独立--exact进程及10000ms外部watchdog，按CPU预算并发并共享原批次期限；ignored长验收分类不变。9项新增定向短测独立重跑通过，非作者完整diff复核通过；另31项过滤环境敏感用例后通过，整文件曾超10秒，未宣称整文件或完整Rust回归通过。见 [实施与复核](../implementation-gap-implementation/acceptance-tools-review.md)，原证据见 [runner](exhaustive-review/sweep81.md) 与 [发布复核](exhaustive-review/luna77.md)。 |
 | G72 | 验收artifact先验证canonical containment再读内容；现存validator契约 | matrix `validateArtifacts`先realpath/readFile，再判断canonical路径属于output；新结果及PASS复用均调用它，拒绝之前已读越界目标。仅登记matrix读取次序，不把Pages开发smoke也按同类技术自动列缺口，不提供安全复现场景。见 [原文复核](hidden-review/batch-080.md) 与 [裁定](hidden-review/candidate-resolution-02.md)。 |
 
 ## 3. 候选项与契约冲突：不能冒充已确认漏实现
