@@ -14,7 +14,7 @@ use engine::session::protocol::{EngineUpdate, ProtocolSession, SaveCandidateKey}
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;
 
@@ -48,6 +48,23 @@ thread_local! {
 mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
+fn reserve_session_handle(next: &AtomicU32) -> Result<u32, SessionError> {
+    next.fetch_update(
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+        |candidate| match candidate {
+            0 => None,
+            u32::MAX => Some(0),
+            _ => Some(candidate + 1),
+        },
+    )
+    .map_err(|_| {
+        SessionError::ResourceLimit(
+            "WASM 会话句柄已耗尽；已有会话仍有效，新建会话须重新启动 Worker".into(),
+        )
+    })
+}
+
 /// WASM Worker 局部的句柄 owner；ProtocolSession 仍拥有引擎状态。
 #[derive(Default)]
 struct SessionRegistry {
@@ -55,20 +72,34 @@ struct SessionRegistry {
 }
 
 impl SessionRegistry {
-    fn register(&mut self, session: ProtocolSession) -> u32 {
-        let id = NEXT.fetch_add(1, Ordering::SeqCst);
-        self.sessions.insert(id, session);
-        id
+    fn register(
+        &mut self,
+        session: ProtocolSession,
+        next: &AtomicU32,
+    ) -> Result<u32, SessionError> {
+        let id = reserve_session_handle(next)?;
+        match self.sessions.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(session);
+                Ok(id)
+            }
+            Entry::Occupied(_) => Err(SessionError::Step(
+                engine::session::StepFatal::InvariantViolation {
+                    location: "SessionRegistry::register".into(),
+                    description: format!("WASM 会话句柄 {id} 已登记，禁止覆盖现有会话"),
+                },
+            )),
+        }
     }
 
     fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, SessionError> {
         let session = ProtocolSession::new(setup, seed)?;
-        Ok(self.register(session))
+        self.register(session, &NEXT)
     }
 
     fn restore(&mut self, slot: &SaveSlot) -> Result<u32, SessionError> {
         let session = ProtocolSession::restore(slot)?;
-        Ok(self.register(session))
+        self.register(session, &NEXT)
     }
 
     fn with_session<T>(

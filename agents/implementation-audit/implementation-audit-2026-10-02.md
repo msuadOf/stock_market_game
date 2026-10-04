@@ -169,7 +169,7 @@ Q01–Q09、Q11继续保留；Q10已转G39，Q19经恢复链复核转G80并保�
 | Q17 | ClosingEngine::correct先过账/记录重述，再生成报告；合法派生汇总溢出可Err且留部分状态。见 [更正](exhaustive-review/luna23.md)。 | Journal批次原子已有，未找到整个更正/报告API失败零状态变化的明确保证或Session生产caller；保留真实边界，不擅自要求所有底层操作强事务。 |
 | Q18 | Release collector不独立强制各平台最低格式组合，但归档producer已拒缺格式。见 [制品](exhaustive-review/luna77.md)。 | 是否要求最终collector重复校验语义组成需明确；没有正常生产绕过producer的证据，不称当前Release已漏包。 |
 | Q19（已转G80） | 新局默认Industrial不代表完整存档恢复拒绝Bank variant；恢复整体安装CompanyOperations，未校验EclPolicy。见 [银行续核](renewed-check/bank-restore.md)。 | 纠正原降级理由；缺口限SaveSlot外部恢复，不要求改变库级serde/issue_loan错误次序，也不称默认新局已具备完整银行产品。 |
-| Q20 | WASM NEXT的u32句柄计数会环绕，登记insert可覆盖仍存活句柄。见 [绑定](exhaustive-review/luna40.md)。 | 需明确耗尽时拒绝/重新分配策略；本轮只静态记录，未跑数十亿次或证明普通旅程触发。 |
+| Q20（已补齐） | WASM句柄单调分配1..u32::MAX，0仅为耗尽哨兵；CAS保证并行不重号，HashMap Entry明确拒绝覆盖活会话。原问题见 [绑定](exhaustive-review/luna40.md)，实施见 [句柄耗尽](../remaining-questions-and-features/wasm-handle-exhaustion.md)。 | 耗尽返回ResourceLimit、不复用删除编号，已有会话保持有效；create/restore共同传播错误，无迁移或静默重试。14项短测及非作者独立重跑/完整diff复核通过；未冒称已创建数十亿会话或完成浏览器与完整回归。 |
 | Q21 | 非正固定价可先报日限/price cage/资源拒绝，而非OrderBook InvalidPrice。见 [校验](exhaustive-review/luna16.md)。 | 已显式拒绝；多重非法条件的Market/Session错误优先级未规定，正常UI先挡非正价，不可断言公共路径一律LimitExceeded。 |
 | Q22 | 来源拼接顺序、时段AccountReceipt及实际接收轨迹之间仍需核验；见 [草稿](exhaustive-review/luna49.md)。 | PreviousCommit/BetweenTicks是就绪时间窗，NPC向量在前不证明交易来源优先；只有真实竞争错序证据才能升级，不能恢复全局固定来源排序。 |
 | Q23 | 直接公共accrue_income_tax重复调用会把已记税费计入再次税前并追加亏损池；生产经营caller已按成功自然日日结在年末计提一次，失败候选回滚后可重试。见 [税务](exhaustive-review/luna54.md)。 | G35已接通生产年末计提及失败回滚重试；直接公共accrue_income_tax重复调用的幂等及准入尚无完整约定，不冒充默认游戏已算错税。 |
