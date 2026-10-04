@@ -37,8 +37,8 @@ test("null 竞价价不进入曲线但保留累计量，连续量独立缩放，
   assert.deepEqual(source, before);
 });
 
-test("分时保留单点竞价、最后七笔倒序和现有统一明细时刻", () => {
-  const trades = Array.from({ length: 9 }, (_, seq) => ({ seq, code: "600001", price: 1000, qty: 1, maker: 1, taker: 2 }));
+test("分时保留单点竞价、最新优先的最近七笔及游戏时钟", () => {
+  const trades = Array.from({ length: 9 }, (_, index) => ({ seq: 8 - index, code: "600001", price: 1000, qty: 1, maker: 1, taker: 2 }));
   const source = { ...inputs(), auctionPoints: [{ time: 99, value: 11, volume: 0, buy: true }], trades, elapsedMinutes: 121, gameTick: 8100 };
   const p = model.MobileIntradayProjection.fromInputs(source);
   assert.equal(p.displayedAverage, 11);
@@ -47,8 +47,23 @@ test("分时保留单点竞价、最后七笔倒序和现有统一明细时刻",
   assert.deepEqual(p.recentTrades.map(t => t.seq), [8, 7, 6, 5, 4, 3, 2]);
   assert.equal(p.tradeTime, "13:00");
   assert.equal(p.clockTime, "13:00");
-  assert.equal(p.volumeMarks()[0].height, 1);
-  assert.equal(trades[0].seq, 0);
+  assert.equal(p.volumeMarks()[0].height, 0);
+  assert.equal(trades[0].seq, 8);
+});
+
+test("审计G13：一百笔最新优先成交带只取前七笔，不取最旧尾部", () => {
+  const trades = Array.from({ length: 100 }, (_, index) => ({ seq: 100 - index, code: "600101", price: 1000, qty: 100, maker: 1, taker: 2 }));
+  const projection = model.MobileIntradayProjection.fromInputs({ ...inputs(), trades });
+  assert.deepEqual(projection.recentTrades.map(trade => trade.seq), [100, 99, 98, 97, 96, 95, 94]);
+  assert.equal(trades[0].seq, 100);
+});
+
+test("审计G44：分时零量槽位为零高，非零量仍有可见高度", () => {
+  const projection = model.MobileIntradayProjection.fromInputs({ ...inputs(),
+    auctionPoints: [{ time: 0, value: null, volume: 0, buy: false }],
+    minutePoints: [{ time: 0, value: 10, volume: 0 }, { time: 1, value: 10, volume: 1 }, { time: 2, value: 10, volume: 1000 }],
+  });
+  assert.deepEqual(projection.volumeMarks().map(mark => mark.height), [0, 0, 1, 100]);
 });
 
 test("分时按原 slice 限制连续与竞价可见点，异常价与量继续显式拒绝", () => {

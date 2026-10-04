@@ -652,7 +652,7 @@ export class MobileIntradayProjection {
     const averageSource = this.visiblePoints.length > 0 ? this.visiblePoints : this.visibleAuctionPricePoints;
     // 沿用价格点算术均值；此显示值不是撮合均价或 VWAP。
     this.displayedAverage = averageSource.length > 0 ? averageSource.reduce((sum, point) => sum + point.value, 0) / averageSource.length : lastClose;
-    this.recentTrades = inputs.trades.slice(-7).reverse();
+    this.recentTrades = inputs.trades.slice(0, 7);
     const latestPoint = this.visiblePoints.at(-1);
     const latestAuctionPoint = this.visibleAuctionPoints.at(-1);
     this.signature = latestPoint
@@ -690,7 +690,7 @@ export class MobileIntradayProjection {
     ].map(point => ({
       ...point,
       x: intradayChartX({ phase: point.phase, minute: point.time }),
-      height: Math.max(1, (point.volume ?? 0) / (point.phase === "auction" ? this.volumeScale.auctionMax : this.volumeScale.continuousMax) * 100),
+      height: (point.volume ?? 0) === 0 ? 0 : Math.max(1, (point.volume ?? 0) / (point.phase === "auction" ? this.volumeScale.auctionMax : this.volumeScale.continuousMax) * 100),
     }));
   }
 }
@@ -769,6 +769,6 @@ export class MobileKlineProjection {
   }
 
   volumeMarks() {
-    return this.volumes.map((volume, index) => ({ volume, slot: this.slotFor(index), height: Math.max(1, volume / this.maxVolume * 66), rise: this.visibleCandles[index].close >= this.visibleCandles[index].open }));
+    return this.volumes.map((volume, index) => ({ volume, slot: this.slotFor(index), height: volume === 0 ? 0 : Math.max(1, volume / this.maxVolume * 66), rise: this.visibleCandles[index].close >= this.visibleCandles[index].open }));
   }
 }

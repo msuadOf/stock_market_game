@@ -6,6 +6,12 @@ import type { IndicatorResultState } from "../components/useIndicatorResults.ts"
 const candle = (i: number): KlinePoint => ({ time: i as KlinePoint["time"], open: i + 10, close: i + 11, high: i + 12, low: i + 9, volume: i * 100 });
 const pending: IndicatorResultState = { kind: "pending" };
 
+test("审计G44：K线零量不画正高度，微小正量保留最小可见高度", () => {
+  const candles = [0, 1, 1000].map((volume, index) => ({ ...candle(index), volume }));
+  const projection = model.MobileKlineProjection.fromInputs(candles, { capacity: 72, offsetFromEnd: 0 }, pending);
+  assert.deepEqual(projection.volumeMarks().map(mark => mark.height), [0, 1, 66]);
+});
+
 test("K 线空与单根投影不填造行情，容量大于历史时保留固定槽宽", () => {
   assert.equal(typeof model.MobileKlineProjection, "function", "K 线投影必须提供共同窗口与几何行为 owner");
   const empty = model.MobileKlineProjection.fromInputs([], { capacity: 72, offsetFromEnd: 0 }, pending);
@@ -21,7 +27,7 @@ test("K 线空与单根投影不填造行情，容量大于历史时保留固定
   assert.equal(shape.body.bottom, p.priceY(10));
   assert.deepEqual(shape.wick.upper, { start: p.priceY(12), end: p.priceY(11) });
   assert.deepEqual(shape.wick.lower, { start: p.priceY(10), end: p.priceY(9) });
-  assert.equal(p.volumeMarks()[0].height, 1);
+  assert.equal(p.volumeMarks()[0].height, 0);
 });
 
 test("MA 与 Rust KDJ 先覆盖完整历史再截取窗口，三个图共享槽位", () => {
