@@ -150,7 +150,7 @@ Q02–Q04、Q06–Q09、Q11继续保留；Q01、Q05、Q18已按用户选择补�
 
 | ID | 事实与证据 | 处理边界 |
 |---|---|---|
-| Q01（已补齐） | 用户选择规范有符号 i64 十进制分字符串；Money、裸持仓成本、个人估值与因果诊断金额统一编码，Web 严格校验并以 BigInt 运算，实际生成类型同步。原疑问见 [基础复核](reaudit-foundations.md)，现行契约见 [ADR-0031](../../docs/decisions/0031-money-decimal-cents-wire.md)。 | 旧数字、非规范字符串与越界显式拒绝，无代际版本、兼容或迁移；AccountingAmount 元字符串与 u64 聚合范围不变。Money 29项及跨宿主代表性短测、Web类型检查与非作者复核通过；六个表示摘要由独立旧/新真实生产者逐原文金额 path 取证，不从失败输出重钉。两个因果套件既存失败在675ac4c复现，未改弱断言、未跑完整回归。见 [独立复核](../remaining-questions-and-features/money-wire-independent-review.md) 与 [表示证据](../remaining-questions-and-features/money-wire-golden.md)。 |
+| Q01（已补齐） | 用户选择规范有符号 i64 十进制分字符串；Money、裸持仓成本、个人估值与因果诊断金额统一编码，Web 严格校验并以 BigInt 运算，实际生成类型同步。原疑问见 [基础复核](reaudit-foundations.md)，现行契约见 [ADR-0031](../../docs/decisions/0031-money-decimal-cents-wire.md)。 | 旧数字、非规范字符串与越界显式拒绝，无代际版本、兼容或迁移；AccountingAmount 元字符串与 u64 聚合范围不变。Money 29项及跨宿主代表性短测、Web类型检查与非作者复核通过；六个表示摘要由独立旧/新真实生产者逐原文金额 path 取证，不从失败输出重钉。曾在675ac4c复现的两项因果失败已随后补足真实成交fixture，原断言保留，14项短测通过，见 [因果修复](../remaining-questions-and-features/causal-test-fixture-fix.md)；未跑完整回归。见 [独立复核](../remaining-questions-and-features/money-wire-independent-review.md) 与 [表示证据](../remaining-questions-and-features/money-wire-golden.md)。 |
 | Q02 | 个人技术数据已用于候选，但 PersonalPriceMemory::record_public_history_read 仍无生产调用；根观察只记行情观察。当前链见 [策略与公司复核](reaudit-engine.md)。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
 | Q03 | 日历/会计文档要求冻结 RegulationProfile；当前 setup 与恢复均强制校验 simulation_policy_id。实现见 [基础复核](reaudit-foundations.md)。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
 | Q04 | UX-CONTRACT 要求固定应用标题，useMobileUiController 仍在详情展示股票标题。见 [界面复核](reaudit-ui.md)。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |

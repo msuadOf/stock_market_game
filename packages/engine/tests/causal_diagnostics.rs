@@ -238,7 +238,8 @@ fn npc_execution_session() -> GameSession {
     let mut setup = fixture::setup();
     setup.stocks[0].code = StockCode("000812".to_owned());
     setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
-    setup.stocks[0].initial_price = Money::from_cents(285);
+    // 原 285 分场景只有自然买单；价格高于个人估值的场景提供真实 NPC 卖单。
+    setup.stocks[0].initial_price = Money::from_cents(600);
     // 与默认公司 fixture 的发行股份及 ST 主板类别一致，避免失真的估值分母。
     setup.stocks[0].total_shares = 1_052_631_579;
     setup.stocks[0].category = engine::SecurityCategory::StMainBoard;
@@ -248,16 +249,108 @@ fn npc_execution_session() -> GameSession {
     setup.npcs.inst_count = 20;
     let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, 7).unwrap();
+    let initial = session.save().expect("初始化事实必须可读取");
+    let initial_cash: i128 = initial
+        .snapshot
+        .accounts
+        .values()
+        .map(|account| i128::from(account.cash.cents()))
+        .sum();
+    let initial_shares: u64 = initial
+        .snapshot
+        .accounts
+        .values()
+        .flat_map(|account| account.positions.values())
+        .map(|position| u64::from(position.qty))
+        .sum();
+    let mut traded_shares = 0_u64;
+    let mut player_bought = 0_u64;
     for _ in 0..TRADING_DAYS {
         while session.civil_clock().phase() == engine::session::CivilPhase::ClosedDay {
             session.end_civil_day().expect("休市日正常日结");
         }
+        // 每日一手玩家买单仅为诊断提供真实对手盘，不保证生产市场的流动性。
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: StockCode("000812".to_owned()),
+                    side: Side::Buy,
+                    price: engine::LimitPrice::Highest,
+                    qty: 100,
+                },
+            )
+            .expect("真实玩家买单必须入队");
         for _ in 0..ticks_per_day {
-            session.step().expect("healthy step");
+            let events = session.step().expect("healthy step");
+            let mut player_bought_this_tick = 0_u32;
+            for event in events {
+                if let Event::Trade {
+                    qty, maker, taker, ..
+                } = event
+                {
+                    assert!(qty > 0);
+                    assert_ne!(maker, taker);
+                    traded_shares += u64::from(qty);
+                    if maker == AccountId(0) || taker == AccountId(0) {
+                        player_bought_this_tick += qty;
+                        player_bought += u64::from(qty);
+                    }
+                }
+            }
+            if player_bought_this_tick > 0 {
+                let position = session
+                    .account(AccountId(0))
+                    .unwrap()
+                    .position(&StockCode("000812".to_owned()))
+                    .expect("真实买入必须形成持仓");
+                assert!(position.t1_locked() >= player_bought_this_tick);
+            }
         }
         session.end_civil_day().expect("交易日正常日结");
     }
+    assert!(traded_shares > 0, "诊断场景必须经过真实撮合");
+    assert!(player_bought > 0, "玩家必须与真实 NPC 成交");
+    assert_eq!(
+        session.causal_diagnostics().unwrap().filled_qty,
+        traded_shares * 2,
+        "每笔 Trade 必须对应买卖双方 Filled"
+    );
+    let final_save = session.save().expect("日终事实必须可读取");
+    assert_eq!(
+        final_save
+            .snapshot
+            .accounts
+            .values()
+            .flat_map(|account| account.positions.values())
+            .map(|position| u64::from(position.qty))
+            .sum::<u64>(),
+        initial_shares,
+        "真实对手盘不能制造股份"
+    );
+    assert!(
+        final_save
+            .snapshot
+            .accounts
+            .values()
+            .map(|account| i128::from(account.cash.cents()))
+            .sum::<i128>()
+            < initial_cash,
+        "真实成交必须扣费，不能补钱"
+    );
     session
+}
+
+#[test]
+fn npc_execution_fixture_has_real_bilateral_fills() {
+    let session = npc_execution_session();
+    let report = session.causal_diagnostics().unwrap();
+    assert!(
+        report.filled_qty > 0,
+        "真实成交前置条件不满足：申报量={}, 成交量={}",
+        report.submitted_qty,
+        report.filled_qty
+    );
 }
 
 #[test]
