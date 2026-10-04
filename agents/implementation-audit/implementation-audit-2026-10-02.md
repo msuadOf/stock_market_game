@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐32项，剩余47项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐51项，剩余28项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -52,7 +52,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G07 | 身份不决定分析能力，散户可分析基本面及五路权重；公司计划 K5、任务17/26，ADR-0016 | 基本面认识和五路信号仍只装配到机构链；Retail 仍走 ZiNoise/retail 内核。 不是要求所有散户都估值，也不是赋予全部散户机构执行复杂度。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G08 | 失败日期与每20交易日无新受挫衰减；ADR-0013 计划契约修订、公司计划 K5 | 散户观察/成交仍走 legacy writer，dated writer/衰减没有进入对应消费链；不重做已有机构衰减。 不能用已有机构 ADR-0026 衰减核销散户链路，也不应重复实现机构衰减。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G09 | 本人已知完整年报及可用中期更新；公司计划 K5a:148 | `decision_chain/roots.rs` 仍只将年报投递到信念更新，中期补充链缺失。 中期材料须作为补充或修订，不能直接当全年报告。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
-| G20 | 新局从熵取种、测试可固定；ADR-0005 §4 | `useSessionHostLifecycle.ts:90` 普通新局仍使用固定 `DEFAULT_SEED=42n`。 存档 RNG 和固定 seed 测试注入已存在；不要求自由并发同 seed 整局字节一致。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
+| G20 | 已补齐：新局从熵取种、测试可固定；ADR-0005 §4 | 普通无档新局使用Web Crypto完整u64熵，允许0，熵不可用显错而不创建宿主；E2E固定种子、读档种子无损独立。 helper与真实lifecycle短测通过，非作者完整diff复核通过；不要求自由并发整局字节一致。见 [实施复核](../implementation-gap-implementation/seed-baseline-review.md)；原证据见 [宿主](reaudit-host.md)。 |
 | G42 | 个人价格记忆按持仓∪活跃计划＋8修剪，恢复验证同一边界；K5、任务19/25 | `roots.rs:486` 仅prune watchlist，PersonalPriceMemory::prune无生产caller；恢复以全市场股票数＋8设限且条目必须属于全市场，未验证未保护条目最多8个。默认5股不展露此边界；个人认知上限不属于被撤销的世界配额。见 [个人记忆](exhaustive-review/luna21.md) 与 [计划](exhaustive-review/luna03.md)。 |
 | G43 | 淡出股票不再自动获知/分析/建立新计划；K6候选范围、任务25 | `root_candidate_codes` 无条件加入所有belief.entry_stocks，关注驱逐后无持仓/活动计划且未重新发现的旧股仍进入观察、报告获取和新计划候选。缺本次候选资格过滤，不能删除本人历史已知材料来冒充淡出。见 [生产root](exhaustive-review/luna03.md)。 |
 | G69 | 已补齐：计划恢复保持非零且可表示的期限；输入校验原则、历史strategy D02 | 开户、TradingPlan serde、PlanBook与完整Session validator共用期限校验；先减一再求最后有效日，MAX/1合法，零期限及越界显式拒绝。新增直接API及完整SaveSlot定向短测，不改变A股订单有效期。原问题见 [期限原文复核](hidden-review/batch-068.md) 与 [裁定](hidden-review/candidate-resolution-01.md)；实施证据见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
@@ -61,11 +61,11 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G10 | 连续竞价一分钟成交量；DESIGN:88、UX-CONTRACT:47 | `market-chart-projection.ts` 仍以每帧累计量差替换分钟量，而非累加该分钟量。 同分钟累计100→200→200最终会只留0；首个连续点还可能带入竞价累计量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G11 | 新日清旧分时且保留新日已到采样；UX-CONTRACT:81 | 普通TickBatch分时合并只按日内槽位；CivilUpdate虽重建历史，相邻交易日AfterClose＋BeforeOpen屏障仍携带旧日全帧，新日未覆盖槽可能保留旧日点。纯空屏障和初始化清理已有，未完成的是正常相邻交易日隔离。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G12 | 分时量涨红空心、跌绿实心；UX-CONTRACT:54 | 连续点方向固定 true、竞价按非空判方向，涨量柱仍非红色空心。 这里审计价格涨跌展示，不把 buy 字段称为真实主动买卖方向。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G10 | 已补齐：连续竞价一分钟成交量；DESIGN:88、UX-CONTRACT:47 | 连续量按权威累计量差累加到分钟，竞价完成量建立连续量基线，股与界面手数不混。 53项定向短测及双文件SSR通过，非作者再审通过；未做浏览器像素或性能矩阵。见 [实施复核](../implementation-gap-implementation/chart-stream-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G11 | 已补齐：新日清旧分时且保留新日已到采样；UX-CONTRACT:81 | 同批次跨日清旧缓存并保留新日采样；BeforeOpen屏障清旧日分时与竞价，AfterClose-only保留真实收盘图与日K。 53项定向短测及双文件SSR通过，非作者再审通过；未做浏览器像素或性能矩阵。见 [实施复核](../implementation-gap-implementation/chart-stream-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G12 | 已补齐：分时量涨红空心、跌绿实心；UX-CONTRACT:54 | 按前有效价格判涨跌，同竞价槽不以自身作前价；真实SVG量柱涨红空心、跌绿实心，不伪装主动买卖方向。 53项定向短测及双文件SSR通过，非作者再审通过；未做浏览器像素或性能矩阵。见 [实施复核](../implementation-gap-implementation/chart-stream-review.md)；原证据见 [界面](reaudit-ui.md)。 |
 | G13 | 已补齐：逐笔展示最近成交；DESIGN:126、移动QA | 实际最新优先成交带取slice(0,7)，不反转或无界积累。100笔成交短Fixture验证显示100至94，原数组不修改；仍保留三宿主最近100条边界。 原证据见 [界面](reaudit-ui.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
-| G14 | 逐笔时间对应真实成交；DESIGN:126 | 逐笔仍共用当前 `tradeTime`，不取各笔成交时间。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G14 | 已补齐：逐笔时间对应真实成交；DESIGN:126 | 逐笔从所属提交帧tick经effect与Redux送达详情，逐行显示自身时间；缺字段明确提示，不借当前时钟。 53项定向短测及双文件SSR通过，非作者再审通过；未做浏览器像素或性能矩阵。见 [实施复核](../implementation-gap-implementation/chart-stream-review.md)；原证据见 [界面](reaudit-ui.md)。 |
 | G15 | 已补齐：官方年度覆盖替代模拟回退；`docs/simulation-calendar.md:59` | 对存在Official覆盖的交易所/年度，非周末且不在覆盖休市区间的日期为Trading，不叠加模拟假日；其他交易所/年度保留fallback，周末不开放。合成Fixture短测覆盖上述边界，默认空official表不变。原证据见[基础](reaudit-foundations.md)，验证见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G75 | 已补齐：日内时刻恢复与构造器使用同一秒域；`CivilInstant`输入契约 | serde经过CivilInstant::new校验，0与86399合法，86400及u32::MAX拒绝；公开秒域不再可由私有字段派生serde绕过。原问题见 [原文复核](hidden-review/batch-139.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G76 | 已补齐：冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | policy content digest新增独立source_digest分量；只修改出处摘要即改变身份，旧digest与新摘要组合在validate拒绝。默认official空表身份不变；测试使用合成出处，不使用真实行情。原问题见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
@@ -79,14 +79,14 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 |---|---|---|
 | G16 | 普通tick不随多年历史线性复制；`docs/superpowers/plans/2026-09-24-single-world-multithreading.md:60` | 全历史PlanBook复制仍在RootReadContext::capture；普通shadow另深拷贝ClosingEngine版本/重述及PublicLibrary报告/公告。Arc封装不消除原副本。缺所有权优化，不删历史、不强定COW/WAL；未测幅度。见 [当前历史owner](exhaustive-review/luna10.md) 与 [策略](reaudit-engine.md)。 |
 | G17 | Rust指标与Rayon生产加速；ADR-0008 D2 | Rust 指标已有，三宿主仍只调单项函数；Rayon batch 仍仅测试调用。 缺批量生产接线，不把指标功能整体重开；是否值得对现有负载并行须先测量。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
-| G21 | 基线CLI只取setup、不验证其余档字段；`docs/price-volume-simulation-gap-checklist.md:265` | `price_volume_baseline.rs:29` 仍完整反序列化 SaveSlot 后才取 setup。 工具输入投影与公共 SaveSlot 深度验证是不同契约，不应放宽业务读档校验。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
-| G22 | 表单即时/字段级错误；`docs/error-handling.md:114` | 表单错误迁至 `useTradingCommands` 后仍只有全局 notice，缺字段关联。 错误并未静默吞掉；缺的是即时、字段级反馈。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G23 | 进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情进入/返回仍只变状态，没有对应导航焦点恢复。 交易底页焦点管理不能代替详情导航；后续需浏览器短验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | 信息 tab 仍调用 `scrollIntoView`。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G25 | 返回/切股至少44px点击热区；DESIGN:86 | 返回/切股横向点击区域仍小于约定 44px。 可见图标可以小，但热区应满足契约；本轮未做像素测量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G21 | 已补齐：基线CLI只取setup、不验证其余档字段；`docs/price-volume-simulation-gap-checklist.md:265` | CLI仅反序列化setup投影并执行启动配置校验，无关schema/runtime/envelope字段不影响新局；公共SaveSlot深校验不放宽。5项定向Rust短测通过且由非作者独立重跑，完整diff复核通过，未跑长模拟。见 [实施复核](../implementation-gap-implementation/seed-baseline-review.md)；原证据见 [工具](reaudit-tools.md)。 |
+| G22 | 已补齐：表单即时/字段级错误；`docs/error-handling.md:114` | 真实交易hook即时生成价格/数量字段错误，App委托与条件单用aria-invalid/aria-describedby关联；买卖与零股卖出仍按原规则预检。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G23 | 已补齐：进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情挂载后聚焦返回；返回恢复原股票行，失联时聚焦行情区域，preventScroll保持滚动；切股不抢焦点。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G24 | 已补齐：信息标签切换保持滚动；UX-CONTRACT:69 | 真实信息tab handler只更新状态，移除主动scrollIntoView。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G25 | 已补齐：返回/切股至少44px点击热区；DESIGN:86 | 最终CSS返回首列44px，返回及切股热区至少44px，图标可独立缩放。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
 | G26 | 已补齐：手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint命令添加--deny-warnings，手动开发CI沿用该入口；实际两线程oxlint短Fixture对照原warning退出0、新命令warning退出1、合法代码退出0，不把lint加入发布。 原证据见 [工具](reaudit-tools.md)，短测见 [CI与Pages边界](../implementation-gap-implementation/ci-pages.md)。 |
 | G45 | 已补齐：自选详情返回原列表身份；UX导航/Flow ledger | reducer保留原primaryTab；App使用共用MobileDetailLayer按detailCode显示详情，不再仅允许market页。短测覆盖自选→详情→切股→交易底页→返回，并实际SSR共用详情层，返回仍在自选。 原证据见 [导航](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
-| G48 | 中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML固定lang=en且无运行时修正；AG Grid sortable表头未配置locale，实际使用英文排序辅助文本。两处均需对应中文界面，不能用中文列名核销内置提示。见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
+| G48 | 已补齐：中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML语言为zh-CN，真实AG Grid消费已核安装版本key的中文locale与辅助文本。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
 | G49 | 已补齐：持仓成本及浮盈承接半偶到分语义；account spec:23/63 | 持仓展示共用valueHeldPosition，BigInt中间计算正负对称半偶到每股分，浮盈=(现价−舍入成本)×股数，与Rust Account一致；真实SSR验证200股净投入±200100分的成本与浮盈，单位/费用/T+1不变。 原证据见 [账户消费](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
 | G50 | 已补齐：React渲染异常进入可见详情/反馈出口；错误处理规范 | `RenderErrorBoundary` 在真实root包裹Provider/App，React render/layout失败复用脱敏、复制反馈与刷新警告；安全读取message描述符，不执行访问器，非法类型显式诊断并保留cause。12项相关短测通过，非作者完整diff复核通过；未运行浏览器异常捕获验收，不泛称覆盖事件/异步异常。实现见 [React错误出口](../implementation-gap-implementation/react-errors.md)，原证据见 [错误链](exhaustive-review/luna14.md)。 |
 | G51 | Desktop释放失败显式上报；错误处理规范 | `tauri-host.ts:165–175` 清fatalCallback后丢弃stop_session的Promise，dispose调用方无法接IPC rejection。unlisten运行时行为是版本限定补充，结论仅依明确stop_session失败出口。见 [释放](exhaustive-review/sweep14.md)。 |
@@ -94,10 +94,10 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G54 | 已补齐：Money公开解析拒绝完全无数字输入；Money spec/Task4 | Money::from_yuan_str显式拒绝“.”、“+.”、“-.”及带空白形态，保留“.5”“12.”等含数字的既有合法输入。影响限定公开库API，不冒称UI/存档此前已接受。原证据见 [解析](exhaustive-review/luna18.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G55 | 已补齐：公开Strategy构造/工厂统一拒非法参数；策略spec/防御原则 | Momentum构造器拒非有限阈值，params.validate与Factory沿用同一入口；机构原始margin在采样/钳位前校验，零tick日显式InvalidParam。新短测验证非法参数拒绝、margin/零tick不消耗RNG及合法三类实例可建。原证据见 [策略入口](exhaustive-review/sweep20.md) 与 [工厂](exhaustive-review/sweep19.md)，实施见 [策略输入](../implementation-gap-implementation/strategy-input.md)。 |
 | G56 | 已补齐：Pages区分owner根站点和项目路径；ADR-0028 | Pages base仅在仓库名与repository_owner.github.io不区分大小写精确一致时为根路径；异owner同后缀为项目路径。步骤传owner并校验env形状，VM执行真实JS核root/project与非法env，不冒称线上部署验收。 原证据见 [Pages](exhaustive-review/luna12.md)，短测见 [CI与Pages边界](../implementation-gap-implementation/ci-pages.md)。 |
-| G64 | 桌面行情选股有键盘等价入口；UX/设计辅助功能 | MarketGrid仅onRowClicked选择，suppressCellFocus禁用单元格焦点；移动原生按钮在桌面隐藏。静态缺选股入口，不声称所有键盘操作失效或已跑浏览器。见 [桌面Grid](exhaustive-review/sweep41.md)。 |
-| G65 | 主导航/行情分类选中状态程序化公开；UX辅助功能 | 主导航与行情分类只有active CSS，没有向辅助技术提供当前/选中状态；图表/信息tab已有aria-selected。具体角色及属性由实现按组件语义选，不硬指定错误role。见 [状态](exhaustive-review/luna02.md)。 |
+| G64 | 已补齐：桌面行情选股有键盘等价入口；UX/设计辅助功能 | 真实AG Grid开启cell focus，Enter/Space走同一选股入口，保留方向键导航并提供中文说明。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [桌面Grid](exhaustive-review/sweep41.md)。 |
+| G65 | 已补齐：主导航/行情分类选中状态程序化公开；UX辅助功能 | 真实主导航/行情分类公开aria-current；交易按钮公开展开状态与目标，不强加错误tab角色。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [状态](exhaustive-review/luna02.md)。 |
 | G67 | 已补齐：外部baseline持仓必须有行情，估值缺项显式失败；防御/资产契约 | 外部baseline深验所有账户持仓代码有own行情引用；portfolio selector和组件不再缺价默认为0。覆盖玩家/非玩家、零股引用及继承属性，错误保留持仓代码和协议路径；delta原guard不改。 原证据见 [资产](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
-| G68 | 合法非默认局证券使用当前setup交易规则/选项；存档编辑、交易规则一致性 | 读档安装activeSetup，快捷涨跌停仍查DEFAULT_SETUP，下单选项仍取STOCK_LIST，非默认证券缺规则/选项。不同主板/ST类别未必改变现行限价，不能用“同code改category必算错”作证；缺当前配置消费。见 [表单](exhaustive-review/luna02.md) 与 [裁定](exhaustive-review/resolution.md)。 |
+| G68 | 已补齐：合法非默认局证券使用当前setup交易规则/选项；存档编辑、交易规则一致性 | 股票选项、当前证券类别、快捷涨跌停均消费activeSetup；非默认证券无名称时显示代码，不编造名称。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [表单](exhaustive-review/luna02.md) 与 [裁定](exhaustive-review/resolution.md)。 |
 
 ### 2.5 补充逐章核对发现
 
@@ -105,11 +105,11 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 |---|---|---|
 | G28 | 固定集团合并报表进入完整交付；ADR-0016:97、公司计划K3/任务12–13/完成条件 | 日终仍发布Standalone，未接固定集团合并公开链；等额往来申报仍不保证账面上界；跨行业完整合并产物还按原始科目码汇总/联合分类，保险与工商/地产同码异义会触发DuplicateClassification拒绝报告。 合并算法和五产物测试已有；单层等简化不取消普通集团报告承诺，也不要求默认每家公司有子公司。Task12 F6要求调用方从真实账簿派生申报，现配对校验仅确认双方等额，不保证未超账面余额；重复成员对双抵及销售金额上界已修，不能混报或声称默认游戏已发生超额抵销。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G29 | 已补齐：无NPC时跳过初始流通盘分配；initial-positions spec§2.4、计划Task3 | ByKind仅在确有NPC且正流通盘需要分配时要求有效种类权重和，零NPC沿用空集合seed早退；不赠股、不放宽各权重finite/非负校验。Random/正权重及全零ByKind真实新局→tick→日结→恢复均维持玩家零持仓，已有有效种类非法权重反例保留。原证据见[基础](reaudit-foundations.md)，短测见 [零NPC](../implementation-gap-implementation/zero-npc.md)。 |
-| G30 | 图表窗口按钮可见键盘焦点；DESIGN:82、UX-CONTRACT:56 | 图表窗口按钮仍使用未定义 `--msd-focus`。 按钮名称和 SSR 存在不能证明键盘焦点可见。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G31 | 图表只随当前股票历史刷新；UX-CONTRACT:88 | `MarketChartProjection` accessor 每批重建数组，当前股票未变化也更新引用。 Provider 拆分未保证数据引用隔离；未实测性能幅度。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G32 | 昨收中轴与0.00%位置一致；DESIGN:90 | 昨收中轴与图形中点仍使用不同高度坐标系。 当前样式推导中两中点相差时间轴23px的一半，未做浏览器像素验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G33 | 移动端字号随容器宽度响应；DESIGN:64/127 | 后置 px 字号仍覆盖关键报价响应式规则，不是全部页面不响应。 局部响应式能力旧基线已存在，不算本次修复；320/390/430px仍需代表性验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G34 | 交易底页遵守减少动态效果偏好；DESIGN:104、UX-CONTRACT:95 | reduced-motion 规则仍未覆盖详情外的交易底页。 本轮未运行浏览器观察动画。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G30 | 已补齐：图表窗口按钮可见键盘焦点；DESIGN:82、UX-CONTRACT:56 | 详情根定义msd-focus，真实图表工具按钮焦点样式消费该token。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G31 | 已补齐：图表只随当前股票历史刷新；UX-CONTRACT:88 | 当前股票未变时复用冻结readonly分时/竞价/日K数组，无关股票与同槽无变化不换引用。 53项定向短测及双文件SSR通过，非作者再审通过；未做浏览器像素或性能矩阵。见 [实施复核](../implementation-gap-implementation/chart-stream-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G32 | 已补齐：昨收中轴与0.00%位置一致；DESIGN:90 | SVG、昨收中轴与0%标注共享扣除时间轴后的真实绘图区，不再使用不同高度中点。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G33 | 已补齐：移动端字号随容器宽度响应；DESIGN:64/127 | 后置报价、摘要、周期和盘口字号改为clamp与cqw，不再用固定px覆盖容器响应式规则。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
+| G34 | 已补齐：交易底页遵守减少动态效果偏好；DESIGN:104、UX-CONTRACT:95 | 最终App reduced-motion规则覆盖详情外交易底页和遮罩，取消transition/animation。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
 
 
 ### 2.6 公司与计划生产闭环补漏
