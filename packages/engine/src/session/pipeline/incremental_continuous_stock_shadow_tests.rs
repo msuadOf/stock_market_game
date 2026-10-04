@@ -947,12 +947,28 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     let account = AccountId(1);
     let mut makers = Vec::new();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: game.civil_date(),
+        market_minute: game.current_market_minute(),
+        trading_day: u64::from(game.day()),
+    };
     for (index, code) in codes.iter().enumerate() {
         game.state
             .accounts
             .get_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        game.state
+            .retail_experience
+            .get_mut(&account)
+            .unwrap()
+            .initialize_holding_dated(
+                code,
+                Some(Money::from_cents(1_000)),
+                Money::from_cents(1_000),
+                moment,
+            )
             .unwrap();
         let order_id = OrderId(10_000 + u64::try_from(index).unwrap());
         makers.push(add_resting(

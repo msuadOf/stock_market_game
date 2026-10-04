@@ -23,6 +23,50 @@ fn due_retail(seed: u64) -> (GameSession, AccountId) {
     (shadow, account)
 }
 
+pub(super) fn use_buy_imbalance_analysis(session: &mut GameSession, account: AccountId) {
+    let profile = session.state.accounts[&account]
+        .strategy()
+        .unwrap()
+        .profile();
+    let analysis = crate::strategy::AnalysisProfile::new(
+        crate::strategy::AnalysisWeights::new(0, 0, 10_000, 0, 0).unwrap(),
+        None,
+    )
+    .unwrap();
+    *session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .belief_mut() = crate::strategy::BeliefBook::new(
+        account,
+        profile,
+        analysis,
+        &mut crate::session::SplitMix64::new(99),
+    );
+    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
+    for code in codes {
+        if session.state.markets[&code].best_bid().is_none() {
+            assert_eq!(session.phase(), crate::TradingPhase::Continuous);
+            session.seed_order_for_test(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: crate::Side::Buy,
+                    price: crate::LimitPrice::Fixed(Money::from_cents(900)),
+                    qty: 100,
+                },
+                &mut Vec::new(),
+            );
+        }
+        assert_eq!(
+            session.state.markets[&code].best_bid(),
+            Some(Money::from_cents(900))
+        );
+        assert!(session.state.markets[&code].best_ask().is_none());
+    }
+}
+
 #[test]
 fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping() {
     let account = AccountId(1);
@@ -68,6 +112,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
 #[test]
 fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity() {
     let (mut shadow, account) = due_retail(8);
+    use_buy_imbalance_analysis(&mut shadow, account);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
     let mut source =
         run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
@@ -160,7 +205,11 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
             .accounts
             .get_mut(&account)
             .unwrap()
-            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
+            .set_strategy(Box::new(
+                ZiNoiseStrategy::new(if account == AccountId(1) { 0.0 } else { 1.0 }, 100, 0.5)
+                    .unwrap(),
+            ));
+        use_buy_imbalance_analysis(&mut shadow, account);
         let tick = shadow.state.tick;
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     }
@@ -267,6 +316,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
 #[test]
 fn projection_preserves_request_quantity_for_next_tick_validation() {
     let (mut shadow, account) = due_retail(33);
+    use_buy_imbalance_analysis(&mut shadow, account);
     // 当前散户试买目标为资产的 7%；明确给足资金，让策略确实请求完整 900 股。
     shadow
         .state

@@ -9,8 +9,8 @@ use tower::ServiceExt;
 
 fn setup() -> Value {
     json!({
-        "stocks": [{"code":"600101","exchange":"Shanghai","category":"MainBoard","initial_price":1000,"limit_pct":0.10,"tick":1,"total_shares":"10000000","float_shares":0}],
-        "npcs": {"retail_count":0,"inst_count":0,"hot_count":0,"retail_cash_median":10000000},
+        "stocks": [{"code":"600101","exchange":"Shanghai","category":"MainBoard","initial_price":"1000","limit_pct":0.10,"tick":"1","total_shares":"10000000","float_shares":0}],
+        "npcs": {"retail_count":0,"inst_count":0,"hot_count":0,"retail_cash_median":"10000000"},
         "config": engine::GameConfig::proposed_defaults(),
         "strategy_params": {"retail":{"arrival_rate":0.5,"order_size_mean":100,"chase_prob":0.2},"inst":{"margin":0.05,"order_size":200},"hot":{"lookback":3,"trend_threshold":0.02,"order_size":200}},
         "ticks_per_day":10,"auction_ticks":0,"closing_auction_ticks":0,"history_len":5,"t1_enabled":true,"float_allocation":"Random","simulation_policy_id":engine::SIMULATION_POLICY_ID

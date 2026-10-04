@@ -11,6 +11,11 @@ fn fixture(auction: bool) -> GameSession {
     setup.closing_auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: game.civil_date(),
+        market_minute: game.current_market_minute(),
+        trading_day: u64::from(game.day()),
+    };
     // 保持生产 StrategyState 已安装。外部测试候选仍走真实
     // DecisionShadow/AccountValidation 路径，不替换生产 dispatcher。
     for account in [AccountId(1), AccountId(2)] {
@@ -20,6 +25,17 @@ fn fixture(auction: bool) -> GameSession {
                 .get_mut(&account)
                 .unwrap()
                 .grant_position(code.clone(), 1_000, Money::from_cents(1_000_000))
+                .unwrap();
+            game.state
+                .retail_experience
+                .get_mut(&account)
+                .unwrap()
+                .initialize_holding_dated(
+                    code,
+                    Some(Money::from_cents(1_000_000)),
+                    Money::from_cents(1_000),
+                    moment,
+                )
                 .unwrap();
         }
     }
@@ -52,14 +68,18 @@ fn config(permutation: ExecutorPermutation) -> ExecutorPerturbation {
     }
 }
 
-fn run(auction: bool, threads: usize, config: ExecutorPerturbation) -> Vec<ExecutorOrderRecord> {
+fn run(
+    prototype: &GameSession,
+    threads: usize,
+    config: ExecutorPerturbation,
+) -> Vec<ExecutorOrderRecord> {
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
         .unwrap()
         .install(|| {
             with_executor_perturbation(config, || {
-                let mut game = fixture(auction);
+                let mut game = prototype.clone_for_tick_shadow().unwrap();
                 let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
                 let mut player_fills = BTreeMap::<_, u64>::new();
                 // Includes auction completion, PreOpen, continuous, and day-end finalizers.
@@ -106,44 +126,72 @@ fn records_at(
         .collect()
 }
 
-#[test]
-fn executor_perturbation_exercises_public_path_across_budgets() {
-    for auction in [false, true] {
-        let baseline = run(auction, 1, config(ExecutorPermutation::Canonical));
-        for threads in [1, 2, 4] {
-            for permutation in [
-                ExecutorPermutation::Reverse,
-                ExecutorPermutation::RotateLeft,
-            ] {
-                let records = run(auction, threads, config(permutation));
-                let stock_boundary = if auction {
-                    ExecutorBoundary::AuctionStockShards
-                } else {
-                    ExecutorBoundary::ContinuousStockShards
-                };
-                let completion_boundary = if auction {
-                    ExecutorBoundary::AuctionWorkerResults
-                } else {
-                    ExecutorBoundary::ContinuousWorkerResults
-                };
-                for boundary in [
-                    ExecutorBoundary::AccountValidationShards,
-                    stock_boundary,
-                    completion_boundary,
-                    ExecutorBoundary::AggregatedReceiptResults,
-                ] {
-                    let before = records_at(&baseline, boundary);
-                    let after = records_at(&records, boundary);
-                    assert!(!after.is_empty(), "missing actual nonempty {boundary:?}");
-                    assert_ne!(
-                        before[0].identities, after[0].identities,
-                        "inert {boundary:?}"
-                    );
-                    assert!(after[0].item_counts.iter().all(|count| *count > 0));
-                }
-            }
+fn assert_public_path_budget(auction: bool, threads: usize) {
+    let prototype = fixture(auction);
+    let prototype_before = prototype.session_state_hash().unwrap();
+    let baseline = run(&prototype, threads, config(ExecutorPermutation::Canonical));
+    for permutation in [
+        ExecutorPermutation::Reverse,
+        ExecutorPermutation::RotateLeft,
+    ] {
+        let records = run(&prototype, threads, config(permutation));
+        let stock_boundary = if auction {
+            ExecutorBoundary::AuctionStockShards
+        } else {
+            ExecutorBoundary::ContinuousStockShards
+        };
+        let completion_boundary = if auction {
+            ExecutorBoundary::AuctionWorkerResults
+        } else {
+            ExecutorBoundary::ContinuousWorkerResults
+        };
+        for boundary in [
+            ExecutorBoundary::AccountValidationShards,
+            stock_boundary,
+            completion_boundary,
+            ExecutorBoundary::AggregatedReceiptResults,
+        ] {
+            let before = records_at(&baseline, boundary);
+            let after = records_at(&records, boundary);
+            assert!(!after.is_empty(), "missing actual nonempty {boundary:?}");
+            assert_ne!(
+                before[0].identities, after[0].identities,
+                "inert {boundary:?}"
+            );
+            assert!(after[0].item_counts.iter().all(|count| *count > 0));
         }
+        assert_eq!(prototype.session_state_hash().unwrap(), prototype_before);
     }
+}
+
+#[test]
+fn executor_perturbation_exercises_continuous_with_one_thread() {
+    assert_public_path_budget(false, 1);
+}
+
+#[test]
+fn executor_perturbation_exercises_continuous_with_two_threads() {
+    assert_public_path_budget(false, 2);
+}
+
+#[test]
+fn executor_perturbation_exercises_continuous_with_four_threads() {
+    assert_public_path_budget(false, 4);
+}
+
+#[test]
+fn executor_perturbation_exercises_auction_with_one_thread() {
+    assert_public_path_budget(true, 1);
+}
+
+#[test]
+fn executor_perturbation_exercises_auction_with_two_threads() {
+    assert_public_path_budget(true, 2);
+}
+
+#[test]
+fn executor_perturbation_exercises_auction_with_four_threads() {
+    assert_public_path_budget(true, 4);
 }
 
 #[test]
@@ -163,7 +211,9 @@ fn executor_perturbation_allows_stock_output_reordering() {
 
 #[test]
 fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
-    let canonical = run(false, 1, ExecutorPerturbation::default());
+    let prototype = fixture(false);
+    let prototype_before = prototype.session_state_hash().unwrap();
+    let canonical = run(&prototype, 1, ExecutorPerturbation::default());
     for stock_shards in [true, false] {
         let mut perturbation = ExecutorPerturbation::default();
         let boundary = if stock_shards {
@@ -173,7 +223,7 @@ fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
             perturbation.worker_results = ExecutorPermutation::Reverse;
             ExecutorBoundary::ContinuousWorkerResults
         };
-        let records = run(false, 1, perturbation);
+        let records = run(&prototype, 1, perturbation);
         assert_ne!(
             records_at(&records, boundary)[0],
             records_at(&canonical, boundary)[0]
@@ -186,6 +236,7 @@ fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
     assert!(nested.is_err());
     assert!(records.is_empty());
     assert!(with_executor_perturbation(ExecutorPerturbation::default(), || ()).is_ok());
+    assert_eq!(prototype.session_state_hash().unwrap(), prototype_before);
 }
 #[test]
 fn executor_boundaries_serialize_responsibility_labels() {

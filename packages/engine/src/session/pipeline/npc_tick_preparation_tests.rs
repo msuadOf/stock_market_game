@@ -173,7 +173,8 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
 
 #[test]
 fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
-    let (authority, npc) = due_retail(8, 100);
+    let (mut authority, npc) = due_retail(8, 100);
+    super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut authority, npc);
     let mut prospective = authority.clone_for_tick_shadow().unwrap();
 
     let prepared = prepare_npc_decisions(&mut prospective, None).unwrap();
@@ -213,6 +214,7 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
 #[test]
 fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
     let (mut session, npc) = due_retail(8, 2_000_000);
+    super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
     // 7% 的试买目标足以提出 200 万股，由下一 tick 的 AccountValidation 执行单笔数量规则。
     session
         .state

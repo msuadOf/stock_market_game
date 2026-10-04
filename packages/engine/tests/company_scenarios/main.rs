@@ -107,10 +107,6 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
     }
 }
 
-pub(crate) fn session(start_date: &str) -> GameSession {
-    GameSession::new(setup(start_date), SEED).expect("公司经营与交易场景 fixture 必须成功装配")
-}
-
 /// Disclosure-focused scenarios still use the real company, information and
 /// belief pipelines, but do not need five issuers or six market ticks on every
 /// trading day while advancing through a civil reporting window.
@@ -141,8 +137,40 @@ pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
         .expect("focused one-tick trading day must complete");
 }
 
-pub(crate) fn fixture_session() -> GameSession {
-    session(&fixture().start_date)
+fn representative_setup(start_date: &str) -> SessionSetup {
+    let mut representative = setup(start_date);
+    representative.stocks.retain(|stock| stock.code.0 == "600101");
+    representative
+}
+
+pub(crate) fn representative_session(start_date: &str) -> GameSession {
+    GameSession::new(representative_setup(start_date), SEED)
+        .expect("单发行人完整交易阶段 fixture 必须成功装配")
+}
+
+#[test]
+fn representative_fixture_retains_all_npc_kinds_and_trading_phases() {
+    let full = setup("2030-01-07");
+    let representative = representative_setup("2030-01-07");
+    assert_eq!(representative.stocks.len(), 1);
+    assert_eq!(representative.npcs.retail_count, full.npcs.retail_count);
+    assert_eq!(representative.npcs.inst_count, full.npcs.inst_count);
+    assert_eq!(representative.npcs.hot_count, full.npcs.hot_count);
+    assert_eq!(
+        representative.npcs.retail_cash_median,
+        full.npcs.retail_cash_median
+    );
+    assert_eq!(representative.ticks_per_day, full.ticks_per_day);
+    assert_eq!(representative.auction_ticks, full.auction_ticks);
+    assert_eq!(
+        representative.closing_auction_ticks,
+        full.closing_auction_ticks
+    );
+    assert_eq!(representative.t1_enabled, full.t1_enabled);
+    assert_eq!(
+        serde_json::to_value(representative.float_allocation).unwrap(),
+        serde_json::to_value(full.float_allocation).unwrap()
+    );
 }
 
 #[test]

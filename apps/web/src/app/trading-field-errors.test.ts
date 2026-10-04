@@ -4,7 +4,7 @@ import { tradingFieldErrors } from "./trading-field-errors.ts";
 
 test("即时字段错误分别关联价格和股数，符号限价与市价不校验禁用价格", { timeout: 10000 }, () => {
   assert.deepEqual(tradingFieldErrors("limit", "fixed", "1.234", "零股"), {
-    price: "价格必须是最多两位小数的正数", quantity: "数量必须是正整数股",
+    price: "价格输入无效：金额输入必须是至多两位小数的规范元字符串", quantity: "数量必须是正整数股",
   });
   assert.deepEqual(tradingFieldErrors("limit", "highest", "", "50"), {});
   assert.deepEqual(tradingFieldErrors("market", "fixed", "", "100"), {});

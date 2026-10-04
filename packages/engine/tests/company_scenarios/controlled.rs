@@ -184,8 +184,8 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
 #[test]
 fn reading_diagnostics_does_not_change_authoritative_events_or_saves() {
     // Given: same-seed twins; only one reads the real diagnostic API between commands.
-    let mut plain = fixture_session();
-    let mut observed = fixture_session();
+    let mut plain = representative_session(&fixture().start_date);
+    let mut observed = representative_session(&fixture().start_date);
     let mut plain_events = Vec::new();
     let mut observed_events = Vec::new();
 

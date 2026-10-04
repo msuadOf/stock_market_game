@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_MAX_MS, runBoundedCommand } from "./run-with-deadline.mjs";
 import { assertSupportedNodeVersion } from "./run-web-tests.mjs";
+import { prepareWorkspacePaths } from "./workspace-paths.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const MAX_SCRIPT_TEST_PROCESSES = 4;
@@ -87,16 +88,22 @@ export async function runScriptTestBatch({
   return result;
 }
 
-export async function runScriptTests({ cwd = DEFAULT_REPO_ROOT, run = runBoundedCommand } = {}) {
+export async function prepareScriptTestEnvironment({ cwd = DEFAULT_REPO_ROOT, env = process.env } = {}) {
+  const { processTmpDir } = await prepareWorkspacePaths({ sourceRoot: cwd, scope: "script-tests" });
+  return { ...env, TMPDIR: processTmpDir, TMP: processTmpDir, TEMP: processTmpDir };
+}
+
+export async function runScriptTests({ cwd = DEFAULT_REPO_ROOT, env = process.env, run = runBoundedCommand } = {}) {
   return run({ command: process.execPath, args: [fileURLToPath(import.meta.url), "--internal-worker"],
-    cwd, env: { ...process.env, [SCRIPT_TEST_INTERNAL_WORKER_ENV]: "1" },
+    cwd, env: { ...env, [SCRIPT_TEST_INTERNAL_WORKER_ENV]: "1" },
     timeoutMs: LONG_VALIDATION_MAX_MS, cleanupReserveMs: COMMAND_CLEANUP_RESERVE_MAX_MS });
 }
 
 export async function main(argv, env = process.env) {
-  if (argv.length === 0) return runScriptTests();
+  if (argv.length === 0) return runScriptTests({ env });
   if (argv.length === 1 && argv[0] === "--internal-worker" && env[SCRIPT_TEST_INTERNAL_WORKER_ENV] === "1") {
-    return runScriptTestBatch({ log: console.log });
+    const workspaceEnv = await prepareScriptTestEnvironment({ env });
+    return runScriptTestBatch({ env: workspaceEnv, log: console.log });
   }
   throw new Error("scripts internal worker 必须由进程外五分钟 supervisor 启动；用法：run-script-tests.mjs");
 }

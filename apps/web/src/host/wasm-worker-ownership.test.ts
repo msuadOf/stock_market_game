@@ -100,7 +100,8 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 1 });
     assert.deepEqual(f.posted, [{ type: "saved", requestId: 1, generation: 1, slot: f.saved }]);
-    f.send({ type: "start" });
+    f.send({ type: "start", generation: 1, requestId: 20 });
+    assert.deepEqual(f.posted.at(-1), { type: "started", generation: 1, requestId: 20 });
     assert.equal(f.timers.size, 1);
     f.posted.length = 0;
     f.handle(9);
@@ -115,17 +116,18 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 3 });
     assert.deepEqual(f.posted, [{ type: "operationError", requestId: 3, generation: 1, message: "Worker 请求属于已过期会话" }]);
-    f.send({ type: "stop" });
+    f.send({ type: "stop", generation: 2, requestId: 21 });
+    assert.deepEqual(f.posted.at(-1), { type: "stopped", generation: 2, requestId: 21 });
     f.send({ type: "stepOnce", generation: 2, requestId: 4 });
     assert.ok(f.calls.includes("step:9"));
     assert.deepEqual(f.posted.at(-1), { type: "stepped", generation: 2, requestId: 4, tick: 1 });
     f.posted.length = 0;
     f.send({ type: "setPausePreferences", generation: 2, requestId: 5, preferences: { pause_after_close: true, pause_before_open: false } });
-    f.send({ type: "start" });
+    f.send({ type: "start", generation: 2, requestId: 22 });
     f.send({ type: "endCivilDay", generation: 2, requestId: 6 });
-    assert.deepEqual(f.posted.map((message) => message.type), ["pausePreferencesSet", "protocol", "barrierPaused", "civilDayEnded"]);
+    assert.deepEqual(f.posted.map((message) => message.type), ["pausePreferencesSet", "started", "protocol", "barrierPaused", "civilDayEnded"]);
     assert.equal(f.timers.size, 0);
-    f.send({ type: "start" });
+    f.send({ type: "start", generation: 2, requestId: 23 });
     f.send({ type: "drop" });
     assert.equal(f.timers.size, 0);
     assert.equal(f.calls.at(-1), "drop:9");
@@ -135,7 +137,8 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
 test("Worker restore snapshot 失败仍以 microtask 恢复原会话，prepare 失败保留新 authority", async () => {
   await withWorker(async (f) => {
     f.send({ type: "create", setup: {}, seed: 1n });
-    f.send({ type: "start" });
+    f.send({ type: "start", generation: 1, requestId: 20 });
+    assert.deepEqual(f.posted.at(-1), { type: "started", generation: 1, requestId: 20 });
     f.handle(9);
     f.fail("snapshot");
     f.posted.length = 0;

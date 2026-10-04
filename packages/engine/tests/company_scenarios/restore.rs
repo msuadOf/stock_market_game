@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn restored_and_uninterrupted_sessions_keep_canonical_events_and_saves_identical() {
     // Given: two real twins split by a mid-scenario save after a trading day and civil settlement.
-    let mut uninterrupted = fixture_session();
+    let mut uninterrupted = representative_session(&fixture().start_date);
     run_trading_day(&mut uninterrupted);
     uninterrupted
         .end_civil_day()

@@ -60,8 +60,8 @@ describe("Tauri host startup contract", () => {
 
   it("pauses a host that finishes initialization after the page became hidden", () => {
     const appSource = readFileSync(new URL("../app/useSessionHostLifecycle.ts", import.meta.url), "utf8");
-    const startIndex = appSource.indexOf("host.start(");
-    const hiddenStopIndex = appSource.indexOf("if (isDocumentHidden()) host.stop();", startIndex);
+    const startIndex = appSource.indexOf("await host.start(");
+    const hiddenStopIndex = appSource.indexOf("if (isDocumentHidden()) await host.stop();", startIndex);
 
     assert.notEqual(startIndex, -1);
     assert.notEqual(hiddenStopIndex, -1);
