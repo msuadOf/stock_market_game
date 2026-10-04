@@ -15,6 +15,31 @@ fn cp(id: &str) -> CounterpartyId {
     CounterpartyId(id.to_string())
 }
 
+#[test]
+fn audit_boundary_opening_inventory_reconciles_accounts_without_seeds() {
+    for account in [acct::RAW, acct::FINISHED, "5001"] {
+        let mut config = base_config();
+        config.opening_lines = vec![
+            cent_line(account, PostingSide::Debit, 100),
+            cent_line("4001", PostingSide::Credit, 100),
+        ];
+        let error = engine::company::industrial::IndustrialBooks::new(config).unwrap_err();
+        match error {
+            IndustrialError::OpeningSeedMismatch {
+                account: actual,
+                ledger,
+                seeded,
+            } => {
+                assert_eq!(actual.0, account);
+                assert_eq!(ledger.cents(), 100);
+                assert_eq!(seeded.cents(), 0);
+            }
+            other => panic!("{other}"),
+        }
+    }
+    engine::company::industrial::IndustrialBooks::new(base_config()).unwrap();
+}
+
 fn goods() -> InventoryItemCode {
     InventoryItemCode("GOODS".to_string())
 }

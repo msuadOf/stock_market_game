@@ -110,6 +110,16 @@ impl IndustrialOpeningReconciliation<'_> {
                 .or_insert(AccountingAmount::ZERO);
             *total = total.add(seed.cost)?;
         }
+        for code in [
+            crate::accounting::reports::industrial::codes::RAW_MATERIAL,
+            crate::accounting::reports::industrial::codes::FINISHED_GOODS,
+            crate::accounting::reports::industrial::codes::WIP,
+        ] {
+            let account = LedgerAccountId(code.to_owned());
+            if self.ledger.chart().get(&account).is_some() {
+                seeded.entry(account).or_insert(AccountingAmount::ZERO);
+            }
+        }
         for (account, seeded_total) in &seeded {
             let ledger_balance = self.ledger.account_net_debit(account)?;
             if &ledger_balance != seeded_total {
