@@ -254,6 +254,10 @@ pub enum SessionCommand {
         code: StockCode,
         reply: oneshot::Sender<Result<GenerationResponse<HistoricalStockData>, SessionError>>,
     },
+    InitialAllocation {
+        generation: u64,
+        reply: oneshot::Sender<Result<GenerationResponse<engine::session::InitialAllocation>, SessionError>>,
+    },
     QueryBaseline {
         generation: u64,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
@@ -395,6 +399,14 @@ impl SessionHandles {
     ) -> Result<GenerationResponse<HistoricalStockData>, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx.send(SessionCommand::StockHistory { generation, code, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn initial_allocation(&self, generation: u64) -> Result<GenerationResponse<engine::session::InitialAllocation>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::InitialAllocation { generation, reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)?
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
@@ -999,6 +1011,10 @@ impl<R: Runtime> SessionActor<R> {
                 };
                 let _ = reply.send(result);
             }
+            SessionCommand::InitialAllocation { generation, reply } => {
+                let result = self.generation_response(generation, self.game.initial_allocation());
+                let _ = reply.send(result);
+            }
             SessionCommand::QueryBaseline { generation, reply } => {
                 let result = if generation != self.generation {
                     Err(SessionError::InvalidSave(format!(
@@ -1369,6 +1385,23 @@ mod tests {
         let result = handles.npc_decision_diagnostics(0, AccountId(1)).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn initial_allocation_queries_actual_npc_holdings_before_start() {
+        let app = tauri::test::mock_app();
+        let manager = SessionManager::default();
+        let session_id = manager.new_session(diagnostic_setup(), 7, app.handle().clone()).await.unwrap();
+        let handles = manager.lookup(&session_id).await.unwrap();
+        assert!(handles.initial_allocation(0).await.is_err());
+        let allocation = handles.initial_allocation(1).await.unwrap();
+        assert_eq!(allocation.generation, "1");
+        assert_eq!(allocation.value.stocks[0].categories[1].shares, 100_000);
+        assert_eq!(allocation.value.stocks[0].categories[1].zero_holders, 0);
+        assert_eq!(allocation.value.stocks[0].unallocated_shares, 0);
+        assert_eq!(handles.initial_allocation(1).await.unwrap().value, allocation.value);
+        handles.shutdown().await.unwrap();
+        manager.remove(&session_id).await.unwrap();
     }
 
     #[tokio::test]

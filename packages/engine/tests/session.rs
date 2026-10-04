@@ -91,6 +91,59 @@ fn sample_setup() -> SessionSetup {
     }
 }
 
+#[test]
+fn initial_allocation_reads_real_positions_without_rng_or_cash_changes() {
+    let mut setup = sample_setup();
+    setup.stocks[0].float_shares = 3;
+    setup.npcs.retail_count = 5;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        0.45,
+        0.53,
+        0.02,
+        engine::WithinKindDistribution::EqualPercentage,
+    );
+    let game = engine::GameSession::new(setup, 42).unwrap();
+    let before = game.business_state_hash().unwrap();
+    let allocation = game.initial_allocation().unwrap();
+    let stock = &allocation.stocks[0];
+    assert_eq!(stock.float_shares, 3);
+    assert_eq!(stock.unallocated_shares, 0);
+    assert_eq!(stock.categories[0].shares, 3);
+    assert_eq!(stock.categories[0].account_count, 5);
+    assert_eq!(stock.categories[0].zero_holders, 2);
+    assert_eq!(before, game.business_state_hash().unwrap());
+}
+
+#[test]
+fn initial_allocation_exposes_unassigned_float_and_rejects_running_game() {
+    let mut setup = sample_setup();
+    setup.stocks[0].float_shares = 7;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut game = engine::GameSession::new(setup, 42).unwrap();
+    assert_eq!(
+        game.initial_allocation().unwrap().stocks[0].unallocated_shares,
+        7
+    );
+    game.step().unwrap();
+    assert!(game.initial_allocation().is_err());
+}
+
+#[test]
+fn initial_allocation_rejects_restored_tick_zero_even_on_start_date() {
+    let game = engine::GameSession::new(sample_setup(), 42).unwrap();
+    assert!(game.initial_allocation().is_ok());
+    let slot = game.save().unwrap();
+    assert_eq!(slot.snapshot.tick, 0);
+    let restored = engine::GameSession::restore(&slot).unwrap();
+    assert_eq!(restored.tick(), 0);
+    assert_eq!(restored.civil_date(), game.civil_date());
+    assert!(restored.initial_allocation().is_err());
+}
+
 /// 合法订单测试输入的唯一 owner；坏档测试不经过此同步路径。
 struct TestOrderSaveFixture {
     save: engine::SaveSlot,

@@ -68,3 +68,24 @@
     grid-template-columns: 1fr;
   }
 }
+.float-allocation-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.float-allocation-summary {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.float-allocation-summary th,
+table.float-allocation-summary td {
+  padding: 4px 6px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.float-allocation-summary th:first-child {
+  text-align: left;
+}

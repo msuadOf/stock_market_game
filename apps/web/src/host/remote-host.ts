@@ -16,6 +16,8 @@ import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "./npc-
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
+import { parseInitialAllocation } from "./initial-allocation.ts";
+import { exact, record } from "./protocol/guards.ts";
 
 type RemoteHostOptions = {
   readonly baseUrl?: string;
@@ -378,6 +380,17 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (Object.keys(response).length !== 2 || typeof response.generation !== "string" || !Object.hasOwn(response, "data")) throw new Error("远程股票历史响应字段无效");
       publisher.assertQueryCursor(cursor, response.generation, "远程股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.data, code);
+    },
+    async initialAllocation() {
+      if (disposed) throw new Error("远程会话已经销毁，不能查询初始分配");
+      if (publisher.baselineForRead() === null) await connectRestoredBaseline();
+      const cursor = publisher.captureQueryCursor("远程初始分配需要当前权威基线");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation });
+      const response = record(await requestJson(`${baseUrl}/api/initial-allocation?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程初始分配响应");
+      exact(response, ["generation", "data"], "远程初始分配响应");
+      if (disposed) throw new Error("远程初始分配响应属于已销毁会话");
+      publisher.assertQueryCursor(cursor, response.generation, "远程初始分配响应属于已过期会话 generation");
+      return parseInitialAllocation(response.data, setup.stocks.map((stock) => stock.code));
     },
     async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
       const normalized = normalizeIndicatorInput(input);

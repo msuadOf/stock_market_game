@@ -13,6 +13,8 @@ import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "./npc-
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
+import { parseInitialAllocation } from "./initial-allocation.ts";
+import { exact } from "./protocol/guards.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -291,6 +293,15 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code }), "Tauri query_stock_history");
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri query_stock_history.generation"), "Tauri 股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.value, code);
+    },
+    async initialAllocation() {
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询初始分配");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("initial_allocation", { sessionId: requireSession(), generation: cursor.generation }), "Tauri 初始分配响应");
+      exact(response, ["generation", "value"], "Tauri 初始分配响应");
+      if (disposed) throw new Error("Tauri 初始分配响应属于已销毁会话");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri 初始分配响应.generation"), "Tauri 初始分配响应属于已过期会话 generation");
+      return parseInitialAllocation(response.value, setup.stocks.map((stock) => stock.code));
     },
     async refreshBaseline() {
       const queryGeneration = timeline.captureGeneration();

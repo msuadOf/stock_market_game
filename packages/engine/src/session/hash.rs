@@ -31,6 +31,7 @@ impl GameSession {
         let Self {
             state,
             poison: _,
+            fresh_initial_allocation: _,
             #[cfg(test)]
                 injected_failure: _,
             #[cfg(test)]

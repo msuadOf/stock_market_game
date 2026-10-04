@@ -473,6 +473,14 @@ pub fn query_stock_history(handle: u32, code: String) -> Result<JsValue, JsValue
 }
 
 #[wasm_bindgen]
+pub fn initial_allocation(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let allocation = session.initial_allocation().map_err(session_error_to_js)?;
+        public_dto_to_js(&allocation)
+    })
+}
+
+#[wasm_bindgen]
 pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValue, JsValue> {
     let candles: Vec<engine::indicators::OhlcBar> = serde_wasm_bindgen::from_value(candles)?;
     let indicators = engine::indicators::calculate_indicators(&prices, &candles)

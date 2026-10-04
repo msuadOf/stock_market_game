@@ -29,7 +29,7 @@ function fixture() {
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
     setSessionSetup: (value) => { assert.equal(typeof value, "object"); setup = typeof value === "function" ? value(DEFAULT_SETUP) : value; calls.push("session-setup"); },
-    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); }, setFloatAllocationDraft: () => { calls.push("allocation-draft"); },
+    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); }, setFloatAllocationDraft: () => { calls.push("allocation-draft"); }, setInitialAllocation: () => {},
     setStartDateError: (value) => { calls.push(`date-error:${String(value)}`); }, setSpeedMetricsPollingGeneration: (value) => { calls.push(`poll:${value}`); },
     setSpeedMetrics: (value) => { calls.push(`metrics:${value}`); }, setSpeedMetricsError: (value) => { calls.push(`metrics-error:${value}`); },
   };
@@ -63,6 +63,16 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
     assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "allocation-draft", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
+  }
+});
+test("日终读档成功清除旧局初始分配，不拿读档后的持仓重算开局", async () => {
+  for (const kind of ["load", "loadFile"] as const) {
+    const f = fixture();
+    const clears: unknown[] = [];
+    f.ports.setInitialAllocation = (value) => { clears.push(value); };
+    f.host.initialAllocation = async () => { throw new Error("读档不查询开局分配"); };
+    await createSaveCommands(f.ports)[kind]();
+    assert.deepEqual(clears, [null]);
   }
 });
 test("load 失败先同步权威基线；同步失败升级 fatal；旧宿主响应不能回写 setup", async () => {

@@ -11,7 +11,7 @@ export function commandHostFixture(overrides: Partial<EngineHost> = {}): EngineH
     start: unsupported, stop: unsupported, dispose: unsupported, setSpeed: unsupported, setFrameRate: unsupported,
     setPausePreferences: async () => unsupported(), readSpeedMetrics: async () => unsupported(), submitIntent: async () => unsupported(),
     snapshot: () => baseState().snapshot, tick: unsupported, day: unsupported, save: async () => unsupported(),
-    refreshBaseline: async () => unsupported(), playerWorkingOrders: async () => unsupported(), queryStockHistory: async () => unsupported(), calculateIndicators: async () => unsupported(),
+    refreshBaseline: async () => unsupported(), playerWorkingOrders: async () => unsupported(), queryStockHistory: async () => unsupported(), initialAllocation: async () => unsupported(), calculateIndicators: async () => unsupported(),
     load: async () => unsupported(), ...overrides,
   };
 }

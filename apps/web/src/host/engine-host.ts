@@ -12,6 +12,7 @@ import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { PlayerWorkingOrder } from "./player-working-orders.ts";
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
+import type { InitialAllocation } from "./initial-allocation.ts";
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -64,6 +65,7 @@ export interface EngineHost {
   refreshBaseline(): Promise<void>;
   playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]>;
   queryStockHistory(code: StockCode): Promise<HistoricalStockData>;
+  initialAllocation(): Promise<InitialAllocation>;
   calculateIndicators(input: IndicatorInput): Promise<IndicatorResults>;
   load(slot: unknown): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;

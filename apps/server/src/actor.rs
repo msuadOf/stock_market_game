@@ -424,6 +424,10 @@ pub enum SessionCommand {
         code: StockCode,
         reply: oneshot::Sender<Result<(u64, engine::session::HistoricalStockData), SendCommandError>>,
     },
+    InitialAllocation {
+        generation: u64,
+        reply: oneshot::Sender<Result<(u64, engine::session::InitialAllocation), SendCommandError>>,
+    },
     PublicBaseline {
         reply: oneshot::Sender<PublicBaseline>,
     },
@@ -687,6 +691,13 @@ impl SessionHandles {
     ) -> Result<(u64, engine::session::HistoricalStockData), SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx.send(SessionCommand::StockHistory { generation, code, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
+    pub async fn initial_allocation(&self, generation: u64) -> Result<(u64, engine::session::InitialAllocation), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::InitialAllocation { generation, reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
@@ -1340,6 +1351,16 @@ impl SessionActor {
                     Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
                 } else {
                     self.game.query_stock_history(AccountId(0), &code)
+                        .map(|data| (self.timeline_generation, data))
+                        .map_err(|error| SendCommandError::Rejected(error.to_string()))
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::InitialAllocation { generation, reply } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                } else {
+                    self.game.initial_allocation()
                         .map(|data| (self.timeline_generation, data))
                         .map_err(|error| SendCommandError::Rejected(error.to_string()))
                 };

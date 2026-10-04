@@ -69,6 +69,7 @@ fn app_router_with_state(state: AppState) -> Router {
             get(routes::api_player_working_orders),
         )
         .route("/api/stock-history", get(routes::api_stock_history))
+        .route("/api/initial-allocation", get(routes::api_initial_allocation))
         .route("/api/host-capabilities", get(routes::api_host_capabilities))
         .route("/api/indicators", post(routes::api_calculate_indicators))
         .route(

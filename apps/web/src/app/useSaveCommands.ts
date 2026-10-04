@@ -13,6 +13,7 @@ import { validateDayEndArchive } from "../save/day-end-candidate.ts";
 import type { SpeedMetricsRequestGate } from "../host/speed.ts";
 import { store, clearAutoOrders } from "../store/store.ts";
 import { parseStartDate, setupWithStartDate } from "../components/start-date.ts";
+import type { InitialAllocation } from "../host/initial-allocation.ts";
 
 export interface SaveCommandPorts {
   hostRef: MutableRefObject<EngineHost | null>;
@@ -44,6 +45,7 @@ export interface SaveCommandPorts {
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
   setFloatAllocationDraft(allocation: FloatAllocation): void;
+  setInitialAllocation(allocation: InitialAllocation | null): void;
   setStartDateError(error: string | null): void;
   setSpeedMetricsPollingGeneration(generation: number): void;
   setSpeedMetrics(metrics: SpeedMetrics | null): void;
@@ -58,7 +60,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -131,6 +133,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setStartDateDraft(slot.setup.start_date);
       setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       setFloatAllocationDraft(slot.setup.float_allocation);
+      setInitialAllocation(null);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -198,6 +201,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setStartDateDraft(slot.setup.start_date);
       setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       setFloatAllocationDraft(slot.setup.float_allocation);
+      setInitialAllocation(null);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());

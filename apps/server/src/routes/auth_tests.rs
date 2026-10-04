@@ -55,6 +55,30 @@ async fn request(
 }
 
 #[tokio::test]
+async fn initial_allocation_route_requires_owner_and_current_generation() {
+    let app = crate::app_router();
+    let mut market = setup();
+    market["stocks"][0]["float_shares"] = json!(7);
+    let (status, created) = request(app.clone(), "POST", "/api/new", Some(json!({"setup":market,"seed":"17"})), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = created["session_id"].as_str().unwrap();
+    let token = created["session_token"].as_str().unwrap();
+    let uri = format!("/api/initial-allocation?session_id={session_id}&generation=1");
+    assert_eq!(request(app.clone(), "GET", &uri, None, None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(request(app.clone(), "GET", &uri, None, Some("other-player")).await.0, StatusCode::FORBIDDEN);
+    let (status, response) = request(app.clone(), "GET", &uri, None, Some(token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["generation"], "1");
+    assert_eq!(response["data"]["stocks"][0]["float_shares"], 7);
+    assert_eq!(response["data"]["stocks"][0]["unallocated_shares"], 7);
+    assert_eq!(response["data"]["stocks"][0]["categories"].as_array().unwrap().len(), 3);
+    let stale = format!("/api/initial-allocation?session_id={session_id}&generation=2");
+    assert_eq!(request(app.clone(), "GET", &stale, None, Some(token)).await.0, StatusCode::CONFLICT);
+    assert_eq!(request(app.clone(), "GET", &format!("{uri}&account=0"), None, Some(token)).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(request(app, "DELETE", &format!("/api/session?session_id={session_id}"), None, Some(token)).await.0, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn session_private_http_routes_require_the_matching_bearer_token() {
     let app = crate::app_router();
     let created = app

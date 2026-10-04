@@ -19,6 +19,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     stop: async () => { calls.push("stop"); }, dispose: async () => { calls.push("dispose"); },
     setSpeed: async () => { calls.push("speed"); }, setPausePreferences: async () => { calls.push("preferences"); },
     load: async () => { calls.push("load"); }, submitIntent: async () => {},
+    initialAllocation: async () => ({ stocks: [] }),
   });
   const source = new InitialSaveSource<StrictSaveEnvelope>();
   const ports: SessionHostLifecyclePorts = {
@@ -33,7 +34,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
     isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; } }),
-    setActiveSetup: () => { calls.push("setup"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {}, setFloatAllocationDraft: () => {},
+    setActiveSetup: () => { calls.push("setup"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {}, setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
     setError: (value) => { calls.push(String(value)); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
   };
@@ -45,6 +46,36 @@ test("SessionHostLifecycle 先校验环境和读取，再创建/注册/启动；
   assert.deepEqual(f.calls, ["environment", "read", "create", "setup", "register", "connect", "speed", "preferences", "start", "stop", "running:true", "ready"]);
   assert.equal(f.ports.hostRef.current, f.host);
   let reads = 0; await f.source.read(async () => { reads++; return null; }); assert.equal(reads, 0);
+});
+test("新局在同一宿主开跑前取得真实分配，读档不查询初始分配", { timeout: 10000 }, async () => {
+  const f = fixture({ setInitialAllocation: (value) => { f.calls.push(value === null ? "clear-allocation" : "show-allocation"); } });
+  f.host.initialAllocation = async () => { f.calls.push("query-allocation"); return { stocks: [] }; };
+  await f.runtime.start();
+  assert.ok(f.calls.indexOf("create") < f.calls.indexOf("query-allocation"));
+  assert.ok(f.calls.indexOf("query-allocation") < f.calls.indexOf("show-allocation"));
+  assert.ok(f.calls.indexOf("show-allocation") < f.calls.indexOf("start"));
+  await f.runtime.dispose();
+  const restored = fixture();
+  restored.source.select(commandDayEndArchiveFixture());
+  restored.host.initialAllocation = async () => { throw new Error("读档不能假称初始分配"); };
+  await restored.runtime.start();
+  assert.ok(restored.calls.includes("load"));
+  assert.ok(restored.calls.includes("ready"));
+  await restored.runtime.dispose();
+});
+test("取消后的初始分配晚响应不写 UI、不启动旧宿主", { timeout: 10000 }, async () => {
+  let queried!: () => void;
+  let resolve!: (value: { stocks: [] }) => void;
+  const entered = new Promise<void>((done) => { queried = done; });
+  const f = fixture({ setInitialAllocation: (value) => { if (value !== null) f.calls.push("show-allocation"); } });
+  f.host.initialAllocation = async () => { queried(); return new Promise((done) => { resolve = done; }); };
+  const starting = f.runtime.start();
+  await entered;
+  await f.runtime.dispose();
+  resolve({ stocks: [] });
+  await starting;
+  assert.equal(f.calls.includes("show-allocation"), false);
+  assert.equal(f.calls.includes("start"), false);
 });
 test("宿主创建期间进入后台，就绪必须等待暂停确认后再发布 ready", { timeout: 10000 }, async () => {
   let hidden = false;

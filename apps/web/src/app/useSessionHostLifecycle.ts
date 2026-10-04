@@ -16,6 +16,7 @@ import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import { validateDayEndArchive } from "../save/day-end-candidate.ts";
 import type { InitialSaveSource, SessionReplacementGate } from "../save/session-replacement.ts";
 import type { DayEndPersistence } from "../save/day-end-persistence.ts";
+import type { InitialAllocation } from "../host/initial-allocation.ts";
 
 export interface SessionHostLifecyclePorts {
   hostRef: MutableRefObject<EngineHost | null>;
@@ -46,6 +47,7 @@ export interface SessionHostLifecyclePorts {
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
   setFloatAllocationDraft(allocation: SessionSetup["float_allocation"]): void;
+  setInitialAllocation(allocation: InitialAllocation | null): void;
   setDeliveryModes(modes: readonly DeliveryMode[]): void;
   setDeliveryModeState(mode: DeliveryMode | null): void;
   setNotice(notice: string): void;
@@ -61,7 +63,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, startupTarget, sessionSetup, speed, pauseAfterClose,
     pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
     isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
     createSeed = createNewSessionSeed,
@@ -98,6 +100,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   const playerOrderRefreshGate = playerOrderRefreshGateRef.current;
   const start = async () => {
     try {
+      setInitialAllocation(null);
       if (startupTarget.kind === "wasm") checkWasmEnvironment();
       const initialSlot = await initialSaveSourceRef.current.read(async () => {
         if (TRADING_E2E_MODE) return null;
@@ -116,6 +119,11 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
       if (initialSlot !== null) await host.load(initialSlot);
       if (cancelled) return;
+      if (initialSlot === null) {
+        const allocation = await host.initialAllocation();
+        if (cancelled) return;
+        setInitialAllocation(allocation);
+      }
       setActiveSetup(setup);
       setStartDateDraft(setup.start_date);
       setPriceCageEnabledDraft(setup.config.price_cage_enabled);

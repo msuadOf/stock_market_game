@@ -22,6 +22,7 @@ mod execution;
 mod failure;
 mod hash;
 mod history_reads;
+mod initial_allocation;
 mod institutional_behavior;
 mod minimal_snapshot;
 mod observation_clock;
@@ -37,6 +38,9 @@ mod views;
 pub use failure::StepFatal;
 pub use hash::StateHash;
 pub use history_reads::HistoricalStockData;
+pub use initial_allocation::{
+    InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
+};
 #[cfg(test)]
 mod continuous_cancellation_tests;
 #[cfg(test)]
@@ -1226,6 +1230,7 @@ impl SessionSetup {
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
     poison: Option<StepFatal>,
+    fresh_initial_allocation: bool,
     #[cfg(test)]
     injected_failure: Option<StepFatal>,
     #[cfg(test)]
@@ -1430,6 +1435,7 @@ impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
             poison: None,
+            fresh_initial_allocation: self.fresh_initial_allocation,
             #[cfg(test)]
             injected_failure: None,
             #[cfg(test)]
@@ -1519,6 +1525,7 @@ impl GameSession {
         disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
             poison: None,
+            fresh_initial_allocation: true,
             #[cfg(test)]
             injected_failure: None,
             #[cfg(test)]
@@ -2866,6 +2873,7 @@ impl GameSession {
             .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
         validate_save_slot(save)?;
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
+        sess.fresh_initial_allocation = false;
 
         // 清空初始持仓分配 → 用快照精确覆盖
         for acc in sess.state.accounts.values_mut() {

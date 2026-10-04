@@ -16,6 +16,7 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
   readonly query_stock_history?: (handle: number, code: string) => unknown;
+  readonly initial_allocation?: (handle: number) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
@@ -297,6 +298,14 @@ ctx.addEventListener("message", (event) => {
           const queryHistory = (wasm as WasmTransportExtensions).query_stock_history;
           if (queryHistory === undefined) throw new Error("当前 WASM bindings 不支持股票历史查询，请重建 bindings");
           ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, message.code) });
+          return;
+        }
+        case "initialAllocation": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const queryAllocation = (wasm as WasmTransportExtensions).initial_allocation;
+          if (queryAllocation === undefined) throw new Error("当前 WASM bindings 不支持初始分配查询，请重建 bindings");
+          ctx.postMessage({ type: "initialAllocation", requestId: message.requestId, generation: requestedGeneration, data: queryAllocation(session) });
           return;
         }
         case "npcDecisionTrace": {

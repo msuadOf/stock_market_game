@@ -143,6 +143,16 @@ async fn query_stock_history(
     handles.query_stock_history(parse_generation(generation)?, code).await.map_err(map_send_error)
 }
 
+#[tauri::command]
+async fn initial_allocation(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::GenerationResponse<engine::session::InitialAllocation>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.initial_allocation(parse_generation(generation)?).await.map_err(map_send_error)
+}
+
 /// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。
 #[tauri::command]
 async fn runtime_snapshot(
@@ -409,6 +419,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             calculate_indicators,
             player_working_orders,
             query_stock_history,
+            initial_allocation,
             runtime_snapshot,
             civil_date,
             public_reports,
@@ -440,6 +451,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             calculate_indicators,
             player_working_orders,
             query_stock_history,
+            initial_allocation,
             runtime_snapshot,
             civil_date,
             public_reports,
