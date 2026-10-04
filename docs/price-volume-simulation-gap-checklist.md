@@ -266,7 +266,7 @@ NPC 报价还是 UI 预填值的问题。
 `SessionSetup` 创建全新会话，不会恢复或改写原存档：
 
 ```bash
-cargo run -p engine --release --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5
+cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5
 ```
 
 标准输出为 JSON，包含每个 seed、每只股票的成交活跃度、日内节奏、收益分布与尾部、量价相关、回撤、
