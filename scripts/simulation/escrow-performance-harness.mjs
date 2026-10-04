@@ -19,6 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
+import { terminateTree } from "../run-with-deadline.mjs";
 
 const CONFIG_SCHEMA = "escrow-perf-config-v2";
 const SAMPLE_SCHEMA = "escrow-perf-sample-v2";
@@ -337,8 +338,12 @@ class ProcessSampleRun {
   #startedAt;
   #endedAt;
   #spawnError;
+  #spawn;
+  #terminate;
 
-  constructor(endpoint, { rssSampleIntervalMs, sampleTree = linuxProcessTreeSample }) {
+  constructor(endpoint, { rssSampleIntervalMs, sampleTree = linuxProcessTreeSample, spawn: spawnProcess = spawn, terminate = terminateTree }) {
+    this.#terminate = terminate;
+    this.#spawn = spawnProcess;
     this.#sampleTreeProbe = sampleTree;
     this.#endpoint = endpoint;
     this.#rssSampleIntervalMs = rssSampleIntervalMs;
@@ -382,22 +387,31 @@ class ProcessSampleRun {
 
   async start() {
     this.#startedAt = process.hrtime.bigint();
-    this.#child = spawn(this.#endpoint.command[0], this.#endpoint.command.slice(1), {
+    this.#child = this.#spawn(this.#endpoint.command[0], this.#endpoint.command.slice(1), {
       cwd: this.#endpoint.cwd,
       env: process.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const sampler = this.sampleTree();
     this.#child.stdout.on("data", (chunk) => { this.#stdout += chunk; });
     this.#child.stderr.on("data", (chunk) => { this.#stderr += chunk; });
     this.#child.on("error", (error) => { this.#spawnError = error; });
-    const { code, signal } = await new Promise((resolve) => this.#child.on("close", (code, signal) => {
+    const closed = new Promise((resolve) => this.#child.on("close", (code, signal) => {
       this.#endedAt = process.hrtime.bigint();
       this.stopSampling();
       resolve({ code, signal });
     }));
-    await sampler;
+    const sampler = this.sampleTree().catch(async (error) => {
+      this.stopSampling();
+      try {
+        await this.#terminate(this.#child);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], `采样和进程清理均失败：${String(error)}；${String(cleanupError)}`);
+      }
+      return { error };
+    });
+    const [{ code, signal }, samplingFailure] = await Promise.all([closed, sampler]);
+    if (samplingFailure !== undefined) throw samplingFailure.error;
     return this.collectResult(code, signal);
   }
 
