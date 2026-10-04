@@ -34,7 +34,7 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
   const tradeStock = activeSetup.stocks.find((stock) => stock.code === tradeCode);
   const fieldErrors = tradingFieldErrors(orderKind, priceChoice, priceText, qtyText, tradeStock ? maxAShareOrderQuantity(tradeStock.category, orderKind === "market") : undefined);
   const visibleFieldErrors: TradingFieldErrors = { ...submittedErrors };
-  if (touched.has("price")) visibleFieldErrors.price = fieldErrors.price;
+  if (touched.has("price") || submittedErrors.price !== undefined) visibleFieldErrors.price = fieldErrors.price;
   if (touched.has("quantity")) visibleFieldErrors.quantity = fieldErrors.quantity ?? submittedErrors.quantity;
   function setPriceText(value: string) {
     updatePriceText(value);

@@ -91,3 +91,13 @@ test("G68：配置替换后的委托证券只能从当前 activeSetup 选择", {
   commands.setPriceChoice("highest"); commands = f.hook.render();
   assert.deepEqual(commands.buildIntent("Buy"), { PlaceLimit: { code: "300999", side: "Buy", price: "Highest", qty: 100 } });
 });
+
+test("G22：提交前未触碰的价格错误随价格字段禁用即时撤下", { timeout: 10000 }, () => {
+  const f = fixture(); let commands = f.hook.render();
+  assert.equal(commands.buildIntent("Buy"), null);
+  assert.match(f.hook.render().fieldErrors.price!, /价格/);
+  commands.setOrderKind("market"); commands = f.hook.render();
+  assert.equal(commands.fieldErrors.price, undefined);
+  commands.setOrderKind("limit"); commands.setPriceChoice("highest"); commands = f.hook.render();
+  assert.equal(commands.fieldErrors.price, undefined);
+});
