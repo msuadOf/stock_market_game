@@ -11,17 +11,109 @@ import {
   buildRustTestExecutionPolicy,
   collectFullRegressionSourceFingerprint,
   executeFullRegression,
+  executeRustTestBinaries,
   FULL_REGRESSION_SOURCE_INPUTS,
   fullRegressionSteps,
   main,
   parseFullRegressionArgs,
   parseCargoTestExecutables,
+  parseRustTestCases,
   runFullRegression,
   runFullRegressionPhase,
 } from "./run-full-regression.mjs";
 import { prepareWorkspacePaths, resolveWorkspaceRoot } from "./workspace-paths.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import * as regression from "./run-full-regression.mjs";
+
+it("Rust case discovery rejects malformed output and excludes benchmarks", { timeout: 10000 }, () => {
+  assert.deepEqual(parseRustTestCases("suite::case: test\nbench: benchmark\n1 test, 1 benchmark\n"), ["suite::case"]);
+  assert.throws(() => parseRustTestCases(undefined), /did not return output/);
+  assert.throws(() => parseRustTestCases("unexpected output"), /malformed/);
+  assert.throws(() => parseRustTestCases("same: test\nsame: test\n"), /duplicate/);
+});
+
+it("Rust ordinary cases in one binary run concurrently with independent deadlines and ignored cases excluded", { timeout: 10000 }, async () => {
+  const calls = [];
+  let active = 0;
+  let peak = 0;
+  const result = await executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }],
+    policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now,
+    remainingMs: () => 2500,
+    run: async (options) => {
+      calls.push(options);
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "long: test\n" : "short-a: test\nshort-b: test\nlong: test\n" };
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+    },
+  });
+  assert.equal(peak, 2);
+  assert.equal(result.case_count, 2);
+  assert.equal(result.max_concurrent_cases, 2);
+  assert.deepEqual(calls.filter((call) => !call.args.includes("--list")).map((call) => call.args[0]), ["short-a", "short-b"]);
+  assert.ok(calls.every((call) => call.timeoutMs === 2500));
+});
+
+it("Rust ordinary case watchdog terminates a hanging process and reports the exact case", { timeout: 10000 }, async () => {
+  const startedAt = Date.now();
+  await assert.rejects(executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture-label" }],
+    policy: buildRustTestExecutionPolicy(4, 1), cwd: process.cwd(), env: process.env, now: Date.now,
+    remainingMs: () => 400,
+    run: async (options) => {
+      assert.equal(options.timeoutMs, 400);
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "" : "hanging::case: test\n" };
+      return runBoundedCommand({ ...options, command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], cleanupReserveMs: 100 });
+    },
+  }), /fixture-label case hanging::case failed:.*400ms deadline/);
+  assert.ok(Date.now() - startedAt < 1500);
+});
+
+it("Rust ordinary case failure aborts active sibling cases and never launches queued cases", { timeout: 10000 }, async () => {
+  let siblingStarted;
+  const started = new Promise((resolve) => { siblingStarted = resolve; });
+  const executed = [];
+  let aborted = false;
+  await assert.rejects(executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }],
+    policy: buildRustTestExecutionPolicy(4, 1), cwd: process.cwd(), env: {}, now: Date.now,
+    remainingMs: () => 300000,
+    run: async ({ args, signal, timeoutMs }) => {
+      assert.equal(timeoutMs, 10000);
+      if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "fail: test\nsibling: test\nqueued: test\n" };
+      executed.push(args[0]);
+      if (args[0] === "fail") {
+        await started;
+        throw new Error("injected case failure");
+      }
+      siblingStarted();
+      await new Promise((resolve, reject) => signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true }));
+    },
+  }), /fixture case fail failed: injected case failure/);
+  assert.equal(aborted, true);
+  assert.deepEqual(executed, ["fail", "sibling"]);
+});
+
+it("Rust case listing fails explicitly instead of skipping malformed or unknown ignored cases", { timeout: 10000 }, async () => {
+  for (const ignoredOutput of ["bad output", "unknown: test\n"]) {
+    let executions = 0;
+    await assert.rejects(executeRustTestBinaries({
+      artifacts: [{ executable: "fixture", label: "fixture" }],
+      policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now,
+      remainingMs: () => 300000,
+      run: async ({ args }) => {
+        if (!args.includes("--list")) executions += 1;
+        return { stdout: args.includes("--ignored") ? ignoredOutput : "ordinary: test\n" };
+      },
+    }), /malformed Rust test listing|contains an unknown case/);
+    assert.equal(executions, 0);
+  }
+});
 
 it("resolves a linked worktree through the Git common directory", async () => {
   const actualWorkspaceRoot = await resolveWorkspaceRoot(process.cwd());
@@ -476,8 +568,9 @@ it("accepts a correctly sealed reordered inventory with extras and duplicate art
     await assert.rejects(executeFullRegression({
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
-      run: async ({ command }) => {
+      run: async ({ command, args }) => {
         assert.equal(command, fixture.artifact);
+        if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
         ordinaryExecutions += 1;
       },
     }), /required long validation target.*resolved to 2 prebuilt binaries/i);
@@ -521,9 +614,12 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
     await executeFullRegression({
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
-      run: async () => { calls += 1; },
+      run: async ({ args }) => {
+        calls += 1;
+        return { stdout: args.includes("--list") && !args.includes("--ignored") ? "ordinary: test\n" : "" };
+      },
     });
-    assert.equal(calls, 4);
+    assert.equal(calls, 6);
   } finally {
     await fixture.cleanup();
   }
@@ -584,15 +680,15 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
       run: async (options) => {
         calls.push(options);
         nowMs += 1;
-        return { stdout: "", stderr: "" };
+        return { stdout: options.args.includes("--list") && !options.args.includes("--ignored") ? "ordinary::case: test\n" : "", stderr: "" };
       },
     });
-    assert.equal(calls.filter((call) => call.command === fixture.artifact).length, 2);
-    const ordinaryBinary = calls.find((call) => call.command === fixture.artifact && !call.args.includes("--ignored"));
-    assert.equal(ordinaryBinary.timeoutMs, 300_000);
-    assert.deepEqual(ordinaryBinary.args, ["--test-threads=6"]);
-    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "2");
-    const longValidation = calls.find((call) => call.command === fixture.artifact && call.args.includes("--ignored"));
+    assert.equal(calls.filter((call) => call.command === fixture.artifact).length, 4);
+    const ordinaryBinary = calls.find((call) => call.args.includes("ordinary::case"));
+    assert.equal(ordinaryBinary.timeoutMs, 10_000);
+    assert.deepEqual(ordinaryBinary.args, ["ordinary::case", "--exact", "--test-threads=1"]);
+    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "7");
+    const longValidation = calls.find((call) => call.command === fixture.artifact && call.args.includes("--ignored") && !call.args.includes("--list"));
     assert.deepEqual(longValidation.args, [
       "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
       "--exact",
@@ -601,7 +697,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     ]);
     assert.equal(longValidation.env.RAYON_NUM_THREADS, "7");
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
-    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_998);
+    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_996);
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
     assert.equal(web.command, process.execPath);
     assert.equal(web.timeoutMs, 10_000);
