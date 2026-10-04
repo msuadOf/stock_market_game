@@ -12,6 +12,146 @@ fn session_with_runtime_state() -> GameSession {
     GameSession::new(setup, 42).expect("runtime_state fixture 必须有效")
 }
 
+#[test]
+fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 1;
+    let mut session = GameSession::new(setup, 42).expect("mixed NPC fixture must initialize");
+    let retail = AccountId(1);
+    let institution = AccountId(2);
+
+    let retail_execution = session.state.accounts[&retail]
+        .strategy()
+        .expect("retail execution strategy exists")
+        .profile();
+    let retail_cognition = match retail_execution {
+        crate::strategy::StrategyProfile::Retail(crate::strategy::RetailStyle::LongTerm) => {
+            crate::strategy::RetailStyle::Noise
+        }
+        _ => crate::strategy::RetailStyle::LongTerm,
+    };
+    let retail_cognition = crate::strategy::StrategyProfile::Retail(retail_cognition);
+    let mut retail_rng = crate::session::SplitMix64::new(1201);
+    let retail_analysis =
+        crate::strategy::derive_analysis_profile(&retail_cognition, retail, &mut retail_rng)
+            .expect("retail cognition profile must derive");
+    *session
+        .state
+        .belief_participants
+        .get_mut(&retail)
+        .expect("retail participant exists")
+        .belief_mut() = crate::strategy::BeliefBook::new(
+        retail,
+        retail_cognition.clone(),
+        retail_analysis,
+        &mut retail_rng,
+    );
+
+    assert_eq!(
+        session.state.accounts[&institution]
+            .strategy()
+            .expect("institution execution strategy exists")
+            .institution_style(),
+        Some(crate::strategy::InstitutionStyle::DeepValue)
+    );
+    let institution_cognition =
+        crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::Growth);
+    let mut institution_rng = crate::session::SplitMix64::new(1202);
+    let institution_analysis = crate::strategy::derive_analysis_profile(
+        &institution_cognition,
+        institution,
+        &mut institution_rng,
+    )
+    .expect("institution cognition profile must derive");
+    *session
+        .state
+        .belief_participants
+        .get_mut(&institution)
+        .expect("institution participant exists")
+        .belief_mut() = crate::strategy::BeliefBook::new(
+        institution,
+        institution_cognition.clone(),
+        institution_analysis,
+        &mut institution_rng,
+    );
+
+    let mut restored = GameSession::restore(&session.save().expect("separated profiles save"))
+        .expect("cognition and execution styles may differ within account kind");
+    assert_eq!(
+        restored.state.belief_participants[&institution]
+            .belief()
+            .profile(),
+        &institution_cognition
+    );
+    assert_eq!(
+        restored.state.accounts[&institution]
+            .strategy()
+            .unwrap()
+            .profile(),
+        crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
+    );
+    assert_eq!(
+        restored.state.belief_participants[&retail]
+            .belief()
+            .profile(),
+        &retail_cognition
+    );
+    assert!(restored.state.belief_participants[&retail]
+        .belief()
+        .analysis()
+        .fundamental_method()
+        .is_some());
+    let market = restored.build_market_view();
+    let code = market.stocks.keys().next().unwrap().clone();
+    let assessments = restored
+        .capture_retail_analysis(&[retail], &market)
+        .expect("explicit retail analysis must consume its cognition profile");
+    assert!(assessments[&retail].contains_key(&code));
+    restored
+        .step()
+        .expect("separated profiles must support a tick");
+
+    let resaved = restored.save().expect("separated profiles resave");
+    let rebuilt = GameSession::restore(&resaved).expect("resaved profiles restore");
+    assert_eq!(
+        rebuilt.state.belief_participants[&institution]
+            .belief()
+            .profile(),
+        &institution_cognition
+    );
+    assert_eq!(
+        resaved.runtime_state.strategy_states[&institution].profile(),
+        crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
+    );
+    assert_eq!(
+        rebuilt.state.belief_participants[&retail]
+            .belief()
+            .profile(),
+        &retail_cognition
+    );
+
+    let mut wrong_owner = serde_json::to_value(&resaved).expect("save serializes");
+    let institution_key = institution.0.to_string();
+    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0);
+    let wrong_owner: SaveSlot = serde_json::from_value(wrong_owner).expect("typed edited save");
+    assert!(matches!(
+        GameSession::restore(&wrong_owner),
+        Err(SessionError::InvalidSave(message)) if message.contains("belief book owner")
+    ));
+
+    let mut wrong_kind = serde_json::to_value(&resaved).expect("save serializes");
+    wrong_kind["belief_books"][institution.0.to_string()]["profile"] = serde_json::to_value(
+        crate::strategy::StrategyProfile::Retail(crate::strategy::RetailStyle::LongTerm),
+    )
+    .expect("retail profile serializes");
+    let wrong_kind: SaveSlot = serde_json::from_value(wrong_kind).expect("typed edited save");
+    assert!(matches!(
+        GameSession::restore(&wrong_kind),
+        Err(SessionError::InvalidSave(message)) if message.contains("belief profile conflicts with account kind")
+    ));
+}
+
 fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
     SavedFeeComponents {
         commission: fees.commission,

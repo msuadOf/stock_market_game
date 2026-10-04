@@ -2478,6 +2478,55 @@ mod chain_restructure_tests {
     }
 
     #[test]
+    fn institution_plan_parameters_use_execution_style_when_cognition_differs() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        assert_eq!(
+            session.state.accounts[&account]
+                .strategy()
+                .expect("execution strategy exists")
+                .institution_style(),
+            Some(crate::strategy::InstitutionStyle::DeepValue)
+        );
+
+        let cognition = crate::strategy::StrategyProfile::Institution(
+            crate::strategy::InstitutionStyle::Growth,
+        );
+        let mut rng = SplitMix64::new(1203);
+        let analysis = crate::strategy::derive_analysis_profile(&cognition, account, &mut rng)
+            .expect("Growth cognition profile must derive");
+        *session
+            .state
+            .belief_participants
+            .get_mut(&account)
+            .expect("institution belief exists")
+            .belief_mut() = crate::strategy::BeliefBook::new(
+            account,
+            cognition.clone(),
+            analysis,
+            &mut rng,
+        );
+        assert_eq!(
+            session.state.belief_participants[&account].belief().profile(),
+            &cognition
+        );
+        observe_account_root_for_latch(&mut session, account);
+        let code = session.state.setup.stocks[0].code.clone();
+        let belief = session.state.belief_participants[&account].belief();
+        let entry = belief
+            .entry(&code)
+            .expect("personal root must consume the Growth cognitive profile");
+        assert_eq!(entry.method, belief.analysis().fundamental_method());
+
+        let urgency = session.initial_plan_urgency(account, Side::Buy, 8_000, 5);
+        assert_eq!(
+            urgency,
+            Urgency::Patient,
+            "DeepValue execution style must keep its patient plan parameter despite Growth cognition"
+        );
+    }
+
+    #[test]
     fn institution_frozen_policy_and_historical_review_resources_survive_restore() {
         let mut session = probe_session();
         let account = AccountId(1);
