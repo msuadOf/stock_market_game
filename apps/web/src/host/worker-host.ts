@@ -284,7 +284,10 @@ export function createWorkerHost(
           callback = onUpdate;
           fatalCallback = onFatalError ?? null;
           if (cachedBaseline !== null && deliveredGeneration !== cachedBaseline.generation) {
-            callback(cachedBaseline);
+            if (callback(cachedBaseline) === false) {
+              callback = null;
+              throw new Error("Worker 消费者拒绝 cached baseline，未启动 Worker loop");
+            }
             deliveredGeneration = cachedBaseline.generation;
           }
           await control("start", "started");

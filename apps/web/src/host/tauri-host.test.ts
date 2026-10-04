@@ -220,6 +220,18 @@ test("Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline
     ? new Promise<void>((resolve) => { finishControl = resolve; }) : undefined);
 });
 
+test("Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标记已交付", { timeout: 10000 }, async () => {
+  await withTauriHost(async (host, calls) => {
+    calls.length = 0;
+    await assert.rejects(host.start(() => false), /消费者拒绝.*baseline/);
+    assert.equal(calls.includes("resume_session"), false);
+    const updates: unknown[] = [];
+    await host.start((update) => { updates.push(update); return true; });
+    assert.equal(updates.length, 1);
+    assert.equal(calls.filter((command) => command === "resume_session").length, 1);
+  });
+});
+
 test("Tauri dispose 即使 IPC 失败也释放监听并显式拒绝", { timeout: 10000 }, async () => {
   await withTauriHost(async (host, calls) => {
     await assert.rejects(host.dispose(), /stop 失败/);

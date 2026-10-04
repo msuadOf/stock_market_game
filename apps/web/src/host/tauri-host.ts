@@ -167,7 +167,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       fatalCallback = onFatalError ?? null;
       const baseline = timeline.baselineForDelivery();
       if (baseline !== null && deliveredGeneration !== baseline.generation) {
-        callback(baseline);
+        if (callback(baseline) === false) {
+          callback = null;
+          throw new Error("Tauri 消费者拒绝 cached baseline，未恢复 actor");
+        }
         deliveredGeneration = baseline.generation;
       }
       const id = requireSession();

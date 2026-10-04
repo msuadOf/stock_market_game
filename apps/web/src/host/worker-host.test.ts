@@ -301,6 +301,61 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
   }
 });
 
+test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class IsolatedWorker extends EventTarget {
+    static current: IsolatedWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); IsolatedWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: IsolatedWorker });
+  let oldHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  let newHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const oldCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const oldWorker = IsolatedWorker.current;
+    oldWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    oldHost = await oldCreating;
+    const rejectingStart = oldHost.start(() => false);
+    const unexpectedStart = oldWorker.sent.find((message) => message.type === "start");
+    if (unexpectedStart !== undefined) oldWorker.emit({ type: "started", generation: 1, requestId: unexpectedStart.requestId });
+    await assert.rejects(rejectingStart, /消费者拒绝.*baseline/);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "start" || message.type === "uiFrame").length, 0);
+    const newCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 2n);
+    const newWorker = IsolatedWorker.current;
+    newWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(9, 4) });
+    newHost = await newCreating;
+    const newUpdates: unknown[] = [];
+    let newStarted = false;
+    const startingNew = newHost.start((update) => { newUpdates.push(update); }).then(() => { newStarted = true; });
+    const requestId = newWorker.sent.at(-1)!.requestId;
+    oldWorker.emit({ type: "started", generation: 1, requestId });
+    oldWorker.emit({ type: "protocol", generation: 1, deliveryId: 1, update: {} });
+    await Promise.resolve();
+    assert.equal(newStarted, false);
+    assert.equal(newUpdates.length, 1);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "uiFrame").length, 0);
+    newWorker.emit({ type: "started", generation: 1, requestId });
+    await startingNew;
+    const retriedUpdates: unknown[] = [];
+    const retry = oldHost.start((update) => { retriedUpdates.push(update); return true; });
+    oldWorker.emit({ type: "started", generation: 1, requestId: oldWorker.sent.at(-1)!.requestId });
+    await retry;
+    assert.equal(retriedUpdates.length, 1);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "start").length, 1);
+    assert.equal(newUpdates.length, 1);
+    assert.equal(newHost.tick(), 9);
+  } finally {
+    await oldHost?.dispose();
+    await newHost?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
 test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
