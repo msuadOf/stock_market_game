@@ -156,7 +156,7 @@ function payload(value: unknown, path: string): TickTimeseriesPayload {
 export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapshot {
   const source = record(normalizeSerdeValue(value, path), path);
   exact(source, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path);
-  return {
+  const snapshot: Snapshot = {
     seq: safeInteger(field(source, "seq", path), `${path}.seq`),
     tick: safeInteger(field(source, "tick", path), `${path}.tick`),
     day: safeU32(field(source, "day", path), `${path}.day`),
@@ -166,6 +166,14 @@ export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapsh
     daily_candles: mapEntries(field(source, "daily_candles", path), `${path}.daily_candles`, (candles, candlePath) => values(candles, candlePath).map((candle, index) => parseDailyCandle(candle, `${candlePath}[${index}]`))),
     active_daily_candles: mapEntries(field(source, "active_daily_candles", path), `${path}.active_daily_candles`, parseDailyCandle),
   };
+  for (const [accountId, account] of Object.entries(snapshot.accounts)) {
+    for (const code of Object.keys(account.positions)) {
+      if (!Object.hasOwn(snapshot.markets, code)) {
+        malformed(`${path}.accounts.${accountId}.positions.${code}`, `持仓 ${code} 缺少行情，不能估值`);
+      }
+    }
+  }
+  return snapshot;
 }
 
 function account(value: unknown, path: string): AccountSnap {

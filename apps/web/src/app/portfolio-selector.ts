@@ -12,7 +12,10 @@ export function selectPortfolioInput(state: RootState): PortfolioInput {
   const heldPrices = Object.fromEntries(
     Object.entries(account?.positions ?? {})
       .filter(([, position]) => position.qty > 0)
-      .map(([code]) => [code, markets[code]?.last_price ?? 0]),
+      .map(([code]) => {
+        if (!Object.hasOwn(markets, code)) throw new Error(`持仓 ${code} 缺少行情，不能估值`);
+        return [code, markets[code].last_price];
+      }),
   );
   return { account, heldPrices };
 }
