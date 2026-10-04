@@ -103,7 +103,7 @@ test("移动详情将权威股数接入盘口、逐笔和两种图表的手数�
   assert.match(intraday, /style="--depth:50%"/);
   assert.match(intraday, /当日成交量 <b>2\.5手<\/b>/);
   assert.match(intraday, /分时量（手）[\s\S]*?量:2\.5手/);
-  assert.match(intraday, /aria-label="逐笔成交"[\s\S]*?>1<\/span>/);
+  assert.match(intraday, /aria-label="600101 最近逐笔成交，数量单位为手"[\s\S]*?<tr data-trade-seq="1"><td data-time-missing="true">成交时间缺失<\/td><td class="flat">10\.00<\/td><td>1<\/td><\/tr>/);
 
   const daily = renderDetail("日K", "盘口");
   assert.match(daily, /成交量（手）[\s\S]*?量:2\.5手/);
@@ -195,4 +195,35 @@ test("移动端连续竞价有成交也保持普通折线", () => {
   assert.ok(html.includes('class="msd-price-line"'));
   assert.ok(!html.includes('class="msd-auction-dot"'));
   assert.ok(!html.includes('本分钟有成交'));
+});
+
+test("零成交日的开高低显示未形成，不把昨收占位当作成交价格", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "资金", { activeDailyCandle: { ...candle, volume: 0, tradeStats: undefined } });
+  assert.match(html, /高 <b class="flat">--<\/b>/);
+  assert.match(html, /低 <b class="flat">--<\/b>/);
+  assert.match(html, /开 <b class="flat">--<\/b>/);
+  assert.match(html, /成交额<\/span><b>0元<\/b>/);
+});
+
+test("个股成交明细筛选证券并使用精确价格、小数手和权威成交时间", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { trades: [
+    { ...trade, code: "002156", seq: 10, tick: 902, price: "9999" },
+    { ...trade, seq: 9, tick: 901, price: "1001", qty: 250 },
+  ] });
+  assert.doesNotMatch(html, /99\.99/);
+  assert.match(html, /data-trade-seq="9"/);
+  assert.match(html, /09:30:01/);
+  assert.match(html, /10\.01/);
+  assert.match(html, />2\.5<\/td>/);
+  assert.match(html, /最近成交缓存/);
+});
+
+test("明细先筛选股票再截取七笔，展开入口显示当前股票缓存数量", { timeout: 10000 }, () => {
+  const ownTrades = Array.from({ length: 9 }, (_, index) => ({ ...trade, seq: 20 - index, tick: 920 - index }));
+  const html = renderDetail("分时", "盘口", { trades: [{ ...trade, seq: 30, code: "002156" }, ...ownTrades] });
+  const rows = [...html.matchAll(/data-trade-seq="(\d+)"/g)].map(match => Number(match[1]));
+  assert.deepEqual(rows, [20, 19, 18, 17, 16, 15, 14]);
+  assert.match(html, /aria-label="显示缓存明细（9笔）"[^>]*aria-expanded="false"/);
+  assert.match(html, /aria-label="价格（元）"/);
+  assert.match(html, /aria-label="量（手）"/);
 });

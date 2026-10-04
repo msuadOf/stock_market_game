@@ -44,9 +44,6 @@
 .layout-desktop .ob-title span { color: var(--muted); font-size: 10px; }
 .layout-desktop .ob-row { min-height: 25px; border-bottom: 1px solid var(--surface-subtle); }
 .ob-empty { padding: 16px 0; text-align: center; color: var(--muted); }
-.terminal-quote-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
-.terminal-quote-facts dt { color: var(--muted); }
-.terminal-quote-facts dd { margin: 0; text-align: right; }
 .desktop-terminal[data-view="stock"] .terminal-body { grid-template-columns: 170px minmax(520px, 1fr); grid-template-rows: minmax(450px, 1fr) 36px; }
 .terminal-stocklist { overflow: auto; border-right: 1px solid var(--border); grid-row: 1 / -1; }
 .terminal-stock-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 13px 12px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; }

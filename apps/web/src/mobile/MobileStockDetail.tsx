@@ -6,11 +6,13 @@ import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { FiveLevelBook } from "../components/FiveLevelBook.tsx";
+import { MarketTradeTape } from "../components/MarketTradeTape.tsx";
+import { marketQuoteFacts } from "../components/market-quote-facts.ts";
 import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
-import { formatTradeLots, formatTradeTime, intradayChartX, MobileIntradayProjection, priceChangePercent, type AuctionPoint } from "./market-model";
+import { formatTradeLots, intradayChartX, MobileIntradayProjection, priceChangePercent, type AuctionPoint } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -56,9 +58,9 @@ function tone(diff: number): "rise" | "fall" | "flat" {
 }
 
 
-function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
+function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
   const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
-  const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress, recentTrades } = projection;
+  const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
   const auction = auctionDisplayPoints(visibleAuctionPoints, moneyToChartNumber(market.last_close) / 100);
@@ -112,26 +114,23 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
         </svg>
       </div>
       <div className="msd-ticks" aria-label="逐笔成交">
-        <div className="msd-ticks-head">明细⌃</div>
-        {recentTrades.length === 0 ? <p>等待成交…</p> : recentTrades.map((trade) => (
-          <div className="msd-tick-row" key={trade.seq}><span>{formatTradeTime(trade.tick)}</span><b className={tone(compareMoney(trade.price, market.last_close))}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
-        ))}
+        <MarketTradeTape key={code} code={code} market={market} trades={trades} />
       </div>
     </section>
   );
 }
 
 function FundsPanel({ activeDailyCandle }: Pick<Props, "activeDailyCandle">) {
-  const tradedShares = activeDailyCandle?.volume ?? 0;
-  const statsUnavailable = tradedShares > 0 && activeDailyCandle?.tradeStats === undefined;
+  const facts = marketQuoteFacts(activeDailyCandle);
+  const { statsUnavailable } = facts;
   return (
     <section className="msd-funds" aria-labelledby="fund-flow-title">
       <div className="msd-fund-title"><h2 id="fund-flow-title">当日累计成交</h2><span>来自引擎权威撮合统计</span></div>
       <div className="msd-fund-grid">
         <div className="msd-fund-summary">
-          <div><span>成交额</span><b>{statsUnavailable ? "--" : `${formatDecimalCentsAsYuan(activeDailyCandle?.tradeStats?.turnoverCents ?? "0")}元`}</b></div>
-          <div><span>成交量（手）</span><b>{formatTradeLots(tradedShares)}</b></div>
-          <div><span>成交笔数</span><b>{statsUnavailable ? "--" : (activeDailyCandle?.tradeStats?.tradeCount ?? 0)}</b></div>
+          <div><span>成交额</span><b>{facts.turnoverCents === null ? "--" : `${formatDecimalCentsAsYuan(facts.turnoverCents)}元`}</b></div>
+          <div><span>成交量（手）</span><b>{formatTradeLots(facts.volume)}</b></div>
+          <div><span>成交笔数</span><b>{facts.tradeCount === null ? "--" : facts.tradeCount}</b></div>
         </div>
         <div className="msd-fund-bars" aria-label={statsUnavailable ? "旧存档缺少当日成交额和成交笔数" : "资金方向暂无数据"}><p>{statsUnavailable ? "当前旧存档只有成交量，没有可对账的成交额和笔数；进入下一交易日后会恢复完整统计。" : "引擎暂未提供主动买卖方向，故不推算或伪造“大单流入/流出”。"}</p></div>
       </div>
@@ -143,11 +142,8 @@ export function MobileStockDetail(props: Props) {
   const { market } = props;
   const diff = subtractMoney(market.last_price, market.last_close);
   const percent = priceChangePercent(market.last_price, market.last_close);
-  const rawPrices = props.activeDailyCandle?.rawPrices;
-  if (props.activeDailyCandle !== undefined && rawPrices === undefined) throw new Error("当日 K 线缺少精确分值，不能展示报价摘要");
-  const open = rawPrices?.open ?? market.last_close;
-  const high = rawPrices?.high ?? market.last_price;
-  const low = rawPrices?.low ?? market.last_price;
+  const facts = marketQuoteFacts(props.activeDailyCandle);
+  const { prices } = facts;
   const chartType = props.period === "分时" ? "分时" : "日K";
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, items: readonly string[]) {
@@ -177,8 +173,8 @@ export function MobileStockDetail(props: Props) {
       </header>
       <section className="msd-quote" aria-label="股票报价摘要">
         <div className={`msd-last ${tone(compareMoney(diff, "0"))}`}><strong>{yuan(market.last_price)}</strong><span>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>
-        <div className="msd-day-prices"><span>高 <b className={tone(compareMoney(high, market.last_close))}>{yuan(high)}</b></span><span>低 <b className={tone(compareMoney(low, market.last_close))}>{yuan(low)}</b></span><span>开 <b className={tone(compareMoney(open, market.last_close))}>{yuan(open)}</b></span></div>
-        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(props.activeDailyCandle?.volume ?? 0)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
+        <div className="msd-day-prices">{([["高", prices?.high], ["低", prices?.low], ["开", prices?.open]] as const).map(([label, price]) => <span key={label}>{label} <b className={price === undefined ? "flat" : tone(compareMoney(price, market.last_close))}>{price === undefined ? "--" : yuan(price)}</b></span>)}</div>
+        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(facts.volume)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
       <div className="msd-period-tabs" role="tablist" aria-label="图表周期">
         {chartPeriods.map((item) => {

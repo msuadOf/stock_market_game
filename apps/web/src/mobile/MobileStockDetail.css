@@ -126,12 +126,7 @@
 .msd-minute-bars .msd-volume-guide { stroke: #ededed; stroke-width: 1px; }
 .msd-minute-volume-mark { transform: translateX(-.25px); }
 
-.msd-ticks { min-width: 0; height: 148px; padding: 4px 6px; overflow: hidden; border-top: 1px solid #ddd; border-left: 1px solid #ddd; background: #fff; }
-.msd-ticks-head { margin-bottom: 3px; text-align: center; font-size: clamp(11px, 3.5cqw, 15px); font-weight: 700; }
-.msd-ticks p { color: #999; text-align: center; }
-.msd-tick-row { display: grid; grid-template-columns: 1fr 1fr .55fr; gap: 3px; line-height: 1.75; font-size: clamp(8px, 2.55cqw, 11px); white-space: nowrap; }
-.msd-tick-row b { text-align: right; }
-.msd-tick-row span:last-child { text-align: right; }
+.msd-ticks { min-width: 0; height: 148px; padding: 4px 6px; overflow: auto; border-top: 1px solid #ddd; border-left: 1px solid #ddd; background: #fff; }
 
 .msd-kline { min-height: 482px; padding: 8px 6px; background: #fff; }
 .msd-kline-meta { display: flex; gap: 13px; min-height: 32px; align-items: center; font-size: clamp(11px, 3.3cqw, 14px); }

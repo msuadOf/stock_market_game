@@ -2,6 +2,28 @@ import { expect, test } from "@playwright/test";
 
 test.setTimeout(10_000);
 
+test("个股右栏在盘口、成交明细和行情摘要间切换，键盘与切股保持一致", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  const tabs = page.getByRole("tablist", { name: "个股行情信息" });
+  await tabs.getByRole("tab", { name: "盘口", exact: true }).press("ArrowRight");
+  await expect(tabs.getByRole("tab", { name: "明细", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("table", { name: "600101 最近逐笔成交，数量单位为手" })).toBeVisible();
+  await expect(page.getByText("暂无该股票的成交缓存", { exact: true })).toBeVisible();
+  await tabs.getByRole("tab", { name: "明细", exact: true }).press("End");
+  await expect(tabs.getByRole("tab", { name: "行情", exact: true })).toBeFocused();
+  await tabs.getByRole("tab", { name: "行情", exact: true }).press("Tab");
+  await expect(page.getByRole("tabpanel", { name: "行情", exact: true })).toBeFocused();
+  await expect(page.getByRole("region", { name: "当日行情摘要" })).toContainText("尚无成交，开盘价及高低价未形成");
+  await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /芯片科技/ }).click();
+  await tabs.getByRole("tab", { name: "明细", exact: true }).click();
+  await expect(page.getByRole("table", { name: "002156 最近逐笔成交，数量单位为手" })).toBeVisible();
+  await tabs.getByRole("tab", { name: "盘口", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "五档盘口，数量单位为手" })).toBeVisible();
+  await expect(page.locator(".desktop-account-bar")).toBeInViewport();
+});
+
 test("行情单击预览、双击进入个股，F10 与返回保持选择和图表周期", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?tradingE2E=1");
