@@ -26,23 +26,23 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐51项，剩余28项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐63项，剩余16项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
 
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
-| G01 | 浏览器远程 HTTP/WS 可用且鉴权；ADR-0005 §6、ADR-0027 | 浏览器 WS query token 与服务端 header 认证仍不一致；`remote-request.ts` → `remote-host.ts` → Server `routes.rs`。 修复须保留鉴权，不得通过开放私有路由绕过契约。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G02 | 三宿主实际倍率；ADR-0005 §5、UX-CONTRACT 模拟控制 | Remote `readSpeedMetrics` GET 仍不附凭据；真实 UI 轮询迁至 `useSpeedMetricsPolling.ts`。  当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G03 | remote push/pull 都可持续取帧；ADR-0005 §6、ADR-0010 | Remote 切 pull 后仍没有 `GetFrame` 发送循环。 服务端测试手动拉帧不证明浏览器适配器已接线。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G04 | baseline 仅初始化、读档、显式重同步；ADR-0010 §统一更新 | `App.tsx:362` 暂停后继续再次 `host.start`，Remote/Tauri 重送旧 baseline；Worker 的 generation 守卫原已存在。 缓存不随 delta 推进，重新交付可能回退状态及游标；这里的继续不是从磁盘读档。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G05 | 心跳失活处理与重连；ADR-0005 §6、ADR-0010 宿主能力 | Server 无 Pong 截止判据，Remote 意外 close 仍转 fatal 而非自动恢复；换刷新模式后旧socket的迟到onerror缺身份守卫，会调用共享fail并关闭新连接。手动start可以重建连接，但不等于自动恢复或旧连接事件隔离。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G18 | Worker uiFrame 背压；ADR-0010 宿主能力/不做 | `WasmTickLoop.publish` 每步发完整更新，仍无消费者驱动的有界背压。 定时让出执行机会不等于消费背压；任何合并不得丢弃协议要求保留的提交帧及交易事实，未实测卡顿。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G19 | Tauri 固定高倍率 tick 在 Rust 聚合后约 16ms 发布；ADR-0010 | Desktop 固定倍率仍 `run_cycle(1)` 后直接 emit；Fastest 批次不等于固定倍率聚合。  当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
-| G40 | 三宿主有副作用控制命令等待宿主确认；ADR-0010:60 | `EngineHost.start/stop/setSpeed` 为void，App暂停/继续立即更新running和成功提示；Desktop `set_running/set_speed/set_pause_preferences` 仅mpsc入队，IPC返回不证明actor已应用。订单CommandQueued仍只表示入队，不能改成成交确认。见 [宿主全文](exhaustive-review/luna01.md) 与 [actor](exhaustive-review/luna62.md)。 |
+| G01 | 已补齐：浏览器远程 HTTP/WS 可用且鉴权；ADR-0005 §6、ADR-0027 | 浏览器WS通过认证subprotocol携凭据，Server握手解析并保留会话鉴权，HTTP保持Bearer；不把凭据放URL或开放私有路由。 Remote 53项、heartbeat 5项与WS 10项短测通过，非作者完整diff再审通过；未跑真实浏览器网络/公网验收。见 [实施复核](../implementation-gap-implementation/remote-chain-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G02 | 已补齐：三宿主实际倍率；ADR-0005 §5、UX-CONTRACT 模拟控制 | Remote实际倍率请求附认证凭据，沿现有UI轮询消费真实宿主指标。 Remote 53项、heartbeat 5项与WS 10项短测通过，非作者完整diff再审通过；未跑真实浏览器网络/公网验收。见 [实施复核](../implementation-gap-implementation/remote-chain-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G03 | 已补齐：remote push/pull 都可持续取帧；ADR-0005 §6、ADR-0010 | Remote pull真实发送GetFrame，单inflight并等协议响应后继续，deadline与连接切换清理请求，不无界积压。 Remote 53项、heartbeat 5项与WS 10项短测通过，非作者完整diff再审通过；未跑真实浏览器网络/公网验收。见 [实施复核](../implementation-gap-implementation/remote-chain-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G04 | 已补齐：baseline 仅初始化、读档、显式重同步；ADR-0010 §统一更新 | Remote/Tauri正常暂停继续不重送旧baseline；仅首次交付、读档及显式重同步建立基线，拒绝交付不标记完成，显式重试可重送。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。另见 [Remote应用链](../implementation-gap-implementation/remote-chain.md)。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G05 | 已补齐：心跳失活处理与重连；ADR-0005 §6、ADR-0010 宿主能力 | Server独立监督匹配Pong期限，阻塞await亦到期释放连接，迟到Pong与后续Ping不续旧期限；Remote有限自动恢复与旧连接身份隔离，不重发委托。 Remote 53项、heartbeat 5项与WS 10项短测通过，非作者完整diff再审通过；未跑真实浏览器网络/公网验收。见 [实施复核](../implementation-gap-implementation/remote-chain-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G18 | 已补齐：Worker uiFrame 背压；ADR-0010 宿主能力/不做 | Worker以消费者接纳后的uiFrame ACK实行有界credit及16ms目标批次，完整提交/交易事实保留；ACK不等React绘制。拒绝或fatal终态停止消费，不错误ACK后续帧。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G19 | 已补齐：Tauri 固定高倍率 tick 在 Rust 聚合后约 16ms 发布；ADR-0010 | Desktop固定倍率按现实到期tick债务在Rust聚合后约16ms交付，只扣真实完成tick，CPU预算保留尾数，冷启动/双窗口/完整日序列覆盖。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [宿主](reaudit-host.md)。 |
+| G40 | 已补齐：三宿主有副作用控制命令等待宿主确认；ADR-0010:60 | 三宿主start/stop/setSpeed等待实际应用确认：Worker applied回执、Desktop actor oneshot、Remote actor→HTTP Promise；UI与偏好storage确认后才更新。CommandQueued仍仅订单入队。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。另见 [Remote应用链](../implementation-gap-implementation/remote-chain.md)。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [宿主全文](exhaustive-review/luna01.md) 与 [actor](exhaustive-review/luna62.md)。 |
 | G53 | 已补齐：恢复响应必须推进generation；历史task30:26–27 | restoreWorkerSlot先验证nextGeneration为正安全整数且严格大于原generation，再交付snapshot；短测覆盖旧/同代拒绝、推进成功及零/负数/小数/不安全整数/字符串，错误保留actual/expected代次。 原证据见 [Worker](exhaustive-review/luna29.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
-| G66 | 已接受Remote请求保留完成或显式错误出口；ADR-0010、错误处理原则 | dispose忽略后续消息且不reject已登记写请求；刷新单槽waiter可被内部ResyncRequired覆盖，遗失读档恢复链原await。UI交易及保存hook真实等待这些Promise；确认中断应说明结果未知，不能假称请求必未执行。见 [Remote](exhaustive-review/luna60.md) 与 [调用](exhaustive-review/sweep61.md)。 |
+| G66 | 已补齐：已接受Remote请求保留完成或显式错误出口；ADR-0010、错误处理原则 | Remote HTTP、写请求、刷新与读档waiter在超时/dispose/重同步/断连都有明确终态，并隔离迟到确认；中断写请求只说明结果未知，不假称未执行。 Remote 53项、heartbeat 5项与WS 10项短测通过，非作者完整diff再审通过；未跑真实浏览器网络/公网验收。见 [实施复核](../implementation-gap-implementation/remote-chain-review.md)；原证据见 [Remote](exhaustive-review/luna60.md) 与 [调用](exhaustive-review/sweep61.md)。 |
 
 ### 2.2 策略、个人信息与估值
 
@@ -78,7 +78,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | ID | 要求与原文 | 生产证据、缺少环节及影响 |
 |---|---|---|
 | G16 | 普通tick不随多年历史线性复制；`docs/superpowers/plans/2026-09-24-single-world-multithreading.md:60` | 全历史PlanBook复制仍在RootReadContext::capture；普通shadow另深拷贝ClosingEngine版本/重述及PublicLibrary报告/公告。Arc封装不消除原副本。缺所有权优化，不删历史、不强定COW/WAL；未测幅度。见 [当前历史owner](exhaustive-review/luna10.md) 与 [策略](reaudit-engine.md)。 |
-| G17 | Rust指标与Rayon生产加速；ADR-0008 D2 | Rust 指标已有，三宿主仍只调单项函数；Rayon batch 仍仅测试调用。 缺批量生产接线，不把指标功能整体重开；是否值得对现有负载并行须先测量。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
+| G17 | 已补齐：Rust指标与Rayon生产加速；ADR-0008 D2 | 测量小输入并行更慢后保留顺序，2048及以上样本在统一生产单项入口以Rayon join并行独立指标；三宿主真实调用、精确数值与nightly WASM编译通过。 短测、真实WASM target编译与非作者复核通过；未跑长期吞吐矩阵。见 [实施复核](../implementation-gap-implementation/tick-performance-review.md)；原证据见 [基础](reaudit-foundations.md)。 |
 | G21 | 已补齐：基线CLI只取setup、不验证其余档字段；`docs/price-volume-simulation-gap-checklist.md:265` | CLI仅反序列化setup投影并执行启动配置校验，无关schema/runtime/envelope字段不影响新局；公共SaveSlot深校验不放宽。5项定向Rust短测通过且由非作者独立重跑，完整diff复核通过，未跑长模拟。见 [实施复核](../implementation-gap-implementation/seed-baseline-review.md)；原证据见 [工具](reaudit-tools.md)。 |
 | G22 | 已补齐：表单即时/字段级错误；`docs/error-handling.md:114` | 真实交易hook即时生成价格/数量字段错误，App委托与条件单用aria-invalid/aria-describedby关联；买卖与零股卖出仍按原规则预检。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
 | G23 | 已补齐：进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情挂载后聚焦返回；返回恢复原股票行，失联时聚焦行情区域，preventScroll保持滚动；切股不抢焦点。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [界面](reaudit-ui.md)。 |
@@ -89,8 +89,8 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G48 | 已补齐：中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML语言为zh-CN，真实AG Grid消费已核安装版本key的中文locale与辅助文本。 定向短测、真实consumer完整diff独立复核通过；浏览器焦点、视觉、辅助技术矩阵未执行。见 [实施复核](../implementation-gap-implementation/ui-contracts-review.md)；原证据见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
 | G49 | 已补齐：持仓成本及浮盈承接半偶到分语义；account spec:23/63 | 持仓展示共用valueHeldPosition，BigInt中间计算正负对称半偶到每股分，浮盈=(现价−舍入成本)×股数，与Rust Account一致；真实SSR验证200股净投入±200100分的成本与浮盈，单位/费用/T+1不变。 原证据见 [账户消费](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
 | G50 | 已补齐：React渲染异常进入可见详情/反馈出口；错误处理规范 | `RenderErrorBoundary` 在真实root包裹Provider/App，React render/layout失败复用脱敏、复制反馈与刷新警告；安全读取message描述符，不执行访问器，非法类型显式诊断并保留cause。12项相关短测通过，非作者完整diff复核通过；未运行浏览器异常捕获验收，不泛称覆盖事件/异步异常。实现见 [React错误出口](../implementation-gap-implementation/react-errors.md)，原证据见 [错误链](exhaustive-review/luna14.md)。 |
-| G51 | Desktop释放失败显式上报；错误处理规范 | `tauri-host.ts:165–175` 清fatalCallback后丢弃stop_session的Promise，dispose调用方无法接IPC rejection。unlisten运行时行为是版本限定补充，结论仅依明确stop_session失败出口。见 [释放](exhaustive-review/sweep14.md)。 |
-| G52 | 协议断言保留已知actual/expected上下文；错误详情规范 | 前端generation/cursor不一致仅生成通用ProtocolError文本，coordinator没有补上已知实际值/期望值，复制反馈缺复现事实。三宿主真实engine fatal已有context，不泛称全部错误无详情。见 [协议错误](exhaustive-review/luna14.md)。 |
+| G51 | 已补齐：Desktop释放失败显式上报；错误处理规范 | Tauri dispose等待stop_session IPC并保留fatal出口，释放失败Promise拒绝并由真实生命周期展示，不再fire-and-forget。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [释放](exhaustive-review/sweep14.md)。 |
+| G52 | 已补齐：协议断言保留已知actual/expected上下文；错误详情规范 | 协议失败提供真实actual/expected公开游标并经实际复制反馈保留，敏感值仍脱敏；未知类型不猜tick，callback失败使用处理前attempt cursor。 Node相关短测与Rust actor 15项短测通过、非作者再审通过；未跑浏览器长验收。三项反馈上下文发现均修复并由web_gap_review独立再审通过。见 [实施复核](../implementation-gap-implementation/host-controls-review.md)；原证据见 [协议错误](exhaustive-review/luna14.md)。 |
 | G54 | 已补齐：Money公开解析拒绝完全无数字输入；Money spec/Task4 | Money::from_yuan_str显式拒绝“.”、“+.”、“-.”及带空白形态，保留“.5”“12.”等含数字的既有合法输入。影响限定公开库API，不冒称UI/存档此前已接受。原证据见 [解析](exhaustive-review/luna18.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G55 | 已补齐：公开Strategy构造/工厂统一拒非法参数；策略spec/防御原则 | Momentum构造器拒非有限阈值，params.validate与Factory沿用同一入口；机构原始margin在采样/钳位前校验，零tick日显式InvalidParam。新短测验证非法参数拒绝、margin/零tick不消耗RNG及合法三类实例可建。原证据见 [策略入口](exhaustive-review/sweep20.md) 与 [工厂](exhaustive-review/sweep19.md)，实施见 [策略输入](../implementation-gap-implementation/strategy-input.md)。 |
 | G56 | 已补齐：Pages区分owner根站点和项目路径；ADR-0028 | Pages base仅在仓库名与repository_owner.github.io不区分大小写精确一致时为根路径；异owner同后缀为项目路径。步骤传owner并校验env形状，VM执行真实JS核root/project与非法env，不冒称线上部署验收。 原证据见 [Pages](exhaustive-review/luna12.md)，短测见 [CI与Pages边界](../implementation-gap-implementation/ci-pages.md)。 |
