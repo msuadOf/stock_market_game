@@ -1,5 +1,16 @@
 # 量价诊断报告
 
+## 量价与 causal 同批诊断
+
+默认使用 `engine::run_combined_diagnostics` 或 `price_volume_baseline` 示例运行默认模式。
+每个 seed 只创建一个 `GameSession` 并步进一次；量价 collector 消费该 session 的权威 `Trade`
+receipt，causal collector 读取同一 session 产生的执行事实。两份报告通过同一 `run_id` 配对，来源元数据
+记录交易日、tick 数，以及两侧成交笔数、股数、成交额的对账摘要。摘要不替代逐笔事实，也不改变交易。
+
+示例加 `--independent` 会分别运行两个 session。报告明确标记 `independent_sessions`，并为 causal
+运行使用不同的 `run_id`；相同 seed 只代表 RNG seed 相同，不代表自由调度下的 Trade/receipt 轨迹相同。
+独立模式适用于需要比较两次运行的场景，不能将其结果解释为同批成交的两个视角。
+
 `engine::run_price_volume_baseline` 是策略变更前后的确定性离线回归工具。它只推进游戏 tick，
 不读取墙钟、不经过 UI 或 Publisher，也不消耗诊断专用随机数。因此相同 `SessionSetup`、seed
 列表和交易日数必须逐字段得到相同报告。

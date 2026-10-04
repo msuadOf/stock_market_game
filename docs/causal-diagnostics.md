@@ -9,6 +9,12 @@ public event, host contract, snapshot or save representation is modified.
 starts a real session from the input setup; it does not restore an old ledger.
 The historical task-1 baseline fixture/report is unchanged.
 
+量价与 causal 同批采集时，`price_volume_baseline` 示例默认对每个 seed 仅推进一个真实
+`GameSession`。量价报告读取该次运行的 `Trade` receipt；causal 报告读取同一 session 的执行事实，
+共享 `run_id`，并输出笔数、成交股数与成交额对账摘要。示例的 `--independent` 模式仍分别启动两个
+session，来源标记为 `independent_sessions`，两个报告使用不同 `run_id`。seed 相同不保证自由调度
+轨迹相同，不能跨独立运行声称成交逐笔相同。
+
 ## Definitions
 
 - Submitted quantity is the quantity entering an allocated order-ID lifecycle,

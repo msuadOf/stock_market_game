@@ -1,8 +1,8 @@
 use std::{env, fs, path::Path, process};
 
-use engine::{run_price_volume_baseline, SessionSetup};
+use engine::{run_combined_diagnostics, run_price_volume_baseline, SessionSetup};
 
-const USAGE: &str = "用法：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- <存档.json> <交易日数> <seed[,seed...]>\n\n示例：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5";
+const USAGE: &str = "用法：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- [--independent] <存档.json> <交易日数> <seed[,seed...]>\n\n默认模式在同一真实 session 运行中收集量价与 causal 报告。\n--independent 显式分别创建 session；相同 seed 不代表自由调度轨迹相同。\n\n示例：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5";
 
 fn main() {
     if let Err(error) = run() {
@@ -17,6 +17,10 @@ fn run() -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     }
+    let (independent, args) = match args.first().map(String::as_str) {
+        Some("--independent") => (true, &args[1..]),
+        _ => (false, args.as_slice()),
+    };
     if args.len() != 3 {
         return Err(format!("需要 3 个参数，实际收到 {} 个", args.len()));
     }
@@ -34,30 +38,55 @@ fn run() -> Result<(), String> {
             save_path.display()
         )
     })?;
-    let report = run_price_volume_baseline(&setup, &seeds, trading_days)
-        .map_err(|error| error.to_string())?;
-    let mut causal_runs = Vec::new();
-    for seed in seeds {
-        let mut session =
-            engine::GameSession::new(setup.clone(), seed).map_err(|error| error.to_string())?;
+    let output = if independent {
+        let price_volume = run_price_volume_baseline(&setup, &seeds, trading_days)
+            .map_err(|error| error.to_string())?;
         let ticks = setup
             .ticks_per_day
             .checked_mul(u64::from(trading_days))
             .ok_or("tick count overflow")?;
-        for _ in 0..ticks {
-            session
-                .step()
-                .map_err(|error| format!("diagnostic market step failed: {error}"))?;
+        let mut causal_runs = Vec::new();
+        for (index, seed) in seeds.iter().copied().enumerate() {
+            let mut session =
+                engine::GameSession::new(setup.clone(), seed).map_err(|error| error.to_string())?;
+            for _ in 0..ticks {
+                session
+                    .step()
+                    .map_err(|error| format!("diagnostic market step failed: {error}"))?;
+            }
+            let causal_execution_count = session
+                .causal_facts()
+                .iter()
+                .filter(|fact| {
+                    matches!(
+                        &fact.kind,
+                        engine::diagnostics::causal::CausalFactKind::Execution { .. }
+                    )
+                })
+                .count();
+            causal_runs.push(serde_json::json!({
+                "run_id": format!("causal-independent-run-{index}-seed-{seed}"),
+                "seed": seed.to_string(),
+                "source": {
+                    "collection_mode": "independent_session",
+                    "source_kind": "causal_execution_facts",
+                    "ticks": ticks.to_string(),
+                    "causal_execution_count": causal_execution_count.to_string(),
+                    "same_seed_does_not_identify_same_free_scheduling_trajectory": true
+                },
+                "report": session.causal_diagnostics().map_err(|error| error.to_string())?
+            }));
         }
-        causal_runs.push(
-            session
-                .causal_diagnostics()
-                .map_err(|error| error.to_string())?,
-        );
+        serde_json::to_string_pretty(&serde_json::json!({
+            "collection_mode": "independent_sessions",
+            "price_volume": price_volume,
+            "causal_runs": causal_runs
+        }))
+    } else {
+        let report = run_combined_diagnostics(&setup, &seeds, trading_days)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_string_pretty(&report)
     }
-    let output = serde_json::to_string_pretty(
-        &serde_json::json!({ "price_volume": report, "causal_runs": causal_runs }),
-    )
     .map_err(|error| format!("报告 JSON 序列化失败：{error}"))?;
     println!("{output}");
     Ok(())

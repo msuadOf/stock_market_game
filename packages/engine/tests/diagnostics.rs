@@ -1,7 +1,7 @@
 use engine::{
-    run_price_volume_baseline, BaselineError, FloatAllocation, GameConfig, HotParams, InstParams,
-    Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange,
-    StockSpec, StrategyParams,
+    run_combined_diagnostics, run_price_volume_baseline, BaselineError, FloatAllocation,
+    GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams, SecurityCategory,
+    SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
 };
 
 fn diagnostic_setup() -> SessionSetup {
@@ -51,6 +51,61 @@ fn diagnostic_setup() -> SessionSetup {
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
+}
+
+#[test]
+fn combined_diagnostics_pairs_reports_from_the_same_trade_receipts() {
+    let seeds = [7, 11, 19, 23, 31];
+    let report = run_combined_diagnostics(&diagnostic_setup(), &seeds, 20).unwrap();
+    let run = report
+        .causal_runs
+        .iter()
+        .find(|run| run.source.trade_receipt_count > 0)
+        .expect("at least one real seeded market run must produce a Trade receipt");
+    let price_volume_run = report
+        .price_volume
+        .runs
+        .iter()
+        .find(|price_volume_run| price_volume_run.run_id == run.run_id)
+        .expect("the paired price-volume report must use the same run identity");
+    let stock = &price_volume_run.stocks[&StockCode("600101".to_string())];
+
+    assert!(
+        run.source.trade_receipt_count > 0,
+        "fixture must produce an actual Trade receipt"
+    );
+    assert!(
+        run.source.trade_receipt_shares > 0,
+        "actual Trade receipts must carry shares"
+    );
+    assert!(
+        run.source.trade_receipt_turnover_cents > 0,
+        "actual Trade receipts must carry turnover"
+    );
+    assert_eq!(run.run_id, price_volume_run.run_id);
+    assert_eq!(run.seed, price_volume_run.seed);
+    assert_eq!(
+        run.source.trade_receipt_count,
+        price_volume_run.trade_events
+    );
+    assert_eq!(run.source.trade_receipt_shares, stock.trade_event_volume);
+    assert_eq!(
+        run.source.trade_receipt_turnover_cents,
+        stock.trade_event_turnover_cents
+    );
+    assert_eq!(
+        run.source.causal_execution_count,
+        run.source.trade_receipt_count
+    );
+    assert_eq!(
+        run.source.causal_execution_shares,
+        run.source.trade_receipt_shares
+    );
+    assert_eq!(
+        run.source.causal_execution_turnover_cents,
+        run.source.trade_receipt_turnover_cents
+    );
+    assert_eq!(run.source.collection_mode, "shared_session");
 }
 
 #[test]
@@ -131,13 +186,13 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         "散户行为诊断报告必须保留每个 seed 实际产生的散户目标仓位决策"
     );
     assert!(
-            report.runs.iter().all(|run| {
-                run.retail_behavior.desired_buy_shares >= run.retail_behavior.executable_buy_shares
-                    && run.retail_behavior.desired_sell_shares
-                        >= run.retail_behavior.executable_sell_shares
-            }),
-            "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
-        );
+        report.runs.iter().all(|run| {
+            run.retail_behavior.desired_buy_shares >= run.retail_behavior.executable_buy_shares
+                && run.retail_behavior.desired_sell_shares
+                    >= run.retail_behavior.executable_sell_shares
+        }),
+        "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
+    );
     assert!(
         report
             .runs

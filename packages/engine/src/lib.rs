@@ -74,13 +74,16 @@ pub use session::{
 
 pub mod diagnostics;
 pub use diagnostics::NpcDecisionDiagnostics;
+#[cfg(feature = "simulation-diagnostics")]
+pub use diagnostics::{
+    run_combined_diagnostics, CombinedCausalRunReport, CombinedDiagnosticsReport,
+    CombinedRunSource, NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS,
+};
 pub use diagnostics::{
     run_price_volume_baseline, BaselineError, DistributionSummary, ExtremeSeedCase,
     ParticipantExecutionRunReport, PriceVolumeBaselineReport, PriceVolumeRunReport,
     StockEnsembleReport, StockPriceVolumeReport,
 };
-#[cfg(feature = "simulation-diagnostics")]
-pub use diagnostics::{NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS};
 
 pub mod observation;
 pub use observation::{

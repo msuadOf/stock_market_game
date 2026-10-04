@@ -108,6 +108,15 @@ pub enum BaselineError {
         expected: u64,
         actual: u64,
     },
+    #[error("seed {seed} 的 causal 执行摘要与实际 Trade receipt 不一致")]
+    CausalTradeReceiptMismatch { seed: u64 },
+    #[cfg(feature = "simulation-diagnostics")]
+    #[error("seed {seed} causal 报告生成失败：{source}")]
+    CausalReport {
+        seed: u64,
+        #[source]
+        source: causal::CausalError,
+    },
 }
 
 /// 一组 setup 在多个随机种子下的可比量价报告。
@@ -174,6 +183,7 @@ pub struct ExtremeSeedCase {
 /// 单个 seed 的完整报告。所有 u64 序列化为十进制字符串，避免 JSON/JavaScript 精度损失。
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct PriceVolumeRunReport {
+    pub run_id: String,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub seed: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
@@ -191,6 +201,45 @@ pub struct PriceVolumeRunReport {
     /// 不可将该量与单边成交量或市场成交量直接比较。
     pub participant_execution: ParticipantExecutionRunReport,
     pub stocks: BTreeMap<StockCode, StockPriceVolumeReport>,
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[derive(Debug, serde::Serialize)]
+pub struct CombinedDiagnosticsReport {
+    pub price_volume: PriceVolumeBaselineReport,
+    pub causal_runs: Vec<CombinedCausalRunReport>,
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[derive(Debug, serde::Serialize)]
+pub struct CombinedCausalRunReport {
+    pub run_id: String,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub seed: u64,
+    pub source: CombinedRunSource,
+    pub report: causal::CausalReport,
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct CombinedRunSource {
+    pub collection_mode: &'static str,
+    pub source_kind: &'static str,
+    pub trading_days: u32,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub ticks: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_receipt_count: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_receipt_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_receipt_turnover_cents: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub causal_execution_count: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub causal_execution_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub causal_execution_turnover_cents: u64,
 }
 
 /// 单个 seed 的成交参与归因。仅使用权威 `Trade` 事件和公开策略档案，不读取 NPC 私有资产。
@@ -355,6 +404,153 @@ pub fn run_price_volume_baseline(
     seeds: &[u64],
     trading_days: u32,
 ) -> Result<PriceVolumeBaselineReport, BaselineError> {
+    validate_baseline_input(setup, seeds, trading_days)?;
+    let seed_count =
+        u32::try_from(seeds.len()).map_err(|_| BaselineError::TooManySeeds(seeds.len()))?;
+    let total_ticks = setup
+        .ticks_per_day
+        .checked_mul(u64::from(trading_days))
+        .ok_or(BaselineError::TickCountOverflow {
+            ticks_per_day: setup.ticks_per_day,
+            trading_days,
+        })?;
+
+    let mut runs = Vec::with_capacity(seeds.len());
+    for (index, &seed) in seeds.iter().enumerate() {
+        let run_id = diagnostic_run_id(index, seed);
+        runs.push(run_one_seed(setup, seed, trading_days, total_ticks, run_id)?.0);
+    }
+    let (stocks, extreme_cases) = summarize_ensemble(setup, &runs, seed_count);
+    Ok(PriceVolumeBaselineReport {
+        trading_days,
+        ticks_per_day: setup.ticks_per_day,
+        runs,
+        stocks,
+        extreme_cases,
+    })
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+pub fn run_combined_diagnostics(
+    setup: &SessionSetup,
+    seeds: &[u64],
+    trading_days: u32,
+) -> Result<CombinedDiagnosticsReport, BaselineError> {
+    validate_baseline_input(setup, seeds, trading_days)?;
+    let total_ticks = setup
+        .ticks_per_day
+        .checked_mul(u64::from(trading_days))
+        .ok_or(BaselineError::TickCountOverflow {
+            ticks_per_day: setup.ticks_per_day,
+            trading_days,
+        })?;
+    let mut price_volume_runs = Vec::with_capacity(seeds.len());
+    let mut causal_runs = Vec::with_capacity(seeds.len());
+    for (index, &seed) in seeds.iter().enumerate() {
+        let run_id = diagnostic_run_id(index, seed);
+        let (price_volume, session) =
+            run_one_seed(setup, seed, trading_days, total_ticks, run_id.clone())?;
+        let mut receipt_shares = 0_u64;
+        let mut receipt_turnover = 0_u64;
+        for stock in price_volume.stocks.values() {
+            receipt_shares = receipt_shares.checked_add(stock.trade_event_volume).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "combined trade receipt shares",
+                },
+            )?;
+            receipt_turnover = receipt_turnover
+                .checked_add(stock.trade_event_turnover_cents)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "combined trade receipt turnover",
+                })?;
+        }
+        let receipt_count = price_volume.trade_events;
+        let mut execution_count = 0_u64;
+        let mut execution_shares = 0_u64;
+        let mut execution_turnover = 0_u64;
+        for fact in session.causal_facts() {
+            if let causal::CausalFactKind::Execution {
+                qty, price_cents, ..
+            } = &fact.kind
+            {
+                execution_count =
+                    execution_count
+                        .checked_add(1)
+                        .ok_or(BaselineError::CounterOverflow {
+                            seed,
+                            counter: "combined causal execution count",
+                        })?;
+                execution_shares = execution_shares.checked_add(u64::from(*qty)).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "combined causal execution shares",
+                    },
+                )?;
+                let gross = u64::try_from(*price_cents)
+                    .ok()
+                    .and_then(|price| price.checked_mul(u64::from(*qty)))
+                    .ok_or(BaselineError::CounterOverflow {
+                        seed,
+                        counter: "combined causal execution turnover",
+                    })?;
+                execution_turnover = execution_turnover.checked_add(gross).ok_or(
+                    BaselineError::CounterOverflow {
+                        seed,
+                        counter: "combined causal execution turnover",
+                    },
+                )?;
+            }
+        }
+        if execution_count != receipt_count
+            || execution_shares != receipt_shares
+            || execution_turnover != receipt_turnover
+        {
+            return Err(BaselineError::CausalTradeReceiptMismatch { seed });
+        }
+        let report = session
+            .causal_diagnostics()
+            .map_err(|source| BaselineError::CausalReport { seed, source })?;
+        causal_runs.push(CombinedCausalRunReport {
+            run_id: run_id.clone(),
+            seed,
+            source: CombinedRunSource {
+                collection_mode: "shared_session",
+                source_kind: "actual_trade_receipts_and_causal_execution_facts",
+                trading_days,
+                ticks: total_ticks,
+                trade_receipt_count: receipt_count,
+                trade_receipt_shares: receipt_shares,
+                trade_receipt_turnover_cents: receipt_turnover,
+                causal_execution_count: execution_count,
+                causal_execution_shares: execution_shares,
+                causal_execution_turnover_cents: execution_turnover,
+            },
+            report,
+        });
+        price_volume_runs.push(price_volume);
+    }
+    let seed_count =
+        u32::try_from(seeds.len()).map_err(|_| BaselineError::TooManySeeds(seeds.len()))?;
+    let (stocks, extreme_cases) = summarize_ensemble(setup, &price_volume_runs, seed_count);
+    Ok(CombinedDiagnosticsReport {
+        price_volume: PriceVolumeBaselineReport {
+            trading_days,
+            ticks_per_day: setup.ticks_per_day,
+            runs: price_volume_runs,
+            stocks,
+            extreme_cases,
+        },
+        causal_runs,
+    })
+}
+
+fn validate_baseline_input(
+    setup: &SessionSetup,
+    seeds: &[u64],
+    trading_days: u32,
+) -> Result<(), BaselineError> {
     if seeds.is_empty() {
         return Err(BaselineError::EmptySeeds);
     }
@@ -367,28 +563,19 @@ pub fn run_price_volume_baseline(
             return Err(BaselineError::DuplicateSeed(seed));
         }
     }
-    let seed_count =
-        u32::try_from(seeds.len()).map_err(|_| BaselineError::TooManySeeds(seeds.len()))?;
-    let total_ticks = setup
+    u32::try_from(seeds.len()).map_err(|_| BaselineError::TooManySeeds(seeds.len()))?;
+    setup
         .ticks_per_day
         .checked_mul(u64::from(trading_days))
         .ok_or(BaselineError::TickCountOverflow {
             ticks_per_day: setup.ticks_per_day,
             trading_days,
         })?;
+    Ok(())
+}
 
-    let mut runs = Vec::with_capacity(seeds.len());
-    for &seed in seeds {
-        runs.push(run_one_seed(setup, seed, trading_days, total_ticks)?);
-    }
-    let (stocks, extreme_cases) = summarize_ensemble(setup, &runs, seed_count);
-    Ok(PriceVolumeBaselineReport {
-        trading_days,
-        ticks_per_day: setup.ticks_per_day,
-        runs,
-        stocks,
-        extreme_cases,
-    })
+fn diagnostic_run_id(index: usize, seed: u64) -> String {
+    format!("baseline-run-{index}-seed-{seed}")
 }
 
 struct StockRunDiagnostics {
@@ -399,6 +586,7 @@ struct StockRunDiagnostics {
 }
 
 struct SeedDiagnostics {
+    run_id: String,
     seed: u64,
     trading_days: u32,
     stocks: BTreeMap<StockCode, StockRunDiagnostics>,
@@ -412,7 +600,13 @@ struct SeedDiagnostics {
 }
 
 impl SeedDiagnostics {
-    fn new(setup: &SessionSetup, seed: u64, trading_days: u32, session: &GameSession) -> Self {
+    fn new(
+        setup: &SessionSetup,
+        seed: u64,
+        trading_days: u32,
+        run_id: String,
+        session: &GameSession,
+    ) -> Self {
         let stocks = setup
             .stocks
             .iter()
@@ -435,6 +629,7 @@ impl SeedDiagnostics {
             .collect();
         participant_profiles.insert(AccountId(0), "player");
         Self {
+            run_id,
             seed,
             trading_days,
             stocks,
@@ -776,6 +971,7 @@ impl SeedDiagnostics {
         }
 
         Ok(PriceVolumeRunReport {
+            run_id: self.run_id,
             seed,
             final_tick: total_ticks,
             trade_events: self.trade_events,
@@ -794,10 +990,11 @@ fn run_one_seed(
     seed: u64,
     trading_days: u32,
     total_ticks: u64,
-) -> Result<PriceVolumeRunReport, BaselineError> {
+    run_id: String,
+) -> Result<(PriceVolumeRunReport, GameSession), BaselineError> {
     let mut session = GameSession::new(setup.clone(), seed)
         .map_err(|source| BaselineError::Session { seed, source })?;
-    let mut diagnostics = SeedDiagnostics::new(setup, seed, trading_days, &session);
+    let mut diagnostics = SeedDiagnostics::new(setup, seed, trading_days, run_id, &session);
     for elapsed_tick in 1..=total_ticks {
         let phase = session.phase();
         let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
@@ -818,7 +1015,7 @@ fn run_one_seed(
         }
         diagnostics.observe_committed_events(events, phase, day_tick, setup)?;
     }
-    diagnostics.finish_run(setup, total_ticks)
+    Ok((diagnostics.finish_run(setup, total_ticks)?, session))
 }
 
 impl ParticipantExecutionAccumulator {
@@ -1812,12 +2009,15 @@ mod tests {
             closing_auction_ticks: 0,
             history_len: 2,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
-        (super::SeedDiagnostics::new(&setup, 7, 1, &session), setup)
+        (
+            super::SeedDiagnostics::new(&setup, 7, 1, super::diagnostic_run_id(0, 7), &session),
+            setup,
+        )
     }
 
     #[test]
