@@ -131,6 +131,24 @@ pub struct AnnouncedEvent {
 }
 
 impl AnnouncedEvent {
+    pub(crate) fn validate_payment_failure(
+        &self,
+        occurred_on: CivilDate,
+    ) -> Result<(), InformationError> {
+        if let crate::company::ShockKind::PaymentFailure { what, amount } = &self.kind {
+            if what.trim().is_empty()
+                || !amount.is_positive()
+                || self.amplitude_bp != 0
+                || self.starts_on != occurred_on
+                || self.expires_on != occurred_on
+            {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!("invalid payment failure announcement on {occurred_on}"),
+                });
+            }
+        }
+        Ok(())
+    }
     /// 由已激活冲击构造（条款在激活时即确定，是已确认事实）。
     pub fn from_active(shock: &crate::company::ActiveShock) -> Self {
         Self {

@@ -135,6 +135,28 @@ pub enum ShockKind {
     ProductionInterruption,
     /// 资产减值迹象。
     AssetImpairmentSignal,
+    PaymentFailure {
+        what: String,
+        amount: crate::accounting::AccountingAmount,
+    },
+}
+
+impl ShockKind {
+    pub fn applies_to(&self, kind: crate::company::CompanyKind) -> bool {
+        use crate::company::CompanyKind;
+        match self {
+            Self::MarketDemandShift
+            | Self::CompanyDemandShift
+            | Self::ContractWon
+            | Self::ContractCancelled => kind != CompanyKind::Bank,
+            Self::IndustryCostShift { .. } | Self::ProductionInterruption => {
+                matches!(kind, CompanyKind::Industrial | CompanyKind::RealEstate)
+            }
+            Self::AssetImpairmentSignal => kind == CompanyKind::Industrial,
+            Self::CreditDeterioration => true,
+            Self::PaymentFailure { .. } => false,
+        }
+    }
 }
 
 /// 一个已激活（或待激活）的冲击：幅度（带符号 bp）+ 有效窗口（闭区间）。

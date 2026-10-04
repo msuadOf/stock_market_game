@@ -137,6 +137,10 @@ impl BankBooks {
         &self.books
     }
 
+    pub(crate) fn books_mut(&mut self) -> &mut Books {
+        &mut self.books
+    }
+
     pub fn counterparties(&self) -> &CounterpartyLedger {
         &self.counterparties
     }

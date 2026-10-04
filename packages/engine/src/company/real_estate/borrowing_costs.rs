@@ -257,6 +257,7 @@ impl RealEstateBooks {
                 principal,
                 annual_rate_bp,
                 start,
+                maturity,
                 lender.clone(),
                 project,
                 account,

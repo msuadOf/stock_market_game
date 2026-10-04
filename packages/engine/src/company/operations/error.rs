@@ -10,6 +10,8 @@ use thiserror::Error;
 /// `matches!` 字段绑定——observation 套件先例）。
 #[derive(Debug, Error)]
 pub enum OperationsError {
+    #[error("invalid company payment history: {detail}")]
+    InvalidPaymentHistory { detail: String },
     #[error(transparent)]
     Industrial(#[from] crate::company::industrial::IndustrialError),
     #[error(transparent)]

@@ -32,6 +32,7 @@ pub struct ProjectLoanState {
     /// 过账借款科目（2001/2501，按起息—到期期限在借款时选定）。
     debt_account: String,
     annual_rate_bp: i32,
+    maturity_date: CivilDate,
 }
 
 impl ProjectLoanState {
@@ -39,6 +40,7 @@ impl ProjectLoanState {
         principal: AccountingAmount,
         annual_rate_bp: i32,
         start: CivilDate,
+        maturity_date: CivilDate,
         lender: crate::company::counterparty::CounterpartyId,
         project: Option<ProjectId>,
         debt_account: &'static str,
@@ -53,11 +55,16 @@ impl ProjectLoanState {
             project,
             debt_account: debt_account.to_string(),
             annual_rate_bp,
+            maturity_date,
         }
     }
 
     pub fn outstanding(&self) -> AccountingAmount {
         self.outstanding
+    }
+
+    pub fn maturity_date(&self) -> CivilDate {
+        self.maturity_date
     }
 
     pub fn accrued_unpaid(&self) -> AccountingAmount {

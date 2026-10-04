@@ -73,6 +73,12 @@ impl CompanyOperations {
                 expires_on: shock.expires_on,
             });
         }
+        if !shock.kind.applies_to(target.spec.kind) {
+            return Err(OperationsError::ShockKindMismatch {
+                actual: shock.kind,
+                slot: "company industry",
+            });
+        }
         target.economy.activate(shock);
         Ok(())
     }
@@ -90,7 +96,7 @@ impl CompanyOperations {
             });
         }
         for company in self.companies.values_mut() {
-            if predicate(&company.spec) {
+            if predicate(&company.spec) && shock.kind.applies_to(company.spec.kind) {
                 company.economy.activate(shock.clone());
             }
         }

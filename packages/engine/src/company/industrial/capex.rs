@@ -71,27 +71,30 @@ impl IndustrialBooks {
         let base = self.next_event_id;
         let mut postings = Vec::new();
         let mut entries = Vec::new();
-        for (index, (code, amount)) in due.into_iter().enumerate() {
-            let event = BusinessEventId::new(base + index as u64);
+        for (code, amount) in &due {
+            if amount.is_zero() {
+                continue;
+            }
+            let event = BusinessEventId::new(base + entries.len() as u64);
             entries.push(JournalEntry {
                 source: event,
                 date,
                 kind: BusinessKind::Depreciation,
                 cash_flow: CashFlowClass::NonCash,
                 lines: vec![
-                    super::line(chart::acct::ADMIN_EXP, PostingSide::Debit, amount),
-                    super::line(chart::acct::ACC_DEP, PostingSide::Credit, amount),
+                    super::line(chart::acct::ADMIN_EXP, PostingSide::Debit, *amount),
+                    super::line(chart::acct::ACC_DEP, PostingSide::Credit, *amount),
                 ],
             });
             postings.push(DepreciationPosting {
-                code,
-                amount,
+                code: code.clone(),
+                amount: *amount,
                 event,
             });
         }
         self.post_with_commit(base + postings.len() as u64, entries)?;
-        for posting in &postings {
-            self.assets_mut().apply_depreciation(&posting.code)?;
+        for (code, _) in &due {
+            self.assets_mut().apply_depreciation(code)?;
         }
         Ok(postings)
     }

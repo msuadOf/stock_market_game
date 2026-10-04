@@ -21,6 +21,32 @@ fn machine() -> FixedAssetCode {
 }
 
 #[test]
+fn zero_depreciation_advances_life_without_zero_journal() {
+    let mut company = engine::company::industrial::IndustrialBooks::new(base_config()).unwrap();
+    company
+        .acquire_asset(machine(), amt(1), amt(1), 2, d("2030-01-02"))
+        .unwrap();
+    let count = company.books().journal().entry_count();
+    assert!(company
+        .depreciate_month(d("2030-01-31"))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        company.assets().get(&machine()).unwrap().remaining_months(),
+        1
+    );
+    assert_eq!(company.books().journal().entry_count(), count);
+    assert!(company
+        .depreciate_month(d("2030-02-28"))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        company.assets().get(&machine()).unwrap().remaining_months(),
+        0
+    );
+}
+
+#[test]
 fn gold_capex_depreciation_straight_line_conservation() {
     let mut co =
         engine::company::industrial::IndustrialBooks::new(base_config()).expect("base opening");
