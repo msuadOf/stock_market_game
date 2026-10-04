@@ -220,3 +220,22 @@
 .msd-volume-title,.msd-kdj-title { height:23px; padding:3px 8px; border-top:1px solid #eee; font-size:12px; font-weight:700; }.msd-volume-title span { color:#e35137; }
 .msd-k-volume { display:block; width:100%; height:75px; border-bottom:1px solid #eee; }.msd-k-volume rect { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-k-volume rect.rise { fill:none; color:#ed3943; }.msd-k-volume rect.fall { fill:currentColor; color:#15952d; }
 .msd-kdj-title span { color:#e56b38; }.msd-kdj-title em { color:#c73771; font-style:normal; }.msd-kdj { width:100%; height:72px; background:repeating-linear-gradient(0deg,transparent 0 34px,#eee 35px); }.msd-kdj polyline { stroke:#222; }.msd-kdj .orange { stroke:#e56b38; }.msd-kdj .pink { stroke:#c73771; }
+
+/* 两端共用的图例与缩放工具采用正常文档流，数值换行不覆盖蜡烛。 */
+.msd-kline { height: auto; min-height: 465px; display: flex; flex-direction: column; }
+.msd-kline-meta { height: auto; min-height: 32px; flex-wrap: wrap; gap: 3px 8px; }
+.msd-kline-meta button { padding: 3px 0; font: inherit; white-space: nowrap; }
+.msd-chart-tools { position: static; min-height: 30px; flex: none; }
+
+/* SVG 非等比拉伸时，图形宽高变化，轮廓保持屏幕像素宽度。 */
+.msd-candle-chart rect, .msd-candle-chart line, .msd-k-volume rect, .msd-kdj line,
+.msd-price-plot polyline, .msd-minute-bars line, .msd-minute-bars rect { vector-effect: non-scaling-stroke; }
+.kline-details { position:absolute; top:40px; left:10px; z-index:5; width:180px; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--text); box-shadow:0 2px 8px #0002; font-size:12px; }
+.kline-details-head { display:flex; align-items:center; justify-content:space-between; }
+.kline-details-head button { border:0; background:transparent; color:inherit; font-size:20px; cursor:pointer; }
+.kline-details dl { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; margin:4px 0 0; }
+.kline-detail-row { display:contents; }
+.kline-details dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+
+.kline-details { pointer-events: none; }
+.kline-details button { pointer-events: auto; }

@@ -1,8 +1,7 @@
-import { Children, isValidElement, useCallback, useState, type HTMLAttributes, type MutableRefObject, type ReactElement, type ReactNode } from "react";
-import { ResponsiveGridLayout, useContainerWidth, type Layout, type ResponsiveLayouts } from "react-grid-layout";
+import { Children, isValidElement, useState, type HTMLAttributes, type ReactElement, type ReactNode } from "react";
+import { ResponsiveGridLayout, type Layout, type ResponsiveLayouts } from "react-grid-layout";
 import type { Orientation } from "../hooks/useOrientation.ts";
 import {
-  createWorkspaceLayouts,
   WORKSPACE_BREAKPOINTS,
   WORKSPACE_COLUMNS,
   WORKSPACE_MARGIN,
@@ -12,12 +11,17 @@ import {
   type WorkspaceBreakpoint,
   type WorkspacePanelId,
 } from "./workspace-layout.ts";
+import { DesktopTerminal, type DesktopView } from "./DesktopTerminal.tsx";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./workspace-grid.css";
 
 export interface WorkspaceGridProps extends HTMLAttributes<HTMLDivElement> {
   orientation: Orientation;
+  desktopView?: DesktopView;
+  onDesktopViewChange?: (view: DesktopView) => void;
+  stockList?: ReactNode;
+  onTradeCurrent?: () => void;
   "data-mobile-tab"?: string;
   "data-mobile-detail"?: string;
 }
@@ -81,26 +85,11 @@ export function WorkspaceDesktopLayout({ width, layouts, children, onLayoutChang
   </ResponsiveGridLayout>;
 }
 
-function MeasuredWorkspace({ children, layouts, onLayoutChange }: Omit<WorkspaceDesktopLayoutProps, "width">) {
-  const { width, containerRef }: { width: number; containerRef: MutableRefObject<HTMLDivElement | null> } = useContainerWidth();
-  return <div className="workspace-width-container" ref={(node) => { containerRef.current = node; }}>
-    {width > 0
-      ? <WorkspaceDesktopLayout width={width} layouts={layouts} onLayoutChange={onLayoutChange}>{children}</WorkspaceDesktopLayout>
-      : <p role="status">工作台等待容器提供可用宽度…</p>}
-  </div>;
-}
-
-export function WorkspaceGrid({ orientation, children, className = "", ...attributes }: WorkspaceGridProps) {
-  const [layouts, setLayouts] = useState<ResponsiveLayouts<WorkspaceBreakpoint>>(() => createWorkspaceLayouts());
-  const onLayoutChange = useCallback((_layout: Layout, nextLayouts: ResponsiveLayouts<WorkspaceBreakpoint>) => {
-    setLayouts(nextLayouts);
-  }, []);
+export function WorkspaceGrid({ orientation, children, className = "", desktopView = "quotes", onDesktopViewChange, stockList, onTradeCurrent, ...attributes }: WorkspaceGridProps) {
+  const [localView, setLocalView] = useState<DesktopView>("quotes");
   const panels = namedPanels(children);
-  if (orientation === "portrait") {
-    return <div className={`app-grid ${className}`.trim()} {...attributes}>{children}</div>;
-  }
+  if (orientation === "portrait") return <div className={`app-grid ${className}`.trim()} {...attributes}>{children}</div>;
   return <div className={`workspace-desktop ${className}`.trim()} {...attributes}>
-    <MeasuredWorkspace layouts={layouts} onLayoutChange={onLayoutChange}>{panels}</MeasuredWorkspace>
-    <div hidden>{panels.filter((panel) => panel.props.id === "section-user")}</div>
+    <DesktopTerminal view={onDesktopViewChange ? desktopView : localView} onViewChange={onDesktopViewChange ?? setLocalView} stockList={stockList} panels={panels} onTradeCurrent={onTradeCurrent} />
   </div>;
 }

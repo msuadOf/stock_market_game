@@ -1,4 +1,4 @@
-import { moneyToChartNumber, subtractMoney, ratioMoney } from "../utils/money.ts";
+import { moneyToChartNumber, subtractMoney, ratioMoney, compareMoney } from "../utils/money.ts";
 import type { IndicatorResultState } from "../components/useIndicatorResults.ts";
 import type { TradeEvent, MarketSnap } from "../types/engine.ts";
 import type { EngineEvent, PriceLevel } from "../types/engine";
@@ -346,6 +346,11 @@ export function aggregateCandles(candles: readonly KlinePoint[], period: "日K" 
   }
   return groups.map((group) => ({
     time: group[0].time,
+    ...(group.every(candle => candle.rawPrices !== undefined) ? { rawPrices: {
+      open: group[0].rawPrices!.open, close: group.at(-1)!.rawPrices!.close,
+      high: group.reduce((max, candle) => compareMoney(candle.rawPrices!.high, max) > 0 ? candle.rawPrices!.high : max, group[0].rawPrices!.high),
+      low: group.reduce((min, candle) => compareMoney(candle.rawPrices!.low, min) < 0 ? candle.rawPrices!.low : min, group[0].rawPrices!.low),
+    } } : {}),
     open: group[0].open,
     high: Math.max(...group.map((candle) => candle.high)),
     low: Math.min(...group.map((candle) => candle.low)),
@@ -738,16 +743,16 @@ export class MobileKlineProjection {
   private readonly maxVolume: number;
   private readonly averages: ReadonlyMap<number, readonly number[]>;
 
-  static fromInputs(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState): MobileKlineProjection {
-    return new MobileKlineProjection(allCandles, viewport, result);
+  static fromInputs(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState, overlayPrices: readonly number[] = []): MobileKlineProjection {
+    return new MobileKlineProjection(allCandles, viewport, result, overlayPrices);
   }
 
-  private constructor(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState) {
+  private constructor(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState, overlayPrices: readonly number[]) {
     this.allCandles = allCandles;
     this.visibleWindow = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
     const { start, end } = this.visibleWindow;
     this.visibleCandles = allCandles.slice(start, end);
-    const values = this.visibleCandles.flatMap(candle => [candle.high, candle.low]);
+    const values = [...this.visibleCandles.flatMap(candle => [candle.high, candle.low]), ...overlayPrices];
     this.priceMax = values.length === 0 ? 0 : Math.max(...values);
     const priceMin = values.length === 0 ? 0 : Math.min(...values);
     this.priceRange = Math.max(.01, this.priceMax - priceMin);

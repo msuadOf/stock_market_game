@@ -8,18 +8,18 @@ import type { IndicatorResults } from "./indicator-results.ts";
 function fixture(indicator = true) {
   const calls: string[] = [];
   const series: { id: string; data: unknown; options: unknown }[] = [];
-  const charts: { widths: number[]; removed: number; fits: number }[] = [];
+  const charts: { widths: number[]; heights: number[]; removed: number; fits: number; attributionLogo: boolean | undefined }[] = [];
   let observerCallback: (() => void) | undefined;
   let windowCallback: (() => void) | undefined;
   let observed: readonly Element[] = [];
   let failedRemoval: string | null = null;
-  const main = { clientWidth: 320 } as HTMLDivElement;
-  const secondary = indicator ? { clientWidth: 180 } as HTMLDivElement : null;
+  const main = { clientWidth: 320, clientHeight: 180 } as HTMLDivElement;
+  const secondary = indicator ? { clientWidth: 180, clientHeight: 60 } as HTMLDivElement : null;
   const ports: PriceChartRuntimePorts = {
     createChart: ((_container: string | HTMLElement, options?: Parameters<typeof createChart>[1]) => {
       const index = charts.length;
       calls.push(`create:${index}`);
-      const chart = { widths: [options?.width as number], removed: 0, fits: 0 };
+      const chart = { widths: [options?.width as number], heights: [options?.height as number], removed: 0, fits: 0, attributionLogo: options?.layout?.attributionLogo };
       charts.push(chart);
       return {
         addSeries: (definition: { type: string }, options: unknown) => {
@@ -32,7 +32,7 @@ function fixture(indicator = true) {
           calls.push(`removeSeries:${series.id}`);
           if (series.id === failedRemoval) throw new Error("series 删除失败");
         },
-        applyOptions: ({ width }: { width: number }) => { chart.widths.push(width); },
+        applyOptions: ({ width, height }: { width: number; height: number }) => { chart.widths.push(width); chart.heights.push(height); },
         timeScale: () => ({ fitContent: () => { chart.fits += 1; } }),
         remove: () => { chart.removed += 1; calls.push(`remove:${index}`); },
       };
@@ -137,4 +137,63 @@ test("MACD 与 KDJ 逐项删除失败后重试不重复删除已释放句柄", {
     assert.equal(removals(order[2].id), 1);
     f.runtime.dispose();
   }
+});
+
+
+test("从预览进入个股后图表随容器高度扩展，隐藏面板不破坏图表尺寸", { timeout: 10000 }, () => {
+  const f = fixture();
+  Object.defineProperty(f.main, "clientHeight", { value: 420, configurable: true });
+  Object.defineProperty(f.secondary!, "clientHeight", { value: 100 });
+  f.resizeObserver();
+  assert.equal(f.charts[0].heights.at(-1), 420);
+  assert.equal(f.charts[1].heights.at(-1), 100);
+  Object.defineProperty(f.main, "clientHeight", { value: 0 });
+  f.resizeObserver();
+  assert.equal(f.charts[0].heights.at(-1), 420);
+  f.runtime.dispose();
+});
+
+test("日 K 预览放大后重新适配可见窗口，主副图同时适配", { timeout: 10000 }, () => {
+  const f = fixture();
+  f.runtime.updatePrice([], candles, 10, "日K", 20);
+  f.runtime.updateIndicator("volume", buildPriceChartIndicatorSource("日K", [], candles), { kind: "idle" }, 20);
+  const before = f.charts.map(chart => chart.fits);
+  Object.defineProperty(f.main, "clientWidth", { value: 600 });
+  Object.defineProperty(f.secondary!, "clientWidth", { value: 600 });
+  f.resizeObserver();
+  assert.deepEqual(f.charts.map(chart => chart.fits), before.map(count => count + 1));
+  f.runtime.dispose();
+});
+
+
+test("主图与指标副图都关闭覆盖绘图区的品牌标志", { timeout: 10000 }, () => {
+  const f = fixture();
+  assert.deepEqual(f.charts.map(chart => chart.attributionLogo), [false, false]);
+  f.runtime.dispose();
+});
+
+test("均线可多选且按完整交易日收盘价计算，切换不改K线数据或窗口", { timeout: 10000 }, () => {
+  const f = fixture();
+  const daily = Array.from({ length: 61 }, (_, index) => ({ ...candles[0], time: index as import("lightweight-charts").UTCTimestamp, close: index + 1 }));
+  f.runtime.updatePrice([], daily, 10, "日K", 360);
+  const before = f.charts[0].fits;
+  f.runtime.updateMovingAverages(daily, [20, 60], "日K", 360);
+  assert.equal(f.series.length, 5);
+  assert.deepEqual((f.series[3].data as unknown[])[0], { time: 19, value: 10.5 });
+  assert.deepEqual((f.series[4].data as unknown[])[0], { time: 59, value: 30.5 });
+  assert.equal(f.charts[0].fits, before);
+  assert.deepEqual(f.series[1].data, daily);
+  f.runtime.updateMovingAverages(daily, [60], "日K", 360);
+  assert.ok(f.calls.includes(`removeSeries:${f.series[3].id}`));
+  f.runtime.updateMovingAverages(daily.slice(0, 10), [60], "日K", 360);
+  assert.deepEqual(f.series[4].data, []);
+  f.runtime.updateMovingAverages(daily, [60], "分时", 360);
+  assert.ok(f.calls.includes(`removeSeries:${f.series[4].id}`));
+  f.runtime.dispose();
+});
+
+ test("均线采用参考图的五个周期及配色", { timeout: 10000 }, async () => {
+  const { KLINE_MOVING_AVERAGES } = await import("./kline-moving-averages.ts");
+  assert.deepEqual(KLINE_MOVING_AVERAGES.map(item => item.days), [5, 10, 20, 30, 60]);
+  assert.deepEqual(KLINE_MOVING_AVERAGES.map(item => item.color), ["#ff8a00", "#1890ff", "#c82bb5", "#00bfd8", "#ff6500"]);
 });

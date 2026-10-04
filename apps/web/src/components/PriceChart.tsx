@@ -8,6 +8,9 @@ import { PriceChartRuntime, type PriceChartIndicator } from "./price-chart-runti
 import type { IndicatorCalculator } from "./indicator-results.ts";
 import { useIndicatorResults } from "./useIndicatorResults.ts";
 import { buildPriceChartIndicatorSource } from "./price-chart-indicators.ts";
+import { DesktopIntradayChart } from "./DesktopIntradayChart.tsx";
+import type { MobileIntradayProjection } from "../mobile/market-model.ts";
+import { moneyToChartNumber } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
 
 export interface PricePoint {
@@ -32,18 +35,22 @@ export interface KlinePoint {
 
 interface Props {
   data: readonly PricePoint[];
+  intraday: MobileIntradayProjection;
+  dayRange?: Readonly<{ high: number; low: number; volume?: number }>;
   /** Rust Snapshot 同步的已完成交易日 OHLC。 */
   dailyCandles?: readonly KlinePoint[];
-  lastClose: number; // 昨收（元），用于着色基准
+  lastClose: Cents; // 精确昨收（分）
   chartType?: "分时" | "日K";
+  movingAverageDays?: readonly number[];
   klineDays?: number; // 日K 显示天数（20/60/120/240/360）
   indicatorCalculator?: IndicatorCalculator | null;
 }
 
+const EMPTY_MA_DAYS: readonly number[] = [];
 const EMPTY_PRICE_POINTS: readonly PricePoint[] = [];
 const EMPTY_DAILY_CANDLES: readonly KlinePoint[] = [];
 
-export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20, indicatorCalculator = null }: Props) {
+export function PriceChart({ data, intraday, dayRange, dailyCandles, lastClose, chartType = "分时", klineDays = 20, movingAverageDays = EMPTY_MA_DAYS, indicatorCalculator = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const indicatorContainerRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<PriceChartRuntime | null>(null);
@@ -69,20 +76,25 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
   }, []);
 
   useEffect(() => {
-    runtimeRef.current?.updatePrice(data, dailyCandles, lastClose, chartType, klineDays);
+    runtimeRef.current?.updatePrice(data, dailyCandles, moneyToChartNumber(lastClose) / 100, chartType, klineDays);
   }, [data, dailyCandles, lastClose, chartType, klineDays]);
 
   useEffect(() => {
     runtimeRef.current?.updateIndicator(indicator, indicatorSource, indicatorResult, klineDays);
   }, [indicatorSource, klineDays, indicator, indicatorResult]);
 
+  useEffect(() => {
+    runtimeRef.current?.updateMovingAverages(dailyCandles ?? EMPTY_DAILY_CANDLES, movingAverageDays, chartType, klineDays);
+  }, [dailyCandles, movingAverageDays, chartType, klineDays]);
+
   return (
-    <div style={{ width: "100%" }}>
+    <div className="price-chart" style={{ width: "100%" }}>
       {chartType === "日K" && (!dailyCandles || dailyCandles.length === 0) && (
         <div className="chart-empty" role="status">暂无权威日 K 数据，请检查引擎快照。</div>
       )}
-      <div ref={containerRef} style={{ width: "100%", height: 180 }} />
-      <div ref={indicatorContainerRef} style={{ width: "100%", height: 60 }} />
+      {chartType === "分时" && <DesktopIntradayChart projection={intraday} dayRange={dayRange} lastClose={lastClose} indicator={indicator} result={indicatorResult} />}
+      <div hidden={chartType === "分时"} className="price-chart-main" ref={containerRef} style={{ width: "100%", height: 180 }} />
+      <div hidden={chartType === "分时" || indicator === "none"} className="price-chart-indicator" ref={indicatorContainerRef} style={{ width: "100%", height: 60 }} />
       {(indicator === "macd" || indicator === "kdj") && indicatorResult.kind !== "ready" && (
         <div role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>
           {indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : ""}
@@ -97,17 +109,10 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
         ] as const).map(([type, label]) => (
           <button
             key={type}
+            className="chart-indicator-button"
+            aria-pressed={indicator === type}
             onClick={() => setIndicator(type)}
-            style={{
-              padding: "2px 8px",
-              fontSize: "11px",
-              border: "1px solid #ddd",
-              borderRadius: "3px",
-              background: indicator === type ? "#d81e06" : "transparent",
-              color: indicator === type ? "#fff" : "#555",
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
+
           >
             {label}
           </button>

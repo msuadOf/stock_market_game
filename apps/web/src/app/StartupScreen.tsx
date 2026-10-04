@@ -20,7 +20,7 @@ export function StartupScreen({ mode, remoteAddress, error, developmentHint, onM
   return <main className="app-error" aria-labelledby="startup-title">
     <h1 id="startup-title">股票模拟游戏 · 启动选择</h1>
     <p>尚未连接游戏引擎。确认后才建立宿主并读取一次日终快速存档；模式和地址不写入游戏存档。</p>
-    <form onSubmit={submit}>
+    <form noValidate onSubmit={submit}>
       <fieldset>
         <legend>引擎运行位置</legend>
         <label><input type="radio" name="startup-mode" value="local" checked={mode === "local"} onChange={() => onModeChange("local")} />本地</label>

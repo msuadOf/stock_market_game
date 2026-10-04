@@ -1,3 +1,4 @@
+import { KLINE_MOVING_AVERAGES, klineMovingAverage } from "./kline-moving-averages.ts";
 import {
   createChart, LineSeries, CandlestickSeries, HistogramSeries, ColorType, CrosshairMode,
   type UTCTimestamp, type IChartApi, type ISeriesApi,
@@ -21,6 +22,7 @@ export interface PriceChartRuntimePorts {
 
 /** 仅持有 Lightweight Charts 句柄及 resize 资源；输入行情仍由调用方拥有。 */
 export class PriceChartRuntime {
+  private readonly movingAverages = new Map<number, ISeriesApi<"Line">>();
   private chart: IChartApi | null = null;
   private indicatorChart: IChartApi | null = null;
   private priceSeries: ISeriesApi<"Line"> | null = null;
@@ -53,13 +55,14 @@ export class PriceChartRuntime {
       width: containers.main.clientWidth,
       height: 180,
       layout: {
+        attributionLogo: false,
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#222",
         fontFamily: '"Microsoft YaHei", sans-serif',
         fontSize: 11,
       },
       grid: { vertLines: { color: "rgba(0,0,0,0.04)" }, horzLines: { color: "rgba(0,0,0,0.04)" } },
-      rightPriceScale: { borderColor: "#ddd" },
+      rightPriceScale: { borderColor: "#ddd", minimumWidth: 64 },
       // 游戏分时图只表达相对行情，不展示真实日历；否则内部序号会被渲染为 1970 年日期。
       timeScale: { visible: false },
       crosshair: { mode: CrosshairMode.Normal },
@@ -91,19 +94,20 @@ export class PriceChartRuntime {
         width: containers.indicator.clientWidth,
         height: 60,
         layout: {
+        attributionLogo: false,
           background: { type: ColorType.Solid, color: "transparent" },
           textColor: "#888",
           fontFamily: '"Microsoft YaHei", sans-serif',
           fontSize: 10,
         },
         grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-        rightPriceScale: { visible: false },
+        rightPriceScale: { visible: true, minimumWidth: 64 },
         timeScale: { visible: false },
       });
       this.indicatorChart = volChart;
       const volSeries = volChart.addSeries(HistogramSeries, {
         priceFormat: { type: "custom", minMove: 0.01, formatter: (value: number) => `${formatLotAmount(value)}手` },
-        priceScaleId: "",
+        priceScaleId: "right",
       });
       volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
       this.volumeSeries = volSeries;
@@ -117,8 +121,16 @@ export class PriceChartRuntime {
   }
 
   resize(): void {
-    this.chart?.applyOptions({ width: this.containers.main.clientWidth });
-    if (this.containers.indicator !== null) this.indicatorChart?.applyOptions({ width: this.containers.indicator.clientWidth });
+    const { main, indicator } = this.containers;
+    // display:none 的其他工作区暂时没有尺寸，保留图表直到重新显示。
+    if (main.clientWidth > 0 && main.clientHeight > 0) {
+      this.chart?.applyOptions({ width: main.clientWidth, height: main.clientHeight });
+      this.chart?.timeScale().fitContent();
+    }
+    if (indicator !== null && indicator.clientWidth > 0 && indicator.clientHeight > 0) {
+      this.indicatorChart?.applyOptions({ width: indicator.clientWidth, height: indicator.clientHeight });
+      this.indicatorChart?.timeScale().fitContent();
+    }
   }
 
   updatePrice(data: readonly PricePoint[], dailyCandles: readonly KlinePoint[] | undefined, lastClose: number, chartType: "分时" | "日K", klineDays: number): void {
@@ -176,7 +188,7 @@ export class PriceChartRuntime {
 
     if (indicator === "volume") {
       if (!this.volumeSeries) {
-        const s = chart.addSeries(HistogramSeries, { priceFormat: { type: "custom", minMove: 0.01, formatter: (value: number) => `${formatLotAmount(value)}手` }, priceScaleId: "" });
+        const s = chart.addSeries(HistogramSeries, { priceFormat: { type: "custom", minMove: 0.01, formatter: (value: number) => `${formatLotAmount(value)}手` }, priceScaleId: "right" });
         s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
         this.volumeSeries = s;
       }
@@ -188,9 +200,9 @@ export class PriceChartRuntime {
       }
       const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!this.macdDif) {
-        this.macdDif = chart.addSeries(LineSeries, { color: "#d85b73", lineWidth: 1, priceScaleId: "" });
-        this.macdDea = chart.addSeries(LineSeries, { color: "#6ca6e8", lineWidth: 1, priceScaleId: "" });
-        this.macdHistogram = chart.addSeries(HistogramSeries, { priceScaleId: "" });
+        this.macdDif = chart.addSeries(LineSeries, { color: "#d85b73", lineWidth: 1, priceScaleId: "right" });
+        this.macdDea = chart.addSeries(LineSeries, { color: "#6ca6e8", lineWidth: 1, priceScaleId: "right" });
+        this.macdHistogram = chart.addSeries(HistogramSeries, { priceScaleId: "right" });
         this.macdHistogram.priceScale().applyOptions({ scaleMargins: { top: 0.3, bottom: 0.1 } });
       }
       this.macdDif!.setData(plotted.dif);
@@ -203,9 +215,9 @@ export class PriceChartRuntime {
       }
       const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!this.kdjK) {
-        this.kdjK = chart.addSeries(LineSeries, { color: "#e6a400", lineWidth: 1, priceScaleId: "" });
-        this.kdjD = chart.addSeries(LineSeries, { color: "#c56ae6", lineWidth: 1, priceScaleId: "" });
-        this.kdjJ = chart.addSeries(LineSeries, { color: "#4ea15f", lineWidth: 1, priceScaleId: "" });
+        this.kdjK = chart.addSeries(LineSeries, { color: "#e6a400", lineWidth: 1, priceScaleId: "right" });
+        this.kdjD = chart.addSeries(LineSeries, { color: "#c56ae6", lineWidth: 1, priceScaleId: "right" });
+        this.kdjJ = chart.addSeries(LineSeries, { color: "#4ea15f", lineWidth: 1, priceScaleId: "right" });
         this.kdjK.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
       }
       this.kdjK!.setData(plotted.k);
@@ -213,6 +225,24 @@ export class PriceChartRuntime {
       this.kdjJ!.setData(plotted.j);
     }
     chart.timeScale().fitContent();
+  }
+
+  updateMovingAverages(candles: readonly KlinePoint[], periods: readonly number[], chartType: "分时" | "日K", visibleDays: number): void {
+    if (!this.chart) return;
+    const selected = new Set(chartType === "日K" ? periods : []);
+    for (const [days, series] of this.movingAverages) {
+      if (!selected.has(days)) { this.chart.removeSeries(series); this.movingAverages.delete(days); }
+    }
+    for (const days of selected) {
+      const definition = KLINE_MOVING_AVERAGES.find(item => item.days === days);
+      if (!definition) throw new RangeError(`不支持的均线周期：${days}`);
+      let series = this.movingAverages.get(days);
+      if (!series) {
+        series = this.chart.addSeries(LineSeries, { color: definition.color, lineWidth: 1, title: `MA${days}`, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true });
+        this.movingAverages.set(days, series);
+      }
+      series.setData(klineMovingAverage(candles, days, visibleDays));
+    }
   }
 
   private removeIndicatorSeries(chart: IChartApi, field: "macdHistogram" | "macdDif" | "macdDea" | "kdjK" | "kdjD" | "kdjJ"): void {
@@ -229,6 +259,7 @@ export class PriceChartRuntime {
     this.ports.resizeEvents.removeEventListener("resize", this.handleResize);
     this.chart?.remove();
     this.indicatorChart?.remove();
+    this.movingAverages.clear();
     this.chart = this.indicatorChart = null;
     this.priceSeries = null;
     this.candleSeries = null;

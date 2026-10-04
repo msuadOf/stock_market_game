@@ -46,7 +46,8 @@ test("移动我的页面与桌面控制区均可操作自然日暂停偏好", as
   await expect(beforeOpen).toBeChecked();
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  const desktopControls = page.getByRole("group", { name: "自然日暂停偏好" });
+  await page.getByRole("button", { name: "游戏与存档", exact: true }).click();
+  const desktopControls = page.locator(".mobile-game-state");
   await expect(desktopControls.getByRole("checkbox", { name: "收盘后暂停复盘" })).toBeChecked();
   await expect(desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" })).toBeChecked();
   await desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" }).uncheck();

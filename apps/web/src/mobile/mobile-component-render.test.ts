@@ -159,12 +159,20 @@ test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变
   assert.match(html, /class="msd-minute-volume-mark fall"[^>]*width="0\.5"[^>]*fill="var\(--msd-fall\)"[^>]*stroke="none"/);
 });
 
-test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
-  const html = renderDetail("分时", "盘口", { auctionPoints: [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null })) });
-  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 3);
-  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 2);
-  const lines = [...html.matchAll(/class="msd-auction-line" points="([^"]+)"/g)];
-  assert.deepEqual(lines.map(line => line[1].split(" ").length), [1, 2, 1]);
+test("竞价实际SVG将null显示在0%参考轴，有效更新绘粗点且原始数据不变", () => {
+  const auctionPoints = [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null }));
+  const html = renderDetail("分时", "盘口", { auctionPoints, minutePoints: [] });
+  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 4);
+  const line = html.match(/class="msd-auction-line" points="([^"]+)"/);
+  assert.ok(line);
+  const coordinates = line[1].split(" ");
+  assert.equal(coordinates.length, 6);
+  assert.equal(Number(coordinates[1].split(",")[1]), 50);
+  assert.equal(Number(coordinates[4].split(",")[1]), 50);
+  assert.equal(auctionPoints[1].value, null);
+  assert.equal(auctionPoints[4].value, null);
+  assert.equal((html.match(/class="msd-minute-volume-mark /g) ?? []).length, 6);
 });
 
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
@@ -180,4 +188,11 @@ test("K 线 projection 经真实组件保持实体、影线和成交量共享固
   assert.ok(Math.abs(Number(lower[3]) - 91) < 1e-10);
   assert.ok(Math.abs(Number(lower[4]) - 174) < 1e-10);
   assert.match(html, /class="msd-k-volume"[^>]*>[\s\S]*?y="9"/);
+});
+
+test("移动端连续竞价有成交也保持普通折线", () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [], minutePoints: [{ time: 0, value: 10, volume: 100 }, { time: 1, value: 11, volume: 200 }] });
+  assert.ok(html.includes('class="msd-price-line"'));
+  assert.ok(!html.includes('class="msd-auction-dot"'));
+  assert.ok(!html.includes('本分钟有成交'));
 });

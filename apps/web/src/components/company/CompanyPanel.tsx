@@ -16,6 +16,7 @@ import { visibleReports } from "./company-view-model.ts";
 import "./company.css";
 
 interface CompanyPanelProps {
+  readonly allowCompanySelection?: boolean;
   readonly companyId: string | null;
   readonly companyState: CompanyState;
   readonly initialCivilDate: string;
@@ -37,7 +38,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ companyId, companyState, initialCivilDate, onCompanyChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
@@ -69,7 +70,7 @@ export function CompanyPanel({ companyId, companyState, initialCivilDate, onComp
     <section className="company-panel" aria-label="公司信息" data-company-id={company.id}>
       <header className="company-panel-head">
         <div>
-          <label className="company-picker"><span>公司</span><select aria-label="选择公司" value={company.id} onChange={(event) => onCompanyChange(event.currentTarget.value)}>{publicCompanies.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.industry}</option>)}</select></label>
+          {allowCompanySelection && <label className="company-picker"><span>公司</span><select aria-label="选择公司" value={company.id} onChange={(event) => onCompanyChange(event.currentTarget.value)}>{publicCompanies.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.industry}</option>)}</select></label>}
           <CompanyIdentity company={company} />
         </div>
         <div className="company-calendar" aria-label="当前模拟日历">

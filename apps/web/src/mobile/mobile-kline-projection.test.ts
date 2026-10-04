@@ -68,3 +68,10 @@ test("周月 K 沿用 5/20 游戏交易日聚合，offset 超界归一与原始 
   }
   assert.deepEqual(candles, before);
 });
+
+test("长均线超出可见蜡烛区间时仍纳入价格域", { timeout: 10000 }, () => {
+  const candles = Array.from({ length: 60 }, (_, i) => ({ time: i as import("lightweight-charts").UTCTimestamp, open: 100-i, high: 101-i, low: 99-i, close: 100-i, volume: 100 }));
+  const p = model.MobileKlineProjection.fromInputs(candles, { capacity: 30, offsetFromEnd: 0 }, { kind: "idle" }, [85]);
+  assert.ok(p.priceY(85) >= 0);
+  assert.ok(p.priceY(85) <= 190);
+});

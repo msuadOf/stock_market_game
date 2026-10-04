@@ -20,6 +20,8 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await expectEngineReady(page);
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
+  await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   await expectPublicReportReady(page);
 
   const panel = companyPanel(page);
@@ -56,10 +58,12 @@ test("平板端以真实 WASM 切换公司和报告期间并保持规范公开�
   await page.setViewportSize({ width: 768, height: 700 });
   await page.goto("/");
   await expectEngineReady(page);
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
+  await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   await expectPublicReportReady(page);
 
   const panel = companyPanel(page);
-  await panel.getByLabel("选择公司").selectOption("C-002156");
+  await page.getByRole("navigation", {name:"个股列表"}).getByRole("button", {name:/芯片科技/}).click();
   await expect(panel).toHaveAttribute("data-company-id", "C-002156");
   await expect(panel.getByRole("list", { name: "公开报告列表" })).toBeVisible();
   await expect(panel).toContainText("芯片科技股份有限公司");
@@ -102,30 +106,35 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await expectEngineReady(page);
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
+  await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   await expectPublicReportReady(page);
+  await page.getByRole("button", {name:"游戏与存档"}).click();
   const startDate = page.getByLabel("模拟起始日期").first();
   await expect(startDate).toHaveValue("2030-01-01");
   await startDate.focus();
   await expect(startDate).toBeFocused();
-  await expect(companyPanel(page)).toHaveAttribute("data-company-id", "C-600101");
+  await expect(page.locator("#section-company .company-panel")).toHaveAttribute("data-company-id", "C-600101");
   await startDate.fill("");
   await expect(startDate).toHaveValue("");
-  await page.getByRole("button", { name: "新游戏", exact: true }).click();
+  await page.getByRole("button", { name: "创建新游戏", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "模拟起始日期不是有效公历日" })).toBeVisible();
-  await expect(companyPanel(page)).toHaveAttribute("data-company-id", "C-600101");
+  await expect(page.locator("#section-company .company-panel")).toHaveAttribute("data-company-id", "C-600101");
   await startDate.evaluate((element) => {
     const input = element as { value: string; dispatchEvent(event: Event): boolean };
     input.value = "2030-02-30";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "新游戏", exact: true }).click();
+  await page.getByRole("button", { name: "创建新游戏", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "模拟起始日期不是有效公历日" })).toBeVisible();
-  await expect(companyPanel(page)).toHaveAttribute("data-company-id", "C-600101");
+  await expect(page.locator("#section-company .company-panel")).toHaveAttribute("data-company-id", "C-600101");
   await startDate.fill("2031-01-01");
-  await page.getByRole("button", { name: "新游戏", exact: true }).click();
+  await page.getByRole("button", { name: "创建新游戏", exact: true }).click();
   await expectEngineReady(page);
   await expect(page.getByRole("status").filter({ hasText: "已按 2031-01-01 创建新模拟会话" })).toBeVisible();
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
+  await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   await expectPublicReportReady(page);
   await expect(companyPanel(page)).toContainText("2031-01-01");
   await expect(companyPanel(page)).toContainText("季度报告 · 2029-03-31");
@@ -150,6 +159,8 @@ test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async
   ` });
   await page.goto("/");
   await expectEngineReady(page);
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
+  await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   const panel = companyPanel(page);
   await panel.scrollIntoViewIfNeeded();
   await expect(panel.getByRole("alert")).toContainText("公开报告查询失败：public report page size 0 outside 1..=100");

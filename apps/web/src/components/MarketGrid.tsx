@@ -27,6 +27,7 @@ interface Props {
   markets: Readonly<Record<string, MarketSnap>>;
   selectedCode: string | null;
   onSelect: (code: string) => void;
+  onOpen?: (code: string) => void;
   heldCodes: ReadonlySet<string>;
   priceHistoryByCode: Readonly<Record<string, readonly PricePoint[]>>;
 }
@@ -35,7 +36,7 @@ function yuan(cents: Cents): number {
   return moneyToChartNumber(cents) / 100;
 }
 
-export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
+export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes, priceHistoryByCode }: Props) {
   const [mobileTab, setMobileTab] = useState<MobileMarketView>("watchlist");
   const [sortDescending, setSortDescending] = useState(false);
   const builtRowsRef = useRef<RowData[]>([]);
@@ -84,7 +85,8 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
       {
         headerName: "代码",
         field: "code",
-        width: 80,
+        width: 110,
+        minWidth: 110,
         cellClass: "grid-mono",
         pinned: "left",
       },
@@ -128,12 +130,25 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
         cellClass: (p: CellClassParams<RowData>) =>
           p.data ? colorClass(p.data.changePct) : "",
       },
+      {
+        headerName: "昨收", colId: "lastClose", minWidth: 85, type: "numericColumn",
+        valueGetter: (p) => p.data?._rawLastClose,
+        valueFormatter: (p) => p.value === undefined ? "—" : centsToYuanText(p.value as Cents), comparator: compareMoney,
+      },
+      ...([ ["best_bid", "买一"], ["best_ask", "卖一"] ] as const).map(([field, headerName]): ColDef<RowData> => ({
+        headerName, colId: field, minWidth: 85, type: "numericColumn",
+        valueGetter: (p) => p.data?._source[field],
+        valueFormatter: (p) => p.value == null ? "—" : centsToYuanText(p.value as Cents),
+        comparator: (a: Cents | null, b: Cents | null) => a === null ? (b === null ? 0 : -1) : b === null ? 1 : compareMoney(a, b),
+      })),
     ],
     [colorClass],
   );
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
+      flex: 1,
+      minWidth: 80,
       resizable: true,
       sortable: true,
     }),
@@ -149,8 +164,13 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
 
   const onCellKeyDown = useCallback((event: CellKeyDownEvent<RowData> | FullWidthCellKeyDownEvent<RowData>) => {
     const keyboardEvent = event.event;
+    if (keyboardEvent instanceof KeyboardEvent && keyboardEvent.key === "Enter" && event.data && onOpen) {
+      keyboardEvent.preventDefault();
+      onOpen(event.data.code);
+      return;
+    }
     if (keyboardEvent instanceof KeyboardEvent && selectMarketByKeyboard(keyboardEvent.key, event.data?.code, onSelect)) keyboardEvent.preventDefault();
-  }, [onSelect]);
+  }, [onSelect, onOpen]);
 
   const getRowClass = useCallback(
     (params: { data: RowData | undefined }) => {
@@ -163,7 +183,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
   return (
     <>
       <div className="ag-theme-alpine market-grid-container" role="region" aria-label="股票行情" aria-describedby="market-grid-keyboard-help" style={{ width: "100%", height: "100%", minHeight: 180 }}>
-        <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，按 Enter 或空格选择当前股票。</p>
+        <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，空格预览当前股票，Enter 进入个股。</p>
         <AgGridReact<RowData>
           theme="legacy"
           rowData={initialRowsRef.current}
@@ -173,6 +193,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}
+          onRowDoubleClicked={(event) => { if (event.data && onOpen) onOpen(event.data.code); }}
           onCellKeyDown={onCellKeyDown}
           localeText={MARKET_GRID_LOCALE}
           getRowClass={getRowClass}

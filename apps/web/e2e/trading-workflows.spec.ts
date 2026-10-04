@@ -21,6 +21,7 @@ async function openGame(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"交易", exact:true}).click();
 }
 
 async function advanceToTick(page: Page, target: number): Promise<number> {
@@ -131,15 +132,15 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
   await advanceToTick(page, 10);
   await expect(playerOrder(page)).toContainText("资金已冻结");
 
-  // Jan 1 is a closed civil day: advancing into Jan 2 can already have
-  // archived it. Intraday saving must preserve that archive byte-for-byte.
+  // 1 月 1 日是休市自然日，进入次日可能已自动归档；日内保存必须逐字节保留该存档。
   const priorArchive = await page.evaluate(() => localStorage.getItem("stock-game-save"));
-  await page.getByTitle("快存到 LocalStorage").click();
+  await page.getByRole("button", {name:"游戏与存档"}).click();
+  await page.getByRole("button", {name:"保存当前进度"}).click();
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"交易", exact:true}).click();
   await expect(page.locator(".notice")).toContainText("日内不写档");
   expect(await page.evaluate(() => localStorage.getItem("stock-game-save"))).toBe(priorArchive);
 
-  // The fixture has 30 ticks/day. The next step publishes the CivilUpdate
-  // barrier before tick 31, so the automatic archive contains tick 30 only.
+  // fixture 每日 30 tick，tick 31 前的 CivilUpdate 屏障只归档 tick 30。
   await advanceToTick(page, 31);
   await expect(page.locator(".notice")).toContainText("日终存档已更新");
   await expect(page.locator(".player-order-item")).toHaveCount(0);
@@ -155,7 +156,9 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
 
   await page.reload();
   await expectEngineReady(page);
-  await page.getByTitle("从 LocalStorage 快读").click();
+  await page.getByRole("button", {name:"游戏与存档"}).click();
+  await page.getByRole("button", {name:"读取本地进度"}).click();
+  await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"交易", exact:true}).click();
   await expect(page.locator(".notice")).toContainText("已读档");
   await expect(availableCash(page)).toHaveText(savedCash);
   await expect.poll(async () => normalizeVisibleText(await positions.innerText())).toBe(savedPositions);

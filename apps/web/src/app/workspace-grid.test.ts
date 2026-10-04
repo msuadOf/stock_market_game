@@ -46,8 +46,8 @@ test("React 18 容器 ref 与桌面组件 createElement 接线通过类型校验
   assert.deepEqual(diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")), []);
 });
 
-test("横屏六个面板都提供显式标题拖柄和缩放柄，子内容原样保留", () => {
-  const html = renderToStaticMarkup(createElement(views.WorkspaceGrid, { orientation: "landscape" }, panels()));
+test("独立旧工作台组件的六个面板都提供显式标题拖柄和缩放柄，子内容原样保留", () => {
+  const html = renderToStaticMarkup(createElement(views.WorkspaceDesktopLayout, { width: 1400, layouts: createWorkspaceLayouts(), onLayoutChange: () => undefined }, panels()));
   assert.equal((html.match(/class="workspace-drag-handle"/g) ?? []).length, 6);
   assert.equal((html.match(/react-resizable-handle-se/g) ?? []).length, 6);
   assert.match(html, /拖动行情面板/);
