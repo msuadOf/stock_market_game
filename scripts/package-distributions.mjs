@@ -9,6 +9,34 @@ import { fileURLToPath } from "node:url";
 const products = new Set(["desktop", "server", "webui-server"]);
 const usage = "usage: node scripts/package-distributions.mjs <desktop|server|webui-server> --input target/build-artifacts/NAME --output target/distributions/NAME --target <native rust triple>";
 
+export function desktopInstallerFormats(platform) {
+  if (platform === "win32") return [["msi", ".msi"], ["nsis", ".exe"]];
+  if (platform === "linux") return [["deb", ".deb"], ["rpm", ".rpm"], ["appimage", ".AppImage"]];
+  if (platform === "darwin") return [["dmg", ".dmg"]];
+  throw new Error(`unsupported desktop platform: ${platform}`);
+}
+
+export function requireDistributionFormats({ product, target, files }, platform) {
+  const names = files.map((file) => file.name);
+  const stem = `${product}-${target}`;
+  const requireName = (name) => {
+    if (!names.includes(name)) throw new Error(`missing required distribution format: ${product}/${target}: ${name}`);
+  };
+  if (product === "desktop") {
+    requireName("LICENSE");
+    for (const [format, extension] of desktopInstallerFormats(platform)) {
+      if (!names.some((name) => name.startsWith(`${stem}-`) && name.endsWith(extension))) {
+        throw new Error(`missing required distribution format: ${product}/${target}: ${format} (${extension})`);
+      }
+    }
+    if (platform === "darwin") {
+      for (const format of ["zip", "tar.gz"]) requireName(`${stem}-app.${format}`);
+    } else requireName(`${stem}-portable.zip`);
+  } else if (["server", "webui-server", "web"].includes(product)) {
+    for (const format of ["zip", "tar.gz"]) requireName(`${stem}.${format}`);
+  } else throw new Error(`unsupported distribution product: ${product}`);
+}
+
 export function desktopInstallerName(installer, target) {
   return `desktop-${target}-${path.basename(installer).replace(/[^A-Za-z0-9._-]+/g, "_")}`;
 }
@@ -193,7 +221,7 @@ export async function desktopInputs(input, platform) {
   if (!["win32", "linux", "darwin"].includes(platform)) throw new Error(`unsupported desktop platform: ${platform}`);
   const bundle = path.join(input, "bundle");
   await requireDirectory(bundle);
-  const formats = platform === "win32" ? [["msi", ".msi"], ["nsis", ".exe"]] : platform === "linux" ? [["deb", ".deb"], ["rpm", ".rpm"], ["appimage", ".AppImage"]] : [["dmg", ".dmg"]];
+  const formats = desktopInstallerFormats(platform);
   const installers = [];
   for (const [folder, extension] of formats) {
     const directory = path.join(bundle, folder);
@@ -339,6 +367,7 @@ export async function packageDistributions(options, { root = process.cwd(), run 
       files.push({ name, bytes: info.size, sha256: await fileDigest(filename) });
     }
     const manifest = { schema: "distribution-manifest", schema_version: 1, product: options.product, target: options.target, files };
+    requireDistributionFormats(manifest, platform);
     await writeFile(path.join(distributions, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
     await publish(distributions, output);
     return manifest;
