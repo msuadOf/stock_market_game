@@ -13,6 +13,9 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum InsuranceError {
+    #[error("invalid restored Insurance state: {detail}")]
+    InvalidRestoredState { detail: String },
+
     /// 赔款支付将打负现金（`NegativeCashProhibited` 的领域映射）：类型化
     /// 拒绝，账套与子账零改动（K2 客户流动性约束：险企继续运行）。
     #[error("payment failed (insufficient cash): {source}")]

@@ -224,11 +224,10 @@ fn zero_remeasurement_consumes_one_event_slot_without_group_writes() {
 #[test]
 fn release_apply_overflow_preserves_existing_post_and_partial_write_order() {
     let (mut books, group) = seeded();
-    let mut saved = serde_json::to_value(books.group(&group).unwrap()).unwrap();
-    saved["released_revenue"] = serde_json::to_value(AccountingAmount::MAX).unwrap();
-    books
-        .groups
-        .insert(group.clone(), serde_json::from_value(saved).unwrap());
+    groups::restore_tests::set_released_revenue(
+        books.groups.get_mut(&group).unwrap(),
+        AccountingAmount::MAX,
+    );
     let slot = books.next_event_id;
     assert!(matches!(
         books.release_service(&group, 365, date()),
@@ -329,11 +328,10 @@ fn exhausted_csm_keeps_existing_inactive_carry_after_final_release() {
 fn remeasurement_apply_overflow_preserves_existing_partial_write_order() {
     let (mut books, group) = seeded();
     books.release_service(&group, 100, date()).unwrap();
-    let mut saved = serde_json::to_value(books.group(&group).unwrap()).unwrap();
-    saved["reestimated_csm"] = serde_json::to_value(AccountingAmount::MAX).unwrap();
-    books
-        .groups
-        .insert(group.clone(), serde_json::from_value(saved).unwrap());
+    groups::restore_tests::set_reestimated_csm(
+        books.groups.get_mut(&group).unwrap(),
+        AccountingAmount::MAX,
+    );
     let slot = books.next_event_id;
     assert!(matches!(
         books.remeasure(&group, date(), amount(66_082)),
@@ -348,4 +346,65 @@ fn remeasurement_apply_overflow_preserves_existing_partial_write_order() {
     assert_eq!(state.reestimated_csm_total(), AccountingAmount::MAX);
     assert_eq!(state.remeasure_finance_total(), amount(0));
     assert_eq!(books.next_event_id, slot + 2);
+}
+
+#[test]
+fn restored_books_reject_corrupt_group_json_and_direct_memory_state() {
+    let (mut books, group) = seeded();
+    books.validate_restore().unwrap();
+    let mut saved = serde_json::to_value(&books).unwrap();
+    saved["groups"]["GROUP"]["released_revenue"] =
+        serde_json::to_value(AccountingAmount::MAX).unwrap();
+    assert!(serde_json::from_value::<InsuranceBooks>(saved).is_err());
+    groups::restore_tests::set_released_revenue(
+        books.groups.get_mut(&group).unwrap(),
+        AccountingAmount::MAX,
+    );
+    let error = books.validate_restore().unwrap_err().to_string();
+    assert!(error.contains("GROUP"), "{error}");
+}
+
+#[test]
+fn restored_books_revalidate_discount_and_policyholder_reference() {
+    let (mut books, group) = seeded();
+    books.discount.rate_bp = 0;
+    assert_eq!(
+        books.validate_restore(),
+        Err(InsuranceError::InvalidDiscountRate { rate_bp: 0 })
+    );
+    books.discount.rate_bp = 400;
+    let mut saved = serde_json::to_value(books.group(&group).unwrap()).unwrap();
+    saved["policyholder"] = serde_json::json!("UNKNOWN");
+    books
+        .groups
+        .insert(group, serde_json::from_value(saved).unwrap());
+    assert!(matches!(
+        books.validate_restore(),
+        Err(InsuranceError::Company(
+            crate::company::CompanyError::UnknownCounterparty { .. }
+        ))
+    ));
+}
+
+#[test]
+fn maximum_premium_established_by_public_api_roundtrips() {
+    let mut books = InsuranceBooks::new(config()).unwrap();
+    let group = ContractId("MAX".into());
+    books
+        .establish_group(
+            InsuranceProductKind::TermProtection,
+            group,
+            &CounterpartyId("POL".into()),
+            AccountingAmount::MAX,
+            amount(80_000),
+            amount(0),
+            date(),
+            CivilDate::from_iso("2031-01-01").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(books.validate_restore(), Ok(()));
+    assert_eq!(
+        serde_json::from_slice::<InsuranceBooks>(&serde_json::to_vec(&books).unwrap()).unwrap(),
+        books
+    );
 }
