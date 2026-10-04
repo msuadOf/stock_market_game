@@ -105,7 +105,12 @@ msuad 2026-06-29 重新定调：**一份 engine + 一份「宿主无关的应用
 - **心跳 ping-pong**（后端 ~30s 发 ping，客户端不回 pong 即重连）——防中间设备杀空闲连接。
 - **事件流带单调递增 `seq` 序号** + **状态可随时快照**——断线重连后按 seq 续传 / 拉快照对齐。
 - **`wss://` + TLS 证书**（明文 `ws://` 在公网会被拦截/注入）。
-- **握手鉴权 token**（query 或首条消息），裸连拒绝。
+- **握手鉴权 token**，裸连拒绝。当前浏览器通过 `Sec-WebSocket-Protocol` 提供
+  `stock-game.auth.<token 的 UTF-8 hex>`，服务端只协商公开 `stock-game`，不回显凭据；
+  原生客户端仍可使用 `Authorization: Bearer`。URL query 凭据保持拒绝，避免 token
+  出现在访问 URL、代理日志或错误反馈中。Ping 发出后 10 秒内未收到匹配 Pong 则关闭连接；
+  Remote 意外断线以 100/200/400ms 间隔重试连接并取新权威 baseline，连续三次恢复失败
+  显式报错。未确认的写请求不自动重发，只报告结果未知并要求核对权威委托状态。
 - 部署文档须写清反向代理（Nginx/Caddy）的 WS 透传配置；注意 CDN（如 Cloudflare 免费版）对 WS 连接数/频率的限制。
 
 ### §7 三端持久化
