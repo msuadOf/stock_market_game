@@ -309,7 +309,10 @@ impl AdaptivePlanChainCoordinator {
         round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
-        let ordered = self.outcomes_in_plan_identity_order(steps)?;
+        let ordered = match self.outcomes_in_plan_identity_order(steps) {
+            Ok(ordered) => ordered,
+            Err(error) => return self.fail(error),
+        };
         let result = self.advance_continuous_batch(session, &ordered, round);
         if result.is_err() {
             self.failed = true;
@@ -324,7 +327,10 @@ impl AdaptivePlanChainCoordinator {
         round: Option<&AuctionExecutionRound>,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
-        let ordered = self.outcomes_in_plan_identity_order(steps)?;
+        let ordered = match self.outcomes_in_plan_identity_order(steps) {
+            Ok(ordered) => ordered,
+            Err(error) => return self.fail(error),
+        };
         let result = self.advance_auction_batch(session, &ordered, round);
         if result.is_err() {
             self.failed = true;
