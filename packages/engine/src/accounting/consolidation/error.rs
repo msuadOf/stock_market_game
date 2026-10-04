@@ -144,6 +144,13 @@ pub enum ConsolidationError {
         side_b: Option<Box<DeclaredSide>>,
     },
 
+    #[error("intercompany amount must be positive: {amount} (member {member:?}, counterparty {counterparty:?})")]
+    IntercompanyAmountNotPositive {
+        member: MemberId,
+        counterparty: MemberId,
+        amount: AccountingAmount,
+    },
+
     /// 申报科目是现金类：工作底稿分录绝不触碰现金（集团现金不变的红线）。
     #[error(
         "intercompany declaration touches cash account {account:?} of {member:?}: worksheet entries must never touch cash"

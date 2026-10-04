@@ -9,6 +9,76 @@ use engine::accounting::consolidation::{consolidate, ConsolidationError, MemberI
 use engine::accounting::LedgerAccountId;
 
 #[test]
+fn audit_boundary_equal_nonpositive_intercompany_balances_are_rejected() {
+    let chart = engine::company::industrial::industrial_chart_v2();
+    let parent = super::super::books_with(
+        chart.clone(),
+        vec![super::super::entry(
+            1,
+            "2030-01-01",
+            engine::accounting::BusinessKind::OpeningBalance,
+            engine::accounting::CashFlowClass::Financing,
+            &[
+                (acct::BANK, engine::accounting::PostingSide::Debit, 100),
+                (acct::PAYABLE, engine::accounting::PostingSide::Credit, 100),
+            ],
+        )],
+    );
+    let sub = super::super::books_with(
+        chart,
+        vec![super::super::entry(
+            1,
+            "2030-01-01",
+            engine::accounting::BusinessKind::OpeningBalance,
+            engine::accounting::CashFlowClass::Financing,
+            &[
+                (acct::AR, engine::accounting::PostingSide::Debit, 100),
+                (acct::CAPITAL, engine::accounting::PostingSide::Credit, 100),
+            ],
+        )],
+    );
+    let before = (parent.clone(), sub.clone());
+    for amount in [0, -1] {
+        for reversed in [false, true] {
+            let mut req = request(
+                "IC-ROOT",
+                vec![
+                    member("IC-ROOT", None, 1000, 0, &parent),
+                    member("IC-SUB", Some("IC-ROOT"), 100, 80, &sub),
+                ],
+            );
+            req.intercompany_balances = vec![
+                ic_balance("IC-SUB", "IC-ROOT", acct::AR, amount),
+                ic_balance("IC-ROOT", "IC-SUB", acct::PAYABLE, amount),
+            ];
+            if reversed {
+                req.intercompany_balances.reverse();
+            }
+            let error = consolidate(req).unwrap_err();
+            match error {
+                ConsolidationError::IntercompanyAmountNotPositive { amount: actual, .. } => {
+                    assert_eq!(actual, yuan(amount))
+                }
+                other => panic!("{other}"),
+            }
+        }
+    }
+    let mut valid = request(
+        "IC-ROOT",
+        vec![
+            member("IC-ROOT", None, 1000, 0, &parent),
+            member("IC-SUB", Some("IC-ROOT"), 100, 80, &sub),
+        ],
+    );
+    valid.intercompany_balances = vec![
+        ic_balance("IC-SUB", "IC-ROOT", acct::AR, 100),
+        ic_balance("IC-ROOT", "IC-SUB", acct::PAYABLE, 100),
+    ];
+    assert_eq!(consolidate(valid).unwrap().worksheet.len(), 1);
+    assert_eq!((parent, sub), before);
+}
+
+#[test]
 fn counterparty_balance_mismatch_lists_both_balances() {
     let (parent, sub) = pair_books();
     let mut req = request(

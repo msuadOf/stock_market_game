@@ -89,6 +89,13 @@ fn precheck_balance(
 ) -> Result<(), ConsolidationError> {
     ensure_member(group, &decl.member)?;
     ensure_member(group, &decl.counterparty)?;
+    if !decl.amount.is_positive() {
+        return Err(ConsolidationError::IntercompanyAmountNotPositive {
+            member: decl.member.clone(),
+            counterparty: decl.counterparty.clone(),
+            amount: decl.amount,
+        });
+    }
     if decl.member == decl.counterparty {
         return Err(ConsolidationError::IntercompanySelfReference {
             member: decl.member.clone(),
