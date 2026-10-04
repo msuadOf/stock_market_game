@@ -88,9 +88,13 @@ export async function restoreWorkerSlot(
     generation: currentGeneration,
     slot,
   }, "restored");
+  const nextGeneration = generation(response.nextGeneration, "Worker restore generation");
+  if (nextGeneration <= currentGeneration) {
+    throw new Error(`Worker restore generation 必须大于当前 generation ${currentGeneration}，实际收到 ${nextGeneration}`);
+  }
   return {
     snapshot: parseProtocolSnapshot(response.snapshot, "Worker restored.snapshot"),
-    nextGeneration: generation(response.nextGeneration, "Worker restore generation"),
+    nextGeneration,
   };
 }
 

@@ -13,6 +13,31 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
+test("审计G53：Worker恢复必须推进generation，不能接受相同或更小代", async () => {
+  for (const nextGeneration of [1, 2, 3]) {
+    const worker = new FakeWorker();
+    const requests = new WorkerRequestScope(worker);
+    const pending = restoreWorkerSlot(requests, {}, 1, 2);
+    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    if (nextGeneration <= 2) await assert.rejects(pending, /generation.*2.*[12]|[12].*generation.*2/);
+    else assert.equal((await pending).nextGeneration, 3);
+    assert.equal(requests.pendingCount(), 0);
+  }
+});
+
+test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串", async () => {
+  for (const nextGeneration of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "3"]) {
+    const worker = new FakeWorker();
+    const requests = new WorkerRequestScope(worker);
+    const pending = restoreWorkerSlot(requests, {}, 1, 2);
+    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    await assert.rejects(pending, /正安全整数/);
+    assert.equal(requests.pendingCount(), 0);
+  }
+});
+
 test("Worker save pins candidate generation and rejects an old saved response after baseline replacement", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class SaveWorker extends EventTarget {
