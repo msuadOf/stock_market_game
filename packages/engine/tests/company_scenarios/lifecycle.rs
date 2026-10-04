@@ -7,7 +7,7 @@ use engine::session::CivilPhase;
 #[test]
 fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free() {
     // Given: an actual Friday GameSession with seeded accounting, published history, and NPCs.
-    let mut session = session("2030-02-01");
+    let mut session = representative_session("2030-02-01");
     let initial = session.decision_chain_diagnostics();
     assert!(
         initial.library_publications > 0,

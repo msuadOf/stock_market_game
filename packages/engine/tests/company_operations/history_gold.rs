@@ -24,10 +24,16 @@ fn history_config(
     // 前史账套 as_of = 前史首日的前一天（2028-01-01 的前一天）。
     // 工商 + 保险两行业足以覆盖「同一处理器」语义；银行/地产走同一条
     // generate_history 循环（确定性金样不重复支付它们的运行成本）。
+    let mut insurance = insurance_c(d("2027-12-31"));
+    if let engine::company::operations::FlowParams::Insurance(flow) = &mut insurance.flow {
+        flow.daily_groups_base = 1;
+    } else {
+        panic!("保险 fixture 必须使用 InsuranceFlowParams");
+    }
     engine::company::operations::CompanyOperationsConfig {
         seed,
         shock_params: params,
-        companies: vec![industrial_a(d("2027-12-31")), insurance_c(d("2027-12-31"))],
+        companies: vec![industrial_a(d("2027-12-31")), insurance],
     }
 }
 
