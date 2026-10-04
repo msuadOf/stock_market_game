@@ -173,7 +173,7 @@ Q01–Q09、Q11继续保留；Q10已转G39，Q19经恢复链复核转G80并保�
 | Q21 | 非正固定价可先报日限/price cage/资源拒绝，而非OrderBook InvalidPrice。见 [校验](exhaustive-review/luna16.md)。 | 已显式拒绝；多重非法条件的Market/Session错误优先级未规定，正常UI先挡非正价，不可断言公共路径一律LimitExceeded。 |
 | Q22 | 来源拼接顺序、时段AccountReceipt及实际接收轨迹之间仍需核验；见 [草稿](exhaustive-review/luna49.md)。 | PreviousCommit/BetweenTicks是就绪时间窗，NPC向量在前不证明交易来源优先；只有真实竞争错序证据才能升级，不能恢复全局固定来源排序。 |
 | Q23 | 直接公共accrue_income_tax重复调用会把已记税费计入再次税前并追加亏损池；生产经营caller已按成功自然日日结在年末计提一次，失败候选回滚后可重试。见 [税务](exhaustive-review/luna54.md)。 | G35已接通生产年末计提及失败回滚重试；直接公共accrue_income_tax重复调用的幂等及准入尚无完整约定，不冒充默认游戏已算错税。 |
-| Q24 | Tauri第二个listener注册失败可能留下第一个；create_session成功后的初始化失败退订listener却未stop_session。见 [初始化裁定](hidden-review/candidate-resolution-04.md)。 | 真实资源失败路径与G51的dispose错误不同；失败初始化的资源归属/回收契约须明确。Worker同步postMessage异常仅延迟到既有有界timeout清理，不一并称永久泄漏，也不因旧测试冻结就宣称所有初始化回收完备。 |
+| Q24（已补齐） | 初始化资源以成功取得为归属边界：第二个listener失败释放第一个；取得有效session ID后的baseline/capability失败等待本人stop_session。原问题见 [初始化裁定](hidden-review/candidate-resolution-04.md)，实施与短测见 [初始化回收](../remaining-questions-and-features/tauri-initialization.md)。 | 已取得资源独立并行清理并等待全部结果，AggregateError保留原错及每项清理错误；未知session ID不得猜测或误停别人。21项行为短测、TypeScript及非作者完整diff复核通过；独立另跑新增6例通过。不扩大为所有原生初始化故障或Worker回收已获完整验收。 |
 | Q25 | BeliefBook的owner/key与StrategyState确定性身份均已校验，但未交叉核对同账户两个profile。见 [身份续核](renewed-check/belief-identity.md)。 | 创建时一致、字段影响计算不证明恢复必须全等；允许认知与执行风格不同还是必须统一身份需澄清，不限制个体AnalysisProfile/机构阈值，本轮不新增确认G。 |
 
 ## 4. 最小验证缺口与现有测试入口

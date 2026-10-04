@@ -111,41 +111,53 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     fatalCallback?.(failure);
   };
 
-  eventUnlisten = await listen<unknown>("engine-event", (event) => {
-    try {
-      const payload = parseTauriEventPayload(event.payload);
-      if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
-      if (callback?.(createProtocolUpdate(timeline.currentGeneration(), payload.update)) === false) {
-        callback = null;
-        running = false;
-        void invoke("pause_session", { sessionId: requireSession() }).catch((error: unknown) => {
-          fail({ code: "TAURI_PROTOCOL_STOP", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
-        });
-      }
-    } catch (error) {
-      fail({ code: "TAURI_EVENT_PROTOCOL", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-  failureUnlisten = await listen<unknown>("engine-failure", (event) => {
-    try {
-      const payload = parseFailurePayload(event.payload);
-      if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
-      fail(payload);
-    } catch (error) {
-      fail({ code: "TAURI_FAILURE_PROTOCOL", where: "tauri-host.engine-failure", message: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
   try {
-    sessionId = await invoke<string>("create_session", { setup, seed: seed.toString() });
+    eventUnlisten = await listen<unknown>("engine-event", (event) => {
+      try {
+        const payload = parseTauriEventPayload(event.payload);
+        if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
+        if (callback?.(createProtocolUpdate(timeline.currentGeneration(), payload.update)) === false) {
+          callback = null;
+          running = false;
+          void invoke("pause_session", { sessionId: requireSession() }).catch((error: unknown) => {
+            fail({ code: "TAURI_PROTOCOL_STOP", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
+          });
+        }
+      } catch (error) {
+        fail({ code: "TAURI_EVENT_PROTOCOL", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
+      }
+    });
+    failureUnlisten = await listen<unknown>("engine-failure", (event) => {
+      try {
+        const payload = parseFailurePayload(event.payload);
+        if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
+        fail(payload);
+      } catch (error) {
+        fail({ code: "TAURI_FAILURE_PROTOCOL", where: "tauri-host.engine-failure", message: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    sessionId = text(await invoke<unknown>("create_session", { setup, seed: seed.toString() }), "Tauri create_session.session_id");
     timeline.setInitialTimeline(sessionId);
     const initialBaseline = parseRestore(await invoke<unknown>("engine_baseline", { sessionId, generation: timeline.currentGeneration() }));
     timeline.installInitialBaseline(initialBaseline);
     npcDiagnosticsEnabled = parseHostCapabilities(await invoke<unknown>("host_capabilities"));
   } catch (error) {
-    await eventUnlisten();
-    await failureUnlisten();
-    throw new Error(`Tauri 会话初始化失败：${error instanceof Error ? error.message : String(error)}`);
+    disposed = true;
+    const ownedSessionId = sessionId;
+    sessionId = null;
+    timeline.clearForDispose();
+    const cleanup: { name: string; release: () => void | Promise<unknown> }[] = [];
+    if (eventUnlisten !== null) cleanup.push({ name: "engine-event listener", release: eventUnlisten });
+    if (failureUnlisten !== null) cleanup.push({ name: "engine-failure listener", release: failureUnlisten });
+    if (ownedSessionId !== null) cleanup.push({ name: "stop_session", release: () => invoke("stop_session", { sessionId: ownedSessionId }) });
+    const results = await Promise.allSettled(cleanup.map(({ release }) => Promise.resolve().then(release)));
+    const cleanupErrors = results.flatMap((result, index) => result.status === "rejected"
+      ? [new Error(`${cleanup[index]!.name} 清理失败：${result.reason instanceof Error ? result.reason.message : String(result.reason)}`, { cause: result.reason })]
+      : []);
+    const message = `Tauri 会话初始化失败：${error instanceof Error ? error.message : String(error)}`;
+    if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], `${message}；${cleanupErrors.map((failure) => failure.message).join("；")}`, { cause: error });
+    throw new Error(message, { cause: error });
   }
 
   const requireSession = (): string => {
