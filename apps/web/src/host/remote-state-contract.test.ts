@@ -43,7 +43,7 @@ async function fixture(onUpdate?: (update: HostUpdate) => void, respond?: (url: 
       return socket as unknown as WebSocket;
     },
   });
-  host.start((update) => { received.push(update); onUpdate?.(update); }, (failure) => failures.push(failure));
+  await host.start((update) => { received.push(update); onUpdate?.(update); }, (failure) => failures.push(failure));
   return { host, sockets, failures, received, socket: sockets[0]! };
 }
 
@@ -99,24 +99,27 @@ test("mode 切换丢弃旧 socket message/close，已同步的新连接沿用 pr
   socket.receive(baseline(2));
   socket.onclose?.();
   replacement.receive(protocol());
-  assert.deepEqual(received.map((update) => update.type), ["baseline", "protocol"]);
+  assert.deepEqual(received.map((update) => update.type), ["baseline"]);
+  replacement.receive(baseline());
+  replacement.receive(protocol());
+  assert.deepEqual(received.map((update) => update.type), ["baseline", "baseline", "protocol"]);
   assert.equal(host.getDeliveryMode(), "pull");
   assert.equal(failures.length, 0);
 });
 
-test("旧 socket onerror 按现状仍使新连接 fail，并保留 cached baseline", options, async () => {
+test("旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate", options, async () => {
   const { host, socket, sockets, failures } = await fixture();
   assert.ok(host.setDeliveryMode);
   socket.receive(baseline());
   host.setDeliveryMode("pull");
   socket.onerror?.();
-  assert.equal(sockets[1]!.closed, 1);
-  assert.equal(failures[0]!.code, "REMOTE_SOCKET");
+  assert.equal(sockets[1]!.closed, 0);
+  assert.equal(failures.length, 0);
   assert.equal(host.tick(), 0);
   await assert.rejects(host.submitIntent(intent), /尚未完成权威基线同步/);
 });
 
-test("resync 按现状覆盖单槽 waiter，baseline 仅完成最新 waiter", options, async () => {
+test("并发 resync 共享权威 baseline，所有 waiter 均完成", options, async () => {
   const { host, socket } = await fixture();
   socket.receive(baseline());
   let firstSettled = false;
@@ -124,9 +127,9 @@ test("resync 按现状覆盖单槽 waiter，baseline 仅完成最新 waiter", op
   const second = host.refreshBaseline();
   socket.receive(baseline());
   await second;
-  assert.equal(firstSettled, false);
-  assert.deepEqual(socket.sent, [{ Resync: {} }, { Resync: {} }]);
-  host.dispose();
+  assert.equal(firstSettled, true);
+  assert.deepEqual(socket.sent, [{ Resync: {} }]);
+  await host.dispose();
 });
 
 test("baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝", options, async () => {
@@ -142,19 +145,18 @@ test("baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝", opti
   assert.equal(failures[0]!.code, "REMOTE_PROTOCOL");
 });
 
-test("同步 send throw 保留 command 登记，dispose 按现状不 settle pending command", options, async () => {
+test("同步 send throw 清理 command，dispose 显式拒绝未确认请求", options, async () => {
   const { host, socket, failures } = await fixture();
   socket.receive(baseline());
   socket.sendError = new Error("send broke");
   await assert.rejects(host.submitIntent(intent), /send broke/);
   socket.sendError = null;
-  socket.receive({ CommandQueued: { request_id: 1 } });
   assert.equal(failures.length, 0);
   let settled = false;
   void host.submitIntent(intent).then(() => { settled = true; }, () => { settled = true; });
-  host.dispose();
+  await host.dispose();
   await Promise.resolve();
-  assert.equal(settled, false);
+  assert.equal(settled, true);
 });
 
 test("generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol", options, async () => {
@@ -170,15 +172,16 @@ test("generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 p
   socket.receive({ ResyncRequired: { reason: "lagged", missed: 1 } });
   assert.deepEqual(socket.sent, [{ Resync: {} }, { Resync: {} }]);
   socket.receive(baseline(2));
-  host.dispose();
+  await host.dispose();
 });
 
 test("load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败", { timeout: 10000 }, async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const successful = await fixture();
   successful.socket.receive(baseline());
-  successful.host.stop();
+  await successful.host.stop();
   successful.socket.onclose?.();
+  t.mock.timers.tick(100);
   const loaded = successful.host.load({});
   await new Promise<void>((resolve) => setImmediate(resolve));
   successful.sockets[1]!.receive(baseline(2));
@@ -187,14 +190,17 @@ test("load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式
   assert.equal(successful.failures.length, 0);
 
   const expired = await fixture();
-  expired.host.stop();
+  await expired.host.stop();
   expired.socket.onclose?.();
+  t.mock.timers.tick(100);
   const loading = expired.host.load({});
-  const rejected = assert.rejects(loading, /REMOTE_BASELINE_TIMEOUT/);
+  const rejected = assert.rejects(loading, /连接中断.*结果未知/);
   await new Promise<void>((resolve) => setImmediate(resolve));
   t.mock.timers.tick(5000);
   await rejected;
-  assert.equal(expired.failures[0]!.code, "REMOTE_BASELINE_TIMEOUT");
+  assert.equal(expired.failures.length, 0);
+  await expired.host.dispose();
+  await successful.host.dispose();
 });
 
 for (const queryKind of ["orders", "diagnostics", "save"] as const) {
@@ -213,18 +219,18 @@ for (const queryKind of ["orders", "diagnostics", "save"] as const) {
     finish!(Response.json(queryKind === "orders" ? { generation: "1", orders: [] } : queryKind === "diagnostics" ? { generation: "1", diagnostics: null } : { saved: true }));
     const result = await completed;
     if (queryKind === "save") assert.deepEqual(result, { saved: true });
-    host.dispose();
+    await host.dispose();
   });
 }
 
-test("resync send 同步失败发生在新 waiter 登记前，既有 waiter 仍等待 baseline", options, async () => {
+test("resync send 同步失败拒绝已登记 waiter，后续可显式重试", options, async () => {
   const { host, socket } = await fixture();
   socket.receive(baseline());
-  const first = host.refreshBaseline();
   socket.sendError = new Error("resync send broke");
   await assert.rejects(host.refreshBaseline(), /resync send broke/);
   socket.sendError = null;
+  const first = host.refreshBaseline();
   socket.receive(baseline());
   await first;
-  host.dispose();
+  await host.dispose();
 });

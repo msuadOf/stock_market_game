@@ -30,8 +30,10 @@ export class RemotePublisherState {
 
   beginResync(): void { this.awaitingBaseline = true; }
 
-  // 保留当前单槽覆盖语义；旧 waiter 不会因新请求自动完成或拒绝。
-  beginBaselineWait(waiter: BaselineWaiter): void { this.baselineWaiter = waiter; }
+  beginBaselineWait(waiter: BaselineWaiter): void {
+    this.rejectBaselineWaiter(new Error("远程基线请求已被替换，确认中断，结果未知"));
+    this.baselineWaiter = waiter;
+  }
 
   takeBaselineWaiter(): BaselineWaiter | null {
     const waiter = this.baselineWaiter;
@@ -40,13 +42,11 @@ export class RemotePublisherState {
   }
 
   resolveBaselineWaiter(): void {
-    this.baselineWaiter?.resolve();
-    this.baselineWaiter = null;
+    this.takeBaselineWaiter()?.resolve();
   }
 
   rejectBaselineWaiter(error: Error): void {
-    this.baselineWaiter?.reject(error);
-    this.baselineWaiter = null;
+    this.takeBaselineWaiter()?.reject(error);
   }
 
   installBaseline(update: Baseline, onTimelineChanged: () => void): void {

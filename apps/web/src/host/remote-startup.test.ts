@@ -41,26 +41,24 @@ test("remote startup restores and caches the authoritative baseline without runn
     assert.equal(connections(), 1);
     assert.equal(requests.some(({ url }) => url.endsWith("/api/running")), false);
     const received: unknown[] = [];
-    host.start((update) => received.push(update));
+    await host.start((update) => { received.push(update); });
     assert.equal(connections(), 1);
     assert.equal((received[0] as { generation: string }).generation, "2");
     assert.ok(requests.some(({ url, init }) => url.endsWith("/api/running") && JSON.parse(String(init?.body)).running === true));
     assert.equal(requests.filter(({ url }) => url.endsWith("/api/load")).length, 1);
     context.mock.timers.tick(5000);
     assert.equal(closes(), 0, "successful restoration must clear its timeout");
-  } finally { host.dispose(); }
+  } finally { await host.dispose(); }
 });
 
 test("remote startup connection loss rejects restoration even while the market is paused", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const { host, closes } = await fixture((socket) => { socket.close(); socket.onclose?.({} as CloseEvent); });
   try {
-    await assert.rejects(host.load({ daily: true }), /意外断开/);
-    assert.equal(closes(), 1);
-    context.mock.timers.tick(5000);
-    assert.equal(closes(), 1, "failed restoration must clear its timeout");
+    await assert.rejects(host.load({ daily: true }), /连接中断.*结果未知/);
+    assert.equal(closes(), 2);
   }
-  finally { host.dispose(); }
+  finally { await host.dispose(); }
 });
 
 test("remote startup without a baseline times out and closes its connection", async (context) => {
@@ -78,7 +76,7 @@ test("remote startup without a baseline times out and closes its connection", as
     assert.equal(closes(), 1);
     context.mock.timers.tick(5000);
     assert.equal(closes(), 1);
-  } finally { host.dispose(); }
+  } finally { await host.dispose(); }
 });
 
 test("disposed remote startup cannot reconnect after a late load response", async () => {
@@ -86,8 +84,9 @@ test("disposed remote startup cannot reconnect after a late load response", asyn
   const { host, connections } = await fixture(() => {}, () => new Promise<Response>((resolve) => { finish = () => resolve(new Response(null)); }));
   const loaded = host.load({ daily: true });
   assert.ok(finish);
-  host.dispose();
+  const rejected = assert.rejects(loaded, /销毁/);
+  await host.dispose();
   finish();
-  await assert.rejects(loaded, /销毁/);
+  await rejected;
   assert.equal(connections(), 0);
 });

@@ -40,7 +40,7 @@ test("RemotePublisherState epoch 每次 baseline 都更新，跨 generation 先�
   assert.equal(state.isProtocolDeliverable("2"), false);
 });
 
-test("RemotePublisherState waiter 保留单槽覆盖和 resolve 后清槽的重入顺序", options, () => {
+test("RemotePublisherState waiter 替换显式拒绝旧请求，完成前清槽保留重入请求", options, () => {
   const state = new RemotePublisherState();
   const completed: string[] = [];
   state.beginBaselineWait({ resolve() { completed.push("old"); }, reject() { completed.push("old-rejected"); } });
@@ -49,11 +49,13 @@ test("RemotePublisherState waiter 保留单槽覆盖和 resolve 后清槽的重�
     state.beginBaselineWait({ resolve() { completed.push("nested"); }, reject() { completed.push("nested-rejected"); } });
   }, reject() { completed.push("current-rejected"); } });
   state.resolveBaselineWaiter();
-  assert.deepEqual(completed, ["current"]);
-  assert.equal(state.hasBaselineWaiter(), false);
+  assert.deepEqual(completed, ["old-rejected", "current"]);
+  assert.equal(state.hasBaselineWaiter(), true);
+  state.resolveBaselineWaiter();
+  assert.deepEqual(completed, ["old-rejected", "current", "nested"]);
   state.beginBaselineWait({ resolve() { completed.push("taken"); }, reject() { completed.push("taken-rejected"); } });
   const taken = state.takeBaselineWaiter();
   assert.equal(state.hasBaselineWaiter(), false);
   taken!.reject(new Error("fail"));
-  assert.deepEqual(completed, ["current", "taken-rejected"]);
+  assert.deepEqual(completed, ["old-rejected", "current", "nested", "taken-rejected"]);
 });
