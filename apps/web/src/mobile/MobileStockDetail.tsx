@@ -95,8 +95,8 @@ function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "
   </section>;
 }
 
-function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
-  const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
+function IntradayPanel({ market, minutePoints, auctionPoints, trades, activeDailyCandle, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "activeDailyCandle" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
+  const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, activeDailyCandle, elapsedMinutes, totalMinutes, gameDay, gameTick });
   const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress, recentTrades } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
@@ -113,7 +113,7 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
     >
       <div className="msd-intraday-main">
         <div className="msd-chart-meta">
-          <span>集合竞价</span><b className="average">均价:{displayedAverage.toFixed(2)}</b>
+          <span>集合竞价</span><b className="average">均价:{displayedAverage === null ? projection.averageUnavailableReason : displayedAverage.toFixed(2)}</b>
           <span>最新:{yuan(market.last_price)}</span>
         </div>
         <div className="msd-intraday-chart">

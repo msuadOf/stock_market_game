@@ -15,6 +15,8 @@ export interface PricePoint {
   value: number; // 元（yuan）
   volume?: number;
   buy?: boolean;
+  cumulativeTurnoverCents?: string;
+  cumulativeVolumeShares?: number;
 }
 
 export interface KlinePoint {

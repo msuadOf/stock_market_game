@@ -54,9 +54,15 @@ export class MarketChartProjection {
         const previousPrice = previousMinute?.value ?? auctionPrice;
         const value = moneyToChartNumber(point.last_price) / 100;
         const increment = Math.max(0, point.cumulative_volume - (this.continuousVolumes[code] ?? 0));
+        const candle = frame.activeDailyCandles[code];
+        const tradeStats = candle?.trade_stats;
         const projected = Object.freeze({ time, value,
           volume: increment + (previous?.time === time ? previous.volume ?? 0 : 0),
           buy: previousPrice === null || previousPrice === undefined || value >= previousPrice,
+          ...(tradeStats === undefined || tradeStats === null ? {} : {
+            cumulativeTurnoverCents: tradeStats.turnover_cents,
+            cumulativeVolumeShares: candle.volume,
+          }),
         });
         if (!samePoint(previous, projected)) this.pricesByCode[code] = freezeHistory(mergeMinutePoints(history, [projected]));
         this.continuousVolumes[code] = point.cumulative_volume;
@@ -128,7 +134,11 @@ export class MarketChartProjection {
 
 function samePoint(previous: PricePoint | AuctionPoint | undefined, next: PricePoint | AuctionPoint): boolean {
   return previous !== undefined && previous.time === next.time && previous.value === next.value
-    && previous.volume === next.volume && previous.buy === next.buy;
+    && previous.volume === next.volume && previous.buy === next.buy
+    && ("cumulativeTurnoverCents" in previous ? previous.cumulativeTurnoverCents : undefined)
+      === ("cumulativeTurnoverCents" in next ? next.cumulativeTurnoverCents : undefined)
+    && ("cumulativeVolumeShares" in previous ? previous.cumulativeVolumeShares : undefined)
+      === ("cumulativeVolumeShares" in next ? next.cumulativeVolumeShares : undefined);
 }
 
 function sameCandle(previous: KlinePoint | undefined, next: KlinePoint): boolean {

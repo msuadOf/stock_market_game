@@ -20,6 +20,9 @@ pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
 
+pub mod intraday_average;
+pub use intraday_average::{calculate_intraday_average, IntradayAverage, IntradayAverageError};
+
 pub mod config;
 pub use config::{ConfigError, GameConfig};
 

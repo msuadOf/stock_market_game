@@ -8,6 +8,25 @@ import { formatSharesAsLots } from "../utils/format.ts";
 
 export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
+/** 将真实日累计成交额分与股数保留到分时图坐标边界才转为近似元数。 */
+export function intradayAverageYuan(turnoverCents: string, volumeShares: number): number | null {
+  if (!/^(0|[1-9]\d*)$/.test(turnoverCents)) {
+    throw new RangeError(`分时成交额必须是规范十进制分字符串，收到 ${turnoverCents}`);
+  }
+  if (!Number.isSafeInteger(volumeShares) || volumeShares < 0) {
+    throw new RangeError(`分时成交股数必须是非负安全整数，收到 ${String(volumeShares)}`);
+  }
+  const turnover = BigInt(turnoverCents);
+  if (volumeShares === 0) {
+    if (turnover !== 0n) throw new RangeError("分时无成交股数时累计成交额必须为零");
+    return null;
+  }
+  if (turnover === 0n) throw new RangeError("分时存在成交股数时累计成交额必须为正数");
+  const divisor = BigInt(volumeShares) * 100n;
+  const chartScale = 100_000_000n;
+  return Number((turnover * chartScale + divisor / 2n) / divisor) / Number(chartScale);
+}
+
 export type MobileMarketView = "watchlist" | "holdings";
 export const MOBILE_KLINE_DEFAULT_CAPACITY = 72;
 export const MOBILE_KLINE_ZOOM_LEVELS = [120, 96, 72, 48, 30] as const;
@@ -632,6 +651,7 @@ export interface MobileIntradayInputs {
   minutePoints: readonly PricePoint[];
   auctionPoints: readonly AuctionPoint[];
   trades: readonly TradeEvent[];
+  activeDailyCandle?: Pick<KlinePoint, "volume" | "tradeStats">;
   elapsedMinutes: number;
   totalMinutes: number;
   gameDay: number;
@@ -646,7 +666,8 @@ export class MobileIntradayProjection {
   readonly scale: Readonly<SymmetricIntradayScale>;
   readonly volumeScale: Readonly<IntradayVolumeScale>;
   readonly progress: number;
-  readonly displayedAverage: number;
+  readonly displayedAverage: number | null;
+  readonly averageUnavailableReason: string;
   readonly recentTrades: readonly Readonly<TradeEvent>[];
   readonly signature: string;
   readonly tradeTime: string;
@@ -666,9 +687,17 @@ export class MobileIntradayProjection {
     this.scale = symmetricIntradayScale([...this.visibleAuctionPricePoints, ...this.visiblePoints].map(point => point.value), lastClose);
     this.volumeScale = intradayVolumeScale(this.visibleAuctionPoints.map(point => point.volume ?? 0), this.visiblePoints.map(point => point.volume ?? 0));
     this.progress = tradingDayProgress(this.visibleAuctionPoints.length / AUCTION_VOLUME_LINES_PER_MINUTE + inputs.elapsedMinutes, CALL_AUCTION_ENTRY_MINUTES + inputs.totalMinutes);
-    const averageSource = this.visiblePoints.length > 0 ? this.visiblePoints : this.visibleAuctionPricePoints;
-    // 沿用价格点算术均值；此显示值不是撮合均价或 VWAP。
-    this.displayedAverage = averageSource.length > 0 ? averageSource.reduce((sum, point) => sum + point.value, 0) / averageSource.length : lastClose;
+    const activeDailyCandle = inputs.activeDailyCandle;
+    const stats = activeDailyCandle?.tradeStats;
+    const volumeShares = activeDailyCandle?.volume;
+    this.displayedAverage = stats === undefined || volumeShares === undefined
+      ? null
+      : intradayAverageYuan(stats.turnoverCents, volumeShares);
+    this.averageUnavailableReason = stats === undefined
+      ? "不支持（缺少真实成交额统计）"
+      : volumeShares === undefined
+        ? "不支持（缺少真实成交股数）"
+        : this.displayedAverage === null ? "暂无成交" : "";
     this.recentTrades = inputs.trades.slice(0, 7);
     const latestPoint = this.visiblePoints.at(-1);
     const latestAuctionPoint = this.visibleAuctionPoints.at(-1);
@@ -705,9 +734,10 @@ export class MobileIntradayProjection {
   }
 
   averageLine(): string {
-    return this.visiblePoints.map((point, index) => {
-      const average = this.visiblePoints.slice(0, index + 1).reduce((sum, entry) => sum + entry.value, 0) / (index + 1);
-      return `${intradayChartX({ phase: "continuous", minute: point.time })},${this.priceY(average)}`;
+    return this.visiblePoints.flatMap(point => {
+      if (point.cumulativeTurnoverCents === undefined || point.cumulativeVolumeShares === undefined) return [];
+      const average = intradayAverageYuan(point.cumulativeTurnoverCents, point.cumulativeVolumeShares);
+      return average === null ? [] : [`${intradayChartX({ phase: "continuous", minute: point.time })},${this.priceY(average)}`];
     }).join(" ");
   }
 

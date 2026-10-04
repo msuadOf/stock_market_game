@@ -49,12 +49,12 @@ test("审计G45：App共用详情层从自选打开会实际渲染，返回后�
 const candle: KlinePoint = {
   time: 0 as KlinePoint["time"],
   open: 10,
-  high: 10.2,
-  low: 9.8,
-  close: 10.1,
-  rawPrices: { open: "1000", high: "1020", low: "980", close: "1010" },
+  high: 10,
+  low: 8,
+  close: 8,
+  rawPrices: { open: "1000", high: "1000", low: "800", close: "800" },
   volume: 250,
-  tradeStats: { turnoverCents: "69900", tradeCount: 2 },
+  tradeStats: { turnoverCents: "225000", tradeCount: 2 },
 };
 
 const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 2 };
@@ -113,7 +113,7 @@ test("移动详情将权威股数接入盘口、逐笔和两种图表的手数�
 
 test("资金页展示权威成交额与成交笔数，不从截取的逐笔列表推算", () => {
   const html = renderDetail("分时", "资金");
-  assert.match(html, /成交额<\/span><b>699元<\/b>/);
+  assert.match(html, /成交额<\/span><b>2250元<\/b>/);
   assert.match(html, /成交量（手）<\/span><b>2\.5<\/b>/);
   assert.match(html, /成交笔数<\/span><b>2<\/b>/);
   assert.match(html, /来自引擎权威撮合统计/);
@@ -139,18 +139,31 @@ test("G14：逐笔时间取自身tick，缺失明确显示而不借用当前时�
 });
 
 
-test("分时 projection 经真实组件保留 null 竞价量、阶段独立高度与算术均价", () => {
+test("分时 projection 经真实组件保留 null 竞价量、阶段独立高度与真实日内均价", () => {
   const html = renderDetail("分时", "盘口", {
     auctionPoints: [{ time: 0, value: null, volume: 100_000, buy: false }, { time: 99, value: 12, volume: 50_000, buy: true }],
-    minutePoints: [{ time: 119, value: 10, volume: 100, buy: false }, { time: 120, value: 8, volume: 200, buy: true }],
+    minutePoints: [
+      { time: 119, value: 10, volume: 100, cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100 },
+      { time: 120, value: 8, volume: 200, cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300 },
+    ],
+    activeDailyCandle: { ...candle, volume: 300, tradeStats: { turnoverCents: "260000", tradeCount: 2 } },
     gameDay: 3,
   });
-  assert.match(html, /均价:9\.00/);
+  assert.match(html, /均价:8\.67/);
   assert.match(html, /data-intraday-signature="3:continuous:120:8:200"/);
   assert.match(html, /data-auction-count="2"/);
   const heights = [...html.matchAll(/<rect class="msd-minute-volume-mark [^"]+"[^>]*height="([^%]+)%"/g)].map(match => Number(match[1]));
   assert.deepEqual(heights, [100, 50, 50, 100]);
   assert.match(html, /msd-auction-dot/);
+});
+
+test("没有真实成交额统计或成交量时，组件明确显示不可用或暂无成交", () => {
+  const unavailable = renderDetail("分时", "盘口", { activeDailyCandle: { ...candle, tradeStats: undefined } });
+  assert.ok(unavailable.includes("均价:不支持（缺少真实成交额统计）"));
+  const missingShares = renderDetail("分时", "盘口", { activeDailyCandle: { ...candle, volume: undefined } });
+  assert.ok(missingShares.includes("均价:不支持（缺少真实成交股数）"));
+  const noTrades = renderDetail("分时", "盘口", { activeDailyCandle: { ...candle, volume: 0, tradeStats: { turnoverCents: "0", tradeCount: 0 } } });
+  assert.match(noTrades, /均价:暂无成交/);
 });
 
 test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变半像素槽宽", { timeout: 10000 }, () => {
@@ -169,15 +182,15 @@ test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
 
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
   const html = renderDetail("日K", "盘口");
-  assert.match(html, /data-kline-signature="0:10:10\.2:9\.8:10\.1:250"/);
+  assert.match(html, /data-kline-signature="0:10:10:8:8:250"/);
   const upper = html.match(/class="upper-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
   const lower = html.match(/class="lower-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
   assert.ok(upper); assert.ok(lower);
   assert.equal(Number(upper[1]), 390 / 72 / 2);
   assert.equal(Number(upper[1]), Number(lower[1]));
   assert.ok(Math.abs(Number(upper[3]) - 8) < 1e-10);
-  assert.ok(Math.abs(Number(upper[4]) - 49.5) < 1e-10);
-  assert.ok(Math.abs(Number(lower[3]) - 91) < 1e-10);
+  assert.ok(Math.abs(Number(upper[4]) - 8) < 1e-10);
+  assert.ok(Math.abs(Number(lower[3]) - 174) < 1e-10);
   assert.ok(Math.abs(Number(lower[4]) - 174) < 1e-10);
   assert.match(html, /class="msd-k-volume"[^>]*>[\s\S]*?y="9"/);
 });

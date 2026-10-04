@@ -10,6 +10,29 @@ function quote(tick: number, volume: number, code = "600000"): NormalizedTickFra
     continuousPoints: { [code]: { tick, phase: "Continuous", last_price: "1200", cumulative_volume: volume, bids: [], asks: [] } } };
 }
 
+function quoteWithDailyStats(
+  tick: number,
+  cumulativeVolume: number,
+  volumeShares: number,
+  turnoverCents: string,
+  tradeCount: number,
+  lastPrice = "1200",
+  ohlc = { open: "1200", high: "1200", low: "1200", close: "1200" },
+): NormalizedTickFrame {
+  const source = quote(tick, cumulativeVolume);
+  return {
+    ...source,
+    continuousPoints: {
+      ...source.continuousPoints,
+      "600000": { ...source.continuousPoints["600000"], last_price: lastPrice },
+    },
+    activeDailyCandles: { "600000": {
+      time: 0, ...ohlc, volume: volumeShares,
+      trade_stats: { turnover_cents: turnoverCents, trade_count: tradeCount },
+    } },
+  };
+}
+
 test("分时跨批次累计量基线、分钟替换与输入不变", { timeout: 10000 }, () => {
   const frames = [quote(901, 100), quote(961, 160), quote(962, 170)];
   const before = structuredClone(frames);
@@ -79,11 +102,13 @@ test("竞价成交量不混入连续分钟量，新日只保留新日采样且�
   owner.upsertFrames([auction, quote(901, 120), quote(902, 130)]);
   assert.deepEqual(owner.pricePointsFor("600000"), [{ time: 0, value: 12, volume: 30, buy: false }]);
   owner.upsertFrames([quote(961, 160)]);
-  const next = quote(16201, 5);
-  owner.upsertFrames([quote(15300, 200), next, quote(16261, 8)]);
+  const next = quoteWithDailyStats(16201, 5, 5, "6000", 1);
+  const later = quoteWithDailyStats(16261, 8, 8, "9600", 2);
+  const oldDay = quoteWithDailyStats(15300, 200, 200, "240000", 10);
+  owner.upsertFrames([oldDay, next, later]);
   assert.deepEqual(owner.pricePointsFor("600000"), [
-    { time: 0, value: 12, volume: 5, buy: true },
-    { time: 1, value: 12, volume: 3, buy: true },
+    { time: 0, value: 12, volume: 5, buy: true, cumulativeTurnoverCents: "6000", cumulativeVolumeShares: 5 },
+    { time: 1, value: 12, volume: 3, buy: true, cumulativeTurnoverCents: "9600", cumulativeVolumeShares: 8 },
   ]);
   assert.deepEqual(owner.auctionPointsFor("600000"), []);
 });
@@ -96,6 +121,22 @@ test("同分钟涨跌以最后价对前分钟价判定，不被分钟内部反�
   rebound.continuousPoints["600000"].last_price = "1150";
   owner.upsertFrames([quote(901, 100), falling, rebound]);
   assert.deepEqual(owner.pricePointsFor("600000").at(-1), { time: 1, value: 11.5, volume: 30, buy: false });
+});
+
+test("分时采样附着同帧权威日累计成交额与股数，含基线与同分钟更新", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  const first = quoteWithDailyStats(901, 100, 100, "100000", 2, "1000", { open: "1000", high: "1000", low: "1000", close: "1000" });
+  owner.installBaseline({ ...baseState(), intraday: [first] });
+  assert.deepEqual(owner.pricePointsFor("600000"), [{
+    time: 0, value: 10, volume: 100, buy: true,
+    cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100,
+  }]);
+  const updated = quoteWithDailyStats(902, 160, 300, "260000", 3, "800", { open: "1000", high: "1000", low: "800", close: "800" });
+  owner.upsertFrames([updated]);
+  assert.deepEqual(owner.pricePointsFor("600000").at(-1), {
+    time: 0, value: 8, volume: 160, buy: true,
+    cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300,
+  });
 });
 
 test("竞价方向跳过 null 指示价，下降指示价不冒充买入方向", { timeout: 10000 }, () => {

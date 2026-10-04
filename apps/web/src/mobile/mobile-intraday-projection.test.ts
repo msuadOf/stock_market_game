@@ -4,13 +4,13 @@ import * as model from "./market-model.ts";
 import type { TradeEvent } from "../types/engine.ts";
 
 function inputs() {
-  return { market: { last_close: "1000" }, minutePoints: [], auctionPoints: [], trades: [] as TradeEvent[], elapsedMinutes: 0, totalMinutes: 240, gameDay: 3, gameTick: 0 };
+  return { market: { last_close: "1000" }, minutePoints: [], auctionPoints: [], trades: [] as TradeEvent[], activeDailyCandle: undefined, elapsedMinutes: 0, totalMinutes: 240, gameDay: 3, gameTick: 0 };
 }
 
-test("空分时以昨收显示均价，保持空 signature 和价格中轴", () => {
+test("空分时不伪造均价，仍保持空 signature 和昨收价格中轴", () => {
   assert.equal(typeof model.MobileIntradayProjection, "function", "分时投影必须提供共同数据与几何行为 owner");
   const p = model.MobileIntradayProjection.fromInputs(inputs());
-  assert.equal(p.displayedAverage, 10);
+  assert.equal(p.displayedAverage, null);
   assert.equal(p.priceY(10), 50);
   assert.deepEqual(p.auctionSegments(), []);
   assert.equal(p.continuousLine(), "");
@@ -20,13 +20,16 @@ test("空分时以昨收显示均价，保持空 signature 和价格中轴", () 
   assert.deepEqual(p.volumeMarks(), []);
 });
 
-test("null 竞价价不进入曲线但保留累计量，连续量独立缩放，均价为算术均值", () => {
-  const source = { ...inputs(), auctionPoints: [{ time: 0, value: null, volume: 100000, buy: false }, { time: 99, value: 12, volume: 50000, buy: true }], minutePoints: [{ time: 119, value: 10, volume: 100, buy: false }, { time: 120, value: 8, volume: 200, buy: true }], elapsedMinutes: 121 };
+test("null 竞价价不进入价格曲线；均价使用日累计真实成交额和股数", () => {
+  const source = { ...inputs(), auctionPoints: [{ time: 0, value: null, volume: 100000, buy: false }, { time: 99, value: 12, volume: 50000, buy: true }], minutePoints: [
+    { time: 119, value: 10, volume: 100, cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100 },
+    { time: 120, value: 8, volume: 200, cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300 },
+  ], activeDailyCandle: { volume: 300, tradeStats: { turnoverCents: "260000", tradeCount: 2 } }, elapsedMinutes: 121 };
   const before = structuredClone(source);
   const p = model.MobileIntradayProjection.fromInputs(source);
   assert.equal(p.visibleAuctionPricePoints.length, 1);
-  assert.equal(p.displayedAverage, 9);
-  assert.equal(p.averageLine(), `${model.intradayChartX({ phase: "continuous", minute: 119 })},${p.priceY(10)} ${model.intradayChartX({ phase: "continuous", minute: 120 })},${p.priceY(9)}`);
+  assert.equal(p.displayedAverage, 8.66666667);
+  assert.equal(p.averageLine(), `${model.intradayChartX({ phase: "continuous", minute: 119 })},${p.priceY(10)} ${model.intradayChartX({ phase: "continuous", minute: 120 })},${p.priceY(8.66666667)}`);
   assert.deepEqual(p.volumeMarks().map(m => m.height), [100, 50, 50, 100]);
   assert.equal(p.volumeMarks()[0].phase, "auction");
   assert.equal(p.visibleAuctionPricePoints[0].value, 12);
@@ -37,11 +40,43 @@ test("null 竞价价不进入曲线但保留累计量，连续量独立缩放，
   assert.deepEqual(source, before);
 });
 
+test("无当日成交时均价为空，不使用昨收或竞价指示价伪造成交均价", () => {
+  const projection = model.MobileIntradayProjection.fromInputs({ ...inputs(), auctionPoints: [{ time: 99, value: 11, volume: 0, buy: true }] });
+  assert.equal(projection.displayedAverage, null);
+  assert.equal(projection.averageLine(), "");
+});
+
+test("存在成交额统计但缺少成交股数时，均价保持不可用", () => {
+  const projection = model.MobileIntradayProjection.fromInputs({
+    ...inputs(),
+    activeDailyCandle: { volume: undefined, tradeStats: { turnoverCents: "1000", tradeCount: 1 } },
+  });
+  assert.equal(projection.displayedAverage, null);
+  assert.equal(projection.averageUnavailableReason, "不支持（缺少真实成交股数）");
+});
+
+test("日内线使用完整累计分子分母，不因可见窗口截断而重算，并在缺少权威统计时留空", () => {
+  const projection = model.MobileIntradayProjection.fromInputs({
+    ...inputs(),
+    totalMinutes: 1,
+    minutePoints: [
+      { time: 0, value: 10, volume: 100, cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100 },
+      { time: 1, value: 8, volume: 200, cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300 },
+    ],
+    activeDailyCandle: { volume: 300, tradeStats: { turnoverCents: "260000", tradeCount: 2 } },
+  });
+  assert.equal(projection.displayedAverage, 8.66666667);
+  assert.equal(projection.averageLine(), `${model.intradayChartX({ phase: "continuous", minute: 1 })},${projection.priceY(8.66666667)}`);
+  const unavailable = model.MobileIntradayProjection.fromInputs({ ...inputs(), minutePoints: [{ time: 1, value: 8, volume: 200 }], activeDailyCandle: { volume: 200 } });
+  assert.equal(unavailable.displayedAverage, null);
+  assert.equal(unavailable.averageLine(), "");
+});
+
 test("分时保留单点竞价、最新优先的最近七笔及游戏时钟", () => {
   const trades = Array.from({ length: 9 }, (_, index) => ({ seq: 8 - index, code: "600001", price: "1000", qty: 1, maker: 1, taker: 2 }));
   const source = { ...inputs(), auctionPoints: [{ time: 99, value: 11, volume: 0, buy: true }], trades, elapsedMinutes: 121, gameTick: 8100 };
   const p = model.MobileIntradayProjection.fromInputs(source);
-  assert.equal(p.displayedAverage, 11);
+  assert.equal(p.displayedAverage, null);
   assert.deepEqual(p.auctionSegments().map(segment => segment.map(point => point.value)), [[11]]);
   assert.equal(p.signature, "3:auction:99:11:0");
   assert.deepEqual(p.recentTrades.map(t => t.seq), [8, 7, 6, 5, 4, 3, 2]);
