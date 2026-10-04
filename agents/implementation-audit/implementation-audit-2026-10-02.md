@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐25项，剩余54项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐27项，剩余52项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -84,7 +84,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G23 | 进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情进入/返回仍只变状态，没有对应导航焦点恢复。 交易底页焦点管理不能代替详情导航；后续需浏览器短验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | 信息 tab 仍调用 `scrollIntoView`。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G25 | 返回/切股至少44px点击热区；DESIGN:86 | 返回/切股横向点击区域仍小于约定 44px。 可见图标可以小，但热区应满足契约；本轮未做像素测量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G26 | 手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；仅指手动开发CI，不要求恢复普通 commit/PR 自动运行或发布链路lint。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
+| G26 | 已补齐：手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint命令添加--deny-warnings，手动开发CI沿用该入口；实际两线程oxlint短Fixture对照原warning退出0、新命令warning退出1、合法代码退出0，不把lint加入发布。 原证据见 [工具](reaudit-tools.md)，短测见 [CI与Pages边界](../implementation-gap-implementation/ci-pages.md)。 |
 | G45 | 已补齐：自选详情返回原列表身份；UX导航/Flow ledger | reducer保留原primaryTab；App使用共用MobileDetailLayer按detailCode显示详情，不再仅允许market页。短测覆盖自选→详情→切股→交易底页→返回，并实际SSR共用详情层，返回仍在自选。 原证据见 [导航](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G48 | 中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML固定lang=en且无运行时修正；AG Grid sortable表头未配置locale，实际使用英文排序辅助文本。两处均需对应中文界面，不能用中文列名核销内置提示。见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
 | G49 | 已补齐：持仓成本及浮盈承接半偶到分语义；account spec:23/63 | 持仓展示共用valueHeldPosition，BigInt中间计算正负对称半偶到每股分，浮盈=(现价−舍入成本)×股数，与Rust Account一致；真实SSR验证200股净投入±200100分的成本与浮盈，单位/费用/T+1不变。 原证据见 [账户消费](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
@@ -93,7 +93,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G52 | 协议断言保留已知actual/expected上下文；错误详情规范 | 前端generation/cursor不一致仅生成通用ProtocolError文本，coordinator没有补上已知实际值/期望值，复制反馈缺复现事实。三宿主真实engine fatal已有context，不泛称全部错误无详情。见 [协议错误](exhaustive-review/luna14.md)。 |
 | G54 | 已补齐：Money公开解析拒绝完全无数字输入；Money spec/Task4 | Money::from_yuan_str显式拒绝“.”、“+.”、“-.”及带空白形态，保留“.5”“12.”等含数字的既有合法输入。影响限定公开库API，不冒称UI/存档此前已接受。原证据见 [解析](exhaustive-review/luna18.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G55 | 已补齐：公开Strategy构造/工厂统一拒非法参数；策略spec/防御原则 | Momentum构造器拒非有限阈值，params.validate与Factory沿用同一入口；机构原始margin在采样/钳位前校验，零tick日显式InvalidParam。新短测验证非法参数拒绝、margin/零tick不消耗RNG及合法三类实例可建。原证据见 [策略入口](exhaustive-review/sweep20.md) 与 [工厂](exhaustive-review/sweep19.md)，实施见 [策略输入](../implementation-gap-implementation/strategy-input.md)。 |
-| G56 | Pages区分owner根站点和项目路径；ADR-0028 | distributions仅看repository.name的.github.io后缀，没有与owner匹配；非owner同后缀项目被误编为根路径。当前stock_market_game不触发，不推翻其发布验收。见 [Pages](exhaustive-review/luna12.md)。 |
+| G56 | 已补齐：Pages区分owner根站点和项目路径；ADR-0028 | Pages base仅在仓库名与repository_owner.github.io不区分大小写精确一致时为根路径；异owner同后缀为项目路径。步骤传owner并校验env形状，VM执行真实JS核root/project与非法env，不冒称线上部署验收。 原证据见 [Pages](exhaustive-review/luna12.md)，短测见 [CI与Pages边界](../implementation-gap-implementation/ci-pages.md)。 |
 | G64 | 桌面行情选股有键盘等价入口；UX/设计辅助功能 | MarketGrid仅onRowClicked选择，suppressCellFocus禁用单元格焦点；移动原生按钮在桌面隐藏。静态缺选股入口，不声称所有键盘操作失效或已跑浏览器。见 [桌面Grid](exhaustive-review/sweep41.md)。 |
 | G65 | 主导航/行情分类选中状态程序化公开；UX辅助功能 | 主导航与行情分类只有active CSS，没有向辅助技术提供当前/选中状态；图表/信息tab已有aria-selected。具体角色及属性由实现按组件语义选，不硬指定错误role。见 [状态](exhaustive-review/luna02.md)。 |
 | G67 | 已补齐：外部baseline持仓必须有行情，估值缺项显式失败；防御/资产契约 | 外部baseline深验所有账户持仓代码有own行情引用；portfolio selector和组件不再缺价默认为0。覆盖玩家/非玩家、零股引用及继承属性，错误保留持仓代码和协议路径；delta原guard不改。 原证据见 [资产](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
