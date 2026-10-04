@@ -109,6 +109,12 @@ pub fn cash_flow(
     assumptions: &PersonalAssumptions,
     growth_bp: i32,
 ) -> Result<ScenarioEstimates, Unavailable> {
+    if matches!(
+        facts.scope,
+        crate::accounting::consolidation::ScopeId::Consolidated(_)
+    ) {
+        return Err(Unavailable::ConsolidatedCashFlowAttributionUnavailable);
+    }
     let fcfe = fcfe_starting_point(facts)?;
     let run = |growth: i32, cost: i32| {
         dcf_equity_total(fcfe, growth, cost, assumptions.terminal_growth_bp)

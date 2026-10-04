@@ -38,8 +38,49 @@ pub struct ZiNoiseStrategy {
 }
 
 impl ZiNoiseStrategy {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_personal_analysis(
+        &self,
+        decision: &mut StrategyDecision,
+        assessments: &BTreeMap<StockCode, crate::plans::CandidateAssessment>,
+        market: &MarketView,
+        own: &SelfView,
+        risk: &AccountRiskObservation,
+        experience: &RetailExperienceState,
+        market_minute: u64,
+        rng: &mut dyn Rng,
+        config: &GameConfig,
+    ) {
+        let data = self.strategy_data();
+        if data.arrival_rate == 0.0 {
+            return;
+        }
+        let original = decision
+            .position_decision
+            .take()
+            .expect("retail analysis requires a position decision");
+        let position = crate::behavior::apply_personal_analysis(
+            original.clone(),
+            assessments,
+            own,
+            market,
+            risk,
+            experience,
+            market_minute,
+            f64::from(data.position_step_bp) / 10_000.0,
+            rng,
+        );
+        if position == original {
+            decision.position_decision = Some(original);
+            return;
+        }
+        decision.intents =
+            retail_position_decision_to_intents(&data, &position, market, own, config);
+        decision.reviewed_stocks = position.code.iter().cloned().collect();
+        decision.position_decision = Some(position);
+    }
     /// 把本实例的全部散户参数投影到临时 StrategyData，不增加持久化状态。
-    fn strategy_data(&self) -> StrategyData {
+    pub(crate) fn strategy_data(&self) -> StrategyData {
         let mut data =
             StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
         data.dip_threshold = self.dip_threshold;

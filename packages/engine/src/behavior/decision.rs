@@ -387,7 +387,7 @@ pub(super) fn decide_retail_position_inner(
             } else {
                 PositionAction::Watch
             },
-            DecisionReason::InsufficientHistory,
+            DecisionReason::NoSignal,
             position_step_fraction,
         );
     };

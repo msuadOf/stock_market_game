@@ -55,6 +55,7 @@ use rayon::prelude::*;
 mod lifecycle;
 pub(in crate::session) mod personal_state;
 mod quote;
+mod retail_analysis;
 mod roots;
 mod urgency;
 use personal_state::PlanPersonalState;
@@ -170,8 +171,17 @@ struct CandidateObservations<'a> {
 }
 
 fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u64) {
-    let failures = belief
-        .experience()
+    let experience = belief.experience().clone();
+    apply_personal_experience_feedback(belief, &experience, trading_day)
+        .unwrap_or_else(|error| panic!("institution experience confidence failed: {error}"));
+}
+
+fn apply_personal_experience_feedback(
+    belief: &mut BeliefBook,
+    experience: &crate::RetailExperienceState,
+    trading_day: u64,
+) -> Result<(), crate::strategy::BeliefError> {
+    let failures = experience
         .feedback
         .failure_events
         .iter()
@@ -180,8 +190,7 @@ fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u
                 .order_id
                 .map(|order| (event.moment, event.code.clone(), OrderId(order), false))
         });
-    let profits = belief
-        .experience()
+    let profits = experience
         .feedback
         .exit_records
         .iter()
@@ -216,19 +225,16 @@ fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u
             } else {
                 BeliefCause::ExperienceFailure { order }
             };
-            belief
-                .apply_experience(
-                    &code,
-                    cause,
-                    order,
-                    if profitable { 500 } else { -1_000 },
-                    trading_day,
-                )
-                .unwrap_or_else(|error| {
-                    panic!("institution experience confidence failed for {code:?}: {error}")
-                });
+            belief.apply_experience(
+                &code,
+                cause,
+                order,
+                if profitable { 500 } else { -1_000 },
+                trading_day,
+            )?;
         }
     }
+    Ok(())
 }
 
 #[cfg(feature = "simulation-diagnostics")]
@@ -299,15 +305,44 @@ fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u3
 fn root_candidate_codes(
     account: AccountId,
     held: &BTreeSet<StockCode>,
-    belief: &BeliefBook,
+    watchlist: &crate::experience::PersonalWatchlist,
     plans: &PlanBook,
     discovered: Option<StockCode>,
 ) -> BTreeSet<StockCode> {
     let mut candidates = held.clone();
-    candidates.extend(belief.entry_stocks().cloned());
+    candidates.extend(watchlist.stocks.keys().cloned());
     candidates.extend(plans.active_codes(account).cloned());
     candidates.extend(discovered);
     candidates
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+pub(in crate::session) fn plan_trace_states(
+    account: AccountId,
+    plans: &PlanBook,
+) -> BTreeMap<PlanId, String> {
+    plans
+        .active_plan_ids_for_account(account)
+        .into_iter()
+        .map(|plan_id| {
+            let plan = plans.plan(plan_id).expect("active diagnostic plan exists");
+            (plan_id, plan_trace_state(plan))
+        })
+        .collect()
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn plan_trace_state(plan: &TradingPlan) -> String {
+    format!(
+        "{:?}/v{}/{:?}/{}/{:?}/{:?}/{:?}",
+        plan.status(),
+        plan.version(),
+        plan.target(),
+        plan.filled_qty(),
+        plan.active_child_order_id(),
+        plan.urgency(),
+        plan.opinion()
+    )
 }
 
 /// A lifecycle decision carries no plan-book write until the caller applies it. The current
@@ -482,6 +517,60 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
 }
 
 impl GameSession {
+    pub(in crate::session) fn prune_plan_personal_memory(
+        &mut self,
+        account: AccountId,
+        plans: &PlanBook,
+    ) {
+        let protected: BTreeSet<StockCode> = self.state.accounts[&account]
+            .positions()
+            .keys()
+            .cloned()
+            .chain(plans.active_codes(account).cloned())
+            .collect();
+        let participant = self
+            .state
+            .belief_participants
+            .get(&account)
+            .unwrap_or_else(|| {
+                panic!("plan account {account:?} has no personal state for memory retention")
+            });
+        let unprotected = |codes: &mut dyn Iterator<Item = &StockCode>| {
+            codes
+                .filter(|code| !protected.contains(*code))
+                .take(crate::MAX_UNHELD_WATCHLIST_STOCKS + 1)
+                .count()
+        };
+        if unprotected(&mut participant.watchlist().stocks.keys())
+            <= crate::MAX_UNHELD_WATCHLIST_STOCKS
+            && unprotected(&mut participant.price_memory().stocks.keys())
+                <= crate::MAX_UNHELD_WATCHLIST_STOCKS
+        {
+            return;
+        }
+        let mut participant = self
+            .state
+            .belief_participants
+            .remove(&account)
+            .expect("checked personal state remains installed");
+        participant.prune_memory(&protected);
+        assert!(
+            self.state
+                .belief_participants
+                .insert(account, participant)
+                .is_none(),
+            "personal memory owner was installed twice"
+        );
+    }
+
+    pub(in crate::session) fn prune_all_personal_memories(&mut self) {
+        let accounts: Vec<_> = self.state.belief_participants.keys().copied().collect();
+        let plans = self.state.plans.clone();
+        for account in accounts {
+            self.prune_plan_personal_memory(account, &plans);
+        }
+    }
+
     fn plan_review_resources(
         &self,
         account: AccountId,
@@ -781,14 +870,7 @@ impl GameSession {
     ) {
         use crate::diagnostics::NpcDecisionTraceRecord;
 
-        let plan_ids = plans
-            .plan_ids()
-            .filter(|plan_id| {
-                plans
-                    .plan(*plan_id)
-                    .is_ok_and(|plan| plan.account() == account)
-            })
-            .collect();
+        let plan_ids = plans.active_plan_ids_for_account(account);
         let expectation_method = self
             .state
             .belief_participants
@@ -809,12 +891,7 @@ impl GameSession {
                 _ => None,
             })
             .collect();
-        let budget_constraints = plans
-            .plan_ids()
-            .filter_map(|plan_id| plans.plan(plan_id).ok())
-            .filter(|plan| plan.account() == account && plan.is_terminal())
-            .map(|plan| format!("{:?}", plan.status()))
-            .collect();
+        let budget_constraints = Vec::new();
         self.state
             .npc_decision_traces
             .record(NpcDecisionTraceRecord {
@@ -826,10 +903,48 @@ impl GameSession {
                     .collect(),
                 expectation_method,
                 plan_ids,
+                plan_changes: Vec::new(),
                 budget_constraints,
                 order_ids,
                 codes: candidates.iter().cloned().collect(),
             });
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(in crate::session) fn record_plan_trace_changes(
+        &mut self,
+        account: AccountId,
+        before: &BTreeMap<PlanId, String>,
+        plans: &PlanBook,
+    ) {
+        let ids: BTreeSet<_> = before
+            .keys()
+            .copied()
+            .chain(plans.active_plan_ids_for_account(account))
+            .collect();
+        let changed: Vec<_> = ids
+            .into_iter()
+            .filter_map(|plan_id| {
+                let current =
+                    plan_trace_state(plans.plan(plan_id).expect("diagnostic plan persists"));
+                (before.get(&plan_id) != Some(&current)).then(|| {
+                    (
+                        plan_id,
+                        format!(
+                            "{plan_id:?}: {} -> {current}",
+                            before
+                                .get(&plan_id)
+                                .map(String::as_str)
+                                .unwrap_or("Created")
+                        ),
+                    )
+                })
+            })
+            .collect();
+        let (plan_ids, changes): (Vec<_>, Vec<_>) = changed.into_iter().unzip();
+        self.state
+            .npc_decision_traces
+            .enrich(account, self.state.tick, [], plan_ids, changes, []);
     }
 
     /// 计划生命周期驱动：新开/修订/平静观察。需要基本面的策略在
@@ -871,11 +986,27 @@ impl GameSession {
 
     /// 为本账户的非终止 ShareCount 计划计算软预算和报价输入。
     /// 调用方先应用已经收到的计划事实；这里仅观察会话并返回账户私有游标。
+    #[cfg(test)]
     pub(in crate::session) fn prepare_plan_quotes_for_account(
         &self,
         id: AccountId,
         market_view: &MarketView,
         plans: &PlanBook,
+    ) -> Option<super::plan_chain_candidates::QuotePlans> {
+        self.prepare_classified_plan_quotes_for_account(
+            id,
+            market_view,
+            plans,
+            &plans.active_plan_ids_for_account(id).into_iter().collect(),
+        )
+    }
+
+    pub(in crate::session) fn prepare_classified_plan_quotes_for_account(
+        &self,
+        id: AccountId,
+        market_view: &MarketView,
+        plans: &PlanBook,
+        existing_plan_ids: &BTreeSet<PlanId>,
     ) -> Option<super::plan_chain_candidates::QuotePlans> {
         let active_plans: Vec<TradingPlan> = plans
             .active_plan_ids_for_account(id)
@@ -979,6 +1110,16 @@ impl GameSession {
                         })
                     }
                 }
+            })
+            .map(|mut request| {
+                request.class = if request.side == Side::Sell {
+                    AllocationClass::RiskReduction
+                } else if existing_plan_ids.contains(&request.plan_id) {
+                    AllocationClass::ExistingPlan
+                } else {
+                    AllocationClass::NewOpportunity
+                };
+                request
             })
             .collect();
         let grants: Option<AllocationResult> = if requests.is_empty() {
@@ -1283,6 +1424,650 @@ pub(in crate::session) fn next_routable_sell_qty(
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    #[cfg(feature = "simulation-diagnostics")]
+    #[test]
+    fn trace_links_a_real_cancellation_and_its_plan_transition() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let plans = session.state.plans.clone();
+        session.record_npc_decision_trace(account, &[], &BTreeSet::from([code]), &plans, &[]);
+        let events = drive_once(&mut session, &reversal_assessment(-8_000));
+        let canceled: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::OrderCanceled {
+                    account: owner, id, ..
+                } if *owner == account => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert!(!canceled.is_empty());
+        let trace = session
+            .state
+            .npc_decision_traces
+            .records(account)
+            .unwrap()
+            .back()
+            .unwrap();
+        assert!(canceled.iter().all(|order| trace.order_ids.contains(order)));
+        assert!(!trace.plan_changes.is_empty());
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    #[test]
+    fn production_root_trace_links_actual_public_step_orders() {
+        let (session, events) = seeded_buy_plan_with_child_events();
+        let account = AccountId(1);
+        let accepted: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::OrderAccepted {
+                    account: owner, id, ..
+                } if *owner == account => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert!(!accepted.is_empty());
+        let records = session.state.npc_decision_traces.records(account).unwrap();
+        assert!(accepted
+            .iter()
+            .all(|order| records.iter().any(|trace| trace.order_ids.contains(order))));
+        assert!(records.iter().any(|trace| !trace.plan_changes.is_empty()));
+    }
+
+    #[test]
+    fn first_personal_root_uses_latest_known_interim_with_annual_basis() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso("2030-09-02").unwrap();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let account = AccountId(1);
+        observe_account_root_for_latch(&mut session, account);
+        let code = session.state.setup.stocks[0].code.clone();
+        let participant = &session.state.belief_participants[&account];
+        let entry = participant.belief().entry(&code).unwrap();
+        assert_eq!(entry.used_report_ids.len(), 2);
+        let now = session.chain_observation_instant();
+        let annual = session
+            .state
+            .library
+            .report(entry.used_report_ids[0], now)
+            .unwrap();
+        let interim = session
+            .state
+            .library
+            .report(entry.used_report_ids[1], now)
+            .unwrap();
+        assert_eq!(
+            annual.reports.kind,
+            crate::accounting::reports::ReportKind::Annual
+        );
+        assert_eq!(
+            interim.reports.kind,
+            crate::accounting::reports::ReportKind::HalfYear
+        );
+        assert!(entry.used_report_ids.iter().all(|id| participant
+            .information()
+            .records_for_company(&annual.company)
+            .iter()
+            .any(|record| record.id == *id)));
+        let frozen = entry.clone();
+        observe_account_root_for_latch(&mut session, account);
+        assert_eq!(
+            session.state.belief_participants[&account]
+                .belief()
+                .entry(&code)
+                .unwrap(),
+            &frozen
+        );
+    }
+
+    #[test]
+    fn personal_root_prefers_known_consolidated_before_standalone_version_sequence() {
+        assert_personal_scope_priority(false);
+    }
+
+    #[test]
+    fn retail_observation_prefers_known_consolidated_before_standalone_version_sequence() {
+        assert_personal_scope_priority(true);
+    }
+
+    fn assert_personal_scope_priority(retail: bool) {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso("2030-04-10").unwrap();
+        if retail {
+            setup.npcs.retail_count = 1;
+            setup.npcs.inst_count = 0;
+        }
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let account = AccountId(1);
+        let now = session.chain_observation_instant();
+        let mut library = session.state.library.save();
+        let standalone = library
+            .reports
+            .iter()
+            .filter(|report| report.reports.kind == crate::accounting::reports::ReportKind::Annual)
+            .max_by_key(|report| crate::strategy::own_known_report_priority(report))
+            .unwrap()
+            .clone();
+        let group_id = PublicationId::new(library.next_seq);
+        library.next_seq += 1;
+        let mut group = standalone.clone();
+        group.id = group_id;
+        group.reports.scope = crate::accounting::consolidation::ScopeId::Consolidated(
+            crate::accounting::consolidation::MemberId(group.company.0.clone()),
+        );
+        group.reports.income.net_income_to_parent =
+            Some(group.reports.income.cumulative.net_income);
+        group.reports.income.minority_net_income = Some(crate::accounting::AccountingAmount::ZERO);
+        group.reports.equity.opening_minority = Some(crate::accounting::AccountingAmount::ZERO);
+        group.reports.equity.minority_net_income = Some(crate::accounting::AccountingAmount::ZERO);
+        group.reports.equity.closing_minority = Some(crate::accounting::AccountingAmount::ZERO);
+        group.reports.balance_sheet.equity_lines.push((
+            crate::accounting::reports::BsLine::MinorityEquity,
+            crate::accounting::AccountingAmount::ZERO,
+        ));
+        library.reports.push(group);
+        session.state.library =
+            std::sync::Arc::new(crate::information::PublicLibrary::from_parts(library).unwrap());
+        let market = session.build_market_view();
+        let mut own = crate::information::NpcInformationState::new(account);
+        own.record_acquisition(account, &session.state.library, standalone.id, now)
+            .unwrap();
+        let ctx =
+            NpcObservationContext::new(account, &own, &session.state.library, &market).unwrap();
+        assert_eq!(
+            crate::strategy::preferred_own_report(&ctx, &standalone.company).unwrap(),
+            Some(standalone.id)
+        );
+        if retail {
+            session
+                .capture_retail_analysis(&[account], &market)
+                .unwrap();
+        } else {
+            observe_account_root_for_latch(&mut session, account);
+        }
+        let code = session.state.setup.stocks[0].code.clone();
+        let before = session.state.belief_participants[&account]
+            .belief()
+            .entry(&code)
+            .unwrap()
+            .clone();
+        assert_eq!(before.used_report_ids, vec![group_id]);
+        let mut library = session.state.library.save();
+        let mut corrected = standalone.clone();
+        corrected.id = PublicationId::new(library.next_seq);
+        library.next_seq += 1;
+        corrected.supersedes = Some(standalone.id);
+        corrected.origin = crate::information::PublicationOrigin::Correction;
+        corrected.reports.version.sequence = 2;
+        corrected.reports.version.supersedes = Some(1);
+        corrected.reports.version.kind = crate::accounting::reports::VersionKind::Correction {
+            reason: "合成 scope 选择 fixture".to_owned(),
+        };
+        let date = session.civil_date().prev().unwrap();
+        corrected.approved_at = crate::calendar::CivilInstant::from_hms(date, 8, 0, 0).unwrap();
+        corrected.published_at = crate::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap();
+        library.reports.push(corrected);
+        session.state.library =
+            std::sync::Arc::new(crate::information::PublicLibrary::from_parts(library).unwrap());
+        if retail {
+            session
+                .capture_retail_analysis(&[account], &market)
+                .unwrap();
+        } else {
+            observe_account_root_for_latch(&mut session, account);
+        }
+        assert_eq!(
+            session.state.belief_participants[&account]
+                .belief()
+                .entry(&code)
+                .unwrap(),
+            &before
+        );
+    }
+
+    #[test]
+    fn own_existing_plan_budget_precedes_a_new_opportunity() {
+        let mut session = GameSession::new(
+            crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+            42,
+        )
+        .unwrap();
+        let account = AccountId(1);
+        let codes: Vec<_> = session.state.markets.keys().cloned().collect();
+        let new = open_account_latch_plan(&mut session, account, codes[0].clone(), Side::Buy);
+        let existing = open_account_latch_plan(&mut session, account, codes[1].clone(), Side::Buy);
+        let reserve = buy_order_reservation(
+            &session.state.setup.config,
+            session.state.markets[&codes[1]].up_stop().unwrap(),
+            100,
+            Money::ZERO,
+        )
+        .unwrap();
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_set_cash(reserve);
+        let market = session.build_market_view();
+        let cursor = session
+            .prepare_classified_plan_quotes_for_account(
+                account,
+                &market,
+                &session.state.plans,
+                &BTreeSet::from([existing]),
+            )
+            .unwrap();
+        let grants = &cursor.grants.unwrap().grants;
+        assert_eq!(grants[0].plan_id, existing);
+        assert_eq!(grants[1].plan_id, new);
+        assert_eq!(grants[0].allocated_cash, reserve);
+        assert_eq!(grants[0].constraint, None);
+        assert_eq!(grants[1].allocated_cash, Money::ZERO);
+        assert_eq!(
+            grants[1].constraint,
+            Some(crate::plans::AllocationConstraint::InsufficientAvailableCash)
+        );
+    }
+
+    fn personal_memory_boundary_session() -> (GameSession, Vec<StockCode>) {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        let template = setup.stocks[0].clone();
+        setup.stocks = (0..9)
+            .map(|index| {
+                let mut stock = template.clone();
+                stock.code = StockCode(format!("600{index:03}"));
+                stock
+            })
+            .collect();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let account = AccountId(1);
+        let codes: Vec<_> = session.state.markets.keys().cloned().collect();
+        for code in codes.iter().take(9) {
+            let price = session.state.markets[code].last_price();
+            let participant = session.state.belief_participants.get_mut(&account).unwrap();
+            participant
+                .price_memory_mut()
+                .observe_price(code, price, 0)
+                .unwrap();
+        }
+        (session, codes)
+    }
+
+    #[test]
+    fn restore_rejects_nine_unprotected_price_memories() {
+        let (session, _) = personal_memory_boundary_session();
+        let excessive = session.save().unwrap();
+        let error = GameSession::restore(&excessive)
+            .err()
+            .expect("nine unprotected memories must fail");
+        assert!(error.to_string().contains("eviction bound"));
+    }
+
+    #[test]
+    fn restore_rejects_nine_unprotected_watchlist_entries() {
+        let (session, codes) = personal_memory_boundary_session();
+        let account = AccountId(1);
+        let mut watched = session.save().unwrap();
+        watched
+            .price_memories
+            .get_mut(&account)
+            .unwrap()
+            .stocks
+            .clear();
+        for code in &codes {
+            watched
+                .watchlists
+                .get_mut(&account)
+                .unwrap()
+                .record_attention(code, 0, 0)
+                .unwrap();
+        }
+        assert!(GameSession::restore(&watched)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("eviction bound"));
+    }
+
+    #[test]
+    fn save_validation_accepts_eight_unprotected_price_memories() {
+        let (session, codes) = personal_memory_boundary_session();
+        let account = AccountId(1);
+        let mut eight = session.save().unwrap();
+        eight
+            .price_memories
+            .get_mut(&account)
+            .unwrap()
+            .stocks
+            .remove(&codes[0]);
+        assert!(crate::session::persistence::validate_save_slot(&eight).is_ok());
+    }
+
+    #[test]
+    fn save_validation_protects_active_plan_memory_outside_the_eight_limit() {
+        let (mut session, codes) = personal_memory_boundary_session();
+        let account = AccountId(1);
+        let protected = codes[0].clone();
+        open_account_latch_plan(&mut session, account, protected.clone(), Side::Buy);
+        let valid = session.save().unwrap();
+        crate::session::persistence::validate_save_slot(&valid).unwrap();
+        assert_eq!(valid.price_memories[&account].stock_count(), 9);
+        assert!(valid.plans.active_plan(account, &protected).is_some());
+    }
+
+    #[test]
+    fn completed_sell_prunes_memory_before_quiet_point_save_validation() {
+        let (mut session, codes) = personal_memory_boundary_session();
+        let account = AccountId(1);
+        let code = codes[0].clone();
+        let price = session.state.markets[&code].last_price();
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .grant_position(code.clone(), 100, price)
+            .unwrap();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: session.civil_date(),
+            market_minute: session.current_market_minute(),
+            trading_day: u64::from(session.state.day),
+        };
+        session
+            .state
+            .belief_participants
+            .get_mut(&account)
+            .unwrap()
+            .belief_mut()
+            .experience_mut()
+            .initialize_institutional_holding_dated(&code, Some(price), price, moment)
+            .unwrap();
+        session.state.attention_scheduler.clear();
+        session
+            .state
+            .npc_attention
+            .get_mut(&account)
+            .unwrap()
+            .next_attention_candidate_tick = 100;
+        session.state.attention_scheduler.enqueue(100, account);
+        session.seed_order_for_test(
+            account,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(price),
+                qty: 100,
+            },
+            &mut Vec::new(),
+        );
+        let seller_cash = session.state.accounts[&account].cash();
+        let buyer_cash = session.state.accounts[&AccountId(0)].cash();
+        let gross = price.mul_shares(100).unwrap();
+        let config = &session.state.setup.config;
+        let seller_net = gross
+            .sub(config.commission(gross).unwrap())
+            .unwrap()
+            .sub(config.stamp_tax(gross).unwrap())
+            .unwrap()
+            .sub(config.transfer_fee(gross).unwrap())
+            .unwrap();
+        let buyer_total = buy_order_reservation(config, price, 100, Money::ZERO).unwrap();
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(price),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let events = session.step().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Trade {
+                maker: AccountId(1),
+                taker: AccountId(0),
+                qty: 100,
+                ..
+            }
+        )));
+        assert!(!session.state.accounts[&account]
+            .positions()
+            .contains_key(&code));
+        assert_eq!(
+            session.state.accounts[&AccountId(0)].positions()[&code].qty(),
+            100
+        );
+        assert_eq!(session.state.accounts[&AccountId(0)].sellable_qty(&code), 0);
+        assert_eq!(
+            session.state.accounts[&account].cash(),
+            seller_cash.add(seller_net).unwrap()
+        );
+        assert_eq!(
+            session.state.accounts[&AccountId(0)].cash(),
+            buyer_cash.sub(buyer_total).unwrap()
+        );
+        assert_eq!(
+            session.state.belief_participants[&account]
+                .price_memory()
+                .stock_count(),
+            8
+        );
+        crate::session::persistence::validate_save_slot(&session.save().unwrap()).unwrap();
+    }
+    #[test]
+    fn faded_belief_is_not_a_candidate_without_attention_holding_or_plan() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        observe_account_root_for_latch(&mut session, account);
+        let participant = &session.state.belief_participants[&account];
+        assert!(participant.belief().entry_stocks().next().is_some());
+        let candidates = root_candidate_codes(
+            account,
+            &BTreeSet::new(),
+            &crate::experience::PersonalWatchlist::new(),
+            &session.state.plans,
+            None,
+        );
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn faded_stock_root_preserves_old_knowledge_without_acquiring_new_material() {
+        let mut session = GameSession::new(
+            crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+            42,
+        )
+        .unwrap();
+        let account = AccountId(1);
+        observe_account_root_for_latch(&mut session, account);
+        let faded = session.state.belief_participants[&account]
+            .belief()
+            .entry_stocks()
+            .next()
+            .unwrap()
+            .clone();
+        let old = session.state.belief_participants[&account]
+            .belief()
+            .entry(&faded)
+            .unwrap()
+            .clone();
+        let company = session
+            .state
+            .company_registry
+            .issuer_of(&faded)
+            .unwrap()
+            .clone();
+        let date = session.civil_date().prev().unwrap();
+        let expires_on = session.civil_date();
+        let publication = std::sync::Arc::make_mut(&mut session.state.library)
+            .publish_announcement(crate::information::AnnouncementRequest {
+                company: company.clone(),
+                occurred_on: date,
+                published_at: crate::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
+                event: crate::information::AnnouncedEvent {
+                    kind: crate::company::ShockKind::ContractWon,
+                    amplitude_bp: 100,
+                    starts_on: date,
+                    expires_on,
+                },
+            })
+            .unwrap();
+        let market = session.build_market_view();
+        let now = session.chain_observation_instant();
+        let exposed = session.chain_exposed_stocks(now);
+        let context = RootReadContext::capture(&session).unwrap();
+        let mut personal = PlanPersonalState::take(&mut session, account);
+        personal.watchlist = crate::experience::PersonalWatchlist::new();
+        let empty = BTreeSet::new();
+        let seed = (0..1000)
+            .find(|seed| {
+                let mut attention = personal.attention.clone();
+                attention.rng_state = *seed;
+                attention
+                    .sample_discovery_stock(&market, &empty, &personal.watchlist, &exposed)
+                    .is_some_and(|code| code != faded)
+            })
+            .unwrap();
+        personal.attention.rng_state = seed;
+        let mut operations = PlanChainOperationBatch::empty();
+        InstitutionDecisionRoot::observe_personal(
+            &context,
+            account,
+            &mut personal,
+            &market,
+            &session.market_price_path_observations().unwrap(),
+            &session.build_chain_technical_observations().unwrap(),
+            now,
+            &exposed,
+            &context.plans,
+            &mut operations,
+        );
+        assert_eq!(personal.belief.entry(&faded).unwrap(), &old);
+        assert!(personal
+            .information
+            .records_for_company(&company)
+            .iter()
+            .any(|record| old.used_report_ids.contains(&record.id)));
+        assert!(!personal
+            .information
+            .records_for_company(&company)
+            .iter()
+            .any(|record| record.id == publication));
+        personal.install(&mut session, account);
+        crate::session::pipeline::commit_injected_plan_roots_for_test(&mut session, operations);
+        assert!(session.state.plans.active_plan(account, &faded).is_none());
+    }
+
+    #[test]
+    fn personal_root_prunes_price_memory_to_protected_union_plus_eight() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        let template = setup.stocks[0].clone();
+        setup.stocks = (0..9)
+            .map(|index| {
+                let mut stock = template.clone();
+                stock.code = StockCode(format!("600{index:03}"));
+                stock
+            })
+            .collect();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let account = AccountId(1);
+        let discovered = session.state.markets.keys().next().unwrap().clone();
+        let price = session.state.markets[&discovered].last_price();
+        session.seed_order_for_test(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: discovered.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(price),
+                qty: 100,
+            },
+            &mut Vec::new(),
+        );
+        let market = session.build_market_view();
+        let snapshot = RootReadContext::capture(&session).unwrap();
+        let mut personal = PlanPersonalState::take(&mut session, account);
+        personal.belief = BeliefBook::new(
+            account,
+            crate::strategy::StrategyProfile::Institution(
+                crate::strategy::InstitutionStyle::DeepValue,
+            ),
+            crate::strategy::AnalysisProfile::new(
+                crate::strategy::AnalysisWeights::new(0, 0, 10_000, 0, 0).unwrap(),
+                None,
+            )
+            .unwrap(),
+            &mut crate::session::SplitMix64::new(42),
+        );
+        for (code, stock) in market.stocks.iter().skip(1) {
+            personal.watchlist.record_attention(code, 0, 0).unwrap();
+            personal
+                .price_memory
+                .observe_price(code, stock.last_price, 0)
+                .unwrap();
+        }
+        let held: BTreeSet<_> = session.state.accounts[&account]
+            .positions()
+            .keys()
+            .cloned()
+            .collect();
+        assert!(held.is_empty());
+        let seed = (0..1000)
+            .find(|seed| {
+                let mut attention = personal.attention.clone();
+                attention.rng_state = *seed;
+                attention.sample_discovery_stock(
+                    &market,
+                    &held,
+                    &personal.watchlist,
+                    &BTreeSet::new(),
+                ) == Some(discovered.clone())
+            })
+            .unwrap();
+        personal.attention.rng_state = seed;
+        let mut operations = PlanChainOperationBatch::empty();
+        InstitutionDecisionRoot::observe_personal(
+            &snapshot,
+            account,
+            &mut personal,
+            &market,
+            &session.market_price_path_observations().unwrap(),
+            &session.build_chain_technical_observations().unwrap(),
+            session.chain_observation_instant(),
+            &BTreeSet::new(),
+            &snapshot.plans,
+            &mut operations,
+        );
+        personal.install(&mut session, account);
+        crate::session::pipeline::commit_injected_plan_roots_for_test(&mut session, operations);
+        assert!(session
+            .state
+            .plans
+            .active_plan(account, &discovered)
+            .is_some());
+        let participant = &session.state.belief_participants[&account];
+        assert!(participant.price_memory().stock(&discovered).is_some());
+        assert!(participant.watchlist().stock(&discovered).is_some());
+        let protected: BTreeSet<_> = held
+            .into_iter()
+            .chain(session.state.plans.active_codes(account).cloned())
+            .collect();
+        assert!(
+            participant
+                .price_memory()
+                .stocks
+                .keys()
+                .filter(|code| !protected.contains(*code))
+                .count()
+                <= 8
+        );
+    }
+
     #[test]
     fn institution_active_buy_withdraws_when_its_positive_opinion_ends() {
         for score in [0, -1_000] {
@@ -3610,7 +4395,7 @@ mod chain_restructure_tests {
         let candidates = root_candidate_codes(
             account,
             &held,
-            session.state.belief_participants[&account].belief(),
+            session.state.belief_participants[&account].watchlist(),
             &session.state.plans,
             None,
         );
@@ -3755,6 +4540,10 @@ mod chain_restructure_tests {
     /// 公共场景：真实链路跑出一个带在途子单的 Buy 计划（DeepValue 机构在
     /// 低价股上信念看多 → 计划 + Patient 子单挂在玩家买一上方）。
     fn seeded_buy_plan_with_child() -> GameSession {
+        seeded_buy_plan_with_child_events().0
+    }
+
+    fn seeded_buy_plan_with_child_events() -> (GameSession, Vec<Event>) {
         let mut session = probe_session();
         force_attention(&mut session, AccountId(1));
         let mut seed_events = Vec::new();
@@ -3770,7 +4559,7 @@ mod chain_restructure_tests {
         );
         session.state.pending_npc = None;
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
-        session.step().expect("healthy step");
+        let events = session.step().expect("healthy step");
         // 场景断言：计划 + 在途子单确实就位（后续测试依赖）。
         let plans = session.plans_debug();
         assert!(
@@ -3789,7 +4578,7 @@ mod chain_restructure_tests {
                 .is_some(),
             "seed scenario must leave an in-flight child order"
         );
-        session
+        (session, events)
     }
 
     fn reversal_assessment(score_bp: i32) -> BTreeMap<StockCode, CandidateAssessment> {
@@ -4241,6 +5030,8 @@ mod chain_restructure_tests {
 
     fn probe_session() -> GameSession {
         let setup = SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("000812".to_string()),
                 exchange: StockExchange::Shenzhen,

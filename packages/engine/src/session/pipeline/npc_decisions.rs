@@ -176,7 +176,18 @@ pub(in crate::session) fn run_npc_decisions(
                 .map_err(|source| NpcDecisionSourceError::StrategyHydration { account, source })?;
             let npc_seed = npc_rng_seed(snapshot.npc_seed_base(), snapshot.tick(), account);
             let mut rng = SplitMix64::new(npc_seed);
-            let decision = strategy.decide_with_experience(
+            let dated_experience = input.failure_influence().map(|influence| {
+                let mut experience = input
+                    .retail_experience()
+                    .expect("dated failure influence requires retail experience")
+                    .clone();
+                experience.consecutive_failed_buys = influence;
+                experience
+            });
+            let experience = dated_experience
+                .as_ref()
+                .or_else(|| input.retail_experience());
+            let mut decision = strategy.decide_with_experience(
                 snapshot.market(),
                 input.self_view(),
                 (input.kind() == crate::AccountKind::Retail)
@@ -185,11 +196,31 @@ pub(in crate::session) fn run_npc_decisions(
                 (input.kind() == crate::AccountKind::Retail)
                     .then(|| input.account_risk())
                     .flatten(),
-                input.retail_experience(),
+                experience,
                 snapshot.market_minute(),
                 &mut rng,
                 config,
             );
+            if let Some(analysis) = input.retail_analysis() {
+                let StrategyState::ZiNoise(retail) = input.strategy_state() else {
+                    panic!(
+                        "retail analysis requires the retail execution strategy for {account:?}"
+                    );
+                };
+                retail.apply_personal_analysis(
+                    &mut decision,
+                    analysis,
+                    snapshot.market(),
+                    input.self_view(),
+                    input
+                        .account_risk()
+                        .expect("retail analysis requires account risk"),
+                    experience.expect("retail analysis requires personal experience"),
+                    snapshot.market_minute(),
+                    &mut rng,
+                    config,
+                );
+            }
             let execution_urgency = crate::plans::urgency::risk::assess_personal_risk_urgency(
                 decision.position_decision.as_ref(),
                 input.account_risk(),

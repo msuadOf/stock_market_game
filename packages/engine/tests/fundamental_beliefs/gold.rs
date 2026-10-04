@@ -53,6 +53,9 @@ pub(crate) fn neutral_assumptions() -> PersonalAssumptions {
 pub(crate) fn hand_facts(equity_cents: i128, opening_cents: i128, ni_cents: i128) -> AnnualFacts {
     AnnualFacts {
         report_id: PublicationId::new(901),
+        scope: engine::accounting::consolidation::ScopeId::Standalone(
+            engine::accounting::consolidation::MemberId(crate::COMPANY.to_owned()),
+        ),
         published_at: CivilInstant::from_hms(d("2031-03-20"), 18, 0, 0).expect("phase"),
         revenue: AccountingAmount::from_cents(200_000_000),
         prior_revenue: PriorRevenue::Comparative(AccountingAmount::from_cents(160_000_000)),

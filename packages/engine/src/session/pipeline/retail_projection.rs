@@ -278,6 +278,11 @@ pub(super) struct RetailProjectionOutput {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(super) enum RetailProjectionError {
+    #[error("retail receipt minute {receipt_minute} differs from dated moment {moment_minute}")]
+    InconsistentMoment {
+        receipt_minute: u64,
+        moment_minute: u64,
+    },
     #[error("retail receipt {index} has a regressing quantity chain")]
     QuantityRegression { index: u64 },
     #[error("retail receipt {index} has non-positive gross")]
@@ -319,10 +324,24 @@ struct AccountProjection {
 
 /// Projects only ReceiptAggregation-validated, normalized receipts.  It never mutates caller
 /// state: only selected retail accounts and seen keys are copied on success.
+#[cfg(test)]
 pub(super) fn project_retail_receipts(
     input: RetailProjectionInput<'_>,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
     project_receipts(input, ExperienceUpdateMode::Retail)
+}
+
+pub(super) fn project_retail_receipts_dated(
+    input: RetailProjectionInput<'_>,
+    moment: crate::experience::ExperienceMoment,
+) -> Result<RetailProjectionOutput, RetailProjectionError> {
+    if input.market_minute != moment.market_minute {
+        return Err(RetailProjectionError::InconsistentMoment {
+            receipt_minute: input.market_minute,
+            moment_minute: moment.market_minute,
+        });
+    }
+    project_receipts(input, ExperienceUpdateMode::RetailDated(moment))
 }
 
 pub(super) fn project_institutional_receipts(
@@ -334,7 +353,9 @@ pub(super) fn project_institutional_receipts(
 
 #[derive(Clone, Copy)]
 enum ExperienceUpdateMode {
+    #[cfg(test)]
     Retail,
+    RetailDated(crate::experience::ExperienceMoment),
     InstitutionalFacts(crate::experience::ExperienceMoment),
 }
 
@@ -439,6 +460,7 @@ struct AccountFillProjection<'a> {
     account: AccountId,
     mode: ExperienceUpdateMode,
     state: Option<RetailExperienceState>,
+    #[cfg(test)]
     market_minute: u64,
     positions_before: Option<&'a BTreeMap<StockCode, Position>>,
     positions_after: Option<&'a BTreeMap<StockCode, Position>>,
@@ -459,12 +481,13 @@ impl<'a> AccountFillProjection<'a> {
             ExperienceUpdateMode::InstitutionalFacts(_) => {
                 positions_before.cloned().unwrap_or_default()
             }
-            ExperienceUpdateMode::Retail => BTreeMap::new(),
+            _ => BTreeMap::new(),
         };
         Self {
             account,
             mode,
             state: input.retail_experience.get(&account).cloned(),
+            #[cfg(test)]
             market_minute: input.market_minute,
             positions_before,
             positions_after: input.positions_after.get(&account),
@@ -516,6 +539,7 @@ impl<'a> AccountFillProjection<'a> {
                     account: self.account,
                 })?;
         match self.mode {
+            #[cfg(test)]
             ExperienceUpdateMode::Retail => experience.record_fill_with_order(
                 &order.stock,
                 aggregate.side,
@@ -525,6 +549,16 @@ impl<'a> AccountFillProjection<'a> {
                 cost_before,
                 self.market_minute,
                 Some(order.order.0),
+            )?,
+            ExperienceUpdateMode::RetailDated(moment) => experience.record_fill_dated(
+                &order.stock,
+                aggregate.side,
+                average,
+                before_qty,
+                after_qty,
+                cost_before,
+                Some(order.order.0),
+                moment,
             )?,
             ExperienceUpdateMode::InstitutionalFacts(moment) => {
                 let fees = aggregate
@@ -631,12 +665,14 @@ impl<'a> AccountFillProjection<'a> {
                 account: self.account,
             })
         });
-        if let (ExperienceUpdateMode::Retail, Some(state)) = (self.mode, &mut self.state) {
-            let held = self
-                .positions_after
-                .map(|positions| positions.keys().cloned().collect())
-                .unwrap_or_default();
-            state.prune_watchlist(&held);
+        if !matches!(self.mode, ExperienceUpdateMode::InstitutionalFacts(_)) {
+            if let Some(state) = &mut self.state {
+                let held = self
+                    .positions_after
+                    .map(|positions| positions.keys().cloned().collect())
+                    .unwrap_or_default();
+                state.prune_watchlist(&held);
+            }
         }
         AccountProjection {
             account: self.account,

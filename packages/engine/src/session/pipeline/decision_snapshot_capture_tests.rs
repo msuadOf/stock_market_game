@@ -4,6 +4,87 @@ use crate::session::npc_working_quote_tests;
 use crate::{AccountId, AccountKind, Money};
 
 #[test]
+fn retail_capture_seals_personal_analysis_for_the_real_p2_source() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    let mut shadow = GameSession::new(setup, 41).unwrap();
+    let account = AccountId(1);
+    let profile = shadow.state.accounts[&account]
+        .strategy()
+        .unwrap()
+        .profile();
+    let analysis = crate::strategy::AnalysisProfile::new(
+        crate::strategy::AnalysisWeights::new(0, 0, 10_000, 0, 0).unwrap(),
+        None,
+    )
+    .unwrap();
+    *shadow
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .belief_mut() = crate::strategy::BeliefBook::new(
+        account,
+        profile,
+        analysis,
+        &mut crate::SplitMix64::new(99),
+    );
+    let attention = shadow.state.npc_attention.get_mut(&account).unwrap();
+    attention.next_attention_candidate_tick = 0;
+    attention.rng_state = 3;
+    shadow.state.attention_scheduler.clear();
+    shadow.state.attention_scheduler.enqueue(0, account);
+    let code = shadow.state.markets.keys().next().unwrap().clone();
+    shadow
+        .state
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(crate::Order {
+            id: crate::OrderId(1),
+            owner: AccountId(0),
+            side: crate::Side::Buy,
+            price: Money::from_cents(950),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            seq: 1,
+        })
+        .unwrap();
+    let captured = capture_decision_snapshot(&mut shadow).unwrap();
+    assert_eq!(captured.snapshot.due_npc_ids(), &[account]);
+    let assessments = captured
+        .snapshot
+        .account(account)
+        .unwrap()
+        .retail_analysis()
+        .unwrap();
+    assert_eq!(assessments.len(), 1);
+    let crate::plans::CandidateAssessment::Scored { score, .. } =
+        assessments.values().next().unwrap()
+    else {
+        panic!("the personally observed buy-book imbalance must produce a scored candidate");
+    };
+    let output = super::npc_decisions::run_npc_decisions(
+        captured.snapshot.clone(),
+        &shadow.state.setup.config,
+    )
+    .unwrap();
+    let decision = output.account_outputs()[0].position_decision().unwrap();
+    assert_eq!(
+        decision.reason,
+        crate::behavior::DecisionReason::PersonalAnalysis
+    );
+    if score.value() > 0 {
+        assert!(decision.desired_delta_shares > 0);
+    } else {
+        assert!(decision.desired_delta_shares <= 0);
+    }
+    assert!(!output.account_outputs()[0].uses_parent_order_execution());
+}
+
+#[test]
 fn capture_only_copies_working_orders_owned_by_observed_npcs() {
     let mut setup = npc_working_quote_tests::two_stock_quote_setup();
     setup.npcs.inst_count = 2;
@@ -118,6 +199,77 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
 }
 
 #[test]
+fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence() {
+    let (_, mut shadow, account) = due_retail_shadow(42);
+    let code = shadow.state.setup.stocks[0].code.clone();
+    let price = shadow.state.markets[&code].last_price();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: shadow.civil_date(),
+        market_minute: shadow.current_market_minute(),
+        trading_day: u64::from(shadow.state.day),
+    };
+    shadow
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .fixture_insert_position(
+            code.clone(),
+            crate::Position::from_restored_parts(100, 100, price.cents() * 200, 0),
+        );
+    shadow
+        .state
+        .retail_experience
+        .get_mut(&account)
+        .unwrap()
+        .record_fill_dated(
+            &code,
+            crate::Side::Buy,
+            Money::from_cents(price.cents() * 2),
+            0,
+            100,
+            None,
+            Some(17),
+            moment,
+        )
+        .unwrap();
+    capture_decision_snapshot(&mut shadow).unwrap();
+    let state = &shadow.state.retail_experience[&account];
+    assert_eq!(state.feedback.failure_events.len(), 1);
+    assert_eq!(state.feedback.failure_events[0].moment, moment);
+    assert_eq!(state.consecutive_failed_buys, 1);
+    shadow.state.day = 19;
+    shadow.state.tick = u64::from(shadow.state.day) * shadow.state.setup.ticks_per_day;
+    let tick = shadow.state.tick;
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+    let nineteen = capture_decision_snapshot(&mut shadow).unwrap();
+    assert_eq!(
+        nineteen
+            .snapshot
+            .account(account)
+            .unwrap()
+            .failure_influence(),
+        Some(1)
+    );
+    shadow.state.day = 20;
+    shadow.state.tick = u64::from(shadow.state.day) * shadow.state.setup.ticks_per_day;
+    let tick = shadow.state.tick;
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+    let twenty = capture_decision_snapshot(&mut shadow).unwrap();
+    assert_eq!(
+        twenty
+            .snapshot
+            .account(account)
+            .unwrap()
+            .failure_influence(),
+        Some(0)
+    );
+    let state = &shadow.state.retail_experience[&account];
+    assert_eq!(state.consecutive_failed_buys, 1);
+    assert_eq!(state.feedback.failure_events.len(), 1);
+}
+
+#[test]
 fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
     let (source, mut shadow, account) = due_retail_shadow(0xC0FFEE);
     let source_before = source.session_state_hash().unwrap();
@@ -218,9 +370,14 @@ fn capture_reports_retail_experience_overflow() {
         .grant_position(code.clone(), 100, last)
         .unwrap();
     let market_minute = shadow.current_market_minute();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: shadow.civil_date(),
+        market_minute,
+        trading_day: u64::from(shadow.state.day),
+    };
     let experience = shadow.state.retail_experience.get_mut(&account).unwrap();
     experience
-        .initialize_holding(&code, Some(last), last, market_minute)
+        .initialize_holding_dated(&code, Some(last), last, moment)
         .unwrap();
     experience.consecutive_failed_buys = u16::MAX;
     let stock = experience.stocks.get_mut(&code).unwrap();
@@ -379,7 +536,16 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
             crate::Position::from_restored_parts(qty, locked, i64::from(qty) * price.cents(), 0),
         );
         experience
-            .initialize_holding(&codes[index], Some(price), Money::from_cents(peak), 0)
+            .initialize_holding_dated(
+                &codes[index],
+                Some(price),
+                Money::from_cents(peak),
+                crate::experience::ExperienceMoment {
+                    civil_date: source.civil_date(),
+                    market_minute: 0,
+                    trading_day: u64::from(source.state.day),
+                },
+            )
             .unwrap();
     }
     // 两个持仓不占未持仓关注列表额度；九个未持仓项目中只移除最旧者。

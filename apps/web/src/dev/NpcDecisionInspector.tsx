@@ -69,7 +69,7 @@ export function NpcDecisionInspector({ host, timelineGeneration = null }: { read
   </main>;
 }
 
-function TraceRecord({ record }: { readonly record: NpcDecisionTraceRecord }) {
+export function TraceRecord({ record }: { readonly record: NpcDecisionTraceRecord }) {
   return <li>
     <strong>tick {record.tick}</strong>
     <dl>
@@ -77,7 +77,8 @@ function TraceRecord({ record }: { readonly record: NpcDecisionTraceRecord }) {
       <dt>报告</dt><dd>{record.source_report_ids.join("、") || "无新增报告"}</dd>
       <dt>预期方法</dt><dd>{record.expectation_method ?? "未形成预期"}</dd>
       <dt>计划</dt><dd>{record.plan_ids.join("、") || "无"}</dd>
-      <dt>预算/状态</dt><dd>{record.budget_constraints.join("、") || "无约束记录"}</dd>
+      <dt>计划变化</dt><dd>{record.plan_changes.join("、") || "无变化记录"}</dd>
+      <dt>预算约束</dt><dd>{record.budget_constraints.join("、") || "无约束记录"}</dd>
       <dt>订单</dt><dd>{record.order_ids.join("、") || "未提交"}</dd>
     </dl>
   </li>;

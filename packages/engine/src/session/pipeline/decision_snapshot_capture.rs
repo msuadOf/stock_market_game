@@ -79,6 +79,8 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
     Snapshot(#[source] DecisionSnapshotError),
     #[error("P2 urgency policy validation failed: {0}")]
     UrgencyPolicy(#[from] crate::plans::UrgencyError),
+    #[error("P2 retail personal analysis failed: {0}")]
+    RetailAnalysis(#[source] crate::session::StepFatal),
 }
 
 /// Advances due-attention and pre-decision retail observations on `shadow`, then
@@ -144,6 +146,11 @@ fn capture_decision_snapshot_in_place(
     }
 
     let market_minute = shadow.current_market_minute();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: shadow.civil_date(),
+        market_minute,
+        trading_day: u64::from(shadow.state.day),
+    };
     let (working_continuous, working_auction) = if accepted_due_npc_ids.is_empty() {
         (BTreeMap::new(), BTreeMap::new())
     } else {
@@ -198,6 +205,19 @@ fn capture_decision_snapshot_in_place(
                 account_risk,
                 experience.clone(),
             );
+            let input = if let Some(state) = experience
+                .as_ref()
+                .filter(|_| entry.kind() == AccountKind::Retail)
+            {
+                input.with_failure_influence(state.failure_influence(&moment).map_err(
+                    |source| DecisionSnapshotCaptureError::Experience {
+                        account: *account,
+                        source,
+                    },
+                )?)
+            } else {
+                input
+            };
             Ok((*account, input, experience))
         })
         .collect::<Vec<Result<_, DecisionSnapshotCaptureError>>>()
@@ -212,6 +232,23 @@ fn capture_decision_snapshot_in_place(
         }
     }
 
+    shadow
+        .state
+        .retail_experience
+        .replace_existing_shared_parallel(experience_updates)
+        .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
+    let mut retail_analysis = shadow
+        .capture_retail_analysis(&accepted_due_npc_ids, &market)
+        .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
+    let accounts = accounts
+        .into_iter()
+        .map(|(account, input)| {
+            (
+                account,
+                input.with_retail_analysis(retail_analysis.remove(&account)),
+            )
+        })
+        .collect();
     let snapshot = DecisionSnapshot::new(
         tick,
         shadow.state.seed,
@@ -225,11 +262,6 @@ fn capture_decision_snapshot_in_place(
     .map_err(DecisionSnapshotCaptureError::Snapshot)?
     .with_urgency_policy(shadow.state.urgency_policy)?;
 
-    shadow
-        .state
-        .retail_experience
-        .replace_existing_shared_parallel(experience_updates)
-        .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
     for (tick, account) in scheduled {
         shadow.state.attention_scheduler.enqueue(tick, account);
     }
@@ -341,10 +373,28 @@ impl CapturedExperienceObservation {
                 .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
         }
         let held: BTreeSet<_> = self_positions.keys().cloned().collect();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: session.civil_date(),
+            market_minute,
+            trading_day: u64::from(session.state.day),
+        };
         let mut risk_positions = BTreeMap::new();
         for (code, price, qty, cost_price) in positions {
+            if !experience.feedback.stocks.contains_key(&code) {
+                experience
+                    .initialize_holding_dated(
+                        &code,
+                        cost_price.filter(|cost| cost.cents() > 0),
+                        price,
+                        moment,
+                    )
+                    .map_err(|source| DecisionSnapshotCaptureError::Experience {
+                        account,
+                        source,
+                    })?;
+            }
             experience
-                .observe_position(&code, price, market_minute)
+                .observe_position_dated(&code, price, moment)
                 .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
             if entry.kind() == AccountKind::Retail {
                 risk_positions.insert(

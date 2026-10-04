@@ -93,6 +93,7 @@ pub(in crate::session) struct PlanChainOperationBatch {
     candidate_source: PlanChainCandidateSource,
     routes: StockRouteCoordination,
     reports: Vec<PlanExecutionReport>,
+    existing_plan_ids: BTreeSet<PlanId>,
 }
 
 fn route_invariant(description: &str) -> StepFatal {
@@ -400,6 +401,7 @@ impl PlanChainOperationBatch {
             candidate_source: PlanChainCandidateSource::default(),
             routes: StockRouteCoordination::default(),
             reports: Vec::new(),
+            existing_plan_ids: BTreeSet::new(),
         }
     }
 
@@ -459,6 +461,8 @@ impl PlanChainOperationBatch {
             return Ok(false);
         };
         self.operations.append(&mut generated.operations);
+        self.existing_plan_ids
+            .append(&mut generated.existing_plan_ids);
         Ok(true)
     }
 
@@ -469,6 +473,13 @@ impl PlanChainOperationBatch {
     ) {
         self.operations
             .push_back(PlanChainOperation::AccountExecution { account, market });
+    }
+
+    pub(in crate::session) fn remember_existing_plans(
+        &mut self,
+        plans: impl IntoIterator<Item = PlanId>,
+    ) {
+        self.existing_plan_ids.extend(plans);
     }
 
     pub(in crate::session) fn push_lifecycle(

@@ -132,7 +132,17 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     let events = plan.event_outbox;
     let event_keys = plan.event_keys;
     validate_event_keys(&events, &event_keys, plan.expiry.releases.len())?;
-    let candidate = plan.state.into_session()?;
+    let mut candidate = plan.state.into_session()?;
+    let memory_accounts: BTreeSet<_> = plan
+        .applied_receipts
+        .iter()
+        .map(|receipt| receipt.envelope.account)
+        .filter(|account| candidate.state.belief_participants.contains_key(account))
+        .collect();
+    let plans = candidate.state.plans.clone();
+    for account in memory_accounts {
+        candidate.prune_plan_personal_memory(account, &plans);
+    }
     validate_applied_receipt_journal(
         &candidate.state.envelope_ledger,
         &plan.applied_receipts,

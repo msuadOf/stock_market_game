@@ -7,7 +7,7 @@ pub(in crate::session) struct RootReadContext {
     accounts: account_book::AccountBook,
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
     operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
-    library: crate::information::PublicLibrary,
+    library: std::sync::Arc<crate::information::PublicLibrary>,
     pub(in crate::session) plans: PlanBook,
     civil_date: crate::CivilDate,
     market_minute: u64,
@@ -240,6 +240,7 @@ impl InstitutionDecisionRoot {
             market_minute: context.market_minute,
             trading_day: u64::from(context.day),
         };
+        operations.remember_existing_plans(plans.active_plan_ids_for_account(id));
         // 股票簿可能已交给并行撮合线程；根观察只能读取它接受时固定的行情视图。
         let equity = context.accounts[&id]
             .positions()
@@ -304,7 +305,13 @@ impl InstitutionDecisionRoot {
         });
 
         // 1. 个体发现（消费注意力个体流；接受即写入关注列表）。
+        let protected: BTreeSet<StockCode> = held
+            .iter()
+            .cloned()
+            .chain(plans.active_codes(id).cloned())
+            .collect();
         let watchlist = &mut personal.watchlist;
+        watchlist.prune(&protected);
         let discovered =
             personal
                 .attention
@@ -319,7 +326,7 @@ impl InstitutionDecisionRoot {
         }
 
         // 原持仓与信念条目消失后，活动计划仍须进入本人的候选集，保留复核与委托观察。
-        let candidates = root_candidate_codes(id, &held, &personal.belief, plans, discovered);
+        let candidates = root_candidate_codes(id, &held, watchlist, plans, discovered);
         for code in &candidates {
             personal
                 .price_memory
@@ -337,11 +344,11 @@ impl InstitutionDecisionRoot {
                 });
         }
 
-        // 2. 公共曝光 → 显式获知（新年报留下 id 供信念更新）。
+        // 2. 公共曝光 → 显式获知（最新定期报告留下 id 供信念更新）。
         #[cfg(feature = "simulation-diagnostics")]
         let mut causal_facts =
             vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];
-        let mut new_annual_reports: Vec<(StockCode, PublicationId)> = Vec::new();
+        let mut new_reports: Vec<(StockCode, PublicationId)> = Vec::new();
         for code in &candidates {
             let Some(company_id) = context.company_registry.issuer_of(code).cloned() else {
                 continue;
@@ -363,11 +370,16 @@ impl InstitutionDecisionRoot {
                             "acquisition failed for account {id:?} publication {publication_id:?}: {error}"
                         )
                     });
-                let is_annual = context
+                let is_report = context
                     .library
                     .report(publication_id, now)
                     .map(|report| {
-                        report.reports.kind == crate::accounting::reports::ReportKind::Annual
+                        matches!(
+                            report.reports.kind,
+                            crate::accounting::reports::ReportKind::Annual
+                                | crate::accounting::reports::ReportKind::Quarter
+                                | crate::accounting::reports::ReportKind::HalfYear
+                        )
                     })
                     .unwrap_or(false);
                 #[cfg(feature = "simulation-diagnostics")]
@@ -391,8 +403,26 @@ impl InstitutionDecisionRoot {
                         acquired: now,
                     });
                 }
-                if is_annual {
-                    new_annual_reports.push((code.clone(), publication_id));
+                if is_report {
+                    if let Some((_, latest)) =
+                        new_reports.iter_mut().find(|(stock, _)| stock == code)
+                    {
+                        let report = context
+                            .library
+                            .report(publication_id, now)
+                            .expect("acquired report exists");
+                        let prior = context
+                            .library
+                            .report(*latest, now)
+                            .expect("acquired report exists");
+                        if crate::strategy::own_known_report_priority(report)
+                            > crate::strategy::own_known_report_priority(prior)
+                        {
+                            *latest = publication_id;
+                        }
+                    } else {
+                        new_reports.push((code.clone(), publication_id));
+                    }
                 }
             }
         }
@@ -427,13 +457,18 @@ impl InstitutionDecisionRoot {
             .collect();
         {
             let belief = &mut personal.belief;
-            for (code, publication_id) in &new_annual_reports {
+            for (code, publication_id) in &mut new_reports {
                 let Some((_, inputs)) = issuer_inputs
                     .iter()
-                    .find(|(candidate, _)| candidate == code)
+                    .find(|(candidate, _)| candidate == &*code)
                 else {
-                    panic!("annual report for {code:?} must have issuer inputs");
+                    panic!("periodic report for {code:?} must have issuer inputs");
                 };
+                *publication_id = crate::strategy::preferred_own_report(&ctx, &inputs.company)
+                    .unwrap_or_else(|error| {
+                        panic!("report selection failed for {id:?} {code:?}: {error}")
+                    })
+                    .expect("newly acquired report has an own-known candidate");
                 belief
                     .apply_cause(
                         code,
@@ -478,16 +513,10 @@ impl InstitutionDecisionRoot {
         // 6–8. 预算/紧迫度/报价/执行（覆盖账户全部活跃计划，含既有）。
         operations.push_account_execution(id, market_view.clone());
 
-        // 关注列表修剪：持仓 ∪ 活跃计划股票受保护（永不被驱逐）。
-        let protected: BTreeSet<StockCode> = held
-            .into_iter()
-            .chain(plans.active_codes(id).cloned())
-            .collect();
-        watchlist.prune(&protected);
         #[cfg(feature = "simulation-diagnostics")]
         return PlanRootDiagnostics {
             facts: causal_facts,
-            reports: new_annual_reports,
+            reports: new_reports,
             candidates,
         };
         #[cfg(not(feature = "simulation-diagnostics"))]

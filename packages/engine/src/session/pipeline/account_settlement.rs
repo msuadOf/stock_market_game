@@ -2,7 +2,7 @@
 
 use super::institutional_experience_projection::project_institutional_experience;
 use super::retail_projection::{
-    canonical_unseen_receipts, project_retail_receipts, RetailProjectionError,
+    canonical_unseen_receipts, project_retail_receipts_dated, RetailProjectionError,
     RetailProjectionInput, RetailProjectionSeen, RetailReceiptEvent,
 };
 use super::settlement::{ReceiptSettlementPlan, SettlementApplication};
@@ -193,15 +193,18 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
             positions_after.insert(*account_id, account.positions().clone());
         }
     }
-    let projection = project_retail_receipts(RetailProjectionInput {
-        retail_experience,
-        retail_accounts: &retail_accounts,
-        positions_before: &positions_before,
-        positions_after: &positions_after,
-        seen,
-        market_minute: moment.market_minute,
-        receipts: &canonical,
-    })?;
+    let projection = project_retail_receipts_dated(
+        RetailProjectionInput {
+            retail_experience,
+            retail_accounts: &retail_accounts,
+            positions_before: &positions_before,
+            positions_after: &positions_after,
+            seen,
+            market_minute: moment.market_minute,
+            receipts: &canonical,
+        },
+        moment,
+    )?;
     let belief_patch = project_institutional_experience(
         &account_shadow,
         belief_participants,

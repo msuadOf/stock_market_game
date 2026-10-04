@@ -9,6 +9,7 @@ mod data;
 mod factory;
 mod factory_profiles;
 mod fundamental;
+pub(crate) use fundamental::{own_known_report_priority, preferred_own_report};
 mod hot;
 mod institution;
 mod institution_experience_policy;

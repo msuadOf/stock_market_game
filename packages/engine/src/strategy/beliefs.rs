@@ -137,6 +137,10 @@ impl BeliefBook {
         self.npc
     }
 
+    pub fn profile(&self) -> &StrategyProfile {
+        &self.profile
+    }
+
     pub fn assumptions(&self) -> &PersonalAssumptions {
         &self.assumptions
     }

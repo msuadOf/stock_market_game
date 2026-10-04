@@ -1154,6 +1154,7 @@ fn position_action_name(action: PositionAction) -> &'static str {
 
 fn decision_reason_name(reason: DecisionReason) -> &'static str {
     match reason {
+        DecisionReason::PersonalAnalysis => "personal_analysis",
         DecisionReason::PositionRisk => "position_risk",
         DecisionReason::TakeProfit => "take_profit",
         DecisionReason::Momentum => "momentum",
@@ -1771,6 +1772,8 @@ mod tests {
             SecurityCategory, StockExchange, StockSpec, StrategyParams,
         };
         let setup = crate::SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),
                 exchange: StockExchange::Shanghai,

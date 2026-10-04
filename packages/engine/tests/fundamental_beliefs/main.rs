@@ -13,6 +13,7 @@ mod gold;
 mod hand;
 mod per_share;
 mod priors;
+mod interim;
 
 use engine::accounting::closing::ClosingEngine;
 use engine::accounting::consolidation::{MemberId, ScopeId};

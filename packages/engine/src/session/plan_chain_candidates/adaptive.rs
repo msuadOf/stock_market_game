@@ -112,6 +112,25 @@ impl PlanChainOperationBatch {
                 ready.push(candidate);
                 continue;
             }
+            #[cfg(feature = "simulation-diagnostics")]
+            let trace_account = match &operation {
+                PlanChainOperation::Lifecycle { account, .. }
+                | PlanChainOperation::AccountExecution { account, .. } => *account,
+                PlanChainOperation::QuotePlans(cursor) => cursor.account,
+                PlanChainOperation::Restructure { plan_id, .. }
+                | PlanChainOperation::Execute(PlanExecutionRequest { plan_id, .. }) => session
+                    .state
+                    .plans
+                    .plan(*plan_id)
+                    .expect("diagnostic operation plan exists")
+                    .account(),
+                PlanChainOperation::ExecutionRoute(_) => unreachable!("route handled above"),
+            };
+            #[cfg(feature = "simulation-diagnostics")]
+            let trace_before = super::super::decision_chain::plan_trace_states(
+                trace_account,
+                &session.state.plans,
+            );
             let mut plans = std::mem::take(&mut session.state.plans);
             let progress = match operation {
                 PlanChainOperation::QuotePlans(mut cursor) => {
@@ -223,12 +242,30 @@ impl PlanChainOperationBatch {
                     session
                         .synchronize_owned_plan_execution(&mut plans)
                         .map_err(execution)?;
+                    session.prune_plan_personal_memory(account, &plans);
                     let cursor = observation.observe(session, |session| {
-                        session.prepare_plan_quotes_for_account(account, &market, &plans)
+                        session.prepare_classified_plan_quotes_for_account(
+                            account,
+                            &market,
+                            &plans,
+                            &self.existing_plan_ids,
+                        )
                     });
                     if let Some(cursor) = cursor {
                         #[cfg(feature = "simulation-diagnostics")]
                         if let Some(result) = &cursor.grants {
+                            session.state.npc_decision_traces.enrich(
+                                account,
+                                session.state.tick,
+                                [],
+                                [],
+                                [],
+                                result.grants.iter().filter_map(|grant| {
+                                    grant.constraint.map(|constraint| {
+                                        format!("{:?}: {constraint:?}", grant.plan_id)
+                                    })
+                                }),
+                            );
                             session.causal_record(
                                 crate::diagnostics::causal::CausalFactKind::Budget {
                                     account,
@@ -263,6 +300,8 @@ impl PlanChainOperationBatch {
                 .map(|progress| session.materialize_plan_progress(&mut plans, progress))
                 .transpose()
                 .map_err(execution)?;
+            #[cfg(feature = "simulation-diagnostics")]
+            session.record_plan_trace_changes(trace_account, &trace_before, &plans);
             session.state.plans = plans;
             self.append_progress(progress);
         }
@@ -346,10 +385,32 @@ impl PlanChainOperationBatch {
             let route = self
                 .routes
                 .take_pending(&(account, code.clone()), generation_index)?;
+            #[cfg(feature = "simulation-diagnostics")]
+            let trace_before =
+                super::super::decision_chain::plan_trace_states(account, &session.state.plans);
+            #[cfg(feature = "simulation-diagnostics")]
+            let trace_order = match &outcome {
+                PlanRouteOutcome::Accepted(order) | PlanRouteOutcome::Canceled(order) => {
+                    Some(*order)
+                }
+                PlanRouteOutcome::Rejected(_) => None,
+            };
             let mut plans = std::mem::take(&mut session.state.plans);
             let progress = route
                 .resume(session, &mut plans, outcome)
                 .and_then(|progress| session.materialize_plan_progress(&mut plans, progress));
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                session.record_plan_trace_changes(account, &trace_before, &plans);
+                session.state.npc_decision_traces.enrich(
+                    account,
+                    session.state.tick,
+                    trace_order,
+                    [],
+                    [],
+                    [],
+                );
+            }
             session.state.plans = plans;
             match progress.map_err(execution)? {
                 PlanExecutionProgress::Complete(report) => {
