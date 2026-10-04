@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54、G69–G71、G74–G78、G80 共12项，剩余67项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54–G55、G69–G71、G74–G78、G80 共13项，剩余66项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -92,7 +92,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G51 | Desktop释放失败显式上报；错误处理规范 | `tauri-host.ts:165–175` 清fatalCallback后丢弃stop_session的Promise，dispose调用方无法接IPC rejection。unlisten运行时行为是版本限定补充，结论仅依明确stop_session失败出口。见 [释放](exhaustive-review/sweep14.md)。 |
 | G52 | 协议断言保留已知actual/expected上下文；错误详情规范 | 前端generation/cursor不一致仅生成通用ProtocolError文本，coordinator没有补上已知实际值/期望值，复制反馈缺复现事实。三宿主真实engine fatal已有context，不泛称全部错误无详情。见 [协议错误](exhaustive-review/luna14.md)。 |
 | G54 | 已补齐：Money公开解析拒绝完全无数字输入；Money spec/Task4 | Money::from_yuan_str显式拒绝“.”、“+.”、“-.”及带空白形态，保留“.5”“12.”等含数字的既有合法输入。影响限定公开库API，不冒称UI/存档此前已接受。原证据见 [解析](exhaustive-review/luna18.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
-| G55 | 公开Strategy构造/工厂统一拒非法参数；策略spec/防御原则 | Momentum构造与params.validate仅查threshold<0，NaN/+Inf可通过；Factory机构margin先min(0.95)掩盖非法值；零ticks仅debug_assert，release概率退化。正式Session有setup/state二次防线，不称坏策略已进入游戏。见 [策略入口](exhaustive-review/sweep20.md) 与 [工厂](exhaustive-review/sweep19.md)。 |
+| G55 | 已补齐：公开Strategy构造/工厂统一拒非法参数；策略spec/防御原则 | Momentum构造器拒非有限阈值，params.validate与Factory沿用同一入口；机构原始margin在采样/钳位前校验，零tick日显式InvalidParam。新短测验证非法参数拒绝、margin/零tick不消耗RNG及合法三类实例可建。原证据见 [策略入口](exhaustive-review/sweep20.md) 与 [工厂](exhaustive-review/sweep19.md)，实施见 [策略输入](../implementation-gap-implementation/strategy-input.md)。 |
 | G56 | Pages区分owner根站点和项目路径；ADR-0028 | distributions仅看repository.name的.github.io后缀，没有与owner匹配；非owner同后缀项目被误编为根路径。当前stock_market_game不触发，不推翻其发布验收。见 [Pages](exhaustive-review/luna12.md)。 |
 | G64 | 桌面行情选股有键盘等价入口；UX/设计辅助功能 | MarketGrid仅onRowClicked选择，suppressCellFocus禁用单元格焦点；移动原生按钮在桌面隐藏。静态缺选股入口，不声称所有键盘操作失效或已跑浏览器。见 [桌面Grid](exhaustive-review/sweep41.md)。 |
 | G65 | 主导航/行情分类选中状态程序化公开；UX辅助功能 | 主导航与行情分类只有active CSS，没有向辅助技术提供当前/选中状态；图表/信息tab已有aria-selected。具体角色及属性由实现按组件语义选，不硬指定错误role。见 [状态](exhaustive-review/luna02.md)。 |

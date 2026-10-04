@@ -55,7 +55,7 @@ impl MomentumStrategy {
         Ok(())
     }
 
-    /// 构造并校验参数。lookback<2 / threshold<0 / order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
+    /// 构造并校验参数。lookback<2 / threshold非有限或<0 / order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
     pub fn new(
         lookback: usize,
         trend_threshold: f64,
@@ -67,10 +67,10 @@ impl MomentumStrategy {
                 reason: "must be >= 2".to_string(),
             });
         }
-        if trend_threshold < 0.0 {
+        if !trend_threshold.is_finite() || trend_threshold < 0.0 {
             return Err(StrategyError::InvalidParam {
                 param: "trend_threshold",
-                reason: "must be >= 0".to_string(),
+                reason: "must be finite and >= 0".to_string(),
             });
         }
         if order_size == 0 {

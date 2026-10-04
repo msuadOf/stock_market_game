@@ -2120,6 +2120,48 @@ fn factory_returns_strategy_error_for_invalid_parameters() {
 }
 
 #[test]
+fn audit_strategy_hot_threshold_rejects_nonfinite_values_at_all_entry_points() {
+    for threshold in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(MomentumStrategy::new(3, threshold, 100).is_err());
+        let mut params = sample_params();
+        params.hot.trend_threshold = threshold;
+        assert!(params.validate().is_err());
+        assert!(
+            StrategyFactory::build(AccountKind::Hot, &params, &mut SeqRng::new_f64(0.5)).is_err()
+        );
+    }
+}
+
+#[test]
+fn audit_strategy_factory_rejects_invalid_margin_before_individual_sampling() {
+    for margin in [f64::NAN, f64::INFINITY, -0.1, 1.0, 2.0] {
+        let mut params = sample_params();
+        params.inst.margin = margin;
+        let mut rng = SeqRng::new_f64(0.5);
+        assert!(
+            StrategyFactory::build(AccountKind::Inst, &params, &mut rng).is_err(),
+            "{margin}"
+        );
+        assert_eq!(rng.idx, 0);
+        assert_eq!(rng.uidx, 0);
+    }
+}
+
+#[test]
+fn audit_strategy_zero_tick_day_is_explicit_error_without_sampling() {
+    for kind in [AccountKind::Retail, AccountKind::Inst, AccountKind::Hot] {
+        let mut rng = SeqRng::new_f64(0.5);
+        let result = StrategyFactory::build_for_market_day(kind, &sample_params(), 0, &mut rng);
+        match result {
+            Err(StrategyError::InvalidParam { param, .. }) => assert_eq!(param, "ticks_per_day"),
+            _ => panic!("零 tick 日必须显式返回 InvalidParam"),
+        }
+        assert_eq!(rng.idx, 0);
+        assert_eq!(rng.uidx, 0);
+    }
+}
+
+#[test]
 fn reexport_from_crate_root() {
     use engine::{
         BeliefInstitutionStrategy, Intent, MarketView, MomentumStrategy, PositionView, SelfView,
