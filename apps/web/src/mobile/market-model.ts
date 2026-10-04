@@ -563,7 +563,7 @@ export class AuctionPointCollector {
 }
 
 /** 将同一分钟的实时更新原位替换，避免一秒一个点把横轴挤满。 */
-export function mergeMinutePoints<T extends { time: number }>(history: T[], incoming: T[]): T[] {
+export function mergeMinutePoints<T extends { time: number }>(history: readonly T[], incoming: readonly T[]): T[] {
   const merged = new Map(history.map((point) => [point.time, point]));
   for (const point of incoming) merged.set(point.time, point);
   return [...merged.values()].sort((left, right) => left.time - right.time);
@@ -608,6 +608,22 @@ export function formatGameClock(tick: number): string {
   const minutes = Math.floor((secondsFromMidnight % 3_600) / 60);
   const seconds = secondsFromMidnight % 60;
   return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+export function formatTradeTime(tick: number | undefined): string {
+  if (tick === undefined) return "成交时间缺失";
+  if (!Number.isSafeInteger(tick) || tick <= 0) {
+    throw new RangeError(`成交 tick 必须是正安全整数，收到 ${String(tick)}`);
+  }
+  const secondOfDay = (tick - 1) % TOTAL_TICKS_PER_DAY + 1;
+  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
+  const secondsFromMidnight = secondOfDay <= CALL_AUCTION_TICKS
+    ? 9 * 3_600 + 15 * 60 + secondOfDay
+    : continuousSecond <= 7_200
+      ? 9 * 3_600 + 30 * 60 + continuousSecond
+      : 13 * 3_600 + continuousSecond - 7_200;
+  return [Math.floor(secondsFromMidnight / 3_600), Math.floor(secondsFromMidnight % 3_600 / 60), secondsFromMidnight % 60]
+    .map((value) => String(value).padStart(2, "0")).join(":");
 }
 
 export interface MobileIntradayInputs {
