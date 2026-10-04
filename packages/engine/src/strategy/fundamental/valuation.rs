@@ -128,7 +128,7 @@ pub fn cash_flow(
 
 /// 5 年 FCFE 折现 + 终值（全整数、逐步半偶舍入；checked 溢出 ⇒ Overflow）：
 /// `FCFE_t = rhe(FCFE_{t−1} × (10000+g), 10000)`；
-/// `PV_t = rhe(FCFE_t × 10000, 10000+r)`；
+/// `PV_t` 将 `FCFE_t` 连续折现 t 次，每次 `rhe(value × 10000, 10000+r)`；
 /// `FCFE_6 = rhe(FCFE_5 × (10000+gt), 10000)`，`TV = rhe(FCFE_6 × 10000, r−gt)`
 /// （r ≤ gt ⇒ 类型化不可用——无限估值），PV(TV) 按五年折现链。
 fn dcf_equity_total(
@@ -156,9 +156,12 @@ fn dcf_equity_total(
     let discount = i128::from(10_000 + cost_bp);
     let mut f = fcfe;
     let mut total: i128 = 0;
-    for _ in 0..5 {
+    for year in 1..=5 {
         f = scale_round(f, growth_factor, 10_000)?;
-        let present = scale_round(f, 10_000, discount)?;
+        let mut present = f;
+        for _ in 0..year {
+            present = scale_round(present, 10_000, discount)?;
+        }
         total = total
             .checked_add(present)
             .ok_or_else(|| overflow("dcf year sum"))?;
