@@ -1095,7 +1095,9 @@ impl SessionSetup {
                     )));
                 }
             }
-            if self.stocks.iter().any(|stock| stock.float_shares > 0) {
+            if self.stocks.iter().any(|stock| stock.float_shares > 0)
+                && (self.npcs.retail_count > 0 || self.npcs.inst_count > 0 || self.npcs.hot_count > 0)
+            {
                 let effective_weight = [
                     (self.npcs.retail_count, *retail),
                     (self.npcs.inst_count, *inst),

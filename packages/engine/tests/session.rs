@@ -2347,6 +2347,68 @@ fn float_setup(float: u32) -> SessionSetup {
     s
 }
 
+#[test]
+fn audit_zero_npc_skips_positive_float_allocation_without_gifting_player_shares() {
+    for allocation in [
+        engine::FloatAllocation::Random,
+        engine::FloatAllocation::ByKind {
+            retail: 0.4,
+            inst: 0.5,
+            hot: 0.1,
+        },
+        engine::FloatAllocation::ByKind {
+            retail: 0.0,
+            inst: 0.0,
+            hot: 0.0,
+        },
+    ] {
+        let mut setup = float_setup(1000);
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        setup.float_allocation = allocation;
+        setup.history_len = 1;
+        setup.ticks_per_day = 1;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        setup.start_date = engine::CivilDate::from_iso("2030-01-07").unwrap();
+        let mut session =
+            GameSession::new(setup, 42).expect("没有NPC时不执行分配，不应因有效权重和为0拒绝");
+        assert_eq!(session.account_count(), 1);
+        assert!(session
+            .account(AccountId(0))
+            .unwrap()
+            .positions()
+            .is_empty());
+        session.step().unwrap();
+        session.end_civil_day().unwrap();
+        let restored = GameSession::restore(&session.save().unwrap()).unwrap();
+        assert_eq!(restored.account_count(), 1);
+        assert!(restored
+            .account(AccountId(0))
+            .unwrap()
+            .positions()
+            .is_empty());
+    }
+}
+
+#[test]
+fn audit_zero_npc_does_not_relax_invalid_allocation_parameter_guard() {
+    for weight in [-1.0, f64::NAN, f64::INFINITY] {
+        let mut setup = float_setup(1000);
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        setup.float_allocation = engine::FloatAllocation::ByKind {
+            retail: weight,
+            inst: 0.0,
+            hot: 0.0,
+        };
+        let error = setup.validate().unwrap_err();
+        assert!(error.to_string().contains("finite >=0"), "{error}");
+    }
+}
+
 /// 通过已知 NPC id（1..=npc_count）求和持仓的辅助。account_count 含玩家(0)。
 fn npc_total_qty(s: &GameSession, code: &StockCode) -> u32 {
     (1..s.account_count() as u64)
