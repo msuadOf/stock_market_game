@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { it } from "node:test";
-import { buildScriptTestPolicy, discoverScriptTestFiles, main, runScriptTestBatch, runScriptTests } from "./run-script-tests.mjs";
+import { buildScriptTestPolicy, discoverScriptTestFiles, main, prepareScriptTestEnvironment, runScriptTestBatch, runScriptTests } from "./run-script-tests.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
+import { resolveWorkspaceRoot } from "./workspace-paths.mjs";
 
 it("完整递归发现新目录与测试自身，忽略非测试并拒绝 symbolic link", { timeout: 10000 }, async () => {
   const root = await mkdtemp(path.join(process.cwd(), ".tmp", "script-discovery-"));
@@ -109,4 +110,20 @@ it("发现后期限耗尽不启动命令，独立入口为长聚合而非放宽�
   assert.equal(calls[0].args.at(-1), "--internal-worker");
   assert.equal(calls[0].env.STOCK_GAME_SCRIPT_TEST_INTERNAL_WORKER, "1");
   await assert.rejects(main(["--internal-worker"], {}), /supervisor/);
+});
+
+it("独立入口先启动监督进程再在 worker 中规范工作区环境", { timeout: 10000 }, async () => {
+  const calls = [];
+  const originalEnv = { FIXTURE: "preserved", TMPDIR: "/outside", TMP: "/outside", TEMP: "/outside" };
+  await runScriptTests({ env: originalEnv,
+    run: async (options) => { calls.push(options); },
+  });
+  assert.equal(calls[0].timeoutMs, 300000);
+  for (const key of ["TMPDIR", "TMP", "TEMP"]) assert.equal(calls[0].env[key], "/outside");
+  const workspaceEnv = await prepareScriptTestEnvironment({ env: calls[0].env });
+  const expected = path.join(await resolveWorkspaceRoot(process.cwd()), ".tmp", "process-tmp", "script-tests");
+  assert.equal(workspaceEnv.FIXTURE, "preserved");
+  for (const key of ["TMPDIR", "TMP", "TEMP"]) assert.equal(workspaceEnv[key], expected);
+  assert.equal(workspaceEnv.STOCK_GAME_SCRIPT_TEST_INTERNAL_WORKER, "1");
+  assert.deepEqual(originalEnv, { FIXTURE: "preserved", TMPDIR: "/outside", TMP: "/outside", TEMP: "/outside" });
 });
