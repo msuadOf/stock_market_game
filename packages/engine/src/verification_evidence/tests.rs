@@ -3,8 +3,8 @@ use crate::{
     company::CompanyId,
     information::PublicationId,
     session::pipeline::{
-        EnvelopeAudit, EnvelopeKey, FeeComponents, ReceiptDelta, ReceiptLocalKey, ReceiptSource,
-        ReceiptTransition,
+        EnvelopeAudit, EnvelopeKey, EventStableKey, FeeComponents, ReceiptDelta, ReceiptLocalKey,
+        ReceiptSource, ReceiptTransition,
     },
     session::{
         protocol::{
@@ -563,6 +563,90 @@ fn announcement_event(seq: u64, publication_id: u32) -> Event {
     }
 }
 
+fn account_identity_frame(indices: &[u64]) -> TickFrame {
+    let events = indices
+        .iter()
+        .enumerate()
+        .map(|(position, _)| {
+            let seq = u64::try_from(position + 1).unwrap();
+            if position == 0 {
+                Event::IntentRejected {
+                    seq,
+                    account: AccountId(3),
+                    code: StockCode("600001".to_owned()),
+                    reason: RejectionReason::InsufficientCash,
+                }
+            } else {
+                Event::OrderCanceled {
+                    seq,
+                    account: AccountId(3),
+                    code: StockCode("600001".to_owned()),
+                    id: OrderId(seq),
+                    remaining_qty: 100,
+                }
+            }
+        })
+        .collect();
+    let mut frame = frame(events);
+    for (fact, index) in frame.facts.iter_mut().zip(indices) {
+        fact.key = EventStableKey::for_event(&fact.event, *index);
+    }
+    frame
+}
+
+#[test]
+fn account_sealed_identity_accepts_sparse_operation_and_reserved_expiry_indices() {
+    let reserved = crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
+    let frame = account_identity_frame(&[7, reserved, crate::orderbook::js_safe_u64::MAX]);
+    let projected = project_update(RuntimeUpdateRef::Tick(&frame)).unwrap();
+    assert_eq!(projected.events[0].comparison_event_key.3, "7");
+    assert_eq!(projected.events[1].comparison_event_key.3, reserved.to_string());
+}
+
+#[test]
+fn account_sealed_identity_rejects_cross_variant_key_collision() {
+    let reserved = crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
+    for indices in [vec![7, 7], vec![7, reserved, reserved]] {
+        let frame = account_identity_frame(&indices);
+        assert!(matches!(
+            project_update(RuntimeUpdateRef::Tick(&frame)),
+            Err(EvidenceError::InvalidEventIdentity { .. })
+        ));
+    }
+}
+
+#[test]
+fn account_sealed_identity_rejects_unsafe_and_non_cancel_reserved_indices() {
+    for index in [
+        crate::orderbook::js_safe_u64::MAX + 1,
+        crate::orderbook::js_safe_u64::MAX - u32::MAX as u64,
+    ] {
+        let frame = account_identity_frame(&[index]);
+        assert!(matches!(
+            project_update(RuntimeUpdateRef::Tick(&frame)),
+            Err(EvidenceError::InvalidEventIdentity { .. })
+        ));
+    }
+}
+
+#[test]
+fn stock_event_identity_still_requires_zero_based_contiguous_indices() {
+    let event = Event::Trade {
+        seq: 1,
+        code: StockCode("600001".to_owned()),
+        price: Money::from_cents(1_000),
+        qty: 100,
+        maker: AccountId(3),
+        taker: AccountId(4),
+    };
+    let mut frame = frame(vec![event]);
+    frame.facts[0].key = EventStableKey::for_event(&frame.facts[0].event, 7);
+    assert!(matches!(
+        project_update(RuntimeUpdateRef::Tick(&frame)),
+        Err(EvidenceError::InvalidEventIdentity { .. })
+    ));
+}
+
 #[test]
 fn phase_six_session_variants_share_one_ordinal_scope() {
     let events = vec![
@@ -1022,25 +1106,23 @@ fn batch_update_stream_projection_rejects_empty_and_duplicate_identity_streams()
 }
 
 #[test]
-fn event_projection_rejects_gapped_local_indices_and_adr_key_tampering() {
+fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
     let events = vec![
-        Event::OrderAccepted {
+        Event::Trade {
             seq: 1,
-            account: AccountId(1),
             code: StockCode("600001".to_owned()),
-            id: OrderId(9),
-            side: Side::Buy,
             price: Money::from_cents(1_000),
-            remaining_qty: 100,
+            qty: 100,
+            maker: AccountId(1),
+            taker: AccountId(2),
         },
-        Event::OrderAccepted {
+        Event::Trade {
             seq: 2,
-            account: AccountId(1),
             code: StockCode("600001".to_owned()),
-            id: OrderId(10),
-            side: Side::Buy,
             price: Money::from_cents(999),
-            remaining_qty: 100,
+            qty: 100,
+            maker: AccountId(1),
+            taker: AccountId(2),
         },
     ];
     let mut gapped = frame(events);
@@ -1452,7 +1534,7 @@ fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
 }
 
 #[test]
-fn observation_rejects_restore_byte_and_continuation_mismatches() {
+fn observation_rejects_restore_byte_mismatch_but_allows_independent_continuations() {
     let conservation = vec![
         coverage_snapshot(12, "600001", 9, &[30, 70]),
         coverage_snapshot(13, "000001", 10, &[100]),
@@ -1491,17 +1573,17 @@ fn observation_rejects_restore_byte_and_continuation_mismatches() {
         }
     );
 
-    let bad_continuation = [
+    let independent_continuation = [
         restore("opening"),
         RestoreSlotBytes {
             restored_continuation: b"different",
             ..restore("partial")
         },
     ];
-    let error = project_observation(
+    let projected = project_observation(
         observation_input(
             &conservation,
-            Some(&bad_continuation),
+            Some(&independent_continuation),
             Some(b"save-v2-bytes"),
             &accounts,
             &stocks,
@@ -1510,11 +1592,7 @@ fn observation_rejects_restore_byte_and_continuation_mismatches() {
         ),
         &TestDigest,
     )
-    .unwrap_err();
-    assert_eq!(
-        error,
-        EvidenceError::RestoreContinuationMismatch {
-            slot: "partial".to_owned()
-        }
-    );
+    .unwrap();
+    let slot = &projected.execution_coverage.restore_slots[1];
+    assert_ne!(slot.uninterrupted_continuation, slot.restored_continuation);
 }

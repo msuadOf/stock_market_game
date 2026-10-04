@@ -121,6 +121,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 - K7 的自由 rerun 分别保存并校验原始证据，不要求不同 worker、执行扰动或恢复后的自由继续运行产生相同整局字节。
   `determinism.checkpoint.json` 的 `k7-determinism-receipt-v2` 同时绑定首份 `seed-<seed>.json` 和 `rerun.json` 的 SHA-256，并如实记录 `identical`；复用与独立 root verifier 均验证两份原始数据的来源、配置及业务覆盖。
   Escrow 每次 capture 仍独立验证每 tick 的收据重放、守恒及失败负控，立即保存/恢复的状态等价不变；这里不把自由 rerun 当作固定受理事实重放。
+  事件身份按 ADR-0017 的真实域校验：`Account/Sealed` 允许稀疏操作索引和独立 P0 预留段，检查 JS-safe 范围、变体映射及键唯一；Stock、PriceTick、DayEnd 和共享 Session 域仍要求各自连续，不重编号真实 producer 身份。
 - 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
 
 ### GitHub CI 构建与类型门禁

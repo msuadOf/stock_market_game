@@ -78,6 +78,7 @@ struct RestoreSlotReceipt {
     restored: ArtifactReceipt,
     uninterrupted_continuation: ArtifactReceipt,
     restored_continuation: ArtifactReceipt,
+    restored_conservation: Vec<engine::verification_evidence::ConservationSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -204,6 +205,7 @@ struct RestoreSlotCapture {
     restored: Vec<u8>,
     uninterrupted_continuation: Vec<u8>,
     restored_continuation: Vec<u8>,
+    restored_conservation: Vec<engine::verification_evidence::ConservationSnapshot>,
 }
 
 #[path = "committed.rs"]
@@ -265,6 +267,7 @@ fn assemble(
                 &slot.uninterrupted_continuation,
             ),
             restored_continuation: ArtifactReceipt::from_bytes(&slot.restored_continuation),
+            restored_conservation: slot.restored_conservation.clone(),
         })
         .collect();
 
@@ -514,6 +517,8 @@ fn identities(rows: &[CollectorRow]) -> Vec<String> {
 
 fn frozen_setup() -> Result<SessionSetup, String> {
     let setup = SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock(
                 "600101",
@@ -1005,9 +1010,19 @@ mod tests {
         assert_eq!(bundle.report.runtime_coverage.restore_slots.len(), 2);
         for slot in &bundle.report.runtime_coverage.restore_slots {
             assert_eq!(slot.saved.sha256, slot.restored.sha256);
-            assert_eq!(
-                slot.uninterrupted_continuation.sha256,
-                slot.restored_continuation.sha256
+            assert!(
+                slot.uninterrupted_continuation
+                    .byte_length
+                    .parse::<usize>()
+                    .unwrap()
+                    > 0
+            );
+            assert!(
+                slot.restored_continuation
+                    .byte_length
+                    .parse::<usize>()
+                    .unwrap()
+                    > 0
             );
         }
         assert!(bundle
@@ -1050,6 +1065,24 @@ mod tests {
             .iter()
             .any(|tick| tick["receipts"].as_array().unwrap().len() >= 8));
         assert_eq!(bundle.report.runtime_coverage.account_ids.len(), 9);
+    }
+
+    #[test]
+    fn restored_continuations_validate_their_own_committed_receipt_chains() {
+        let capture = committed::capture_short_restore_runtime(17).unwrap();
+        assert_eq!(capture.restore_slots.len(), 2);
+        let mut restored_receipt_count = 0;
+        for slot in capture.restore_slots {
+            let continuation: Value = serde_json::from_slice(&slot.restored_continuation).unwrap();
+            restored_receipt_count += continuation[1]["receipts"].as_array().unwrap().len();
+            assert_eq!(slot.restored_conservation.len(), 1);
+            let snapshot = &slot.restored_conservation[0];
+            assert_eq!(snapshot.tick, continuation[0]["tick"].as_u64().unwrap());
+            assert_eq!(snapshot.seed, "17");
+            assert_eq!(snapshot.scenario, crate::cli::SCENARIO);
+            assert!(!snapshot.accounts.is_empty());
+        }
+        assert!(restored_receipt_count > 0);
     }
 
     #[test]

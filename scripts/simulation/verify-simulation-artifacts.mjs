@@ -15,9 +15,9 @@ const SIMULATION_CHILD_TIMEOUT_MS = 300_000;
 const SIMULATION_BATCH_TIMEOUT_MS = 300_000;
 const SIMULATION_CLEANUP_RESERVE_MS = 1_000;
 const SIMULATION_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const SIMULATION_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
+const SIMULATION_RUNNER_VERSION = "2026-10-04-free-admission-rerun-v9";
 const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
-const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
+const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v2";
 const SIMULATION_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
 const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
 const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
@@ -379,7 +379,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
   const directoryName = matrixDirectoryName(spec);
   const directoryPath = resolveContained(root, directoryName, `matrix ${directoryName}`);
   await requireDirectory(directoryPath, `matrix ${directoryName}`);
-  const expectedArtifacts = ["checkpoint.json", "determinism.checkpoint.json"];
+  const expectedArtifacts = ["checkpoint.json", "determinism.checkpoint.json", "rerun.json"];
   for (const seed of spec.seeds) expectedArtifacts.push(`seed-${seed}.json`, `seed-${seed}.checkpoint.json`);
   await requireExactDirectoryEntries(directoryPath, expectedArtifacts, `matrix ${directoryName}`);
 
@@ -424,9 +424,11 @@ async function verifyMatrix(root, report, rootContext, spec) {
   if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
   requireJsonEqual(receipt.identity, identity, `matrix ${directoryName} determinism receipt identity`);
   if (receipt.identity_digest !== sha256(JSON.stringify(identity))) fail(`matrix ${directoryName} determinism receipt identity digest mismatch`);
-  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) {
+  const rerun = await readJson(resolveContained(directoryPath, "rerun.json", `matrix ${directoryName} rerun`), `matrix ${directoryName} rerun`);
+  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== sha256(rerun.bytes) || receipt.identical !== (receipt.first_digest === receipt.rerun_digest)) {
     fail(`matrix ${directoryName} determinism receipt is not bound to the canonical and rerun bytes`);
   }
+  validateSimulationRaw(rerun.parsed, rootContext, spec, receipt.seed, `matrix ${directoryName} rerun`);
   requireJsonEqual(receipt.argv, canonical.argv, `matrix ${directoryName} determinism receipt argv`);
   if (receipt.exit_code !== 0) fail(`matrix ${directoryName} determinism rerun exit code must be zero`);
   requireNonNegativeDuration(receipt.wall_ms, `matrix ${directoryName} determinism receipt wall_ms`);
@@ -439,7 +441,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
     seed: receipt.seed,
     first_digest: receipt.first_digest,
     rerun_digest: receipt.rerun_digest,
-    identical: true,
+    identical: receipt.identical,
     revision: receipt.revision,
     receipt: "determinism.checkpoint.json",
   }, `manifest matrix ${directoryName}.determinism_check`);

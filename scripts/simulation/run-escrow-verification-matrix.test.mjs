@@ -10,6 +10,15 @@ import {
   sha256Hex,
 } from "./run-escrow-verification-matrix.mjs";
 
+it("artifact validator 在读取内容前核对 canonical containment", async () => {
+  const source = await readFile(new URL("./run-escrow-verification-matrix.mjs", import.meta.url), "utf8");
+  const validator = source.slice(source.indexOf("async function validateArtifacts("), source.indexOf("async function validateCaptureReceipt("));
+  const resolveIndex = validator.indexOf("canonical = await realpath(absolute)");
+  const containmentIndex = validator.indexOf("if (!isBelow(canonical, output))");
+  const readIndex = validator.indexOf("bytes = await readFile(canonical)");
+  assert.ok(resolveIndex >= 0 && containmentIndex > resolveIndex && readIndex > containmentIndex);
+});
+
 async function fixture() {
   const processTemp = process.env.TMPDIR;
   assert.ok(processTemp, "tests require the registered workspace-local TMPDIR");
@@ -41,7 +50,7 @@ async function fixture() {
   };
 }
 
-function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinismDrift = false } = {}) {
+function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinismDrift = false, restoredDrift = false } = {}) {
   const calls = [];
   const invocations = [];
   const runChild = async ({ command, args, entry, output, env }) => {
@@ -105,6 +114,10 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
         after_failed_step: { sha256: sha256Hex("before"), byte_length: "6" },
       } : null,
     };
+    capture.runtime_coverage.restore_slots = ["intraday", "post-civil"].map((slot) => ({
+      slot, restored_conservation: structuredClone(capture.producer_readiness.conservation_snapshots),
+    }));
+    if (restoredDrift) capture.runtime_coverage.restore_slots[0].restored_conservation[0].accounts[0].aggregate.right.cash_cents = "1";
     await writeFile(path.join(output, "capture.json"), JSON.stringify(capture));
     const captureBytes = await readFile(path.join(output, "capture.json"));
     await writeFile(path.join(output, "capture-receipt.json"), JSON.stringify({
@@ -255,12 +268,17 @@ describe("escrow verification matrix runner", () => {
     assert.equal(summary.failure.code, "ARTIFACT_HASH_DRIFT");
   });
 
-  it("fails when individually valid receipts drift across budget/repeat observations", async () => {
+  it("接受不同 worker 自由调度的合法产物差异", async () => {
     const { config } = await fixture();
     const fake = fakeHarness({ determinismDrift: true });
     const summary = await runEscrowVerificationMatrix(config, { runChild: fake.runChild });
+    assert.equal(summary.status, "PASS");
+  });
+
+  it("拒绝恢复分支的守恒错误而不比较两个自由继续运行", async () => {
+    const { config } = await fixture();
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fakeHarness({ restoredDrift: true }).runChild });
     assert.equal(summary.status, "FAIL");
-    assert.equal(summary.failure.code, "DETERMINISM_DRIFT");
   });
 
   it("reports a typed FAIL when the harness itself reports FAIL", async () => {

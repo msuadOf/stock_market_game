@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -255,6 +256,47 @@ describe("simulation acceptance root verifier", () => {
     receipt.rerun_digest = "a".repeat(64);
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
     await assert.rejects(verifySimulationArtifacts(root), /not bound to the canonical and rerun bytes/);
+  });
+
+  it("接受自由 rerun 的合法输出差异并保留各自原始证据", async () => {
+    const root = await newTempDir("free-rerun-");
+    const execute = fakeSimulationExec();
+    let invocation = 0;
+    await captureAfter({ outputDir: root, repoRoot: REPO_ROOT, resourcePolicy: RESOURCE_POLICY,
+      exec: async (...arguments_) => {
+        const result = await execute(...arguments_);
+        if (arguments_[0].endsWith("simulation_baseline_fixture")) {
+          result.stdout = `${result.stdout}${" ".repeat(++invocation)}`;
+        }
+        return result;
+      },
+    });
+    assert.equal((await verifySimulationArtifacts(root)).determinism_reruns, 2);
+    const receipt = JSON.parse(await readFile(path.join(root, "primary-b1-e1-c1", "determinism.checkpoint.json"), "utf8"));
+    assert.notEqual(receipt.first_digest, receipt.rerun_digest);
+    assert.equal(receipt.identical, false);
+    await writeFile(path.join(root, "primary-b1-e1-c1", "rerun.json"), "{}");
+    await assert.rejects(verifySimulationArtifacts(root), /rerun bytes/);
+  });
+
+  it("root 与 resume 拒绝重新绑定 hash 但来源非法的 rerun", async () => {
+    const root = await cloneRoot(validAfterRoot, "rerun-source-tamper");
+    const directory = path.join(root, "primary-b1-e1-c1");
+    const raw = JSON.parse(await readFile(path.join(directory, "rerun.json"), "utf8"));
+    raw.build_source_fingerprint = "a".repeat(64);
+    const bytes = JSON.stringify(raw);
+    const receiptPath = path.join(directory, "determinism.checkpoint.json");
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    receipt.rerun_digest = createHash("sha256").update(bytes).digest("hex");
+    receipt.identical = false;
+    const { receipt_digest: previousDigest, ...receiptState } = receipt;
+    assert.ok(previousDigest);
+    receipt.receipt_digest = createHash("sha256").update(JSON.stringify(receiptState)).digest("hex");
+    await writeFile(path.join(directory, "rerun.json"), bytes);
+    await writeFile(receiptPath, JSON.stringify(receipt));
+    await assert.rejects(verifySimulationArtifacts(root), /stale fixture binary/);
+    await assert.rejects(captureAfter({ outputDir: root, exec: fakeSimulationExec(), repoRoot: REPO_ROOT,
+      resourcePolicy: RESOURCE_POLICY, resume: true }), /source fingerprint|stale.*binary/);
   });
 
   it("rejects missing and unreferenced artifacts during the root walk", async () => {

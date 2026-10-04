@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 /// P0 cancellations and Projection book events share the accepted Account/Sealed wire
 /// domain. Reserve the top u32-sized range for account-local P0 identities so
 /// later Projection activity cannot change the identity of an earlier expiry fact.
-pub(super) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
+pub(crate) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
     crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]

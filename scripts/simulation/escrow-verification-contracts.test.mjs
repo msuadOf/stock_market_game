@@ -114,7 +114,7 @@ function conservationSnapshot(tick = 12) {
 }
 
 describe("determinism and perturbation contracts", () => {
-  it("requires byte-identical state/events/receipts/save bytes across 1/2/4/auto and repeats", () => {
+  it("核对完整 worker 矩阵而不要求自由调度产物字节相同", () => {
     assert.deepEqual(verifyDeterminismMatrix(determinismMatrix()), {
       scenarios: 1,
       budgets: ["1", "2", "4", "auto"],
@@ -123,7 +123,11 @@ describe("determinism and perturbation contracts", () => {
     });
     const changed = determinismMatrix();
     changed.find((entry) => entry.budget === "4" && entry.repeat === "1").artifacts = changedArtifacts("receipts");
-    assert.throws(() => verifyDeterminismMatrix(changed), /byte artifacts mismatch/);
+    changed[0].execution_coverage.restore_slots[0].restored_continuation = artifactReceipt("不同自由继续运行");
+    assert.equal(verifyDeterminismMatrix(changed).compared_observations, 8);
+    const invalidRestore = structuredClone(changed);
+    invalidRestore[0].execution_coverage.restore_slots[0].restored = artifactReceipt("被改变的存档");
+    assert.throws(() => verifyDeterminismMatrix(invalidRestore), /saved\/restored bytes/);
 
     const numericRepeat = determinismMatrix();
     numericRepeat[0].repeat = 0;
@@ -137,7 +141,7 @@ describe("determinism and perturbation contracts", () => {
 
   it("proves all three delivery orders changed and the remaining merge control fails", () => {
     const reference = observation();
-    const perturbed = observation({ mode: "perturbed", order: perturbationOrder("p") });
+    const perturbed = observation({ mode: "perturbed", order: perturbationOrder("p"), artifacts: changedArtifacts("event_stream") });
     const controls = [
       observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
     ];

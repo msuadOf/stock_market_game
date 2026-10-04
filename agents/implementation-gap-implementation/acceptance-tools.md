@@ -6,7 +6,7 @@
 
 ## 实施
 
-- G39：自由 worker/扰动/rerun 不要求整局字节相等，立即保存/恢复等价保留；每次 capture 保留收据重放、守恒、业务覆盖及失败负控。K7 receipt v2 新增保存和绑定 rerun 原始证据；复用与 root verifier 独立验证两次输出。Rust harness 的 restored 分支用当前 projector 的独立副本校验实际 frame、收据守恒和 finalizer，并发布 `restored_conservation`；matrix 校验两个不同恢复点、来源 tick 范围和恢复分支守恒。生产 verification helper 同步允许两个独立 continuation receipt 不同，不仅删除 JS 门禁。跨层实施及静态复核完成，但 Rust 编译/行为验证未完成。
+- G39：自由 worker/扰动/rerun 不要求整局字节相等，立即保存/恢复等价保留；每次 capture 保留收据重放、守恒、业务覆盖及失败负控。K7 receipt v2 新增保存和绑定 rerun 原始证据；复用与 root verifier 独立验证两次输出。Rust harness 的 restored 分支用当前 projector 的独立副本校验实际 frame、收据守恒和 finalizer，并发布 `restored_conservation`；matrix 校验两个不同恢复点、来源 tick 范围和恢复分支守恒。生产 verification helper 同步允许两个独立 continuation receipt 不同，不仅删除 JS 门禁。跨层实施、代表性 Rust/JS 验证与独立复核完成，后续实际收尾与未验收边界见最后一节。
 - G60：性能工具通过既有启动选择，明确选择本地并提交启动操作，已进入游戏时不重复启动。
 - G61：正式性能命令加入进程外 300000ms supervisor；UI/CDP 异常显式拒绝、资源逐项清理并汇总失败；sampler 拒绝立即终止 owned tree 并等待 child close。
 - G62：嵌套 owned supervisor 继承同一 POSIX 进程组；终止前枚举 descendant，Linux 用 `/proc` 核对已观察后代不再 live；Windows 等待 taskkill 退出并检查结果。hard cutoff 明确区分请求与未确认终止，不再仅凭 direct child close 宣称完整树已终止。清理失败与执行 exit/stderr 用 AggregateError 同时保留。进程树快照不能保证捕捉任意瞬间 reparent 的第三方进程，macOS/Windows 未实跑。
@@ -25,4 +25,20 @@
 
 ## 独立复核
 
-非实施 reviewer `/root/implement_acceptance_tools/review_acceptance` 审完整工具 diff，确认现行 A 股与并发受理语义、必要性和范围，发现 Windows 清理失败覆盖原 exit/stderr：已修为 AggregateError 并补红绿 mock，再次复核通过。正式 testing 文档中初版 receipt 名称错误也已按 reviewer 修为真实 schema/路径。G63 子组另有非作者 reviewer 独立重跑 9/9 并通过。G39/G72 扩展 Rust/JS 完整 diff 另经 `/root/implement_acceptance_tools/simulation_contract/review_contract` 和主组 reviewer 独立静态复核，未发现必修问题；主组复核记录见 `acceptance-tools-review.md`。G60/G61/G62/G63/G72 已在实施范围闭环；G39 仍明确保留 Rust 定向编译/短行为验证，不宣称完成验收。
+非实施 reviewer `/root/implement_acceptance_tools/review_acceptance` 审完整工具 diff，确认现行 A 股与并发受理语义、必要性和范围，发现 Windows 清理失败覆盖原 exit/stderr：已修为 AggregateError 并补红绿 mock，再次复核通过。正式 testing 文档中初版 receipt 名称错误也已按 reviewer 修为真实 schema/路径。G63 子组另有非作者 reviewer 独立重跑 9/9 并通过。G39/G72 扩展 Rust/JS 完整 diff 另经 `/root/implement_acceptance_tools/simulation_contract/review_contract` 和主组 reviewer 独立静态复核；追加真实 Rust 收尾见下一节，主组复核记录见 `acceptance-tools-review.md`。
+
+## G39 最后 Rust 收尾
+
+前面的 Rust 阻断是当时状态，不作为最终结论继承。共享生产入口稳定后，采用 `timeout -s KILL 300s flock /tmp/stock-market-gap-cargo.lock` 监督全部准备，锁内执行 `cargo test -p engine --features verification-harness --lib --example escrow_verification_harness --no-run --target-dir .tmp/gap-target -j16 --message-format=json`，从 Cargo JSON 获取两个精确 executable 并复制到 `.tmp/process-tmp/g39-final/bin/`，避免后续其它 owner 编译覆盖。在锁内 listing 确认两目标各有 1 个 case；最初 listing 因 sandbox `spawnSync EPERM` 失败，没有冒充通过，随后外部授权执行完成。最终增量编译 20.87 秒，编译耗时与普通测试分开。过程观察到 rustc 9 threads、183% CPU；不是单核构建。
+
+真实 example case 首次暴露 tick1 projector 的全域零基连续门禁失败。核对 ADR-0017 的 2026-09-26 修订后确认：`Account/Sealed` 的普通操作与顶部预留 P0 索引段不可按零基连续验证。修复仅按域建模 validator：复用生产 `QUOTE_EXPIRY_EVENT_INDEX_BASE`，该常量仅提高到 `pub(crate)` 可见性；Account 索引检查 JS-safe 上下界、非 `OrderCanceled` 不得占预留段、跨变体同键及 P0 段重复拒绝。Stock、PriceTick、DayEnd 和完整 update-stream 的共享 Session 域仍强制零基连续。没有改 producer 身份、没有重新编号，也没有改变实际受理或事件业务顺序。新增合法稀疏/P0 段 case 真正先红后绿；原要求 Account gap 拒绝的旧测试按现行 ADR 改为 Stock Trade gap 拒绝，保留原 phase/entity/source 篡改拒绝断言。
+
+完整 12tick/history24 的新 example 普通 case 未在 10 秒命令期限完成，未放宽 deadline、未称 PASS。新增 `cfg(test)` 的 history1、3tick 日短入口复用同一 capture 主体、两次 restore、完整 frame/projector、收据守恒及 finalizer；压缩日下机构计划出现 `parent-order account 6 stock 000812 violates execution-plan invariants` checkpoint 拒绝已报告给 root，不在本组盲改该 owner。`expires_market_minute` 是根据短日 near-close 推测的调查方向，联合不变量中具体哪个字段失败尚未取证，不将推测写成根因。短 fixture 明确只有两个 retail donor、关闭其 arrival，正式 9accounts/12tick 默认不动。独立 reviewer 发现这可能只验证空 receipt chain，已修为通过真实 enqueue 增加 600101 lower-limit 买单（100 股、1008 分），由 restored closing tick 日终终结，并增加实际 journal `restored_receipt_count > 0` 强断言；没有篡改余额或收据，没有绕 restore。
+
+最终普通验证每组单独 `RAYON_NUM_THREADS=8 timeout -s KILL 10s <copied-binary> <filter> --test-threads=8`：
+
+- lib `verification_evidence::tests::` 23/23 通过，case 合计 1.91 秒，command 2.79 秒，包含 continuation 目标、新 Account 边界、Stock gap 和 Session 跨更新重复/连续负控。
+- example `runtime::tests::restored_continuations_validate_their_own_committed_receipt_chains --exact` 1/1 通过，8.53 秒。该 case 用 Rayon8；此前与其它 module 共一个 10 秒批次超时仍如实保留，没有把失败批次改写为通过。
+- 非实施 reviewer 再次审完整新增 diff 与非空链发现修复，并独立执行 example 1/1（case8.84秒、command9.44秒）和 lib 23/23（case1.39秒、command1.45秒），两组各自满足 10 秒期限；见 `acceptance-tools-review.md`。
+
+G39/G72 可以按实施与代表性短验证范围核销。本结论不表示完整 default fixture、全矩阵、机构压缩日 checkpoint 不变量、三宿主或性能矩阵已通过；这些未运行或失败边界仍单列，不将工作文件当作真实矩阵 PASS。

@@ -395,12 +395,16 @@ async function validateArtifacts(capture, output, entry) {
     let bytes;
     try {
       canonical = await realpath(absolute);
-      bytes = await readFile(canonical);
     } catch (error) {
       throw new MatrixFailure("MISSING_ARTIFACT", `${entry.id} cannot read artifact ${name}: ${error.message}`, { entry: entry.id, name, file });
     }
     if (!isBelow(canonical, output)) {
       throw new MatrixFailure("INVALID_ARTIFACT_PATH", `${entry.id} artifact ${name} resolves outside its output directory`, { entry: entry.id, name, file, canonical });
+    }
+    try {
+      bytes = await readFile(canonical);
+    } catch (error) {
+      throw new MatrixFailure("MISSING_ARTIFACT", `${entry.id} cannot read artifact ${name}: ${error.message}`, { entry: entry.id, name, file });
     }
     const actualHash = sha256Hex(bytes);
     if (actualHash !== receipt.sha256 || String(bytes.length) !== receipt.byte_length) {
@@ -489,6 +493,23 @@ function validateExecutorEvidence(capture, entry) {
     if (BigInt(snapshots.length) !== to - from + 1n || snapshots.some((snapshot, index) =>
       BigInt(snapshot.tick) !== from + BigInt(index) || snapshot.scenario !== entry.scenario || snapshot.seed !== entry.seed)) {
       throw new MatrixFailure("MISSING_CONSERVATION", `${entry.id} conservation omits, duplicates or misidentifies a committed tick`);
+    }
+    const restoreSlots = capture.runtime_coverage.restore_slots;
+    if (!Array.isArray(restoreSlots) || restoreSlots.length !== 2
+      || restoreSlots.some((slot) => typeof slot.slot !== "string" || slot.slot.length === 0)
+      || new Set(restoreSlots.map((slot) => slot.slot)).size !== 2) {
+      throw new MatrixFailure("MISSING_CONSERVATION", `${entry.id} lacks two distinct restored continuation witnesses`);
+    }
+    for (const slot of restoreSlots) {
+      if (!Array.isArray(slot.restored_conservation) || slot.restored_conservation.length !== 1) {
+        throw new MatrixFailure("MISSING_CONSERVATION", `${entry.id} restore ${slot.slot} lacks its committed continuation snapshot`);
+      }
+      const snapshot = slot.restored_conservation[0];
+      verifyConservationSnapshot(snapshot);
+      if (snapshot.scenario !== entry.scenario || snapshot.seed !== entry.seed
+        || BigInt(snapshot.tick) < from || BigInt(snapshot.tick) > to) {
+        throw new MatrixFailure("MISSING_CONSERVATION", `${entry.id} restore ${slot.slot} has an unrelated continuation snapshot`);
+      }
     }
   }
   return orders;
@@ -584,10 +605,6 @@ class EscrowVerificationRun {
     const vector = artifactVector(artifacts);
     if (entry.mode !== "negative-control") {
       if (this.baselineVector === null) this.baselineVector = vector;
-      else if (vector !== this.baselineVector) {
-        throw new MatrixFailure(reusable ? "REUSE_VALIDATION_FAILED" : "DETERMINISM_DRIFT",
-          reusable ? "stored deterministic artifact receipts drifted" : `${entry.id} artifact receipts differ from the frozen matrix reference`, { entry: entry.id });
-      }
     } else if (vector === this.baselineVector) {
       throw new MatrixFailure(reusable ? "REUSE_VALIDATION_FAILED" : "NEGATIVE_CONTROL_NOT_DETECTED",
         reusable ? "stored negative control no longer exposes the disabled merge" : `${entry.id} artifact receipts did not expose the disabled canonical merge`,

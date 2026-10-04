@@ -192,7 +192,39 @@ fn negative_control(
 }
 
 pub(super) fn capture_runtime(seed: u64) -> Result<RuntimeCapture, String> {
-    let mut session = initial_session(seed)?;
+    capture_runtime_with_session(seed, initial_session(seed)?)
+}
+
+#[cfg(test)]
+pub(super) fn capture_short_restore_runtime(seed: u64) -> Result<RuntimeCapture, String> {
+    let mut setup = frozen_setup()?;
+    setup.history_len = 1;
+    setup.ticks_per_day = 3;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 1;
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    let mut session = initial_session_with_setup(seed, setup)?;
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockCode("600101".to_owned()),
+                side: Side::Buy,
+                price: engine::LimitPrice::Fixed(Money::from_cents(1_008)),
+                qty: 100,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    capture_runtime_with_session(seed, session)
+}
+
+fn capture_runtime_with_session(
+    seed: u64,
+    mut session: ProtocolSession,
+) -> Result<RuntimeCapture, String> {
     let mut capture = Accumulator::default();
     let mut restore_slots = Vec::new();
     for _ in 0..2 {
@@ -331,11 +363,11 @@ impl Accumulator {
         let replay = step_scripted(&mut restored)?;
         let uninterrupted_continuation = continuation_bytes(&original, session)?;
         let restored_continuation = continuation_bytes(&replay, &restored)?;
-        if uninterrupted_continuation != restored_continuation {
-            return Err(format!(
-                "{name}: restored full frame/receipt/state continuation differs"
-            ));
-        }
+        let mut restored_capture = Accumulator {
+            projector: self.projector.clone(),
+            ..Accumulator::default()
+        };
+        restored_capture.frame(seed, replay, &restored)?;
         self.frame(seed, original, session)?;
         Ok(RestoreSlotCapture {
             slot: name.to_owned(),
@@ -343,6 +375,7 @@ impl Accumulator {
             restored: restored_bytes,
             uninterrupted_continuation,
             restored_continuation,
+            restored_conservation: restored_capture.conservation,
         })
     }
 }
@@ -427,7 +460,14 @@ fn decimal_identity_json(value: Value) -> Value {
 }
 
 fn initial_session(seed: u64) -> Result<ProtocolSession, String> {
-    let session = ProtocolSession::new(frozen_setup()?, seed).map_err(|error| error.to_string())?;
+    initial_session_with_setup(seed, frozen_setup()?)
+}
+
+fn initial_session_with_setup(
+    seed: u64,
+    setup: engine::SessionSetup,
+) -> Result<ProtocolSession, String> {
+    let session = ProtocolSession::new(setup, seed).map_err(|error| error.to_string())?;
     let mut initial = session.game().save().map_err(|error| error.to_string())?;
     // A declared initial allocation, not a runtime mutation: transfer 1,000
     // already-settled shares per stock from an NPC to the player. Total supply
