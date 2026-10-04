@@ -62,8 +62,10 @@ pub trait Strategy {
 
 ### §4 可插拔扩展（开闭原则）
 
-- 加新策略 = 新增一个实现 `Strategy` 的 struct + 注册到「策略工厂」（`enum StrategyKind` + `fn build(kind, params, rng) -> Box<dyn Strategy>`）。
-- **不改任何现有策略代码**。`Account` 持有 `Box<dyn Strategy>`（玩家为 `None`），对新策略透明。
+- 当前策略是 engine 内置代码，不支持运行时插件加载、动态安装或外部脚本；运行时插件属于未来需求。
+- 加新策略 = 新增策略实现，并在代码中的 `StrategyFactory` 注册分派，再补对应测试。注册是静态代码接缝，
+  不要求修改其他策略的实现逻辑；“可插拔”不表示运行时插件。
+- `Account` 持有策略接口对象（玩家不持 NPC 策略），账户执行路径不依赖具体策略实现。
 
 ### §5 隐藏公允价 V 轨道 + 机构各异的目标价
 

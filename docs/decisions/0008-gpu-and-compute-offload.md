@@ -5,13 +5,13 @@
 - **决策者 (Deciders):** msuad + Claude
 - **关联 (Related):** 细化 [ADR-0007](0007-three-deployment-frontend-framework.md) §6（GPU seam 预留）；依赖 [ADR-0005](0005-unified-engine-three-deployments.md)（tick 步进 / 种子化 RNG）、[ADR-0006](0006-npc-strategy-module.md)（Strategy trait）、[ADR-0002](0002-engine-rust-wasm.md)（Rust→WASM）。
 
-> 本 ADR 是一次**深度技术讨论**的沉淀：把「什么该上 GPU / 什么不该 / 为什么」的推理固化下来，避免日后反复重提同一组问题。**结论先行：当前规模 GPU 是负收益，但为真正的用例（蒙特卡洛回测、超大规模 NPC）留好 seam。**
+> 本 ADR 保留当时对「什么该上 GPU / 什么不该 / 为什么」的技术讨论记录。其性能估算和候选顺序不是现行路线；当前实时 GPU 不做，是否开展其他 GPU 工作需由具体需求另行决定。
 
 ---
 
 ## 上下文 (Context)
 
-ADR-0007 §6 为「未来规模化」预留了 `ComputeBackend` trait seam（`CpuBackend` + 可选 `engine-gpu`(wgpu)，默认关）。但当时只搭了接口骨架，没有回答一组关键问题：
+ADR-0007 §6 当时为「未来规模化」预留了 `ComputeBackend` trait seam（`CpuBackend` + 可选 `engine-gpu`(wgpu)，默认关）。但在本 ADR 讨论时只搭了接口骨架，没有回答一组关键问题：
 
 1. **NPC `decide` 到底该不该搬上 GPU？** （每步都要跑、看似是最热路径）
 2. **MACD/KDJ 等指标计算在哪算最划算？**
@@ -22,65 +22,64 @@ ADR-0007 §6 为「未来规模化」预留了 `ComputeBackend` trait seam（`Cp
 
 这些问题在 engine 已实现 rayon CPU 多核并行、wasm-bindgen-rayon 已跑通之后被重新审视。结论需要固化，否则后续协作者会重复踩「为什么不上 GPU」的讨论。
 
-### 关键事实基线（讨论时已验证）
+### 原讨论的技术基线（按当时验证记录）
 
-- engine **已实现 rayon CPU 多核并行**，是当前最优的多核方案。
-- **wasm-bindgen-rayon 已跑通**（nightly toolchain + `build-std` + `-C target-feature=+atomics`）→ 浏览器内也能拿多核，CPU 路径三端一致。
-- **WGSL compute shader 运行时一次编译 < 1ms**（非瓶颈，见 §技术细节 T4）。
-- 当前每 tick 的 NPC `decide` 总成本约 **~5–10μs**（数十~数百 NPC 量级）。
-- CPU↔GPU 单次 dispatch 往返约 **~200μs**（数据上传 + dispatch + 回读 + 同步）。
+- 当时记录 engine **已实现 rayon CPU 多核并行**、`wasm-bindgen-rayon` 已跑通。
+- 当时对 **WGSL compute shader** 的估算为运行时一次编译 < 1ms。
+- 当时估算每 tick NPC `decide` 成本约 **~5–10μs**（数十~数百 NPC），CPU↔GPU 单次 dispatch 往返约 **~200μs**。
+
+这些估算保留为历史技术依据，不是当前性能测量、固定性能门槛或自动启动优化工作的条件。
 
 ---
 
 ## 决策 (Decision)
 
-### §1 当前采纳（要做 / 已在做）
+### §1 当前实现与保留的界面
 
 | # | 决策 | 状态 |
 |---|------|------|
 | D1 | **rayon CPU 多核并行是当前最优**，作为 `CpuBackend` 基座 | ✅ 已实现 |
-| D2 | **MACD / KDJ 指标计算搬到 engine Rust**（rayon 加速，前端减负）—— 指标本是纯函数、批量算，rayon 直接受益 | 待落地 |
-| D3 | **跨股票并行撮合**（`par_iter` 按股票切片）—— 各股票 orderbook 独立，天然可并行 | 待落地 |
-| D4 | **蒙特卡洛回测是 GPU 的真正用例**（离线、独立、大数据量、对延迟不敏感）—— 列为未来 GPU 首个落地目标 | 已标记为 GPU 用例 |
-| D5 | **保留 `ComputeBackend` trait seam**，为未来 GPU/ML 铺路（不删除 ADR-0007 §6 的预留） | ✅ seam 在 |
+| D2 | MACD、价格 KDJ 与 OHLC KDJ 在 Rust engine 计算；批量输入使用 rayon 并行 | ✅ 已实现，Web 经宿主请求消费结果 |
+| D3 | 连续竞价与集合竞价按股票拆分独立工作并行执行，之后按稳定股票键汇总 | ✅ 主要撮合路径已实现；不据此宣称整局所有阶段都无串行边界 |
+| D4 | 蒙特卡洛 GPU 回测曾作为候选用例 | 历史候选，不是当前承诺或实施授权 |
+| D5 | 保留当前 `ComputeBackend` seam，CPU 为权威后端 | ✅ 当前实现；不代表实时 GPU 路线 |
 
-### §2 已分析但当前不做（且有明确判据，避免日后再被反复提）
+### §2 曾评估但当前不做的 GPU 方案
 
 | # | 提案 | 判据 / 结论 |
 |---|------|-------------|
-| N1 | **GPU compute shader for NPC `decide`** | **当前负收益。** CPU↔GPU 往返 ~200μs，而当前每步 CPU 仅 ~5–10μs → **GPU 慢约 40 倍**。只有单步 decide 计算量显著大于 200μs 时才有意义，那需要每步远超当前规模。**不做。** |
-| N2 | **流水线化 + 三缓冲（用户提出）** | **架构上可行，是「延迟换吞吐量」的经典 trade-off。** 流水线会把 decide 滞后 2-tick（stale 数据）。但该方案**只有在 NPC 数量 5000+ 时吞吐量收益才显现**——当前规模无收益反而引入复杂度。**当前不做，留作规模化方案。** |
-| N3 | **Strategy 数据化（`Box<dyn Strategy>` → 参数表 + 统一内核）** | 这是 **GPU 化的前提**（GPU 要数据并行、SOA 布局、不能跑动态分发）。但其本身是独立重构、影响面大、当前 CPU 下 trait 对象开销可忽略。**单独做，不绑死在 GPU 议题上。** |
+| N1 | GPU compute shader for NPC `decide` | 当时的性能估算认为 dispatch 成本不合算；实时 GPU 当前不做。该估算不是现行数值门槛或未来自动触发条件。 |
+| N2 | 流水线化 + 三缓冲 | 当时记录的 2-tick 延迟是该候选方案的代价；该方案未列入当前实施路线。 |
+| N3 | Strategy 数据化为参数表与统一内核 | 曾作为 GPU 前置优化讨论；当前策略仍用内置代码注册，不要求为 GPU 改写。 |
 
-> 三条「不做」的判据都写死在上表。**日后若有人再提，请先回答：NPC 规模是否已达 5000+？单步 decide 是否已 > 200μs？** 若否，维持本 ADR 结论。
+表中的数量和耗时估算是当时方案评估记录，不构成当前待办、性能门槛或自动复评规则。将来如提出新的性能或 GPU 需求，按当时的具体工作负载重新评估。
 
-### §3 `ComputeBackend` trait 设计草案（seam，保留）
+### §3 当前 `ComputeBackend` 接口与边界
 
 ```rust
-/// 计算后端抽象：让 NPC decide / 指标 / 演化的执行位置可切换（CPU ↔ GPU）。
-/// 不强制现在实现 GpuBackend；trait 在 = 给未来留接口、给配置开关留位置。
+/// 计算后端抽象：对齐批量 NPC decide 输入与稳定顺序输出。
 trait ComputeBackend: Send + Sync {
-    /// 提交一批 decide（异步语义）；CpuBackend 同步执行，GpuBackend 异步 dispatch。
-    fn submit_decide(&self, snapshot: &TickSnapshot, params: &[NpcParams], seeds: &[u64]) -> PendingDecide;
-    /// 轮询结果；CpuBackend 立即可得，GpuBackend 需等 GPU 完成。
-    fn poll_decide(&self, pending: PendingDecide) -> Vec<Vec<Intent>>;
-    /// 演化（指标/状态推进），就地更新 markets。
-    fn evolve_v(&self, markets: &mut [Market], params: &VParams, seeds: &[u64]);
+    fn decide_all(
+        &self,
+        strategies: &[StrategyData],
+        market: &MarketView,
+        selves: &[SelfView],
+        seeds: &[u64],
+        config: &GameConfig,
+    ) -> Result<Vec<Vec<Intent>>, ComputeError>;
 }
 
-// CpuBackend : ComputeBackend  → rayon 同步执行（当前唯一实现）
-// GpuBackend : ComputeBackend  → wgpu 异步 dispatch + 轮询（未来）
-// ComputeMode { Cpu, Gpu, Auto } → 配置切换；默认 Cpu。
+// CpuBackend 使用 rayon；Auto 当前等同 Cpu；显式 Gpu 请求返回 BackendUnavailable。
 ```
 
-- `CpuBackend` 是当前唯一实现（rayon 同步），trait 的存在只为了让「换 GPU」成为**配置切换而非改代码**。
-- `Auto` 模式留位：未来可按规模自动选 CPU/GPU，但当前 `Auto == Cpu`。
+- 撮合、结算和路由不经 `ComputeBackend`；`engine-gpu` 只探测设备，计算仍委托 CPU。
+- 保留接口是当前代码事实，不承诺通过配置即可切换真实 GPU，也不意味着实时 GPU 已进入路线。
 
 ---
 
 ## 技术细节 (Technical Notes)
 
-讨论中澄清的、容易被误解的几条 GPU/计算知识，固化以防重复踩坑：
+以下保留当时讨论中的 GPU/计算知识记录；其中性能数值是历史估算，不代表当前机器上的复测结论：
 
 - **T1. Compute shader ≠ 图形管线。** Compute shader 是 GPU 的「通用并行计算单元」，与顶点/片元图形渲染无关。所有 GPGPU 框架（CUDA / OpenCL / wgpu / WebGPU compute）用的是**同一个概念**——它就是「能在 GPU 上跑的数据并行内核」。
 - **T2. wgpu 统一 native + Web。** wgpu 在 native 后端走 Vulkan(DX12/Metal) 各平台图形 API，在浏览器走 WebGPU 标准——**一份 WGSL 内核三端复用**（契合 ADR-0005 三端同构）。这也是我们选 wgpu 而非裸 Vulkan/CUDA 的原因。
@@ -91,47 +90,41 @@ trait ComputeBackend: Send + Sync {
 
 ---
 
-## 收益排序表 (Payoff Ranking)
+## 历史方案收益分析（非当前路线）
 
-> 决定**做事顺序**的依据：先做低难度高收益的，GPU 高难度低（当前）收益的放最后。
+> 下表保留原技术讨论的候选记录；已实现项标明现状，其他项目不构成实施顺序或授权。
 
 | offload 目标 | 收益 | 难度 | 备注 |
 |---|---|---|---|
-| MACD/KDJ → engine Rust（rayon） | ⭐⭐⭐ | 低 | D2，优先做；指标纯函数 + 批量，rayon 直接受益，前端减负 |
-| 跨股票并行撮合（`par_iter`） | ⭐⭐ | 低 | D3，orderbook 跨股票独立，天然并行 |
-| positions `Vec` 重构（消除 `deepNormalize`） | ⭐⭐ | 低 | 顺带消除每 tick 的深度规范化开销 |
-| 蒙特卡洛回测（GPU） | ⭐⭐⭐ | 中 | D4，**GPU 真正用例**：离线、独立、大数据量、对延迟不敏感 |
-| NPC `decide` GPU 流水线 | 当前**负收益** | 高 | N1/N2，需 5000+ NPC 才回正；现在做反而慢 40 倍 |
+| MACD/KDJ → engine Rust（rayon） | 已实现 | — | D2 当前路径 |
+| 按股票拆分并行撮合 | 已实现主要路径 | — | D3 当前路径；阶段边界见 §1 |
+| positions `Vec` 重构 | 未列为当前事项 | — | 历史优化候选，不要求替换现有数据结构 |
+| 蒙特卡洛回测（GPU） | 未实现 | — | 历史候选，需求确定后另行评估 |
+| NPC `decide` GPU 流水线 | 当前不做 | — | 历史性能估算不作为当前门槛 |
 
 ---
 
 ## 备选方案 (Alternatives Considered)
 
-- **A. 现在就把 NPC decide 搬上 GPU** — 否决（N1）：往返 200μs vs 当前 5–10μs，慢 40 倍。负收益。判据写死在 §2。
+- **A. 现在就把 NPC decide 搬上 GPU** — 当时因预估往返成本较高而不选；实时 GPU 当前仍不做，该估算不作为永久触发阈值。
 - **B. 用 GPU f32 做 decide + 撮合** — 否决（T3）：跨厂商非确定，违反铁律一（TDD 可断言性）。必须整数/定点。
-- **C. 删掉 `ComputeBackend` seam，等真要 GPU 再加** — 否决：seam 成本极低（一个 trait + `ComputeMode` 枚举），且让「换后端」=配置切换而非改代码；删了反而把未来路堵窄。保留（D5）。
-- **D. 指标计算留在前端 TS 算** — 否决（D2）：前端算重复了 engine 已有的价格序列、加重 UI 线程、跨端可能算出不一致结果。搬到 engine Rust 统一算、rayon 加速、前端只展示。
-- **E. 流水线 + 三缓冲现在就上** — 否决（N2）：架构可行，但当前规模无吞吐收益、且引入 2-tick stale 复杂度。留作 5000+ NPC 时的方案。
+- **C. 删除 `ComputeBackend` seam** — 当前保留 seam；其存在不代表真实 GPU 可由配置切换。
+- **D. 指标计算留在前端 TS 算** — 现行 MACD/KDJ 由 engine Rust 计算，前端通过宿主消费结果。
+- **E. 流水线 + 三缓冲** — 历史候选，不在当前路线。
 
 ---
 
 ## 后果 (Consequences)
 
 - **正面：**
-  - 「该不该上 GPU」有了**有判据的结论**，不再反复讨论；判据可量化（NPC ≥ 5000？单步 > 200μs？）。
+  - 原讨论记录了当时对 NPC GPU dispatch 的成本判断；该估算不替代未来对实际负载的测量。
   - rayon CPU 并行 + wasm-bindgen-rayon 三端一致，是当前最优且已验证的多核路径。
-  - `ComputeBackend` seam 保留 → 未来 GPU/ML 落地是「加实现 + 配置切换」，不改调用方。
-  - 蒙特卡洛回测被明确为 GPU 首个落地目标，方向聚焦。
+  - 当前 `ComputeBackend` seam 保持批量决策调用边界；未承诺真实 GPU/ML 可直接接入。
   - 整数/定点确定性方案与 `Money=i64` 契合，TDD 可断言性不破。
 - **负面 / 代价：**
-  - D2/D3（指标搬 engine、跨股票并行撮合）是**待落地的实打实工作量**，本 ADR 只定方向。
-  - 蒙特卡洛 GPU 回测（D4）依赖 wgpu 重依赖 + 整数内核，是中难度项，需单独设计。
-  - Strategy 数据化（N3）作为 GPU 前提被单独列项，未来若启动 GPU decide 必须先做它。
+  - 真实 GPU 内核与 GPU 回测均未实现；是否开展需由后续具体需求决定。
 - **后续需要做的：**
-  - **优先**：D2（MACD/KDJ 搬 engine）→ D3（跨股票并行撮合）→ positions Vec 重构。三者低难度高收益。
-  - **后续**：蒙特卡洛回测 GPU 化设计（独立 spec/ADR，落实整数内核 + wgpu dispatch）。
-  - **触发条件**：当 NPC 规模逼近 5000 或单步 decide > 100μs 时，重新评估 N1/N2（流水线 + Strategy 数据化 N3）。
-  - 本 ADR 不新增开放问题（讨论已闭环）；如规模演进触发重评，届时新建 ADR 推翻/细化本条。
+  - 不设本 ADR 自动触发的 GPU、三缓冲或 positions `Vec` 重构任务；未来需求应独立确定范围与验证条件。
 
 ---
 
