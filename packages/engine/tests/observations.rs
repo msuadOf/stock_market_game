@@ -320,18 +320,49 @@ fn account_risk_uses_each_accounts_cost_weight_and_explicit_references() {
 }
 
 #[test]
-fn account_risk_rejects_invalid_prices_costs_and_references() {
+fn account_risk_accepts_nonpositive_net_cost_without_inventing_a_return() {
     let code = StockCode("000001".into());
-    let invalid_cost = BTreeMap::from([(
+    for cost in [None, Some(i64::MIN), Some(-157), Some(0)] {
+        let positions = BTreeMap::from([(
+            code.clone(),
+            RiskPositionInput {
+                qty: 100,
+                cost_price: cost.map(price),
+                last_price: price(800),
+                peak_price_since_entry: Some(price(1_000)),
+            },
+        )]);
+        let risk = build_account_risk_observation(
+            price(20_000),
+            &positions,
+            Some(price(100_000)),
+            Some(price(125_000)),
+        )
+        .expect("非正净成本是合法持仓事实");
+        let position = &risk.positions[&code];
+        assert_eq!(risk.equity, price(100_000));
+        assert_eq!(position.market_value, price(80_000));
+        assert_eq!(position.unrealized_return, None);
+        assert_close(position.equity_weight.unwrap(), 0.8);
+        assert_close(position.drawdown_from_position_peak.unwrap(), -0.2);
+        assert_close(risk.return_from_reference.unwrap(), 0.0);
+        assert_close(risk.drawdown_from_peak.unwrap(), -0.2);
+    }
+}
+
+#[test]
+fn account_risk_rejects_invalid_market_prices_peaks_and_references() {
+    let code = StockCode("000001".into());
+    let invalid_price = BTreeMap::from([(
         code.clone(),
         RiskPositionInput {
             qty: 100,
-            cost_price: Some(Money::ZERO),
-            last_price: price(800),
+            cost_price: Some(price(-157)),
+            last_price: Money::ZERO,
             peak_price_since_entry: None,
         },
     )]);
-    assert!(build_account_risk_observation(Money::ZERO, &invalid_cost, None, None).is_err());
+    assert!(build_account_risk_observation(Money::ZERO, &invalid_price, None, None).is_err());
 
     let invalid_peak = BTreeMap::from([(
         code,

@@ -173,7 +173,7 @@ test("Given an already-published tick batch, when a CivilUpdate shares its tick 
       })(),
       seq_from: 1,
       seq_to: 2,
-      refresh: { ticks_per_day: 1, snapshot: snapshot(1, 2), securities: [{ code: "600000", exchange: "Shanghai", initial_price: 1_000, category: "MainBoard", limit_pct: 0.1, tick: 1, total_shares: "1000000", float_shares: 1_000_000 }], intraday: [frame(1, 0, ["600000"])], public_publication_ids: [] },
+      refresh: { ticks_per_day: 1, snapshot: snapshot(1, 2), securities: [{ code: "600000", exchange: "Shanghai", initial_price: "1000", category: "MainBoard", limit_pct: 0.1, tick: "1", total_shares: "1000000", float_shares: 1_000_000 }], intraday: [frame(1, 0, ["600000"])], public_publication_ids: [] },
     },
   }, civilDate: "2030-01-03", revision: "1" });
   assert.equal(publications, 2);

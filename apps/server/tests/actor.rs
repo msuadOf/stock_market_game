@@ -269,7 +269,7 @@ fn public_baseline_serializes_only_the_player_account() {
         json["accounts"].as_object().map(|accounts| accounts.len()),
         Some(1)
     );
-    assert_eq!(json["accounts"]["0"]["cash"], 10_000);
+    assert_eq!(json["accounts"]["0"]["cash"], "10000");
     assert!(json["accounts"].get("1").is_none());
     assert!(!json.to_string().contains("9999999"));
 }

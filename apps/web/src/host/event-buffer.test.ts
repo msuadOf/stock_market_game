@@ -8,7 +8,7 @@ import {
   uiBackpressurePolicy,
 } from "./event-buffer.test-support.ts";
 
-const tick = (seq: number, code: string, close: number): EngineEvent => ({
+const tick = (seq: number, code: string, close: string): EngineEvent => ({
   PriceTick: {
     seq,
     tick: seq,
@@ -16,9 +16,9 @@ const tick = (seq: number, code: string, close: number): EngineEvent => ({
     last_price: close,
     daily_candle: {
       time: 0,
-      open: 100,
+      open: "100",
       high: close,
-      low: 100,
+      low: "100",
       close,
       volume: seq,
       trade_stats: { turnover_cents: "9007200000000000", trade_count: 7 },
@@ -42,39 +42,39 @@ describe("fast-forward event buffer", () => {
         seq: 4,
         day: 1,
         closed_daily_candles: {
-          AAA: { time: 0, open: 100, high: 120, low: 90, close: 110, volume: 20 },
+          AAA: { time: 0, open: "100", high: "120", low: "90", close: "110", volume: 20 },
         },
       },
     };
     const events = [
-      tick(1, "AAA", 101),
-      tick(60, "AAA", 102),
+      tick(1, "AAA", "101"),
+      tick(60, "AAA", "102"),
       boundary,
-      tick(61, "AAA", 105),
-      tick(119, "AAA", 106),
-      tick(120, "AAA", 107),
-      tick(121, "AAA", 108),
-      tick(122, "BBB", 205),
+      tick(61, "AAA", "105"),
+      tick(119, "AAA", "106"),
+      tick(120, "AAA", "107"),
+      tick(121, "AAA", "108"),
+      tick(122, "BBB", "205"),
     ];
 
     assert.deepEqual(compactFastForwardEvents(events, 100, 60, 14_400, 0), [
       boundary,
-      tick(120, "AAA", 107),
-      tick(121, "AAA", 108),
-      tick(122, "BBB", 205),
+      tick(120, "AAA", "107"),
+      tick(121, "AAA", "108"),
+      tick(122, "BBB", "205"),
     ]);
   });
 
   it("keeps one auction indication per six-second volume slot and the final uncross event", () => {
-    const auction = (seq: number, tickValue: number, price: number): EngineEvent => ({
+    const auction = (seq: number, tickValue: number, price: string): EngineEvent => ({
       AuctionTick: { seq, tick: tickValue, phase: "CallAuction", code: "AAA", indicative_price: price, matched_volume: seq, imbalance: 0 },
     });
     const completed: EngineEvent = {
-      AuctionCompleted: { seq: 4, tick: 900, phase: "CallAuction", code: "AAA", clearing_price: 103, matched_volume: 20 },
+      AuctionCompleted: { seq: 4, tick: 900, phase: "CallAuction", code: "AAA", clearing_price: "103", matched_volume: 20 },
     };
     assert.deepEqual(compactFastForwardEvents([
-      auction(1, 1, 101), auction(2, 6, 102), auction(3, 7, 103), completed,
-    ]), [auction(2, 6, 102), auction(3, 7, 103), completed]);
+      auction(1, 1, "101"), auction(2, 6, "102"), auction(3, 7, "103"), completed,
+    ]), [auction(2, 6, "102"), auction(3, 7, "103"), completed]);
   });
 
   it("retains errors and only the newest trades needed by the visible tape", () => {
@@ -82,7 +82,7 @@ describe("fast-forward event buffer", () => {
       IntentRejected: { seq: 5, account: 1, code: "AAA", reason: "InsufficientCash" },
     };
     const trades = Array.from({ length: 4 }, (_, i): EngineEvent => ({
-      Trade: { seq: i + 1, code: "AAA", qty: 1, price: 100 + i, maker: 1, taker: 2 },
+      Trade: { seq: i + 1, code: "AAA", qty: 1, price: String(100 + i), maker: 1, taker: 2 },
     }));
 
     assert.deepEqual(compactFastForwardEvents([...trades, rejected], 2), [trades[2], trades[3], rejected]);
@@ -107,8 +107,8 @@ describe("fast-forward event buffer", () => {
       },
     };
 
-    assert.deepEqual(compactFastForwardEvents([tick(1, "AAA", 101), civilAdvance, disclosure]), [
-      tick(1, "AAA", 101),
+    assert.deepEqual(compactFastForwardEvents([tick(1, "AAA", "101"), civilAdvance, disclosure]), [
+      tick(1, "AAA", "101"),
       civilAdvance,
       disclosure,
     ]);
@@ -120,7 +120,7 @@ describe("fast-forward event buffer", () => {
         seq: 1,
         day: 1,
         closed_daily_candles: new Map([
-          ["AAA", { time: 0, open: 100, high: 110, low: 90, close: 105, volume: 20 }],
+          ["AAA", { time: 0, open: "100", high: "110", low: "90", close: "105", volume: 20 }],
         ]),
       },
     } as unknown as EngineEvent;
@@ -130,7 +130,7 @@ describe("fast-forward event buffer", () => {
         seq: 1,
         day: 1,
         closed_daily_candles: {
-          AAA: { time: 0, open: 100, high: 110, low: 90, close: 105, volume: 20 },
+          AAA: { time: 0, open: "100", high: "110", low: "90", close: "105", volume: 20 },
         },
       },
     }]);
@@ -156,7 +156,7 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: new Map([
-          ["600101", { time: 1, open: 1000, high: 1010, low: 990, close: 1005, volume: 100 }],
+          ["600101", { time: 1, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 }],
         ]),
       },
     }, {
@@ -174,7 +174,7 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: {
-          "600101": { time: 1, open: 1000, high: 1010, low: 990, close: 1005, volume: 100 },
+          "600101": { time: 1, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 },
         },
       },
     }, {

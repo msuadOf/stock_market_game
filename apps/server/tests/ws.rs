@@ -19,9 +19,9 @@ fn sample_setup_json() -> serde_json::Value {
             "code": "600101",
             "exchange": "Shanghai",
             "category": "MainBoard",
-            "initial_price": 1000,
+            "initial_price": "1000",
             "limit_pct": 0.10,
-            "tick": 1,
+            "tick": "1",
             "total_shares": "10000000",
             "float_shares": 0
         }],
@@ -29,7 +29,7 @@ fn sample_setup_json() -> serde_json::Value {
             "retail_count": 2,
             "inst_count": 1,
             "hot_count": 1,
-            "retail_cash_median": 10_000_000
+            "retail_cash_median": "10000000"
         },
         "config": engine::GameConfig::proposed_defaults(),
         "strategy_params": {
@@ -350,8 +350,23 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
         serde_json::json!({
             "SubmitIntent": {
-                "request_id": 7,
+                "request_id": 6,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
+            }
+        }).to_string(),
+    )).await.unwrap();
+    let numeric_price_error = ws.next().await.unwrap().unwrap().into_text().unwrap();
+    let numeric_price_error: serde_json::Value = serde_json::from_str(&numeric_price_error).unwrap();
+    assert_eq!(
+        numeric_price_error["GatewayError"]["code"],
+        "INVALID_CLIENT_COMMAND"
+    );
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        serde_json::json!({
+            "SubmitIntent": {
+                "request_id": 7,
+                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();
@@ -648,7 +663,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
             serde_json::json!({ "SubmitIntent": { "request_id": 8,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
-                    "price": { "Fixed": 1000 }, "qty": 100 } } } })
+                    "price": { "Fixed": "1000" }, "qty": 100 } } } })
             .to_string(),
         ))
         .await

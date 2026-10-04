@@ -1,3 +1,4 @@
+import { moneyToChartNumber } from "../utils/money.ts";
 import type { KlinePoint } from "../components/PriceChart";
 import type { DailyCandleSnap, EngineEvent, Snapshot } from "../types/engine";
 
@@ -9,11 +10,12 @@ export interface SyncedCandles {
 export function toChartCandle(candle: DailyCandleSnap): KlinePoint {
   return {
     time: candle.time as KlinePoint["time"],
-    open: candle.open / 100,
-    high: candle.high / 100,
-    low: candle.low / 100,
-    close: candle.close / 100,
+    open: moneyToChartNumber(candle.open) / 100,
+    high: moneyToChartNumber(candle.high) / 100,
+    low: moneyToChartNumber(candle.low) / 100,
+    close: moneyToChartNumber(candle.close) / 100,
     volume: candle.volume,
+    rawPrices: Object.freeze({ open: candle.open, high: candle.high, low: candle.low, close: candle.close }),
     ...(candle.trade_stats === undefined || candle.trade_stats === null ? {} : {
       tradeStats: {
         turnoverCents: candle.trade_stats.turnover_cents,

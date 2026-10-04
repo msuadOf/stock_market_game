@@ -166,10 +166,10 @@ test("Given a generation-correlated Worker order response, when read, then it pr
   const worker = new FakeWorker();
   const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
-    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }] });
   assert.deepEqual(await pending, [{
-    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }]);
 });
 

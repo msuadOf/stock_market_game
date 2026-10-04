@@ -44,7 +44,7 @@
 
 实现及对应的稀疏参与者用例已完成。同一输入指纹 `a9d4a0bf75c12feb`、120 tick 的单次测量：1／8 worker 完整 `step` 为 31.473／23.133 秒，约 1.36 倍；P4 为 14.083／9.682 秒。两次都有 27 个计划子单或成交、玩家与 NPC 留簿委托；8 worker 全进程约 172% CPU。上一版单次完整 `step` 为 47.349／34.132 秒、P4 为 28.487／19.781 秒。原始输出在 `.tmp/receipt-projection-{1,8}.json` 和同名 `.time`；结果不同运行时刻、并发受理也允许不同，不把这组差值表述为稳定或完全可归因的提速。P4 仍是最大阶段，整轮并行度继续受单股负载与反馈协调影响。
 
-上述 `.tmp` 测量输出仅保留在本地，未作为 Git 证据提交；测量输入已保存为 `packages/engine/examples/production_entry_workload_20_phases.json`，与当次输入字节相同。可用 `cargo build -p engine --release --example production_entry_performance -j 16` 编译，再分别运行 `target/release/examples/production_entry_performance packages/engine/examples/production_entry_workload_20_phases.json 1` 和末尾参数为 `8` 的命令复测。输出会包含输入指纹，便于核对工作负载。
+上述 `.tmp` 测量输出仅保留在本地，未作为 Git 证据提交；测量输入已保存为 `packages/engine/examples/production_entry_workload_20_phases.json`，与当次输入字节相同。历史复测可在对应源码上用 `cargo build -p engine --release --example production_entry_performance -j 16` 编译，再分别运行 `target/release/examples/production_entry_performance packages/engine/examples/production_entry_workload_20_phases.json 1` 和末尾参数为 `8` 的命令。输出会包含输入指纹，便于核对工作负载。该输入保留当时的数字金额原字节；[ADR-0031](../../decisions/0031-money-decimal-cents-wire.md) 生效后不能直接用于当前解析器，当前测量须另建分字符串输入并记录新指纹，不覆盖原件或建立旧格式兼容。
 
 ## 已撤回实验：市场簿共享只读版本
 

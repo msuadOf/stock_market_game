@@ -1,3 +1,4 @@
+import { addMoney, subtractMoney, compareMoney, moneyToBigInt, moneyToChartNumber } from "../utils/money.ts";
 import { useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
@@ -5,7 +6,7 @@ import { publicCompanyForStock } from "../components/company/company-catalog.ts"
 import { MarketGrid } from "../components/MarketGrid.tsx";
 import { PriceChart } from "../components/PriceChart.tsx";
 import { STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
-import type { SessionSetup } from "../types/engine.ts";
+import type { Cents, SessionSetup } from "../types/engine.ts";
 import { MobileGameClock } from "../mobile/MobileGameClock.tsx";
 import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent } from "../mobile/market-model.ts";
@@ -14,7 +15,7 @@ import { store, type RootState } from "../store/store.ts";
 import { selectCompany } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import { aSharePriceLimits } from "../utils/trade-input.ts";
-import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "../utils/format.ts";
+import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
 import { portfolioInputEqual, selectPortfolioInput } from "./portfolio-selector.ts";
 import { valueHeldPosition } from "./position-valuation.ts";
@@ -25,8 +26,8 @@ const MAX_DAILY_CANDLES = 360;
 function usePortfolio() {
   const { account, heldPrices } = useSelector(selectPortfolioInput, portfolioInputEqual);
   return useMemo(() => {
-    const cash = account?.cash ?? 0;
-    const availableCash = cash - (account?.reserved_cash ?? 0);
+    const cash = account?.cash ?? "0";
+    const availableCash = subtractMoney(cash, account?.reserved_cash ?? "0");
     const positions = !account ? [] : Object.entries(account.positions)
       .filter(([, position]) => position.qty > 0)
       .map(([code, position]) => {
@@ -40,9 +41,9 @@ function usePortfolio() {
           ...valuation,
         };
       });
-    const totalMarketValue = positions.reduce((sum, position) => sum + position.marketValue, 0);
-    const totalPnl = positions.reduce((sum, position) => sum + position.pnl, 0);
-    return { positions, availableCash, totalMarketValue, totalAssets: cash + totalMarketValue, totalPnl };
+    const totalMarketValue = positions.reduce((sum, position) => addMoney(sum, position.marketValue), "0");
+    const totalPnl = positions.reduce((sum, position) => addMoney(sum, position.pnl), "0");
+    return { positions, availableCash, totalMarketValue, totalAssets: addMoney(cash, totalMarketValue), totalPnl };
   }, [account, heldPrices]);
 }
 
@@ -73,9 +74,9 @@ export function DesktopDayTag() {
 export function DesktopAssets() {
   const { totalAssets, availableCash, totalPnl } = usePortfolio();
   return <div className="assets">
-    <div className="asset"><span className="label">总资产</span><span className="value">{formatYuanAmount(totalAssets / 100)}</span><span className="unit">元</span></div>
-    <div className="asset"><span className="label">可用资金</span><span className="value">{formatYuanAmount(availableCash / 100)}</span><span className="unit">元</span></div>
-    <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}</span><span className="unit">元</span></div>
+    <div className="asset"><span className="label">总资产</span><span className="value">{formatCentsAmount(totalAssets)}</span><span className="unit">元</span></div>
+    <div className="asset"><span className="label">可用资金</span><span className="value">{formatCentsAmount(availableCash)}</span><span className="unit">元</span></div>
+    <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(compareMoney(totalPnl, "0"))}`}>{compareMoney(totalPnl, "0") >= 0 ? "+" : ""}{formatCentsAmount(totalPnl)}</span><span className="unit">元</span></div>
   </div>;
 }
 
@@ -100,14 +101,14 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, se
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const { chartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   if (!market) return null;
-  const diff = market.last_price - market.last_close;
+  const diff = subtractMoney(market.last_price, market.last_close);
   const pct = priceChangePercent(market.last_price, market.last_close);
-  const cls = colorClass(diff);
-  const rowCls = (price: number) => price > market.last_close ? "up" : price < market.last_close ? "down" : "flat";
+  const cls = colorClass(compareMoney(diff, "0"));
+  const rowCls = (price: Cents) => colorClass(compareMoney(price, market.last_close));
   return <>
     <div className="chart-tabs">{(["分时", "日K"] as const).map((period) => <button key={period} className={`chart-tab ${chartPeriod === period ? "active" : ""}`} onClick={() => setChartPeriod(period)}>{period}</button>)}</div>
-    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div></div>
-    <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close / 100} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} />
+    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div></div>
+    <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={moneyToChartNumber(market.last_close) / 100} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} />
     {chartPeriod === "日K" && <div className="kline-period-bar">{[20, 60, 120, 240, MAX_DAILY_CANDLES].map((days) => <button key={days} className={`kline-period-btn ${klineDays === days ? "active" : ""}`} onClick={() => setKlineDays(days)}>{days}日</button>)}</div>}
     <div className="order-book"><div className="ob-title">五档盘口（手）</div><div className="ob-rows">
       {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{index + 1}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>).reverse()}
@@ -121,20 +122,20 @@ interface TradeMarketControlsProps { activeSetup: SessionSetup; tradeCode: strin
 export function TradeMarketControls({ activeSetup, tradeCode, setPriceText, setQtyText }: TradeMarketControlsProps) {
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[tradeCode]);
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
-  const availableCash = (account?.cash ?? 0) - (account?.reserved_cash ?? 0);
-  const price = market?.last_price ?? 0;
-  const maxQty = price > 0 ? Math.floor(availableCash / price / 100) * 100 : 0;
+  const availableCash = subtractMoney(account?.cash ?? "0", account?.reserved_cash ?? "0");
+  const price = market?.last_price ?? "0";
+  const maxLots = compareMoney(price, "0") > 0 ? moneyToBigInt(availableCash) / moneyToBigInt(price) / 100n : 0n;
   return <>
-    <div className="quick-position">{[{ label: "全仓", pct: 1 }, { label: "1/2", pct: .5 }, { label: "1/3", pct: 1 / 3 }, { label: "1/4", pct: .25 }].map((button) => { const quantity = Math.floor((maxQty * button.pct) / 100) * 100; return <button key={button.label} className="qp-btn" onClick={() => setQtyText(String(Math.max(100, quantity)))} disabled={quantity < 100}>{button.label}</button>; })}</div>
-    {market && (() => { const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode); if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>; const { up, down } = aSharePriceLimits(market.last_close, stock.category); return <div className="limit-links"><button className="ll-btn down" onClick={() => setPriceText(yuan(down))}>跌停 {yuan(down)}</button><button className="ll-btn up" onClick={() => setPriceText(yuan(up))} disabled={market.last_price >= up}>涨停 {yuan(up)}</button></div>; })()}
+    <div className="quick-position">{[{ label: "全仓", divisor: 1n }, { label: "1/2", divisor: 2n }, { label: "1/3", divisor: 3n }, { label: "1/4", divisor: 4n }].map((button) => { const quantity = maxLots / button.divisor * 100n; return <button key={button.label} className="qp-btn" onClick={() => setQtyText(String(quantity))} disabled={quantity < 100n}>{button.label}</button>; })}</div>
+    {market && (() => { const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode); if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>; const { up, down } = aSharePriceLimits(market.last_close, stock.category); return <div className="limit-links"><button className="ll-btn down" onClick={() => setPriceText(yuan(down))}>跌停 {yuan(down)}</button><button className="ll-btn up" onClick={() => setPriceText(yuan(up))} disabled={compareMoney(market.last_price, up) >= 0}>涨停 {yuan(up)}</button></div>; })()}
   </>;
 }
 
 export function PositionsPanel({ onOpenMarket }: { onOpenMarket: () => void }) {
   const { positions, availableCash, totalMarketValue, totalAssets, totalPnl } = usePortfolio();
-  return <><section className="mobile-portfolio-summary" aria-label="账户资产概览"><div className="mobile-assets-total"><span>总资产</span><strong>{formatYuanAmount(totalAssets / 100)}元</strong><small>可用资金 {formatYuanAmount(availableCash / 100)}元</small></div><div><span>持仓市值</span><b>{formatYuanAmount(totalMarketValue / 100)}元</b></div><div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></div></section><div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positions.length} 只</span></div><div className="mobile-position-table-wrap"><table className="grid-table"><thead><tr><th>代码</th><th className="num">持仓</th><th className="num">可卖</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead><tbody>
+  return <><section className="mobile-portfolio-summary" aria-label="账户资产概览"><div className="mobile-assets-total"><span>总资产</span><strong>{formatCentsAmount(totalAssets)}元</strong><small>可用资金 {formatCentsAmount(availableCash)}元</small></div><div><span>持仓市值</span><b>{formatCentsAmount(totalMarketValue)}元</b></div><div><span>浮动盈亏</span><b className={colorClass(compareMoney(totalPnl, "0"))}>{compareMoney(totalPnl, "0") >= 0 ? "+" : ""}{formatCentsAmount(totalPnl)}元</b></div></section><div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positions.length} 只</span></div><div className="mobile-position-table-wrap"><table className="grid-table"><thead><tr><th>代码</th><th className="num">持仓</th><th className="num">可卖</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead><tbody>
     {positions.length === 0 && <tr><td colSpan={6} className="empty"><div className="mobile-position-empty"><b>暂无持仓</b><span>从行情选择股票，通过“交易”买入后会显示在这里。</span><button type="button" onClick={onOpenMarket}>去看行情</button></div></td></tr>}
-    {positions.map((position) => <tr key={position.code}><td className="mono">{position.code} {STOCK_NAMES[position.code]}</td><td className="num">{position.qty}</td><td className="num">{position.sellableQty}</td><td className="num">{yuan(position.avgCost)}</td><td className="num">{formatYuanAmount(position.marketValue / 100)}元</td><td className={`num ${colorClass(position.pnl)}`}>{position.pnl >= 0 ? "+" : ""}{formatYuanAmount(position.pnl / 100)}元</td></tr>)}
+    {positions.map((position) => <tr key={position.code}><td className="mono">{position.code} {STOCK_NAMES[position.code]}</td><td className="num">{position.qty}</td><td className="num">{position.sellableQty}</td><td className="num">{yuan(position.avgCost)}</td><td className="num">{formatCentsAmount(position.marketValue)}元</td><td className={`num ${colorClass(compareMoney(position.pnl, "0"))}`}>{compareMoney(position.pnl, "0") >= 0 ? "+" : ""}{formatCentsAmount(position.pnl)}元</td></tr>)}
   </tbody></table></div></>;
 }
 
@@ -144,14 +145,14 @@ export function TradesPanel() {
     (state: RootState) => Object.fromEntries(Object.entries(state.snapshot.snapshot?.markets ?? {}).map(([code, market]) => [code, market.last_close])),
     (left, right) => Object.keys(left).length === Object.keys(right).length && Object.entries(left).every(([code, value]) => right[code] === value),
   );
-  return <div className="trade-feed"><table className="grid-table"><thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量（手）</th></tr></thead><tbody>{trades.length === 0 && <tr><td colSpan={4} className="empty">等待成交…</td></tr>}{trades.map((trade) => { const diff = trade.price - (lastCloses[trade.code] ?? trade.price); return <tr key={trade.seq}><td className="mono">{trade.seq}</td><td className="mono">{trade.code}</td><td className={`num ${colorClass(diff)}`}>{yuan(trade.price)}</td><td className="num">{formatSharesAsLots(trade.qty)}</td></tr>; })}</tbody></table></div>;
+  return <div className="trade-feed"><table className="grid-table"><thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量（手）</th></tr></thead><tbody>{trades.length === 0 && <tr><td colSpan={4} className="empty">等待成交…</td></tr>}{trades.map((trade) => { const diff = subtractMoney(trade.price, lastCloses[trade.code] ?? trade.price); return <tr key={trade.seq}><td className="mono">{trade.seq}</td><td className="mono">{trade.code}</td><td className={`num ${colorClass(compareMoney(diff, "0"))}`}>{yuan(trade.price)}</td><td className="num">{formatSharesAsLots(trade.qty)}</td></tr>; })}</tbody></table></div>;
 }
 
 interface UserPanelProps { running: boolean; pauseAfterClose: boolean; pauseBeforeOpen: boolean; pausePreferencesPending: boolean; deliveryMode: DeliveryMode | null; deliveryModes: readonly DeliveryMode[]; deliveryLabels: Record<DeliveryMode, string>; onPauseAfterCloseChange: (value: boolean) => void; onPauseBeforeOpenChange: (value: boolean) => void; onDeliveryModeChange: (mode: DeliveryMode) => void; onSave: () => void; onLoad: () => void; onSaveFile: () => void; onLoadFile: () => void }
 export function UserPanel(props: UserPanelProps) {
   const day = useSelector((state: RootState) => state.snapshot.snapshot?.day ?? 0);
   const { totalAssets, availableCash, totalPnl } = usePortfolio();
-  return <><section className="mobile-user-overview" aria-label="我的账户"><span>模拟账户</span><strong>{formatYuanAmount(totalAssets / 100)}元</strong><div><span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span><span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span></div></section><section className="mobile-game-state" aria-label="游戏状态"><div><span>当前进度</span><b>第 {day + 1} 个交易日</b></div><div><span>模拟状态</span><b>{props.running ? "交易中" : "已暂停"}</b></div><label><input type="checkbox" checked={props.pauseAfterClose} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseAfterCloseChange(event.currentTarget.checked)} />收盘后暂停复盘</label><label><input type="checkbox" checked={props.pauseBeforeOpen} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseBeforeOpenChange(event.currentTarget.checked)} />开盘前暂停查看资讯</label>{props.deliveryMode !== null && props.deliveryModes.length > 0 && <div><label htmlFor="mobile-delivery-mode">刷新方式</label><select id="mobile-delivery-mode" value={props.deliveryMode} onChange={(event) => props.onDeliveryModeChange(event.target.value as DeliveryMode)}>{props.deliveryModes.map((mode) => <option key={mode} value={mode}>{props.deliveryLabels[mode]}</option>)}</select></div>}</section><div className="mobile-user-section"><h4>数据管理</h4><button type="button" onClick={props.onSave}>保存当前进度</button><button type="button" onClick={props.onLoad}>读取本地进度</button><button type="button" onClick={props.onSaveFile}>另存为文件</button><button type="button" onClick={props.onLoadFile}>从文件读取</button></div></>;
+  return <><section className="mobile-user-overview" aria-label="我的账户"><span>模拟账户</span><strong>{formatCentsAmount(totalAssets)}元</strong><div><span>可用资金 <b>{formatCentsAmount(availableCash)}元</b></span><span>持仓盈亏 <b className={colorClass(compareMoney(totalPnl, "0"))}>{compareMoney(totalPnl, "0") >= 0 ? "+" : ""}{formatCentsAmount(totalPnl)}元</b></span></div></section><section className="mobile-game-state" aria-label="游戏状态"><div><span>当前进度</span><b>第 {day + 1} 个交易日</b></div><div><span>模拟状态</span><b>{props.running ? "交易中" : "已暂停"}</b></div><label><input type="checkbox" checked={props.pauseAfterClose} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseAfterCloseChange(event.currentTarget.checked)} />收盘后暂停复盘</label><label><input type="checkbox" checked={props.pauseBeforeOpen} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseBeforeOpenChange(event.currentTarget.checked)} />开盘前暂停查看资讯</label>{props.deliveryMode !== null && props.deliveryModes.length > 0 && <div><label htmlFor="mobile-delivery-mode">刷新方式</label><select id="mobile-delivery-mode" value={props.deliveryMode} onChange={(event) => props.onDeliveryModeChange(event.target.value as DeliveryMode)}>{props.deliveryModes.map((mode) => <option key={mode} value={mode}>{props.deliveryLabels[mode]}</option>)}</select></div>}</section><div className="mobile-user-section"><h4>数据管理</h4><button type="button" onClick={props.onSave}>保存当前进度</button><button type="button" onClick={props.onLoad}>读取本地进度</button><button type="button" onClick={props.onSaveFile}>另存为文件</button><button type="button" onClick={props.onLoadFile}>从文件读取</button></div></>;
 }
 
 interface CompanyPanelActions { initialCivilDate: string; onCompanyQuery: (companyId: string, cursor: string | null) => void; onAdvanceCivilDay: () => Promise<void> }

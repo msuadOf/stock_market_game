@@ -9,7 +9,7 @@ import {
 describe("runtime snapshot policy", () => {
   it("refreshes authoritative account state after every trade", () => {
     const trade = {
-      Trade: { seq: 1, code: "600101", price: 1000, qty: 100, maker: 1, taker: 0 },
+      Trade: { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 0 },
     } as EngineEvent;
     assert.equal(requiresRuntimeSnapshot([trade]), true);
   });
@@ -21,8 +21,8 @@ describe("runtime snapshot policy", () => {
         seq: 3,
         tick: 1,
         code: "600101",
-        last_price: 1000,
-        daily_candle: { time: 0, open: 1000, high: 1000, low: 1000, close: 1000, volume: 0 },
+        last_price: "1000",
+        daily_candle: { time: 0, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 },
         bids: [],
         asks: [],
       },
@@ -52,7 +52,7 @@ describe("runtime snapshot policy", () => {
         code: "600101",
         id: 1,
         side: "Sell",
-        price: 1000,
+        price: "1000",
         remaining_qty: 100,
       },
     } as EngineEvent;
@@ -79,7 +79,7 @@ describe("runtime snapshot policy", () => {
         code: "600101",
         id: 2,
         side: "Buy",
-        price: 1000,
+        price: "1000",
         remaining_qty: 100,
       },
     } as EngineEvent;

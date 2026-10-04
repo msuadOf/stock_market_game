@@ -72,6 +72,29 @@ async function runCli(fixture_) {
 }
 
 describe("package distributions (short fixtures, concurrency=4)", { concurrency: 4, timeout: 10000 }, () => {
+  it("按单一产品平台核对现行格式，不要求手动单产品同时生成其他平台", async () => {
+    const { requireDistributionFormats } = await import("./package-distributions.mjs");
+    for (const [platform, target, installers, archives] of [
+      ["win32", "x86_64-pc-windows-msvc", ["game.msi", "game.exe"], ["portable.zip"]],
+      ["linux", "x86_64-unknown-linux-gnu", ["game.deb", "game.rpm", "game.AppImage"], ["portable.zip"]],
+      ["darwin", "aarch64-apple-darwin", ["game.dmg"], ["app.zip", "app.tar.gz"]],
+    ]) {
+      const stem = `desktop-${target}`;
+      const files = ["LICENSE", ...installers.map((name) => `${stem}-${name}`), ...archives.map((name) => `${stem}-${name}`)].map((name) => ({ name }));
+      assert.doesNotThrow(() => requireDistributionFormats({ product: "desktop", target, files }, platform));
+      assert.doesNotThrow(() => requireDistributionFormats({ product: "desktop", target, files: [...files, { name: `${stem}-another.${installers[0].split(".").at(-1)}` }] }, platform));
+      for (const removed of files) {
+        assert.throws(() => requireDistributionFormats({ product: "desktop", target, files: files.filter((file) => file !== removed) }, platform), /missing required distribution format/);
+      }
+      for (const product of ["server", "webui-server"]) {
+        const files = ["zip", "tar.gz"].map((format) => ({ name: `${product}-${target}.${format}` }));
+        assert.doesNotThrow(() => requireDistributionFormats({ product, target, files }, platform));
+        for (const removed of files) assert.throws(() => requireDistributionFormats({ product, target, files: files.filter((file) => file !== removed) }, platform), /missing required distribution format/);
+      }
+    }
+    assert.throws(() => requireDistributionFormats({ product: "server", target: nativeTarget, files: [{ name: "other.zip" }, { name: "other.tar.gz" }] }, process.platform), /missing required distribution format/);
+    assert.throws(() => requireDistributionFormats({ product: "unknown", target: nativeTarget, files: [] }, process.platform), /unsupported distribution product/);
+  });
   it("keeps all native installer extensions with stable ASCII platform-qualified names", async () => {
     const { desktopInstallerName } = await import("./package-distributions.mjs");
     for (const [target, extensions] of [["aarch64-apple-darwin", ["dmg"]], ["x86_64-pc-windows-msvc", ["msi", "exe"]],

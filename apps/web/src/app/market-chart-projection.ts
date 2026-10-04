@@ -1,3 +1,4 @@
+import { moneyToChartNumber } from "../utils/money.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import { CALL_AUCTION_TICKS, TICKS_PER_TRADING_MINUTE, TOTAL_TICKS_PER_DAY } from "../config/defaults.ts";
 import type { NormalizedTickFrame, ProtocolState } from "../host/protocol/index.ts";
@@ -31,7 +32,7 @@ export class MarketChartProjection {
           if (point.phase === "ClosingAuction") continue;
           if (point.kind === "Completion") this.continuousVolumes[code] = point.matched_volume;
           const history = this.auctionsByCode[code] ?? EMPTY_HISTORY;
-          const value = point.indicative_price === null ? null : point.indicative_price / 100;
+          const value = point.indicative_price === null ? null : moneyToChartNumber(point.indicative_price) / 100;
           const time = Math.floor(((point.tick - 1) % TOTAL_TICKS_PER_DAY) / (TICKS_PER_TRADING_MINUTE / 10));
           const previous = history.findLast((sample) => sample.time < time && sample.value !== null);
           const projected = Object.freeze({
@@ -51,7 +52,7 @@ export class MarketChartProjection {
         const auctionPrice = this.auctionsByCode[code]?.findLast((sample) => sample.value !== null)?.value;
         const previousMinute = previous?.time === time ? history.at(-2) : previous;
         const previousPrice = previousMinute?.value ?? auctionPrice;
-        const value = point.last_price / 100;
+        const value = moneyToChartNumber(point.last_price) / 100;
         const increment = Math.max(0, point.cumulative_volume - (this.continuousVolumes[code] ?? 0));
         const projected = Object.freeze({ time, value,
           volume: increment + (previous?.time === time ? previous.volume ?? 0 : 0),
@@ -133,6 +134,8 @@ function samePoint(previous: PricePoint | AuctionPoint | undefined, next: PriceP
 function sameCandle(previous: KlinePoint | undefined, next: KlinePoint): boolean {
   return previous !== undefined && previous.time === next.time && previous.open === next.open
     && previous.high === next.high && previous.low === next.low && previous.close === next.close
+    && previous.rawPrices?.open === next.rawPrices?.open && previous.rawPrices?.high === next.rawPrices?.high
+    && previous.rawPrices?.low === next.rawPrices?.low && previous.rawPrices?.close === next.rawPrices?.close
     && previous.volume === next.volume && previous.tradeStats?.turnoverCents === next.tradeStats?.turnoverCents
     && previous.tradeStats?.tradeCount === next.tradeStats?.tradeCount;
 }

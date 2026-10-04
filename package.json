@@ -13,6 +13,7 @@
     "build": "corepack pnpm --filter web build",
     "build:target": "node scripts/build-targets.mjs",
     "test": "node scripts/run-full-regression.mjs",
+    "test:scripts": "node scripts/run-script-tests.mjs",
     "test:e2e": "corepack pnpm --filter web test:e2e",
     "types:generate": "cargo test -p engine export_bindings",
     "types:check": "corepack pnpm types:generate && node scripts/check-generated-types.mjs",

@@ -518,8 +518,10 @@ fn runtime_envelope_rejects_injected_derived_fields() {
     ] {
         let mut encoded = serde_json::json!({
             "key": { "account": 1, "stock": "600888", "order": 1, "side": "Sell" },
-            "charged": { "commission": 0, "stamp_tax": 0, "transfer_fee": 0 }
+            "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" }
         });
+        serde_json::from_value::<SavedLiveEnvelope>(encoded.clone())
+            .expect("完整当前 envelope 在注入派生字段前应可解码");
         encoded[field] = serde_json::json!(0);
         assert!(
             serde_json::from_value::<SavedLiveEnvelope>(encoded).is_err(),

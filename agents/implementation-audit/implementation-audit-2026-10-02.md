@@ -146,15 +146,15 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 3. 候选项与契约冲突：不能冒充已确认漏实现
 
-Q01–Q09、Q11继续保留；Q10已转G39，Q19经恢复链复核转G80并保留原编号追溯。Q12–Q25记录范围/规范冲突、错误优先级和条件边界；编号均为本审计内部ID，与docs/open-questions.md不是同一命名空间，不能把待定方向当作确认缺口。
+Q02–Q04、Q06–Q09、Q11继续保留；Q01、Q05、Q18已按用户选择补齐，Q10已转G39，Q19经恢复链复核转G80并保留原编号追溯。Q12–Q25记录范围/规范冲突、错误优先级和条件边界；编号均为本审计内部ID，与docs/open-questions.md不是同一命名空间，不能把待定方向当作确认缺口。
 
 | ID | 事实与证据 | 处理边界 |
 |---|---|---|
-| Q01 | Money 仍是 transparent i64 JSON整数，Web parseMoney 仍要求安全整数；配置只校验现金非负。当前边界见 [基础复核](reaudit-foundations.md)。 | 跨端支持范围未统一登记。需选择共同范围或无损编码，不直接要求删掉Web精度守卫，也不以默认金额小证明无风险。 |
+| Q01（已补齐） | 用户选择规范有符号 i64 十进制分字符串；Money、裸持仓成本、个人估值与因果诊断金额统一编码，Web 严格校验并以 BigInt 运算，实际生成类型同步。原疑问见 [基础复核](reaudit-foundations.md)，现行契约见 [ADR-0031](../../docs/decisions/0031-money-decimal-cents-wire.md)。 | 旧数字、非规范字符串与越界显式拒绝，无代际版本、兼容或迁移；AccountingAmount 元字符串与 u64 聚合范围不变。Money 29项及跨宿主代表性短测、Web类型检查与非作者复核通过；六个表示摘要由独立旧/新真实生产者逐原文金额 path 取证，不从失败输出重钉。曾在675ac4c复现的两项因果失败已随后补足真实成交fixture，原断言保留，14项短测通过，见 [因果修复](../remaining-questions-and-features/causal-test-fixture-fix.md)；未跑完整回归。见 [独立复核](../remaining-questions-and-features/money-wire-independent-review.md) 与 [表示证据](../remaining-questions-and-features/money-wire-golden.md)。 |
 | Q02 | 个人技术数据已用于候选，但 PersonalPriceMemory::record_public_history_read 仍无生产调用；根观察只记行情观察。当前链见 [策略与公司复核](reaudit-engine.md)。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
 | Q03 | 日历/会计文档要求冻结 RegulationProfile；当前 setup 与恢复均强制校验 simulation_policy_id。实现见 [基础复核](reaudit-foundations.md)。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
 | Q04 | UX-CONTRACT 要求固定应用标题，useMobileUiController 仍在详情展示股票标题。见 [界面复核](reaudit-ui.md)。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |
-| Q05 | 任务目录已有递归发现 scripts/**/*.test.mjs 的并行runner及历史32文件验收；根test和手动CI仍未接入该runner。待定的是正式持续维护入口，不是完全没有发现代码；获批测试helper不必接生产。见 [工具复核](reaudit-tools.md)。 | 验收工具持续覆盖策略需单独收口；不恢复已退役工具，也不把测试重新接入最新决定已排除测试的产品发布链。 |
+| Q05（已补齐） | 用户已选择根test、现有手动开发CI和独立test:scripts共用完整scripts/**/*.test.mjs发现；源码指纹覆盖scripts目录。原疑问见 [工具复核](reaudit-tools.md)，实施见 [脚本测试入口](../remaining-questions-and-features/script-test-entry.md)。 | 普通case与每文件进程树10000ms，整批多核并行且共享300000ms期限，失败取消并等待清理；自身测试注入执行器不递归跑根回归。43项定向短测及非作者完整diff/独立复验通过；普通commit和产品发布仍不自动测试，未运行完整脚本集或完整回归。 |
 | Q06 | 初始持仓 spec 要求 ByKind 比例和约等于1、类内随机；当前允许正有效权重归一，散户另作 eligibility/Pareto 分配。见 [基础复核](reaudit-foundations.md)。 | 容差及分布的最新批准依据未定位；先明确当前政策与旧spec关系，不要求为旧算法回退。独立于G29零NPC校验矛盾。 |
 | Q07 | 前端 aggregateCandles 仍按5/20交易日分组，UX只列周期名。自然周/月及合成历史衔接口径未裁决。见 [界面复核](reaudit-ui.md)。 | 当前已有图表，但是否应按公历周/月及合成负时间历史衔接需明确；不能宣称已核实真实周月口径。 |
 | Q08 | 移动 MA 与分时均价仍由前端推导；MACD/KDJ由Rust提供，均价代码明确不是撮合均价或VWAP。见 [界面复核](reaudit-ui.md)。 | MACD/KDJ已由Rust返回；需区分允许的展示派生与权威指标，尤其均价口径。不是凭此证明伪造行情，也不能写“全部指标均来自Rust”。 |
@@ -165,15 +165,15 @@ Q01–Q09、Q11继续保留；Q10已转G39，Q19经恢复链复核转G80并保�
 | Q13 | 政策保存沪深分别official覆盖，CivilClock按首只股票取exchange；默认政策v1同轨。见 [日历](exhaustive-review/sweep04.md)。 | 混合局异步交易日是否支持需明确；不能与G15覆盖替代问题混淆，也不声称当前默认官方日历有差异。 |
 | Q14 | 工商CreditDeterioration会增加准备，到期应收仍全额回款，未独立延期。见 [经营](exhaustive-review/luna03.md)。 | K4“客户延付/信用恶化”的替代范围需明确，不能把斜线承诺自动当两个独立模型；已批准只记录行业假设保留。 |
 | Q15 | 精确颜色token静态计算的小字号白底对比与AA目标冲突。见 [颜色](exhaustive-review/luna02.md)。 | 需明确文字与图形/品牌色的作用范围；尚未computed-style验收，不擅自改token或弱化AA。 |
-| Q16 | 旧“负成本显示-而非xx%”混淆金额与收益率；当前显示负净成本金额。见 [账户](exhaustive-review/luna15.md)。 | 非正净成本收益率不可用不等于必须隐藏负成本金额；G49舍入/浮盈公式是已确认的另一问题。 |
+| Q16 | 旧“负成本显示-而非xx%”混淆金额与收益率；当前显示负净成本金额。用户已确认负成本合法，共享风险观测的错误正数限制已修复，零/负成本分析及真实大额成交短测通过，见 [净成本修复](../remaining-questions-and-features/nonpositive-net-cost-fix.md)；原界面疑问见 [账户](exhaustive-review/luna15.md)。 | 非正净成本收益率不可用不等于必须隐藏负成本金额；收益率显示选择仍需讨论，不用修复分析校验冒称已决定UI。G49舍入/浮盈公式是已确认的另一问题。 |
 | Q17 | ClosingEngine::correct先过账/记录重述，再生成报告；合法派生汇总溢出可Err且留部分状态。见 [更正](exhaustive-review/luna23.md)。 | Journal批次原子已有，未找到整个更正/报告API失败零状态变化的明确保证或Session生产caller；保留真实边界，不擅自要求所有底层操作强事务。 |
-| Q18 | Release collector不独立强制各平台最低格式组合，但归档producer已拒缺格式。见 [制品](exhaustive-review/luna77.md)。 | 是否要求最终collector重复校验语义组成需明确；没有正常生产绕过producer的证据，不称当前Release已漏包。 |
+| Q18（已补齐） | 用户已选择最终Release collector也校验最低格式，与producer复用requireDistributionFormats；缺格式即拒绝。原疑问见 [制品](exhaustive-review/luna77.md)，实施见 [发行收集](../remaining-questions-and-features/release-collection.md)。 | 十组全部通过身份、文件/大小/摘要及格式校验后才创建收集目录，不改变unsigned或手动单产品范围。27项定向短测及非作者完整diff/独立短测通过；不是已有正常Release漏包的证据，未运行真实发版或完整回归。 |
 | Q19（已转G80） | 新局默认Industrial不代表完整存档恢复拒绝Bank variant；恢复整体安装CompanyOperations，未校验EclPolicy。见 [银行续核](renewed-check/bank-restore.md)。 | 纠正原降级理由；缺口限SaveSlot外部恢复，不要求改变库级serde/issue_loan错误次序，也不称默认新局已具备完整银行产品。 |
-| Q20 | WASM NEXT的u32句柄计数会环绕，登记insert可覆盖仍存活句柄。见 [绑定](exhaustive-review/luna40.md)。 | 需明确耗尽时拒绝/重新分配策略；本轮只静态记录，未跑数十亿次或证明普通旅程触发。 |
+| Q20（已补齐） | WASM句柄单调分配1..u32::MAX，0仅为耗尽哨兵；CAS保证并行不重号，HashMap Entry明确拒绝覆盖活会话。原问题见 [绑定](exhaustive-review/luna40.md)，实施见 [句柄耗尽](../remaining-questions-and-features/wasm-handle-exhaustion.md)。 | 耗尽返回ResourceLimit、不复用删除编号，已有会话保持有效；create/restore共同传播错误，无迁移或静默重试。14项短测及非作者独立重跑/完整diff复核通过；未冒称已创建数十亿会话或完成浏览器与完整回归。 |
 | Q21 | 非正固定价可先报日限/price cage/资源拒绝，而非OrderBook InvalidPrice。见 [校验](exhaustive-review/luna16.md)。 | 已显式拒绝；多重非法条件的Market/Session错误优先级未规定，正常UI先挡非正价，不可断言公共路径一律LimitExceeded。 |
 | Q22 | 来源拼接顺序、时段AccountReceipt及实际接收轨迹之间仍需核验；见 [草稿](exhaustive-review/luna49.md)。 | PreviousCommit/BetweenTicks是就绪时间窗，NPC向量在前不证明交易来源优先；只有真实竞争错序证据才能升级，不能恢复全局固定来源排序。 |
 | Q23 | 直接公共accrue_income_tax重复调用会把已记税费计入再次税前并追加亏损池；生产经营caller已按成功自然日日结在年末计提一次，失败候选回滚后可重试。见 [税务](exhaustive-review/luna54.md)。 | G35已接通生产年末计提及失败回滚重试；直接公共accrue_income_tax重复调用的幂等及准入尚无完整约定，不冒充默认游戏已算错税。 |
-| Q24 | Tauri第二个listener注册失败可能留下第一个；create_session成功后的初始化失败退订listener却未stop_session。见 [初始化裁定](hidden-review/candidate-resolution-04.md)。 | 真实资源失败路径与G51的dispose错误不同；失败初始化的资源归属/回收契约须明确。Worker同步postMessage异常仅延迟到既有有界timeout清理，不一并称永久泄漏，也不因旧测试冻结就宣称所有初始化回收完备。 |
+| Q24（已补齐） | 初始化资源以成功取得为归属边界：第二个listener失败释放第一个；取得有效session ID后的baseline/capability失败等待本人stop_session。原问题见 [初始化裁定](hidden-review/candidate-resolution-04.md)，实施与短测见 [初始化回收](../remaining-questions-and-features/tauri-initialization.md)。 | 已取得资源独立并行清理并等待全部结果，AggregateError保留原错及每项清理错误；未知session ID不得猜测或误停别人。21项行为短测、TypeScript及非作者完整diff复核通过；独立另跑新增6例通过。不扩大为所有原生初始化故障或Worker回收已获完整验收。 |
 | Q25 | BeliefBook的owner/key与StrategyState确定性身份均已校验，但未交叉核对同账户两个profile。见 [身份续核](renewed-check/belief-identity.md)。 | 创建时一致、字段影响计算不证明恢复必须全等；允许认知与执行风格不同还是必须统一身份需澄清，不限制个体AnalysisProfile/机构阈值，本轮不新增确认G。 |
 
 ## 4. 最小验证缺口与现有测试入口

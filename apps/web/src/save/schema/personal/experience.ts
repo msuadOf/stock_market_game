@@ -10,20 +10,20 @@ export type ExperienceFeedback = {
   readonly exit_records: readonly ExitRecord[]
 }
 export type FailureEventRecord = { readonly code: string; readonly order_id: string | null; readonly moment: ExperienceMoment }
-export type HoldingEpoch = { readonly entry_moment: ExperienceMoment; readonly last_own_observation: OwnObservation | null; readonly institutional_fees_paid: number | null }
-export type OwnObservation = { readonly price: number; readonly moment: ExperienceMoment }
+export type HoldingEpoch = { readonly entry_moment: ExperienceMoment; readonly last_own_observation: OwnObservation | null; readonly institutional_fees_paid: string | null }
+export type OwnObservation = { readonly price: string; readonly moment: ExperienceMoment }
 export type ExitRecord = { readonly code: string; readonly order_id: string | null; readonly cooldown_until_market_minute: string | null; readonly realized_profit: boolean; readonly moment: ExperienceMoment }
 export type RetailExperienceState = {
-  readonly reference_equity: number | null
-  readonly peak_equity: number | null
+  readonly reference_equity: string | null
+  readonly peak_equity: string | null
   readonly consecutive_failed_buys: number
   readonly stocks: StringMap<RetailStockExperience>
   readonly feedback?: ExperienceFeedback
 }
 export type RetailStockExperience = {
-  readonly entry_reference_price: number | null
-  readonly peak_price_since_entry: number | null
-  readonly last_buy_price: number | null
+  readonly entry_reference_price: string | null
+  readonly peak_price_since_entry: string | null
+  readonly last_buy_price: string | null
   readonly adverse_move_recorded: boolean
   readonly last_buy_order_id: string | null
   readonly last_sell_order_id: string | null
@@ -89,7 +89,7 @@ function parseFailureEvent(value: unknown, path: string): FailureEventRecord {
 function parseHoldingEpoch(value: unknown, path: string): HoldingEpoch {
   const parsed = record(value, path)
   exact(parsed, ["entry_moment", "last_own_observation", "institutional_fees_paid"], path)
-  return { entry_moment: parseExperienceMoment(parsed.entry_moment, `${path}.entry_moment`), last_own_observation: nullable(parsed.last_own_observation, `${path}.last_own_observation`, parseOwnObservation), institutional_fees_paid: nullable(parsed.institutional_fees_paid, `${path}.institutional_fees_paid`, (nested, nestedPath) => integer(nested, nestedPath, 0)) }
+  return { entry_moment: parseExperienceMoment(parsed.entry_moment, `${path}.entry_moment`), last_own_observation: nullable(parsed.last_own_observation, `${path}.last_own_observation`, parseOwnObservation), institutional_fees_paid: nullable(parsed.institutional_fees_paid, `${path}.institutional_fees_paid`, (nested, nestedPath) => { const result = money(nested, nestedPath); if (BigInt(result) < 0n) throw new Error(`存档 ${nestedPath} 费用不得为负`); return result }) }
 }
 
 function parseOwnObservation(value: unknown, path: string): OwnObservation {

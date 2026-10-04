@@ -38,6 +38,10 @@
   Rust `saved_runtime` 与 Web `runtime-state` 负责同一严格当前结构的恢复契约。
   类型、模块和函数不附带内部版本后缀，游戏存档不设代际版本标记，
   额外版本字段及旧字段显式拒绝，不做兼容。见 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
+- `Money` 跨边界使用规范 `i64` 十进制分字符串，TypeScript `Money` 为 `string`；
+  Web 金融算术使用 `BigInt` 并返回字符串，`number` 仅用于比例或图表坐标呈现。
+  不接受旧数字金额，`AccountingAmount` 的独立元字符串契约不变。见
+  [ADR-0031](decisions/0031-money-decimal-cents-wire.md)。
 
 ### 后端：Rust（[ADR-0003](decisions/0003-backend-rust.md)）
 - Stage 1 不依赖后端；当前 Stage 2 服务直接依赖 engine crate。

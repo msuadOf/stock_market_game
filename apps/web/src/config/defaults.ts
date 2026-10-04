@@ -44,22 +44,22 @@ export const STOCK_LIST: StockMeta[] = [
 
 const STOCK_SPECS: StockSpec[] = [
   // 稳健实业 11.20 元 / 涨跌停 10%
-  mkSpec("600101", "Shanghai", 1120, "MainBoard", "8928571429", 3_571_428_571),
+  mkSpec("600101", "Shanghai", "1120", "MainBoard", "8928571429", 3_571_428_571),
   // 芯片科技 27.35 元 / 涨跌停 10%
-  mkSpec("002156", "Shenzhen", 2735, "MainBoard", "2925045704", 2_047_531_993),
+  mkSpec("002156", "Shenzhen", "2735", "MainBoard", "2925045704", 2_047_531_993),
   // 创业板股票 36.80 元 / 涨跌停 20%
-  mkSpec("300260", "Shenzhen", 3680, "ChiNext", "815217391", 611_413_043),
+  mkSpec("300260", "Shenzhen", "3680", "ChiNext", "815217391", 611_413_043),
   // 人气妖股 7.55 元 / 涨跌停 10%
-  mkSpec("600610", "Shanghai", 755, "MainBoard", "1059602649", 847_682_119),
+  mkSpec("600610", "Shanghai", "755", "MainBoard", "1059602649", 847_682_119),
   // ST低价股 2.85 元 / 2026-07-06 起主板风险警示股票涨跌停 10%
-  mkSpec("000812", "Shenzhen", 285, "StMainBoard", "1052631579", 842_105_263),
+  mkSpec("000812", "Shenzhen", "285", "StMainBoard", "1052631579", 842_105_263),
 ];
 
 /** 构造单只股票的 StockSpec，tick 取最小价位 1 分。 */
 function mkSpec(
   code: string,
   exchange: StockExchange,
-  initialPrice: number,
+  initialPrice: string,
   category: StockSpec["category"],
   totalShares: string,
   floatShares: number,
@@ -71,7 +71,7 @@ function mkSpec(
     initial_price: initialPrice,
     category,
     limit_pct: limitPct,
-    tick: 1,
+    tick: "1",
     total_shares: totalShares,
     float_shares: floatShares,
   };
@@ -84,18 +84,18 @@ export const DEFAULT_SETUP: SessionSetup = {
     inst_count: 5,
     hot_count: 2,
     // 当前字段作为散户现金基准：20 万元（分）；分类型财富分布在后续模型中显式化。
-    retail_cash_median: 20_000_000,
+    retail_cash_median: "20000000",
   },
   config: {
     commission_rate: 0.00025,
-    commission_min: 500,
+    commission_min: "500",
     stamp_tax_rate: 0.0005,
     default_limit: 0.10,
     st_limit: 0.10,
     price_cage_enabled: true,
     lot_size: 100,
     // 玩家初始资金 1 千万元；初始资金只有这一处真源。
-    starting_cash: 1_000_000_000,
+    starting_cash: "1000000000",
   },
   strategy_params: {
     // 三个数量字段是群体中心；基准不少于一手时，每个 NPC 在 60%–140% 内采样一次整手规模。

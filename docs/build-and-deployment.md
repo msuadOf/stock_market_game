@@ -117,6 +117,12 @@ WebUI Server 部署无需 Node.js，可选择只启动网页服务、只启动�
 标签 push 后校验标签和固定源码 SHA，直接构建全平台分发，校验十组 manifest/哈希并发布 Release，
 所有有效标签均更新 Pages。`test-*` 标为预发行；不自动修改产品自身版本号。
 Release 附 `release-source.json` 记录源码 SHA，manifest 文件名按产品/target 唯一化。
+最终 Release collector 除文件、大小与 SHA-256 外，复用原生归档 producer 的
+`requireDistributionFormats` 检查每组最低格式：Windows Desktop 为 MSI/NSIS/便携 ZIP，
+Linux Desktop 为 DEB/RPM/AppImage/便携 ZIP，macOS Desktop 为 DMG/app ZIP/app tar.gz；
+Desktop 清单同时保留 LICENSE，Server、WebUI Server 与静态 Web 均须有 ZIP/tar.gz。
+格式必须匹配对应产品与 target 的文件名，缺任一格式即明确失败，不创建收集输出或上传 draft。
+这不要求独立手动产品入口额外构建其他平台，也不增加签名、公证或归档内容 smoke。
 公开前先上传 draft；中途失败可能留下 draft，应检查后再处理，脚本不覆盖旧资产。
 
 三平台构建规则：

@@ -8,8 +8,8 @@ const SNAPSHOT = {
   day: 0,
   phase: "Continuous" as const,
   markets: {
-    "600101": { last_price: 1_000, last_close: 1_000, best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
-    "000001": { last_price: 2_000, last_close: 2_000, best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
+    "600101": { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
+    "000001": { last_price: "2000", last_close: "2000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
   },
   accounts: {},
   daily_candles: {},
@@ -24,7 +24,7 @@ test("协议时间序列帧原子更新权威行情和游戏时钟", () => {
     seq: 1,
     markets: {
       ...SNAPSHOT.markets,
-      "600101": { ...SNAPSHOT.markets["600101"], last_price: 1_001, bids: [[1_000, 100]], asks: [[1_002, 100]] },
+      "600101": { ...SNAPSHOT.markets["600101"], last_price: "1001", bids: [["1000", 100]], asks: [["1002", 100]] },
     },
     activeDailyCandles: {},
   }));
@@ -45,5 +45,5 @@ test("协议帧拒绝倒退序列，保持当前权威快照", () => {
   }));
 
   assert.equal(after.snapshot!.phase, "Continuous");
-  assert.equal(after.snapshot!.markets["600101"].last_price, 1_000);
+  assert.equal(after.snapshot!.markets["600101"].last_price, "1000");
 });

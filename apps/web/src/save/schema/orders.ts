@@ -1,3 +1,4 @@
+import { money as parseCanonicalMoney } from "./primitives.ts"
 import type { Intent } from "../../types/engine"
 import type { NpcAttentionState } from "../../types/generated/NpcAttentionState"
 import type { NpcOrderLifecycle } from "../../types/generated/NpcOrderLifecycle"
@@ -16,8 +17,8 @@ function accountKey(value: string, path: string): void {
   safeIntegerKey(value, path)
 }
 
-function money(value: unknown, path: string): number {
-  return integer(value, path)
+function money(value: unknown, path: string): string {
+  return parseCanonicalMoney(value, path)
 }
 
 function limitPrice(value: unknown, path: string): Extract<Intent, { PlaceLimit: unknown }>["PlaceLimit"]["price"] {

@@ -94,6 +94,7 @@ pub struct EqualWeightMarketObservation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RiskPositionInput {
     pub qty: u32,
+    /// 剩余持仓的净成本，已回收投入时允许为零或负数；不是市场报价。
     pub cost_price: Option<Money>,
     pub last_price: Money,
     /// 当前持仓生命周期内已经观察到的最高价；尚未维护该状态时明确为 `None`。
@@ -104,6 +105,7 @@ pub struct RiskPositionInput {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PositionRiskObservation {
     pub market_value: Money,
+    /// 缺成本或净成本非正时没有有效成本收益率，显式为 `None`。
     pub unrealized_return: Option<f64>,
     pub equity_weight: Option<f64>,
     pub drawdown_from_position_peak: Option<f64>,
@@ -401,6 +403,7 @@ pub fn build_account_risk_observation(
             .expect("market value was built from the same position map");
         let unrealized_return = position
             .cost_price
+            .filter(|cost| cost.cents() > 0)
             .map(|cost| return_between(position.last_price, cost));
         let drawdown_from_position_peak = position
             .peak_price_since_entry
@@ -508,9 +511,6 @@ fn validate_position(
         });
     }
     validate_positive_price("position last price", position.last_price)?;
-    if let Some(cost) = position.cost_price {
-        validate_positive_price("position cost price", cost)?;
-    }
     if let Some(peak) = position.peak_price_since_entry {
         validate_positive_price("position peak price", peak)?;
         if peak < position.last_price {

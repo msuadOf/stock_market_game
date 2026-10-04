@@ -119,7 +119,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
     if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
     if (url.includes("/api/player-working-orders?")) {
       return new Response(JSON.stringify({ generation: "2", orders: [{
-        id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "continuous", frozen: "cash",
+        id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
       }] }), { status: 200 });
     }
     if (url.endsWith("/api/indicators")) return new Response(JSON.stringify({
@@ -141,7 +141,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
   await host.start(() => undefined);
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.playerWorkingOrders(), [{
-    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "continuous", frozen: "cash",
+    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
   }]);
   assert.equal((await host.calculateIndicators({ prices: [10], candles: [{ high: 11, low: 9, close: 10 }] })).macd.dif[0], 0);
   const request = requests.find(({ url }) => url.includes("/api/player-working-orders?"));

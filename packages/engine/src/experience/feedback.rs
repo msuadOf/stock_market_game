@@ -78,7 +78,7 @@ pub struct HoldingEpoch {
     pub entry_moment: ExperienceMoment,
     pub last_own_observation: Option<OwnObservation>,
     #[serde(deserialize_with = "deserialize_institutional_fees")]
-    #[ts(type = "number | null")]
+    #[ts(type = "string | null")]
     pub institutional_fees_paid: Option<Money>,
 }
 

@@ -102,10 +102,10 @@ mod tests {
         serde_json::json!({
             "stocks": [{
                 "code": "600101", "exchange": "Shanghai", "category": "MainBoard",
-                "initial_price": 1000, "limit_pct": 0.1, "tick": 1,
+                "initial_price": "1000", "limit_pct": 0.1, "tick": "1",
                 "total_shares": "100000", "float_shares": 100000
             }],
-            "npcs": {"retail_count": 4, "inst_count": 2, "hot_count": 2, "retail_cash_median": 10000000},
+            "npcs": {"retail_count": 4, "inst_count": 2, "hot_count": 2, "retail_cash_median": "10000000"},
             "config": engine::GameConfig::proposed_defaults(),
             "strategy_params": {
                 "retail": {"arrival_rate": 0.8, "order_size_mean": 200, "chase_prob": 0.4},

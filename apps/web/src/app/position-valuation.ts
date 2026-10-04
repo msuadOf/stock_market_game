@@ -1,30 +1,25 @@
-import type { PositionSnap } from "../types/engine.ts";
+import type { Cents, PositionSnap } from "../types/engine.ts";
+import { moneyFromBigInt, moneyToBigInt } from "../utils/money.ts";
 
 function integer(value: number, field: string): bigint {
   if (!Number.isSafeInteger(value)) throw new RangeError(`${field} 必须是安全整数，实际 ${value}`);
   return BigInt(value);
 }
 
-function displayAmount(value: bigint, field: string): number {
-  const result = Number(value);
-  if (!Number.isSafeInteger(result)) throw new RangeError(`${field} 超出当前 Web 金额安全范围：${value}`);
-  return result;
-}
-
-export function valueHeldPosition(position: PositionSnap, currentPrice: number) {
+export function valueHeldPosition(position: PositionSnap, currentPrice: Cents) {
   const quantity = integer(position.qty, "持仓股数");
   if (quantity <= 0n) throw new RangeError("持仓估值要求正股数");
-  const price = integer(currentPrice, "持仓行情价格");
+  const price = moneyToBigInt(currentPrice);
   if (price <= 0n) throw new RangeError("持仓行情价格必须为正数");
-  const netInvested = integer(position.invested_cents, "累计投入分") - integer(position.recovered_cents, "累计回收分");
+  const netInvested = moneyToBigInt(position.invested_cents) - moneyToBigInt(position.recovered_cents);
   const magnitude = netInvested < 0n ? -netInvested : netInvested;
   let cost = magnitude / quantity;
   const doubledRemainder = (magnitude % quantity) * 2n;
   if (doubledRemainder > quantity || (doubledRemainder === quantity && cost % 2n !== 0n)) cost += 1n;
   if (netInvested < 0n) cost = -cost;
   return {
-    avgCost: displayAmount(cost, "每股成本分"),
-    marketValue: displayAmount(price * quantity, "持仓市值分"),
-    pnl: displayAmount((price - cost) * quantity, "持仓浮盈分"),
+    avgCost: moneyFromBigInt(cost),
+    marketValue: moneyFromBigInt(price * quantity),
+    pnl: moneyFromBigInt((price - cost) * quantity),
   };
 }

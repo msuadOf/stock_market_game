@@ -17,7 +17,7 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
 function validEnvelope(): Record<string, unknown> {
   return {
     key: { account: 0, stock: "600888", order: 1, side: "Buy" },
-    charged: { commission: 0, stamp_tax: 0, transfer_fee: 0 },
+    charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" },
   }
 }
 
@@ -40,6 +40,21 @@ test("存档运行时校验边界保留必填权威状态，不保存旧 profile
   assert.equal("strategy_profiles" in save, false)
   assert.deepEqual(parseSaveSlot(save), save)
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
+})
+
+test("存档 Money 保留完整 i64 分值并拒绝旧 number 编码", { timeout: 10_000 }, () => {
+  for (const cash of ["0", "9007199254740993", "9223372036854775807"]) {
+    const save = currentSaveFixture()
+    const snapshot = save.snapshot as Record<string, unknown>
+    snapshot.accounts = { "0": { cash, positions: {} } }
+    assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
+  }
+  for (const cash of [0, 1000000000000, "00", "+1", "-0", "1.0", "-1", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"]) {
+    const save = currentSaveFixture()
+    const snapshot = save.snapshot as Record<string, unknown>
+    snapshot.accounts = { "0": { cash, positions: {} } }
+    assert.throws(() => parseSaveSlot(save), /snapshot\.accounts\.0\.cash/)
+  }
 })
 
 test("save snapshot accepts only raw account and market facts", () => {
@@ -74,7 +89,7 @@ test("save snapshot derives day and phase instead of accepting persisted mirrors
 })
 
 test("runtime envelope persists identity and actual charges only", () => {
-  const charged = { commission: 3, stamp_tax: 2, transfer_fee: 1 }
+  const charged = { commission: "3", stamp_tax: "2", transfer_fee: "1" }
   const envelope = {
     key: { account: 0, stock: "600888", order: 1, side: "Sell" },
     charged,
@@ -90,7 +105,7 @@ test("runtime envelope persists identity and actual charges only", () => {
   for (const field of ["live", "limit", "remaining_qty", "filled_qty", "filled_value", "nominal"]) {
     assert.throws(() => parseSaveRuntime({
       ...runtime,
-      live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: 0, shares: 1 } : 1 }],
+      live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: "0", shares: 1 } : 1 }],
     }), new RegExp(`live_envelopes\\[0\\]\\.${field}`))
   }
 })
@@ -103,7 +118,7 @@ test("saved parent plans omit child remaining quantity and reject injected mirro
     filled_qty: 0,
     child_qty: 100,
     active_child_order_id: 1,
-    limit_price: 1_000,
+    limit_price: "1000",
     expires_market_minute: "500",
   }
   const orderState = { ...currentSaveFixture(), parent_orders: { "1": { "600101": base } } }
@@ -144,7 +159,7 @@ test("book sequence cursor keys must match both configured stocks and snapshot m
 
 test("pending player and NPC limit intents preserve fixed, highest and lowest prices", () => {
   const intents = [
-    { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } },
+    { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } },
     { PlaceLimit: { code: "600888", side: "Buy", price: "Highest", qty: 100 } },
     { PlaceLimit: { code: "600888", side: "Sell", price: "Lowest", qty: 100 } },
   ]
@@ -158,7 +173,7 @@ test("pending player and NPC limit intents preserve fixed, highest and lowest pr
 })
 
 test("pending limit intents reject legacy numeric and malformed symbolic prices", () => {
-  for (const price of [1000, { Fixed: 1.5 }, { Fixed: "1000" }, { Fixed: 1000, Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
+  for (const price of [1000, { Fixed: 1000 }, { Fixed: "1.5" }, { Fixed: "01" }, { Fixed: "-0" }, { Fixed: "1000", Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price, qty: 100 } }
     const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
     assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
@@ -167,7 +182,7 @@ test("pending limit intents reject legacy numeric and malformed symbolic prices"
 })
 
 test("pending fixed price preserves integer amounts for later engine rejection", () => {
-  for (const value of [0, -1]) {
+  for (const value of ["0", "-1"]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: value }, qty: 100 } }
     const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
     assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
@@ -182,7 +197,7 @@ function pendingNpcReplacementBatch() {
       [1, { Cancel: { code: "600888", id: 42 } }],
       [1, { Cancel: { code: "600888", id: 43 } }],
       [1, { Cancel: { code: "600888", id: 44 } }],
-      [1, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
+      [1, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
       [1, { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }],
     ],
     dependencies: [[0, 3], [1, 3], [1, 4]],
@@ -219,8 +234,8 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
     )
   }
   for (const replacement of [
-    [2, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
-    [1, { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
+    [2, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
+    [1, { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
   ]) {
     const intents = structuredClone(batch.intents)
     intents[3] = replacement
@@ -241,7 +256,7 @@ test("存档仅接受当前结构，不接受任何 schema_version 标记", () =
 })
 
 test("auction save identifies orders without accepting the old arrival field", () => {
-  const order = { owner: 0, side: "Buy", limit: 100, qty: 100, order_id: 1 }
+  const order = { owner: 0, side: "Buy", limit: "100", qty: 100, order_id: 1 }
   const save = { ...currentSaveFixture(), auction_orders: { "600888": [order] } }
   assert.deepEqual(parseSaveSlot(save).auction_orders, save.auction_orders)
   const { order_id: _removed, ...oldOrder } = order
@@ -378,7 +393,7 @@ test("存档运行时校验边界拒绝注入派生 envelope 镜像", () => {
     assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => {
       runtime.live_envelopes = [{
         ...validEnvelope(),
-        [field]: field === "live" ? { cash: 0, shares: 1 } : 1,
+        [field]: field === "live" ? { cash: "0", shares: 1 } : 1,
       }]
     })), new RegExp(`runtime_state\\.live_envelopes\\[0\\]\\.${field}`))
   }

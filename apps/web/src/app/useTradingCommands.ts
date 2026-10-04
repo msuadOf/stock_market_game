@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type MutableRefObject } from "react";
 import type { EngineHost } from "../host/engine-host.ts";
-import type { AccountSnap, Intent, SessionSetup } from "../types/engine.ts";
+import type { AccountSnap, Cents, Intent, SessionSetup } from "../types/engine.ts";
 import { tradingFieldErrors, type TradingFieldErrors } from "./trading-field-errors.ts";
 import { store, addAutoOrder } from "../store/store.ts";
 import { AUTO_ORDER_LABELS, type AutoOrderManager, type AutoOrderType } from "../components/auto-order-manager.ts";
@@ -155,7 +155,7 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
       return;
     }
     const side: "Buy" | "Sell" = (autoType === "stopProfit" || autoType === "stopLoss" || autoType === "sellTrigger") ? "Sell" : "Buy";
-    let tp: number;
+    let tp: Cents;
     let qty: number;
     let field: keyof TradingFieldErrors = "code";
     try {

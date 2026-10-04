@@ -35,20 +35,20 @@ const snapshot: Snapshot = {
   phase: "Continuous",
   markets: {
     "600101": {
-      last_price: 1_000,
-      last_close: 1_000,
-      best_bid: 999,
-      best_ask: 1_001,
-      bids: [[999, 250]],
-      asks: [[1_001, 500]],
+      last_price: "1000",
+      last_close: "1000",
+      best_bid: "999",
+      best_ask: "1001",
+      bids: [["999", 250]],
+      asks: [["1001", 500]],
     },
   },
   accounts: {
     "0": {
-      cash: 12_345,
-      reserved_cash: 345,
+      cash: "12345",
+      reserved_cash: "345",
       reserved_sell_qty: { "600101": 50 },
-      positions: { "600101": { qty: 250, t1_locked: 100, invested_cents: 200_000, recovered_cents: 0 } },
+      positions: { "600101": { qty: 250, t1_locked: 100, invested_cents: "200000", recovered_cents: "0" } },
     },
   },
   daily_candles: {},
@@ -59,7 +59,7 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   const state: RootState = {
     ...store.getState(),
     snapshot: { snapshot: activeSnapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
-    trades: { items: [{ seq: 1, code: "600101", price: 1_000, qty: 250, maker: 1, taker: 2 }] },
+    trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: 1, taker: 2 }] },
   };
   const testStore = configureStore({ reducer: () => state });
   return renderToStaticMarkup(createElement(Provider, {
@@ -96,7 +96,7 @@ test("桌面逐笔与五档盘口以手显示权威股数，不把零股量舍�
 test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一靠近买一", () => {
   for (const count of [1, 2, 5]) {
     const active = structuredClone(snapshot);
-    active.markets["600101"].asks = Array.from({ length: count }, (_, index) => [1001 + index, 100]);
+    active.markets["600101"].asks = Array.from({ length: count }, (_, index) => [String(1001 + index), 100]);
     const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20, setKlineDays() {} }), active);
     const rows = [...book.matchAll(/ob-row ob-ask[^>]*><span class="ob-label">卖(\d)<\/span><span class="ob-price[^"]*">([^<]+)</g)];
     assert.deepEqual(rows.map(row => [Number(row[1]), row[2]]), Array.from({ length: count }, (_, index) => [count - index, ((1000 + count - index) / 100).toFixed(2)]));
@@ -106,8 +106,8 @@ test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一�
 test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口径", () => {
   for (const [invested, recovered, cost, pnl] of [[200100, 0, "10.00", "+2"], [0, 200100, "-10.00", "+4002"]] as const) {
     const active = structuredClone(snapshot);
-    active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: invested, recovered_cents: recovered };
-    active.markets["600101"].last_price = 1001;
+    active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: String(invested), recovered_cents: String(recovered) };
+    active.markets["600101"].last_price = "1001";
     const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
     assert.match(html, new RegExp(`<td class="num">${cost.replace(".", "\\.")}<\\/td>`));
     assert.ok(html.includes(`${pnl}元`), html);

@@ -142,6 +142,11 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // ops_wiring、groups，包含真实支付/披露权威事实，并非命名替换。
     // 原锚保留：16816661624066813714 / 17087109400303676999 /
     // 2354296198442943349；独立证据见 merge-characterization.md。
+    // Q01 两个实际 producer 复现旧三锚，只在已核对类型的 Money path
+    // 给原文数字 token 加引号后，60 个完整 projection 原字节精确复现，
+    // 保留事件、权威业务事实、原顺序与所有独立 guards。旧锚保留：
+    // 18099143602724613260 / 16192716476036528973 / 2620780488067564097；
+    // 原字节 FNV/SHA 与逐 path 核验见 money-wire-golden.md。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -151,17 +156,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 18_099_143_602_724_613_260);
+    assert_complete_projection(0, 14_588_880_118_627_202_930);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 16_192_716_476_036_528_973);
+    assert_complete_projection(3, 10_855_500_538_460_332_623);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 2_620_780_488_067_564_097);
+    assert_complete_projection(6, 14_140_194_587_992_130_069);
 }
 
 #[test]

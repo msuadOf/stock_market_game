@@ -1,3 +1,5 @@
+import { parseMoney } from "../../utils/money.ts"
+
 export type JsonRecord = Record<string, unknown>
 
 const UNSIGNED_DECIMAL = /^\d+$/
@@ -58,6 +60,15 @@ export function finite(value: unknown, path: string): number {
     throw new SaveSchemaError(path, "必须是有限数值")
   }
   return value
+}
+
+export function money(value: unknown, path: string): string {
+  try {
+    return parseMoney(value, path)
+  } catch (error) {
+    if (!(error instanceof Error)) throw error
+    throw new SaveSchemaError(path, error.message)
+  }
 }
 
 export function decimal(value: unknown, path: string): string {

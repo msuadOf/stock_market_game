@@ -17,7 +17,7 @@ describe("game watchlist seed", () => {
     assert.deepEqual(STOCK_LIST.map((stock) => stock.code), [
       "600101", "002156", "300260", "600610", "000812",
     ]);
-    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.initial_price, 1120);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.initial_price, "1120");
   });
 
   it("starts every new game with opening and closing A-share call auctions", () => {
@@ -51,7 +51,7 @@ describe("game watchlist seed", () => {
       retail_count: 20_000,
       inst_count: 5,
       hot_count: 2,
-      retail_cash_median: 20_000_000,
+      retail_cash_median: "20000000",
     });
   });
 
@@ -82,7 +82,7 @@ describe("game watchlist seed", () => {
   });
 
   it("keeps player starting cash, civil start date, and policy identity explicit", () => {
-    assert.equal(DEFAULT_SETUP.config.starting_cash, 1_000_000_000);
+    assert.equal(DEFAULT_SETUP.config.starting_cash, "1000000000");
     assert.equal(DEFAULT_SETUP.start_date, "2030-01-01");
     assert.equal(DEFAULT_SETUP.simulation_policy_id, "a-share-simulation");
   });

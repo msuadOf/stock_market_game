@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -11,12 +11,16 @@ async function fixture(root) {
     for (const target of product === "web" ? ["static"] : targets) {
       const directory = path.join(root, `stock-market-game-${product}-${target}-unsigned`);
       await mkdir(directory);
-      const name = `${product}-${target}.zip`;
+      const stem = `${product}-${target}`;
+      const names = product !== "desktop" ? [`${stem}.zip`, `${stem}.tar.gz`]
+        : target.includes("linux") ? ["LICENSE", `${stem}-game.deb`, `${stem}-game.rpm`, `${stem}-game.AppImage`, `${stem}-portable.zip`]
+          : target.includes("windows") ? ["LICENSE", `${stem}-game.msi`, `${stem}-game.exe`, `${stem}-portable.zip`]
+            : ["LICENSE", `${stem}-game.dmg`, `${stem}-app.zip`, `${stem}-app.tar.gz`];
       const bytes = Buffer.from(`${product}/${target}`);
-      await writeFile(path.join(directory, name), bytes);
+      for (const name of names) await writeFile(path.join(directory, name), bytes);
       await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ schema: "distribution-manifest", schema_version: 1, product, target,
         ...(product === "web" ? { commit: "a".repeat(40) } : {}),
-        files: [{ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }] }));
+        files: names.map((name) => ({ name, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") })) }));
     }
   }
 }
@@ -30,7 +34,7 @@ test("publishing verifies all ten products, rejects tampering, and gives manifes
     await fixture(input);
     const sha = "a".repeat(40);
     const assets = await collectReleaseAssets(input, path.join(root, "output"), sha);
-    assert.equal(new Set(assets.map((file) => path.basename(file))).size, 21);
+    assert.equal(new Set(assets.map((file) => path.basename(file))).size, 35);
     const provenance = JSON.parse(await readFile(path.join(root, "output/release-source.json"), "utf8"));
     assert.equal(provenance.schema, "release-source");
     assert.equal(provenance.schema_version, 1);
@@ -140,8 +144,7 @@ test("publishing refuses symlink assets, collisions and a tag moved after compil
     const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
     const name = "server-aarch64-apple-darwin.zip";
     await writeFile(path.join(directory, name), "web/static");
-    await rm(file);
-    await writeFile(manifestFile, JSON.stringify({ ...manifest, files: [{ ...manifest.files[0], name }] }));
+    await writeFile(manifestFile, JSON.stringify({ ...manifest, files: [...manifest.files, { ...manifest.files[0], name }] }));
     await assert.rejects(collectReleaseAssets(input, path.join(root, "collision-output"), "a".repeat(40)), /collision/);
     const calls = [];
     await assert.rejects(main({ RELEASE_TAG: "test-abc", RELEASE_SHA: "a".repeat(40), GITHUB_REPOSITORY: "owner/game" }, async (args) => {
@@ -150,6 +153,38 @@ test("publishing refuses symlink assets, collisions and a tag moved after compil
     assert.equal(calls.length, 1);
     assert.equal(calls[0][0], "api");
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("最终 collector 拒绝任一产品的缺失格式，即使 manifest、文件和摘要一致", { timeout: 10000 }, async (context) => {
+  const { collectReleaseAssets } = await import("./publish-release.mjs");
+  const root = await mkdtemp(path.join(tmpdir(), "release-formats-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const input = path.join(root, "input");
+  await mkdir(input);
+  await fixture(input);
+  for (const [product, target, suffixes] of [
+    ["desktop", "x86_64-unknown-linux-gnu", [".deb", ".rpm", ".AppImage", "-portable.zip", "LICENSE"]],
+    ["desktop", "x86_64-pc-windows-msvc", [".msi", ".exe", "-portable.zip", "LICENSE"]],
+    ["desktop", "aarch64-apple-darwin", [".dmg", "-app.zip", "-app.tar.gz", "LICENSE"]],
+    ["server", "x86_64-unknown-linux-gnu", [".zip", ".tar.gz"]],
+    ["webui-server", "x86_64-pc-windows-msvc", [".zip", ".tar.gz"]],
+    ["web", "static", [".zip", ".tar.gz"]],
+  ]) {
+    const directory = path.join(input, `stock-market-game-${product}-${target}-unsigned`);
+    const manifestFile = path.join(directory, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+    for (const suffix of suffixes) {
+      const removed = manifest.files.find((file) => file.name.endsWith(suffix));
+      const bytes = await readFile(path.join(directory, removed.name));
+      await rm(path.join(directory, removed.name));
+      await writeFile(manifestFile, JSON.stringify({ ...manifest, files: manifest.files.filter((file) => file !== removed) }));
+      const output = path.join(root, "missing-format-output");
+      await assert.rejects(collectReleaseAssets(input, output, "a".repeat(40)), /missing required distribution format/);
+      await assert.rejects(lstat(output), { code: "ENOENT" });
+      await writeFile(path.join(directory, removed.name), bytes);
+      await writeFile(manifestFile, JSON.stringify(manifest));
+    }
+  }
 });
 
 test("上传 draft 期间 tag 移动时必须保持 draft 并拒绝公开 Release", async (context) => {

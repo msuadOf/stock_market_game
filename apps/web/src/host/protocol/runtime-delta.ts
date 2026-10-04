@@ -23,7 +23,7 @@ function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
     venue: enumValue(field(source, "venue", path), ["auction", "continuous"], `${path}.venue`),
     frozen: enumValue(field(source, "frozen", path), ["cash", "shares"], `${path}.frozen`),
   };
-  if (order.code.length === 0 || order.price <= 0 || order.remainingQty === 0
+  if (order.code.length === 0 || BigInt(order.price) <= 0n || order.remainingQty === 0
     || order.frozen !== (order.side === "Buy" ? "cash" : "shares")) {
     malformed(path, "活动委托代码、价格、余量或冻结资源不合法");
   }
@@ -44,11 +44,11 @@ export function parseBaselineWorkingOrders(value: unknown, markets: Snapshot["ma
 }
 
 function validateAccount(account: AccountSnap, path: string): void {
-  if (account.cash < 0 || account.reserved_cash < 0 || account.reserved_cash > account.cash) {
+  if (BigInt(account.cash) < 0n || BigInt(account.reserved_cash) < 0n || BigInt(account.reserved_cash) > BigInt(account.cash)) {
     malformed(path, "账户现金或资金占用不合法");
   }
   for (const [code, position] of Object.entries(account.positions)) {
-    if (position.t1_locked > position.qty || position.invested_cents < 0 || position.recovered_cents < 0) {
+    if (position.t1_locked > position.qty || BigInt(position.invested_cents) < 0n || BigInt(position.recovered_cents) < 0n) {
       malformed(`${path}.positions.${code}`, "持仓数量、T+1 锁定或成本不合法");
     }
   }

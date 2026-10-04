@@ -1,3 +1,4 @@
+import { money as parseCanonicalMoney } from "./primitives.ts"
 import { SaveSchemaError, array, boolean, decimal, exact, integer, map, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 import { u32 } from "./personal/common.ts"
 
@@ -10,9 +11,9 @@ const EXACT_FLOAT = /^[0-9a-f]{16}$/
 const EXACT_FLOAT_EXPONENT_MASK = 0x7ff0000000000000n
 
 export type SavedFeeComponents = {
-  readonly commission: number
-  readonly stamp_tax: number
-  readonly transfer_fee: number
+  readonly commission: string
+  readonly stamp_tax: string
+  readonly transfer_fee: string
 }
 
 export type SavedEnvelopeKey = {
@@ -91,8 +92,8 @@ function stock(value: unknown, path: string): string {
   return parsed
 }
 
-function money(value: unknown, path: string): number {
-  return integer(value, path)
+function money(value: unknown, path: string): string {
+  return parseCanonicalMoney(value, path)
 }
 
 function boundedU32(value: unknown, path: string, minimum = 0): number {

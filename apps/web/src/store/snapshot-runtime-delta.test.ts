@@ -7,7 +7,7 @@ import type { RuntimeDelta } from "../types/generated/RuntimeDelta.ts";
 
 function baseline() {
   return snapshotReducer(undefined, installProtocolSnapshotBaseline({ generation: "1", snapshot: parseProtocolSnapshot({
-    ...snapshot(0, 0), accounts: { "0": { cash: 1_000, reserved_cash: 0, positions: {}, reserved_sell_qty: {} } },
+    ...snapshot(0, 0), accounts: { "0": { cash: "1000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
   }) }));
 }
 

@@ -6,6 +6,6 @@
 export type PositionSnap = {
   qty: number;
   t1_locked: number;
-  invested_cents: number;
-  recovered_cents: number;
+  invested_cents: string;
+  recovered_cents: string;
 };

@@ -4,4 +4,4 @@
  * 金额/股价的定点表示。内部恒为「分」(元×100) 的 i64，无 f64、无误差。
  * 有符号：盈亏/浮亏可为负。价格 = 每股元值，2 位小数，与资金同尺度。
  */
-export type Money = number;
+export type Money = string;

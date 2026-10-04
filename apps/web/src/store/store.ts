@@ -7,7 +7,7 @@
  * 各 slice 拆到独立文件，这里只做装配与统一导出。
  */
 import { configureStore, createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { Snapshot, TradeEvent } from "../types/engine";
+import type { Cents, Snapshot, TradeEvent } from "../types/engine";
 import type { DailyCandle } from "../types/generated/DailyCandle.ts";
 import type { MarketSnap } from "../types/generated/MarketSnap.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
@@ -178,7 +178,7 @@ export interface AutoOrderUI {
   id: string;
   code: string;
   type: "stopProfit" | "stopLoss" | "buyTrigger" | "sellTrigger";
-  triggerPrice: number;
+  triggerPrice: Cents;
   qty: number;
   side: "Buy" | "Sell";
   enabled: boolean;

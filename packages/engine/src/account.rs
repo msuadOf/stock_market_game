@@ -612,8 +612,10 @@ pub struct Position {
     /// 当日买入锁定（T+1 日终解锁；T+0 时始终 0）。
     t1_locked: u32,
     /// 总买入成交额（分）。仅成交额，不含费用。
+    #[serde(with = "crate::money::cents_decimal")]
     invested_cents: i64,
     /// 总卖出成交额（分）。仅成交额，不含费用。
+    #[serde(with = "crate::money::cents_decimal")]
     recovered_cents: i64,
 }
 

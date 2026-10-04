@@ -4,6 +4,90 @@ mod fixture;
 use super::*;
 
 #[test]
+fn exhausted_handles_never_wrap_to_zero_or_replace_live_sessions() {
+    let next = AtomicU32::new(u32::MAX - 1);
+    let mut registry = SessionRegistry::default();
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    for seed in [41, 42] {
+        let session = ProtocolSession::new(setup.clone(), seed).unwrap();
+        assert!(registry.register(session, &next).is_ok());
+    }
+    let exhausted = ProtocolSession::new(setup, 43).unwrap();
+    assert!(
+        matches!(registry.register(exhausted, &next), Err(SessionError::ResourceLimit(message)) if message.contains("句柄已耗尽"))
+    );
+    assert_eq!(registry.sessions.len(), 2);
+    assert!(!registry.sessions.contains_key(&0));
+    assert_eq!(next.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        registry.sessions[&(u32::MAX - 1)]
+            .game()
+            .save()
+            .unwrap()
+            .seed,
+        41
+    );
+    assert_eq!(registry.sessions[&u32::MAX].game().save().unwrap().seed, 42);
+    registry.remove(u32::MAX);
+    assert!(matches!(
+        reserve_session_handle(&next),
+        Err(SessionError::ResourceLimit(_))
+    ));
+}
+
+#[test]
+fn handle_collision_is_explicit_and_keeps_the_original_session() {
+    let mut registry = SessionRegistry::default();
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    registry
+        .sessions
+        .insert(7, ProtocolSession::new(setup.clone(), 41).unwrap());
+    let next = AtomicU32::new(7);
+    let duplicate = ProtocolSession::new(setup, 42).unwrap();
+    assert!(matches!(
+        registry.register(duplicate, &next),
+        Err(SessionError::Step(_))
+    ));
+    assert_eq!(registry.sessions.len(), 1);
+    assert_eq!(registry.sessions[&7].game().save().unwrap().seed, 41);
+}
+
+#[test]
+fn concurrent_reservations_issue_each_final_handle_once_and_then_reject() {
+    let next = AtomicU32::new(u32::MAX - 15);
+    let results = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..4)
+                        .map(|_| reserve_session_handle(&next))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let issued: std::collections::BTreeSet<_> = results
+        .iter()
+        .filter_map(|result| result.as_ref().ok().copied())
+        .collect();
+    assert_eq!(issued.len(), 16);
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 16);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(SessionError::ResourceLimit(_))))
+            .count(),
+        16
+    );
+    assert!(!issued.contains(&0));
+    assert_eq!(next.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn producer_failure_contains_real_location_and_recovery_details() {
     let error = engine::session::StepFatal::InvariantViolation {
         location: "ReceiptAggregation::validate".into(),

@@ -1,3 +1,4 @@
+import { money as parseCanonicalMoney } from "../primitives.ts"
 import { SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
 
 export type StringMap<T> = { readonly [key: string]: T }
@@ -41,8 +42,8 @@ export function tradingDay(value: unknown, path: string): number {
   return integer(value, path, 0)
 }
 
-export function money(value: unknown, path: string): number {
-  return integer(value, path)
+export function money(value: unknown, path: string): string {
+  return parseCanonicalMoney(value, path)
 }
 
 export function nullable<T>(value: unknown, path: string, parser: (nested: unknown, nestedPath: string) => T): T | null {

@@ -4,7 +4,7 @@ import { accountKey, marketMinute, money, stockKey, type StringMap } from "./com
 export type PersonalWatchlist = { readonly stocks: StringMap<WatchedStock>; readonly latest_attention_minute: string }
 export type WatchedStock = { readonly last_observed_market_minute: string }
 export type PersonalPriceMemory = { readonly stocks: StringMap<StockPriceMemory> }
-export type StockPriceMemory = { readonly first_observed_minute: string; readonly first_observed_price: number; readonly last_observed_minute: string; readonly last_observed_price: number; readonly observed_high: number; readonly observed_low: number; readonly last_public_history_read_minute: string | null; readonly public_history_read_count: number; readonly last_touched_minute: string }
+export type StockPriceMemory = { readonly first_observed_minute: string; readonly first_observed_price: string; readonly last_observed_minute: string; readonly last_observed_price: string; readonly observed_high: string; readonly observed_low: string; readonly last_public_history_read_minute: string | null; readonly public_history_read_count: number; readonly last_touched_minute: string }
 
 export function parseWatchlists(value: unknown, path = "watchlists"): StringMap<PersonalWatchlist> { return map(value, path, accountKey, parseWatchlist) }
 export function parsePriceMemories(value: unknown, path = "price_memories"): StringMap<PersonalPriceMemory> { return map(value, path, accountKey, parsePriceMemory) }

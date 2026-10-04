@@ -3,6 +3,7 @@
  */
 import type { Cents } from "../types/engine";
 import type { IntentRejectedEvent } from "../types/engine";
+import { centsToYuanText, moneyToBigInt } from "./money.ts";
 
 const CHINESE_UNIT_STEP = 10_000;
 
@@ -132,12 +133,17 @@ export function formatLotAmount(lots: number): string {
 
 /** 分 → 元（保留 2 位）。 */
 export function yuan(cents: Cents): string {
-  return (cents / 100).toFixed(2);
+  return centsToYuanText(cents);
 }
 
 /** 元（带正负号，用于涨跌额 / 盈亏）。 */
 export function yuanSigned(cents: Cents): string {
-  return `${cents >= 0 ? "+" : ""}${yuan(cents)}`;
+  return `${moneyToBigInt(cents) >= 0n ? "+" : ""}${yuan(cents)}`;
+}
+
+export function formatCentsAmount(cents: Cents): string {
+  const value = moneyToBigInt(cents);
+  return `${value < 0n ? "-" : ""}${formatDecimalCentsAsYuan((value < 0n ? -value : value).toString())}`;
 }
 
 /** 百分比（带正负号，保留 2 位）。入参为小数（如 0.0235 表示 2.35%）。 */

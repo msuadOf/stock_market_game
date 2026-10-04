@@ -10,8 +10,8 @@ test("价格事件把权威游戏 tick 同步到 Redux 时钟", () => {
         seq: 9,
         tick: 7_200,
         code: "000812",
-        last_price: 286,
-        daily_candle: { time: 0, open: 285, high: 286, low: 285, close: 286, volume: 1 },
+        last_price: "286",
+        daily_candle: { time: 0, open: "285", high: "286", low: "285", close: "286", volume: 1 },
       },
     },
   ]);
@@ -22,7 +22,7 @@ test("价格事件把权威游戏 tick 同步到 Redux 时钟", () => {
 test("集合竞价事件也持续推进常驻游戏时钟", () => {
   const snapshot = { tick: 0 };
   syncSnapshotTick(snapshot, [{
-    AuctionTick: { seq: 1, tick: 899, code: "000812", indicative_price: 286, matched_volume: 10, imbalance: 0 },
+    AuctionTick: { seq: 1, tick: 899, code: "000812", indicative_price: "286", matched_volume: 10, imbalance: 0 },
   }]);
   assert.equal(snapshot.tick, 899);
 });

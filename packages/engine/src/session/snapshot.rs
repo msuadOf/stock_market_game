@@ -25,7 +25,11 @@ pub struct MarketSnap {
 pub struct PositionSnap {
     pub qty: u32,
     pub t1_locked: u32,
+    #[serde(with = "crate::money::cents_decimal")]
+    #[ts(type = "string")]
     pub invested_cents: i64,
+    #[serde(with = "crate::money::cents_decimal")]
+    #[ts(type = "string")]
     pub recovered_cents: i64,
 }
 

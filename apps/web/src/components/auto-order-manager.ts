@@ -3,6 +3,7 @@
  * 生成的同一个 ID，触发后通过回调把状态写回 Redux。
  */
 import type { Intent, Cents } from "../types/engine";
+import { compareMoney } from "../utils/money.ts";
 import type { AutomaticOrderPoint } from "../host/protocol/index.ts";
 
 export type AutoOrderType = "stopProfit" | "stopLoss" | "buyTrigger" | "sellTrigger";
@@ -82,8 +83,8 @@ export class AutoOrderManager {
         if (!order.enabled || order.triggered || this.pending.has(order.id) || order.code !== point.code) continue;
         const price = point.last_price;
         const shouldTrigger = order.type === "stopProfit" || order.type === "sellTrigger"
-          ? price >= order.triggerPrice
-          : price <= order.triggerPrice;
+          ? compareMoney(price, order.triggerPrice) >= 0
+          : compareMoney(price, order.triggerPrice) <= 0;
         if (!shouldTrigger) continue;
 
         this.pending.add(order.id);

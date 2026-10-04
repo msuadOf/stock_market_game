@@ -77,7 +77,7 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["auction_orders", "600101"], [{ owner: 1 }], /auction_orders/],
     [["resting_orders", market], [{ id: 1 }], /resting_orders/],
     [["price_history", market, 0], 1.5, /price_history/],
-    [["market_minute_closes", market], [{ absolute_trading_minute: 1, close: "1000" }], /market_minute_closes/],
+    [["market_minute_closes", market], [{ absolute_trading_minute: 1, close: 1000 }], /market_minute_closes/],
     [["rng_state"], 42, /rng_state/],
     [["npc_attention", account, "rng_state"], 42, /npc_attention/],
     [["runtime_state", "strategy_states", account], { Institution: "Unknown" }, /runtime_state/],

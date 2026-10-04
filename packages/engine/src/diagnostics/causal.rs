@@ -44,7 +44,9 @@ pub struct OrderOrigin {
 #[derive(Clone, Debug, Serialize)]
 pub struct Quote {
     pub code: StockCode,
+    #[serde(serialize_with = "crate::money::cents_decimal::optional")]
     pub bid_cents: Option<i64>,
+    #[serde(serialize_with = "crate::money::cents_decimal::optional")]
     pub ask_cents: Option<i64>,
     #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub bid_depth: u64,
@@ -69,7 +71,9 @@ pub enum CausalFactKind {
         account: AccountId,
         code: StockCode,
         qty: u32,
+        #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
         value_before: i64,
+        #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
         gross: i64,
     },
     Terminated {
@@ -86,6 +90,7 @@ pub enum CausalFactKind {
         taker: OrderId,
         side: Option<Side>,
         qty: u32,
+        #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
         price_cents: i64,
         before: Quote,
     },
@@ -103,7 +108,9 @@ pub enum CausalFactKind {
     },
     Budget {
         account: AccountId,
+        #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
         available_cents: i64,
+        #[serde(serialize_with = "crate::money::cents_decimal::list")]
         allocated_cents: Vec<i64>,
     },
 }
@@ -121,6 +128,7 @@ pub(crate) struct CausalCollector {
     facts: Vec<CausalFact>,
     decision: std::collections::BTreeMap<AccountId, u64>,
     pub termination: Option<Termination>,
+    #[serde(serialize_with = "crate::money::cents_decimal::map")]
     filled_values: std::collections::BTreeMap<OrderId, i64>,
 }
 
@@ -216,6 +224,19 @@ impl CausalCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collector_filled_values_serialize_as_exact_decimal_cents() {
+        let mut collector = CausalCollector::default();
+        let code = StockCode("600101".to_owned());
+        collector.record_continuous_fill(time(), OrderId(1), AccountId(1), &code, 100, i64::MAX);
+        let value = serde_json::to_value(collector).unwrap();
+        assert_eq!(value["filled_values"]["1"], i64::MAX.to_string());
+        assert_eq!(
+            value["facts"][0]["kind"]["Filled"]["gross"],
+            i64::MAX.to_string()
+        );
+    }
 
     fn time() -> FactTime {
         FactTime {

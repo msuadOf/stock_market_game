@@ -2,12 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formatDecimalCentsAsYuan,
+  formatCentsAmount,
+  yuan,
+  yuanSigned,
   formatLotAmount,
   formatSharesAsLots,
   formatYuanAmount,
   rejectionText,
   RecursiveChineseNumberFormatter,
 } from "./format.ts";
+
+test("Money 显示保留负数与安全整数外的每一分", { timeout: 10000 }, () => {
+  assert.equal(yuan("9007199254740993"), "90071992547409.93");
+  assert.equal(yuanSigned("-1"), "-0.01");
+  assert.equal(yuanSigned("0"), "+0.00");
+  assert.equal(formatCentsAmount("-12500000000"), "-1.25亿");
+});
 
 test("无损十进制分值按元和中文数量级显示", () => {
   assert.equal(formatDecimalCentsAsYuan("69900"), "699");

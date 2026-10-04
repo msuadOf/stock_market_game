@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/pr
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseReleaseTag } from "./release-policy.mjs";
+import { requireDistributionFormats } from "./package-distributions.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 
 function requireSha(sha) {
@@ -53,6 +54,7 @@ export async function collectReleaseAssets(input, output, sha) {
       artifacts.push({ source, name: file.name });
     }
     const name = `${manifest.product}-${manifest.target}-manifest.json`;
+    requireDistributionFormats(manifest, web ? undefined : { "unknown-linux-gnu": "linux", "pc-windows-msvc": "win32", "apple-darwin": "darwin" }[targetMatch[1]]);
     if (usedNames.has(name)) throw new Error(`manifest name collision: ${name}`);
     usedNames.add(name);
     artifacts.push({ source: manifestFile, name });

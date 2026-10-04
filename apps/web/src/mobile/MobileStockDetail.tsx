@@ -1,3 +1,4 @@
+import { compareMoney, subtractMoney } from "../utils/money.ts";
 import { useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
@@ -9,7 +10,7 @@ import { MobileRunToggle } from "./MobileRunToggle";
 import { KlineViewportControls } from "./KlineViewportControls.tsx";
 import { aggregateCandles, buildFiveLevelBook, formatTradeLots, formatTradeTime, intradayChartX, MOBILE_KLINE_DEFAULT_CAPACITY, MobileIntradayProjection, MobileKlineProjection, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
-import { formatDecimalCentsAsYuan } from "../utils/format";
+import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
 const chartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
@@ -48,10 +49,6 @@ interface Props {
   companyContent: ReactNode;
 }
 
-function yuan(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
-
 function tone(diff: number): "rise" | "fall" | "flat" {
   return diff > 0 ? "rise" : diff < 0 ? "fall" : "flat";
 }
@@ -61,10 +58,10 @@ function FiveLevelBook({ market }: { market: MarketSnap }) {
   const sellMaximum = Math.max(1, ...book.sells.flatMap(({ level }) => level ? [level[1]] : []));
   const buyMaximum = Math.max(1, ...book.buys.flatMap(({ level }) => level ? [level[1]] : []));
   return <aside className="msd-order-book" aria-label="五档盘口，数量单位为手">
-    <div className="msd-book-head"><b className={tone(market.last_price - market.last_close)}>大单 <small>量/手</small></b><span>{yuan(market.last_price)}</span></div>
-    {book.sells.map(({ label, level }) => <div className="msd-book-row" key={label}><span>{label}</span><b className={level ? tone(level[0] - market.last_close) : "flat"}>{level ? yuan(level[0]) : "--"}</b><span className="msd-book-depth sell" style={{ "--depth": `${level ? orderBookDepthPercent(level[1], sellMaximum) : 0}%` } as CSSProperties}><span>{level ? formatTradeLots(level[1]) : "--"}</span></span></div>)}
+    <div className="msd-book-head"><b className={tone(compareMoney(market.last_price, market.last_close))}>大单 <small>量/手</small></b><span>{yuan(market.last_price)}</span></div>
+    {book.sells.map(({ label, level }) => <div className="msd-book-row" key={label}><span>{label}</span><b className={level ? tone(compareMoney(level[0], market.last_close)) : "flat"}>{level ? yuan(level[0]) : "--"}</b><span className="msd-book-depth sell" style={{ "--depth": `${level ? orderBookDepthPercent(level[1], sellMaximum) : 0}%` } as CSSProperties}><span>{level ? formatTradeLots(level[1]) : "--"}</span></span></div>)}
     <div className="msd-book-divider" />
-    {book.buys.map(({ label, level }) => <div className="msd-book-row" key={label}><span>{label}</span><b className={level ? tone(level[0] - market.last_close) : "flat"}>{level ? yuan(level[0]) : "--"}</b><span className="msd-book-depth buy" style={{ "--depth": `${level ? orderBookDepthPercent(level[1], buyMaximum) : 0}%` } as CSSProperties}><span>{level ? formatTradeLots(level[1]) : "--"}</span></span></div>)}
+    {book.buys.map(({ label, level }) => <div className="msd-book-row" key={label}><span>{label}</span><b className={level ? tone(compareMoney(level[0], market.last_close)) : "flat"}>{level ? yuan(level[0]) : "--"}</b><span className="msd-book-depth buy" style={{ "--depth": `${level ? orderBookDepthPercent(level[1], buyMaximum) : 0}%` } as CSSProperties}><span>{level ? formatTradeLots(level[1]) : "--"}</span></span></div>)}
   </aside>;
 }
 
@@ -158,7 +155,7 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
       <div className="msd-ticks" aria-label="逐笔成交">
         <div className="msd-ticks-head">明细⌃</div>
         {recentTrades.length === 0 ? <p>等待成交…</p> : recentTrades.map((trade) => (
-          <div className="msd-tick-row" key={trade.seq}><span>{formatTradeTime(trade.tick)}</span><b className={tone(trade.price - market.last_close)}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
+          <div className="msd-tick-row" key={trade.seq}><span>{formatTradeTime(trade.tick)}</span><b className={tone(compareMoney(trade.price, market.last_close))}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
         ))}
       </div>
     </section>
@@ -185,11 +182,13 @@ function FundsPanel({ activeDailyCandle }: Pick<Props, "activeDailyCandle">) {
 
 export function MobileStockDetail(props: Props) {
   const { market } = props;
-  const diff = market.last_price - market.last_close;
+  const diff = subtractMoney(market.last_price, market.last_close);
   const percent = priceChangePercent(market.last_price, market.last_close);
-  const open = props.activeDailyCandle ? props.activeDailyCandle.open * 100 : market.last_close;
-  const high = props.activeDailyCandle ? props.activeDailyCandle.high * 100 : market.last_price;
-  const low = props.activeDailyCandle ? props.activeDailyCandle.low * 100 : market.last_price;
+  const rawPrices = props.activeDailyCandle?.rawPrices;
+  if (props.activeDailyCandle !== undefined && rawPrices === undefined) throw new Error("当日 K 线缺少精确分值，不能展示报价摘要");
+  const open = rawPrices?.open ?? market.last_close;
+  const high = rawPrices?.high ?? market.last_price;
+  const low = rawPrices?.low ?? market.last_price;
   const chartType = props.period === "分时" ? "分时" : "日K";
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, items: readonly string[]) {
@@ -218,8 +217,8 @@ export function MobileStockDetail(props: Props) {
         />
       </header>
       <section className="msd-quote" aria-label="股票报价摘要">
-        <div className={`msd-last ${tone(diff)}`}><strong>{yuan(market.last_price)}</strong><span>{diff >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>
-        <div className="msd-day-prices"><span>高 <b className={tone(high - market.last_close)}>{yuan(high)}</b></span><span>低 <b className={tone(low - market.last_close)}>{yuan(low)}</b></span><span>开 <b className={tone(open - market.last_close)}>{yuan(open)}</b></span></div>
+        <div className={`msd-last ${tone(compareMoney(diff, "0"))}`}><strong>{yuan(market.last_price)}</strong><span>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>
+        <div className="msd-day-prices"><span>高 <b className={tone(compareMoney(high, market.last_close))}>{yuan(high)}</b></span><span>低 <b className={tone(compareMoney(low, market.last_close))}>{yuan(low)}</b></span><span>开 <b className={tone(compareMoney(open, market.last_close))}>{yuan(open)}</b></span></div>
         <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(props.activeDailyCandle?.volume ?? 0)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
       <div className="msd-period-tabs" role="tablist" aria-label="图表周期">
