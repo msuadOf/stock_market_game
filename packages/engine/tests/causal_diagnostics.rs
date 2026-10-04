@@ -4,6 +4,78 @@ mod fixture;
 use engine::diagnostics::causal::{CausalError, CausalFactKind, CausalReport, Termination};
 use engine::{AccountId, Event, GameSession, Intent, Money, Side, StockCode};
 
+#[test]
+fn causal_json_preserves_large_unsigned_values_as_decimal_strings() {
+    let session = canceled_session(false);
+    let mut report = session.causal_diagnostics().unwrap();
+    report.seed = u64::MAX;
+    report.submitted_qty = u64::MAX;
+    report.orders[0].source_sequence = u64::MAX;
+    report.orders[0].lifetime_market_minutes = Some(u64::MAX);
+    report.orders[0].origin.decision = Some(u64::MAX);
+    report.information_delays = vec![(u64::MAX, 3)];
+    report.impacts = vec![engine::diagnostics::causal::ImpactSample {
+        execution_sequence: u64::MAX,
+        quote_sequence: Some(u64::MAX),
+        signed_observational_bp: None,
+        absent_reason: Some("no_later_quote"),
+    }];
+    report.recoveries = vec![engine::diagnostics::causal::RecoverySample {
+        loss_sequence: u64::MAX,
+        recovered_sequence: None,
+        market_minutes: None,
+        censored_reason: Some("observation_end"),
+    }];
+    let artifact = serde_json::json!({"causal_runs": [report]});
+    let json = &artifact["causal_runs"][0];
+    let expected = serde_json::json!(u64::MAX.to_string());
+    assert_eq!(json["seed"], expected);
+    assert_eq!(json["submitted_qty"], expected);
+    assert_eq!(json["orders"][0]["source_sequence"], expected);
+    assert_eq!(json["orders"][0]["lifetime_market_minutes"], expected);
+    assert_eq!(json["orders"][0]["origin"]["decision"], expected);
+    assert_eq!(json["information_delays"][0][0], expected);
+    assert_eq!(json["information_delays"][0][1], 3);
+    assert_eq!(json["orders"][0]["filled_qty"], "0");
+    assert_eq!(json["impacts"][0]["execution_sequence"], expected);
+    assert_eq!(json["impacts"][0]["quote_sequence"], expected);
+    assert_eq!(json["recoveries"][0]["loss_sequence"], expected);
+    assert!(json["recoveries"][0]["recovered_sequence"].is_null());
+    assert!(json["recoveries"][0]["market_minutes"].is_null());
+}
+
+#[test]
+fn causal_fact_json_preserves_large_time_sequence_and_depth() {
+    let session = canceled_session(false);
+    let mut fact = session.causal_facts()[0].clone();
+    fact.sequence = u64::MAX;
+    fact.time.market_minute = u64::MAX;
+    fact.kind = CausalFactKind::Quote(engine::diagnostics::causal::Quote {
+        code: StockCode("600101".to_owned()),
+        bid_cents: None,
+        ask_cents: None,
+        bid_depth: u64::MAX,
+        ask_depth: 0,
+    });
+    let json = serde_json::to_value(&fact).unwrap();
+    assert_eq!(json["sequence"], u64::MAX.to_string());
+    assert_eq!(json["time"]["market_minute"], u64::MAX.to_string());
+    assert_eq!(json["kind"]["Quote"]["bid_depth"], u64::MAX.to_string());
+    assert_eq!(json["kind"]["Quote"]["ask_depth"], "0");
+    fact.kind = CausalFactKind::Acquisition {
+        account: AccountId(0),
+        company: engine::company::CompanyId("diagnostic".to_owned()),
+        publication: u64::MAX,
+        published: fact.time.civil,
+        acquired: fact.time.civil,
+    };
+    let json = serde_json::to_value(fact).unwrap();
+    assert_eq!(
+        json["kind"]["Acquisition"]["publication"],
+        u64::MAX.to_string()
+    );
+}
+
 fn canceled_session(auction: bool) -> GameSession {
     let mut setup = fixture::setup();
     setup.npcs.retail_count = 0;

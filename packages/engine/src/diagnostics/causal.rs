@@ -4,6 +4,7 @@ use crate::{AccountId, CivilInstant, OrderId, Side, StockCode};
 use serde::Serialize;
 
 mod aggregate;
+mod decimal;
 mod microstructure;
 mod report;
 pub use microstructure::{ImpactSample, RecoverySample};
@@ -22,6 +23,7 @@ pub enum Termination {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct FactTime {
     pub phase: crate::TradingPhase,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub market_minute: u64,
     pub civil: CivilInstant,
 }
@@ -33,6 +35,7 @@ pub struct OrderOrigin {
     pub code: StockCode,
     pub company: Option<CompanyId>,
     pub plan: Option<PlanId>,
+    #[serde(serialize_with = "decimal::optional")]
     pub decision: Option<u64>,
     pub side: Side,
     pub qty: u32,
@@ -43,7 +46,9 @@ pub struct Quote {
     pub code: StockCode,
     pub bid_cents: Option<i64>,
     pub ask_cents: Option<i64>,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub bid_depth: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub ask_depth: u64,
 }
 
@@ -88,6 +93,7 @@ pub enum CausalFactKind {
     Acquisition {
         account: AccountId,
         company: CompanyId,
+        #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
         publication: u64,
         published: CivilInstant,
         acquired: CivilInstant,
@@ -104,6 +110,7 @@ pub enum CausalFactKind {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CausalFact {
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub sequence: u64,
     pub time: FactTime,
     pub kind: CausalFactKind,
