@@ -101,3 +101,14 @@ test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一�
     assert.deepEqual(rows.map(row => [Number(row[1]), row[2]]), Array.from({ length: count }, (_, index) => [count - index, ((1000 + count - index) / 100).toFixed(2)]));
   }
 });
+
+test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口径", () => {
+  for (const [invested, recovered, cost, pnl] of [[200100, 0, "10.00", "+2"], [0, 200100, "-10.00", "+4002"]] as const) {
+    const active = structuredClone(snapshot);
+    active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: invested, recovered_cents: recovered };
+    active.markets["600101"].last_price = 1001;
+    const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
+    assert.match(html, new RegExp(`<td class="num">${cost.replace(".", "\\.")}<\\/td>`));
+    assert.ok(html.includes(`${pnl}元`), html);
+  }
+});

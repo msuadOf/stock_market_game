@@ -16,6 +16,7 @@ import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "../utils/format.ts";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
 import { portfolioInputEqual, selectPortfolioInput } from "./portfolio-selector.ts";
+import { valueHeldPosition } from "./position-valuation.ts";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
@@ -28,16 +29,14 @@ function usePortfolio() {
     const positions = !account ? [] : Object.entries(account.positions)
       .filter(([, position]) => position.qty > 0)
       .map(([code, position]) => {
-        const currentPrice = heldPrices[code] ?? 0;
-        const netInvested = position.invested_cents - position.recovered_cents;
-        const marketValue = currentPrice * position.qty;
+        const currentPrice = heldPrices[code];
+        if (currentPrice === undefined) throw new Error(`持仓 ${code} 缺少行情，不能估值`);
+        const valuation = valueHeldPosition(position, currentPrice);
         return {
           code,
           qty: position.qty,
           sellableQty: Math.max(0, position.qty - position.t1_locked - (account.reserved_sell_qty[code] ?? 0)),
-          avgCost: position.qty > 0 ? netInvested / position.qty : 0,
-          marketValue,
-          pnl: marketValue - netInvested,
+          ...valuation,
         };
       });
     const totalMarketValue = positions.reduce((sum, position) => sum + position.marketValue, 0);
