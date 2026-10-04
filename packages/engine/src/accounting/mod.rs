@@ -86,6 +86,37 @@ impl Books {
         if batch.is_empty() {
             return Ok(());
         }
+        let trial = self.trial_ledger_for(&batch)?;
+        self.ledger = trial;
+        self.journal.record_batch(batch);
+        Ok(())
+    }
+
+    pub(crate) fn transact_post_batch<T, E>(
+        &mut self,
+        batch: Vec<JournalEntry>,
+        operation: impl FnOnce(&Books) -> Result<T, E>,
+    ) -> Result<T, BooksTransactionError<E>> {
+        if batch.is_empty() {
+            return operation(self).map_err(BooksTransactionError::Operation);
+        }
+        let trial = self
+            .trial_ledger_for(&batch)
+            .map_err(BooksTransactionError::Accounting)?;
+        let old_ledger = std::mem::replace(&mut self.ledger, trial);
+        let batch_count = self.journal.batches.len();
+        self.journal.record_batch(batch);
+        match operation(self) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.journal.rollback_to_batch_count(batch_count);
+                self.ledger = old_ledger;
+                Err(BooksTransactionError::Operation(error))
+            }
+        }
+    }
+
+    fn trial_ledger_for(&self, batch: &[JournalEntry]) -> Result<Ledger, AccountingError> {
         let batch_len = batch.len();
         let abort =
             |failed_index: Option<usize>, cause: AccountingError| AccountingError::BatchAborted {
@@ -120,9 +151,7 @@ impl Books {
             return Err(abort(None, cause));
         }
 
-        self.ledger = trial;
-        self.journal.record_batch(batch);
-        Ok(())
+        Ok(trial)
     }
 
     /// 封账：状态 + 守卫（结账试算/结转/快照在 `closing`）。
@@ -139,6 +168,11 @@ impl Books {
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
     }
+}
+
+pub(crate) enum BooksTransactionError<E> {
+    Accounting(AccountingError),
+    Operation(E),
 }
 
 /// 批末现金下限：任一现金科目净借方余额 < 0 → 类型化拒绝（不 clamp）。

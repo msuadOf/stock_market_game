@@ -212,8 +212,10 @@ fn correction_guards_reject() {
         )
         .expect_err("open-period target must be rejected");
     assert!(matches!(
-        err,
-        engine::accounting::closing::ClosingError::CorrectionTargetNotClosed { .. }
+        &err,
+        engine::accounting::closing::ClosingError::CorrectionFailed { reason, cause }
+            if reason == "test"
+                && matches!(cause.as_ref(), engine::accounting::closing::ClosingError::CorrectionTargetNotClosed { .. })
     ));
 
     // 目标无已公布版本（2030-06 已封账但从未经结账引擎定稿）。
@@ -242,8 +244,10 @@ fn correction_guards_reject() {
         )
         .expect_err("unclosed-by-engine target must be rejected");
     assert!(matches!(
-        err,
-        engine::accounting::closing::ClosingError::NoVersionToSupersede { .. }
+        &err,
+        engine::accounting::closing::ClosingError::CorrectionFailed { reason, cause }
+            if reason == "test"
+                && matches!(cause.as_ref(), engine::accounting::closing::ClosingError::NoVersionToSupersede { .. })
     ));
 
     // 调整分录早于目标期间（2030-05 < 2030-06）→ 更正守卫拒绝（前向约束）。
@@ -273,8 +277,10 @@ fn correction_guards_reject() {
         )
         .expect_err("back-dated adjustment must be rejected");
     assert!(matches!(
-        err,
-        engine::accounting::closing::ClosingError::CorrectionEntriesNotForward { .. }
+        &err,
+        engine::accounting::closing::ClosingError::CorrectionFailed { reason, cause }
+            if reason == "test"
+                && matches!(cause.as_ref(), engine::accounting::closing::ClosingError::CorrectionEntriesNotForward { .. })
     ));
     assert_eq!(
         fresh, before,

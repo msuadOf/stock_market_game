@@ -12,6 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::accounting::closing::{
+    ClosingEngine, CorrectionRequest, CorrectionTransactionError, ReportHandle,
+};
+use crate::accounting::consolidation::MemberId;
+use crate::accounting::reports::IndustryPresentation;
+use crate::accounting::Books;
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::publication::{
@@ -119,6 +125,129 @@ impl PublicLibrary {
         };
         self.insert_report(report)?;
         Ok(id)
+    }
+
+    /// 原子完成调整凭证过账、重述报表生成和公开更正发布。
+    pub fn correct_and_publish(
+        &mut self,
+        closing: &mut ClosingEngine,
+        books: &mut Books,
+        member: &MemberId,
+        industry: IndustryPresentation,
+        correction: CorrectionRequest,
+        publication: PublicationRequest,
+    ) -> Result<(ReportHandle, PublicationId), super::CorrectionPublicationError> {
+        let reason = correction.reason.clone();
+        let target = (publication.period, publication.kind);
+        let prepared =
+            closing.correct_with_publication(books, member, industry, target, correction, |set| {
+                self.prepare_correction_publication(set, publication)
+            });
+        match prepared {
+            Ok((handle, pending)) => {
+                let publication_id = self.commit_prepared_report(pending);
+                Ok((handle, publication_id))
+            }
+            Err(CorrectionTransactionError::Closing(cause)) => {
+                Err(super::CorrectionPublicationError::Closing {
+                    reason,
+                    cause: Box::new(cause),
+                })
+            }
+            Err(CorrectionTransactionError::Accounting(cause)) => {
+                Err(super::CorrectionPublicationError::Accounting {
+                    reason,
+                    cause: Box::new(cause),
+                })
+            }
+            Err(CorrectionTransactionError::Publication(cause)) => {
+                Err(super::CorrectionPublicationError::Information {
+                    reason,
+                    cause: Box::new(cause),
+                })
+            }
+        }
+    }
+
+    fn prepare_correction_publication(
+        &self,
+        set: &crate::accounting::reports::ReportSet,
+        request: PublicationRequest,
+    ) -> Result<PreparedReportPublication, InformationError> {
+        ensure_origin_supersedes(&request.origin, request.supersedes)?;
+        ensure_scope_mirrors_company(&request.company, &request.scope)?;
+        ensure_schedule_window(&request.origin, request.period)?;
+        ensure_publication_times(request.period, request.approved_at, request.published_at)?;
+        ensure_schedule_instant(&request.origin, request.published_at)?;
+        let target = request
+            .supersedes
+            .ok_or(InformationError::OriginSupersedesMismatch)?;
+        let original = self
+            .reports
+            .get(&target)
+            .ok_or(InformationError::CorrectionTargetUnknown { target })?;
+        if original.company != request.company
+            || original.reports.period != request.period
+            || original.reports.kind != request.kind
+            || original.reports.scope != request.scope
+        {
+            return Err(InformationError::CorrectionTargetMismatch {
+                target,
+                company: request.company,
+            });
+        }
+        if set.scope != request.scope || set.period != request.period || set.kind != request.kind {
+            return Err(InformationError::ReportNotFinalized {
+                scope: request.scope,
+                period: request.period,
+                kind: request.kind,
+                sequence: set.version.sequence,
+            });
+        }
+        if set.version.sequence != request.sequence {
+            return Err(InformationError::ReportNotFinalized {
+                scope: request.scope,
+                period: request.period,
+                kind: request.kind,
+                sequence: request.sequence,
+            });
+        }
+        set.validate()
+            .map_err(|err| InformationError::ReportNotPublishable(Box::new(err)))?;
+        let id = PublicationId::new(self.next_seq);
+        let next_seq =
+            self.next_seq
+                .checked_add(1)
+                .ok_or_else(|| InformationError::InconsistentLibrary {
+                    detail: format!("publication id space exhausted at {id:?}"),
+                })?;
+        let report = PublishedReport {
+            id,
+            company: request.company,
+            policy: request.policy,
+            approved_at: request.approved_at,
+            published_at: request.published_at,
+            origin: request.origin,
+            supersedes: request.supersedes,
+            reports: set.clone(),
+        };
+        ensure_report_shape(&report)?;
+        let digest = extend_content_digest(self.content_digest, b'R', id, &report)?;
+        Ok(PreparedReportPublication {
+            report,
+            next_seq,
+            digest,
+        })
+    }
+
+    fn commit_prepared_report(&mut self, prepared: PreparedReportPublication) -> PublicationId {
+        let id = prepared.report.id;
+        let company = prepared.report.company.clone();
+        self.reports.insert(id, prepared.report);
+        self.by_company.entry(company).or_default().insert(id);
+        self.next_seq = prepared.next_seq;
+        self.content_digest = prepared.digest;
+        id
     }
 
     /// 公开一条临时公告（发生日的下一个 18:00 相位；时序错配 = 拒绝）。
@@ -289,6 +418,12 @@ impl PublicLibrary {
                 _ => unreachable!("publication digest kind is closed"),
             })
     }
+}
+
+struct PreparedReportPublication {
+    report: PublishedReport,
+    next_seq: u32,
+    digest: u64,
 }
 
 fn extend_content_digest(

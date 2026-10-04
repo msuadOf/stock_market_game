@@ -231,6 +231,131 @@ fn correction_does_not_leak_into_later_periods() {
     assert_eq!(fy31.cash_flow.operating, yuan(300));
 }
 
+#[test]
+fn failed_correction_report_generation_restores_books_and_closing_state() {
+    let mut scenario = CorrectionScenario::through_correction();
+    let books_before = serde_json::to_vec(&scenario.books).expect("账套可序列化");
+    let closing_before = serde_json::to_vec(&scenario.closing).expect("结账状态可序列化");
+    let result = scenario.closing.correct(
+        &mut scenario.books,
+        &scenario.member,
+        IndustryPresentation::Bank,
+        (period("2030-12"), ReportKind::Annual),
+        CorrectionRequest {
+            entries: vec![entry(
+                4,
+                "2031-02-15",
+                BusinessKind::CashRevenue,
+                CashFlowClass::Operating,
+                &[
+                    ("1002", PostingSide::Debit, 100),
+                    ("6001", PostingSide::Credit, 100),
+                ],
+            )],
+            reason: "错配行业报表生成失败时保留此原因".to_string(),
+        },
+    );
+
+    assert!(result.is_err(), "行业科目错配必须使派生报告生成失败");
+    assert_eq!(
+        serde_json::to_vec(&scenario.books).expect("账套可序列化"),
+        books_before,
+        "派生报告失败不得留下更正分录"
+    );
+    assert_eq!(
+        serde_json::to_vec(&scenario.closing).expect("结账状态可序列化"),
+        closing_before,
+        "派生报告失败不得留下重述底稿或版本"
+    );
+}
+
+#[test]
+fn report_arithmetic_overflow_restores_correction_transaction() {
+    use engine::accounting::{
+        AccountingAmount, BusinessEventId, JournalEntry, JournalLine, LedgerAccountId,
+    };
+    use engine::calendar::CivilDate;
+
+    let mut books = Books::new(engine::company::industrial::industrial_account_chart());
+    books
+        .post_batch(vec![JournalEntry {
+            source: BusinessEventId::new(1),
+            date: CivilDate::from_iso("2029-12-31").expect("fixture date"),
+            kind: BusinessKind::OpeningBalance,
+            cash_flow: CashFlowClass::Financing,
+            lines: vec![
+                JournalLine {
+                    account: LedgerAccountId("1002".to_string()),
+                    side: PostingSide::Debit,
+                    amount: AccountingAmount::from_cents(i128::MAX),
+                },
+                JournalLine {
+                    account: LedgerAccountId("4001".to_string()),
+                    side: PostingSide::Credit,
+                    amount: AccountingAmount::from_cents(i128::MAX),
+                },
+            ],
+        }])
+        .expect("opening balance posts at the largest representable amount");
+    let mut closing = ClosingEngine::new();
+    let id = member();
+    for month in 1..=11 {
+        closing
+            .close_month(
+                &mut books,
+                &id,
+                IndustryPresentation::Industrial,
+                AccountingPeriod::from_ymd(2030, month).expect("fixture period"),
+            )
+            .expect("short history month closes");
+    }
+    closing
+        .close_year(&mut books, &id, IndustryPresentation::Industrial, 2030)
+        .expect("target annual report closes before correction");
+    let books_before = serde_json::to_vec(&books).expect("账套可序列化");
+    let closing_before = serde_json::to_vec(&closing).expect("结账状态可序列化");
+
+    let result = closing.correct(
+        &mut books,
+        &id,
+        IndustryPresentation::Industrial,
+        (period("2030-12"), ReportKind::Annual),
+        CorrectionRequest {
+            entries: vec![entry(
+                2,
+                "2031-01-15",
+                BusinessKind::CreditSale,
+                CashFlowClass::NonCash,
+                &[("1122", PostingSide::Debit, 1), ("6001", PostingSide::Credit, 1)],
+            )],
+            reason: "派生报表合计溢出更正".to_string(),
+        },
+    );
+
+    assert!(matches!(
+        &result,
+        Err(ClosingError::CorrectionFailed { reason, cause })
+            if reason == "派生报表合计溢出更正"
+                && matches!(
+                    cause.as_ref(),
+                    ClosingError::Report(report)
+                        if matches!(
+                            report.as_ref(),
+                            engine::accounting::reports::ReportError::Accounting(accounting)
+                                if matches!(
+                                    accounting.as_ref(),
+                                    engine::accounting::AccountingError::AmountOverflow { op: "add", .. }
+                                )
+                        )
+                )
+    ), "派生报表的加法溢出必须拒绝更正");
+    assert_eq!(serde_json::to_vec(&books).expect("账套可序列化"), books_before);
+    assert_eq!(
+        serde_json::to_vec(&closing).expect("结账状态可序列化"),
+        closing_before
+    );
+}
+
 /// 重述底稿随引擎 serde 状态整体存取：save → restore → 生成的后续版本
 /// 与不落盘路径逐字节一致（底稿经存档恢复后仍生效）。
 #[test]

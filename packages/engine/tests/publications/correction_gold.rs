@@ -11,7 +11,8 @@ use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::{
     scheduled_instant, stable_company_offset, AccountingPolicyRef, PublicLibrary,
-    PublicationOrigin, PublicationRequest, ScheduledReportKind,
+    CorrectionPublicationError, InformationError, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind,
 };
 
 const COMPANY: &str = "C-CORR";
@@ -68,41 +69,80 @@ fn correction_preserves_previous_version() {
     let original_publication_bytes =
         serde_json::to_string(&original_report_before_correction).expect("原报告可序列化");
 
-    // —— 差错更正：调整分录过账于开放期间 2031-01 → 年报 ReportVersion.sequence=2（supersedes 指向原报告）——
-    let corrected = closing
-        .correct(
-            &mut books,
-            &MemberId(COMPANY.to_string()),
-            IndustryPresentation::Industrial,
-            (
-                AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
-                ReportKind::Annual,
-            ),
-            CorrectionRequest {
-                entries: vec![entry(
-                    99,
-                    "2031-01-15",
-                    BusinessKind::CashRevenue,
-                    CashFlowClass::Operating,
-                    &[
-                        ("1002", PostingSide::Debit, 300),
-                        ("6001", PostingSide::Credit, 300),
-                    ],
-                )],
-                reason: "遗漏现金收入更正".to_string(),
-            },
-        )
-        .expect("更正报告登记新 ReportVersion.sequence");
-    assert_eq!(corrected.sequence, 2);
-
-    // 公开更正：新 PublishedReport 关联旧 ID，公布在更正后的下一个 18:00 相位。
+    // —— 差错更正与公开合为一个提交：先验证失败回滚，再原凭证重试 ——
     let correction_instant = scheduled_instant(ScheduledReportKind::Q1, 2031, offset)
         .expect("an 18:00 phase instant after the correction");
     let correction_approval =
         CivilInstant::from_hms(correction_instant.date(), 8, 0, 0).expect("approval instant");
-    let corrected_publication_id = library
-        .publish_closed(
-            &closing,
+    let correction_entries = vec![entry(
+        99,
+        "2031-01-15",
+        BusinessKind::CashRevenue,
+        CashFlowClass::Operating,
+        &[
+            ("1002", PostingSide::Debit, 300),
+            ("6001", PostingSide::Credit, 300),
+        ],
+    )];
+    let books_before_failure = serde_json::to_vec(&books).expect("账套可序列化");
+    let closing_before_failure = serde_json::to_vec(&closing).expect("结账状态可序列化");
+    let library_before_failure = library.clone();
+    let rejected_publication_instant =
+        CivilInstant::from_hms(correction_instant.date(), 17, 0, 0).expect("错误相位合法");
+    let failure = library
+        .correct_and_publish(
+            &mut closing,
+            &mut books,
+            &MemberId(COMPANY.to_string()),
+            IndustryPresentation::Industrial,
+            CorrectionRequest {
+                entries: correction_entries.clone(),
+                reason: "遗漏现金收入更正".to_string(),
+            },
+            PublicationRequest {
+                company: company.clone(),
+                scope: scope.clone(),
+                period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
+                kind: ReportKind::Annual,
+                sequence: 2,
+                policy: AccountingPolicyRef { chart_version: 2 },
+                approved_at: correction_approval,
+                published_at: rejected_publication_instant,
+                origin: PublicationOrigin::Correction,
+                supersedes: Some(original_publication_id),
+            },
+        )
+        .expect_err("错误发布时点必须拒绝整笔更正");
+    assert!(matches!(
+        &failure,
+        CorrectionPublicationError::Information { reason, cause }
+            if reason == "遗漏现金收入更正"
+                && matches!(
+                    cause.as_ref(),
+                    InformationError::PublicationOutsidePhase { published_at }
+                        if *published_at == rejected_publication_instant
+                )
+    ));
+    assert_eq!(
+        serde_json::to_vec(&books).expect("账套可序列化"),
+        books_before_failure
+    );
+    assert_eq!(
+        serde_json::to_vec(&closing).expect("结账状态可序列化"),
+        closing_before_failure
+    );
+    assert_eq!(library, library_before_failure);
+
+    let (corrected, corrected_publication_id) = library
+        .correct_and_publish(
+            &mut closing,
+            &mut books,
+            &MemberId(COMPANY.to_string()),
+            IndustryPresentation::Industrial,
+            CorrectionRequest {
+                entries: correction_entries,
+                reason: "遗漏现金收入更正".to_string(),
+            },
             PublicationRequest {
                 company: company.clone(),
                 scope: scope.clone(),
@@ -116,7 +156,8 @@ fn correction_preserves_previous_version() {
                 supersedes: Some(original_publication_id),
             },
         )
-        .expect("correction publishes as a new version");
+        .expect("修复发布条件后同凭证可重试");
+    assert_eq!(corrected.sequence, 2);
 
     // —— 历史不可覆写：原报告重复查询逐字节不变；更正报告关联原报告 ——
     let original_report_after_correction = library

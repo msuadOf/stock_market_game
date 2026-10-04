@@ -49,19 +49,6 @@ struct RestatementRegister {
 type RestatementRows = Vec<(ScopeId, Vec<(BusinessEventId, AccountingPeriod)>)>;
 
 impl RestatementRegister {
-    fn record_correction(
-        &mut self,
-        scope: ScopeId,
-        entries: &[JournalEntry],
-        target: AccountingPeriod,
-    ) -> &BTreeMap<BusinessEventId, AccountingPeriod> {
-        let worksheet = self.scopes.entry(scope).or_default();
-        for entry in entries {
-            worksheet.insert(entry.source, target);
-        }
-        worksheet
-    }
-
     fn for_scope(&self, scope: &ScopeId) -> Option<&BTreeMap<BusinessEventId, AccountingPeriod>> {
         self.scopes.get(scope)
     }
@@ -122,6 +109,12 @@ pub struct CorrectionRequest {
     pub reason: String,
 }
 
+pub(crate) enum CorrectionTransactionError<E> {
+    Closing(ClosingError),
+    Accounting(AccountingError),
+    Publication(E),
+}
+
 /// 单体生成目标（结账引擎内部参数组）。
 struct StandaloneTarget<'a> {
     books: &'a Books,
@@ -150,12 +143,30 @@ pub enum ClosingError {
     CorrectionEntriesNotForward {
         first_entry_period: AccountingPeriod,
     },
+    #[error("report version sequence overflow for {scope} at {period}")]
+    VersionSequenceOverflow {
+        scope: ScopeId,
+        period: AccountingPeriod,
+    },
+    #[error("correction failed for reason '{reason}': {cause}")]
+    CorrectionFailed {
+        reason: String,
+        #[source]
+        cause: Box<ClosingError>,
+    },
 }
 
 /// `?` 直转（装箱由 From 承担——thiserror 的 `#[from]` 不覆盖值→箱路径）。
 impl From<ReportError> for ClosingError {
     fn from(err: ReportError) -> Self {
         ClosingError::Report(Box::new(err))
+    }
+}
+
+fn correction_failure(reason: String, cause: impl Into<ClosingError>) -> ClosingError {
+    ClosingError::CorrectionFailed {
+        reason,
+        cause: Box::new(cause.into()),
     }
 }
 
@@ -261,11 +272,41 @@ impl ClosingEngine {
         target: (AccountingPeriod, ReportKind),
         request: CorrectionRequest,
     ) -> Result<ReportHandle, ClosingError> {
-        self.invalidate_hash_projection();
+        let reason = request.reason.clone();
+        match self.correct_with_publication(
+            books,
+            id,
+            industry,
+            target,
+            request,
+            |_| Ok::<(), std::convert::Infallible>(()),
+        ) {
+            Ok((handle, ())) => Ok(handle),
+            Err(CorrectionTransactionError::Closing(error)) => {
+                Err(correction_failure(reason, error))
+            }
+            Err(CorrectionTransactionError::Accounting(error)) => {
+                Err(correction_failure(reason, error))
+            }
+            Err(CorrectionTransactionError::Publication(never)) => match never {},
+        }
+    }
+
+    pub(crate) fn correct_with_publication<T, E>(
+        &mut self,
+        books: &mut Books,
+        id: &MemberId,
+        industry: IndustryPresentation,
+        target: (AccountingPeriod, ReportKind),
+        request: CorrectionRequest,
+        prepare_publication: impl FnOnce(&ReportSet) -> Result<T, E>,
+    ) -> Result<(ReportHandle, T), CorrectionTransactionError<E>> {
         let scope = ScopeId::Standalone(id.clone());
         let key = (scope.clone(), target.0, target.1);
         if books.journal().period_status(target.0) != crate::accounting::PeriodStatus::Closed {
-            return Err(ClosingError::CorrectionTargetNotClosed { period: target.0 });
+            return Err(CorrectionTransactionError::Closing(
+                ClosingError::CorrectionTargetNotClosed { period: target.0 },
+            ));
         }
         let previous = self
             .versions
@@ -275,39 +316,64 @@ impl ClosingEngine {
             .ok_or(ClosingError::NoVersionToSupersede {
                 scope: scope.clone(),
                 period: target.0,
-            })?;
+            })
+            .map_err(CorrectionTransactionError::Closing)?;
         for entry in &request.entries {
             if entry.period() <= target.0 {
-                return Err(ClosingError::CorrectionEntriesNotForward {
-                    first_entry_period: entry.period(),
-                });
+                return Err(CorrectionTransactionError::Closing(
+                    ClosingError::CorrectionEntriesNotForward {
+                        first_entry_period: entry.period(),
+                    },
+                ));
             }
         }
-        // 原子过账（已封期间/重复来源/负现金由底座守卫拒绝；失败 ⇒ 零改动）。
-        books.post_batch(request.entries.clone())?;
-        // 累积进持久重述底稿：本 Scope 的所有后续生成从此带上该映射。
-        let worksheet =
-            self.restatements
-                .record_correction(scope.clone(), &request.entries, target.0);
+        let mut worksheet = self
+            .restatements
+            .for_scope(&scope)
+            .cloned()
+            .unwrap_or_default();
+        for entry in &request.entries {
+            worksheet.insert(entry.source, target.0);
+        }
+        let sequence = previous.checked_add(1).ok_or_else(|| {
+            CorrectionTransactionError::Closing(ClosingError::VersionSequenceOverflow {
+                scope: scope.clone(),
+                period: target.0,
+            })
+        })?;
         let version = ReportVersion {
-            sequence: previous + 1,
+            sequence,
             supersedes: Some(previous),
             kind: VersionKind::Correction {
                 reason: request.reason,
             },
         };
-        let set = Self::generate_with(
-            StandaloneTarget {
-                books,
-                id,
-                industry,
-                period: target.0,
-                kind: target.1,
-            },
-            version,
-            worksheet,
-        )?;
-        Ok(self.store(set))
+        let entries = request.entries;
+        let generated = books.transact_post_batch(entries, |posted_books| {
+            let set = Self::generate_with(
+                StandaloneTarget {
+                    books: posted_books,
+                    id,
+                    industry,
+                    period: target.0,
+                    kind: target.1,
+                },
+                version,
+                &worksheet,
+            )
+            .map_err(CorrectionTransactionError::Closing)?;
+            let publication =
+                prepare_publication(&set).map_err(CorrectionTransactionError::Publication)?;
+            Ok((set, publication))
+        });
+        let (set, publication) = generated.map_err(|error| match error {
+            crate::accounting::BooksTransactionError::Accounting(error) => {
+                CorrectionTransactionError::Accounting(error)
+            }
+            crate::accounting::BooksTransactionError::Operation(error) => error,
+        })?;
+        self.restatements.scopes.insert(scope, worksheet);
+        Ok((self.store(set), publication))
     }
 
     /// 登记外部生成的版本（如合并 Scope 五产物；只做勾稽校验）。

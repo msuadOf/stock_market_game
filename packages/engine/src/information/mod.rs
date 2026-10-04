@@ -178,3 +178,26 @@ pub enum InformationError {
     #[error("inconsistent public library: {detail}")]
     InconsistentLibrary { detail: String },
 }
+
+/// 报表更正事务失败；保留更正理由与产生错误的业务层原因。
+#[derive(Debug, Error)]
+pub enum CorrectionPublicationError {
+    #[error("correction failed for reason '{reason}': {cause}")]
+    Closing {
+        reason: String,
+        #[source]
+        cause: Box<ClosingError>,
+    },
+    #[error("correction failed for reason '{reason}': accounting failure: {cause}")]
+    Accounting {
+        reason: String,
+        #[source]
+        cause: Box<crate::accounting::AccountingError>,
+    },
+    #[error("correction failed for reason '{reason}': publication failure: {cause}")]
+    Information {
+        reason: String,
+        #[source]
+        cause: Box<InformationError>,
+    },
+}

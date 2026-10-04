@@ -30,6 +30,16 @@ impl Journal {
         self.batches.push(batch);
     }
 
+    pub(crate) fn rollback_to_batch_count(&mut self, batch_count: usize) {
+        while self.batches.len() > batch_count {
+            if let Some(batch) = self.batches.pop() {
+                for entry in batch {
+                    self.posted.remove(&entry.source);
+                }
+            }
+        }
+    }
+
     /// 该来源是否已入账（及首次日期）。
     pub fn posted_date(&self, event: BusinessEventId) -> Option<CivilDate> {
         self.posted.get(&event).copied()
