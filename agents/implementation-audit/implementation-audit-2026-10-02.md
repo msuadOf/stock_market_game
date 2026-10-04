@@ -154,7 +154,7 @@ Q01–Q09、Q11继续保留；Q10已转G39，Q19经恢复链复核转G80并保�
 | Q02 | 个人技术数据已用于候选，但 PersonalPriceMemory::record_public_history_read 仍无生产调用；根观察只记行情观察。当前链见 [策略与公司复核](reaudit-engine.md)。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
 | Q03 | 日历/会计文档要求冻结 RegulationProfile；当前 setup 与恢复均强制校验 simulation_policy_id。实现见 [基础复核](reaudit-foundations.md)。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
 | Q04 | UX-CONTRACT 要求固定应用标题，useMobileUiController 仍在详情展示股票标题。见 [界面复核](reaudit-ui.md)。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |
-| Q05 | 任务目录已有递归发现 scripts/**/*.test.mjs 的并行runner及历史32文件验收；根test和手动CI仍未接入该runner。待定的是正式持续维护入口，不是完全没有发现代码；获批测试helper不必接生产。见 [工具复核](reaudit-tools.md)。 | 验收工具持续覆盖策略需单独收口；不恢复已退役工具，也不把测试重新接入最新决定已排除测试的产品发布链。 |
+| Q05（已补齐） | 用户已选择根test、现有手动开发CI和独立test:scripts共用完整scripts/**/*.test.mjs发现；源码指纹覆盖scripts目录。原疑问见 [工具复核](reaudit-tools.md)，实施见 [脚本测试入口](../remaining-questions-and-features/script-test-entry.md)。 | 普通case与每文件进程树10000ms，整批多核并行且共享300000ms期限，失败取消并等待清理；自身测试注入执行器不递归跑根回归。43项定向短测及非作者完整diff/独立复验通过；普通commit和产品发布仍不自动测试，未运行完整脚本集或完整回归。 |
 | Q06 | 初始持仓 spec 要求 ByKind 比例和约等于1、类内随机；当前允许正有效权重归一，散户另作 eligibility/Pareto 分配。见 [基础复核](reaudit-foundations.md)。 | 容差及分布的最新批准依据未定位；先明确当前政策与旧spec关系，不要求为旧算法回退。独立于G29零NPC校验矛盾。 |
 | Q07 | 前端 aggregateCandles 仍按5/20交易日分组，UX只列周期名。自然周/月及合成历史衔接口径未裁决。见 [界面复核](reaudit-ui.md)。 | 当前已有图表，但是否应按公历周/月及合成负时间历史衔接需明确；不能宣称已核实真实周月口径。 |
 | Q08 | 移动 MA 与分时均价仍由前端推导；MACD/KDJ由Rust提供，均价代码明确不是撮合均价或VWAP。见 [界面复核](reaudit-ui.md)。 | MACD/KDJ已由Rust返回；需区分允许的展示派生与权威指标，尤其均价口径。不是凭此证明伪造行情，也不能写“全部指标均来自Rust”。 |

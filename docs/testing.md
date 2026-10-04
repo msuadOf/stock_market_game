@@ -115,6 +115,19 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
   这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。
+- 根回归的同一执行期限随后递归发现并执行 `scripts/**/*.test.mjs`，包括 runner 自身的
+  短测。正式入口是 `scripts/run-script-tests.mjs`；复用原任务验证工具的完整发现方式，
+  不从 `agents/` 加载生产测试执行器，也不通过 `pnpm test` 再次启动根回归。
+  每文件使用独立 Node 进程、`--test-isolation=none`、`--test-concurrency=1` 和
+  `--test-timeout=10000`，整文件进程树仍受 `min(10000ms, 执行阶段剩余时间)` 门禁。
+  按 `os.availableParallelism()` 最多并发 4 个文件 worker，文件清单排序、拒绝空集、
+  重复路径和 symbolic link；失败立即停止队列、取消在途 siblings，等待清理并汇总
+  实际失败，不用强制退出掩盖泄漏。根 inventory 的源码指纹覆盖整个 `scripts/`，
+  新增深层测试或修改工具也会使旧 inventory 失效。
+  `corepack pnpm test:scripts` 是独立开发入口：聚合属于长验收，整批由进程外
+  300000ms supervisor 约束，每文件和 case 的 10000ms 上限不变。
+  手动开发 CI 通过现有 sealed `execute` 阶段纳入同一入口，无需另起一批测试；
+  普通 commit、产品编译和标签发布仍不运行测试。
 - 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段，但任何一个长阶段都不得超过 5 分钟。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
 - 模拟验收的 `before` 语料已密封，只保留明确用于历史证据读取的解析层；它不属于当前游戏存档兼容；CLI 明确拒绝重跑，不将它当作当前长验收。
 - 当前模拟验收先在独立 300000ms 构建 deadline 内构建一次 fixture，再由 after/sensitivity 在各自的 300000ms 总 deadline 内直接执行预构建二进制；每个模拟验收批次遵循 299000ms 执行/发布 + 1000ms 收尾预留。二进制哈希和编译时嵌入的源指纹必须与当前密封源一致，否则在启动矩阵前失败。

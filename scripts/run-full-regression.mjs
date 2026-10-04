@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_MAX_MS, runBoundedCommand } from "./run-with-deadline.mjs";
 import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-paths.mjs";
 import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
+import { runScriptTestBatch } from "./run-script-tests.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_CONCURRENT_RUST_TEST_BINARIES = 8;
@@ -40,11 +41,7 @@ export const FULL_REGRESSION_SOURCE_INPUTS = [
   "apps/web/vite.config.ts",
   "apps/web-wasm",
   "apps/desktop/src-tauri",
-  "scripts/run-full-regression.mjs",
-  "scripts/run-long-validation.mjs",
-  "scripts/run-web-tests.mjs",
-  "scripts/run-with-deadline.mjs",
-  "scripts/workspace-paths.mjs",
+  "scripts",
 ];
 
 export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRoot = DEFAULT_REPO_ROOT, baseEnv = process.env, workspaceRoot = repoRoot) {
@@ -78,6 +75,7 @@ export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRo
       args: [path.join(resolvedRoot, "scripts", "run-web-tests.mjs"), "--internal-worker"],
       env: { ...workspaceEnv, [WEB_TEST_INTERNAL_WORKER_ENV]: "1" },
     },
+    { kind: "script-test-batch", label: "scripts ordinary tests", env: workspaceEnv, cpuCount },
   ];
 }
 
@@ -593,6 +591,7 @@ export async function executeFullRegression({
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   log = () => undefined,
+  runScripts = runScriptTestBatch,
 } = {}) {
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
   const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
@@ -646,6 +645,11 @@ export async function executeFullRegression({
   timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
   await run(phaseCommandOptions(webStep, sourceRoot, timeoutMs));
   completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
+
+  stepStartedAt = now();
+  const scriptStep = steps.find((step) => step.kind === "script-test-batch");
+  const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: scriptStep.cpuCount, run, now, remainingMs, log });
+  completed.push({ label: scriptStep.label, wall_ms: now() - stepStartedAt, ...scripts });
 
   const after = await collectFingerprint(sourceRoot);
   if (after.digest !== fingerprint.digest) throw new Error("full regression source changed during test execution");

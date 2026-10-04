@@ -24,6 +24,13 @@ import {
 import { prepareWorkspacePaths, resolveWorkspaceRoot } from "./workspace-paths.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import * as regression from "./run-full-regression.mjs";
+import { discoverScriptTestFiles } from "./run-script-tests.mjs";
+
+it("根回归纳入完整 scripts 发现入口及其源码指纹", { timeout: 10000 }, () => {
+  const steps = fullRegressionSteps(4);
+  assert.ok(steps.some((step) => step.kind === "script-test-batch"));
+  assert.ok(FULL_REGRESSION_SOURCE_INPUTS.includes("scripts"));
+});
 
 it("Rust case discovery rejects malformed output and excludes benchmarks", { timeout: 10000 }, () => {
   assert.deepEqual(parseRustTestCases("suite::case: test\nbench: benchmark\n1 test, 1 benchmark\n"), ["suite::case"]);
@@ -151,6 +158,7 @@ it("forces one workspace-local Cargo target and process-temp directory for every
     "rust-test-binaries",
     "rust-doctests",
     "ordinary-command",
+    "script-test-batch",
   ]);
   assert.deepEqual(steps[0].args, ["test", "--workspace", "--no-run", "--message-format=json-render-diagnostics"]);
   assert.deepEqual(steps[2].args, ["test", "--workspace", "--doc", "--no-fail-fast", "--", "--test-threads=7"]);
@@ -209,11 +217,7 @@ it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => 
     "pnpm-lock.yaml",
     "apps/web/package.json",
     "apps/web/src",
-    "scripts/run-full-regression.mjs",
-    "scripts/run-long-validation.mjs",
-    "scripts/run-web-tests.mjs",
-    "scripts/run-with-deadline.mjs",
-    "scripts/workspace-paths.mjs",
+    "scripts",
   ]) assert.ok(FULL_REGRESSION_SOURCE_INPUTS.includes(required), `missing fingerprint input ${required}`);
 });
 
@@ -222,7 +226,7 @@ it("ignores only Tauri-generated schemas while detecting changes to real desktop
   const sourceRoot = await mkdtemp(path.join(workspaceRoot, ".tmp", "full-regression-source-"));
   const directoryInputs = new Set([
     ".cargo", "packages/engine", "packages/engine-gpu", "apps/server",
-    "apps/web/src", "apps/web-wasm", "apps/desktop/src-tauri",
+    "apps/web/src", "apps/web-wasm", "apps/desktop/src-tauri", "scripts",
   ]);
   const desktopRoot = path.join(sourceRoot, "apps", "desktop", "src-tauri");
   const desktopInputs = [
@@ -263,6 +267,13 @@ it("ignores only Tauri-generated schemas while detecting changes to real desktop
       assert.notEqual(changed.digest, before.digest, `${input} must remain source-bound`);
       await writeFile(target, "source-A");
     }
+    const nestedScript = path.join(sourceRoot, "scripts", "simulation", "nested.test.mjs");
+    await mkdir(path.dirname(nestedScript), { recursive: true });
+    await writeFile(nestedScript, "test source");
+    const withScript = await collectFullRegressionSourceFingerprint(sourceRoot);
+    assert.notEqual(withScript.digest, before.digest, "新增深层 scripts 测试必须进入指纹");
+    await writeFile(nestedScript, "changed test source");
+    assert.notEqual((await collectFullRegressionSourceFingerprint(sourceRoot)).digest, withScript.digest);
   } finally {
     await rm(sourceRoot, { recursive: true, force: true });
   }
@@ -615,6 +626,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
     await writeFile(fixture.inventoryPath, originalJson);
     let calls = 0;
     await executeFullRegression({
+      runScripts: async () => ({ file_count: 0 }),
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       run: async ({ args }) => {
@@ -711,6 +723,11 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
     assert.equal(web.command, process.execPath);
     assert.equal(web.timeoutMs, 10_000);
+    const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
+    assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
+    assert.ok(scripts.every((call) => call.timeoutMs <= 10_000 && call.args.includes("--test-timeout=10000")));
+    assert.equal(new Set(scripts.map((call) => call.args.at(-1))).size, scripts.length);
+    assert.equal(result.steps.find((step) => step.label === "scripts ordinary tests").file_count, scripts.length);
     assert.equal(result.steps.find((step) => step.label === "Rust prebuilt test binaries").binary_count, 1);
     assert.equal(result.steps.find((step) => step.label === "Rust required long validations").case_count, 1);
   } finally {
