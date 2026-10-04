@@ -42,6 +42,7 @@ impl GameSession {
             seed: _,
             markets: _,
             accounts: _,
+            history_reads: _,
             price_history: _,
             market_minute_closes: _,
             candle_book: _,
@@ -112,6 +113,7 @@ impl GameSession {
         hash.field(&self.state.pending_player)?;
         hash.field(&self.state.pending_npc)?;
         hash.field(&self.state.npc_attention)?;
+        hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
         hash.field(&self.state.parent_orders)?;
         hash.field(&self.state.pending_plan_events)?;

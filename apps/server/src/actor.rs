@@ -19,7 +19,7 @@ use engine::session::protocol::CivilUpdate;
 use engine::session::protocol::{
     EngineUpdate as ProtocolUpdate, PausePreferences, ProtocolSession,
 };
-use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
+use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tracing::{debug, info, warn};
@@ -419,6 +419,11 @@ pub enum SessionCommand {
         generation: u64,
         reply: oneshot::Sender<Result<(u64, serde_json::Value), SendCommandError>>,
     },
+    StockHistory {
+        generation: u64,
+        code: StockCode,
+        reply: oneshot::Sender<Result<(u64, engine::session::HistoricalStockData), SendCommandError>>,
+    },
     PublicBaseline {
         reply: oneshot::Sender<PublicBaseline>,
     },
@@ -671,6 +676,17 @@ impl SessionHandles {
                 generation,
                 reply: tx,
             })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
+    pub async fn query_stock_history(
+        &self,
+        generation: u64,
+        code: StockCode,
+    ) -> Result<(u64, engine::session::HistoricalStockData), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::StockHistory { generation, code, reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
@@ -1316,6 +1332,16 @@ impl SessionActor {
                                 "serialize player working orders: {error}"
                             ))
                         })
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::StockHistory { generation, code, reply } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                } else {
+                    self.game.query_stock_history(AccountId(0), &code)
+                        .map(|data| (self.timeline_generation, data))
+                        .map_err(|error| SendCommandError::Rejected(error.to_string()))
                 };
                 let _ = reply.send(result);
             }

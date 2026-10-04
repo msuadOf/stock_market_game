@@ -24,14 +24,6 @@ export type StockPriceMemory = {
    */
   observed_low: Money;
   /**
-   * 最近一次主动读取公开历史的绝对交易分钟（读取被记录，不冒充亲历）。
-   */
-  last_public_history_read_minute: string | null;
-  /**
-   * 累计主动读取公开历史次数。
-   */
-  public_history_read_count: number;
-  /**
    * 最近一次实际接触（本人观察或公开读取取较晚者）的市场分钟；驱逐排序键。
    */
   last_touched_minute: string;

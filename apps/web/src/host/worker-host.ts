@@ -4,6 +4,8 @@ import type {
   PublicReportSummary,
   SessionSetup,
   Snapshot,
+  StockCode,
+  HistoricalStockData,
 } from "../types/engine.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
@@ -19,6 +21,7 @@ import type { IndicatorInput, IndicatorResults } from "../components/indicator-r
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 import { createWorkerLifecycle } from "./worker-lifecycle.ts";
 import { WorkerRequestScope } from "./worker-request.ts";
+import { parseHistoricalStockData } from "./stock-history.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -60,6 +63,11 @@ export async function readWorkerSpeedMetrics(requests: WorkerRequestScope, reque
 export async function readWorkerPlayerWorkingOrders(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<readonly PlayerWorkingOrder[]> {
   const response = await requests.request({ type: "playerWorkingOrders", requestId, generation: currentGeneration }, "playerWorkingOrders");
   return normalizePlayerWorkingOrders(response.orders);
+}
+
+export async function readWorkerStockHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, code: StockCode): Promise<HistoricalStockData> {
+  const response = await requests.request({ type: "stockHistory", requestId, generation: currentGeneration, code }, "stockHistory");
+  return parseHistoricalStockData(response.data, code);
 }
 
 export async function requestWorkerIndicators(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IndicatorInput): Promise<IndicatorResults> {
@@ -335,6 +343,14 @@ export function createWorkerHost(
           const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
           return orders;
+        },
+        async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询股票历史");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const data = await readWorkerStockHistory(requests, requests.nextRequestId(), queryGeneration, code);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
+          return data;
         },
         async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
           if (!npcDecisionDiagnostics) throw new Error("当前 WASM 后端未协商启用 NPC 决策诊断");

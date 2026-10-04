@@ -59,6 +59,11 @@ export type { TradingPhase } from "./generated/TradingPhase";
 export type Cents = Money;
 export type EngineEvent = Event;
 export type DailyCandleSnap = import("./generated/DailyCandle").DailyCandle;
+export type HistoricalStockData = {
+  readonly code: import("./generated/StockCode").StockCode;
+  readonly daily_candles: readonly DailyCandleSnap[];
+  readonly active_daily_candle: DailyCandleSnap | null;
+};
 export type RestingOrderSnap = import("./generated/Order").Order;
 export type PriceLevel = [Cents, number];
 
@@ -94,6 +99,7 @@ export interface WasmApi {
     id: string,
   ): import("./generated/PublicReportSummary").PublicReportSummary;
   player_working_orders(handle: number): readonly import("../host/player-working-orders").PlayerWorkingOrder[];
+  query_stock_history(handle: number, code: import("./generated/StockCode").StockCode): HistoricalStockData;
   host_capabilities(): { readonly npcDecisionDiagnostics: boolean };
   calculate_indicators(prices: number[], candles: readonly { high: number; low: number; close: number }[]): import("../components/indicator-results").IndicatorResults;
   npc_decision_trace?(

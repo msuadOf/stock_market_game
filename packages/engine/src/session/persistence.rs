@@ -1218,6 +1218,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
     let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
     let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
     let memory_keys: BTreeSet<AccountId> = save.price_memories.keys().copied().collect();
+    let history_read_keys: BTreeSet<AccountId> = save.history_reads.keys().copied().collect();
     if belief_keys != information_keys
         || belief_keys != watchlist_keys
         || belief_keys != memory_keys
@@ -1275,6 +1276,12 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
             }
         }
     }
+    let account_keys: BTreeSet<AccountId> = save.snapshot.accounts.keys().copied().collect();
+    if history_read_keys != account_keys {
+        return Err(SessionError::InvalidSave(
+            "history-read ledgers must cover every account exactly".to_string(),
+        ));
+    }
     for (id, watchlist) in &save.watchlists {
         let protected: BTreeSet<_> = save.snapshot.accounts[id]
             .positions
@@ -1326,11 +1333,6 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
                 || entry.first_observed_minute > entry.last_observed_minute
                 || entry.last_observed_minute > entry.last_touched_minute
                 || entry.last_touched_minute > current_market_minute
-                || entry.last_public_history_read_minute.is_some_and(|minute| {
-                    minute < entry.last_observed_minute || minute > entry.last_touched_minute
-                })
-                || (entry.public_history_read_count == 0)
-                    != entry.last_public_history_read_minute.is_none()
                 || entry.observed_low > entry.observed_high
                 || entry.first_observed_price < entry.observed_low
                 || entry.first_observed_price > entry.observed_high
@@ -1339,6 +1341,18 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
             {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} has inconsistent price memory for {code:?}"
+                )));
+            }
+        }
+    }
+    for (id, ledger) in &save.history_reads {
+        for (code, entry) in &ledger.stocks {
+            if !stock_codes.contains(code)
+                || entry.read_count == 0
+                || entry.last_read_market_minute > current_market_minute
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} has inconsistent history-read fact for {code:?}"
                 )));
             }
         }

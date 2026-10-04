@@ -418,6 +418,14 @@ pub struct PlayerWorkingOrdersQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StockHistoryQuery {
+    pub session_id: String,
+    pub generation: u64,
+    pub code: engine::StockCode,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SaveRequest {
     pub session_id: String,
     pub generation: String,
@@ -789,6 +797,25 @@ pub async fn api_player_working_orders(
             api_error(StatusCode::BAD_REQUEST, "WORKING_ORDERS_REJECTED", reason)
         }
         Err(SendCommandError::InvalidSpeed(_)) => unreachable!("order query cannot validate speed"),
+    }
+}
+
+/// GET /api/stock-history：由玩家显式查询单只股票历史，不参与 baseline 或快照生成。
+pub async fn api_stock_history(
+    State(state): State<AppState>,
+    Query(query): Query<StockHistoryQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    match handles.query_stock_history(query.generation, query.code).await {
+        Ok((generation, data)) => (StatusCode::OK, Json(serde_json::json!({ "generation": generation.to_string(), "data": data }))).into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
+        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "session actor gone"),
+        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "STOCK_HISTORY_REJECTED", reason),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("stock history query cannot validate speed"),
     }
 }
 

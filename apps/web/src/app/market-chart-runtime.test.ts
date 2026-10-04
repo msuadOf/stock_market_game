@@ -6,9 +6,13 @@ import { createServer, type ViteDevServer } from "vite";
 import type { HostUpdate } from "../host/host-update.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "../host/host-update.ts";
 import { parseEngineUpdate, parseProtocolSnapshot } from "../host/protocol/parse.ts";
+import { createProtocolState } from "../host/protocol/types.ts";
 import { canonicalJson } from "../host/protocol/canonical.ts";
 import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
+import type { EngineHost } from "../host/engine-host.ts";
+import type { HistoricalStockData } from "../types/engine.ts";
+import { createMarketChartRuntimeHarness } from "./market-chart-runtime.hook-test.ts";
 
 let vite: ViteDevServer;
 let probe: typeof import("./market-chart-runtime.test-support.tsx");
@@ -119,6 +123,38 @@ test("successive production deltas use final authoritative active candles and re
   assert.equal(after.active["600101"]!.volume, 300);
   assert.equal(Object.hasOwn(after.active, "000001"), false);
   assert.equal(after.daily[0], before.daily[0]);
+});
+
+test("详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer", { timeout: 10000 }, async () => {
+  const pending = new Map<string, (value: HistoricalStockData) => void>();
+  const host = { queryStockHistory: (code: string) => new Promise<HistoricalStockData>((resolve) => pending.set(code, resolve)) } as unknown as EngineHost;
+  const harness = createMarketChartRuntimeHarness({ hostRef: { current: host }, setNotice: () => {} });
+  let runtime = harness.render();
+  runtime.installBaseline(createProtocolState(baseline().snapshot, "1"));
+  const oldRequest = runtime.queryChartHistory("600101");
+  runtime.selectChart("000001");
+  runtime = harness.render();
+  const currentRequest = runtime.queryChartHistory("000001");
+  const candle = (time: number, close: string) => ({ time, open: close, high: close, low: close, close, volume: 0 });
+  pending.get("000001")!({ code: "000001", daily_candles: [candle(-2, "800")], active_daily_candle: null });
+  await currentRequest;
+  runtime = harness.render();
+  assert.ok(runtime.dailyChartData.some((item) => item.time === -2 && item.close === 8));
+  assert.ok(runtime.dailyChartData.some((item) => item.time === 0 && item.close === 10));
+  pending.get("600101")!({ code: "600101", daily_candles: [candle(-2, "700")], active_daily_candle: null });
+  await oldRequest;
+  runtime = harness.render();
+  assert.ok(runtime.dailyChartData.some((item) => item.time === -2 && item.close === 8));
+  assert.equal(runtime.chartCode, "000001");
+});
+
+test("历史查询错误通过 notice 明确呈现", { timeout: 10000 }, async () => {
+  const host = { queryStockHistory: async () => { throw new Error("history transport unavailable"); } } as unknown as EngineHost;
+  let notice: string | null = null;
+  const harness = createMarketChartRuntimeHarness({ hostRef: { current: host }, setNotice: (value) => { notice = typeof value === "function" ? value(notice) : value; } });
+  const runtime = harness.render();
+  await runtime.queryChartHistory("600101");
+  assert.match(notice ?? "", /读取 600101 历史日 K 失败.*history transport unavailable/);
 });
 
 test("production AfterClose-only 进入非交易日时保留真实收盘分时", { timeout: 10000 }, () => {

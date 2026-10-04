@@ -10,6 +10,7 @@ import type { NpcAttentionState } from "./NpcAttentionState";
 import type { NpcOrderLifecycle } from "./NpcOrderLifecycle";
 import type { Order } from "./Order";
 import type { PendingNpcBatch } from "./PendingNpcBatch";
+import type { PersonalHistoryReadLedger } from "./PersonalHistoryReadLedger";
 import type { PersonalPriceMemory } from "./PersonalPriceMemory";
 import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
@@ -117,4 +118,5 @@ export type SaveSlot = {
    */
   watchlists: { [key in AccountId]: PersonalWatchlist };
   price_memories: { [key in AccountId]: PersonalPriceMemory };
+  history_reads: { [key in AccountId]: PersonalHistoryReadLedger };
 };

@@ -1,15 +1,14 @@
-//! 个人价格记忆：本人真实见过的价格锚点，与主动读取公开历史的
-//! 事件记录相互区分，不虚构观察经历。
+//! 个人价格记忆只保存本人真实见过的价格锚点，不虚构观察经历。
 //!
 //! 每个自然人的记忆独立，不共享账户状态。单股条目只由两类真实事件修改：
 //! - [`PersonalPriceMemory::observe_price`]：本人当时看见的市场价。已观察高低
 //!   只累计本人所见样本，首次观察之前的历史价格永远不会被追认为亲历。
-//! - [`PersonalPriceMemory::record_public_history_read`]：专业技术分析主动读取
-//!   公开历史（唯一读取来源；新增来源时须扩展为显式来源枚举）。
-//!   读取行为以「来源=公开历史读取 + 时间戳」记录，不改变任何本人所见锚点。
+//! - [`PersonalPriceMemory::record_public_history_read`]：已观察股票的实际技术分析
+//!   读取，更新独立 [`PersonalHistoryReadLedger`] 并刷新该条目的最近接触时间。
+//!   玩家可读取尚未观察的公开历史，仍只写入独立读取簿，不创建价格锚点。
 //!
 //! 记忆上限复用持仓 + 8 个未持仓股票（[`MAX_UNHELD_WATCHLIST_STOCKS`]）。
-//! 驱逐按最后实际接触时间（本人观察与公开读取取较晚者）排序，同分钟按
+//! 驱逐按最后实际接触时间（本人观察与本人历史读取取较晚者）排序，同分钟按
 //! StockCode 稳定破同分（与 `RetailExperienceState::prune_watchlist` 的
 //! 降序 `(minute, code)` 约定一致）。受保护集合（持仓 ∪ 活跃计划股票）由
 //! 调用方传入；会话按持仓和活跃计划组合集合，本模块只消费该集合。
@@ -18,7 +17,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{retention::RetentionCandidates, MAX_UNHELD_WATCHLIST_STOCKS};
+use super::{
+    history_reads::PersonalHistoryReadLedger, retention::RetentionCandidates,
+    MAX_UNHELD_WATCHLIST_STOCKS,
+};
 use crate::{Money, StockCode};
 
 /// 个人价格记忆失败。绝不静默吞掉（铁律二）。
@@ -34,6 +36,8 @@ pub enum PriceMemoryError {
         "stock {code} has never been personally observed; a public-history read cannot create memory"
     )]
     UnobservedStock { code: String },
+    #[error("public-history read could not be recorded: {0}")]
+    HistoryRead(String),
 }
 
 /// 单股个人价格记忆。时间窗 = [首次观察, 最近观察] 的市场分钟。
@@ -55,12 +59,6 @@ pub struct StockPriceMemory {
     pub observed_high: Money,
     /// 首次观察以来本人见过的最低价；公开历史读取不改变它。
     pub observed_low: Money,
-    /// 最近一次主动读取公开历史的绝对交易分钟（读取被记录，不冒充亲历）。
-    #[serde(with = "super::optional_u64_decimal")]
-    #[ts(type = "string | null")]
-    pub last_public_history_read_minute: Option<u64>,
-    /// 累计主动读取公开历史次数。
-    pub public_history_read_count: u32,
     /// 最近一次实际接触（本人观察或公开读取取较晚者）的市场分钟；驱逐排序键。
     #[serde(with = "super::u64_decimal")]
     #[ts(type = "string")]
@@ -76,8 +74,6 @@ impl StockPriceMemory {
             last_observed_price: price,
             observed_high: price,
             observed_low: price,
-            last_public_history_read_minute: None,
-            public_history_read_count: 0,
             last_touched_minute: market_minute,
         }
     }
@@ -92,13 +88,16 @@ impl StockPriceMemory {
         Ok(())
     }
 
-    fn record_public_history_read(&mut self, market_minute: u64) -> Result<(), PriceMemoryError> {
+    fn record_public_history_read(
+        &mut self,
+        code: &StockCode,
+        market_minute: u64,
+        reads: &mut PersonalHistoryReadLedger,
+    ) -> Result<(), PriceMemoryError> {
         self.ensure_time_not_backwards(market_minute)?;
-        self.last_public_history_read_minute = Some(market_minute);
-        self.public_history_read_count = self
-            .public_history_read_count
-            .checked_add(1)
-            .expect("read count is bounded by observed read events per session");
+        reads
+            .record(code, market_minute)
+            .map_err(|error| PriceMemoryError::HistoryRead(error.to_string()))?;
         self.last_touched_minute = market_minute;
         Ok(())
     }
@@ -169,6 +168,7 @@ impl PersonalPriceMemory {
         &mut self,
         code: &StockCode,
         market_minute: u64,
+        reads: &mut PersonalHistoryReadLedger,
     ) -> Result<(), PriceMemoryError> {
         let entry = self
             .stocks
@@ -176,7 +176,7 @@ impl PersonalPriceMemory {
             .ok_or_else(|| PriceMemoryError::UnobservedStock {
                 code: code.0.clone(),
             })?;
-        entry.record_public_history_read(market_minute)
+        entry.record_public_history_read(code, market_minute, reads)
     }
 
     /// 按最近接触时间驱逐未受保护股票，最多保留 8 个。
@@ -203,15 +203,18 @@ mod protection_tests {
     use super::*;
 
     #[test]
-    fn price_memory_rejection_and_read_overflow_preserve_existing_failure_surface() {
+    fn price_memory_read_uses_separate_ledger_and_preserves_observation_anchors() {
         let code = StockCode("600101".to_owned());
         let mut memory = PersonalPriceMemory::default();
-        assert!(memory.record_public_history_read(&code, 1).is_err());
+        let mut reads = PersonalHistoryReadLedger::default();
+        assert!(memory.record_public_history_read(&code, 1, &mut reads).is_err());
         assert!(memory.stocks.is_empty());
         memory
             .observe_price(&code, Money::from_cents(100), 2)
             .unwrap();
-        memory.record_public_history_read(&code, 3).unwrap();
+        memory
+            .record_public_history_read(&code, 3, &mut reads)
+            .unwrap();
         let before = memory.clone();
         assert_eq!(
             memory.observe_price(&code, Money::ZERO, 1),
@@ -221,24 +224,21 @@ mod protection_tests {
             })
         );
         assert_eq!(
-            memory.record_public_history_read(&code, 2),
+            memory.record_public_history_read(&code, 2, &mut reads),
             Err(PriceMemoryError::TimeWentBackwards {
                 attempted: 2,
                 last: 3
             })
         );
         assert_eq!(memory, before);
-        memory
-            .stocks
-            .get_mut(&code)
-            .unwrap()
-            .public_history_read_count = u32::MAX;
+        assert_eq!(reads.stocks[&code].read_count, 1);
+        reads.stocks.get_mut(&code).unwrap().read_count = u32::MAX;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            memory.record_public_history_read(&code, 4)
+            memory.record_public_history_read(&code, 4, &mut reads)
         }));
         assert!(result.is_err());
         let entry = &memory.stocks[&code];
-        assert_eq!(entry.last_public_history_read_minute, Some(4));
+        assert_eq!(reads.stocks[&code].last_read_market_minute, 3);
         assert_eq!(entry.last_touched_minute, 3);
         assert_eq!(entry.last_observed_minute, 2);
         assert_eq!(entry.observed_high, Money::from_cents(100));

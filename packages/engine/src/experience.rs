@@ -8,6 +8,7 @@
 //! 全部原有公共路径不变。
 
 mod feedback;
+mod history_reads;
 mod position_transition;
 mod price_memory;
 mod retention;
@@ -18,6 +19,7 @@ pub use feedback::{
     ExitRecord, ExperienceFeedback, ExperienceMoment, FailureEventRecord, HoldingEpoch,
     OwnObservation, FAILURE_DECAY_TRADING_DAYS, LONG_STUCK_TRADING_DAYS,
 };
+pub use history_reads::{HistoryReadError, PersonalHistoryReadLedger, StockHistoryRead};
 pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
 pub use shared_history::AppendOnlyHistory;
 pub use watchlist::{PersonalWatchlist, WatchedStock, WatchlistError};

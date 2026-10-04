@@ -6,7 +6,7 @@ import { parseOrderState } from "./orders.ts"
 import { parseBeliefBooks } from "./personal/beliefs.ts"
 import { parseRetailExperienceStates } from "./personal/experience.ts"
 import { parseInformationStates } from "./personal/information.ts"
-import { parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
+import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
 import { parsePendingPlanEvents, parsePlanBook } from "./personal/plans.ts"
 import { decimal, exact, record } from "./primitives.ts"
 import { parseCivilClock } from "./civil-clock.ts"
@@ -44,10 +44,11 @@ export type StrictSaveEnvelope = {
   readonly belief_books: ReturnType<typeof parseBeliefBooks>
   readonly watchlists: ReturnType<typeof parseWatchlists>
   readonly price_memories: ReturnType<typeof parsePriceMemories>
+  readonly history_reads: ReturnType<typeof parseHistoryReads>
   readonly pending_plan_events: ReturnType<typeof parsePendingPlanEvents>
 }
 
-const ROOT_KEYS = ["runtime_state", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "pending_plan_events"] as const
+const ROOT_KEYS = ["runtime_state", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "pending_plan_events"] as const
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")
@@ -60,5 +61,6 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
   exact(order.book_next_sequences, setup.stocks.map((stock) => stock.code), "book_next_sequences (setup.stocks)")
   exact(order.book_next_sequences, Object.keys(snapshot.markets), "book_next_sequences (snapshot.markets)")
-  return { runtime_state: parseSaveRuntime(root.runtime_state), setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), ops_wiring: parseOperationsWiring(root.ops_wiring), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), pending_plan_events: parsePendingPlanEvents(root.pending_plan_events) }
+  exact(root.history_reads as Record<string, unknown>, Object.keys(snapshot.accounts), "history_reads (snapshot.accounts)")
+  return { runtime_state: parseSaveRuntime(root.runtime_state), setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), ops_wiring: parseOperationsWiring(root.ops_wiring), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), pending_plan_events: parsePendingPlanEvents(root.pending_plan_events) }
 }

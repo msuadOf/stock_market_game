@@ -4,6 +4,8 @@ import type {
   PublicReportQuery,
   PublicReportSummary,
   Snapshot,
+  StockCode,
+  HistoricalStockData,
 } from "../types/engine";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
@@ -61,6 +63,7 @@ export interface EngineHost {
   save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown>;
   refreshBaseline(): Promise<void>;
   playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]>;
+  queryStockHistory(code: StockCode): Promise<HistoricalStockData>;
   calculateIndicators(input: IndicatorInput): Promise<IndicatorResults>;
   load(slot: unknown): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;

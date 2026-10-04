@@ -1,5 +1,5 @@
 import { addMoney, subtractMoney, compareMoney, moneyToBigInt, moneyToChartNumber } from "../utils/money.ts";
-import { useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
 import { publicCompanyForStock } from "../components/company/company-catalog.ts";
@@ -98,6 +98,10 @@ interface ChartPanelProps {
 }
 export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, setKlineDays }: ChartPanelProps) {
   const chartCode = useMarketRuntimeSelection();
+  const { queryChartHistory } = useMarketRuntimeActions();
+  useEffect(() => {
+    if (chartPeriod === "日K") void queryChartHistory(chartCode);
+  }, [chartCode, chartPeriod, klineDays, queryChartHistory]);
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const { chartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   if (!market) return null;
@@ -170,6 +174,10 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions) {
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
+  const { queryChartHistory } = useMarketRuntimeActions();
+  useEffect(() => {
+    if (props.period !== "分时") void queryChartHistory(chartCode);
+  }, [chartCode, props.klineDays, props.period, queryChartHistory]);
   const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);

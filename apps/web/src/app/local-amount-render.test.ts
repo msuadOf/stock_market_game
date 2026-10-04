@@ -67,6 +67,7 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
     children: createElement(MarketRuntimeProvider, {
       autoOrderManagerRef: { current: null },
       setNotice() {},
+      hostRef: { current: null },
       children: view,
     }),
   }));

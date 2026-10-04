@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use engine::experience::PersonalPriceMemory;
+use engine::experience::{PersonalHistoryReadLedger, PersonalPriceMemory};
 
 use super::{code, price};
 
@@ -23,8 +23,6 @@ fn personal_observations_record_first_last_and_high_low_since_first_observation(
     assert_eq!(entry.observed_high, price(1200));
     assert_eq!(entry.observed_low, price(800));
     assert_eq!(entry.last_touched_minute, 300);
-    assert_eq!(entry.last_public_history_read_minute, None);
-    assert_eq!(entry.public_history_read_count, 0);
 }
 
 #[test]
@@ -33,16 +31,17 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     // 专业技术分析主动读取公开历史：读取行为被记录（来源=公开历史读取、时间戳），
     // 但不把历史极值冒充成本人亲历——锚点与已观察高低保持本人所见。
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = PersonalHistoryReadLedger::default();
     let stock = code("600101");
     memory.observe_price(&stock, price(1000), 100).unwrap();
     memory.observe_price(&stock, price(1200), 200).unwrap();
     memory.observe_price(&stock, price(800), 300).unwrap();
 
-    memory.record_public_history_read(&stock, 400).unwrap();
+    memory.record_public_history_read(&stock, 400, &mut reads).unwrap();
 
     let entry = memory.stock(&stock).unwrap();
-    assert_eq!(entry.last_public_history_read_minute, Some(400));
-    assert_eq!(entry.public_history_read_count, 1);
+    assert_eq!(reads.stocks[&stock].last_read_market_minute, 400);
+    assert_eq!(reads.stocks[&stock].read_count, 1);
     assert_eq!(entry.observed_high, price(1200));
     assert_eq!(entry.observed_low, price(800));
     assert_eq!(entry.last_observed_minute, 300);
@@ -51,8 +50,8 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     // 读取也构成一次真实接触，参与最近接触时间排序。
     assert_eq!(entry.last_touched_minute, 400);
 
-    memory.record_public_history_read(&stock, 500).unwrap();
-    assert_eq!(memory.stock(&stock).unwrap().public_history_read_count, 2);
+    memory.record_public_history_read(&stock, 500, &mut reads).unwrap();
+    assert_eq!(reads.stocks[&stock].read_count, 2);
 }
 
 #[test]
@@ -60,6 +59,7 @@ fn prune_keeps_protected_and_eight_most_recent_unheld_stocks() {
     // 持仓股最早接触（minute 0）仍被保护；10 个未持仓股按最近接触保留 8 个，
     // 最早两个被驱逐。上限复用 MAX_UNHELD_WATCHLIST_STOCKS = 持仓 + 8 未持仓。
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = PersonalHistoryReadLedger::default();
     let held = code("600001");
     memory.observe_price(&held, price(1000), 0).unwrap();
     for index in 1..=10_u64 {
@@ -116,7 +116,9 @@ fn public_read_refreshes_recency_for_eviction() {
             .observe_price(&code(&format!("6001{minute:02}")), price(1000), minute)
             .unwrap();
     }
-    memory.record_public_history_read(&earliest, 100).unwrap();
+    memory
+        .record_public_history_read(&earliest, 100, &mut reads)
+        .unwrap();
 
     memory.prune(&BTreeSet::new());
 
@@ -128,10 +130,11 @@ fn public_read_refreshes_recency_for_eviction() {
 #[test]
 fn price_memory_serde_round_trip_preserves_state() {
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = PersonalHistoryReadLedger::default();
     let stock = code("600101");
     memory.observe_price(&stock, price(1000), 120).unwrap();
     memory.observe_price(&stock, price(1300), 240).unwrap();
-    memory.record_public_history_read(&stock, 300).unwrap();
+    memory.record_public_history_read(&stock, 300, &mut reads).unwrap();
 
     let serialized = serde_json::to_string(&memory).unwrap();
     let restored: PersonalPriceMemory = serde_json::from_str(&serialized).unwrap();

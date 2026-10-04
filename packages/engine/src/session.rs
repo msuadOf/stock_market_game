@@ -21,6 +21,7 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
+mod history_reads;
 mod institutional_behavior;
 mod minimal_snapshot;
 mod observation_clock;
@@ -35,6 +36,7 @@ mod snapshot;
 mod views;
 pub use failure::StepFatal;
 pub use hash::StateHash;
+pub use history_reads::HistoricalStockData;
 #[cfg(test)]
 mod continuous_cancellation_tests;
 #[cfg(test)]
@@ -488,6 +490,7 @@ pub struct SaveSlot {
     /// 信念机构账户的个人关注列表。
     pub watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
     pub price_memories: BTreeMap<AccountId, crate::experience::PersonalPriceMemory>,
+    pub history_reads: BTreeMap<AccountId, crate::experience::PersonalHistoryReadLedger>,
     /// 计划执行待应用事实队列（存档边界只保留「计划簿中仍存活」的条目；
     /// 未知/已终止计划的迟到条目按完整存档契约显式丢弃。
     #[ts(skip)]
@@ -749,6 +752,12 @@ pub enum SessionError {
     /// 入队意图时账户存在，但它是引擎控制的 NPC，不接受玩家指令。
     #[error("account is not controlled by a player: {0:?}")]
     NotPlayer(AccountId),
+    #[error("unknown account for history request: {0:?}")]
+    UnknownHistoryAccount(AccountId),
+    #[error("unknown stock for history request: {0:?}")]
+    UnknownHistoryStock(StockCode),
+    #[error("history read could not be recorded: {0}")]
+    InvalidHistoryRead(String),
     #[error("session resource limit exceeded: {0}")]
     ResourceLimit(String),
     /// 透传 market 错误。
@@ -1151,6 +1160,7 @@ struct CommittableSessionState {
     seed: u64,
     markets: BTreeMap<StockCode, Market>,
     accounts: AccountBook,
+    history_reads: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
     market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
     candle_book: SessionCandleBook,
@@ -1395,6 +1405,11 @@ impl GameSession {
                 setup.config.starting_cash,
             ),
         );
+        let mut history_reads = AccountPagedMap::default();
+        history_reads.insert(
+            AccountId(0),
+            crate::experience::PersonalHistoryReadLedger::default(),
+        );
         let rng = SplitMix64::new(seed);
         let civil_clock = CivilClock::new(
             setup.start_date,
@@ -1437,6 +1452,7 @@ impl GameSession {
                 seed,
                 markets,
                 accounts,
+                history_reads,
                 price_history,
                 market_minute_closes,
                 candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
@@ -1981,7 +1997,11 @@ impl GameSession {
                     .attention_scheduler
                     .enqueue(first_candidate_tick, id);
             }
-            self.state.accounts.insert(id, acc);
+                self.state.accounts.insert(id, acc);
+                self.state.history_reads.insert(
+                    id,
+                    crate::experience::PersonalHistoryReadLedger::default(),
+                );
         }
         Ok(())
     }
@@ -2729,6 +2749,7 @@ impl GameSession {
                 .iter()
                 .map(|(id, participant)| (*id, participant.price_memory().clone()))
                 .collect(),
+            history_reads: self.state.history_reads.to_map(),
             // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
             // 的迟到条目在此按完整存档契约显式丢弃（永不适用）。
             pending_plan_events: self
@@ -3020,6 +3041,7 @@ impl GameSession {
                 )
             })
             .collect();
+        sess.state.history_reads = save.history_reads.clone().into_iter().collect();
         sess.reconcile_institutional_holdings()?;
         sess.state.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
@@ -4129,6 +4151,7 @@ impl CommittableSessionState {
             seed,
             markets,
             accounts,
+            history_reads,
             price_history,
             market_minute_closes,
             candle_book,
@@ -4179,6 +4202,7 @@ impl CommittableSessionState {
             seed: *seed,
             markets: markets.clone(),
             accounts,
+            history_reads: history_reads.clone(),
             price_history: price_history.clone(),
             market_minute_closes: market_minute_closes.clone(),
             candle_book: candle_book.clone(),
@@ -4225,6 +4249,7 @@ impl CommittableSessionState {
             seed,
             markets,
             accounts,
+            history_reads,
             price_history,
             market_minute_closes,
             candle_book,
@@ -4268,6 +4293,7 @@ impl CommittableSessionState {
         self.seed = seed;
         self.markets = markets;
         self.accounts.replace_and_drop_parallel(accounts);
+        self.history_reads.replace_and_drop_parallel(history_reads);
         self.price_history = price_history;
         self.market_minute_closes = market_minute_closes;
         self.candle_book = candle_book;

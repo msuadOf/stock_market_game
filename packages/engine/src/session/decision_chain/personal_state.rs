@@ -68,6 +68,7 @@ pub(in crate::session) struct PlanPersonalState {
     pub(super) attention: NpcAttentionState,
     pub(super) watchlist: PersonalWatchlist,
     pub(super) price_memory: PersonalPriceMemory,
+    pub(super) history_reads: crate::experience::PersonalHistoryReadLedger,
     pub(super) information: NpcInformationState,
     pub(super) belief: BeliefBook,
 }
@@ -85,10 +86,16 @@ impl PlanPersonalState {
             .belief_participants
             .remove(&account)
             .unwrap_or_else(|| panic!("plan account {account:?} has no watchlist"));
+        let history_reads = session
+            .state
+            .history_reads
+            .remove(&account)
+            .unwrap_or_else(|| panic!("plan account {account:?} has no history-read ledger"));
         Self {
             attention,
             watchlist: participant.watchlist,
             price_memory: participant.price_memory,
+            history_reads,
             information: participant.information,
             belief: participant.belief,
         }
@@ -117,6 +124,14 @@ impl PlanPersonalState {
                 self.information,
                 self.belief,
             ),
+        );
+        assert!(
+            session
+                .state
+                .history_reads
+                .insert(account, self.history_reads)
+                .is_none(),
+            "plan account {account:?} history-read ledger was installed twice"
         );
     }
 }

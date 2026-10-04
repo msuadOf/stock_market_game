@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
-import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { frame, snapshot as protocolSnapshot, tickBatch } from "./protocol-test-fixtures.ts";
@@ -15,6 +15,16 @@ class FakeWorker implements WorkerRequestPort {
   postMessage(message: unknown): void { this.sent.push(message); }
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
+
+test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker();
+  const requests = new WorkerRequestScope(worker);
+  const pending = readWorkerStockHistory(requests, 12, 3, "600000");
+  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "600000" }]);
+  worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: "600000", daily_candles: [], active_daily_candle: null } });
+  assert.deepEqual(await pending, { code: "600000", daily_candles: [], active_daily_candle: null });
+  assert.equal(requests.pendingCount(), 0);
+});
 
 for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
   test(`Worker ${operation} baseline 被消费者拒绝时终止并显式失败`, { timeout: 10000 }, async () => {

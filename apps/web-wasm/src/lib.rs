@@ -463,6 +463,16 @@ pub fn player_working_orders(handle: u32) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn query_stock_history(handle: u32, code: String) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let history = session
+            .query_stock_history(engine::AccountId(0), &engine::StockCode(code))
+            .map_err(session_error_to_js)?;
+        public_dto_to_js(&history)
+    })
+}
+
+#[wasm_bindgen]
 pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValue, JsValue> {
     let candles: Vec<engine::indicators::OhlcBar> = serde_wasm_bindgen::from_value(candles)?;
     let indicators = engine::indicators::calculate_indicators(&prices, &candles)

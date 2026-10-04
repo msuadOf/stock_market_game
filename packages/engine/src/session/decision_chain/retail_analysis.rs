@@ -209,6 +209,10 @@ impl GameSession {
             let signals = self
                 .retail_candidate_signals(id, code, personal, observation, thirty_minute_market)
                 .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
+            personal
+                .price_memory
+                .record_public_history_read(code, minute, &mut personal.history_reads)
+                .map_err(|error| invariant(error.to_string()))?;
             assessments.insert(
                 code.clone(),
                 blend_candidate(&personal.belief.analysis().weights(), &signals),

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup } from "../types/engine.ts";
+import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup, StockCode } from "../types/engine.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
@@ -12,6 +12,7 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
+import { parseHistoricalStockData } from "./stock-history.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -283,6 +284,13 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const response = record(await invoke<unknown>("player_working_orders", { sessionId: requireSession(), generation: queryGeneration }), "Tauri player_working_orders");
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri player_working_orders.generation"), "Tauri 玩家活动委托响应属于已过期会话 generation");
       return normalizePlayerWorkingOrders(response.value);
+    },
+    async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询股票历史");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code }), "Tauri query_stock_history");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri query_stock_history.generation"), "Tauri 股票历史响应属于已过期会话 generation");
+      return parseHistoricalStockData(response.value, code);
     },
     async refreshBaseline() {
       const queryGeneration = timeline.captureGeneration();

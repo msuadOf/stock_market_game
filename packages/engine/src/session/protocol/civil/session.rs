@@ -69,6 +69,14 @@ pub struct ProtocolCheckpoint {
 }
 
 impl ProtocolSession {
+    pub fn query_stock_history(
+        &mut self,
+        account: crate::AccountId,
+        code: &crate::StockCode,
+    ) -> Result<crate::session::HistoricalStockData, SessionError> {
+        self.state.game.query_stock_history(account, code)
+    }
+
     /// 保存未发布宿主批次的 live state 与共享历史；避免文件投影丢失运行时诊断。
     pub fn checkpoint(&self) -> Result<ProtocolCheckpoint, StepFatal> {
         Ok(ProtocolCheckpoint {

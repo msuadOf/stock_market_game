@@ -1,4 +1,4 @@
-import type { Intent, PublicReportPage, PublicReportQuery, PublicReportSummary, SessionSetup, Snapshot } from "../types/engine.ts";
+import type { HistoricalStockData, Intent, PublicReportPage, PublicReportQuery, PublicReportSummary, SessionSetup, Snapshot, StockCode } from "../types/engine.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { DeliveryMode, EngineHost } from "./engine-host.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
@@ -15,6 +15,7 @@ import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-
 import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
+import { parseHistoricalStockData } from "./stock-history.ts";
 
 type RemoteHostOptions = {
   readonly baseUrl?: string;
@@ -368,6 +369,16 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       publisher.assertQueryCursor(cursor, response.generation, "远程玩家活动委托响应属于已过期会话 generation");
       return normalizePlayerWorkingOrders(response.orders);
     },
+    async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
+      const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询股票历史");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation, code });
+      const raw = await requestJson(`${baseUrl}/api/stock-history?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } });
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("远程股票历史响应必须是对象");
+      const response = raw as Record<string, unknown>;
+      if (Object.keys(response).length !== 2 || typeof response.generation !== "string" || !Object.hasOwn(response, "data")) throw new Error("远程股票历史响应字段无效");
+      publisher.assertQueryCursor(cursor, response.generation, "远程股票历史响应属于已过期会话 generation");
+      return parseHistoricalStockData(response.data, code);
+    },
     async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
       const normalized = normalizeIndicatorInput(input);
       const result = await requestJson(`${baseUrl}/api/indicators`, remotePost({ session_id: created.id, ...normalized }, token));
@@ -414,6 +425,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     },
   };
 }
+
 
 function assertNever(value: never): never {
   throw new Error(`未处理远程消息：${String(value)}`);

@@ -97,6 +97,11 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
             Value::Null,
         ),
         (
+            "GET",
+            &format!("/api/stock-history?session_id={session_id}&generation=0&code=600101"),
+            Value::Null,
+        ),
+        (
             "POST",
             "/api/save",
             json!({"session_id":session_id,"generation":"0","candidate":null}),
@@ -198,6 +203,30 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
             .await
             .0,
         StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            app.clone(),
+            "GET",
+            &format!("/api/stock-history?session_id={session_id}&generation=1&code=600101"),
+            None,
+            Some(session_token),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            app.clone(),
+            "GET",
+            &format!("/api/stock-history?session_id={session_id}&generation=1&code=600101&account=1"),
+            None,
+            Some(session_token),
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
     );
     assert_eq!(
         request(

@@ -188,6 +188,7 @@ fn empty_history_is_structurally_valid_but_insufficient() {
 #[test]
 fn price_memory_rejects_time_going_backwards() {
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = engine::experience::PersonalHistoryReadLedger::default();
     let stock = code("600101");
     memory.observe_price(&stock, price(1000), 100).unwrap();
 
@@ -199,7 +200,9 @@ fn price_memory_rejects_time_going_backwards() {
         }
     );
     assert_eq!(
-        memory.record_public_history_read(&stock, 50).unwrap_err(),
+        memory
+            .record_public_history_read(&stock, 50, &mut reads)
+            .unwrap_err(),
         PriceMemoryError::TimeWentBackwards {
             attempted: 50,
             last: 100,
@@ -225,9 +228,10 @@ fn price_memory_rejects_non_positive_price() {
 fn price_memory_rejects_public_read_of_never_observed_stock() {
     // 从未本人观察过的股票没有价格记忆条目；公开历史读取不能凭空创造亲历。
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = engine::experience::PersonalHistoryReadLedger::default();
     assert_eq!(
         memory
-            .record_public_history_read(&code("600101"), 100)
+            .record_public_history_read(&code("600101"), 100, &mut reads)
             .unwrap_err(),
         PriceMemoryError::UnobservedStock {
             code: "600101".into(),

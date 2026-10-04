@@ -1,23 +1,30 @@
-import { useCallback, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import { MarketChartProjection } from "./market-chart-projection.ts";
 import type { NormalizedEngineUpdate, ProtocolEffect, ProtocolReduction, ProtocolState } from "../host/protocol/index.ts";
 import type { AuctionPoint } from "../mobile/market-model.ts";
+import type { EngineHost } from "../host/engine-host.ts";
+import { toChartCandle } from "../mobile/kline-sync.ts";
+import { mergeStockHistoryCandles, StockHistoryRequestGate } from "./market-history-runtime.ts";
 import { appendTrades, applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 import type { Snapshot } from "../types/engine.ts";
 
 interface Options {
   readonly autoOrderManagerRef: MutableRefObject<AutoOrderManager | null>;
   readonly setNotice: Dispatch<SetStateAction<string | null>>;
+  readonly hostRef: MutableRefObject<EngineHost | null>;
 }
 
-export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Options) {
+export function useMarketChartRuntime({ autoOrderManagerRef, setNotice, hostRef }: Options) {
   const [chartCode, setChartCode] = useState("600101");
   const [projection] = useState(() => new MarketChartProjection());
   const [chartData, setChartData] = useState<readonly PricePoint[]>([]);
   const [auctionChartData, setAuctionChartData] = useState<readonly AuctionPoint[]>([]);
   const [dailyChartData, setDailyChartData] = useState<readonly KlinePoint[]>([]);
+  const chartCodeRef = useRef(chartCode);
+  const historyRequestRef = useRef(new StockHistoryRequestGate());
+  chartCodeRef.current = chartCode;
 
   const getPriceHistory = useCallback(() => projection.history(), [projection]);
   const getActiveDailyCandles = useCallback(() => projection.activeCandles(), [projection]);
@@ -84,6 +91,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
   }, [chartCode, projection]);
 
   const selectChart = useCallback((code: string) => {
+    chartCodeRef.current = code;
     setChartCode(code);
     setChartData(projection.pricePointsFor(code));
     setAuctionChartData(projection.auctionPointsFor(code));
@@ -100,6 +108,27 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
 
   const refreshDailyChart = useCallback(() => setDailyChartData(projection.candlesFor(chartCode)), [chartCode, projection]);
 
+  const queryChartHistory = useCallback(async (code: string): Promise<void> => {
+    const host = hostRef.current;
+    if (host === null) {
+      setNotice(`读取 ${code} 历史日 K 失败：当前没有可用的 EngineHost；请反馈此错误或重新进入本局。`);
+      return;
+    }
+    const request = historyRequestRef.current.begin();
+    try {
+      const history = await host.queryStockHistory(code);
+      if (host !== hostRef.current || !historyRequestRef.current.isCurrent(request) || code !== chartCodeRef.current) return;
+      const queried = [...history.daily_candles.map(toChartCandle), ...(history.active_daily_candle === null ? [] : [toChartCandle(history.active_daily_candle)])];
+      const current = projection.candlesFor(code);
+      const candles = mergeStockHistoryCandles(queried, current);
+      setDailyChartData(candles);
+    } catch (failure) {
+      if (host === hostRef.current && historyRequestRef.current.isCurrent(request) && code === chartCodeRef.current) {
+        setNotice(`读取 ${code} 历史日 K 失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈此错误。`);
+      }
+    }
+  }, [hostRef, projection, setNotice]);
+
   return {
     chartCode,
     getPriceHistory,
@@ -112,6 +141,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
     selectChart,
     resetMarketHistory,
     refreshDailyChart,
+    queryChartHistory,
   };
 }
 

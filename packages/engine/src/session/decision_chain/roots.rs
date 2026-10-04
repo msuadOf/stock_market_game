@@ -508,6 +508,14 @@ impl InstitutionDecisionRoot {
             price_paths,
             technical,
         );
+        for code in &candidates {
+            personal
+                .price_memory
+                .record_public_history_read(code, market_minute, &mut personal.history_reads)
+                .unwrap_or_else(|error| {
+                    panic!("institution history read failed for {id:?} {code:?}: {error}")
+                });
+        }
         operations.push_lifecycle(id, assessments, market_view.clone());
 
         // 6–8. 预算/紧迫度/报价/执行（覆盖账户全部活跃计划，含既有）。

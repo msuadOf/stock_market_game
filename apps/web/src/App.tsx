@@ -128,11 +128,12 @@ interface AppShellProps {
   startupReturnError: string | null;
   onSelectHost: (stopSession: () => Promise<void>) => Promise<void>;
   autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
+  hostRef: MutableRefObject<EngineHost | null>;
   notice: string | null;
   setNotice: Dispatch<SetStateAction<string | null>>;
 }
 
-function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, notice, setNotice }: AppShellProps) {
+function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
   const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
@@ -162,7 +163,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const playerOrderRefreshGateRef = useRef(new PlayerOrderRefreshGate());
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
-  const hostRef = useRef<EngineHost | null>(null);
   const stopStartupRef = useRef<() => Promise<void>>(async () => {});
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
@@ -684,6 +684,7 @@ function App() {
   const [remoteAddress, setRemoteAddress] = useState(import.meta.env.DEV ? import.meta.env.VITE_REMOTE_BASE_URL ?? "" : "");
   const [startupError, setStartupError] = useState<string | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
+  const hostRef = useRef<EngineHost | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const returnToStartup = useCallback(async (stopSession: () => Promise<void>) => {
     if (returningToStartupRef.current) return;
@@ -721,11 +722,11 @@ function App() {
       }} />;
   }
   return (
-    <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice}>
+    <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice} hostRef={hostRef}>
       <AppShell startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
         dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}
         returningToStartup={returningToStartup} returningToStartupRef={returningToStartupRef} startupReturnError={startupReturnError}
-        autoOrderMgrRef={autoOrderMgrRef} notice={notice} setNotice={setNotice} />
+        autoOrderMgrRef={autoOrderMgrRef} hostRef={hostRef} notice={notice} setNotice={setNotice} />
     </MarketRuntimeProvider>
   );
 }

@@ -151,6 +151,37 @@ test("Given an authenticated remote host, when player orders are queried, then i
   assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
 });
 
+test("远程股票历史只通过显式 query endpoint 读取并绑定 generation", { timeout: 10000 }, async () => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requests.push({ url, init });
+    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/stock-history?")) return new Response(JSON.stringify({ generation: "2", data: { code: "600000", daily_candles: [], active_daily_candle: null } }), { status: 200 });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  let socket: WebSocket | null = null;
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
+    baseUrl: "http://127.0.0.1:3000", fetchFn,
+    webSocketFactory: () => {
+      socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+      return socket;
+    },
+  });
+  await host.start(() => undefined);
+  socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  assert.deepEqual(await host.queryStockHistory("600000"), { code: "600000", daily_candles: [], active_daily_candle: null });
+  const request = requests.find(({ url }) => url.includes("/api/stock-history?"));
+  assert.ok(request);
+  const params = new URL(request.url).searchParams;
+  assert.equal(params.get("generation"), "2");
+  assert.equal(params.get("code"), "600000");
+  assert.equal(params.has("account"), false);
+  assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
+  await host.dispose();
+});
+
 test("Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint", async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
   let completeSave: ((response: Response) => void) | null = null;

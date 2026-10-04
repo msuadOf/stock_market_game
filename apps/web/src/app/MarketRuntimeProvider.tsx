@@ -11,6 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
+import type { EngineHost } from "../host/engine-host.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
@@ -26,6 +27,7 @@ interface MarketRuntimeActions {
   selectChart: Runtime["selectChart"];
   resetMarketHistory: Runtime["resetMarketHistory"];
   refreshDailyChart: Runtime["refreshDailyChart"];
+  queryChartHistory: Runtime["queryChartHistory"];
   setIndicatorCalculator: (calculator: IndicatorCalculator) => () => void;
 }
 
@@ -43,11 +45,12 @@ const DataContext = createContext<MarketRuntimeData | null>(null);
 interface Props {
   autoOrderManagerRef: MutableRefObject<AutoOrderManager | null>;
   setNotice: Dispatch<SetStateAction<string | null>>;
+  hostRef: MutableRefObject<EngineHost | null>;
   children: ReactNode;
 }
 
-export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children }: Props) {
-  const runtime = useMarketChartRuntime({ autoOrderManagerRef, setNotice });
+export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef, children }: Props) {
+  const runtime = useMarketChartRuntime({ autoOrderManagerRef, setNotice, hostRef });
   const [calculatorRegistration, setCalculatorRegistration] = useState<{
     readonly token: symbol;
     readonly calculator: IndicatorCalculator;
@@ -65,6 +68,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     selectChart: runtime.selectChart,
     resetMarketHistory: runtime.resetMarketHistory,
     refreshDailyChart: runtime.refreshDailyChart,
+    queryChartHistory: runtime.queryChartHistory,
     setIndicatorCalculator,
   }), [
     runtime.acceptReduction,
@@ -74,6 +78,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     runtime.refreshDailyChart,
     runtime.resetMarketHistory,
     runtime.selectChart,
+    runtime.queryChartHistory,
     setIndicatorCalculator,
   ]);
   const data = useMemo<MarketRuntimeData>(() => ({

@@ -60,16 +60,30 @@ test("strict save boundary rejects malformed nested company and personal-state b
   const information = Reflect.get(save, "information_states")
   assert.ok(typeof information === "object" && information !== null)
   const account = Object.keys(information)[0]
+  const beliefs = Reflect.get(save, "belief_books")
+  assert.ok(typeof beliefs === "object" && beliefs !== null)
+  const institution = Object.entries(beliefs as Record<string, Record<string, unknown>>)
+    .find(([, book]) => {
+      const profile = book.profile
+      return typeof profile === "object" && profile !== null && Object.hasOwn(profile, "Institution")
+    })?.[0]
   const history = Reflect.get(save, "price_history")
   assert.ok(typeof history === "object" && history !== null)
   const market = Object.keys(history)[0]
+  const priceMemories = Reflect.get(save, "price_memories")
+  assert.ok(typeof priceMemories === "object" && priceMemories !== null)
+  const priceMemoryEntry = Object.entries(priceMemories as Record<string, { stocks?: Record<string, unknown> }>)
+    .find(([, memory]) => memory.stocks !== undefined && Object.keys(memory.stocks).length > 0)
   const planBook = Reflect.get(save, "plans")
   assert.ok(typeof planBook === "object" && planBook !== null)
   const plans = Reflect.get(planBook, "plans")
   assert.ok(typeof plans === "object" && plans !== null)
   const plan = Object.keys(plans)[0]
-  if (company === undefined || account === undefined) throw new Error("mature save must contain company and personal state")
-  if (market === undefined || plan === undefined) throw new Error("mature save must contain market and plan state")
+  if (company === undefined || account === undefined || institution === undefined) throw new Error("mature save must contain company, personal state, and institution belief")
+  if (market === undefined || plan === undefined || priceMemoryEntry === undefined) throw new Error("mature save must contain market, plan, and price-memory state")
+  const [priceMemoryAccount, priceMemory] = priceMemoryEntry
+  const rememberedMarket = Object.keys(priceMemory.stocks!)[0]
+  if (rememberedMarket === undefined) throw new Error("mature save must contain a remembered security")
 
   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [
     [["setup", "start_date"], "2030-02-30", /setup\.start_date/],
@@ -95,12 +109,12 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["plans", "plans", plan, "status"], { Unknown: {} }, /plans/],
     [["plans", "plans", plan, "review", "last_review_resources"], undefined, /last_review_resources/],
     [["belief_books", account, "experience"], undefined, /belief_books.*experience/],
-    [["belief_books", account, "institution_policy"], undefined, /institution_experience_policy/],
-    [["belief_books", account, "institution_account_risk_paused"], undefined, /institution_account_risk_paused/],
+    [["belief_books", institution, "institution_policy"], undefined, /institution_experience_policy/],
+    [["belief_books", institution, "institution_account_risk_paused"], undefined, /institution_account_risk_paused/],
     [["information_states", account, "unexpected"], true, /information_states/],
     [["belief_books", account, "analysis", "fundamental_bp"], "4000", /belief_books/],
     [["watchlists", account, "latest_attention_minute"], 50, /watchlists/],
-    [["price_memories", account, "stocks", market, "last_touched_minute"], 50, /price_memories/],
+    [["price_memories", priceMemoryAccount, "stocks", rememberedMarket, "last_touched_minute"], 50, /price_memories/],
     [["pending_plan_events"], [{ Rejected: {} }], /pending_plan_events/],
   ]
   for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutate(path, value)), expected)

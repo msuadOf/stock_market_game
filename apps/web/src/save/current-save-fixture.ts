@@ -160,6 +160,7 @@ export function currentSaveFixture(): JsonObject {
     belief_books: {},
     watchlists: {},
     price_memories: {},
+    history_reads: { "0": { stocks: {} } },
     pending_plan_events: [],
   }
 }

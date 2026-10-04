@@ -204,6 +204,7 @@ mod protection_tests {
     fn public_history_touch_does_not_change_watchlist_attention_eviction() {
         let mut list = PersonalWatchlist::new();
         let mut memory = super::super::PersonalPriceMemory::default();
+        let mut reads = super::super::PersonalHistoryReadLedger::default();
         let codes: Vec<_> = (0..10)
             .map(|index| StockCode(format!("600{index:03}")))
             .collect();
@@ -214,7 +215,9 @@ mod protection_tests {
                 .observe_price(code, crate::Money::from_cents(100), minute)
                 .unwrap();
         }
-        memory.record_public_history_read(&codes[0], 11).unwrap();
+        memory
+            .record_public_history_read(&codes[0], 11, &mut reads)
+            .unwrap();
         list.prune(&BTreeSet::new());
         memory.prune(&BTreeSet::new());
         assert!(list.stock(&codes[0]).is_none());

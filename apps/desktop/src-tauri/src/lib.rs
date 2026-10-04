@@ -132,6 +132,17 @@ async fn player_working_orders(
         .map_err(map_send_error)
 }
 
+#[tauri::command]
+async fn query_stock_history(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    code: engine::StockCode,
+) -> Result<actor::GenerationResponse<engine::session::HistoricalStockData>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.query_stock_history(parse_generation(generation)?, code).await.map_err(map_send_error)
+}
+
 /// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。
 #[tauri::command]
 async fn runtime_snapshot(
@@ -397,6 +408,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             host_capabilities,
             calculate_indicators,
             player_working_orders,
+            query_stock_history,
             runtime_snapshot,
             civil_date,
             public_reports,
@@ -427,6 +439,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             host_capabilities,
             calculate_indicators,
             player_working_orders,
+            query_stock_history,
             runtime_snapshot,
             civil_date,
             public_reports,

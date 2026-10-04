@@ -23,7 +23,7 @@ use engine::session::protocol::{EngineUpdate, PausePreferences, ProtocolSession,
 use engine::{
     calendar::CivilDate,
     company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
-    AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
+    session::HistoricalStockData, AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -249,6 +249,11 @@ pub enum SessionCommand {
         generation: u64,
         reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
     },
+    StockHistory {
+        generation: u64,
+        code: StockCode,
+        reply: oneshot::Sender<Result<GenerationResponse<HistoricalStockData>, SessionError>>,
+    },
     QueryBaseline {
         generation: u64,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
@@ -380,6 +385,18 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn query_stock_history(
+        &self,
+        generation: u64,
+        code: StockCode,
+    ) -> Result<GenerationResponse<HistoricalStockData>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::StockHistory { generation, code, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
@@ -968,6 +985,18 @@ impl<R: Runtime> SessionActor<R> {
                         ))
                     });
                 let result = self.generation_response(generation, orders);
+                let _ = reply.send(result);
+            }
+            SessionCommand::StockHistory { generation, code, reply } => {
+                let result = if generation != self.generation {
+                    self.generation_response(generation, Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    ))))
+                } else {
+                    let queried = self.game.query_stock_history(AccountId(0), &code);
+                    self.generation_response(generation, queried)
+                };
                 let _ = reply.send(result);
             }
             SessionCommand::QueryBaseline { generation, reply } => {

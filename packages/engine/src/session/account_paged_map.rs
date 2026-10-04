@@ -161,7 +161,6 @@ impl<Value: Clone> AccountPagedMap<Value> {
             .collect())
     }
 
-    #[cfg(test)]
     pub(super) fn get_mut(&mut self, id: &AccountId) -> Option<&mut Value> {
         if !self.contains_key(id) {
             return None;

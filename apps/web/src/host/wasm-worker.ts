@@ -15,6 +15,7 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly prepare_public_baseline?: (handle: number) => void;
   readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
+  readonly query_stock_history?: (handle: number, code: string) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
@@ -287,6 +288,15 @@ ctx.addEventListener("message", (event) => {
             generation: requestedGeneration,
             orders: readOrders(session),
           });
+          return;
+        }
+        case "stockHistory": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (typeof message.code !== "string" || message.code.length === 0) throw new Error("股票历史查询代码无效");
+          const [session, wasm] = slot.requireHandle();
+          const queryHistory = (wasm as WasmTransportExtensions).query_stock_history;
+          if (queryHistory === undefined) throw new Error("当前 WASM bindings 不支持股票历史查询，请重建 bindings");
+          ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, message.code) });
           return;
         }
         case "npcDecisionTrace": {

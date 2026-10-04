@@ -112,6 +112,22 @@ test("Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save �
   });
 });
 
+test("Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户", { timeout: 10000 }, async () => {
+  let finishHistory!: (value: unknown) => void;
+  await withTauriHost(async (host, calls) => {
+    const history = assert.rejects(host.queryStockHistory("600000"), /股票历史响应属于已过期/);
+    await host.refreshBaseline();
+    finishHistory({ generation: "1", value: { code: "600000", daily_candles: [], active_daily_candle: null } });
+    await history;
+    assert.ok(calls.includes("query_stock_history"));
+  }, (command, args) => {
+    if (command === "query_stock_history") {
+      assert.deepEqual(args, { sessionId: "session-1", generation: "1", code: "600000" });
+      return new Promise((resolve) => { finishHistory = resolve; });
+    }
+  });
+});
+
 test("Tauri restore snapshot 解析失败保留先写 generation/timeline 与旧 baseline，不 resume", async () => {
   await withTauriHost(async (host, calls) => {
     const updates: unknown[] = [];

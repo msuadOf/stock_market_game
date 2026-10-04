@@ -4,6 +4,7 @@ declare module "*wasm-pkg/web_wasm.js" {
     PublicReportPage,
     PublicReportQuery,
     PublicReportSummary,
+    HistoricalStockData,
     SaveSlot,
     SessionSetup,
     Snapshot,
@@ -22,6 +23,7 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function end_civil_day(handle: number): EngineUpdate;
   export function public_report_page(handle: number, query: PublicReportQuery): PublicReportPage;
   export function public_report_by_id(handle: number, id: string): PublicReportSummary;
+  export function query_stock_history(handle: number, code: import("./types/generated/StockCode").StockCode): HistoricalStockData;
   export function enqueue(handle: number, intent: Intent): void;
   export function save(handle: number): SaveSlot;
   export function restore(slot: SaveSlot): number;

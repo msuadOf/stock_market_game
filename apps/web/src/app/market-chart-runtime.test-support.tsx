@@ -1,9 +1,10 @@
-import { createElement, useRef } from "react";
+import { createElement, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
 import { ProtocolCoordinator } from "../host/protocol-coordinator.ts";
 import type { HostUpdate } from "../host/host-update.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
+import type { EngineHost } from "../host/engine-host.ts";
 
 export type ChartRuntimeObservation = {
   readonly daily: readonly KlinePoint[];
@@ -14,13 +15,15 @@ export type ChartRuntimeObservation = {
   readonly code: string;
 };
 
-export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdates }: {
+export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdates, hostRef, setNotice }: {
   readonly baseline: Extract<HostUpdate, { type: "baseline" }>;
   readonly updates: readonly Extract<HostUpdate, { type: "protocol" }>[];
   readonly observe: (stage: "baseline" | "updated", observation: ChartRuntimeObservation) => void;
   readonly afterUpdates?: (runtime: ReturnType<typeof useMarketChartRuntime>) => void;
+  readonly hostRef?: MutableRefObject<EngineHost | null>;
+  readonly setNotice?: Dispatch<SetStateAction<string | null>>;
 }) {
-  const runtime = useMarketChartRuntime({ autoOrderManagerRef: { current: null }, setNotice: () => {} });
+  const runtime = useMarketChartRuntime({ autoOrderManagerRef: { current: null }, setNotice: setNotice ?? (() => {}), hostRef: hostRef ?? { current: null } });
   const latestRuntime = useRef(runtime);
   latestRuntime.current = runtime;
   const coordinator = useRef<ProtocolCoordinator | null>(null);
