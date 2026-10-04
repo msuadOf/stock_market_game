@@ -29,9 +29,9 @@ export interface KlinePoint {
 }
 
 interface Props {
-  data: PricePoint[];
+  data: readonly PricePoint[];
   /** Rust Snapshot 同步的已完成交易日 OHLC。 */
-  dailyCandles?: KlinePoint[];
+  dailyCandles?: readonly KlinePoint[];
   lastClose: number; // 昨收（元），用于着色基准
   chartType?: "分时" | "日K";
   klineDays?: number; // 日K 显示天数（20/60/120/240/360）

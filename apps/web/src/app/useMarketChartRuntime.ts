@@ -15,9 +15,9 @@ interface Options {
 export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Options) {
   const [chartCode, setChartCode] = useState("600101");
   const [projection] = useState(() => new MarketChartProjection());
-  const [chartData, setChartData] = useState<PricePoint[]>([]);
-  const [auctionChartData, setAuctionChartData] = useState<AuctionPoint[]>([]);
-  const [dailyChartData, setDailyChartData] = useState<KlinePoint[]>([]);
+  const [chartData, setChartData] = useState<readonly PricePoint[]>([]);
+  const [auctionChartData, setAuctionChartData] = useState<readonly AuctionPoint[]>([]);
+  const [dailyChartData, setDailyChartData] = useState<readonly KlinePoint[]>([]);
 
   const getPriceHistory = useCallback(() => projection.history(), [projection]);
   const getActiveDailyCandles = useCallback(() => projection.activeCandles(), [projection]);
@@ -51,7 +51,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
   const acceptReduction = useCallback((reduction: Extract<ProtocolReduction, { kind: "applied" }>) => {
     const update: NormalizedEngineUpdate = reduction.update;
     if (update.kind === "civil-update") {
-      projection.rebuildHistory(update.intraday);
+      projection.rebuildHistory(update.update.kinds.includes("BeforeOpen") ? [] : update.intraday);
       replaceSnapshot(reduction.state.snapshot);
     } else {
       projection.upsertFrames(update.frames);

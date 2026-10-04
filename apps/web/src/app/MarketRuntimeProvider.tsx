@@ -30,9 +30,9 @@ interface MarketRuntimeActions {
 }
 
 interface MarketRuntimeData {
-  chartData: PricePoint[];
-  auctionChartData: AuctionPoint[];
-  dailyChartData: KlinePoint[];
+  chartData: readonly PricePoint[];
+  auctionChartData: readonly AuctionPoint[];
+  dailyChartData: readonly KlinePoint[];
   indicatorCalculator: IndicatorCalculator | null;
 }
 

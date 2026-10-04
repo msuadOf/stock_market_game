@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { HostUpdate } from "../host/host-update.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "../host/host-update.ts";
-import { parseProtocolSnapshot } from "../host/protocol/parse.ts";
+import { parseEngineUpdate, parseProtocolSnapshot } from "../host/protocol/parse.ts";
+import { canonicalJson } from "../host/protocol/canonical.ts";
 import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
 
@@ -86,7 +87,7 @@ test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆�
   assert.equal(after.active["600101"]!.close, 14);
 });
 
-test("production civil 重建日内历史并清旧证券，select 与 reset 读取当前投影", { timeout: 10000 }, () => {
+test("production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K", { timeout: 10000 }, () => {
   const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(0, 0)));
   const first = createProtocolUpdate("1", { TickBatch: {
     frames: [{ ...frame(1, 0, ["600000"]), timeseries_payload: {
@@ -97,8 +98,10 @@ test("production civil 重建日内历史并清旧证券，select 与 reset 读�
   const selected = render([first, civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("600000") }).after;
   assert.equal(selected.code, "600000");
   assert.equal(Object.hasOwn(selected.history, "old"), false);
-  assert.equal(selected.prices.length, 1);
-  assert.equal(selected.prices[0].volume, 1);
+  assert.deepEqual(selected.prices, []);
+  assert.deepEqual(selected.auctions, []);
+  assert.deepEqual(selected.history, {});
+  assert.equal(selected.daily.length, 1);
   assert.equal(selected.active["600000"]!.close, 10);
   const reset = render([first, civil], { baseline: initial, afterUpdates: (runtime) => runtime.resetMarketHistory(initial.snapshot) }).after;
   assert.deepEqual(reset.history, {});
@@ -116,4 +119,22 @@ test("successive production deltas use final authoritative active candles and re
   assert.equal(after.active["600101"]!.volume, 300);
   assert.equal(Object.hasOwn(after.active, "000001"), false);
   assert.equal(after.daily[0], before.daily[0]);
+});
+
+test("production AfterClose-only 进入非交易日时保留真实收盘分时", { timeout: 10000 }, () => {
+  const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(1, 1)));
+  const parsed = parseEngineUpdate(civilUpdate());
+  if (!("CivilUpdate" in parsed)) throw new Error("CivilUpdate fixture 类型错误");
+  const event = { CivilDateAdvanced: {
+    seq: 2, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: "Weekend" as const },
+  } };
+  const civil = createProtocolUpdate("1", { CivilUpdate: { ...parsed.CivilUpdate,
+    kinds: ["AfterClose"], boundary: { ...parsed.CivilUpdate.boundary, next_status: { Closed: "Weekend" } },
+    events: [event], facts: [{ ...parsed.CivilUpdate.facts[0], event, canonical_payload: canonicalJson(event) }],
+  } });
+  const after = render([civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("600000") }).after;
+  assert.equal(after.prices.length, 1);
+  assert.equal(after.prices[0].volume, 1);
+  assert.equal(after.prices[0].value, 10);
+  assert.equal(after.daily.length, 1);
 });
