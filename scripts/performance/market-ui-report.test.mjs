@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
 import { describe, it } from "node:test";
 import { analyzeChartProgress, buildHtmlReport, formatBrowserException } from "./market-ui-report-lib.mjs";
 
@@ -93,7 +94,7 @@ describe("MarketUiReportRun 资源会话", () => {
     assert.deepEqual(calls.slice(-4), ["client.close", "browser.stop", "server.stop", "profile.rm"]);
   });
 
-  it("连接失败保留已取得 client，清理失败按原有边界停止后续步骤", async () => {
+  it("连接失败保留已取得 client，任一清理失败仍执行所有后续步骤", async () => {
     assert.equal(typeof marketReport.MarketUiReportRun, "function");
     for (const failAt of ["connect", "client.close", "browser.stop", "server.stop", "profile.rm"]) {
       const { calls, dependencies } = fixture(failAt);
@@ -103,10 +104,9 @@ describe("MarketUiReportRun 资源会话", () => {
       if (failAt === "connect") await assert.rejects(run.connectPage(), /connect/);
       else await run.connectPage();
       if (failAt === "connect") await run.close();
-      else await assert.rejects(run.close(), new RegExp(failAt));
+      else await assert.rejects(run.close(), (error) => error instanceof AggregateError && error.errors.some((failure) => failure.message === failAt));
       const cleanup = ["client.close", "browser.stop", "server.stop", "profile.rm"];
-      const count = failAt === "connect" ? 4 : cleanup.indexOf(failAt) + 1;
-      assert.deepEqual(calls.slice(-count), cleanup.slice(0, count));
+      assert.deepEqual(calls.slice(-4), cleanup);
     }
   });
 
@@ -117,6 +117,75 @@ describe("MarketUiReportRun 资源会话", () => {
     await assert.rejects(run.launchBrowser(), /Chrome/);
     await run.close();
     assert.deepEqual(calls.slice(-3), ["browser.stop", "null.stop", "profile.rm"]);
+  });
+
+  it("多项清理失败保留全部原因并仍删除 profile", async () => {
+    const { calls, dependencies } = fixture("client.close");
+    dependencies.stopProcess = async () => { throw new Error("进程树终止失败"); };
+    const run = new marketReport.MarketUiReportRun({ url: "http://localhost/", browser: "" }, dependencies);
+    await run.startServerIfNeeded();
+    await run.launchBrowser();
+    await run.connectPage();
+    await assert.rejects(run.close(), (error) => error instanceof AggregateError && error.errors.length === 3);
+    assert.equal(calls.at(-1), "profile.rm");
+  });
+});
+
+describe("生产启动旅程", () => {
+  function fixture({ ready = false, error = "" } = {}) {
+    const calls = [];
+    const root = {};
+    const alert = { textContent: error };
+    const local = { click: () => calls.push("local") };
+    const button = { click: () => { calls.push("start"); ready = !error; } };
+    const document = { querySelector: (selector) => {
+      if (selector === ".app-root") return ready ? root : null;
+      if (selector === '[role="alert"]') return error ? alert : null;
+      if (selector === "#startup-title") return {};
+      if (selector === 'input[name="startup-mode"][value="local"]') return local;
+      if (selector === 'button[type="submit"]') return button;
+      return null;
+    } };
+    const client = { send: async (method, { expression }) => ({ result: { value: runInNewContext(expression, { document }) } }) };
+    return { client, calls };
+  }
+
+  it("明确选择本地并提交现有启动选择，而非改变产品 policy", async () => {
+    const { client, calls } = fixture();
+    await marketReport.enterGame(client);
+    assert.deepEqual(calls, ["local", "start"]);
+  });
+
+  it("已启动页面不再次提交，启动错误显式失败", async () => {
+    const active = fixture({ ready: true });
+    await marketReport.enterGame(active.client);
+    assert.deepEqual(active.calls, []);
+    await assert.rejects(marketReport.enterGame(fixture({ error: "坏档不可读取" }).client), /坏档不可读取/);
+  });
+});
+
+describe("CDP 断连", () => {
+  it("断连即时拒绝 pending command，后续 send 不再挂起", async () => {
+    const socket = new EventTarget();
+    socket.send = () => {};
+    socket.close = () => socket.dispatchEvent(new Event("close"));
+    const client = new marketReport.CdpClient("ws://fixture", { socket });
+    const connected = client.connect();
+    socket.dispatchEvent(new Event("open"));
+    await connected;
+    const command = client.send("Runtime.evaluate");
+    const rejected = assert.rejects(command, /断开/);
+    client.close();
+    await rejected;
+    await assert.rejects(client.send("Page.enable"), /断开/);
+  });
+
+  it("连接建立前断连也显式拒绝", async () => {
+    const socket = new EventTarget();
+    const client = new marketReport.CdpClient("ws://fixture", { socket });
+    const rejected = assert.rejects(client.connect(), /断开/);
+    socket.dispatchEvent(new Event("close"));
+    await rejected;
   });
 });
 

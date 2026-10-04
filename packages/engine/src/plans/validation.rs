@@ -24,6 +24,13 @@ pub enum PlanError {
     InvalidSignalScoreBp { value: i32 },
     #[error("invalid horizon of {value} trading days: must be at least 1")]
     InvalidHorizonDays { value: u32 },
+    #[error(
+        "plan horizon overflows: created day {created_trading_day}, horizon {horizon_trading_days}"
+    )]
+    HorizonOverflow {
+        created_trading_day: u64,
+        horizon_trading_days: u32,
+    },
     #[error("invalid policy threshold {field} = {value} bp: must be positive")]
     InvalidPolicyThreshold { field: &'static str, value: i32 },
     #[error("plan {plan_id:?}: fill quantity must be positive")]
@@ -194,11 +201,24 @@ pub(crate) fn validate_open(open: &PlanOpen) -> Result<(), PlanError> {
     validate_target(open.target)?;
     validate_confidence(open.confidence_bp)?;
     validate_opinion(&open.opinion)?;
-    if open.horizon_trading_days == 0 {
-        return Err(PlanError::InvalidHorizonDays {
-            value: open.horizon_trading_days,
-        });
-    }
+    validate_horizon(open.created_trading_day, open.horizon_trading_days)
+}
+
+pub(crate) fn validate_horizon(
+    created_trading_day: u64,
+    horizon_trading_days: u32,
+) -> Result<(), PlanError> {
+    let offset = horizon_trading_days
+        .checked_sub(1)
+        .ok_or(PlanError::InvalidHorizonDays {
+            value: horizon_trading_days,
+        })?;
+    created_trading_day
+        .checked_add(u64::from(offset))
+        .ok_or(PlanError::HorizonOverflow {
+            created_trading_day,
+            horizon_trading_days,
+        })?;
     Ok(())
 }
 

@@ -65,7 +65,7 @@ export type AutomaticOrderPoint = ContinuousPoint & {
 
 export type ProtocolEffect =
   | { readonly kind: "notice"; readonly message: string }
-  | { readonly kind: "trade"; readonly event: Extract<Event, { Trade: unknown }>["Trade"] }
+  | { readonly kind: "trade"; readonly event: Extract<Event, { Trade: unknown }>["Trade"] & { readonly tick: number } }
   | { readonly kind: "automatic-order"; readonly points: readonly AutomaticOrderPoint[] }
   | {
       readonly kind: "civil-barrier";

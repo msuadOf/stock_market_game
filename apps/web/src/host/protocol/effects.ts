@@ -8,14 +8,14 @@ function assertNever(value: never): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.effects", `未处理拒单原因：${String(value)}`);
 }
 
-function effectsFromEvent(event: Event): readonly ProtocolEffect[] {
+function effectsFromEvent(event: Event, tick: number): readonly ProtocolEffect[] {
   if ("IntentRejected" in event) {
     return [{ kind: "notice", message: `委托被拒：${event.IntentRejected.code} - ${rejectionMessage(event.IntentRejected.reason)}` }];
   }
   if ("SettlementError" in event) {
     return [{ kind: "notice", message: `结算错误：${event.SettlementError.code} - ${event.SettlementError.reason}` }];
   }
-  if ("Trade" in event) return [{ kind: "trade", event: event.Trade }];
+  if ("Trade" in event) return [{ kind: "trade", event: { ...event.Trade, tick } }];
   return [];
 }
 
@@ -59,11 +59,12 @@ function sortedPoints(points: Readonly<Record<string, ContinuousPoint>>): readon
 export function effectsFromFacts(
   facts: readonly EventFact[],
   continuousPoints: Readonly<Record<string, ContinuousPoint>>,
+  tick: number,
 ): readonly ProtocolEffect[] {
   const effects = facts
     .slice()
     .sort((left, right) => factIdentity(left).localeCompare(factIdentity(right)))
-    .flatMap((fact) => effectsFromEvent(fact.event));
+    .flatMap((fact) => effectsFromEvent(fact.event, tick));
   const points = sortedPoints(continuousPoints);
   if (points.length > 0) effects.push({ kind: "automatic-order", points });
   return effects;

@@ -5,7 +5,9 @@ type Analysis = (Option<f64>, Vec<ImpactSample>, Vec<RecoverySample>);
 
 #[derive(Debug, Serialize)]
 pub struct ImpactSample {
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub execution_sequence: u64,
+    #[serde(serialize_with = "decimal::optional")]
     pub quote_sequence: Option<u64>,
     pub signed_observational_bp: Option<f64>,
     pub absent_reason: Option<&'static str>,
@@ -13,8 +15,11 @@ pub struct ImpactSample {
 
 #[derive(Debug, Serialize)]
 pub struct RecoverySample {
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub loss_sequence: u64,
+    #[serde(serialize_with = "decimal::optional")]
     pub recovered_sequence: Option<u64>,
+    #[serde(serialize_with = "decimal::optional")]
     pub market_minutes: Option<u64>,
     pub censored_reason: Option<&'static str>,
 }

@@ -12,11 +12,13 @@ const PUBLIC_CONTEXT_FIELDS = new Set([
   "code", "operation", "phase", "tick", "seq", "fromSeq", "toSeq", "seq_from", "seq_to",
   "generation", "timeline_generation", "day", "civilDate", "civil_date", "revision", "public_revision",
   "requestId", "request_id", "expected", "actual",
+  "tickFrom", "tickTo", "seqFrom", "seqTo", "kind", "cursor", "baselineRequired",
 ]);
 const CAUSE_FIELDS = new Set(["code", "where", "message", "name", "cause", "context"]);
 const PUBLIC_PHASES = new Set<string>([...TRADING_PHASES, "IntradayTrading", "ClosedDay"]);
 
 function publicContextString(value: string, field: string | undefined): string {
+  if (field === "kind") return value === "TickBatch" || value === "CivilUpdate" ? value : "[已脱敏：非公开诊断值]";
   if (field === "operation") return value === "step" || value === "endCivilDay" ? value : "[已脱敏：非公开诊断值]";
   if ((field === "civilDate" || field === "civil_date") && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   if (field === "phase" && PUBLIC_PHASES.has(value)) return value;

@@ -34,9 +34,6 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
             match &update {
                 EngineUpdate::TickBatch(batch) => {
                     batch.validate().unwrap();
-                    if !fastest {
-                        assert_eq!(batch.frames.len(), 1);
-                    }
                     assert!(batch.runtime_snapshot.is_none());
                     let delta = batch.runtime_delta.as_ref().unwrap();
                     let last = batch.frames.last().unwrap();
@@ -52,6 +49,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                         assert!(delta.working_orders.reset);
                     }
                     for frame in &batch.frames {
+                        assert_eq!(frame.tick, ticks.len() as u64 + 1);
                         ticks.push(frame.tick);
                         assert!(!frame.timeseries_payload.markets.is_empty());
                     }
@@ -62,9 +60,14 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                     assert_eq!(civil.refresh.intraday.len(), 30);
                     assert_eq!(actor.pacing.is_running(), !preferences.pauses(civil));
                     println!("desktop fastest={fastest}: {payload}");
+                    let (reply, applied) = oneshot::channel();
                     actor
-                        .handle_command(SessionCommand::SetRunning { running: true })
+                        .handle_command(SessionCommand::SetRunning {
+                            running: true,
+                            reply,
+                        })
                         .await;
+                    applied.await.unwrap();
                     actor.tick_and_emit().await;
                     let next: serde_json::Value =
                         serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();

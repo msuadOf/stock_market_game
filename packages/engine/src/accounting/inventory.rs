@@ -263,7 +263,7 @@ pub enum InventoryError {
 /// 整数半偶舍入除法 `n/d`（d > 0）。共享子账（存货/固定资产）的统一
 /// 舍入入口——与 `amount.rs` 私有实现同算法；金额模块的既定计量语义
 /// 保持不变，故此处维护共享副本（公司域 interest 另有一份带说明的副本）。
-pub(in crate::accounting) fn rhe_div(n: i128, d: i128) -> Result<i128, AccountingError> {
+pub(crate) fn rhe_div(n: i128, d: i128) -> Result<i128, AccountingError> {
     if d <= 0 {
         return Err(AccountingError::AmountOverflow {
             op: "rhe_div",

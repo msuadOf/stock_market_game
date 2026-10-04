@@ -29,6 +29,8 @@ pub struct DecisionAccountInput {
     strategy_state: StrategyState,
     account_risk: Option<AccountRiskObservation>,
     retail_experience: Option<Arc<RetailExperienceState>>,
+    retail_analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+    failure_influence: Option<u16>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -45,6 +47,15 @@ pub enum DecisionSnapshotError {
     MissingRetailAccountRisk(AccountId),
     #[error("retail NPC account {0:?} has no retail-experience state")]
     MissingRetailExperience(AccountId),
+    #[error("non-retail account {0:?} cannot carry retail personal analysis or failure influence")]
+    UnexpectedRetailAnalysis(AccountId),
+    #[error("retail account {account:?} analysis references unknown market stock {code:?}")]
+    UnknownRetailAnalysisStock {
+        account: AccountId,
+        code: crate::StockCode,
+    },
+    #[error("retail account {0:?} personal analysis requires a retail execution strategy")]
+    InvalidRetailAnalysisStrategy(AccountId),
     #[error(
         "decision clock mismatch: header tick/minute {tick}/{market_minute}, market view {market_tick}/{market_view_minute}"
     )]
@@ -86,7 +97,32 @@ impl DecisionAccountInput {
             strategy_state,
             account_risk,
             retail_experience,
+            retail_analysis: None,
+            failure_influence: None,
         }
+    }
+
+    pub fn with_retail_analysis(
+        mut self,
+        analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+    ) -> Self {
+        self.retail_analysis = analysis;
+        self
+    }
+
+    pub fn retail_analysis(
+        &self,
+    ) -> Option<&BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>> {
+        self.retail_analysis.as_ref()
+    }
+
+    pub fn with_failure_influence(mut self, influence: u16) -> Self {
+        self.failure_influence = Some(influence);
+        self
+    }
+
+    pub const fn failure_influence(&self) -> Option<u16> {
+        self.failure_influence
     }
 
     pub const fn kind(&self) -> AccountKind {
@@ -144,6 +180,27 @@ impl DecisionSnapshot {
             let input = &accounts[account];
             if input.kind == AccountKind::Player {
                 return Err(DecisionSnapshotError::PlayerInNpcBatch(*account));
+            }
+            if input.kind != AccountKind::Retail
+                && (input.retail_analysis.is_some() || input.failure_influence.is_some())
+            {
+                return Err(DecisionSnapshotError::UnexpectedRetailAnalysis(*account));
+            }
+            if let Some(analysis) = &input.retail_analysis {
+                if !matches!(input.strategy_state, StrategyState::ZiNoise(_)) {
+                    return Err(DecisionSnapshotError::InvalidRetailAnalysisStrategy(
+                        *account,
+                    ));
+                }
+                if let Some(code) = analysis
+                    .keys()
+                    .find(|code| !market.stocks.contains_key(*code))
+                {
+                    return Err(DecisionSnapshotError::UnknownRetailAnalysisStock {
+                        account: *account,
+                        code: code.clone(),
+                    });
+                }
             }
             if input.kind == AccountKind::Retail {
                 if behavior_market.is_none() {

@@ -16,8 +16,14 @@
 mod determinism;
 mod fixtures;
 mod history_gold;
+mod industry_guards;
+mod industry_sessions;
+mod maturities;
+mod payment_risks;
+mod period_end;
 mod risk_gold;
 mod seam;
+mod session_boundary;
 mod shock_gold;
 
 mod failures;

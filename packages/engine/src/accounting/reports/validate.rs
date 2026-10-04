@@ -112,8 +112,22 @@ fn equity_cross_foot(
 }
 
 impl ReportSet {
+    pub(crate) fn validate_parent_income_source(&self) -> Result<(), ReportError> {
+        if matches!(self.scope, ScopeId::Consolidated(_))
+            && self.income.net_income_to_parent.is_none()
+        {
+            return Err(ReportError::MissingParentIncome {
+                scope: self.scope.clone(),
+                period: self.period,
+            });
+        }
+        Ok(())
+    }
+
     /// 结构与勾稽校验（生成器产物必须通过；手工构造物同规则拒绝）。
     pub fn validate(&self) -> Result<(), ReportError> {
+        self.validate_parent_income_source()?;
+        let consolidated = matches!(self.scope, ScopeId::Consolidated(_));
         let bs = &self.balance_sheet;
         if bs.total_assets != bs.liabilities_and_equity {
             return Err(ReportError::BalanceSheetNotBalanced {
@@ -157,7 +171,6 @@ impl ReportSet {
                 indirect: indirect_total,
             });
         }
-        let consolidated = matches!(self.scope, ScopeId::Consolidated(_));
         let check_bs_line = |line: BsLine, value: AccountingAmount| -> Result<(), ReportError> {
             if line.is_derived() || (consolidated && line == BsLine::PaidInCapital) {
                 return Ok(());

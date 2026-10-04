@@ -62,6 +62,104 @@ pub(super) struct RetailPositionDecisionContext<'a> {
     sellable_qty: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_personal_analysis(
+    original: PositionDecision,
+    assessments: &BTreeMap<StockCode, crate::plans::CandidateAssessment>,
+    own: &SelfView,
+    market: &MarketView,
+    risk: &AccountRiskObservation,
+    experience: &RetailExperienceState,
+    market_minute: u64,
+    step_fraction: f64,
+    rng: &mut dyn Rng,
+) -> PositionDecision {
+    if matches!(
+        original.reason,
+        DecisionReason::PositionRisk
+            | DecisionReason::AccountDrawdown
+            | DecisionReason::BroadMarketRisk
+            | DecisionReason::TakeProfit
+            | DecisionReason::ProfitGiveback
+            | DecisionReason::BreakEvenRelief
+            | DecisionReason::T1Locked
+            | DecisionReason::LowConfidence
+            | DecisionReason::PostExitCooldown
+            | DecisionReason::NoSignal
+    ) {
+        return original;
+    }
+    let selected = assessments
+        .iter()
+        .max_by(|(left_code, left), (right_code, right)| {
+            let magnitude = |assessment: &crate::plans::CandidateAssessment| match assessment {
+                crate::plans::CandidateAssessment::Scored { score, .. } => {
+                    score.value().unsigned_abs()
+                }
+                crate::plans::CandidateAssessment::InsufficientInformation { .. } => 0,
+            };
+            magnitude(left)
+                .cmp(&magnitude(right))
+                .then_with(|| right_code.cmp(left_code))
+        });
+    let Some((code, assessment)) = selected else {
+        return original;
+    };
+    let context = RetailPositionDecisionContext::from_observations(code, own, market, risk);
+    let held = own
+        .positions
+        .get(code)
+        .is_some_and(|position| position.qty > 0);
+    let (action, reason) = match assessment {
+        crate::plans::CandidateAssessment::Scored { score, .. } if score.value() > 0 => (
+            if held {
+                PositionAction::Add
+            } else {
+                PositionAction::TryBuy
+            },
+            DecisionReason::PersonalAnalysis,
+        ),
+        crate::plans::CandidateAssessment::Scored { score, .. } if score.value() < 0 && held => {
+            (PositionAction::Reduce, DecisionReason::PersonalAnalysis)
+        }
+        crate::plans::CandidateAssessment::InsufficientInformation { .. } => (
+            if held {
+                PositionAction::Hold
+            } else {
+                PositionAction::Watch
+            },
+            DecisionReason::InsufficientHistory,
+        ),
+        _ => (
+            if held {
+                PositionAction::Hold
+            } else {
+                PositionAction::Watch
+            },
+            DecisionReason::PersonalAnalysis,
+        ),
+    };
+    if matches!(action, PositionAction::TryBuy | PositionAction::Add)
+        && experience.is_in_post_exit_cooldown(code, market_minute)
+    {
+        return context.target_for(
+            if held {
+                PositionAction::Hold
+            } else {
+                PositionAction::Watch
+            },
+            DecisionReason::PostExitCooldown,
+            step_fraction,
+        );
+    }
+    context.apply_experience_confidence(
+        context.target_for(action, reason, step_fraction),
+        Some(experience),
+        step_fraction,
+        rng,
+    )
+}
+
 impl<'a> RetailPositionDecisionContext<'a> {
     pub(super) fn from_observations(
         code: &'a StockCode,

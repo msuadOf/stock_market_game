@@ -21,6 +21,10 @@ use crate::accounting::{AccountingAmount, AccountingError, FractionUnits};
 use crate::calendar::CivilDate;
 use crate::company::counterparty::CounterpartyId;
 
+mod restore;
+#[cfg(test)]
+pub(super) mod restore_tests;
+
 /// 单个合同组聚合根：保费身份 + GMM 计量/进度 + 赔案账。
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ContractGroupState {
@@ -422,7 +426,7 @@ impl ContractMeasurementState {
     }
 }
 
-/// 保留原扁平存档字段、顺序和 derive 接受集；子对象不新增持久化字段。
+/// 保留原扁平存档字段、顺序与字段解析规则；语义不变量在构造后验证。
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename = "ContractGroupState")]
 struct ContractGroupSnapshot<Policyholder = CounterpartyId, Claims = BTreeMap<ClaimId, ClaimState>>
@@ -491,7 +495,7 @@ impl<'de> serde::Deserialize<'de> for ContractGroupState {
             ContractGroupSnapshot::<CounterpartyId, BTreeMap<ClaimId, ClaimState>>::deserialize(
                 deserializer,
             )?;
-        Ok(Self {
+        let state = Self {
             policyholder: saved.policyholder,
             premium: saved.premium,
             premium_collected: saved.premium_collected,
@@ -518,6 +522,8 @@ impl<'de> serde::Deserialize<'de> for ContractGroupState {
                 carried_loss: saved.carried_loss,
             },
             claims: ClaimRegister::from_claims(saved.claims),
-        })
+        };
+        state.validate_restore().map_err(serde::de::Error::custom)?;
+        Ok(state)
     }
 }

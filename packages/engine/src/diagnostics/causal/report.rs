@@ -28,12 +28,18 @@ pub enum CausalError {
 pub struct OrderLifecycle {
     pub origin: OrderOrigin,
     pub submitted_at: FactTime,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub source_sequence: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub filled_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub canceled_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub aborted_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub open_qty: u64,
     pub terminal_reason: Option<Termination>,
+    #[serde(serialize_with = "decimal::optional")]
     pub lifetime_market_minutes: Option<u64>,
     pub lifetime_civil_seconds: Option<i64>,
     pub censored_reason: Option<&'static str>,
@@ -42,15 +48,22 @@ pub struct OrderLifecycle {
 
 #[derive(Debug, Serialize)]
 pub struct CausalReport {
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub seed: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub submitted_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub filled_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub canceled_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub aborted_qty: u64,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub open_qty: u64,
     pub filled_submitted_ratio: Option<f64>,
     pub ratio_absent_reason: Option<&'static str>,
     pub orders: Vec<OrderLifecycle>,
+    #[serde(serialize_with = "decimal::delays")]
     pub information_delays: Vec<(u64, i64)>,
     pub direction_persistence: Option<f64>,
     pub direction_absent_reason: Option<&'static str>,

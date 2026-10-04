@@ -31,7 +31,7 @@ pub struct InstParams {
 pub struct HotParams {
     /// 回看完整交易分钟数，≥2。
     pub lookback: usize,
-    /// 触发动作的相对变化阈值（绝对值），≥0。
+    /// 触发动作的相对变化阈值（绝对值），有限且≥0。
     pub trend_threshold: f64,
     /// 群体订单规模基准，>0；基准不少于一手时，每个游资实例在其 60%–140%
     /// 范围内采样整手数量；不足一手时保持原值，不静默放大。

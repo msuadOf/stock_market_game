@@ -81,6 +81,8 @@ impl<'a> OperatingDayRun<'a> {
         self.sample_and_activate_shocks()?;
         self.dispatch_due_actions()?;
         self.advance_company_flows()?;
+        self.operations
+            .settle_period_end(self.date, &mut self.payment_failures)?;
         self.schedule_next_interest()?;
         Ok(self.build_day_report())
     }
@@ -109,7 +111,9 @@ impl<'a> OperatingDayRun<'a> {
                 amplitude_bp: shock.amplitude_bp,
             });
             for company in operations.companies.values_mut() {
-                company.economy.activate(shock.clone());
+                if shock.kind.applies_to(company.spec.kind) {
+                    company.economy.activate(shock.clone());
+                }
             }
         }
         let mut industry_shocks: Vec<(IndustryId, ActiveShock)> = Vec::new();
@@ -122,7 +126,7 @@ impl<'a> OperatingDayRun<'a> {
         }
         for (industry, shock) in industry_shocks {
             for (id, company) in &mut operations.companies {
-                if company.spec.industry == industry {
+                if company.spec.industry == industry && shock.kind.applies_to(company.spec.kind) {
                     self.activated.push(ActivatedShockRecord {
                         company: Some(id.clone()),
                         kind: shock.kind.clone(),
@@ -136,6 +140,9 @@ impl<'a> OperatingDayRun<'a> {
             if let Some(shock) =
                 sample_company_shock(&mut company.rng, date, &operations.shock_params)?
             {
+                if !shock.kind.applies_to(company.spec.kind) {
+                    continue;
+                }
                 self.activated.push(ActivatedShockRecord {
                     company: Some(id.clone()),
                     kind: shock.kind.clone(),
@@ -148,7 +155,9 @@ impl<'a> OperatingDayRun<'a> {
     }
 
     fn dispatch_due_actions(&mut self) -> Result<(), OperationsError> {
-        self.dispatched_due = self.operations.dispatch_due_on(self.date)?;
+        self.dispatched_due = self
+            .operations
+            .dispatch_due_on(self.date, &mut self.payment_failures)?;
         Ok(())
     }
 
@@ -198,11 +207,17 @@ impl<'a> OperatingDayRun<'a> {
     fn schedule_next_interest(&mut self) -> Result<(), OperationsError> {
         let next = self.date.next()?;
         self.operations.submit_rolling_interest(next)?;
+        self.operations.schedule_debt_maturities(next)?;
         self.operations.next_expected = Some(next);
         Ok(())
     }
 
     fn build_day_report(self) -> CompanyDayReport {
+        if !self.payment_failures.is_empty() {
+            self.operations
+                .payment_failures
+                .insert(self.date, self.payment_failures.clone());
+        }
         let posted_entries = self
             .operations
             .companies

@@ -84,6 +84,7 @@ impl TradingCalendar {
                     citation_id: entry.source_citation_id.clone(),
                 });
             }
+            return DayStatus::Trading;
         }
         if let Some(kind) = self.simulated_holiday_kind(date) {
             return DayStatus::Closed(ClosedReason::SimulatedHoliday(kind));

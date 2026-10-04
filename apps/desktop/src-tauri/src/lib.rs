@@ -268,7 +268,7 @@ async fn host_parity_step(
         .map_err(map_send_error)
 }
 
-/// 改变步进倍速（仅调整 interval，不立即 step）。fire-and-forget 经 mpsc 保证顺序。
+/// 改变步进倍速（仅调整 interval，不立即 step），等待 actor 应用确认。
 #[derive(Debug, Deserialize)]
 enum SpeedRequest {
     Fixed(f64),

@@ -116,8 +116,14 @@ impl IndustrialBooks {
         self.inventory_mut()
             .apply_issue(&raw, raw_quantity)
             .map_err(|error| map_inventory_issue(raw_quantity, error))?;
-        self.inventory_mut()
-            .receipt(finished, finished_account, finished_quantity, total_cost)?;
+        self.inventory_mut().receipt(
+            finished.clone(),
+            finished_account.clone(),
+            finished_quantity,
+            total_cost,
+        )?;
+        self.record_inventory_source(first_event, &raw, &raw_account);
+        self.record_inventory_source(BusinessEventId::new(base + 1), &finished, &finished_account);
         Ok(ProductionOutcome {
             events: vec![first_event, BusinessEventId::new(base + 1)],
             material_cost,

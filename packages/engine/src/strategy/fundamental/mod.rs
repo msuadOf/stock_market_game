@@ -18,6 +18,7 @@ pub use forecast::{
     initial_forecast, observe_growth, revise_forecast, ForecastBasis, ForecastState,
     GrowthObservation, GROWTH_PRIOR_CLAMP_BP,
 };
+pub(crate) use update::{own_known_report_priority, preferred_own_report};
 pub use update::{BeliefCause, CauseRecord};
 pub(crate) use update::{FAILURE_CONFIDENCE_DELTA_BP, PROFITABLE_EXIT_CONFIDENCE_DELTA_BP};
 pub use valuation::{cash_flow, earnings_multiple, equity_roe, ScenarioEstimates};
@@ -130,6 +131,12 @@ pub enum ValuationUnavailable {
         "financing cash flow cannot be split into interest vs principal from own-known statements"
     )]
     FinancingSplitUndeterminable,
+    #[error(
+        "own-known consolidated statements do not attribute cash flows to parent shareholders"
+    )]
+    ConsolidatedCashFlowAttributionUnavailable,
+    #[error("own-known consolidated statements are missing net income attributed to parent shareholders")]
+    ConsolidatedNetIncomeAttributionUnavailable,
     #[error("total issued shares must be a positive denominator")]
     ZeroIssuedShares,
     #[error("checked arithmetic overflow at step: {step}")]
@@ -243,6 +250,16 @@ pub fn estimate_by_method(
     growth_bp: Option<i32>,
     total_issued_shares: u64,
 ) -> ValuationOutcome {
+    if method == FundamentalMethod::CashFlow
+        && matches!(
+            facts.scope,
+            crate::accounting::consolidation::ScopeId::Consolidated(_)
+        )
+    {
+        return ValuationOutcome::Unavailable {
+            reason: ValuationUnavailable::ConsolidatedCashFlowAttributionUnavailable,
+        };
+    }
     let estimates = match method {
         FundamentalMethod::EarningsMultiple => earnings_multiple(facts, assumptions),
         FundamentalMethod::EquityRoe => equity_roe(facts, assumptions),

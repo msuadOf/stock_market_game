@@ -26,10 +26,10 @@ function updateRange(update: EngineUpdate): { readonly firstTick: number; readon
 
 function updateEffects(update: NormalizedEngineUpdate): readonly ProtocolEffect[] {
   if (update.kind === "tick-batch") {
-    return update.frames.flatMap((frame) => effectsFromFacts(frame.facts, frame.continuousPoints));
+    return update.frames.flatMap((frame) => effectsFromFacts(frame.facts, frame.continuousPoints, frame.tick));
   }
   return [
-    ...effectsFromFacts(update.update.facts, {}),
+    ...effectsFromFacts(update.update.facts, {}, update.update.tick),
     ...civilBarrierEffects(update.update.kinds),
   ];
 }

@@ -164,6 +164,23 @@ impl ClosingEngine {
         Self::default()
     }
 
+    /// 仅验证合并报告的归母损益源必填条件，不替代版本键、重述及完整恢复校验。
+    pub(crate) fn validate_consolidated_parent_income(&self) -> Result<(), ReportError> {
+        for report in self.versions.values().flatten() {
+            report.validate_parent_income_source()?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn missing_parent_income_test_fixture() -> Self {
+        let mut registry = tests::registry_with_group_report();
+        registry.versions.values_mut().next().unwrap()[0]
+            .income
+            .net_income_to_parent = None;
+        registry
+    }
+
     /// 月末封月：试算 → 报表 → 勾稽 → 封账 → 版本入库。
     pub fn close_month(
         &mut self,
@@ -421,6 +438,139 @@ pub use crate::accounting::reports::validate::verify_comparative_honesty;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub(super) fn registry_with_group_report() -> ClosingEngine {
+        use crate::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
+        use crate::accounting::{
+            AccountChart, AccountingAmount, BusinessKind, CashFlowClass, JournalLine,
+            LedgerAccountId, PostingSide,
+        };
+        let mut books = Books::new(AccountChart::generic_account_chart());
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(1),
+                date: crate::calendar::CivilDate::from_iso("2029-12-31").unwrap(),
+                kind: BusinessKind::OpeningBalance,
+                cash_flow: CashFlowClass::Financing,
+                lines: vec![
+                    JournalLine {
+                        account: LedgerAccountId("1002".into()),
+                        side: PostingSide::Debit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                    JournalLine {
+                        account: LedgerAccountId("4001".into()),
+                        side: PostingSide::Credit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                ],
+            }])
+            .unwrap();
+        let member = |id: &str, parent: Option<&str>, held| GroupMember {
+            spec: MemberSpec {
+                id: MemberId(id.into()),
+                group_parent: parent.map(|id| MemberId(id.into())),
+                issued_shares: 100,
+                parent_held_shares: held,
+            },
+            books: &books,
+        };
+        let set = generate_report_set(ReportRequest {
+            period: AccountingPeriod::from_iso("2030-01").unwrap(),
+            kind: ReportKind::Monthly,
+            source: ReportSource::Consolidated {
+                request: ConsolidationRequest {
+                    root: MemberId("root".into()),
+                    members: vec![member("root", None, 0), member("sub", Some("root"), 80)],
+                    intercompany_balances: vec![],
+                    intercompany_sales: vec![],
+                },
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &BTreeMap::new(),
+        })
+        .unwrap();
+        let mut registry = ClosingEngine::new();
+        registry.record(set).unwrap();
+        registry
+    }
+
+    #[test]
+    fn closing_restore_rejects_consolidated_missing_parent_income() {
+        let mut registry = registry_with_group_report();
+        let report = &mut registry.versions.values_mut().next().unwrap()[0];
+        report.income.net_income_to_parent = None;
+        let serialized = serde_json::to_value(&registry).unwrap();
+        let error = serde_json::from_value::<ClosingEngine>(serialized)
+            .expect_err("closing restore must reject missing parent income");
+        assert!(error.to_string().contains("income.net_income_to_parent"));
+    }
+
+    #[test]
+    fn closing_restore_checks_parent_income_before_duplicate_key_overwrite() {
+        let mut registry = registry_with_group_report();
+        let valid_row = serde_json::to_value(&registry).unwrap()["versions"][0].clone();
+        registry.versions.values_mut().next().unwrap()[0]
+            .income
+            .net_income_to_parent = None;
+        let mut serialized = serde_json::to_value(&registry).unwrap();
+        serialized["versions"]
+            .as_array_mut()
+            .unwrap()
+            .push(valid_row);
+        let error = serde_json::from_value::<ClosingEngine>(serialized)
+            .expect_err("later duplicate key cannot hide missing parent income");
+        assert!(error.to_string().contains("income.net_income_to_parent"));
+    }
+
+    #[test]
+    fn closing_restore_preserves_valid_zero_parent_income() {
+        let registry = registry_with_group_report();
+        let restored: ClosingEngine =
+            serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
+        assert_eq!(
+            restored.versions.values().next().unwrap()[0]
+                .income
+                .net_income_to_parent,
+            Some(crate::accounting::AccountingAmount::ZERO)
+        );
+    }
+
+    #[test]
+    fn closing_restore_preserves_standalone_parent_income_none() {
+        let books = Books::new(crate::accounting::AccountChart::generic_account_chart());
+        let set = generate_report_set(ReportRequest {
+            period: AccountingPeriod::from_iso("2030-01").unwrap(),
+            kind: ReportKind::Monthly,
+            source: ReportSource::Standalone {
+                id: MemberId("single".into()),
+                books: &books,
+                industry: IndustryPresentation::Industrial,
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &BTreeMap::new(),
+        })
+        .unwrap();
+        let mut registry = ClosingEngine::new();
+        registry.record(set).unwrap();
+        let restored: ClosingEngine =
+            serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
+        restored.validate_consolidated_parent_income().unwrap();
+        assert_eq!(
+            restored.versions.values().next().unwrap()[0]
+                .income
+                .net_income_to_parent,
+            None
+        );
+    }
 
     #[test]
     fn restatement_rows_preserve_overwrite_empty_and_scope_semantics() {

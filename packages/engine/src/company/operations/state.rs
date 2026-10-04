@@ -62,7 +62,7 @@ impl CompanyEconomicState {
                 ShockKind::IndustryCostShift { .. } => cost += i64::from(shock.amplitude_bp),
                 ShockKind::CreditDeterioration => credit += shock.amplitude_bp,
                 ShockKind::ProductionInterruption => interrupted = true,
-                ShockKind::AssetImpairmentSignal => {}
+                ShockKind::AssetImpairmentSignal | ShockKind::PaymentFailure { .. } => {}
             }
         }
         EconomyAggregates {

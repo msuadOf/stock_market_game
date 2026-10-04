@@ -138,7 +138,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
       return socket;
     },
   });
-  host.start(() => undefined);
+  await host.start(() => undefined);
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.playerWorkingOrders(), [{
     id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "continuous", frozen: "cash",
@@ -173,7 +173,7 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
     webSocketFactory: () => socket,
   });
 
-  host.start(() => undefined);
+  await host.start(() => undefined);
   socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   await host.save({ seq: 42, settledDate: "2030-01-02" });
 
@@ -240,7 +240,7 @@ test("Given a same-generation Publisher resync, when refreshBaseline completes, 
     },
   });
   const received: unknown[] = [];
-  host.start((update) => received.push(update));
+  await host.start((update) => { received.push(update); });
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   await host.refreshBaseline();
   assert.equal(received.length, 2);
@@ -303,8 +303,8 @@ test("Given remote session deletion fails, when disposed, then the host reports 
     fetchFn,
     webSocketFactory: () => socket,
   });
-  remote.start(() => {}, (failure) => failures.push(failure));
-  remote.dispose();
+  await remote.start(() => {}, (failure) => failures.push(failure));
+  await assert.rejects(remote.dispose(), /HTTP 500/);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(failures, [{
     code: "REMOTE_DISPOSE",
@@ -323,7 +323,7 @@ test("remote disposal authenticates the owning session before deletion", async (
     return new Response(null);
   }) as typeof fetch;
   const host = await createRemoteHost({} as SessionSetup, 1n, { fetchFn });
-  host.dispose();
+  await host.dispose();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.ok(deletion);
   assert.equal(new Headers(deletion.headers).get("authorization"), "Bearer owner-token");

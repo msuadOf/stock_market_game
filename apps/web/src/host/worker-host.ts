@@ -88,9 +88,13 @@ export async function restoreWorkerSlot(
     generation: currentGeneration,
     slot,
   }, "restored");
+  const nextGeneration = generation(response.nextGeneration, "Worker restore generation");
+  if (nextGeneration <= currentGeneration) {
+    throw new Error(`Worker restore generation 必须大于当前 generation ${currentGeneration}，实际收到 ${nextGeneration}`);
+  }
   return {
     snapshot: parseProtocolSnapshot(response.snapshot, "Worker restored.snapshot"),
-    nextGeneration: generation(response.nextGeneration, "Worker restore generation"),
+    nextGeneration,
   };
 }
 
@@ -131,7 +135,7 @@ export function createWorkerHost(
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
     const requests = new WorkerRequestScope(worker);
-    let callback: ((update: HostUpdate) => void) | null = null;
+    let callback: ((update: HostUpdate) => void | boolean) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
     let baselineEpoch = 0;
@@ -149,6 +153,13 @@ export function createWorkerHost(
     }, 10_000);
 
     const notifyFailure = (failure: HostFailure) => {
+      if (disposed) return;
+      disposed = true;
+      callback = null;
+      cachedBaseline = null;
+      const reportFailure = fatalCallback;
+      fatalCallback = null;
+      requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
       if (!initialized) {
         clearTimeout(timeout);
         lifecycle.dispose();
@@ -156,8 +167,20 @@ export function createWorkerHost(
         return;
       }
       lifecycle.dispose();
-      if (fatalCallback !== null) fatalCallback(failure);
+      if (reportFailure !== null) reportFailure(failure);
       else pendingFailure = failure;
+    };
+
+    const deliverLiveBaseline = (baseline: Extract<HostUpdate, { type: "baseline" }>): void => {
+      deliveredGeneration = null;
+      if (callback === null) return;
+      try {
+        if (callback(baseline) === false) throw new Error("Worker 消费者拒绝 baseline，会话已停止");
+      } catch (error) {
+        notifyFailure({ code: "WASM_WORKER_BASELINE_REJECTED", where: "worker-host.baseline", message: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+      deliveredGeneration = baseline.generation;
     };
 
     worker.addEventListener("error", (event) => {
@@ -166,16 +189,11 @@ export function createWorkerHost(
         where: "worker-host",
         message: `WASM Worker 脚本加载或执行失败：${event.message || "浏览器未提供具体错误"}`,
       };
-      if (!initialized) {
-        clearTimeout(timeout);
-        lifecycle.dispose();
-        reject(new Error(failure.message));
-        return;
-      }
       notifyFailure(failure);
     });
 
     worker.addEventListener("message", (event: MessageEvent<unknown>) => {
+      if (disposed) return;
       try {
         const incoming = message(event.data);
         switch (incoming.type) {
@@ -206,18 +224,31 @@ export function createWorkerHost(
               resolve(host());
             }
             if (callback !== null && deliveredGeneration !== next.generation) {
-              callback(next);
-              deliveredGeneration = next.generation;
+              deliverLiveBaseline(next);
             }
             return;
           }
-          case "protocol": {
+          case "protocol":
+          case "protocolBatch": {
             const updateGeneration = generation(incoming.generation, "Worker protocol generation");
             if (updateGeneration !== currentGeneration || callback === null) return;
-            callback(createProtocolUpdate(String(updateGeneration), incoming.update, {
-              civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
-              revision: typeof incoming.revision === "string" ? incoming.revision : null,
-            }));
+            const deliveryId = generation(incoming.deliveryId, "Worker protocol deliveryId");
+            const updates = incoming.type === "protocol" ? [incoming.update] : incoming.updates;
+            if (!Array.isArray(updates) || updates.length < 1 || updates.length > 64) throw new Error("Worker protocolBatch 必须包含 1–64 个完整提交");
+            for (const update of updates) {
+              const accepted = callback(createProtocolUpdate(String(updateGeneration), update, {
+                civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
+                revision: typeof incoming.revision === "string" ? incoming.revision : null,
+              }));
+              if (accepted === false) {
+                requests.close(new Error("Worker 消费者拒绝协议更新，会话已停止"));
+                lifecycle.dispose();
+                disposed = true;
+                callback = null;
+                return;
+              }
+            }
+            worker.postMessage({ type: "uiFrame", generation: updateGeneration, deliveryId });
             return;
           }
           case "failure":
@@ -242,6 +273,12 @@ export function createWorkerHost(
       ? { type: "init" }
       : { type: "init", threads: options.threadCount });
 
+    async function control(type: string, successType: string, payload: Record<string, unknown> = {}): Promise<void> {
+      const requestedGeneration = currentGeneration;
+      await requests.request({ type, ...payload, requestId: requests.nextRequestId(), generation: requestedGeneration }, successType);
+      if (disposed || currentGeneration !== requestedGeneration) throw new Error(`Worker ${type} 响应属于已过期 generation`);
+    }
+
     function host(): EngineHost & WorkerE2EHost {
       return {
         capabilities: {
@@ -252,35 +289,38 @@ export function createWorkerHost(
           publicCompanyReports: true,
           npcDecisionDiagnostics,
         },
-        start(onUpdate, onFatalError) {
+        async start(onUpdate, onFatalError) {
           if (disposed) throw new Error("WASM Worker 已被销毁");
           if (pendingFailure !== null) throw new Error(`${pendingFailure.code}: ${pendingFailure.message}`);
           callback = onUpdate;
           fatalCallback = onFatalError ?? null;
           if (cachedBaseline !== null && deliveredGeneration !== cachedBaseline.generation) {
-            callback(cachedBaseline);
+            if (callback(cachedBaseline) === false) {
+              callback = null;
+              throw new Error("Worker 消费者拒绝 cached baseline，未启动 Worker loop");
+            }
             deliveredGeneration = cachedBaseline.generation;
           }
-          worker.postMessage({ type: "start" });
+          await control("start", "started");
         },
-        stop() {
-          lifecycle.pause();
+        async stop() {
+          await control("stop", "stopped");
         },
-        dispose() {
+        async dispose() {
           if (disposed) return;
           disposed = true;
+          requests.close(new Error("WASM Worker 已被销毁，操作已取消"));
           callback = null;
           fatalCallback = null;
           cachedBaseline = null;
           lifecycle.dispose();
         },
-        setSpeed(multiplier) {
+        async setSpeed(multiplier) {
           assertValidSpeedMultiplier(multiplier);
-          worker.postMessage({ type: "setSpeed", speed: multiplier });
+          await control("setSpeed", "speedSet", { speed: multiplier });
         },
         async setPausePreferences(preferences: PausePreferences) {
-          const requestId = requests.nextRequestId();
-          await requests.request(workerPausePreferenceRequest(requestId, currentGeneration, preferences), "pausePreferencesSet");
+          await control("setPausePreferences", "pausePreferencesSet", { preferences });
         },
         setFrameRate(fps) {
           worker.postMessage({ type: "setFrameRate", fps });
@@ -343,23 +383,23 @@ export function createWorkerHost(
         async refreshBaseline() {
           const requestedGeneration = currentGeneration;
           const snapshot = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
-          if (currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
           const baseline = createBaselineUpdate(String(requestedGeneration), snapshot);
           baselineEpoch += 1;
           cachedBaseline = baseline;
-          callback?.(baseline);
-          deliveredGeneration = baseline.generation;
+          deliverLiveBaseline(baseline);
         },
         async load(slot) {
           const parsedSlot = parseSaveSlot(slot);
-          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), currentGeneration);
+          const requestedGeneration = currentGeneration;
+          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration);
+          if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           currentGeneration = restored.nextGeneration;
           const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
           baselineEpoch += 1;
           cachedBaseline = baseline;
           if (callback !== null && deliveredGeneration !== baseline.generation) {
-            callback(baseline);
-            deliveredGeneration = baseline.generation;
+            deliverLiveBaseline(baseline);
           }
         },
         async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {

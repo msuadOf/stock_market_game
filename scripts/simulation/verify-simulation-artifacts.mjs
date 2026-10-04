@@ -269,7 +269,7 @@ function fixtureArgs(rootContext, spec, seed) {
 
 function expectedIdentity(rootContext, spec) {
   return {
-    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 8, effective_date: "2026-09-30", script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 9, effective_date: "2026-10-04", script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: rootContext.git.revision, dirty_paths: rootContext.git.dirty_paths },
     source_fingerprint: rootContext.sourceFingerprint,
     resource_policy: rootContext.resourcePolicy,
@@ -379,7 +379,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
   const directoryName = matrixDirectoryName(spec);
   const directoryPath = resolveContained(root, directoryName, `matrix ${directoryName}`);
   await requireDirectory(directoryPath, `matrix ${directoryName}`);
-  const expectedArtifacts = ["checkpoint.json", "determinism.checkpoint.json"];
+  const expectedArtifacts = ["checkpoint.json", "determinism.checkpoint.json", "rerun.json"];
   for (const seed of spec.seeds) expectedArtifacts.push(`seed-${seed}.json`, `seed-${seed}.checkpoint.json`);
   await requireExactDirectoryEntries(directoryPath, expectedArtifacts, `matrix ${directoryName}`);
 
@@ -421,12 +421,14 @@ async function verifyMatrix(root, report, rootContext, spec) {
   const canonical = completed.at(-1);
   const receipt = (await readJson(resolveContained(directoryPath, "determinism.checkpoint.json", `matrix ${directoryName} determinism receipt`), `matrix ${directoryName} determinism receipt`)).parsed;
   requireExactKeys(receipt, ["schema", "schema_version", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], `matrix ${directoryName} determinism receipt`);
-  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 1) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 2) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
   requireJsonEqual(receipt.identity, identity, `matrix ${directoryName} determinism receipt identity`);
   if (receipt.identity_digest !== sha256(JSON.stringify(identity))) fail(`matrix ${directoryName} determinism receipt identity digest mismatch`);
-  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) {
+  const rerun = await readJson(resolveContained(directoryPath, "rerun.json", `matrix ${directoryName} rerun`), `matrix ${directoryName} rerun`);
+  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== sha256(rerun.bytes) || receipt.identical !== (receipt.first_digest === receipt.rerun_digest)) {
     fail(`matrix ${directoryName} determinism receipt is not bound to the canonical and rerun bytes`);
   }
+  validateSimulationRaw(rerun.parsed, rootContext, spec, receipt.seed, `matrix ${directoryName} rerun`);
   requireJsonEqual(receipt.argv, canonical.argv, `matrix ${directoryName} determinism receipt argv`);
   if (receipt.exit_code !== 0) fail(`matrix ${directoryName} determinism rerun exit code must be zero`);
   requireNonNegativeDuration(receipt.wall_ms, `matrix ${directoryName} determinism receipt wall_ms`);
@@ -439,7 +441,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
     seed: receipt.seed,
     first_digest: receipt.first_digest,
     rerun_digest: receipt.rerun_digest,
-    identical: true,
+    identical: receipt.identical,
     revision: receipt.revision,
     receipt: "determinism.checkpoint.json",
   }, `manifest matrix ${directoryName}.determinism_check`);

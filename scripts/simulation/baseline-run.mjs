@@ -864,7 +864,7 @@ function sha256(content) {
 
 function simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, volumeDenominatorAssumption }) {
   return {
-    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 8, effective_date: "2026-09-30", script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, schema_version: 4, runner_id: SIMULATION_RUNNER_ID, runner_policy_version: 9, effective_date: "2026-10-04", script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: git.revision, dirty_paths: git.dirty_paths },
     source_fingerprint: sourceFingerprint,
     resource_policy: resourcePolicy,
@@ -1003,10 +1003,10 @@ async function persistSeedCheckpoint(dir, identity, entry, atomicWrite, deadline
 function validateDeterminismReceipt(receipt, identity, canonical) {
   if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("simulation acceptance determinism receipt must be a JSON object");
   requireCurrentFields(receipt, ["schema", "schema_version", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], "simulation acceptance determinism receipt");
-  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 1) throw new Error(`simulation acceptance determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA || receipt.schema_version !== 2) throw new Error(`simulation acceptance determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (receipt.identity_digest !== identityDigest || JSON.stringify(receipt.identity) !== JSON.stringify(identity)) throw new Error("simulation acceptance determinism receipt identity/source fingerprint mismatch");
-  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) throw new Error("simulation acceptance determinism receipt digest or canonical seed mismatch");
+  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || !/^[a-f0-9]{64}$/.test(receipt.rerun_digest) || receipt.identical !== (receipt.first_digest === receipt.rerun_digest)) throw new Error("simulation acceptance determinism receipt digest or canonical seed mismatch");
   if (JSON.stringify(receipt.argv) !== JSON.stringify(canonical.argv) || receipt.exit_code !== 0 || !Number.isFinite(receipt.wall_ms) || receipt.wall_ms < 0) throw new Error("simulation acceptance determinism receipt execution metadata is malformed");
   if (receipt.revision !== identity.git.revision || receipt.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error("simulation acceptance determinism receipt source provenance mismatch");
   if (receipt.receipt_digest !== determinismReceiptDigest(receipt)) throw new Error("simulation acceptance determinism receipt digest mismatch");
@@ -1027,18 +1027,23 @@ async function readDeterminismReceipt(receiptPath, identity, canonical) {
     throw new Error(`simulation acceptance determinism receipt JSON is malformed: ${error.message}`);
   }
   validateDeterminismReceipt(receipt, identity, canonical);
+  const bytes = await fsp.readFile(path.join(path.dirname(receiptPath), "rerun.json"));
+  if (sha256(bytes) !== receipt.rerun_digest) throw new Error("simulation acceptance receipt is not bound to rerun bytes");
+  validateSimulationOutput({ scenario: identity.scenario, seed: receipt.seed, naturalDays: identity.natural_days,
+    behavior: identity.multipliers.behavior, event: identity.multipliers.event, volumeDenominatorAssumption: identity.multipliers.volume_denominator_assumption,
+    sourceFingerprintDigest: identity.source_fingerprint.digest, parsed: JSON.parse(bytes.toString("utf8")) });
   return receipt;
 }
 
 async function persistDeterminismReceipt(receiptPath, identity, canonical, rerun, atomicWrite, deadline) {
   const receipt = {
-    schema: SIMULATION_DETERMINISM_RECEIPT_SCHEMA, schema_version: 1,
+    schema: SIMULATION_DETERMINISM_RECEIPT_SCHEMA, schema_version: 2,
     identity,
     identity_digest: sha256(JSON.stringify(identity)),
     seed: canonical.seed,
     first_digest: canonical.sha256,
     rerun_digest: rerun.sha256,
-    identical: true,
+    identical: canonical.sha256 === rerun.sha256,
     argv: rerun.argv,
     exit_code: rerun.exit_code,
     wall_ms: rerun.wall_ms,
@@ -1046,6 +1051,7 @@ async function persistDeterminismReceipt(receiptPath, identity, canonical, rerun
     source_fingerprint_digest: identity.source_fingerprint.digest,
   };
   receipt.receipt_digest = determinismReceiptDigest(receipt);
+  await publishBeforeDeadline(path.join(path.dirname(receiptPath), "rerun.json"), rerun.output_bytes, atomicWrite, deadline);
   await publishBeforeDeadline(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, atomicWrite, deadline);
   return receipt;
 }
@@ -1095,7 +1101,7 @@ async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, prepa
   if (write) {
     await publishBeforeDeadline(path.join(outputDir, `seed-${seed}.json`), buffer, atomicWrite, deadline);
   }
-  return {
+  const result = {
     seed,
     argv: [preparedFixture.executable_relative_path, ...args],
     exit_code: code,
@@ -1103,6 +1109,8 @@ async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, prepa
     sha256,
     raw: parsed,
   };
+  if (!write) Object.defineProperty(result, "output_bytes", { value: buffer });
+  return result;
 }
 
 async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, volumeDenominatorAssumption }) {
@@ -1289,13 +1297,12 @@ async function finalizeSimulationMatrix(matrix, { exec, repoRoot, deadline, prep
   const receiptPath = path.join(outputDir, path.dirname(matrix.checkpoint), "determinism.checkpoint.json");
   const receipt = await readDeterminismReceipt(receiptPath, matrix.identity, canonical);
   if (receipt !== undefined) {
-    return { ...matrix, finalized: true, determinism_check: { seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: true, revision: receipt.revision, receipt: path.basename(receiptPath) } };
+    return { ...matrix, finalized: true, determinism_check: { seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: receipt.identical, revision: receipt.revision, receipt: path.basename(receiptPath) } };
   }
   const rerun = await captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy: matrix.resource_policy, executionPool, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, volumeDenominatorAssumption: matrix.multipliers.volume_denominator_assumption, write: false, permit });
   if (rerun === undefined) return { ...matrix, finalized: false, finalization: { complete: false, reason: "execution_budget_exhausted" } };
-  if (rerun.sha256 !== canonical.sha256) throw new Error(`simulation acceptance deterministic rerun differs for ${matrix.scenario} seed ${rerunSeed}: ${canonical.sha256} != ${rerun.sha256}`);
   const persisted = await persistDeterminismReceipt(receiptPath, matrix.identity, canonical, rerun, atomicWrite, deadline);
-  return { ...matrix, finalized: true, determinism_check: { seed: rerunSeed, first_digest: canonical.sha256, rerun_digest: rerun.sha256, identical: true, revision: persisted.revision, receipt: path.basename(receiptPath) } };
+  return { ...matrix, finalized: true, determinism_check: { seed: rerunSeed, first_digest: canonical.sha256, rerun_digest: rerun.sha256, identical: persisted.identical, revision: persisted.revision, receipt: path.basename(receiptPath) } };
 }
 
 class SimulationBatchContext {

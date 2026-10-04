@@ -15,6 +15,11 @@ pub enum ReportError {
     Accounting(Box<AccountingError>),
     #[error("consolidation failure: {0}")]
     Consolidation(Box<ConsolidationError>),
+    #[error("consolidated report {scope} at {period} is missing income.net_income_to_parent")]
+    MissingParentIncome {
+        scope: crate::accounting::consolidation::ScopeId,
+        period: AccountingPeriod,
+    },
     #[error("account {code} has no statement classification")]
     UnclassifiedAccount { code: LedgerAccountId },
     #[error("duplicate classification for {code}: {first} vs {second}")]

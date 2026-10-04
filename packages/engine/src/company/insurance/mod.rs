@@ -37,6 +37,8 @@ mod service_release;
 
 #[cfg(test)]
 mod behavior_tests;
+#[cfg(test)]
+mod session_restore_tests;
 
 pub use chart::insurance_account_chart;
 pub use claims::{ClaimId, ClaimState};
@@ -129,6 +131,10 @@ impl InsuranceBooks {
 
     pub fn books(&self) -> &Books {
         &self.books
+    }
+
+    pub(crate) fn books_mut(&mut self) -> &mut Books {
+        &mut self.books
     }
 
     pub fn counterparties(&self) -> &CounterpartyLedger {

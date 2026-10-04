@@ -47,3 +47,11 @@ The historical task-1 baseline fixture/report is unchanged.
 The full offline fact vector is intentionally retained for auditability and is
 not suitable for unlimited product-session collection. Large baseline consumers
 must budget its memory and artifact size; product builds leave it absent.
+
+## JSON 大整数编码
+
+causal report 与 source facts 中的 `u64` seed、sequence、market minute、累计数量、
+depth 和可选 identity / lifetime 均输出十进制字符串，避免 JavaScript 安全整数范围导致
+精度丢失；缺失 Option 仍输出 `null`，不以 `"0"` 冒充缺失。`information_delays`
+每项的第一个元素是字符串 identity，第二个元素仍是原 `i64` 时间差。
+本约定仅调整诊断 JSON 投影，不改变 Rust 内部计算、正式交易协议或存档契约。

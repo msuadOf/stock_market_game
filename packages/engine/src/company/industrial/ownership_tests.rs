@@ -13,6 +13,37 @@ fn amount(cents: i128) -> AccountingAmount {
     AccountingAmount::from_cents(cents)
 }
 
+#[test]
+fn audit_credit_arithmetic_error_is_not_reported_as_missing_credit() {
+    let mut books = IndustrialBooks::new(config()).unwrap();
+    let start = date("2030-01-01");
+    for (id, principal) in [("A", AccountingAmount::MAX), ("B", amount(1))] {
+        let id = ContractId(id.into());
+        books
+            .contracts_mut()
+            .register(crate::company::OperatingContract {
+                id: id.clone(),
+                role: crate::company::ContractRole::Borrowing,
+                counterparty: CounterpartyId("LENDER".into()),
+                principal,
+                annual_rate_bp: 0,
+                start_date: start,
+                maturity_date: date("2030-02-01"),
+                basis: crate::company::DayCountBasis::Act365F,
+            })
+            .unwrap();
+        books.loans.insert_registered_loan(id, principal, start);
+    }
+    let before = serde_json::to_value(&books).unwrap();
+    assert!(matches!(
+        books.available_credit(&CounterpartyId("LENDER".into())),
+        Err(IndustrialError::Accounting(
+            crate::accounting::AccountingError::AmountOverflow { .. }
+        ))
+    ));
+    assert_eq!(serde_json::to_value(&books).unwrap(), before);
+}
+
 fn config() -> IndustrialConfig {
     let lender = CounterpartyId("LENDER".into());
     IndustrialConfig {
@@ -239,7 +270,9 @@ fn opening_implicit_debt_roundtrip_keeps_short_account_and_credit_usage() {
     });
     let books = IndustrialBooks::new(cfg).expect("开局隐式借款");
     assert_eq!(
-        books.available_credit(&CounterpartyId("LENDER".into())),
+        books
+            .available_credit(&CounterpartyId("LENDER".into()))
+            .unwrap(),
         Some(amount(9_999))
     );
     let saved = serde_json::to_string(&books).expect("保存");
@@ -263,7 +296,9 @@ fn opening_implicit_debt_roundtrip_keeps_short_account_and_credit_usage() {
     );
     assert_eq!(restored.loan(&loan).expect("隐式贷款").carried().units(), 1);
     assert_eq!(
-        restored.available_credit(&CounterpartyId("LENDER".into())),
+        restored
+            .available_credit(&CounterpartyId("LENDER".into()))
+            .unwrap(),
         Some(amount(10_000))
     );
 }

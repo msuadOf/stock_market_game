@@ -27,6 +27,7 @@ export class WorkerRequestScope {
   private readonly port: WorkerRequestPort;
   private sequence = 0;
   private readonly pending = new Map<number, PendingRequest>();
+  private closed: Error | null = null;
 
   constructor(port: WorkerRequestPort) {
     this.port = port;
@@ -40,8 +41,20 @@ export class WorkerRequestScope {
     return this.pending.size;
   }
 
+  close(error: Error): void {
+    this.closed = error;
+    for (const resource of this.pending.values()) {
+      resource.settled = true;
+      clearTimeout(resource.timeout);
+      this.port.removeEventListener("message", resource.listener);
+      resource.reject(error);
+    }
+    this.pending.clear();
+  }
+
   request(request: WorkerRequest, successType: string, timeoutMs = 10_000): Promise<WorkerResponse> {
     return new Promise((resolve, reject) => {
+      if (this.closed !== null) { reject(this.closed); return; }
       const cleanup = () => {
         if (resource.settled) return;
         resource.settled = true;
@@ -68,8 +81,12 @@ export class WorkerRequestScope {
       const resource: PendingRequest = { listener: handler, timeout, resolve, reject, settled: false };
       this.pending.set(request.requestId, resource);
       this.port.addEventListener("message", handler);
-      // 保留同步 postMessage 抛错后由原 timeout 清理的既有时序。
-      this.port.postMessage(request);
+      try {
+        this.port.postMessage(request);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     });
   }
 }

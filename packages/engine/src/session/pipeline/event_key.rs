@@ -47,7 +47,7 @@ mod source_contract_tests {
 /// ExpiryShadow 撤单与 Projection 订单簿事件共享既定 Account/Sealed wire 身份域。
 /// 为账户局部报价过期身份预留最高的 u32 范围；
 /// 后续 Projection 活动不能改变早先报价过期事实的身份。
-pub(super) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
+pub(crate) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
     crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]

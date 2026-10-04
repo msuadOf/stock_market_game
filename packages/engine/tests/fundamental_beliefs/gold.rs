@@ -5,8 +5,8 @@
 //! 独立金样速查（分）：
 //! - 盈利倍数（NI 17,820,000 × quality 10000bp × PE 10）：中央 178,200,000；
 //!   悲观 q−1000 → 160,380,000；乐观 q+1000 → 196,020,000；每股 1782/1604/1960。
-//! - 现金流（FCFE 17,820,000，g=0/r=1000/gt=0）：中央 191,648,179；
-//!   悲观 g−300,r+200 → 145,033,183；乐观 g+300,r−200 → 265,974,604；每股 1916/1450/2660。
+//! - 现金流（FCFE 17,820,000，g=0/r=1000/gt=0）：中央 178,200,000；
+//!   悲观 g−300,r+200 → 131,444,507；乐观 g+300,r−200 → 253,208,693；每股 1782/1314/2532。
 
 use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
@@ -53,6 +53,9 @@ pub(crate) fn neutral_assumptions() -> PersonalAssumptions {
 pub(crate) fn hand_facts(equity_cents: i128, opening_cents: i128, ni_cents: i128) -> AnnualFacts {
     AnnualFacts {
         report_id: PublicationId::new(901),
+        scope: engine::accounting::consolidation::ScopeId::Standalone(
+            engine::accounting::consolidation::MemberId(crate::COMPANY.to_owned()),
+        ),
         published_at: CivilInstant::from_hms(d("2031-03-20"), 18, 0, 0).expect("phase"),
         revenue: AccountingAmount::from_cents(200_000_000),
         prior_revenue: PriorRevenue::Comparative(AccountingAmount::from_cents(160_000_000)),
@@ -172,7 +175,21 @@ fn cash_flow_end_to_end_gold() {
     else {
         panic!("cash flow must be available for FY2030");
     };
-    assert_eq!(total_equity_estimate.cents(), 191_648_179);
-    assert_eq!(per_share.pessimistic, Money::from_cents(1_450));
-    assert_eq!(per_share.optimistic, Money::from_cents(2_660));
+    assert_eq!(total_equity_estimate.cents(), 178_200_000);
+    assert_eq!(per_share.pessimistic, Money::from_cents(1_314));
+    assert_eq!(per_share.optimistic, Money::from_cents(2_532));
+}
+
+#[test]
+fn audit_boundary_each_cash_flow_is_discounted_for_its_own_year() {
+    let facts = hand_facts(100_000_000, 100_000_000, 17_820_000);
+    let result = engine::strategy::cash_flow(&facts, &neutral_assumptions(), 0).unwrap();
+    let explicit_years = [16_200_000, 14_727_273, 13_388_430, 12_171_300, 11_064_818];
+    assert_eq!(
+        result.central,
+        explicit_years.iter().sum::<i128>() + 110_648_179
+    );
+    assert_eq!(result.central, 178_200_000);
+    assert_eq!(result.pessimistic, 131_444_507);
+    assert_eq!(result.optimistic, 253_208_693);
 }

@@ -59,6 +59,14 @@ impl serde::Serialize for ClosingEngine {
 
 impl<'de> serde::Deserialize<'de> for ClosingEngine {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        EngineSave::deserialize(deserializer).map(Self::from)
+        let save = EngineSave::deserialize(deserializer)?;
+        for (_, _, _, reports) in &save.versions {
+            for report in reports {
+                report
+                    .validate_parent_income_source()
+                    .map_err(serde::de::Error::custom)?;
+            }
+        }
+        Ok(Self::from(save))
     }
 }

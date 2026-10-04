@@ -6,6 +6,8 @@ use engine::{
 
 fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>> {
     Ok(SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600001".to_owned()),
             exchange: StockExchange::Shanghai,
@@ -135,6 +137,11 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 5242099653663156573 / 4627285058458614055。只重钉当前表示锚。
     // 当前契约移除根版本字段；表示锚由既有原字节仅删除该字段独立计算，
     // 保留事件、快照及所有业务事实。依据见工作记录 current-save-contract。
+    // 补缺合并的独立 producer 对照确认 60 个事件/live snapshot 投影均不变；
+    // 存档变化限于 setup、company_operations、closing_registry、public_library、
+    // ops_wiring、groups，包含真实支付/披露权威事实，并非命名替换。
+    // 原锚保留：16816661624066813714 / 17087109400303676999 /
+    // 2354296198442943349；独立证据见 merge-characterization.md。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -144,17 +151,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 16_816_661_624_066_813_714);
+    assert_complete_projection(0, 18_099_143_602_724_613_260);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 17_087_109_400_303_676_999);
+    assert_complete_projection(3, 16_192_716_476_036_528_973);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 2_354_296_198_442_943_349);
+    assert_complete_projection(6, 2_620_780_488_067_564_097);
 }
 
 #[test]

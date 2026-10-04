@@ -217,6 +217,8 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         _ => return Err(format!("unknown scenario `{scenario}`")),
     };
     Ok(SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock(
                 "600101",

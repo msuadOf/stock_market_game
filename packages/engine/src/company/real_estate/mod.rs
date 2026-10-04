@@ -119,6 +119,10 @@ impl RealEstateBooks {
         &self.books
     }
 
+    pub(crate) fn books_mut(&mut self) -> &mut Books {
+        &mut self.books
+    }
+
     pub fn project(&self, id: &ProjectId) -> Option<&ProjectState> {
         self.projects.get(id)
     }

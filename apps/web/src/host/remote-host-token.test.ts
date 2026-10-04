@@ -45,12 +45,14 @@ function requestsFor(sessionToken?: string) {
 async function assertAuthorization(module: RemoteModule, expected: string, returnedToken?: string, explicitToken?: string) {
   const { requests, fetchFn } = requestsFor(returnedToken);
   let socketUrl = "";
+  let protocols: string[] = [];
   const host = await module.createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://new-server.example/game",
     fetchFn,
     ...(explicitToken === undefined ? {} : { token: explicitToken }),
-    webSocketFactory: (url) => {
+    webSocketFactory: (url, offered) => {
       socketUrl = url;
+      protocols = offered;
       return { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
     },
   });
@@ -60,14 +62,15 @@ async function assertAuthorization(module: RemoteModule, expected: string, retur
     assert.equal(new Headers(capabilityRequest.init?.headers).get("authorization"), `Bearer ${expected}`);
     assert.equal(new Headers(requests[0].init?.headers).has("authorization"), false);
     assert.equal(requests[0].url, "https://new-server.example/game/api/new");
-    host.start(() => undefined);
+    await host.start(() => undefined);
     const socket = new URL(socketUrl);
     assert.equal(socket.protocol, "wss:");
     assert.equal(socket.pathname, "/game/ws");
     assert.equal(socket.searchParams.get("session_id"), "runtime-session");
-    assert.equal(socket.searchParams.get("token"), expected);
+    assert.equal(socket.searchParams.has("token"), false);
+    assert.deepEqual(protocols, ["stock-game", `stock-game.auth.${Array.from(new TextEncoder().encode(expected), (byte) => byte.toString(16).padStart(2, "0")).join("")}`]);
   } finally {
-    host.dispose();
+    await host.dispose();
   }
   await new Promise((resolve) => setImmediate(resolve));
   const deletion = requests.find(({ init }) => init?.method === "DELETE");

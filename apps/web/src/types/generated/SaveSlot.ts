@@ -31,6 +31,7 @@ export type SaveSlot = {
    */
   runtime_state: import("../../save/schema/runtime-state").SavedRuntimeState;
   setup: SessionSetup;
+  groups: import("../../save/schema/company/groups").GroupStructure[];
   seed: string;
   snapshot: SaveSnapshot;
   /**
@@ -98,6 +99,8 @@ export type SaveSlot = {
    * 自然日经营时钟权威状态；完整存档携带冻结的日历政策。
    */
   civil_clock: CivilClockSave;
+  company_operations:
+    import("../../save/schema/company/operations").CompanyOperations;
   /**
    * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
    */

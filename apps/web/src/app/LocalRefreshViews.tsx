@@ -4,18 +4,20 @@ import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
 import { publicCompanyForStock } from "../components/company/company-catalog.ts";
 import { MarketGrid } from "../components/MarketGrid.tsx";
 import { PriceChart } from "../components/PriceChart.tsx";
-import { DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
+import { STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
+import type { SessionSetup } from "../types/engine.ts";
 import { MobileGameClock } from "../mobile/MobileGameClock.tsx";
 import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent } from "../mobile/market-model.ts";
 import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state.ts";
-import { setSpeed, store, type RootState } from "../store/store.ts";
+import { store, type RootState } from "../store/store.ts";
 import { selectCompany } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "../utils/format.ts";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
 import { portfolioInputEqual, selectPortfolioInput } from "./portfolio-selector.ts";
+import { valueHeldPosition } from "./position-valuation.ts";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
@@ -28,16 +30,14 @@ function usePortfolio() {
     const positions = !account ? [] : Object.entries(account.positions)
       .filter(([, position]) => position.qty > 0)
       .map(([code, position]) => {
-        const currentPrice = heldPrices[code] ?? 0;
-        const netInvested = position.invested_cents - position.recovered_cents;
-        const marketValue = currentPrice * position.qty;
+        const currentPrice = heldPrices[code];
+        if (currentPrice === undefined) throw new Error(`持仓 ${code} 缺少行情，不能估值`);
+        const valuation = valueHeldPosition(position, currentPrice);
         return {
           code,
           qty: position.qty,
           sellableQty: Math.max(0, position.qty - position.t1_locked - (account.reserved_sell_qty[code] ?? 0)),
-          avgCost: position.qty > 0 ? netInvested / position.qty : 0,
-          marketValue,
-          pnl: marketValue - netInvested,
+          ...valuation,
         };
       });
     const totalMarketValue = positions.reduce((sum, position) => sum + position.marketValue, 0);
@@ -110,15 +110,15 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, se
     <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close / 100} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} />
     {chartPeriod === "日K" && <div className="kline-period-bar">{[20, 60, 120, 240, MAX_DAILY_CANDLES].map((days) => <button key={days} className={`kline-period-btn ${klineDays === days ? "active" : ""}`} onClick={() => setKlineDays(days)}>{days}日</button>)}</div>}
     <div className="order-book"><div className="ob-title">五档盘口（手）</div><div className="ob-rows">
-      {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{5 - index}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>)}
+      {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{index + 1}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>).reverse()}
       <div className="ob-divider" />
       {market.bids.slice(0, 5).map((level, index) => <div key={`b${index}`} className="ob-row ob-bid"><span className="ob-label">买{index + 1}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>)}
     </div></div>
   </>;
 }
 
-interface TradeMarketControlsProps { tradeCode: string; setPriceText: Dispatch<SetStateAction<string>>; setQtyText: Dispatch<SetStateAction<string>> }
-export function TradeMarketControls({ tradeCode, setPriceText, setQtyText }: TradeMarketControlsProps) {
+interface TradeMarketControlsProps { activeSetup: SessionSetup; tradeCode: string; setPriceText: (value: string) => void; setQtyText: (value: string) => void }
+export function TradeMarketControls({ activeSetup, tradeCode, setPriceText, setQtyText }: TradeMarketControlsProps) {
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[tradeCode]);
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
   const availableCash = (account?.cash ?? 0) - (account?.reserved_cash ?? 0);
@@ -126,7 +126,7 @@ export function TradeMarketControls({ tradeCode, setPriceText, setQtyText }: Tra
   const maxQty = price > 0 ? Math.floor(availableCash / price / 100) * 100 : 0;
   return <>
     <div className="quick-position">{[{ label: "全仓", pct: 1 }, { label: "1/2", pct: .5 }, { label: "1/3", pct: 1 / 3 }, { label: "1/4", pct: .25 }].map((button) => { const quantity = Math.floor((maxQty * button.pct) / 100) * 100; return <button key={button.label} className="qp-btn" onClick={() => setQtyText(String(Math.max(100, quantity)))} disabled={quantity < 100}>{button.label}</button>; })}</div>
-    {market && (() => { const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode); if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>; const { up, down } = aSharePriceLimits(market.last_close, stock.category); return <div className="limit-links"><button className="ll-btn down" onClick={() => setPriceText(yuan(down))}>跌停 {yuan(down)}</button><button className="ll-btn up" onClick={() => setPriceText(yuan(up))} disabled={market.last_price >= up}>涨停 {yuan(up)}</button></div>; })()}
+    {market && (() => { const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode); if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>; const { up, down } = aSharePriceLimits(market.last_close, stock.category); return <div className="limit-links"><button className="ll-btn down" onClick={() => setPriceText(yuan(down))}>跌停 {yuan(down)}</button><button className="ll-btn up" onClick={() => setPriceText(yuan(up))} disabled={market.last_price >= up}>涨停 {yuan(up)}</button></div>; })()}
   </>;
 }
 
@@ -147,15 +147,15 @@ export function TradesPanel() {
   return <div className="trade-feed"><table className="grid-table"><thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量（手）</th></tr></thead><tbody>{trades.length === 0 && <tr><td colSpan={4} className="empty">等待成交…</td></tr>}{trades.map((trade) => { const diff = trade.price - (lastCloses[trade.code] ?? trade.price); return <tr key={trade.seq}><td className="mono">{trade.seq}</td><td className="mono">{trade.code}</td><td className={`num ${colorClass(diff)}`}>{yuan(trade.price)}</td><td className="num">{formatSharesAsLots(trade.qty)}</td></tr>; })}</tbody></table></div>;
 }
 
-interface UserPanelProps { running: boolean; pauseAfterClose: boolean; pauseBeforeOpen: boolean; deliveryMode: DeliveryMode | null; deliveryModes: readonly DeliveryMode[]; deliveryLabels: Record<DeliveryMode, string>; onPauseAfterCloseChange: (value: boolean) => void; onPauseBeforeOpenChange: (value: boolean) => void; onDeliveryModeChange: (mode: DeliveryMode) => void; onSave: () => void; onLoad: () => void; onSaveFile: () => void; onLoadFile: () => void }
+interface UserPanelProps { running: boolean; pauseAfterClose: boolean; pauseBeforeOpen: boolean; pausePreferencesPending: boolean; deliveryMode: DeliveryMode | null; deliveryModes: readonly DeliveryMode[]; deliveryLabels: Record<DeliveryMode, string>; onPauseAfterCloseChange: (value: boolean) => void; onPauseBeforeOpenChange: (value: boolean) => void; onDeliveryModeChange: (mode: DeliveryMode) => void; onSave: () => void; onLoad: () => void; onSaveFile: () => void; onLoadFile: () => void }
 export function UserPanel(props: UserPanelProps) {
   const day = useSelector((state: RootState) => state.snapshot.snapshot?.day ?? 0);
   const { totalAssets, availableCash, totalPnl } = usePortfolio();
-  return <><section className="mobile-user-overview" aria-label="我的账户"><span>模拟账户</span><strong>{formatYuanAmount(totalAssets / 100)}元</strong><div><span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span><span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span></div></section><section className="mobile-game-state" aria-label="游戏状态"><div><span>当前进度</span><b>第 {day + 1} 个交易日</b></div><div><span>模拟状态</span><b>{props.running ? "交易中" : "已暂停"}</b></div><label><input type="checkbox" checked={props.pauseAfterClose} onChange={(event) => props.onPauseAfterCloseChange(event.currentTarget.checked)} />收盘后暂停复盘</label><label><input type="checkbox" checked={props.pauseBeforeOpen} onChange={(event) => props.onPauseBeforeOpenChange(event.currentTarget.checked)} />开盘前暂停查看资讯</label>{props.deliveryMode !== null && props.deliveryModes.length > 0 && <div><label htmlFor="mobile-delivery-mode">刷新方式</label><select id="mobile-delivery-mode" value={props.deliveryMode} onChange={(event) => props.onDeliveryModeChange(event.target.value as DeliveryMode)}>{props.deliveryModes.map((mode) => <option key={mode} value={mode}>{props.deliveryLabels[mode]}</option>)}</select></div>}</section><div className="mobile-user-section"><h4>数据管理</h4><button type="button" onClick={props.onSave}>保存当前进度</button><button type="button" onClick={props.onLoad}>读取本地进度</button><button type="button" onClick={props.onSaveFile}>另存为文件</button><button type="button" onClick={props.onLoadFile}>从文件读取</button></div></>;
+  return <><section className="mobile-user-overview" aria-label="我的账户"><span>模拟账户</span><strong>{formatYuanAmount(totalAssets / 100)}元</strong><div><span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span><span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span></div></section><section className="mobile-game-state" aria-label="游戏状态"><div><span>当前进度</span><b>第 {day + 1} 个交易日</b></div><div><span>模拟状态</span><b>{props.running ? "交易中" : "已暂停"}</b></div><label><input type="checkbox" checked={props.pauseAfterClose} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseAfterCloseChange(event.currentTarget.checked)} />收盘后暂停复盘</label><label><input type="checkbox" checked={props.pauseBeforeOpen} disabled={props.pausePreferencesPending} onChange={(event) => props.onPauseBeforeOpenChange(event.currentTarget.checked)} />开盘前暂停查看资讯</label>{props.deliveryMode !== null && props.deliveryModes.length > 0 && <div><label htmlFor="mobile-delivery-mode">刷新方式</label><select id="mobile-delivery-mode" value={props.deliveryMode} onChange={(event) => props.onDeliveryModeChange(event.target.value as DeliveryMode)}>{props.deliveryModes.map((mode) => <option key={mode} value={mode}>{props.deliveryLabels[mode]}</option>)}</select></div>}</section><div className="mobile-user-section"><h4>数据管理</h4><button type="button" onClick={props.onSave}>保存当前进度</button><button type="button" onClick={props.onLoad}>读取本地进度</button><button type="button" onClick={props.onSaveFile}>另存为文件</button><button type="button" onClick={props.onLoadFile}>从文件读取</button></div></>;
 }
 
 interface CompanyPanelActions { initialCivilDate: string; onCompanyQuery: (companyId: string, cursor: string | null) => void; onAdvanceCivilDay: () => Promise<void> }
-interface MobileDetailProps extends CompanyPanelActions { klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
+interface MobileDetailProps extends CompanyPanelActions { klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onSpeedChange: (speed: number) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
 
 export function ConnectedCompanyPanel(props: CompanyPanelActions) {
   const chartCode = useMarketRuntimeSelection();
@@ -184,5 +184,5 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const index = orderedCodes.indexOf(chartCode);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={props.onSpeedChange} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

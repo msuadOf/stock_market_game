@@ -51,6 +51,13 @@ impl BeliefParticipantState {
     pub(in crate::session) fn price_memory(&self) -> &PersonalPriceMemory {
         &self.price_memory
     }
+    pub(in crate::session) fn prune_memory(
+        &mut self,
+        protected: &std::collections::BTreeSet<crate::StockCode>,
+    ) {
+        self.watchlist.prune(protected);
+        self.price_memory.prune(protected);
+    }
     #[cfg(test)]
     pub(in crate::session) fn price_memory_mut(&mut self) -> &mut PersonalPriceMemory {
         &mut self.price_memory

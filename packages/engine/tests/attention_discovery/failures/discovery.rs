@@ -20,6 +20,8 @@ use crate::{attention, code};
 
 fn discovery_setup() -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             StockSpec {
                 code: code("600101"),

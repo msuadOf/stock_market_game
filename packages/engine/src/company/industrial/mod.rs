@@ -23,6 +23,7 @@ mod config;
 mod error;
 mod expenses;
 mod interest;
+mod inventory_sources;
 mod loans;
 #[cfg(test)]
 mod ownership_tests;
@@ -30,6 +31,7 @@ mod production;
 mod purchasing;
 mod repayment;
 mod sales;
+mod trade_events;
 
 pub use config::{IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem};
 pub use error::IndustrialError;
@@ -38,6 +40,8 @@ pub use loans::{InterestAccrualItem, LoanState, RepaymentOutcome, OPENING_DEBT_C
 pub use purchasing::{PurchaseOutcome, Settlement};
 
 pub use chart::industrial_account_chart;
+pub use inventory_sources::InventorySourceEvent;
+pub use trade_events::TradeCounterpartyEvent;
 
 use crate::accounting::{
     AccountingAmount, Books, BusinessKind, CashFlowClass, FixedAssetRegister, InventoryLedger,
@@ -54,7 +58,7 @@ use loans::LoanPortfolio;
 
 /// 工商账套：Books + 子账 + 税务/借款状态（全部随存档序列化；`Books` 恢复走
 /// 重放路径，其余结构体 serde 直存）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
 pub struct IndustrialBooks {
     books: Books,
     inventory: InventoryLedger,
@@ -69,6 +73,8 @@ pub struct IndustrialBooks {
     income_tax_position: IncomeTaxPosition,
     loans: LoanPortfolio,
     next_event_id: u64,
+    trade_counterparty_events: Vec<TradeCounterpartyEvent>,
+    inventory_source_events: Vec<InventorySourceEvent>,
 }
 
 impl IndustrialBooks {
@@ -101,6 +107,15 @@ impl IndustrialBooks {
         }
 
         let (contracts, loans) = reconciliation.seed_debt_after_counterparties(&counterparties)?;
+        let inventory_source_events = config
+            .opening_inventory
+            .iter()
+            .map(|item| InventorySourceEvent {
+                event: opening_event_id(),
+                item: item.item.clone(),
+                account: item.account.clone(),
+            })
+            .collect();
 
         Ok(Self {
             books,
@@ -115,6 +130,8 @@ impl IndustrialBooks {
             income_tax_position: IncomeTaxPosition::default(),
             loans,
             next_event_id: 2,
+            trade_counterparty_events: Vec::new(),
+            inventory_source_events,
         })
     }
 
@@ -174,11 +191,37 @@ impl IndustrialBooks {
         self.loans.iter()
     }
 
-    /// 某贷款人剩余授信 = 限额 − Σ未偿本金（含开局隐式合同）；无授信 = None。
-    pub fn available_credit(&self, lender: &CounterpartyId) -> Option<AccountingAmount> {
-        let limit = self.budget.credit_line(lender)?;
-        let outstanding = self.loans.outstanding_total().ok()?;
-        limit.sub(outstanding).ok()
+    /// 某贷款人剩余授信 = 限额 − 该贷款人的未偿本金（含开局隐式合同）；无授信 = Ok(None)，计算失败 = Err。
+    pub fn available_credit(
+        &self,
+        lender: &CounterpartyId,
+    ) -> Result<Option<AccountingAmount>, IndustrialError> {
+        let Some(limit) = self.budget.credit_line(lender) else {
+            return Ok(None);
+        };
+        let outstanding = self
+            .loans
+            .outstanding_for_lender(self.contracts(), lender)?;
+        Ok(Some(limit.sub(outstanding)?))
+    }
+
+    pub(crate) fn validate_credit_state(&self) -> Result<(), IndustrialError> {
+        self.loans.validate(self.contracts())?;
+        for (id, _) in self.loans.iter() {
+            let contract = self
+                .contracts()
+                .get(id)
+                .expect("loan validation checked contract existence");
+            if self.counterparties().get(&contract.counterparty).is_none() {
+                return Err(IndustrialError::CreditStateInconsistent {
+                    detail: format!(
+                        "loan {id:?} references unknown lender {:?}",
+                        contract.counterparty
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     // ===== 处理器共享内部 =====
@@ -226,6 +269,58 @@ impl IndustrialBooks {
 
     pub(super) fn contracts_mut(&mut self) -> &mut ContractBook {
         &mut self.contracts
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for IndustrialBooks {
+    fn deserialize<Decoder: serde::Deserializer<'de>>(
+        decoder: Decoder,
+    ) -> Result<Self, Decoder::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            books: Books,
+            inventory: InventoryLedger,
+            assets: FixedAssetRegister,
+            receivables: TradeOpenLedger,
+            payables: TradeOpenLedger,
+            contracts: ContractBook,
+            counterparties: CounterpartyLedger,
+            budget: OperatingBudget,
+            tax_policy: TaxPolicy,
+            #[serde(rename = "loss_pool")]
+            income_tax_position: IncomeTaxPosition,
+            loans: LoanPortfolio,
+            next_event_id: u64,
+            trade_counterparty_events: Vec<TradeCounterpartyEvent>,
+            inventory_source_events: Vec<InventorySourceEvent>,
+        }
+        let raw = Raw::deserialize(decoder)?;
+        let restored = Self {
+            books: raw.books,
+            inventory: raw.inventory,
+            assets: raw.assets,
+            receivables: raw.receivables,
+            payables: raw.payables,
+            contracts: raw.contracts,
+            counterparties: raw.counterparties,
+            budget: raw.budget,
+            tax_policy: raw.tax_policy,
+            income_tax_position: raw.income_tax_position,
+            loans: raw.loans,
+            next_event_id: raw.next_event_id,
+            trade_counterparty_events: raw.trade_counterparty_events,
+            inventory_source_events: raw.inventory_source_events,
+        };
+        restored
+            .validate_credit_state()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .validate_trade_counterparty_events()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .validate_inventory_source_events()
+            .map_err(serde::de::Error::custom)?;
+        Ok(restored)
     }
 }
 

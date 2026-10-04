@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -404,6 +405,29 @@ describe("PerformanceComparisonRun 生命周期", () => {
 });
 
 describe("ProcessSampleRun 失败边界", () => {
+  it("真实 sampler 失败终止仍运行的 child 并收敛其 close", async () => {
+    let pid;
+    await assert.rejects(runProcessSample({ command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], cwd: process.cwd() }, {
+      rssSampleIntervalMs: 1,
+      sampleTree: async (ownedPid) => { pid = ownedPid; throw new Error("真实采样故障"); },
+    }), /真实采样故障/);
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  });
+  it("sampler 提前失败即时终止 child，等待 close 后保留采样错误", async () => {
+    const child = new EventEmitter();
+    child.pid = 123;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const calls = [];
+    child.kill = (signal) => { calls.push(signal); setImmediate(() => child.emit("close", null, signal)); };
+    await assert.rejects(runProcessSample({ command: ["fixture"], cwd: process.cwd() }, {
+      rssSampleIntervalMs: 1,
+      spawn: () => child,
+      terminate: (owned) => owned.kill("SIGKILL"),
+      sampleTree: async () => { throw new Error("采样故障"); },
+    }), /采样故障/);
+    assert.deepEqual(calls, ["SIGKILL"]);
+  });
   it("spawn 失败显式传播，零 RSS 样本不生成测量结果", async () => {
     await assert.rejects(runProcessSample({ command: ["/fixture/missing-executable"], cwd: process.cwd() }, { rssSampleIntervalMs: 1 }), /ENOENT/);
     await assert.rejects(runProcessSample({ command: [process.execPath, "-e", "setTimeout(() => {}, 20)"], cwd: process.cwd() }, {

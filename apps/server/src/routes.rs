@@ -84,6 +84,31 @@ fn authorization_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
+fn websocket_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(token) = authorization_token(headers) {
+        return Some(token.to_owned());
+    }
+    let offered = headers.get("sec-websocket-protocol")?.to_str().ok()?;
+    let mut credentials = offered
+        .split(',')
+        .map(str::trim)
+        .filter_map(|protocol| protocol.strip_prefix("stock-game.auth."));
+    let encoded = credentials.next()?;
+    if credentials.next().is_some() || encoded.is_empty() || encoded.len() % 2 != 0 {
+        return None;
+    }
+    let bytes = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = char::from(pair[0]).to_digit(16)?;
+            let low = char::from(pair[1]).to_digit(16)?;
+            Some((high * 16 + low) as u8)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
 /// /api/new 请求体。u64 以十进制字符串跨 JSON，避免 JavaScript Number 精度丢失。
 #[derive(Debug, Deserialize)]
 pub struct NewSessionBody {
@@ -1058,18 +1083,136 @@ pub async fn api_delete_session(
 /// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 按客户端选择推送或拉取 PublisherFrame。
 ///
 /// - 缺 token → 401；未知 session 或错误 token → 403。
-/// - 心跳：~30s 后端发 Ping；客户端不回则由 tungstenite/代理超时清理（ADR-0005 §6）。
+/// - 浏览器凭据通过 auth subprotocol 发送，只协商公开 stock-game，不回显凭据。
+/// - 心跳：~30s 后端发 Ping；10s 内未收到匹配 Pong 则关闭连接。
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WsQuery>,
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
-    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
+    let token = websocket_token(&headers);
+    let handles = match authorized_session(&state, &q.session_id, token.as_deref()) {
         Ok(handles) => handles,
         Err(response) => return *response,
     };
-    ws.on_upgrade(move |socket| run_ws(socket, handles, q.delivery))
+    ws.protocols(["stock-game"])
+        .on_upgrade(move |socket| run_ws(socket, handles, q.delivery))
+}
+
+#[derive(Default)]
+struct WsHeartbeat {
+    sequence: u64,
+    outstanding: Option<(Vec<u8>, tokio::time::Instant)>,
+}
+
+impl WsHeartbeat {
+    fn ping(&mut self, now: tokio::time::Instant) -> Option<Vec<u8>> {
+        if self.outstanding.is_some() {
+            return None;
+        }
+        self.sequence = self.sequence.wrapping_add(1);
+        let payload = self.sequence.to_be_bytes().to_vec();
+        self.outstanding = Some((payload.clone(), now + Duration::from_secs(10)));
+        Some(payload)
+    }
+
+    fn pong(&mut self, payload: &[u8]) {
+        if self
+            .outstanding
+            .as_ref()
+            .is_some_and(|(expected, deadline)| {
+                expected == payload && tokio::time::Instant::now() < *deadline
+            })
+        {
+            self.outstanding = None;
+        }
+    }
+
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        self.outstanding.as_ref().map(|(_, deadline)| *deadline)
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    use super::*;
+
+    #[test]
+    fn matching_pong_clears_only_the_current_ping_deadline() {
+        let now = tokio::time::Instant::now();
+        let mut heartbeat = WsHeartbeat::default();
+        let first = heartbeat.ping(now).unwrap();
+        assert_eq!(heartbeat.deadline(), Some(now + Duration::from_secs(10)));
+        heartbeat.pong(b"wrong");
+        assert!(heartbeat.deadline().is_some());
+        heartbeat.pong(&first);
+        assert!(heartbeat.deadline().is_none());
+        let second = heartbeat.ping(now + Duration::from_secs(30)).unwrap();
+        heartbeat.pong(&first);
+        assert_eq!(heartbeat.deadline(), Some(now + Duration::from_secs(40)));
+        heartbeat.pong(&second);
+        assert!(heartbeat.deadline().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pong_deadline_cancels_a_connection_blocked_inside_an_await() {
+        struct DropMarker(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = DropMarker(dropped.clone());
+        let connection = async move {
+            let _marker = marker;
+            std::future::pending::<()>().await;
+        };
+        let started = tokio::time::Instant::now();
+        let (_sender, mut receiver) =
+            tokio::sync::watch::channel(Some(started + Duration::from_secs(10)));
+        supervise_ws_connection(connection, &mut receiver).await;
+        assert_eq!(
+            tokio::time::Instant::now() - started,
+            Duration::from_secs(10)
+        );
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pong_arriving_at_the_deadline_cannot_reopen_the_connection() {
+        let mut heartbeat = WsHeartbeat::default();
+        let payload = heartbeat.ping(tokio::time::Instant::now()).unwrap();
+        let deadline = heartbeat.deadline();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        heartbeat.pong(&payload);
+        assert_eq!(heartbeat.deadline(), deadline);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_expired_deadline_prevents_connection_poll_from_renewing_it() {
+        let polled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = polled.clone();
+        let (sender, mut receiver) = tokio::sync::watch::channel(Some(tokio::time::Instant::now()));
+        let connection = async move {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            sender.send_replace(Some(tokio::time::Instant::now() + Duration::from_secs(30)));
+            std::future::pending::<()>().await;
+        };
+        supervise_ws_connection(connection, &mut receiver).await;
+        assert!(!polled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_outstanding_ping_cannot_be_replaced_after_runtime_delay() {
+        let mut heartbeat = WsHeartbeat::default();
+        heartbeat.ping(tokio::time::Instant::now()).unwrap();
+        let deadline = heartbeat.deadline();
+        tokio::time::advance(Duration::from_secs(30)).await;
+        assert!(heartbeat.ping(tokio::time::Instant::now()).is_none());
+        assert_eq!(heartbeat.deadline(), deadline);
+    }
 }
 
 /// 每条 WS 连接独占的 publisher 协议状态；socket I/O 仍由 run_ws 执行。
@@ -1264,6 +1407,46 @@ async fn run_ws(
     handles: Arc<crate::actor::SessionHandles>,
     delivery: DeliveryMode,
 ) {
+    let (deadline_sender, mut deadline_receiver) = tokio::sync::watch::channel(None);
+    let connection = run_ws_connection(socket, handles, delivery, deadline_sender);
+    supervise_ws_connection(connection, &mut deadline_receiver).await;
+}
+
+async fn supervise_ws_connection(
+    connection: impl std::future::Future<Output = ()>,
+    deadline_receiver: &mut tokio::sync::watch::Receiver<Option<tokio::time::Instant>>,
+) {
+    tokio::pin!(connection);
+    loop {
+        let deadline = *deadline_receiver.borrow_and_update();
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            debug!("ws: expired pong deadline; refusing to poll connection");
+            break;
+        }
+        tokio::select! {
+            _ = &mut connection => break,
+            changed = deadline_receiver.changed() => {
+                if changed.is_err() { break; }
+            }
+            _ = async {
+                match deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                debug!("ws: pong deadline expired; dropping connection transport");
+                break;
+            }
+        }
+    }
+}
+
+async fn run_ws_connection(
+    socket: axum::extract::ws::WebSocket,
+    handles: Arc<crate::actor::SessionHandles>,
+    delivery: DeliveryMode,
+    deadline_sender: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
+) {
     let (mut sender, mut receiver) = socket.split();
 
     // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
@@ -1304,6 +1487,7 @@ async fn run_ws(
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = heartbeat.tick().await; // 跳过首个立即到期。
+    let mut heartbeat_state = WsHeartbeat::default();
     let mut connection = match WsPublisherConnection::new(
         delivery,
         initial_baseline.0,
@@ -1388,7 +1572,12 @@ async fn run_ws(
             }
             // 心跳：30s 发 Ping（防中间设备杀空闲连接）。
             _ = heartbeat.tick() => {
-                if sender.send(axum::extract::ws::Message::Ping(Vec::new())).await.is_err() {
+                let Some(payload) = heartbeat_state.ping(tokio::time::Instant::now()) else {
+                    debug!("ws: previous ping remains unanswered; closing");
+                    break;
+                };
+                deadline_sender.send_replace(heartbeat_state.deadline());
+                if sender.send(axum::extract::ws::Message::Ping(payload)).await.is_err() {
                     debug!("ws: heartbeat ping failed; closing");
                     break;
                 }
@@ -1397,6 +1586,10 @@ async fn run_ws(
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(m)) => {
+                        if let axum::extract::ws::Message::Pong(payload) = &m {
+                            heartbeat_state.pong(payload);
+                            deadline_sender.send_replace(heartbeat_state.deadline());
+                        }
                         if matches!(m, axum::extract::ws::Message::Close(_)) {
                             debug!("ws: client sent close");
                             break;

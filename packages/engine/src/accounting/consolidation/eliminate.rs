@@ -75,6 +75,32 @@ pub(crate) fn build_worksheet(
         handled[mirror_index] = true;
         worksheet.push(balance_entry(members, decl, &balances[mirror_index])?);
     }
+    let mut declared_totals = BTreeMap::new();
+    for declaration in balances {
+        let key = (declaration.member.clone(), declaration.account.clone());
+        let total = declared_totals
+            .entry(key)
+            .or_insert(crate::accounting::AccountingAmount::ZERO);
+        *total = total.add(declaration.amount)?;
+        let def = member_def(members, &declaration.member, &declaration.account)?;
+        let net = members[&declaration.member]
+            .ledger()
+            .account_net_debit(&declaration.account)?;
+        let balance = if def.element == AccountElement::Liability {
+            net.neg()?
+        } else {
+            net
+        };
+        if *total > balance {
+            return Err(ConsolidationError::IntercompanyAmountBeyondBalance {
+                member: declaration.member.clone(),
+                counterparty: declaration.counterparty.clone(),
+                account: declaration.account.clone(),
+                amount: *total,
+                balance,
+            });
+        }
+    }
     for sale in sales {
         worksheet.push(sale.validate_for(group, members)?.to_worksheet_entry()?);
     }
@@ -89,6 +115,13 @@ fn precheck_balance(
 ) -> Result<(), ConsolidationError> {
     ensure_member(group, &decl.member)?;
     ensure_member(group, &decl.counterparty)?;
+    if !decl.amount.is_positive() {
+        return Err(ConsolidationError::IntercompanyAmountNotPositive {
+            member: decl.member.clone(),
+            counterparty: decl.counterparty.clone(),
+            amount: decl.amount,
+        });
+    }
     if decl.member == decl.counterparty {
         return Err(ConsolidationError::IntercompanySelfReference {
             member: decl.member.clone(),
@@ -139,6 +172,24 @@ fn balance_entry(
             });
         }
     };
+    for (declaration, side) in [(asset_side, Debit), (liability_side, Credit)] {
+        let net = members[&declaration.member]
+            .ledger()
+            .account_net_debit(&declaration.account)?;
+        let balance = match side {
+            Debit => net,
+            Credit => net.neg()?,
+        };
+        if declaration.amount > balance {
+            return Err(ConsolidationError::IntercompanyAmountBeyondBalance {
+                member: declaration.member.clone(),
+                counterparty: declaration.counterparty.clone(),
+                account: declaration.account.clone(),
+                amount: declaration.amount,
+                balance,
+            });
+        }
+    }
     Ok(WorksheetEntry {
         reason: WorksheetReason::IntercompanyBalance,
         lines: vec![
@@ -162,10 +213,13 @@ fn balance_entry(
 pub(crate) fn apply_worksheet(
     balances: &mut AggregatedBalances,
     worksheet: &[WorksheetEntry],
+    members: &BTreeMap<MemberId, &Books>,
 ) -> Result<(), ConsolidationError> {
+    let keys = super::aggregate::account_keys(members);
     for entry in worksheet {
         for line in &entry.lines {
-            let Some(account) = balances.get_mut(&line.account) else {
+            let key = &keys[&(line.member.clone(), line.account.clone())];
+            let Some(account) = balances.get_mut(key) else {
                 // 申报校验已保证科目存在于成员科目表；无发生额科目不可能
                 // 出现在抵销行（有余额才有往来）。到达这里 = 内部不一致。
                 return Err(ConsolidationError::UnknownIntercompanyAccount {

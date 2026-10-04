@@ -55,15 +55,24 @@ pub(in crate::company::operations) fn advance_day(
     // 1. 吸收定期存款（负债，不是收入——处理器红线）。
     if scheduled(params.deposit_every_days) {
         let maturity = add_days(date, params.deposit_term_days)?;
+        let deposit = ContractId(format!("DEP-{day_seq}"));
         books.accept_deposit(
             BankProductKind::TermDeposit,
-            ContractId(format!("DEP-{day_seq}")),
+            deposit.clone(),
             &params.depositor,
             params.deposit_principal,
             params.deposit_rate_bp,
             date,
             maturity,
         )?;
+        scheduler.submit(SchedulerRequest::Due {
+            key: format!("DEP:{}:{}", company.0, deposit.0),
+            due_date: maturity,
+            action: ScheduledAction::ContractMaturity {
+                company: company.clone(),
+                reference: format!("DEP:{}", deposit.0),
+            },
+        })?;
     }
 
     // 2. 发放定期贷款（资产；现金不足 = 失败记录，银行继续运行）+ 到期排队。

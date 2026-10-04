@@ -11,6 +11,7 @@ mod centers;
 mod failures;
 mod gold;
 mod hand;
+mod interim;
 mod per_share;
 mod priors;
 

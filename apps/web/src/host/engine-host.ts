@@ -37,13 +37,13 @@ export interface HostCapabilities {
 /** 各部署宿主必须遵守的异步应用层契约。 */
 export interface EngineHost {
   start(
-    onUpdate: (update: HostUpdate) => void,
+    onUpdate: (update: HostUpdate) => void | boolean,
     onFatalError?: (failure: HostFailure) => void,
-  ): void;
+  ): Promise<void>;
   readonly capabilities: HostCapabilities;
-  stop(): void;
-  dispose(): void;
-  setSpeed(multiplier: number): void;
+  stop(): Promise<void>;
+  dispose(): Promise<void>;
+  setSpeed(multiplier: number): Promise<void>;
   setPausePreferences(preferences: PausePreferences): Promise<void>;
   setFrameRate(fps: number): void;
   /** 所有部署宿主都必须返回同形的权威 tick/现实秒采样；通信方式对 UI 透明。 */

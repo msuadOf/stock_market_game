@@ -17,7 +17,8 @@ import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "./host/startup-policy";
-import { DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
+import { DEFAULT_SETUP, STOCK_NAMES } from "./config/defaults";
+import { SessionControlCommands } from "./app/session-control-commands.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
@@ -62,6 +63,7 @@ import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./m
 import { yuan } from "./utils/format";
 import { orderPriceInputState, type LimitPriceChoice } from "./utils/symbolic-limit-order.ts";
 import { useMobileUiController } from "./app/useMobileUiController";
+import { MobileDetailLayer } from "./mobile/MobileDetailLayer.tsx";
 import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelection } from "./app/MarketRuntimeProvider.tsx";
 import {
   ClockMarker,
@@ -102,7 +104,7 @@ let browserSaveRepository: CompressedLocalStorageSaveRepository | null = null;
 declare global {
   interface Window {
     __STOCK_GAME_E2E__?: {
-      pause(): void;
+      pause(): Promise<void>;
       advanceToTick(target: number): Promise<number>;
       snapshot(): ReturnType<EngineHost["snapshot"]>;
     };
@@ -124,7 +126,7 @@ interface AppShellProps {
   returningToStartup: boolean;
   returningToStartupRef: MutableRefObject<boolean>;
   startupReturnError: string | null;
-  onSelectHost: (stopSession: () => void) => Promise<void>;
+  onSelectHost: (stopSession: () => Promise<void>) => Promise<void>;
   autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
   notice: string | null;
   setNotice: Dispatch<SetStateAction<string | null>>;
@@ -161,7 +163,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
-  const stopStartupRef = useRef<() => void>(() => {});
+  const stopStartupRef = useRef<() => Promise<void>>(async () => {});
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
   const sessionReplacementGateRef = useRef(new SessionReplacementGate());
@@ -183,6 +185,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     openTradeSheet,
     closeTradeSheet,
     showDetailInfo,
+    openDetail,
   } = useMobileUiController(orientation);
   const chartCode = useMarketRuntimeSelection();
   const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator } = useMarketRuntimeActions();
@@ -190,12 +193,20 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   acceptReductionRef.current = acceptReduction;
   const installBaselineRef = useRef(installBaseline);
   installBaselineRef.current = installBaseline;
-  const hostUpdateRef = useRef<(update: HostUpdate) => void>(() => {});
+  const hostUpdateRef = useRef<(update: HostUpdate) => void | boolean>(() => false);
   hostUpdateRef.current = (update) => {
-    protocolCoordinatorRef.current?.accept(update);
+    const coordinator = protocolCoordinatorRef.current;
+    return coordinator === null ? false : coordinator.accept(update);
   };
   const runningRef = useRef(running);
   runningRef.current = running;
+  const [sessionControls] = useState(() => new SessionControlCommands({ hostRef, runningRef,
+    onUpdate: (update) => hostUpdateRef.current(update),
+    onFatal: (failure) => fatalHostErrorRef.current(failure),
+    onRunning: (value) => { runningRef.current = value; store.dispatch(setRunning(value)); },
+    onSpeed: (value) => { store.dispatch(setSpeed(value)); setSpeedMetrics(null); setSpeedMetricsError(null); },
+    onError: setError,
+  }));
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
@@ -204,13 +215,14 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     setTradeCode(code);
     const market = store.getState().snapshot.snapshot?.markets[code];
     if (market) setPriceText(yuan(market.last_price));
-    if (orientation === "portrait") dispatchMobileUi({ type: "open-detail", code });
+    if (orientation === "portrait") openDetail(code);
   }
 
   const protocolPlayerOrders = useSelector((state: RootState) => state.snapshot.playerWorkingOrders);
   const playerOrdersReady = useSelector((state: RootState) => state.snapshot.playerOrdersReady);
   const tradingCommands = useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrderMgrRef, activeSetup, playerAccount, protocolPlayerOrders, playerOrdersReady, setNotice });
   const { tradeCode, orderKind, priceChoice, priceText, qtyText, autoType, autoTrigger, autoQty } = tradingCommands.form;
+  const { fieldErrors, autoFieldErrors } = tradingCommands;
   const { setTradeCode, setOrderKind, setPriceChoice, setPriceText, setQtyText, setAutoType, setAutoTrigger, setAutoQty,
     playerOrders, cancelingOrderIds, clearPlayerOrders, clearCancelingOrderIds, submit, cancelPlayerOrder, addAuto, refreshPlayerOrders } = tradingCommands;
 
@@ -279,7 +291,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         }
       },
       onFailure(failure) {
-        setError(failure);
+        fatalHostErrorRef.current(failure);
       },
     });
   }
@@ -299,15 +311,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     onAutoTriggered: (id) => { store.dispatch(markTriggered(id)); },
   });
 
-  useEffect(() => {
-    try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    if (hostRef.current) {
-      setSpeedMetrics(null);
-      setSpeedMetricsError(null);
-    }
-  }, [speed]);
-
-  usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen, tradingE2EMode: TRADING_E2E_MODE,
+  const pausePreferences = usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen, tradingE2EMode: TRADING_E2E_MODE,
     apply(preferences) {
       store.dispatch(setPauseAfterClose(preferences.pause_after_close));
       store.dispatch(setPauseBeforeOpen(preferences.pause_before_open));
@@ -330,20 +334,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   // 的运行状态恢复。游戏状态仍保留在各自 Worker 中，不会重建或丢失。
   useEffect(() => {
     const syncHostVisibility = () => {
-      const host = hostRef.current;
-      if (!host) return;
-      if (document.hidden) {
-        host.stop();
-      } else if (runningRef.current) {
-        host.start(
-          (update) => { if (host === hostRef.current) hostUpdateRef.current(update); },
-          (failure) => { if (host === hostRef.current) fatalHostErrorRef.current(failure); },
-        );
-      }
+      if (hostRef.current) void sessionControls.syncVisibility(document.hidden);
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, []);
+  }, [sessionControls]);
 
   useEffect(() => {
     refreshDailyChart();
@@ -359,21 +354,8 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,
     loadFile: handleLoadFile, newGame: handleNewGame } = saveCommands;
 
-  const handlePauseToggle = useCallback(() => {
-    if (!hostRef.current) return;
-    if (running) {
-      hostRef.current.stop();
-      store.dispatch(setRunning(false));
-    } else {
-      const host = hostRef.current;
-      host.start(
-        (update) => { if (host === hostRef.current) hostUpdateRef.current(update); },
-        (failure) => { if (host === hostRef.current) fatalHostErrorRef.current(failure); },
-      );
-      store.dispatch(setRunning(true));
-      setNotice("已继续模拟");
-    }
-  }, [running, setNotice]);
+  const handlePauseToggle = useCallback(() => { void sessionControls.toggleRunning(); }, [sessionControls]);
+  const handleSpeedChange = useCallback((value: number) => { void sessionControls.setSpeed(value); }, [sessionControls]);
 
   const handleDeliveryModeChange = useCallback((mode: DeliveryMode) => {
     const host = hostRef.current;
@@ -468,7 +450,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
               speed={speed}
               measuredSpeed={measuredSpeedText}
               measuredSpeedTitle={measuredSpeedTitle}
-              onChange={(value) => store.dispatch(setSpeed(value))}
+              onChange={handleSpeedChange}
             />
           </span>
         </div>
@@ -479,7 +461,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
             const raw = e.target.value;
             const v = raw === "Infinity" ? Infinity : Number(raw);
-            store.dispatch(setSpeed(v));
+            handleSpeedChange(v);
           }}            options={[
               { label: "1x", value: "1" },
               { label: "2x", value: "2" },
@@ -507,9 +489,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
           </span>
-          <fieldset className="pause-preferences" aria-label="自然日暂停偏好">
-            <label><input type="checkbox" checked={pauseAfterClose} onChange={(event) => store.dispatch(setPauseAfterClose(event.currentTarget.checked))} />收盘后暂停复盘</label>
-            <label><input type="checkbox" checked={pauseBeforeOpen} onChange={(event) => store.dispatch(setPauseBeforeOpen(event.currentTarget.checked))} />开盘前暂停查看资讯</label>
+          <fieldset className="pause-preferences" aria-label="自然日暂停偏好" disabled={pausePreferences.pending}>
+            <label><input type="checkbox" checked={pauseAfterClose} onChange={(event) => void pausePreferences.changePreferences({ pause_after_close: event.currentTarget.checked, pause_before_open: pauseBeforeOpen })} />收盘后暂停复盘</label>
+            <label><input type="checkbox" checked={pauseBeforeOpen} onChange={(event) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: event.currentTarget.checked })} />开盘前暂停查看资讯</label>
           </fieldset>
           <Button className="theme-toggle" minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
           <div className="save-group" role="group" aria-label="存档读档">
@@ -523,7 +505,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
       <WorkspaceGrid orientation={orientation} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
-        <Card className="panel market-panel" id="section-market">
+        <Card className="panel market-panel" id="section-market" tabIndex={-1} aria-label="行情列表">
           <h3 className="panel-title">行情</h3>
           <ConnectedMarketPanel onSelect={selectStock} />
         </Card>
@@ -551,8 +533,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         >
           <h3 className="panel-title">委托下单</h3>
           <label className="field"><span>股票</span>
-            <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
-              options={STOCK_LIST.map((s) => ({ label: `${s.code} ${s.name}`, value: s.code }))} />
+            <HTMLSelect value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
+              options={activeSetup.stocks.map((stock) => ({ label: STOCK_NAMES[stock.code] ? `${stock.code} ${STOCK_NAMES[stock.code]}` : stock.code, value: stock.code }))} />
+            {fieldErrors.code && <span id="trade-code-error" className="field-error" role="alert">{fieldErrors.code}</span>}
           </label>
           <label className="field"><span>委托类型</span>
             <HTMLSelect aria-label="委托类型" value={orderKind} onChange={(event) => setOrderKind(event.target.value as "limit" | "market")}
@@ -562,9 +545,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <HTMLSelect aria-label="限价方式" value={priceChoice} onChange={(event) => setPriceChoice(event.target.value as LimitPriceChoice)}
               options={[{ label: "指定价格", value: "fixed" }, { label: "最高限价", value: "highest" }, { label: "最低限价", value: "lowest" }]} />
           </label>}
-          <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} {...orderPriceInputState(orderKind, priceChoice)} /></label>
-          <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" /></label>
-          <TradeMarketControls tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
+          <label className="field"><span>价格（元）</span><InputGroup value={priceText} aria-invalid={Boolean(fieldErrors.price)} aria-describedby={fieldErrors.price ? "trade-price-error" : undefined} onChange={(e) => setPriceText(e.target.value)} {...orderPriceInputState(orderKind, priceChoice)} />{fieldErrors.price && <span id="trade-price-error" className="field-error" role="alert">{fieldErrors.price}</span>}</label>
+          <label className="field"><span>数量（股）</span><InputGroup value={qtyText} aria-invalid={Boolean(fieldErrors.quantity)} aria-describedby={fieldErrors.quantity ? "trade-quantity-error" : undefined} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" />{fieldErrors.quantity && <span id="trade-quantity-error" className="field-error" role="alert">{fieldErrors.quantity}</span>}</label>
+          <TradeMarketControls activeSetup={activeSetup} tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
             <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
             <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
@@ -596,10 +579,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <div className="auto-form">
               <HTMLSelect value={autoType} onChange={(e) => setAutoType(e.target.value as AutoOrderType)}
                 options={(Object.keys(AUTO_ORDER_LABELS) as AutoOrderType[]).map((t) => ({ label: AUTO_ORDER_LABELS[t], value: t }))} />
-              <input className="auto-input" type="text" value={autoTrigger} onChange={(e) => setAutoTrigger(e.target.value)} placeholder="触发价（元）" />
-              <input className="auto-input" type="text" value={autoQty} onChange={(e) => setAutoQty(e.target.value)} placeholder="数量" />
+              <label><span className="sr-only">条件单触发价（元）</span><input className="auto-input" type="text" value={autoTrigger} aria-invalid={Boolean(autoFieldErrors.price)} aria-describedby={autoFieldErrors.price ? "auto-price-error" : undefined} onChange={(e) => setAutoTrigger(e.target.value)} placeholder="触发价（元）" />{autoFieldErrors.price && <span id="auto-price-error" className="field-error" role="alert">{autoFieldErrors.price}</span>}</label>
+              <label><span className="sr-only">条件单数量（股）</span><input className="auto-input" type="text" value={autoQty} aria-invalid={Boolean(autoFieldErrors.quantity)} aria-describedby={autoFieldErrors.quantity ? "auto-quantity-error" : undefined} onChange={(e) => setAutoQty(e.target.value)} placeholder="数量（股）" />{autoFieldErrors.quantity && <span id="auto-quantity-error" className="field-error" role="alert">{autoFieldErrors.quantity}</span>}</label>
               <Button small intent="primary" onClick={addAuto}>添加</Button>
             </div>
+            {autoFieldErrors.code && <p className="field-error" role="alert">{autoFieldErrors.code}</p>}
             <div className="auto-list">
               {autoOrders.length === 0 && <span className="auto-empty">暂无条件单</span>}
               {autoOrders.map((o) => (
@@ -648,7 +632,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </section>
-          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => store.dispatch(setPauseAfterClose(value))} onPauseBeforeOpenChange={(value) => store.dispatch(setPauseBeforeOpen(value))} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
+          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen })} onPauseBeforeOpenChange={(value) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value })} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </WorkspaceGrid>
 
@@ -664,14 +648,12 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
         <>
-        {mobileTab === "market" && mobileDetail && (
-          <div className="mobile-detail-page">
-            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
-          </div>
-        )}
+        <MobileDetailLayer ui={mobileUi}>
+            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+        </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
-            <button key={tab} type="button" className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {
+            <button key={tab} type="button" aria-current={mobileTab === tab ? "page" : undefined} aria-expanded={tab === "trades" ? tradeSheetOpen : undefined} aria-controls={tab === "trades" ? "section-order" : undefined} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {
               if (tab === "trades") openTradeSheet();
               else switchMobileTab(tab);
             }}>
@@ -703,13 +685,13 @@ function App() {
   const [startupError, setStartupError] = useState<string | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const returnToStartup = useCallback(async (stopSession: () => void) => {
+  const returnToStartup = useCallback(async (stopSession: () => Promise<void>) => {
     if (returningToStartupRef.current) return;
     returningToStartupRef.current = true;
     setReturningToStartup(true);
     setStartupReturnError(null);
     try {
-      stopSession();
+      await stopSession();
       store.dispatch(setRunning(false));
       dayEndPersistenceRef.current.invalidate();
       await dayEndPersistenceRef.current.idle();

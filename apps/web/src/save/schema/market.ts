@@ -1,5 +1,7 @@
 import type { FloatAllocation, SessionSetup, Snapshot } from "../../types/engine"
 import type { DailyCandle } from "../../types/generated/DailyCandle"
+import { parseCompanyOperationsConfig } from "./company/operations.ts"
+import { parseGroups } from "./company/groups.ts"
 import { array, boolean, civilDate, decimal, exact, finite, integer, map, nullable, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 
 const exchange = ["Shanghai", "Shenzhen"] as const
@@ -42,7 +44,7 @@ function floatAllocation(value: unknown, path: string): FloatAllocation {
 
 export function parseSetup(value: unknown, path: string): SessionSetup {
   const parsed = record(value, path)
-  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "start_date", "simulation_policy_id"], path)
+  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "start_date", "simulation_policy_id", ...("company_operations" in parsed ? ["company_operations"] : []), ...("groups" in parsed ? ["groups"] : [])], path)
   const npcs = record(parsed.npcs, `${path}.npcs`)
   exact(npcs, ["retail_count", "inst_count", "hot_count", "retail_cash_median"], `${path}.npcs`)
   const config = record(parsed.config, `${path}.config`)
@@ -56,6 +58,8 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
   exact(inst, ["margin", "order_size"], `${path}.strategy_params.inst`)
   exact(hot, ["lookback", "trend_threshold", "order_size"], `${path}.strategy_params.hot`)
   return {
+    ...("company_operations" in parsed ? { company_operations: parsed.company_operations === null ? null : parseCompanyOperationsConfig(parsed.company_operations, `${path}.company_operations`) } : {}),
+    ...("groups" in parsed ? { groups: parseGroups(parsed.groups, `${path}.groups`) } : {}),
     stocks: array(parsed.stocks, `${path}.stocks`).map((item, index) => stock(item, `${path}.stocks[${index}]`)),
     npcs: { retail_count: integer(npcs.retail_count, `${path}.npcs.retail_count`, 0), inst_count: integer(npcs.inst_count, `${path}.npcs.inst_count`, 0), hot_count: integer(npcs.hot_count, `${path}.npcs.hot_count`, 0), retail_cash_median: money(npcs.retail_cash_median, `${path}.npcs.retail_cash_median`) },
     config: { commission_rate: finite(config.commission_rate, `${path}.config.commission_rate`), commission_min: money(config.commission_min, `${path}.config.commission_min`), stamp_tax_rate: finite(config.stamp_tax_rate, `${path}.config.stamp_tax_rate`), default_limit: finite(config.default_limit, `${path}.config.default_limit`), st_limit: finite(config.st_limit, `${path}.config.st_limit`), price_cage_enabled: boolean(config.price_cage_enabled, `${path}.config.price_cage_enabled`), lot_size: integer(config.lot_size, `${path}.config.lot_size`, 1), starting_cash: money(config.starting_cash, `${path}.config.starting_cash`) },

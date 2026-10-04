@@ -14,7 +14,8 @@ use engine::session::{
     Event, FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
     StockSpec,
 };
-use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+use engine::strategy::{HotParams, InstParams, Intent, RetailParams, StrategyParams};
+use engine::{AccountId, LimitPrice, Side};
 
 /// 场景规模刻意保持很小：3 个交易日 × 240 tick/日 × 16 个 NPC × 2 只股票，
 /// 作为受控短回放，覆盖开盘集合竞价、连续竞价、收盘集合竞价与日界。
@@ -87,14 +88,22 @@ const REPLAY_DAYS: u64 = 3;
 /// end=7939505419576849145。只更新存档表示锚，原有独立业务断言全部保留。
 /// 当前无代际标记契约移除存档根字段，不引入兼容。表示锚由上述真实 capture
 /// 仅删除该字段的原字节独立计算，事件锚不变；依据见工作记录 current-save-contract。
-const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 11_144_175_475_449_247_039;
-const PINNED_SAVE_END_FNV: u64 = 11_114_411_633_457_169_759;
+/// 补缺合并后公司支付/披露与个人分析事实改变，不再声称是纯表示漂移。
+/// 原锚保留：events=5948645237561155125、mid=11144175475449247039、
+/// end=11114411633457169759。现行低仓位 NPC 场景只有买单，旧 fixture 没有真实成交。
+/// 新 fixture 将每股既有 1000 股及初始成本从 NPC 转给 Player，现金和股份不变，
+/// 作为开局可卖库存；真实 Player 卖单与自然 NPC 买单撮合，不预制造 Trade。
+/// 独立 capture、旧业务对照与摘要证据见 merge-characterization.md。
+const PINNED_EVENTS_FNV: u64 = 7_922_886_018_261_573_110;
+const PINNED_SAVE_MID_FNV: u64 = 9_809_656_468_401_244_634;
+const PINNED_SAVE_END_FNV: u64 = 15_011_441_865_679_768_707;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
     let second = StockCode("600889".to_string());
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             StockSpec {
                 code: first.clone(),
@@ -170,7 +179,66 @@ fn run_replay(seed: u64) -> ReplayCapture {
 }
 
 fn run_replay_serial(seed: u64) -> ReplayCapture {
-    let mut session = GameSession::new(replay_setup(), seed).expect("replay setup must be valid");
+    let initial = GameSession::new(replay_setup(), seed).expect("replay setup must be valid");
+    let mut initial_save = initial.save().expect("healthy initial save");
+    let initial_cash: i128 = initial_save
+        .snapshot
+        .accounts
+        .values()
+        .map(|account| i128::from(account.cash.cents()))
+        .sum();
+    for stock in &initial_save.setup.stocks {
+        let donor = initial_save
+            .snapshot
+            .accounts
+            .iter_mut()
+            .filter(|(owner, _)| **owner != AccountId(0))
+            .find_map(|(_, account)| {
+                account
+                    .positions
+                    .get_mut(&stock.code)
+                    .filter(|position| position.qty >= 1_000)
+            })
+            .expect("initial float must supply the player fixture inventory");
+        assert_eq!(donor.t1_locked, 0);
+        let invested_cents = stock.initial_price.cents() * 1_000;
+        donor.qty -= 1_000;
+        donor.invested_cents -= invested_cents;
+        initial_save
+            .snapshot
+            .accounts
+            .get_mut(&AccountId(0))
+            .expect("initial player exists")
+            .positions
+            .insert(
+                stock.code.clone(),
+                engine::PositionSnap {
+                    qty: 1_000,
+                    t1_locked: 0,
+                    invested_cents,
+                    recovered_cents: 0,
+                },
+            );
+    }
+    let mut session = GameSession::restore(&initial_save).expect("initial inventory must restore");
+    assert_eq!(
+        initial_save
+            .snapshot
+            .accounts
+            .keys()
+            .map(|owner| {
+                i128::from(
+                    session
+                        .account(*owner)
+                        .expect("restored account exists")
+                        .cash()
+                        .cents(),
+                )
+            })
+            .sum::<i128>(),
+        initial_cash,
+        "initial inventory redistribution must not inject cash"
+    );
     let mut events: Vec<Event> = Vec::new();
     let mut save_mid_bytes = Vec::new();
     for tick_index in 0..(TICKS_PER_DAY * REPLAY_DAYS) {
@@ -178,7 +246,57 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
             save_mid_bytes = serde_json::to_vec(&session.save().expect("healthy save"))
                 .expect("mid-scenario authoritative save must serialize");
         }
-        events.extend(session.step().expect("healthy step"));
+        if tick_index == 0 {
+            for stock in &session
+                .save()
+                .expect("healthy setup projection")
+                .setup
+                .stocks
+            {
+                let price = session.snapshot().markets[&stock.code].last_close;
+                session
+                    .enqueue_player_intent(
+                        AccountId(0),
+                        Intent::PlaceLimit {
+                            code: stock.code.clone(),
+                            side: Side::Sell,
+                            price: LimitPrice::Fixed(price),
+                            qty: 1_000,
+                        },
+                    )
+                    .expect("real player order must enqueue");
+            }
+        }
+        let step_events = session.step().expect("healthy step");
+        for event in &step_events {
+            if let Event::Trade {
+                code,
+                qty,
+                maker,
+                taker,
+                ..
+            } = event
+            {
+                let buyer = if *maker == AccountId(0) {
+                    *taker
+                } else if *taker == AccountId(0) {
+                    *maker
+                } else {
+                    continue;
+                };
+                assert!(
+                    session
+                        .account(buyer)
+                        .expect("real buyer exists")
+                        .position(code)
+                        .expect("real purchase creates a position")
+                        .t1_locked()
+                        >= *qty,
+                    "the real NPC purchase must be T+1 locked on its trade day"
+                );
+            }
+        }
+        events.extend(step_events);
         if (tick_index + 1) % TICKS_PER_DAY == 0 {
             events.extend(
                 session
@@ -194,6 +312,11 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
             .any(|event| matches!(event, Event::Trade { qty, .. } if *qty > 0)),
         "seed discrimination requires genuine trades, not only empty price ticks"
     );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Trade { qty, maker, taker, .. }
+            if *qty > 0 && ((*maker == AccountId(0)) != (*taker == AccountId(0)))
+    )));
     assert_eq!(
         events
             .iter()
@@ -209,6 +332,15 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
         (REPLAY_DAYS * 2 * 2) as usize
     );
     let save = session.save().expect("healthy save");
+    assert!(
+        save.snapshot
+            .accounts
+            .values()
+            .map(|account| i128::from(account.cash.cents()))
+            .sum::<i128>()
+            < initial_cash,
+        "genuine trades must deduct fees rather than inject cash"
+    );
     assert_eq!(save.snapshot.tick, TICKS_PER_DAY * REPLAY_DAYS);
     assert_eq!(u64::from(session.day()), REPLAY_DAYS);
     assert_eq!(

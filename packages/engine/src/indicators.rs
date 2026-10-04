@@ -239,10 +239,22 @@ pub fn calculate_indicators(
     candles: &[OhlcBar],
 ) -> Result<IndicatorResults, IndicatorInputError> {
     validate_input(prices, candles)?;
-    let results = IndicatorResults {
-        macd: macd(prices),
-        price_kdj: kdj(prices),
-        candle_kdj: kdj_ohlc(candles),
+    let results = if prices.len().max(candles.len()) >= 2048 {
+        let (macd, (price_kdj, candle_kdj)) = rayon::join(
+            || macd(prices),
+            || rayon::join(|| kdj(prices), || kdj_ohlc(candles)),
+        );
+        IndicatorResults {
+            macd,
+            price_kdj,
+            candle_kdj,
+        }
+    } else {
+        IndicatorResults {
+            macd: macd(prices),
+            price_kdj: kdj(prices),
+            candle_kdj: kdj_ohlc(candles),
+        }
     };
     validate_results(&results)?;
     Ok(results)
@@ -449,6 +461,36 @@ mod tests {
         assert!(super::calculate_indicators_batch(&[])
             .expect("empty batch should calculate")
             .is_empty());
+    }
+
+    #[test]
+    fn production_indicator_entry_matches_sequential_components_in_a_worker_pool() {
+        let prices: Vec<_> = (0..2048).map(|index| 10.0 + (index % 17) as f64).collect();
+        let candles: Vec<_> = prices
+            .iter()
+            .map(|price| super::OhlcBar {
+                high: price + 1.0,
+                low: price - 1.0,
+                close: *price,
+            })
+            .collect();
+        let expected = super::IndicatorResults {
+            macd: macd(&prices),
+            price_kdj: kdj(&prices),
+            candle_kdj: kdj_ohlc(&candles),
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        let actual = pool
+            .install(|| super::calculate_indicators(&prices, &candles))
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            super::calculate_indicators(&[], &[]).unwrap().macd.dif,
+            Vec::<f64>::new()
+        );
     }
 
     #[test]

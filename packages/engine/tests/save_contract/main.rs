@@ -12,7 +12,9 @@ use engine::session::{
     SecurityCategory, SessionSetup, StockExchange, StockSpec, SIMULATION_POLICY_ID,
 };
 
+mod bank_policy;
 mod failures;
+mod restore_guards;
 
 const SEED: u64 = 0x27_C0FFEE;
 const TICKS_PER_DAY: usize = 1;
@@ -39,6 +41,8 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 /// 增强这些断言。仍保留完整的公司账本、公开信息与个人决策状态。
 fn contract_setup() -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![stock(
             "600101",
             1_120,

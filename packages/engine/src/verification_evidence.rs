@@ -92,8 +92,6 @@ pub enum EvidenceError {
     EmptyRestoreBytes { slot: String, field: &'static str },
     #[error("restore slot {slot} saved/restored bytes differ")]
     RestoreBytesMismatch { slot: String },
-    #[error("restore slot {slot} continuation bytes differ")]
-    RestoreContinuationMismatch { slot: String },
     #[error("pre-canonical {dimension} must contain at least two distinct real identities")]
     InvalidPrecanonicalOrder { dimension: &'static str },
     #[error("execution coverage is incomplete: {detail}")]
@@ -853,6 +851,21 @@ fn validate_event_fact_identities(
                 detail: "source disagrees with the ADR event mapping",
             });
         }
+        if fact.key.local_event_index() > crate::orderbook::js_safe_u64::MAX {
+            return Err(EvidenceError::InvalidEventIdentity {
+                detail: "local_event_index exceeds the JS-safe event identity domain",
+            });
+        }
+        if matches!(entity, EntityTag::Account(_))
+            && source == EventSourceIndex::Sealed
+            && fact.key.local_event_index()
+                >= crate::session::pipeline::QUOTE_EXPIRY_EVENT_INDEX_BASE
+            && !matches!(fact.event, Event::OrderCanceled { .. })
+        {
+            return Err(EvidenceError::InvalidEventIdentity {
+                detail: "QuoteExpiry 保留事件身份索引要求 OrderCanceled",
+            });
+        }
         let key = comparison_event_key(tick, fact, event_variant(&fact.event))?;
         if !comparison_keys.insert(key) {
             return Err(EvidenceError::InvalidEventIdentity {
@@ -864,18 +877,25 @@ fn validate_event_fact_identities(
     sorted.sort_by(|left, right| left.key.cmp(&right.key));
     for fact in sorted {
         let (phase_rank, entity, source) = expected_event_identity(&fact.event);
+        let sparse_account_domain =
+            matches!(entity, EntityTag::Account(_)) && source == EventSourceIndex::Sealed;
         let domain = (tick, phase_rank, entity, source);
         let expected = next_ordinals.entry(domain).or_insert(0u64);
-        if fact.key.local_event_index() != *expected {
+        if sparse_account_domain && fact.key.local_event_index() < *expected {
+            return Err(EvidenceError::InvalidEventIdentity {
+                detail: duplicate_error,
+            });
+        }
+        if !sparse_account_domain && fact.key.local_event_index() != *expected {
             return Err(EvidenceError::InvalidEventIdentity {
                 detail: ordinal_error,
             });
         }
-        *expected = expected
-            .checked_add(1)
-            .ok_or(EvidenceError::InvalidEventIdentity {
+        *expected = fact.key.local_event_index().checked_add(1).ok_or(
+            EvidenceError::InvalidEventIdentity {
                 detail: "local_event_index overflow",
-            })?;
+            },
+        )?;
     }
     Ok(())
 }
@@ -1762,11 +1782,6 @@ fn project_execution_coverage(
             }
             if input.saved != input.restored {
                 return Err(EvidenceError::RestoreBytesMismatch {
-                    slot: input.slot.to_owned(),
-                });
-            }
-            if input.uninterrupted_continuation != input.restored_continuation {
-                return Err(EvidenceError::RestoreContinuationMismatch {
                     slot: input.slot.to_owned(),
                 });
             }

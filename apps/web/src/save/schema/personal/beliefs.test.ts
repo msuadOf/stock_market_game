@@ -43,6 +43,13 @@ const base = {
 
 const moment = { civil_date: "2030-01-02", market_minute: "22", trading_day: "1" }
 
+test("Retail BeliefBook 不携带 Institution policy 或账户暂停状态", () => {
+  const retail = { ...base, profile: { Retail: "Noise" }, institution_policy: null }
+  assert.deepEqual(parseBeliefBook(retail, "book"), retail)
+  assert.throws(() => parseBeliefBook({ ...retail, institution_policy: base.institution_policy }, "book"), /institution_policy/)
+  assert.throws(() => parseBeliefBook({ ...retail, institution_account_risk_paused: true }, "book"), /institution_account_risk_paused/)
+})
+
 test("institution account risk pause is a required frozen boolean", () => {
   for (const paused of [false, true]) {
     const frozen = { ...base, institution_account_risk_paused: paused }

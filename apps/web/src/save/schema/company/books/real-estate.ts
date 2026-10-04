@@ -7,7 +7,7 @@ export type RealEstateBooks = { readonly books: Books; readonly projects: Readon
 type ProjectState = { readonly total_units: number; readonly remaining_units: number; readonly land_cost: string; readonly development_cost: string; readonly capitalized_interest: string; readonly remaining_cost: string; readonly carried_out_cost: string; readonly dev_started_on: string | null; readonly interrupted_on: string | null; readonly interruptions: readonly Interruption[]; readonly completed_on: string | null }
 type Interruption = { readonly start: string; readonly end: string }
 type PresaleContract = { readonly project: string; readonly buyer: string; readonly units: number; readonly price_total: string; readonly collected: string; readonly delivered: boolean }
-type ProjectLoanState = { readonly outstanding: string; readonly accrued_unpaid: string; readonly carried_cap: string; readonly carried_exp: string; readonly last_accrual_date: string; readonly lender: string; readonly project: string | null; readonly debt_account: string; readonly annual_rate_bp: number }
+type ProjectLoanState = { readonly outstanding: string; readonly accrued_unpaid: string; readonly carried_cap: string; readonly carried_exp: string; readonly last_accrual_date: string; readonly maturity_date: string; readonly lender: string; readonly project: string | null; readonly debt_account: string; readonly annual_rate_bp: number }
 type CapitalizationPolicy = { readonly version: number; readonly suspension_min_days: number }
 
 export function parseRealEstateBooks(value: unknown, path: string): RealEstateBooks {
@@ -36,8 +36,8 @@ function parsePresale(value: unknown, path: string): PresaleContract {
 
 function parseLoan(value: unknown, path: string): ProjectLoanState {
   const parsed = record(value, path)
-  exact(parsed, ["outstanding", "accrued_unpaid", "carried_cap", "carried_exp", "last_accrual_date", "lender", "project", "debt_account", "annual_rate_bp"], path)
-  return { outstanding: amount(parsed.outstanding, `${path}.outstanding`), accrued_unpaid: amount(parsed.accrued_unpaid, `${path}.accrued_unpaid`), carried_cap: parseFraction(parsed.carried_cap, `${path}.carried_cap`), carried_exp: parseFraction(parsed.carried_exp, `${path}.carried_exp`), last_accrual_date: civilDate(parsed.last_accrual_date, `${path}.last_accrual_date`), lender: string(parsed.lender, `${path}.lender`), project: nullable(parsed.project, `${path}.project`, string), debt_account: string(parsed.debt_account, `${path}.debt_account`), annual_rate_bp: integer(parsed.annual_rate_bp, `${path}.annual_rate_bp`) }
+  exact(parsed, ["outstanding", "accrued_unpaid", "carried_cap", "carried_exp", "last_accrual_date", "maturity_date", "lender", "project", "debt_account", "annual_rate_bp"], path)
+  return { outstanding: amount(parsed.outstanding, `${path}.outstanding`), accrued_unpaid: amount(parsed.accrued_unpaid, `${path}.accrued_unpaid`), carried_cap: parseFraction(parsed.carried_cap, `${path}.carried_cap`), carried_exp: parseFraction(parsed.carried_exp, `${path}.carried_exp`), last_accrual_date: civilDate(parsed.last_accrual_date, `${path}.last_accrual_date`), maturity_date: civilDate(parsed.maturity_date, `${path}.maturity_date`), lender: string(parsed.lender, `${path}.lender`), project: nullable(parsed.project, `${path}.project`, string), debt_account: string(parsed.debt_account, `${path}.debt_account`), annual_rate_bp: integer(parsed.annual_rate_bp, `${path}.annual_rate_bp`) }
 }
 
 function parseCapitalizationPolicy(value: unknown, path: string): CapitalizationPolicy {

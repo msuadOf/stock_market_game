@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { analyzeChartProgress, buildHtmlReport, formatBrowserException } from "./market-ui-report-lib.mjs";
+import { terminateTree } from "../run-with-deadline.mjs";
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, "")), "..", "..");
 const defaultChromePaths = process.platform === "win32"
@@ -117,18 +118,30 @@ function startViteIfNeeded(url) {
   return child;
 }
 
-class CdpClient {
-  constructor(webSocketUrl) {
-    this.socket = new WebSocket(webSocketUrl);
+export class CdpClient {
+  constructor(webSocketUrl, { socket = new WebSocket(webSocketUrl) } = {}) {
+    this.socket = socket;
     this.nextId = 1;
     this.pending = new Map();
+    this.socket.addEventListener("close", () => this.disconnect(new Error("Chrome DevTools WebSocket 已断开")));
+    this.socket.addEventListener("error", () => this.disconnect(new Error("Chrome DevTools WebSocket 连接失败")));
+  }
+
+  disconnect(error) {
+    this.disconnected = error;
+    this.rejectConnection?.(error);
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
   }
 
   async connect() {
+    if (this.disconnected) throw this.disconnected;
     await new Promise((resolveOpen, reject) => {
+      this.rejectConnection = reject;
       this.socket.addEventListener("open", resolveOpen, { once: true });
       this.socket.addEventListener("error", () => reject(new Error("Chrome DevTools WebSocket 连接失败")), { once: true });
     });
+    this.rejectConnection = undefined;
     this.socket.addEventListener("message", async (event) => {
       const raw = typeof event.data === "string" ? event.data : await event.data.text();
       const message = JSON.parse(raw);
@@ -142,14 +155,21 @@ class CdpClient {
   }
 
   send(method, params = {}) {
+    if (this.disconnected) return Promise.reject(this.disconnected);
     const id = this.nextId++;
     return new Promise((resolveCommand, reject) => {
       this.pending.set(id, { resolve: resolveCommand, reject, method });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
   close() {
+    this.disconnect(new Error("Chrome DevTools WebSocket 已断开"));
     this.socket.close();
   }
 }
@@ -164,6 +184,30 @@ async function evaluate(client, expression) {
 
 async function waitForSelector(client, selector, timeoutMs = 20_000) {
   return waitFor(`等待元素 ${selector}`, () => evaluate(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`), timeoutMs);
+}
+
+export async function enterGame(client) {
+  const state = () => evaluate(client, `(() => {
+    if (document.querySelector('.app-root')) return 'ready';
+    const error = document.querySelector('[role="alert"]');
+    if (error) return { error: error.textContent };
+    return document.querySelector('#startup-title') ? 'startup' : null;
+  })()`);
+  const initial = await waitFor("等待启动页面", state, 30_000);
+  if (initial.error !== undefined) throw new Error(`游戏启动失败：${initial.error}`);
+  if (initial === "ready") return;
+  await evaluate(client, `(() => {
+    const local = document.querySelector('input[name="startup-mode"][value="local"]');
+    const button = document.querySelector('button[type="submit"]');
+    if (!local || !button) throw new Error('启动选择缺少本地模式或启动按钮');
+    local.click();
+    button.click();
+  })()`);
+  const started = await waitFor("等待游戏启动", async () => {
+    const current = await state();
+    return current === 'ready' || current?.error !== undefined ? current : null;
+  }, 30_000);
+  if (started.error !== undefined) throw new Error(`游戏启动失败：${started.error}`);
 }
 
 async function screenshot(client, outputDir, name) {
@@ -222,13 +266,10 @@ function performanceDelta(before, after, probe, durationMs) {
 }
 
 async function stopProcess(child) {
-  if (!child || child.exitCode !== null) return;
-  if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
-    await new Promise((resolveExit) => killer.once("exit", resolveExit));
-  } else {
-    child.kill("SIGTERM");
-  }
+  if (!child || child.exitCode !== null || child.signalCode) return;
+  const closed = new Promise((resolveExit) => child.once("close", resolveExit));
+  await terminateTree(child);
+  await closed;
 }
 
 export class MarketUiReportRun {
@@ -286,7 +327,7 @@ export class MarketUiReportRun {
     ], { windowsHide: true, stdio: "ignore" });
 
     await waitFor("Chrome 调试端口", async () => {
-      const response = await fetch(`http://127.0.0.1:${this.#debugPort}/json/version`);
+      const response = await fetch(`http://127.0.0.1:${this.#debugPort}/json/version`, { signal: AbortSignal.timeout(1500) });
       return response.ok;
     });
   }
@@ -294,7 +335,7 @@ export class MarketUiReportRun {
   async connectPage() {
     const config = this.#config;
     const { fetch, createClient } = this.#dependencies;
-    const targetResponse = await fetch(`http://127.0.0.1:${this.#debugPort}/json/new?${encodeURIComponent(config.url)}`, { method: "PUT" });
+    const targetResponse = await fetch(`http://127.0.0.1:${this.#debugPort}/json/new?${encodeURIComponent(config.url)}`, { method: "PUT", signal: AbortSignal.timeout(1500) });
     if (!targetResponse.ok) throw new Error(`创建 Chrome 页面失败：HTTP ${targetResponse.status}`);
     const target = await targetResponse.json();
     if (!target.webSocketDebuggerUrl) throw new Error("Chrome 未返回 webSocketDebuggerUrl");
@@ -304,12 +345,21 @@ export class MarketUiReportRun {
   }
 
   async close() {
-    this.#client?.close();
-    await this.#dependencies.stopProcess(this.#browser);
-    await this.#dependencies.stopProcess(this.#server);
-    if (this.#browserProfile) {
-      await this.#dependencies.rm(this.#browserProfile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+    const errors = [];
+    const steps = [
+      () => this.#client?.close(),
+      () => this.#dependencies.stopProcess(this.#browser),
+      () => this.#dependencies.stopProcess(this.#server),
+      () => this.#browserProfile && this.#dependencies.rm(this.#browserProfile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    if (errors.length) throw new AggregateError(errors, `性能工具资源清理失败：${errors.map((error) => String(error)).join('；')}`);
   }
 }
 
@@ -324,6 +374,7 @@ async function main() {
   await rm(resolve(outputDir, "failure.txt"), { force: true });
   const screenshots = [];
   const run = new MarketUiReportRun(config);
+  let runFailure;
   try {
     await run.startServerIfNeeded();
     await run.launchBrowser();
@@ -333,7 +384,7 @@ async function main() {
     await client.send("Performance.enable");
     await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 1180, deviceScaleFactor: 1, mobile: true });
     await client.send("Page.navigate", { url: config.url });
-    await waitForSelector(client, ".app-root", 30_000);
+    await enterGame(client);
     const isolated = await evaluate(client, "crossOriginIsolated");
     if (!isolated) throw new Error("页面未启用 crossOriginIsolated，WASM 多线程性能测试无效；请检查 COOP/COEP 响应头");
 
@@ -406,11 +457,17 @@ async function main() {
     process.stdout.write(`${result.passed ? "PASS" : "FAIL"} ${resolve(outputDir, "report.html")}\n`);
     if (!result.passed) process.exitCode = 1;
   } catch (error) {
+    runFailure = error;
     const message = error instanceof Error ? `${error.name}: ${error.message}\n${error.stack ?? ""}` : String(error);
     await writeFile(resolve(outputDir, "failure.txt"), message);
     throw error;
   } finally {
-    await run.close();
+    try {
+      await run.close();
+    } catch (cleanupError) {
+      if (runFailure !== undefined) throw new AggregateError([runFailure, cleanupError], `性能验收和资源清理均失败：${String(runFailure)}；${String(cleanupError)}`);
+      throw cleanupError;
+    }
   }
 }
 

@@ -20,6 +20,6 @@
     "lint": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && corepack pnpm --filter web lint",
     "preview": "corepack pnpm --filter web preview",
     "test:market-performance:unit": "node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/performance/market-ui-report.test.mjs",
-    "test:market-performance": "node scripts/performance/market-ui-report.mjs"
+    "test:market-performance": "node scripts/run-long-validation.mjs 300000 -- node scripts/performance/market-ui-report.mjs"
   }
 }

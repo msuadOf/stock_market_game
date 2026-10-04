@@ -330,7 +330,20 @@ export function buildRustTestExecutionPolicy(availableCpuCount, binaryCount) {
   };
 }
 
-async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remainingMs, now }) {
+export function parseRustTestCases(stdout) {
+  if (typeof stdout !== "string") throw new Error("Rust test listing did not return output");
+  const names = new Set();
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.length === 0 || /^\d+ tests?, \d+ benchmarks?$/.test(line) || line.endsWith(": benchmark")) continue;
+    if (!line.endsWith(": test")) throw new Error(`malformed Rust test listing: ${line}`);
+    const name = line.slice(0, -6);
+    if (name.length === 0 || names.has(name)) throw new Error(`invalid or duplicate Rust test case: ${name}`);
+    names.add(name);
+  }
+  return [...names];
+}
+
+export async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remainingMs, now, log = () => undefined }) {
   let nextIndex = 0;
   let stop = false;
   const failures = [];
@@ -343,19 +356,23 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
       nextIndex += 1;
       if (index >= artifacts.length) return;
       const artifact = artifacts[index];
-      const timeoutMs = remainingMs(`Rust test binary ${artifact.label}`);
-      const startedAt = now();
       try {
-        await run({
-          command: artifact.executable,
-          args: [`--test-threads=${budget.test_threads}`],
-          env: { ...env, RAYON_NUM_THREADS: String(budget.rayon_threads) },
-          cwd,
-          timeoutMs,
-          cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, timeoutMs - 1)),
-          signal: controller.signal,
-        });
-        results[index] = { label: artifact.label, wall_ms: now() - startedAt };
+        const lists = [];
+        for (const ignored of [false, true]) {
+          const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(`Rust test listing ${artifact.label}`));
+          const output = await run({
+            command: artifact.executable,
+            args: ["--list", "--format=terse", ...(ignored ? ["--ignored"] : [])],
+            env: { ...env, RAYON_NUM_THREADS: String(budget.rayon_threads) },
+            cwd, timeoutMs, captureOutput: true,
+            cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
+            signal: controller.signal,
+          });
+          lists.push(parseRustTestCases(output?.stdout));
+        }
+        const ignoredNames = new Set(lists[1]);
+        if (lists[1].some((name) => !lists[0].includes(name))) throw new Error("ignored Rust test listing contains an unknown case");
+        results[index] = lists[0].filter((name) => !ignoredNames.has(name)).map((name) => ({ ...artifact, name }));
       } catch (error) {
         stop = true;
         if (!controller.signal.aborted) controller.abort(error);
@@ -365,7 +382,38 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
   }
   await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
-  return results;
+  const cases = results.flat();
+  const concurrency = Math.min(cases.length, Math.max(1, Math.floor(policy.available_cpu_count / 2)));
+  const cpuBudget = concurrency === 0 ? 0 : Math.floor(policy.available_cpu_count / concurrency);
+  const rayonThreads = Math.max(1, cpuBudget - 1);
+  const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, rayon_threads: rayonThreads, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
+  log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
+  nextIndex = 0;
+  async function caseWorker() {
+    while (!stop) {
+      const index = nextIndex++;
+      if (index >= cases.length) return;
+      const testCase = cases[index];
+      try {
+        const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(`Rust test case ${testCase.label} ${testCase.name}`));
+        await run({
+          command: testCase.executable,
+          args: [testCase.name, "--exact", "--test-threads=1"],
+          env: { ...env, RAYON_NUM_THREADS: String(rayonThreads) },
+          cwd, timeoutMs,
+          cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        stop = true;
+        if (!controller.signal.aborted) controller.abort(error);
+        failures.push(new Error(`${testCase.label} case ${testCase.name} failed: ${error.message}`, { cause: error }));
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => caseWorker()));
+  if (failures.length > 0) throw new AggregateError(failures, `ordinary Rust test cases failed:\n${failures.map((failure) => failure.message).join("\n")}`);
+  return casePolicy;
 }
 
 async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env, remainingMs, now }) {
@@ -567,8 +615,8 @@ export async function executeFullRegression({
   };
   log(JSON.stringify({ phase: "execute-start", ...policy, long_validation: longValidationPolicy }));
   let stepStartedAt = now();
-  await executeRustTestBinaries({ artifacts, policy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now });
-  completed.push({ label: binaryStep.label, wall_ms: now() - stepStartedAt, binary_count: artifacts.length, ...policy });
+  const casePolicy = await executeRustTestBinaries({ artifacts, policy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, log });
+  completed.push({ label: binaryStep.label, wall_ms: now() - stepStartedAt, binary_count: artifacts.length, ...policy, ...casePolicy });
 
   stepStartedAt = now();
   const longValidationResults = await executeRequiredLongValidations({

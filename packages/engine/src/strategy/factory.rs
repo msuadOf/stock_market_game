@@ -42,7 +42,12 @@ impl StrategyFactory {
         ordinal: u32,
         rng: &mut dyn Rng,
     ) -> Result<Option<Box<dyn ProductionStrategy>>, StrategyError> {
-        debug_assert!(ticks_per_day > 0);
+        if ticks_per_day == 0 {
+            return Err(StrategyError::InvalidParam {
+                param: "ticks_per_day",
+                reason: "must be > 0".to_owned(),
+            });
+        }
         match kind {
             AccountKind::Retail => {
                 let r = &params.retail;
@@ -112,6 +117,12 @@ impl StrategyFactory {
             }
             AccountKind::Inst => {
                 let i = &params.inst;
+                if !(0.0..1.0).contains(&i.margin) {
+                    return Err(StrategyError::InvalidParam {
+                        param: "margin",
+                        reason: "must be finite and in [0, 1)".to_owned(),
+                    });
+                }
                 let style = match ordinal % 5 {
                     0 => InstitutionStyle::DeepValue,
                     1 => InstitutionStyle::Growth,

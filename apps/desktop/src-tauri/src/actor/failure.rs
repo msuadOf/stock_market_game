@@ -192,6 +192,5 @@ impl<R: Runtime> SessionActor<R> {
             );
         }
         self.cmd_rx.close();
-        self.pending_fixed_events.clear();
     }
 }

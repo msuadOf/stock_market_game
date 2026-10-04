@@ -35,6 +35,87 @@ fn c_ins() -> CompanyId {
     CompanyId("C-INS".to_string())
 }
 
+#[test]
+fn audit_insurance_expired_coverage_stops_new_claims_but_old_claim_can_be_paid() {
+    use engine::company::insurance::{ClaimId, InsuranceProductKind};
+    use engine::company::operations::{CompanyOperationsConfig, FlowParams, IndustryBooks};
+    use engine::company::{ContractId, CounterpartyId};
+    let start = d("2030-01-01");
+    let end = d("2030-01-03");
+    let group = ContractId("fixture-short-coverage".into());
+    let pending = ClaimId("fixture-unpaid".into());
+    let mut company = insurance_c(start);
+    let IndustryBooks::Insurance(books) = &mut company.books else {
+        unreachable!()
+    };
+    books
+        .establish_group(
+            InsuranceProductKind::TermProtection,
+            group.clone(),
+            &CounterpartyId("EXT-POL".into()),
+            yuan(60),
+            yuan(50),
+            yuan(3),
+            start,
+            end,
+        )
+        .unwrap();
+    books.collect_premium(&group, yuan(60), start).unwrap();
+    books
+        .record_claim(&group, pending.clone(), yuan(1), start)
+        .unwrap();
+    let FlowParams::Insurance(params) = &mut company.flow else {
+        unreachable!()
+    };
+    params.daily_groups_base = 0;
+    params.claim_every_days = 1;
+    params.claim_size = yuan(1);
+    let mut operations = CompanyOperations::new(
+        CompanyOperationsConfig {
+            seed: 17,
+            shock_params: quiet_params(),
+            companies: vec![company],
+        },
+        start,
+    )
+    .unwrap();
+    run_days(&mut operations, start, 3);
+    let before = operations
+        .insurance_books(&c_ins())
+        .unwrap()
+        .group(&group)
+        .unwrap()
+        .claims()
+        .count();
+    assert_eq!(before, 3);
+    run_days(&mut operations, d("2030-01-04"), 2);
+    let mut books = operations.insurance_books(&c_ins()).unwrap().clone();
+    assert_eq!(books.group(&group).unwrap().claims().count(), before);
+    assert_eq!(
+        books
+            .group(&group)
+            .unwrap()
+            .claim(&pending)
+            .unwrap()
+            .unpaid()
+            .unwrap(),
+        yuan(1)
+    );
+    books
+        .pay_claim(&group, &pending, yuan(1), d("2030-01-06"))
+        .expect("保障期内已经发生的未付赔案期后仍能支付");
+    assert_eq!(
+        books
+            .group(&group)
+            .unwrap()
+            .claim(&pending)
+            .unwrap()
+            .unpaid()
+            .unwrap(),
+        AccountingAmount::ZERO
+    );
+}
+
 /// 客户信用恶化生成业务风险（坏账准备/贷款准备计提），且全程无股东分配
 /// （权益科目余额恒等于开局值）。
 #[test]

@@ -8,6 +8,7 @@
 mod allocation;
 mod candidates;
 pub mod quote_policy;
+mod records;
 mod revision;
 mod state;
 pub mod urgency;
@@ -140,7 +141,8 @@ pub enum PlanEvent {
 pub struct PlanBook {
     policy: PlanPolicy,
     next_plan_seq: u64,
-    plans: BTreeMap<PlanId, TradingPlan>,
+    #[ts(as = "BTreeMap<PlanId, TradingPlan>")]
+    plans: records::PlanRecords,
     #[ts(skip)]
     by_account_stock: BTreeMap<AccountId, BTreeMap<StockCode, PlanId>>,
 }
@@ -154,15 +156,23 @@ struct PlanBookSave {
     plans: BTreeMap<PlanId, TradingPlan>,
 }
 
+#[derive(serde::Serialize)]
+struct PlanBookSaveRef<'a> {
+    policy: PlanPolicy,
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    next_plan_seq: u64,
+    plans: &'a records::PlanRecords,
+}
+
 impl serde::Serialize for PlanBook {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        PlanBookSave {
+        PlanBookSaveRef {
             policy: self.policy,
             next_plan_seq: self.next_plan_seq,
-            plans: self.plans.clone(),
+            plans: &self.plans,
         }
         .serialize(serializer)
     }
@@ -231,7 +241,7 @@ impl PlanBook {
         Ok(Self {
             policy,
             next_plan_seq: 0,
-            plans: BTreeMap::new(),
+            plans: records::PlanRecords::default(),
             by_account_stock: BTreeMap::new(),
         })
     }
@@ -249,6 +259,7 @@ impl PlanBook {
         validate_policy(&policy)?;
         let mut by_account_stock = BTreeMap::new();
         for (plan_id, plan) in &plans {
+            plan.validate_horizon()?;
             if plan.plan_id() != *plan_id {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!(
@@ -298,7 +309,7 @@ impl PlanBook {
         Ok(Self {
             policy,
             next_plan_seq,
-            plans,
+            plans: plans.into(),
             by_account_stock,
         })
     }
@@ -373,7 +384,7 @@ impl PlanBook {
     /// 账户+股票当前的非终止计划（无则 None）。
     pub fn active_plan(&self, account: AccountId, code: &StockCode) -> Option<&TradingPlan> {
         let plan_id = self.by_account_stock.get(&account)?.get(code)?;
-        Some(&self.plans[plan_id])
+        self.plans.get(plan_id)
     }
 
     /// 对一个计划应用一个事件：纯 (状态, 事件) 转移，返回事件后的状态。
@@ -518,6 +529,68 @@ mod atomic_event_tests {
             horizon_trading_days: 5,
             created_trading_day: 0,
         }
+    }
+
+    #[test]
+    fn shadow_clone_shares_terminal_history_and_only_copies_touched_plan() {
+        let mut plans = PlanBook::default();
+        for _ in 0..300 {
+            let plan = plans.create(open("600101")).unwrap();
+            plans
+                .apply(
+                    plan,
+                    PlanEvent::Terminated {
+                        reason: TerminationReason::Cancelled,
+                        trading_day: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let live = plans.create(open("600101")).unwrap();
+        let mut shadow = plans.clone();
+        assert!(std::ptr::eq(
+            plans.plan(PlanId(0)).unwrap(),
+            shadow.plan(PlanId(0)).unwrap()
+        ));
+        assert!(std::ptr::eq(
+            plans.plan(live).unwrap(),
+            shadow.plan(live).unwrap()
+        ));
+        shadow
+            .record_review(live, 0, crate::Money::from_cents(1000), 1)
+            .unwrap();
+        assert!(std::ptr::eq(
+            plans.plan(PlanId(0)).unwrap(),
+            shadow.plan(PlanId(0)).unwrap()
+        ));
+        assert!(!std::ptr::eq(
+            plans.plan(live).unwrap(),
+            shadow.plan(live).unwrap()
+        ));
+        assert_ne!(
+            plans.plan(live).unwrap().review(),
+            shadow.plan(live).unwrap().review()
+        );
+        assert_eq!(
+            plans.plan_ids().collect::<Vec<_>>(),
+            shadow.plan_ids().collect::<Vec<_>>()
+        );
+        let restored: PlanBook =
+            serde_json::from_value(serde_json::to_value(&shadow).unwrap()).unwrap();
+        assert_eq!(restored, shadow);
+        let legacy = PlanBookSave {
+            policy: shadow.policy,
+            next_plan_seq: shadow.next_plan_seq,
+            plans: shadow
+                .plans
+                .iter()
+                .map(|(id, plan)| (*id, plan.clone()))
+                .collect(),
+        };
+        assert_eq!(
+            serde_json::to_vec(&shadow).unwrap(),
+            serde_json::to_vec(&legacy).unwrap()
+        );
     }
 
     #[test]

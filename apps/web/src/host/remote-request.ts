@@ -7,13 +7,17 @@ export function remoteBaseUrl(value: string): string {
   return baseUrl;
 }
 
-export function remoteWsUrl(baseUrl: string, sessionId: string, token: string, delivery: DeliveryMode): string {
+export function remoteWsUrl(baseUrl: string, sessionId: string, delivery: DeliveryMode): string {
   const url = new URL(`${baseUrl}/ws`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("session_id", sessionId);
   url.searchParams.set("delivery", delivery);
-  url.searchParams.set("token", token);
   return url.toString();
+}
+
+export function remoteWsProtocols(token: string): string[] {
+  const encoded = Array.from(new TextEncoder().encode(token), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return ["stock-game", `stock-game.auth.${encoded}`];
 }
 
 export async function remoteJson(fetchFn: typeof fetch, url: string, init: RequestInit): Promise<unknown> {

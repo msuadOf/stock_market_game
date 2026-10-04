@@ -3,6 +3,22 @@ use engine::money::MoneyError;
 use serde_json::json;
 
 #[test]
+fn audit_boundary_money_requires_at_least_one_decimal_digit() {
+    for input in [".", "+.", "-.", " . ", " +. ", " -. "] {
+        assert!(
+            matches!(
+                Money::from_yuan_str(input),
+                Err(MoneyError::ParseFailed { .. })
+            ),
+            "{input}"
+        );
+    }
+    for (input, cents) in [(".5", 50), ("12.", 1200), ("+.0", 0), ("-.1", -10)] {
+        assert_eq!(Money::from_yuan_str(input).unwrap().cents(), cents);
+    }
+}
+
+#[test]
 fn money_error_variants_construct_and_display() {
     let precision_parse_error = MoneyError::ParseFailed {
         input: "12.345".to_string(),

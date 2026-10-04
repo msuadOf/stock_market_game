@@ -4,7 +4,7 @@
  * 点击行 → 选股（回调）。
  */
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef, CellClassParams, GridReadyEvent, IRowNode } from "ag-grid-community";
+import type { ColDef, CellClassParams, GridReadyEvent, IRowNode, CellKeyDownEvent, FullWidthCellKeyDownEvent } from "ag-grid-community";
 import { CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, ModuleRegistry, RowStyleModule } from "ag-grid-community";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cents, MarketSnap } from "../types/engine";
@@ -14,6 +14,7 @@ import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
 import { marketCodesForView, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
 import { MarketGridRowSynchronizer } from "./market-grid-row-synchronizer.ts";
 import { buildMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
+import { MARKET_GRID_LOCALE, selectMarketByKeyboard } from "./market-grid-accessibility.ts";
 
 ModuleRegistry.registerModules([ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule]);
 
@@ -143,6 +144,11 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
     [onSelect],
   );
 
+  const onCellKeyDown = useCallback((event: CellKeyDownEvent<RowData> | FullWidthCellKeyDownEvent<RowData>) => {
+    const keyboardEvent = event.event;
+    if (keyboardEvent instanceof KeyboardEvent && selectMarketByKeyboard(keyboardEvent.key, event.data?.code, onSelect)) keyboardEvent.preventDefault();
+  }, [onSelect]);
+
   const getRowClass = useCallback(
     (params: { data: RowData | undefined }) => {
       if (params.data && params.data.code === selectedCode) return "row-selected";
@@ -153,7 +159,8 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
 
   return (
     <>
-      <div className="ag-theme-alpine market-grid-container" style={{ width: "100%", height: "100%", minHeight: 180 }}>
+      <div className="ag-theme-alpine market-grid-container" role="region" aria-label="股票行情" aria-describedby="market-grid-keyboard-help" style={{ width: "100%", height: "100%", minHeight: 180 }}>
+        <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，按 Enter 或空格选择当前股票。</p>
         <AgGridReact<RowData>
           theme="legacy"
           rowData={initialRowsRef.current}
@@ -163,10 +170,12 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}
+          onCellKeyDown={onCellKeyDown}
+          localeText={MARKET_GRID_LOCALE}
           getRowClass={getRowClass}
           rowHeight={28}
           headerHeight={28}
-          suppressCellFocus={true}
+          suppressCellFocus={false}
         />
       </div>
       <div className="mobile-market-dashboard">
@@ -178,7 +187,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
           {MOBILE_LAYOUT.watchlistTabs.map((label, index) => {
             const tab: MobileMarketView = index === 0 ? "watchlist" : "holdings";
             return (
-            <button key={tab} type="button" className={mobileTab === tab ? "active" : ""} onClick={() => setMobileTab(tab)}>{label}</button>
+            <button key={tab} type="button" aria-current={mobileTab === tab ? "page" : undefined} className={mobileTab === tab ? "active" : ""} onClick={() => setMobileTab(tab)}>{label}</button>
           );})}
           <span className="mobile-market-tabs-spacer" aria-hidden="true" /><button type="button" aria-label="更多分类（尚未开放）" title="更多分类尚未开放" disabled>☰</button>
         </nav>

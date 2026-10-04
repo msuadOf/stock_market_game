@@ -3,6 +3,9 @@ import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
+import { ProtocolCoordinator } from "./protocol-coordinator.ts";
+import { frame, snapshot as protocolSnapshot, tickBatch } from "./protocol-test-fixtures.ts";
+import { currentSaveFixture } from "../save/current-save-fixture.ts";
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -12,6 +15,111 @@ class FakeWorker implements WorkerRequestPort {
   postMessage(message: unknown): void { this.sent.push(message); }
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
+
+for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
+  test(`Worker ${operation} baseline 被消费者拒绝时终止并显式失败`, { timeout: 10000 }, async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    class BaselineRejectingWorker extends EventTarget {
+      static current: BaselineRejectingWorker;
+      readonly sent: Record<string, unknown>[] = [];
+      terminations = 0;
+      constructor() { super(); BaselineRejectingWorker.current = this; }
+      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      terminate() { this.terminations++; }
+      emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+    }
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: BaselineRejectingWorker });
+    let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+    try {
+      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const worker = BaselineRejectingWorker.current;
+      worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      host = await creating;
+      let accept = true;
+      const failures: unknown[] = [];
+      const starting = host.start(() => accept, (failure) => { failures.push(failure); });
+      worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
+      await starting;
+      accept = false;
+      const pendingQuery = host.civilDate!().then(() => null, (error: unknown) => error);
+      if (operation === "baseline") {
+        worker.emit({ type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
+      } else {
+        const pending = operation === "load" ? host.load(currentSaveFixture()) : host.refreshBaseline();
+        const rejected = assert.rejects(pending, /消费者拒绝.*baseline/);
+        const requestId = worker.sent.at(-1)!.requestId;
+        worker.emit(operation === "load"
+          ? { type: "restored", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
+          : { type: "refreshed", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
+        await rejected;
+      }
+      assert.equal(worker.terminations, 1);
+      assert.match(String(await pendingQuery), /消费者拒绝/);
+      assert.equal(failures.length, 1);
+      assert.equal(worker.sent.filter((item) => item.type === "uiFrame").length, 0);
+      await assert.rejects(host.start(() => true), /已被销毁/);
+    } finally {
+      await host?.dispose();
+      if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+      else Object.defineProperty(globalThis, "Worker", original);
+    }
+  });
+}
+
+test("审计G53：Worker恢复必须推进generation，不能接受相同或更小代", async () => {
+  for (const nextGeneration of [1, 2, 3]) {
+    const worker = new FakeWorker();
+    const requests = new WorkerRequestScope(worker);
+    const pending = restoreWorkerSlot(requests, {}, 1, 2);
+    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    if (nextGeneration <= 2) await assert.rejects(pending, /generation.*2.*[12]|[12].*generation.*2/);
+    else assert.equal((await pending).nextGeneration, 3);
+    assert.equal(requests.pendingCount(), 0);
+  }
+});
+
+test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串", async () => {
+  for (const nextGeneration of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "3"]) {
+    const worker = new FakeWorker();
+    const requests = new WorkerRequestScope(worker);
+    const pending = restoreWorkerSlot(requests, {}, 1, 2);
+    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    await assert.rejects(pending, /正安全整数/);
+    assert.equal(requests.pendingCount(), 0);
+  }
+});
+
+test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class DisposedRefreshWorker extends EventTarget {
+    static current: DisposedRefreshWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); DisposedRefreshWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: DisposedRefreshWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = DisposedRefreshWorker.current;
+    worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    const pending = host.refreshBaseline();
+    const rejected = assert.rejects(pending, /已过期会话 generation/);
+    worker.emit({ type: "refreshed", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
+    await host.dispose();
+    await rejected;
+    assert.throws(() => host!.snapshot(), /快照尚未就绪/);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
 
 test("Worker save pins candidate generation and rejects an old saved response after baseline replacement", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -194,7 +302,9 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
     worker.emit({ type: "baseline", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
-    host.start((update) => updates.push(update));
+    const starting = host.start((update) => { updates.push(update); });
+    worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
+    await starting;
     const refresh = host.refreshBaseline();
     worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
     await refresh;
@@ -219,7 +329,115 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   }
 });
 
-test("Worker dispose 与 fatal 保留在途请求原 timeout，后续请求 ID 不与旧请求复用", async (context) => {
+test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class ControlledWorker extends EventTarget {
+    static current: ControlledWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); ControlledWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: ControlledWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = ControlledWorker.current;
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    host = await creating;
+    const updates: unknown[] = [];
+    let applied = false;
+    let failures = 0;
+    const starting = host.start((update) => { updates.push(update); }, () => { failures++; }).then(() => { applied = true; });
+    await Promise.resolve();
+    assert.equal(applied, false);
+    worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
+    await starting;
+    const commits = [{ TickBatch: { frames: ["完整事实一"] } }, { CivilUpdate: { facts: ["完整事实二"] } }];
+    worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 3, updates: commits });
+    assert.deepEqual(updates.slice(1).map((update) => (update as { update: unknown }).update), commits);
+    assert.deepEqual(worker.sent.at(-1), { type: "uiFrame", generation: 1, deliveryId: 3 });
+    const speedChange = assert.rejects(host.setSpeed(10), /已过期 generation/);
+    const requestId = worker.sent.at(-1)!.requestId;
+    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "speedSet", generation: 1, requestId });
+    await speedChange;
+    const acceptedCount = updates.length;
+    const acknowledgements = worker.sent.filter((message) => message.type === "uiFrame").length;
+    worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+    worker.emit({ type: "protocol", generation: 2, deliveryId: 4, update: commits[0] });
+    worker.emit({ type: "failure", code: "REPEATED_FATAL", where: "worker-test", message: "重复失败" });
+    assert.equal(updates.length, acceptedCount);
+    assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, acknowledgements);
+    assert.equal(worker.terminations, 1);
+    assert.equal(failures, 1);
+    await assert.rejects(host.start(() => {}), /已被销毁/);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class IsolatedWorker extends EventTarget {
+    static current: IsolatedWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); IsolatedWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: IsolatedWorker });
+  let oldHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  let newHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const oldCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const oldWorker = IsolatedWorker.current;
+    oldWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    oldHost = await oldCreating;
+    const rejectingStart = oldHost.start(() => false);
+    const unexpectedStart = oldWorker.sent.find((message) => message.type === "start");
+    if (unexpectedStart !== undefined) oldWorker.emit({ type: "started", generation: 1, requestId: unexpectedStart.requestId });
+    await assert.rejects(rejectingStart, /消费者拒绝.*baseline/);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "start" || message.type === "uiFrame").length, 0);
+    const newCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 2n);
+    const newWorker = IsolatedWorker.current;
+    newWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(9, 4) });
+    newHost = await newCreating;
+    const newUpdates: unknown[] = [];
+    let newStarted = false;
+    const startingNew = newHost.start((update) => { newUpdates.push(update); }).then(() => { newStarted = true; });
+    const requestId = newWorker.sent.at(-1)!.requestId;
+    oldWorker.emit({ type: "started", generation: 1, requestId });
+    oldWorker.emit({ type: "protocol", generation: 1, deliveryId: 1, update: {} });
+    await Promise.resolve();
+    assert.equal(newStarted, false);
+    assert.equal(newUpdates.length, 1);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "uiFrame").length, 0);
+    newWorker.emit({ type: "started", generation: 1, requestId });
+    await startingNew;
+    const retriedUpdates: unknown[] = [];
+    const retry = oldHost.start((update) => { retriedUpdates.push(update); return true; });
+    oldWorker.emit({ type: "started", generation: 1, requestId: oldWorker.sent.at(-1)!.requestId });
+    await retry;
+    assert.equal(retriedUpdates.length, 1);
+    assert.equal(oldWorker.sent.filter((message) => message.type === "start").length, 1);
+    assert.equal(newUpdates.length, 1);
+    assert.equal(newHost.tick(), 9);
+  } finally {
+    await oldHost?.dispose();
+    await newHost?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class PendingWorker extends EventTarget {
@@ -245,18 +463,64 @@ test("Worker dispose 与 fatal 保留在途请求原 timeout，后续请求 ID �
       worker.emit({ type: "pausePreferencesSet", requestId: 2, generation: 1 });
       await preferences;
       let settled = false;
-      const dateAssertion = assert.rejects(date, /Worker civilDate 操作超时（10000ms）/);
+      const dateAssertion = assert.rejects(date, /已被销毁|TEST_FATAL/);
       void date.then(() => { settled = true; }, () => { settled = true; });
       if (reason === "dispose") host.dispose();
       else worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
-      await Promise.resolve();
-      assert.equal(settled, false);
-      assert.equal(worker.terminations, 1);
-      context.mock.timers.tick(10_000);
       await dateAssertion;
+      assert.equal(settled, true);
+      assert.equal(worker.terminations, 1);
+      await assert.rejects(host.readSpeedMetrics(), /已被销毁|TEST_FATAL/);
       host.dispose();
     }
   } finally {
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class RejectingWorker extends EventTarget {
+    static current: RejectingWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); RejectingWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RejectingWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = RejectingWorker.current;
+    worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    let applications = 0;
+    const failures: unknown[] = [];
+    const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => { applications++; }, onFailure: (failure) => { failures.push(failure); } });
+    const starting = host.start((update) => coordinator.accept(update));
+    worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
+    await starting;
+    const pending = assert.rejects(host.setSpeed(10), /消费者拒绝/);
+    worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 7, updates: [
+      tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)),
+      tickBatch([frame(3, 1, ["600000"])], protocolSnapshot(3, 2)),
+      tickBatch([frame(2, 1, ["600000"])], protocolSnapshot(2, 2)),
+    ] });
+    await pending;
+    assert.equal(applications, 1);
+    assert.equal(failures.length, 1);
+    assert.equal(coordinator.status().kind, "failure");
+    assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, 0);
+    assert.equal(worker.terminations, 1);
+    worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+    assert.equal(applications, 1);
+    await host.dispose();
+    assert.equal(worker.terminations, 1);
+  } finally {
+    await host?.dispose();
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }

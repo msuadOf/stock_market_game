@@ -135,6 +135,7 @@ pub struct CompanyOperations {
     pub(crate) companies: BTreeMap<CompanyId, OperatingCompany>,
     pub(crate) next_expected: Option<CivilDate>,
     pub(crate) history: Option<HistoryMeta>,
+    pub(crate) payment_failures: BTreeMap<CivilDate, Vec<PaymentFailureRecord>>,
     #[serde(skip, default)]
     hash_projection_cache: CompanyOperationsHashCache,
 }
@@ -147,6 +148,7 @@ impl CompanyOperations {
     ) -> Result<Self, OperationsError> {
         let mut ops = Self::build(config, start_date, false)?;
         ops.submit_rolling_interest(start_date)?;
+        ops.schedule_debt_maturities(start_date)?;
         Ok(ops)
     }
 
@@ -216,6 +218,7 @@ impl CompanyOperations {
             companies,
             next_expected: Some(first_day),
             history: None,
+            payment_failures: BTreeMap::new(),
             hash_projection_cache: CompanyOperationsHashCache::default(),
         })
     }
@@ -224,6 +227,49 @@ impl CompanyOperations {
 
     pub fn scheduler(&self) -> &OperatingScheduler {
         &self.scheduler
+    }
+
+    pub fn payment_failures_on(&self, date: CivilDate) -> &[PaymentFailureRecord] {
+        self.payment_failures
+            .get(&date)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn validate_payment_history(&self) -> Result<(), OperationsError> {
+        for (date, failures) in &self.payment_failures {
+            if Some(*date) >= self.next_expected || failures.is_empty() {
+                return Err(OperationsError::InvalidPaymentHistory {
+                    detail: format!("invalid payment failure date/list on {date}"),
+                });
+            }
+            for failure in failures {
+                if !self.companies.contains_key(&failure.company)
+                    || failure.what.trim().is_empty()
+                    || !failure.amount.is_positive()
+                {
+                    return Err(OperationsError::InvalidPaymentHistory {
+                        detail: format!("invalid payment failure on {date}: {failure:?}"),
+                    });
+                }
+            }
+        }
+        for company in self.companies.values() {
+            if company
+                .economy
+                .active()
+                .iter()
+                .any(|shock| matches!(shock.kind, ShockKind::PaymentFailure { .. }))
+            {
+                return Err(OperationsError::InvalidPaymentHistory {
+                    detail: format!(
+                        "payment failure cannot be active economic shock for {:?}",
+                        company.spec.id
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn company(&self, id: &CompanyId) -> Option<&OperatingCompany> {

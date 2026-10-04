@@ -84,14 +84,14 @@ pub(crate) fn generate(windows: &StatementWindows) -> Result<EquityStatement, Re
             })
         }
         Some(facts) => Ok(EquityStatement {
-            opening_parent: facts.equity_to_parent.sub(facts.ni_to_parent)?,
-            net_income: facts.ni_to_parent,
+            opening_parent: facts.equity_to_parent.sub(facts.window_ni_to_parent)?,
+            net_income: facts.window_ni_to_parent,
             other_comprehensive: AccountingAmount::ZERO,
             capital_contributions: AccountingAmount::ZERO,
             distributions: AccountingAmount::ZERO,
             closing_parent: facts.equity_to_parent,
-            opening_minority: Some(facts.minority_equity.sub(facts.minority_ni)?),
-            minority_net_income: Some(facts.minority_ni),
+            opening_minority: Some(facts.minority_equity.sub(facts.window_minority_ni)?),
+            minority_net_income: Some(facts.window_minority_ni),
             closing_minority: Some(facts.minority_equity),
         }),
     }

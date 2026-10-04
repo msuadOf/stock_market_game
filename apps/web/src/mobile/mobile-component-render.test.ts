@@ -6,9 +6,11 @@ import { createServer, type ViteDevServer } from "vite";
 import type { KlinePoint } from "../components/PriceChart.tsx";
 import type { MarketSnap, TradeEvent } from "../types/engine.ts";
 import type { MobileStockDetail as DetailComponent } from "./MobileStockDetail.tsx";
+import { initialMobileUiState, reduceMobileUi } from "./mobile-ui-state.ts";
 
 let vite: ViteDevServer;
 let MobileStockDetail: typeof DetailComponent;
+let MobileDetailLayer: typeof import("./MobileDetailLayer.tsx").MobileDetailLayer;
 
 before(async () => {
   vite = await createServer({
@@ -18,6 +20,7 @@ before(async () => {
     optimizeDeps: { noDiscovery: true },
   });
   ({ MobileStockDetail } = await vite.ssrLoadModule("/src/mobile/MobileStockDetail.tsx") as typeof import("./MobileStockDetail.tsx"));
+  ({ MobileDetailLayer } = await vite.ssrLoadModule("/src/mobile/MobileDetailLayer.tsx") as typeof import("./MobileDetailLayer.tsx"));
 });
 
 after(async () => {
@@ -32,6 +35,16 @@ const market: MarketSnap = {
   bids: [[999, 250], [998, 500]],
   asks: [[1_001, 500], [1_002, 1_000]],
 };
+
+test("审计G45：App共用详情层从自选打开会实际渲染，返回后撤下且保留自选", () => {
+  const list = reduceMobileUi(initialMobileUiState, { type: "switch-primary", tab: "watchlist" });
+  const detail = reduceMobileUi(list, { type: "open-detail", code: "600101" });
+  const children = createElement("span", null, "实际详情内容");
+  assert.match(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: detail, children })), /mobile-detail-page.*实际详情内容/);
+  const returned = reduceMobileUi(detail, { type: "back" });
+  assert.equal(returned.primaryTab, "watchlist");
+  assert.equal(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: returned, children })), "");
+});
 
 const candle: KlinePoint = {
   time: 0 as KlinePoint["time"],
@@ -114,6 +127,16 @@ test("分时图真实渲染压缩午休后的统一时间轴和权威时间槽",
   assert.match(html, /data-auction-volume-line-count="1"/);
 });
 
+test("G32：价格SVG、昨收中轴和0%标签共用价格绘图区，不含时间轴", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口");
+  assert.match(html, /class="msd-price-plot">[\s\S]*?class="msd-scale msd-scale-mid"[\s\S]*?<svg[\s\S]*?<\/svg><\/div><div class="msd-time-axis"/);
+});
+
+test("G14：逐笔时间取自身tick，缺失明确显示而不借用当前时钟", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { trades: [{ ...trade, tick: 901 }, { ...trade, seq: 2, tick: 960 }, { ...trade, seq: 3 }] });
+  assert.match(html, /09:30:01/); assert.match(html, /09:31:00/); assert.match(html, /成交时间缺失/);
+});
+
 
 test("分时 projection 经真实组件保留 null 竞价量、阶段独立高度与算术均价", () => {
   const html = renderDetail("分时", "盘口", {
@@ -124,9 +147,23 @@ test("分时 projection 经真实组件保留 null 竞价量、阶段独立高�
   assert.match(html, /均价:9\.00/);
   assert.match(html, /data-intraday-signature="3:continuous:120:8:200"/);
   assert.match(html, /data-auction-count="2"/);
-  const heights = [...html.matchAll(/<i[^>]*style="left:[^;]+;height:([^%]+)%"/g)].map(match => Number(match[1]));
+  const heights = [...html.matchAll(/<rect class="msd-minute-volume-mark [^"]+"[^>]*height="([^%]+)%"/g)].map(match => Number(match[1]));
   assert.deepEqual(heights, [100, 50, 50, 100]);
   assert.match(html, /msd-auction-dot/);
+});
+
+test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变半像素槽宽", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [], minutePoints: [{ time: 0, value: 11, volume: 100, buy: true }, { time: 1, value: 10, volume: 200, buy: false }] });
+  assert.match(html, /class="msd-minute-volume-mark rise"[^>]*width="0\.5"[^>]*fill="none"[^>]*stroke="var\(--msd-rise\)"/);
+  assert.match(html, /class="msd-minute-volume-mark fall"[^>]*width="0\.5"[^>]*fill="var\(--msd-fall\)"[^>]*stroke="none"/);
+});
+
+test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null })) });
+  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 2);
+  const lines = [...html.matchAll(/class="msd-auction-line" points="([^"]+)"/g)];
+  assert.deepEqual(lines.map(line => line[1].split(" ").length), [1, 2, 1]);
 });
 
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {

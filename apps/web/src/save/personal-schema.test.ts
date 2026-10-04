@@ -46,6 +46,21 @@ test("personal parsers preserve populated simulation acceptance state exactly", 
   assert.deepEqual(parsePendingPlanEvents(pending), pending)
 })
 
+test("BeliefBook 保存合并现金流归母归属不足的显式原因", { timeout: 10_000 }, () => {
+  const saved = { "1": { ...belief["1"], entries: { "600101": {
+    ...belief["1"].entries["600101"],
+    valuation: { Unavailable: { reason: "ConsolidatedCashFlowAttributionUnavailable" } },
+  } } } }
+  assert.deepEqual(parseBeliefBooks(saved), saved)
+  const missingIncome = { "1": { ...saved["1"], entries: { "600101": {
+    ...saved["1"].entries["600101"], valuation: { Unavailable: { reason: "ConsolidatedNetIncomeAttributionUnavailable" } },
+  } } } }
+  assert.deepEqual(parseBeliefBooks(missingIncome), missingIncome)
+  assert.throws(() => parseBeliefBooks({ "1": { ...saved["1"], entries: { "600101": {
+    ...saved["1"].entries["600101"], valuation: { Unavailable: { reason: "UnattributedDefault" } },
+  } } } }), /valuation\.Unavailable\.reason/)
+})
+
 test("information and belief parsers reject malformed exact fields and tags", () => {
   assert.throws(() => parseInformationStates({ "1": { owner: 1, companies: {}, extra: true } }), /information_states\.1\.extra/)
   assert.throws(() => parseInformationStates({ account: information["1"] }), /information_states\.account/)

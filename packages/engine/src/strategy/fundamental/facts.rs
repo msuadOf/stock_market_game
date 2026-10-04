@@ -1,5 +1,5 @@
-//! 年报事实抽取：从本人已获知的年报提取三种估值方法所需的
-//! **归母口径**事实。
+//! 年报事实抽取：保留本人已知报告 scope，收益与权益取归母口径。
+//! 合并现金流未可靠拆为归母时，现金流法明确不可用，不把集团现金流混作归母。
 //!
 //! 报表口径纪律：
 //! - 一致报告范围——合并范围剔除少数股东：权益取 `equity_to_parent`、
@@ -18,6 +18,44 @@ use crate::information::{PublicationId, PublishedReport};
 
 use super::ValuationUnavailable;
 
+pub(super) fn extract_interim_growth(
+    report: &PublishedReport,
+    expected_company: &CompanyId,
+    as_of: CivilInstant,
+) -> Result<super::GrowthObservation, ValuationUnavailable> {
+    if report.company != *expected_company {
+        return Err(ValuationUnavailable::CompanyMismatch {
+            expected: expected_company.clone(),
+            report: report.company.clone(),
+        });
+    }
+    if !matches!(
+        report.reports.kind,
+        ReportKind::Quarter | ReportKind::HalfYear
+    ) {
+        return Err(ValuationUnavailable::UnsupportedReportKind {
+            kind: report.reports.kind,
+        });
+    }
+    if report.published_at > as_of {
+        return Err(ValuationUnavailable::FutureDatedMaterial { report: report.id });
+    }
+    let income = &report.reports.income;
+    let revenue = income
+        .cumulative
+        .line_amount(IncomeLine::OperatingRevenue)
+        .unwrap_or(AccountingAmount::ZERO);
+    let prior = match &income.prior_year {
+        Comparative::Available(columns) => PriorRevenue::Comparative(
+            columns
+                .line_amount(IncomeLine::OperatingRevenue)
+                .unwrap_or(AccountingAmount::ZERO),
+        ),
+        Comparative::Unavailable { .. } => PriorRevenue::NoHistory,
+    };
+    Ok(super::forecast::observe_revenue_growth(revenue, prior))
+}
+
 /// 上年可比收入：比较项可得（可能为 0——增长观察层显式退化处理），或
 /// 缺历史（`Unavailable(reason)`，绝不填零）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -30,6 +68,7 @@ pub enum PriorRevenue {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnnualFacts {
     pub report_id: PublicationId,
+    pub scope: crate::accounting::consolidation::ScopeId,
     pub published_at: CivilInstant,
     /// 年度累计营业收入（贷方正常，正值）。
     pub revenue: AccountingAmount,
@@ -82,9 +121,15 @@ pub fn extract_annual_facts(
         ),
         Comparative::Unavailable { .. } => PriorRevenue::NoHistory,
     };
-    let net_income_to_parent = income
-        .net_income_to_parent
-        .unwrap_or(income.cumulative.net_income);
+    let net_income_to_parent = match (&report.reports.scope, income.net_income_to_parent) {
+        (crate::accounting::consolidation::ScopeId::Consolidated(_), None) => {
+            return Err(ValuationUnavailable::ConsolidatedNetIncomeAttributionUnavailable);
+        }
+        (_, Some(parent)) => parent,
+        (crate::accounting::consolidation::ScopeId::Standalone(_), None) => {
+            income.cumulative.net_income
+        }
+    };
     let cash_flow = &report.reports.cash_flow;
 
     // 借款净运动：附注借款行 movement 求和后取负（movement 是净借方）。
@@ -106,6 +151,7 @@ pub fn extract_annual_facts(
 
     Ok(AnnualFacts {
         report_id: report.id,
+        scope: report.reports.scope.clone(),
         published_at: report.published_at,
         revenue,
         prior_revenue,

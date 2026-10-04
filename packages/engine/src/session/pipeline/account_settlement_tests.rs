@@ -32,6 +32,24 @@ fn stock() -> StockCode {
     StockCode("600001".to_owned())
 }
 
+#[test]
+fn session_settlement_records_retail_receipt_order_and_simulation_date_once() {
+    let mut session = retail_session(200_000);
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: session.civil_date(),
+        market_minute: session.current_market_minute(),
+        trading_day: u64::from(session.state.day),
+    };
+    let receipt = fill(1, Side::Buy, 17, 100, 100_000);
+    apply_session_settlement_transaction(&mut session, &[receipt.clone()]).unwrap();
+    let experience = &session.state.retail_experience[&AccountId(1)];
+    assert_eq!(experience.feedback.stocks[&stock()].entry_moment, moment);
+    assert_eq!(experience.stocks[&stock()].last_buy_order_id, Some(17));
+    let before = experience.clone();
+    apply_session_settlement_transaction(&mut session, &[receipt]).unwrap();
+    assert_eq!(session.state.retail_experience[&AccountId(1)], before);
+}
+
 fn fill(index: u64, side: Side, order: u64, qty: u32, gross: i64) -> EnvelopeReceipt {
     let key = EnvelopeKey {
         account: AccountId(1),
@@ -639,11 +657,15 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
         state.observe_stock(&StockCode(format!("6010{index:02}")), index);
     }
     state
-        .initialize_holding(
+        .initialize_holding_dated(
             &stock(),
             Some(Money::from_cents(1_000)),
             Money::from_cents(1_000),
-            0,
+            crate::experience::ExperienceMoment {
+                civil_date: crate::CivilDate::from_iso("2030-01-01").unwrap(),
+                market_minute: 0,
+                trading_day: 0,
+            },
         )
         .unwrap();
     let mut seen = RetailProjectionSeen::default();
@@ -848,6 +870,20 @@ fn same_account_buy_then_sell_preserves_the_buy_before_sell_lifecycle() {
         .grant_position(stock(), 100, Money::from_cents(1_000))
         .unwrap();
     let mut experience = retail();
+    experience
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .initialize_holding_dated(
+            &stock(),
+            Some(Money::from_cents(1_000)),
+            Money::from_cents(1_000),
+            crate::experience::ExperienceMoment {
+                civil_date: crate::CivilDate::from_iso("2030-01-01").unwrap(),
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
     let mut seen = RetailProjectionSeen::default();
     apply_settlement_transaction(
         &mut accounts,

@@ -354,6 +354,7 @@ fn owner_guards_are_read_only_and_return_existing_context() {
         amount(10),
         1000,
         date(1),
+        date(2),
         party(),
         None,
         chart::acct::ST_DEBT,

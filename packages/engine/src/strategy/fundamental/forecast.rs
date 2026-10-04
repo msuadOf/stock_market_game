@@ -12,7 +12,7 @@ pub const GROWTH_PRIOR_CLAMP_BP: i32 = 2_000;
 /// 增长观察（由年报事实推导）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GrowthObservation {
-    /// 两个年度可比收入（观察增长已 clamp 到 [-2000,2000]bp）。
+    /// 跨两个年度的可比收入（年报或同窗中期；增长限制在 [-2000,2000]bp）。
     TwoYear(i32),
     /// 上年比较项缺历史：显式 0 先验 + 个人偏差（不称历史事实）。
     WithoutHistory,
@@ -25,13 +25,20 @@ pub enum GrowthObservation {
 /// 再 clamp。基数非正/算术溢出 ⇒ [`GrowthObservation::Degenerate`]（不填零、
 /// 不静默 fallback）。
 pub fn observe_growth(facts: &AnnualFacts) -> GrowthObservation {
-    let PriorRevenue::Comparative(prior) = facts.prior_revenue else {
+    observe_revenue_growth(facts.revenue, facts.prior_revenue)
+}
+
+pub(super) fn observe_revenue_growth(
+    revenue: crate::accounting::AccountingAmount,
+    prior_revenue: PriorRevenue,
+) -> GrowthObservation {
+    let PriorRevenue::Comparative(prior) = prior_revenue else {
         return GrowthObservation::WithoutHistory;
     };
     if prior.cents() <= 0 {
         return GrowthObservation::Degenerate;
     }
-    let Some(delta) = facts.revenue.cents().checked_sub(prior.cents()) else {
+    let Some(delta) = revenue.cents().checked_sub(prior.cents()) else {
         return GrowthObservation::Degenerate;
     };
     let Some(scaled) = delta.checked_mul(10_000) else {

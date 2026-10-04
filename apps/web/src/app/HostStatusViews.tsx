@@ -8,6 +8,8 @@ export interface FatalHostErrorProps {
   readonly error: string | HostFailure;
   readonly onRetry: () => void;
   readonly clipboard?: FeedbackClipboard | null;
+  readonly title?: string;
+  readonly description?: string;
 }
 
 function FeedbackCopyButton({ onCopy }: { onCopy: (report: (status: FeedbackCopyStatus) => void) => Promise<void> }) {
@@ -18,10 +20,10 @@ function FeedbackCopyButton({ onCopy }: { onCopy: (report: (status: FeedbackCopy
   </div>;
 }
 
-export function FatalHostError({ error, onRetry, clipboard }: FatalHostErrorProps) {
+export function FatalHostError({ error, onRetry, clipboard, title = "游戏已崩溃", description = "行情引擎或协议无法继续。请查看真实错误详情并反馈；刷新重试不保证解决原因，且会丢失未保存的日内进度。" }: FatalHostErrorProps) {
   return <div className="app-error" role="alert" aria-live="assertive">
-    <h2>游戏已崩溃</h2>
-    <p>行情引擎或协议无法继续。请查看真实错误详情并反馈；刷新重试不保证解决原因，且会丢失未保存的日内进度。</p>
+    <h2>{title}</h2>
+    <p>{description}</p>
     <Button intent="primary" onClick={onRetry}>刷新页面重试</Button>
     <FeedbackCopyButton onCopy={(report) => copyErrorFeedback(error, report, clipboard)} />
     {typeof error === "string" && <pre>{redactFeedbackText(error)}</pre>}

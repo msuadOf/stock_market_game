@@ -19,6 +19,32 @@ fn fixture() -> (GameSession, PlanExecutionRequest) {
     crate::session::plan_chain_candidates_tests::execution_fixture()
 }
 
+#[test]
+fn audit_boundary_continuous_precheck_failure_disables_coordinator() {
+    let (mut session, request) = fixture();
+    let mut chain = coordinator(&session, request);
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert!(!batch.is_empty());
+    assert!(chain
+        .advance_after_typed_outcomes(&mut session, &[], None)
+        .is_err());
+    assert!(chain.next_ready_batch(&mut session).is_err());
+    assert!(chain.finish().is_err());
+}
+
+#[test]
+fn audit_boundary_auction_precheck_failure_disables_coordinator() {
+    let (mut session, request) = fixture();
+    let mut chain = coordinator(&session, request);
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert!(!batch.is_empty());
+    assert!(chain
+        .advance_after_auction_outcomes(&mut session, &[], None)
+        .is_err());
+    assert!(chain.next_ready_batch(&mut session).is_err());
+    assert!(chain.finish().is_err());
+}
+
 fn seal(
     session: &mut GameSession,
 ) -> (

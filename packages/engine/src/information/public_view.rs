@@ -127,6 +127,9 @@ impl PublicLibrary {
         request: AnnouncementRequest,
     ) -> Result<PublicationId, InformationError> {
         ensure_announcement_timing(request.occurred_on, request.published_at)?;
+        request
+            .event
+            .validate_payment_failure(request.occurred_on)?;
         let id = PublicationId::new(self.next_seq);
         let announcement = Announcement {
             id,
@@ -176,6 +179,9 @@ impl PublicLibrary {
                 });
             }
             ensure_announcement_timing(announcement.occurred_on, announcement.published_at)?;
+            announcement
+                .event
+                .validate_payment_failure(announcement.occurred_on)?;
             let company = announcement.company.clone();
             let id = announcement.id;
             if library.announcements.insert(id, announcement).is_some() {

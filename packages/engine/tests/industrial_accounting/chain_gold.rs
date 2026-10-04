@@ -297,7 +297,9 @@ fn gold_full_chain_order_production_credit_sale_collection_interest() {
 
     // 剩余授信 = 5000 − 开局 2000 − 已登记 2000 = 1000 元（容量含开局债务）。
     assert_eq!(
-        co.available_credit(&cp("EXT-BANK")).expect("credit"),
+        co.available_credit(&cp("EXT-BANK"))
+            .expect("credit computation")
+            .expect("credit"),
         yuan(1_000)
     );
 
@@ -369,7 +371,9 @@ fn gold_full_chain_order_production_credit_sale_collection_interest() {
     );
     // 还款释放授信：剩余 = 5000 − 0（开局已还清）− 2000（LOAN-2）= 3000 元。
     assert_eq!(
-        co.available_credit(&cp("EXT-BANK")).expect("credit"),
+        co.available_credit(&cp("EXT-BANK"))
+            .expect("credit computation")
+            .expect("credit"),
         yuan(3_000)
     );
 

@@ -112,7 +112,8 @@ impl IndustrialBooks {
         )?;
 
         self.inventory_mut()
-            .receipt(item, account, quantity, inventory_cost)?;
+            .receipt(item.clone(), account.clone(), quantity, inventory_cost)?;
+        self.record_inventory_source(event, &item, &account);
         let payable = match settlement {
             Settlement::Cash => {
                 self.counterparties_mut().record_flow(super::flow(
@@ -128,6 +129,7 @@ impl IndustrialBooks {
                 let id = OpenItemId(format!("AP-{}", event.value()));
                 self.payables_mut()
                     .open(id.clone(), &supplier.0, date, due_on, total_payment)?;
+                self.record_trade_counterparty(event, supplier, chart::acct::PAYABLE);
                 Some(id)
             }
         };
@@ -175,6 +177,7 @@ impl IndustrialBooks {
             }],
         )?;
         self.payables_mut().apply(payable, open)?;
+        self.record_trade_counterparty(event, &party, chart::acct::PAYABLE);
         self.counterparties_mut().record_flow(super::flow(
             date,
             &party,

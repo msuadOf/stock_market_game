@@ -249,6 +249,320 @@ fn retail_snapshot() -> Arc<DecisionSnapshot> {
     )
 }
 
+#[test]
+fn retail_personal_analysis_controls_direction_without_institution_execution() {
+    let base = retail_snapshot();
+    let code = StockCode("600888".to_owned());
+    for score in [-8_000, 8_000] {
+        let account = AccountId(1);
+        let input = base
+            .account(account)
+            .unwrap()
+            .clone()
+            .with_retail_analysis(Some(BTreeMap::from([(
+                code.clone(),
+                crate::plans::CandidateAssessment::Scored {
+                    score: crate::plans::SignalScore::new(score).unwrap(),
+                    used_weight_bp: 10_000,
+                    excluded: Vec::new(),
+                },
+            )])));
+        let snapshot = Arc::new(
+            DecisionSnapshot::new(
+                base.tick(),
+                base.npc_seed_base(),
+                base.phase(),
+                base.market_minute(),
+                base.market().clone(),
+                base.behavior_market().cloned(),
+                vec![account],
+                BTreeMap::from([(account, input)]),
+            )
+            .unwrap(),
+        );
+        let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+        assert!(!output.account_outputs()[0].uses_parent_order_execution());
+        if score > 0 {
+            assert_eq!(output.intents().len(), 1);
+            assert!(matches!(
+                output.intents()[0].intent(),
+                crate::strategy::Intent::PlaceLimit {
+                    side: crate::Side::Buy,
+                    qty: 100,
+                    ..
+                }
+            ));
+        } else {
+            assert!(output.intents().is_empty());
+        }
+    }
+}
+
+#[test]
+fn retail_personal_analysis_cannot_override_account_risk_or_t1_lock() {
+    for locked in [false, true] {
+        let base = retail_risk_snapshot(locked, "Momentum");
+        let account = AccountId(1);
+        let input = base
+            .account(account)
+            .unwrap()
+            .clone()
+            .with_retail_analysis(Some(BTreeMap::from([(
+                StockCode("600888".to_owned()),
+                crate::plans::CandidateAssessment::Scored {
+                    score: crate::plans::SignalScore::new(10_000).unwrap(),
+                    used_weight_bp: 10_000,
+                    excluded: Vec::new(),
+                },
+            )])));
+        let snapshot = Arc::new(
+            DecisionSnapshot::new(
+                base.tick(),
+                base.npc_seed_base(),
+                base.phase(),
+                base.market_minute(),
+                base.market().clone(),
+                base.behavior_market().cloned(),
+                vec![account],
+                BTreeMap::from([(account, input)]),
+            )
+            .unwrap(),
+        );
+        let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+        let decision = output.account_outputs()[0].position_decision().unwrap();
+        assert_eq!(
+            decision.reason,
+            if locked {
+                crate::behavior::DecisionReason::T1Locked
+            } else {
+                crate::behavior::DecisionReason::AccountDrawdown
+            }
+        );
+        assert!(decision.desired_delta_shares < 0);
+        assert_eq!(decision.executable_delta_shares == 0, locked);
+        assert_eq!(output.intents().is_empty(), locked);
+    }
+}
+
+#[test]
+fn retail_analysis_rejects_unknown_market_stock_before_deciding() {
+    let base = retail_snapshot();
+    let account = AccountId(1);
+    let input = base
+        .account(account)
+        .unwrap()
+        .clone()
+        .with_retail_analysis(Some(BTreeMap::from([(
+            StockCode("missing".to_owned()),
+            crate::plans::CandidateAssessment::InsufficientInformation {
+                excluded: Vec::new(),
+            },
+        )])));
+    let error = DecisionSnapshot::new(
+        base.tick(),
+        base.npc_seed_base(),
+        base.phase(),
+        base.market_minute(),
+        base.market().clone(),
+        base.behavior_market().cloned(),
+        vec![account],
+        BTreeMap::from([(account, input)]),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        super::DecisionSnapshotError::UnknownRetailAnalysisStock {
+            account: AccountId(1),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn retail_analysis_insufficient_information_does_not_create_buy_orders() {
+    let base = retail_snapshot();
+    let account = AccountId(1);
+    let input = base
+        .account(account)
+        .unwrap()
+        .clone()
+        .with_retail_analysis(Some(BTreeMap::from([(
+            StockCode("600888".to_owned()),
+            crate::plans::CandidateAssessment::InsufficientInformation {
+                excluded: Vec::new(),
+            },
+        )])));
+    let snapshot = Arc::new(
+        DecisionSnapshot::new(
+            base.tick(),
+            base.npc_seed_base(),
+            base.phase(),
+            base.market_minute(),
+            base.market().clone(),
+            base.behavior_market().cloned(),
+            vec![account],
+            BTreeMap::from([(account, input)]),
+        )
+        .unwrap(),
+    );
+    let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+    assert!(output.intents().is_empty());
+    assert_eq!(
+        output.account_outputs()[0]
+            .position_decision()
+            .unwrap()
+            .action,
+        crate::behavior::PositionAction::Watch
+    );
+}
+
+#[test]
+fn retail_analysis_consumes_dated_failure_influence_without_erasing_history() {
+    let base = retail_snapshot();
+    let account = AccountId(1);
+    let original = base.account(account).unwrap();
+    let mut experience = original.retail_experience().unwrap().clone();
+    experience.consecutive_failed_buys = 100;
+    let input = DecisionAccountInput::new(
+        AccountKind::Retail,
+        original.self_view().clone(),
+        original.strategy_state().clone(),
+        original.account_risk().cloned(),
+        Some(experience),
+    )
+    .with_failure_influence(0)
+    .with_retail_analysis(Some(BTreeMap::from([(
+        StockCode("600888".to_owned()),
+        crate::plans::CandidateAssessment::Scored {
+            score: crate::plans::SignalScore::new(8_000).unwrap(),
+            used_weight_bp: 10_000,
+            excluded: Vec::new(),
+        },
+    )])));
+    let snapshot = Arc::new(
+        DecisionSnapshot::new(
+            base.tick(),
+            base.npc_seed_base(),
+            base.phase(),
+            base.market_minute(),
+            base.market().clone(),
+            base.behavior_market().cloned(),
+            vec![account],
+            BTreeMap::from([(account, input)]),
+        )
+        .unwrap(),
+    );
+    let output =
+        run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
+    assert_eq!(output.intents().len(), 1);
+    assert_eq!(
+        snapshot
+            .account(account)
+            .unwrap()
+            .retail_experience()
+            .unwrap()
+            .consecutive_failed_buys,
+        100
+    );
+}
+
+#[test]
+fn retail_negative_personal_analysis_reduces_a_real_sellable_holding() {
+    let base = retail_risk_snapshot(false, "Momentum");
+    let account = AccountId(1);
+    let original = base.account(account).unwrap();
+    let mut risk = original.account_risk().unwrap().clone();
+    risk.drawdown_from_peak = None;
+    let input = DecisionAccountInput::new(
+        AccountKind::Retail,
+        original.self_view().clone(),
+        original.strategy_state().clone(),
+        Some(risk),
+        original.retail_experience().cloned(),
+    )
+    .with_retail_analysis(Some(BTreeMap::from([(
+        StockCode("600888".to_owned()),
+        crate::plans::CandidateAssessment::Scored {
+            score: crate::plans::SignalScore::new(-8_000).unwrap(),
+            used_weight_bp: 10_000,
+            excluded: Vec::new(),
+        },
+    )])));
+    let snapshot = Arc::new(
+        DecisionSnapshot::new(
+            base.tick(),
+            base.npc_seed_base(),
+            base.phase(),
+            base.market_minute(),
+            base.market().clone(),
+            base.behavior_market().cloned(),
+            vec![account],
+            BTreeMap::from([(account, input)]),
+        )
+        .unwrap(),
+    );
+    let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+    let decision = output.account_outputs()[0].position_decision().unwrap();
+    assert_eq!(
+        decision.reason,
+        crate::behavior::DecisionReason::PersonalAnalysis
+    );
+    assert_eq!(decision.desired_delta_shares, -500);
+    assert_eq!(decision.executable_delta_shares, -500);
+    assert!(matches!(
+        output.intents()[0].intent(),
+        crate::strategy::Intent::PlaceLimit {
+            side: crate::Side::Sell,
+            qty: 100,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn retail_personal_analysis_cannot_create_an_order_without_random_arrival() {
+    let base = retail_snapshot();
+    let account = AccountId(1);
+    let original = base.account(account).unwrap();
+    let input = DecisionAccountInput::new(
+        AccountKind::Retail,
+        original.self_view().clone(),
+        StrategyState::ZiNoise(ZiNoiseStrategy::new(1e-12, 100, 0.5).unwrap()),
+        original.account_risk().cloned(),
+        original.retail_experience().cloned(),
+    )
+    .with_retail_analysis(Some(BTreeMap::from([(
+        StockCode("600888".to_owned()),
+        crate::plans::CandidateAssessment::Scored {
+            score: crate::plans::SignalScore::new(8_000).unwrap(),
+            used_weight_bp: 10_000,
+            excluded: Vec::new(),
+        },
+    )])));
+    let snapshot = Arc::new(
+        DecisionSnapshot::new(
+            base.tick(),
+            base.npc_seed_base(),
+            base.phase(),
+            base.market_minute(),
+            base.market().clone(),
+            base.behavior_market().cloned(),
+            vec![account],
+            BTreeMap::from([(account, input)]),
+        )
+        .unwrap(),
+    );
+    let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+    assert!(output.intents().is_empty());
+    assert_eq!(
+        output.account_outputs()[0]
+            .position_decision()
+            .unwrap()
+            .reason,
+        crate::behavior::DecisionReason::NoSignal
+    );
+}
+
 fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
     let market = MarketView {
         stocks: ["600001", "600002"]

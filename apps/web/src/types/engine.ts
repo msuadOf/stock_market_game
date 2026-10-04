@@ -62,7 +62,7 @@ export type DailyCandleSnap = import("./generated/DailyCandle").DailyCandle;
 export type RestingOrderSnap = import("./generated/Order").Order;
 export type PriceLevel = [Cents, number];
 
-export type TradeEvent = Extract<Event, { Trade: unknown }>["Trade"];
+export type TradeEvent = Extract<Event, { Trade: unknown }>["Trade"] & { readonly tick?: number };
 export type PriceTickEvent = Extract<Event, { PriceTick: unknown }>["PriceTick"];
 export type AuctionTickEvent = Extract<Event, { AuctionTick: unknown }>["AuctionTick"];
 export type AuctionCompletedEvent = Extract<Event, { AuctionCompleted: unknown }>["AuctionCompleted"];

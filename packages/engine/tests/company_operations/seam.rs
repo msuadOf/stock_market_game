@@ -24,11 +24,23 @@ fn scheduler_wires_into_civil_clock_due_queue_over_closed_weekend() {
 
     // 安装：调度器待办镜像为时钟 due（工商×2 + 银行 + 地产的滚动利息）。
     wiring.install(&mut clock, &ops).expect("install");
-    assert_eq!(clock.pending_due().len(), 4);
-    assert!(clock
-        .pending_due()
-        .iter()
-        .all(|due| due.kind == DueKind::InterestAccrual));
+    assert_eq!(clock.pending_due().len(), 5);
+    assert_eq!(
+        clock
+            .pending_due()
+            .iter()
+            .filter(|due| due.kind == DueKind::InterestAccrual)
+            .count(),
+        4
+    );
+    assert_eq!(
+        clock
+            .pending_due()
+            .iter()
+            .filter(|due| due.kind == DueKind::ContractMaturity)
+            .count(),
+        1
+    );
 
     // 周六日结：到期派发（恰好一次）→ 经营推进 → 重新排队（4 条滚动利息 +
     // 当日业务新增 3 条到期：A/B 的赊销到期与银行首笔贷款到期）。
@@ -47,7 +59,7 @@ fn scheduler_wires_into_civil_clock_due_queue_over_closed_weekend() {
         .journal()
         .entry_count();
     assert!(entries_saturday > 1, "business posted on closed day");
-    assert_eq!(clock.pending_due().len(), 7);
+    assert_eq!(clock.pending_due().len(), 9);
 
     // 周日再日结一次：仍然只有经营，无行情。
     let sunday = clock.end_day(clock.current_date()).expect("sunday ends");

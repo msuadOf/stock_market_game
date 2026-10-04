@@ -7,7 +7,7 @@
 //! - 同一条新闻：FY2030（收入/净利均 +10% ⇒ 观察 +1000bp）。
 //!
 //! 修订后：甲 3000→2500（下调），乙 −3000→−2000（上调）——方向相反。
-//! 独立金样（分）：甲 546,615,121 → 503,863,836；乙 20,219,635 → 79,823,534。
+//! 独立金样（分）：甲 510,943,419 → 470,564,325；乙 18,798,881 → 74,108,614。
 
 use crate::{assumptions_rng, hour_after, market, scenario, ISSUED_SHARES};
 use engine::account::StockCode;
@@ -101,7 +101,7 @@ fn same_news_different_priors_revise_oppositely() {
     let a_growth_before = book_a.entry(&stock_code()).unwrap().forecast.growth_bp;
     let a_total_before = total_of(&book_a);
     assert_eq!(a_growth_before, Some(3_000), "prior +30% expectation");
-    assert_eq!(a_total_before, 546_615_121);
+    assert_eq!(a_total_before, 510_943_419);
 
     // 乙：先验 −30%（FY2028 下滑历史 −2000bp + 一次性偏差 −1000bp）。
     let b = AccountId(5);
@@ -116,7 +116,7 @@ fn same_news_different_priors_revise_oppositely() {
     let b_growth_before = book_b.entry(&stock_code()).unwrap().forecast.growth_bp;
     let b_total_before = total_of(&book_b);
     assert_eq!(b_growth_before, Some(-3_000), "declining expectation");
-    assert_eq!(b_total_before, 20_219_635);
+    assert_eq!(b_total_before, 18_798_881);
 
     // 同一条新闻：FY2030（利润 +10% ⇒ 观察增长 +1000bp）。
     form_on(&sc, a, &mut state_a, 3, &mut book_a, 850, &market_view);
@@ -137,8 +137,8 @@ fn same_news_different_priors_revise_oppositely() {
 
     // 估值随修订同向移动：甲下调、乙上调。
     let (a_total_after, b_total_after) = (total_of(&book_a), total_of(&book_b));
-    assert_eq!(a_total_after, 503_863_836);
-    assert_eq!(b_total_after, 79_823_534);
+    assert_eq!(a_total_after, 470_564_325);
+    assert_eq!(b_total_after, 74_108_614);
     assert!(a_total_after < a_total_before && b_total_after > b_total_before);
 
     // 信心不受材料修订影响（只有经历事件调整）；锚与所用报告更新。
@@ -205,7 +205,7 @@ fn no_trigger_keeps_belief_bytes_unchanged() {
     assert_eq!(entry.forecast.growth_bp, Some(0));
     assert_eq!(
         total_of(&book),
-        191_648_179,
+        178_200_000,
         "same facts re-derive the same value"
     );
     assert_eq!(

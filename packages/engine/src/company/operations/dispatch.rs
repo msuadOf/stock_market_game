@@ -5,25 +5,32 @@ use crate::calendar::CivilDate;
 use crate::company::bank::BankError;
 use crate::company::industrial::IndustrialError;
 use crate::company::operations::config::IndustryBooks;
-use crate::company::operations::core::{CompanyOperations, OperatingCompany};
+use crate::company::operations::core::{CompanyOperations, OperatingCompany, PaymentFailureRecord};
 use crate::company::operations::error::OperationsError;
 use crate::company::scheduler::ScheduledAction;
 use crate::company::spec::CompanyId;
 use crate::company::ContractId;
 
 impl CompanyOperations {
-    /// 派发当日到期（(due_date, id) 稳定序）并分派到行业处理器。
-    pub(crate) fn dispatch_due_on(&mut self, date: CivilDate) -> Result<usize, OperationsError> {
+    /// 派发当日到期：先计息再处理合同，每阶段保留 (due_date, id) 稳定序。
+    pub(crate) fn dispatch_due_on(
+        &mut self,
+        date: CivilDate,
+        failures: &mut Vec<PaymentFailureRecord>,
+    ) -> Result<usize, OperationsError> {
         self.invalidate_hash_projection();
         let dues = self.scheduler.pop_due_on(date)?;
         let count = dues.len();
+        for due in &dues {
+            if let ScheduledAction::InterestAccrual { company } = &due.action {
+                self.accrue_interest_for(company, date)?;
+            }
+        }
         for due in dues {
             match due.action {
-                ScheduledAction::InterestAccrual { company } => {
-                    self.accrue_interest_for(&company, date)?;
-                }
+                ScheduledAction::InterestAccrual { .. } => {}
                 ScheduledAction::ContractMaturity { company, reference } => {
-                    self.dispatch_maturity(&company, &reference, date)?;
+                    self.dispatch_maturity(&company, &reference, date, failures)?;
                 }
             }
         }
@@ -57,12 +64,14 @@ impl CompanyOperations {
         Ok(())
     }
 
-    /// 到期引用分派：`AR:` 工商回款 / `LN:` 银行收本收息 / `DL:` 地产交付。
+    /// 到期引用分派：`AR:` 工商回款 / `LN:` 银行收本收息 / `DL:` 地产交付，
+    /// `DEBT:` 工商/地产还本付息 / `DEP:` 银行存款本息结清。
     fn dispatch_maturity(
         &mut self,
         company: &CompanyId,
         reference: &str,
         date: CivilDate,
+        failures: &mut Vec<PaymentFailureRecord>,
     ) -> Result<(), OperationsError> {
         let target = self.company_or_err(company, "maturity due")?;
         let (prefix, rest) =
@@ -72,6 +81,29 @@ impl CompanyOperations {
                     company: company.clone(),
                     reference: reference.to_string(),
                 })?;
+        if prefix == "DEBT" || prefix == "DEP" {
+            let failures_before = failures.len();
+            crate::company::operations::maturity_payments::pay_maturity(
+                &mut target.books,
+                company,
+                prefix,
+                rest,
+                date,
+                failures,
+            )?;
+            if prefix == "DEP" && failures.len() > failures_before {
+                self.scheduler
+                    .submit(crate::company::scheduler::SchedulerRequest::Due {
+                        key: format!("DEP:{}:{rest}", company.0),
+                        due_date: date.next()?,
+                        action: ScheduledAction::ContractMaturity {
+                            company: company.clone(),
+                            reference: reference.into(),
+                        },
+                    })?;
+            }
+            return Ok(());
+        }
         match (&mut target.books, prefix) {
             (IndustryBooks::Industrial(books), "AR") => {
                 let id = crate::accounting::OpenItemId(rest.to_string());

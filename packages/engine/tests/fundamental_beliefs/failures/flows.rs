@@ -4,9 +4,48 @@ use super::guards::{as_after_publication, company, fy2030_facts, neutral_assumpt
 use crate::hand::{hand_report, HandReportSpec};
 use engine::accounting::AccountingAmount;
 use engine::strategy::{
-    cash_flow, earnings_multiple, estimate_by_method, extract_annual_facts, FundamentalMethod,
-    ValuationOutcome, ValuationUnavailable,
+    cash_flow, earnings_multiple, equity_roe, estimate_by_method, extract_annual_facts,
+    FundamentalMethod, ValuationOutcome, ValuationUnavailable,
 };
+
+#[test]
+fn consolidated_cash_flow_without_parent_attribution_is_explicitly_unavailable() {
+    let facts = extract_annual_facts(
+        &hand_report(HandReportSpec {
+            consolidated: true,
+            ni_total_cents: 1_000_000,
+            ni_to_parent_cents: Some(800_000),
+            equity_to_parent_cents: 10_000_000,
+            total_equity_cents: 12_000_000,
+            opening_parent_cents: 8_000_000,
+            operating_cf_cents: 2_000_000,
+            ..HandReportSpec::default()
+        }),
+        &company(),
+        as_after_publication(),
+    )
+    .unwrap();
+    assert_eq!(
+        cash_flow(&facts, &neutral_assumptions(), 0),
+        Err(ValuationUnavailable::ConsolidatedCashFlowAttributionUnavailable)
+    );
+    assert!(earnings_multiple(&facts, &neutral_assumptions()).is_ok());
+    assert!(equity_roe(&facts, &neutral_assumptions()).is_ok());
+}
+
+#[test]
+fn consolidated_missing_parent_income_never_falls_back_to_group_income() {
+    let report = hand_report(HandReportSpec {
+        consolidated: true,
+        ni_total_cents: 1_000_000,
+        ni_to_parent_cents: None,
+        ..HandReportSpec::default()
+    });
+    assert_eq!(
+        extract_annual_facts(&report, &company(), as_after_publication()),
+        Err(ValuationUnavailable::ConsolidatedNetIncomeAttributionUnavailable)
+    );
+}
 
 /// 溢出与每股值域：类型化，绝不截断。
 #[test]
@@ -41,7 +80,7 @@ fn overflow_and_per_share_range_are_typed() {
 }
 
 /// 筹资口径拆分：利息支付 = (新借−还本) − 筹资CF 不可为负 ⇒ 负 ⇒ Undeterminable；
-/// 正常利息 ⇒ FCFE = 经营CF − capex + 净新借 − 利息（手算 10,216,933 分）。
+/// 正常利息 ⇒ FCFE = 经营CF − capex + 净新借 − 利息（逐年折现手算 9,500,000 分）。
 #[test]
 fn financing_split_undeterminable_and_valid_interest_path() {
     let undeterminable = extract_annual_facts(
@@ -72,5 +111,5 @@ fn financing_split_undeterminable_and_valid_interest_path() {
     )
     .expect("extract");
     let estimates = cash_flow(&with_interest, &neutral_assumptions(), 0).expect("available");
-    assert_eq!(estimates.central, 10_216_933);
+    assert_eq!(estimates.central, 9_500_000);
 }

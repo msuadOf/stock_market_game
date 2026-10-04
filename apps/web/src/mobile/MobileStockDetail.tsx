@@ -7,7 +7,7 @@ import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { KlineViewportControls } from "./KlineViewportControls.tsx";
-import { aggregateCandles, buildFiveLevelBook, formatTradeLots, intradayChartX, MOBILE_KLINE_DEFAULT_CAPACITY, MobileIntradayProjection, MobileKlineProjection, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, type AuctionPoint, type KlineViewportAction } from "./market-model";
+import { aggregateCandles, buildFiveLevelBook, formatTradeLots, formatTradeTime, intradayChartX, MOBILE_KLINE_DEFAULT_CAPACITY, MobileIntradayProjection, MobileKlineProjection, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -20,12 +20,12 @@ interface Props {
   code: string;
   name: string;
   market: MarketSnap;
-  minutePoints: PricePoint[];
-  auctionPoints: AuctionPoint[];
-  dailyCandles: KlinePoint[];
+  minutePoints: readonly PricePoint[];
+  auctionPoints: readonly AuctionPoint[];
+  dailyCandles: readonly KlinePoint[];
   activeDailyCandle?: KlinePoint;
   indicatorCalculator: IndicatorCalculator | null;
-  trades: TradeEvent[];
+  trades: readonly TradeEvent[];
   elapsedMinutes: number;
   totalMinutes: number;
   klineDays: number;
@@ -100,9 +100,10 @@ function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "
 
 function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
   const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
-  const { visiblePoints, visibleAuctionPoints, visibleAuctionPricePoints, scale, displayedAverage, progress, recentTrades } = projection;
+  const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress, recentTrades } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
+  const auctionSegments = projection.auctionSegments();
 
   return (
     <section
@@ -119,6 +120,7 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
           <span>最新:{yuan(market.last_price)}</span>
         </div>
         <div className="msd-intraday-chart">
+          <div className="msd-price-plot">
           <span className="msd-scale msd-scale-top-price">{scale.top.toFixed(2)}</span>
           <span className="msd-scale msd-scale-top-percent">+{scale.topPercent.toFixed(2)}%</span>
           <span className="msd-scale msd-scale-mid">0.00%</span>
@@ -130,33 +132,33 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
             <line className="msd-session-line" x1="37" x2="37" y1="0" y2="100" />
             <line className="msd-session-line" x1="58" x2="58" y1="0" y2="100" />
             <line className="msd-session-line" x1="79" x2="79" y1="0" y2="100" />
-            <polyline className="msd-auction-line" points={projection.auctionLine()} />
-            {visibleAuctionPricePoints.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: visibleAuctionPricePoints[0].time })} cy={projection.priceY(visibleAuctionPricePoints[0].value)} r="0.8" />}
+            {auctionSegments.map((segment, index) => <g key={index}>
+              <polyline className="msd-auction-line" points={segment.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${projection.priceY(point.value)}`).join(" ")} />
+              {segment.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: segment[0].time })} cy={projection.priceY(segment[0].value)} r="0.8" />}
+            </g>)}
             <polyline className="msd-average-line" points={projection.averageLine()} />
             <polyline className="msd-price-line" points={projection.continuousLine()} />
           </svg>
+          </div>
           <div className="msd-time-axis" aria-hidden="true"><span style={{ left: "0%" }}>09:15</span><span className="after-auction" style={{ left: "16%" }}>09:30</span><span style={{ left: "37%" }}>10:30</span><span className="lunch-turn" style={{ left: "58%" }}>11:30/13:00</span><span style={{ left: "79%" }}>14:00</span><span className="market-close">15:00</span></div>
         </div>
       </div>
       <FiveLevelBook market={market} />
       <div className="msd-minute-volume">
         <div className="msd-volume-meta"><b>分时量（手）⌄</b><span>量:{formatTradeLots(volumeMarks.at(-1)?.volume ?? 0)}手</span><small>{projection.clockTime}</small></div>
-        <div
+        <svg
           className="msd-minute-bars"
           aria-label="集合竞价累计量细线及连续竞价一分钟成交量细线"
           data-auction-volume-line-count={visibleAuctionPoints.length}
         >
-          <span className="msd-volume-guide" style={{ left: "16%" }} />
-          <span className="msd-volume-guide" style={{ left: "37%" }} />
-          <span className="msd-volume-guide" style={{ left: "58%" }} />
-          <span className="msd-volume-guide" style={{ left: "79%" }} />
-          {volumeMarks.map((point, index) => <i key={`${point.x}-${index}`} className={point.buy ? "rise" : "fall"} style={{ left: `${point.x}%`, height: `${point.height}%` }} />)}
-        </div>
+          {[16, 37, 58, 79].map((position) => <line key={position} className="msd-volume-guide" x1={`${position}%`} x2={`${position}%`} y1="0" y2="100%" />)}
+          {volumeMarks.map((point, index) => <rect key={`${point.x}-${index}`} className={`msd-minute-volume-mark ${point.buy ? "rise" : "fall"}`} x={`${point.x}%`} y={`${100 - point.height}%`} width={0.5} height={`${point.height}%`} fill={point.buy ? "none" : "var(--msd-fall)"} stroke={point.buy ? "var(--msd-rise)" : "none"} strokeWidth={0.125} vectorEffect="non-scaling-stroke" />)}
+        </svg>
       </div>
       <div className="msd-ticks" aria-label="逐笔成交">
         <div className="msd-ticks-head">明细⌃</div>
         {recentTrades.length === 0 ? <p>等待成交…</p> : recentTrades.map((trade) => (
-          <div className="msd-tick-row" key={trade.seq}><span>{projection.tradeTime}</span><b className={tone(trade.price - market.last_close)}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
+          <div className="msd-tick-row" key={trade.seq}><span>{formatTradeTime(trade.tick)}</span><b className={tone(trade.price - market.last_close)}>{yuan(trade.price)}</b><span>{formatTradeLots(trade.qty)}</span></div>
         ))}
       </div>
     </section>

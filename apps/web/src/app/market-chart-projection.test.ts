@@ -21,7 +21,7 @@ test("分时跨批次累计量基线、分钟替换与输入不变", { timeout: 
   owner.upsertFrames(frames.slice(1));
   assert.deepEqual(owner.pricePointsFor("600000"), [
     { time: 0, value: 12, volume: 100, buy: true },
-    { time: 1, value: 12, volume: 10, buy: true },
+    { time: 1, value: 12, volume: 70, buy: true },
   ]);
   assert.deepEqual(frames, before);
   assert.equal(owner.pricePointsFor("missing").length, 0);
@@ -55,7 +55,7 @@ test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组
   const owner = new MarketChartProjection();
   owner.installBaseline({ ...initial, snapshot, intraday: [quote(901, 100)] });
   const selected = owner.pricePointsFor("600000");
-  selected.pop();
+  assert.throws(() => { (selected as unknown as unknown[]).pop(); }, TypeError);
   assert.equal(owner.pricePointsFor("600000").length, 1);
   assert.throws(() => { owner.pricePointsFor("600000")[0].value = 99; }, TypeError);
   assert.throws(() => { (owner.history() as Record<string, unknown>)["600000"] = []; }, TypeError);
@@ -69,4 +69,76 @@ test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组
   owner.reset(snapshot);
   assert.deepEqual(owner.history(), {});
   assert.equal(owner.candlesFor("600000").length, 2);
+});
+
+test("竞价成交量不混入连续分钟量，新日只保留新日采样且方向取相邻有效价格", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  const auction = { ...quote(600, 0), continuousPoints: {}, auctionPoints: { "600000": [
+    { key: { phase_rank: 4, entity: { Stock: "600000" } as const, source: "Sealed" as const, local_event_index: 0 }, tick: 600, kind: "Completion" as const, phase: "CallAuction" as const, indicative_price: 1300, matched_volume: 100, imbalance: null },
+  ] } };
+  owner.upsertFrames([auction, quote(901, 120), quote(902, 130)]);
+  assert.deepEqual(owner.pricePointsFor("600000"), [{ time: 0, value: 12, volume: 30, buy: false }]);
+  owner.upsertFrames([quote(961, 160)]);
+  const next = quote(16201, 5);
+  owner.upsertFrames([quote(15300, 200), next, quote(16261, 8)]);
+  assert.deepEqual(owner.pricePointsFor("600000"), [
+    { time: 0, value: 12, volume: 5, buy: true },
+    { time: 1, value: 12, volume: 3, buy: true },
+  ]);
+  assert.deepEqual(owner.auctionPointsFor("600000"), []);
+});
+
+test("同分钟涨跌以最后价对前分钟价判定，不被分钟内部反弹或平价误标", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  const falling = quote(961, 120);
+  const rebound = quote(962, 130);
+  falling.continuousPoints["600000"].last_price = 1100;
+  rebound.continuousPoints["600000"].last_price = 1150;
+  owner.upsertFrames([quote(901, 100), falling, rebound]);
+  assert.deepEqual(owner.pricePointsFor("600000").at(-1), { time: 1, value: 11.5, volume: 30, buy: false });
+});
+
+test("竞价方向跳过 null 指示价，下降指示价不冒充买入方向", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  const prices = [1300, 1200, null, 1100];
+  owner.upsertFrames(prices.map((price, index) => {
+    const tick = index * 6 + 1;
+    return { ...quote(tick, 0), continuousPoints: {}, auctionPoints: { "600000": [{
+      key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
+      tick, kind: "Indication", phase: "CallAuction", indicative_price: price, matched_volume: 10, imbalance: null,
+    }] } };
+  }));
+  assert.deepEqual(owner.auctionPointsFor("600000").map((point) => point.buy), [true, false, false, false]);
+});
+
+test("同六秒竞价槽无变化不翻色刷新，槽内反弹仍与前有效槽比较", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  const auction = (tick: number, price: number): NormalizedTickFrame => ({ ...quote(tick, 0), continuousPoints: {}, auctionPoints: { "600000": [{
+    key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
+    tick, kind: "Indication", phase: "CallAuction", indicative_price: price, matched_volume: 10, imbalance: null,
+  }] } });
+  owner.upsertFrames([auction(1, 1300), auction(7, 1200)]);
+  const before = owner.auctionPointsFor("600000");
+  owner.upsertFrames([auction(8, 1200)]);
+  assert.equal(owner.auctionPointsFor("600000"), before);
+  assert.equal(owner.auctionPointsFor("600000").at(-1)!.buy, false);
+  owner.upsertFrames([auction(9, 1250)]);
+  assert.equal(owner.auctionPointsFor("600000").at(-1)!.buy, false);
+});
+
+test("未变证券的只读分时、竞价和日 K 数组保持引用", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection();
+  owner.installBaseline({ ...baseState(), intraday: [quote(901, 100)] });
+  const prices = owner.pricePointsFor("600000");
+  const auctions = owner.auctionPointsFor("600000");
+  const candles = owner.candlesFor("600000");
+  owner.upsertFrames([quote(902, 5, "000001")]);
+  owner.replaceActiveCandles(structuredClone(baseState().snapshot.active_daily_candles));
+  assert.equal(owner.pricePointsFor("600000"), prices);
+  assert.equal(owner.auctionPointsFor("600000"), auctions);
+  assert.equal(owner.candlesFor("600000"), candles);
+  owner.replaceSnapshot(structuredClone(baseState().snapshot));
+  assert.equal(owner.candlesFor("600000"), candles);
+  owner.upsertFrames([quote(902, 100)]);
+  assert.equal(owner.pricePointsFor("600000"), prices);
 });

@@ -37,6 +37,8 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
     SessionSetup {
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -479,79 +481,180 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
         .expect("玩家意图应入队成功");
 }
 
-/// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
-/// float_shares>0 + ByKind 分配 → NPC 持仓可卖 → 卖盘有货 → 撮合出 Trade。
-///
-/// 这是市场产生 Trade 断言所需的 setup（默认 sample_setup 的 float_shares=0，
-/// NPC 无仓只能挂买单、无对手盘 → 无成交；故这里单独构造一份带流通盘的 setup）。
+/// 固定种子的短成交 fixture：少量真实 NPC 提供买方，玩家开局库存来自守恒转移。
 fn active_market_setup() -> SessionSetup {
-    let mut s = sample_setup();
-    s.npcs.retail_count = 2_000;
-    s.npcs.inst_count = 5;
-    s.npcs.hot_count = 2;
-    s.stocks[0].total_shares = 10_000_000;
-    s.stocks[0].float_shares = 10_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.3,
-        inst: 0.4,
-        hot: 0.3,
+    let mut setup = sample_setup();
+    setup.npcs.retail_count = 20;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.npcs.retail_cash_median = Money::from_cents(10_000_000);
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.stocks[0].float_shares = 100_000;
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    setup.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 1.0,
+        inst: 0.0,
+        hot: 0.0,
     };
-    s
+    setup
 }
 
-/// 核心断言：new_session 后市场开始成交——actor 的 step 应广播出 Trade（成交）事件。
-///
-/// 直接驱动 SessionManager（不经 HTTP）：分配流通盘 → 订阅事件流 → 用很小的 base_ms
-/// 让 actor 快速跑 step → 应在若干 tick 内收到至少一条 `Event::Trade`（maker/taker 双方结算）。
-/// 这是真实成交广播「市场转活」的最小契约：不是只出 PriceTick，而是真的撮合成交。
+/// 真实 actor 成交广播契约：加载守恒编辑的日级开局库存，玩家卖单与真实 NPC 买单撮合。
+/// 不凭有限随机市场一定成交的假设等待，也不 mock Trade；全部推进、结算及广播均走生产路径。
 #[tokio::test]
 async fn actor_market_goes_live_produces_trade_events() {
-    let mgr = SessionManager::with_base_ms(5);
-    let id = mgr
-        .new_session(active_market_setup(), 42)
-        .expect("创建 session");
-    let handles = mgr.lookup(&id).expect("lookup 命中");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mgr = SessionManager::with_base_ms(5);
+        let id = mgr
+            .new_session(active_market_setup(), 42)
+            .expect("创建 session");
+        let handles = mgr.lookup(&id).expect("lookup 命中");
 
-    let mut rx = handles.subscribe_events();
-    handles
-        .set_speed(f64::INFINITY)
-        .await
-        .expect("活跃市场测试应能启用最快模式");
-    handles.set_running(true).await.expect("应能启动会话");
+        let mut initial =
+            engine::session::protocol::ProtocolSession::new(active_market_setup(), 42)
+                .expect("真实周末 fixture 应能创建");
+        initial
+            .end_civil_day_update()
+            .expect("周末自然日应成功日结");
+        let mut slot = initial.save().expect("成功自然日日结应能生成公共存档");
+        assert_eq!(slot.snapshot.tick, 0, "周末 fixture 不得运行任何市场 tick");
+        assert!(slot.resting_orders.values().all(Vec::is_empty));
+        assert!(slot.auction_orders.values().all(Vec::is_empty));
+        assert!(slot.filled_orders.values().all(Vec::is_empty));
+        assert!(slot.runtime_state.live_envelopes.is_empty());
+        assert!(slot.parent_orders.values().all(BTreeMap::is_empty));
+        assert!(slot.pending_player.is_empty());
+        assert!(slot.npc_order_lifecycles.is_empty());
+        // 可编辑存档的受控开局条件：仅丢弃未受理的初始 NPC 输入，不冒充成交或撤单；
+        // 已受理委托为空，后续买单必须由真实 NPC 观察重新生成。
+        let pending_npc = slot.pending_npc.as_mut().expect("开局应保留当前观察截点");
+        pending_npc.intents.clear();
+        pending_npc.dependencies.clear();
+        let code = StockCode("600101".to_string());
+        let totals = |slot: &engine::session::SaveSlot| {
+            slot.snapshot
+                .accounts
+                .values()
+                .fold((0_i128, 0_u64, 0_i128), |total, account| {
+                    let position = account.positions.get(&code);
+                    (
+                        total.0 + i128::from(account.cash.cents()),
+                        total.1 + position.map_or(0, |position| u64::from(position.qty)),
+                        total.2
+                            + position.map_or(0, |position| i128::from(position.invested_cents)),
+                    )
+                })
+        };
+        let before = totals(&slot);
+        let donor = slot
+            .snapshot
+            .accounts
+            .iter_mut()
+            .filter(|(owner, _)| **owner != AccountId(0))
+            .find_map(|(_, account)| {
+                account
+                    .positions
+                    .get_mut(&code)
+                    .filter(|position| position.qty >= 100)
+            })
+            .expect("真实初始流通盘应提供 100 股 fixture 库存");
+        assert_eq!(donor.t1_locked, 0);
+        assert_eq!(donor.recovered_cents, 0);
+        let invested_cents = slot.setup.stocks[0].initial_price.cents() * 100;
+        donor.qty -= 100;
+        donor.invested_cents -= invested_cents;
+        slot.snapshot
+            .accounts
+            .get_mut(&AccountId(0))
+            .expect("玩家账户应存在")
+            .positions
+            .insert(
+                code.clone(),
+                engine::PositionSnap {
+                    qty: 100,
+                    t1_locked: 0,
+                    invested_cents,
+                    recovered_cents: 0,
+                },
+            );
+        assert_eq!(
+            totals(&slot),
+            before,
+            "开局库存转移必须保持全户现金、股份与投入成本守恒，不冒充成交"
+        );
+        handles
+            .restore(slot)
+            .await
+            .expect("当前完整日级存档应恢复开局库存");
 
-    // 收集事件，最多等 800 次 50ms 超时窗口（≈40s 上限，给慢机足够余量）。
-    let mut got_trade = false;
-    for _ in 0..800 {
-        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
-            Ok(Ok(update)) => {
-                if let Some(engine::Event::Trade {
-                    seq,
-                    code,
-                    qty,
-                    maker,
-                    taker,
-                    ..
-                }) = protocol_events(&update)
-                    .iter()
-                    .find(|ev| matches!(ev, engine::Event::Trade { .. }))
-                {
-                    assert!(*seq > 0, "Trade 必须带正 seq");
-                    assert!(*qty > 0, "Trade 成交量必须 >0");
-                    assert_ne!(*maker, *taker, "Trade 的 maker/taker 必须是不同账户");
-                    assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
-                    got_trade = true;
-                    break;
-                }
+        let mut rx = handles.subscribe_events();
+        handles.set_running(true).await.expect("应能推进周末自然日");
+        loop {
+            let update = rx.recv().await.expect("自然日事件通道应保持有效");
+            assert!(
+                update.failure.is_none(),
+                "周末推进不得失败：{:?}",
+                update.failure
+            );
+            if update.civil_date == "2030-01-07" {
+                break;
             }
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
-            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
-            Err(_) => continue, // 单次超时，继续等下一个事件
         }
-    }
-    assert!(
-        got_trade,
-        "分配流通盘后，actor 应在若干 step 内广播出至少一条 Trade 事件（市场转活）"
-    );
+        handles
+            .enqueue(Intent::PlaceLimit {
+                code: StockCode("600101".to_string()),
+                side: Side::Sell,
+                price: engine::LimitPrice::Lowest,
+                qty: 100,
+            })
+            .await
+            .expect("玩家真实卖单应入队成功");
+        handles
+            .set_speed(f64::INFINITY)
+            .await
+            .expect("活跃市场测试应能启用最快模式");
+        handles.set_running(true).await.expect("应能启动会话");
+
+        loop {
+            match rx.recv().await {
+                Ok(update) => {
+                    assert!(
+                        update.failure.is_none(),
+                        "真实成交 fixture 不得出现宿主失败：{:?}",
+                        update.failure
+                    );
+                    if let Some(engine::Event::Trade {
+                        seq,
+                        code,
+                        qty,
+                        maker,
+                        taker,
+                        ..
+                    }) = protocol_events(&update)
+                        .iter()
+                        .find(|ev| matches!(ev, engine::Event::Trade { maker, taker, .. } if *maker == AccountId(0) || *taker == AccountId(0)))
+                    {
+                        assert!(*seq > 0, "Trade 必须带正 seq");
+                        assert!(*qty > 0, "Trade 成交量必须 >0");
+                        assert_ne!(*maker, *taker, "Trade 的 maker/taker 必须是不同账户");
+                        assert!(
+                            *maker == AccountId(0) || *taker == AccountId(0),
+                            "真实成交必须包含提供开局库存卖单的玩家"
+                        );
+                        assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
+                        handles
+                            .set_running(false)
+                            .await
+                            .expect("成交后应能暂停会话");
+                        return;
+                    }
+                }
+                Err(error) => panic!("真实成交事件通道不得丢失或关闭：{error}"),
+            }
+        }
+    })
+    .await
+    .expect("真实 NPC 买方与玩家开局库存卖单应在共享 2 秒 deadline 内撮合并广播 Trade");
 }
 
 #[tokio::test]

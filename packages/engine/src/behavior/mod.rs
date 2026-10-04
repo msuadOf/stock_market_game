@@ -9,6 +9,7 @@ use crate::observation::{
 };
 use crate::strategy::{MarketView, RetailStyle, Rng, SelfView, StrategyData};
 use crate::{RetailExperienceState, StockCode};
+pub(crate) use heuristics::apply_personal_analysis;
 
 /// 一个 tick 内可由所有 NPC 共享的只读市场背景。
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +32,7 @@ pub enum PositionAction {
 /// 从实际输入生成的主要判断理由，不是事后编造的心理描述。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecisionReason {
+    PersonalAnalysis,
     PositionRisk,
     TakeProfit,
     Momentum,

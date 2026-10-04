@@ -4,6 +4,8 @@ import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { parseEngineUpdate } from "./protocol/parse.ts";
 import { canonicalJson } from "./protocol/canonical.ts";
 import { frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
+import { buildErrorFeedback } from "../app/error-details.ts";
+import type { HostFailure } from "./host-update.ts";
 
 function baseline() {
   const parsed = parseEngineUpdate(tickBatch([frame(0, 0, [])], snapshot(0, 0)));
@@ -20,6 +22,52 @@ function baseline() {
     publicPublicationIds: [],
   };
 }
+
+test("ProtocolCoordinator cursor 错误保留已知 actual/expected generation、tick 和 seq", { timeout: 10000 }, () => {
+  let context: unknown;
+  const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: (failure) => { context = failure.context; } });
+  coordinator.accept(baseline());
+  coordinator.accept({ type: "protocol", generation: "generation-2", update: tickBatch([frame(3, 7, ["600000"])], snapshot(3, 8)), civilDate: null, revision: null });
+  assert.deepEqual(context, {
+    actual: { generation: "generation-2", kind: "TickBatch", tickFrom: 3, tickTo: 3, seqFrom: 7, seqTo: 8 },
+    expected: { generation: "generation-1", tickFrom: 1, seqFrom: 0 },
+    cursor: { generation: "generation-1", tick: 0, seq: 0 },
+  });
+});
+
+test("ProtocolCoordinator 真实复制反馈保留公开游标且未知或双 variant 不猜 expected tick", { timeout: 10000 }, () => {
+  let failure: HostFailure | undefined;
+  const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: (value) => { failure = value; } });
+  coordinator.accept({ ...baseline(), generation: "1" });
+  coordinator.accept({ type: "protocol", generation: "2", update: tickBatch([frame(3, 7, ["600000"])], snapshot(3, 8)), civilDate: null, revision: null });
+  assert.ok(failure);
+  const text = buildErrorFeedback({ ...failure, context: { ...(failure.context as object), password: "PRIVATE_PASSWORD", session_id: "PRIVATE_SESSION" } });
+  for (const field of ["tickFrom", "tickTo", "seqFrom", "seqTo", "cursor", "generation", "TickBatch"]) assert.ok(text.includes(field), field);
+  assert.match(text, /"tickFrom": 3/);
+  assert.match(text, /"seqFrom": 7/);
+  assert.doesNotMatch(text, /PRIVATE_PASSWORD|PRIVATE_SESSION/);
+  for (const update of [{ unknown: true }, { TickBatch: {}, CivilUpdate: {} }]) {
+    coordinator.accept({ ...baseline(), generation: "1" });
+    coordinator.accept({ type: "protocol", generation: "2", update, civilDate: null, revision: null });
+    const context = failure.context as { actual: Record<string, unknown>; expected: Record<string, unknown> };
+    assert.equal(Object.hasOwn(context.expected, "tickFrom"), false);
+    assert.equal(Object.hasOwn(context.actual, "kind"), false);
+  }
+});
+
+test("ProtocolCoordinator onApplied 抛错时反馈引用本次输入 cursor，不捏造下一包 expected", { timeout: 10000 }, () => {
+  let failure: HostFailure | undefined;
+  const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => { throw new Error("consumer 处理失败"); }, onFailure: (value) => { failure = value; } });
+  coordinator.accept({ ...baseline(), generation: "1" });
+  assert.equal(coordinator.accept({ type: "protocol", generation: "1", update: tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)), civilDate: null, revision: null }), false);
+  assert.ok(failure);
+  const context = failure.context as { expected: unknown; cursor: unknown };
+  assert.deepEqual(context.expected, { generation: "1", tickFrom: 1, seqFrom: 0 });
+  assert.deepEqual(context.cursor, { generation: "1", tick: 0, seq: 0 });
+  const feedback = buildErrorFeedback(failure);
+  assert.match(feedback, /"expected": \{\s*"generation": "1",\s*"seqFrom": 0,\s*"tickFrom": 1/);
+  assert.doesNotMatch(feedback, /"tickFrom": 2/);
+});
 
 test("Given a three-frame protocol batch, when the coordinator accepts it, then it publishes one reduction with every frame", () => {
   const reductions: number[] = [];
@@ -72,6 +120,9 @@ test("Given malformed or stale-generation protocol updates, when accepted, then 
   const initial = coordinator.status();
 
   coordinator.accept({ type: "protocol", generation: "generation-0", update: {}, civilDate: null, revision: null });
+  assert.equal(coordinator.accept({ type: "protocol", generation: "generation-1", update: { Wrong: {} }, civilDate: null, revision: null }), false);
+  assert.equal(failures.length, 1, "fatal 后禁止消费下一提交或覆盖原错误");
+  coordinator.accept(baseline());
   coordinator.accept({ type: "protocol", generation: "generation-1", update: { Wrong: {} }, civilDate: null, revision: null });
 
   assert.equal(initial.kind, "ready");

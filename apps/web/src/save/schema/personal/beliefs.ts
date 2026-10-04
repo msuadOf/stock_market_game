@@ -16,7 +16,7 @@ export type ForecastState = { readonly growth_bp: number | null; readonly basis:
 export type ForecastBasis = { readonly InitialTwoYear: { readonly observed_bp: number } } | "InitialWithoutHistory" | { readonly Revised: { readonly observed_bp: number } } | "Degenerate"
 export type ValuationOutcome = { readonly Available: { readonly total_equity_estimate: string; readonly per_share: PerShareRange } } | { readonly Unavailable: { readonly reason: ValuationUnavailable } }
 export type PerShareRange = { readonly pessimistic: number; readonly optimistic: number }
-export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: string; readonly report: string } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
+export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: string; readonly report: string } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
 export type CauseRecord = { readonly cause: BeliefCause; readonly as_of_trading_day: number }
 export type BeliefCause = { readonly NewMaterial: { readonly report: number } } | { readonly Correction: { readonly report: number } } | { readonly CreditDefault: { readonly announcement: number } } | "HorizonExpired" | { readonly ExperienceFailure: { readonly order: number } } | { readonly ProfitableExit: { readonly order: number } }
 
@@ -24,7 +24,7 @@ const RETAIL = ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"]
 const INSTITUTION = ["DeepValue", "Growth", "Balanced", "Defensive", "ActiveTrader"] as const
 const HOT = ["Momentum", "Reversal"] as const
 const METHODS = ["earnings_multiple", "cash_flow", "equity_roe"] as const
-const UNAVAILABLE_UNITS = ["MethodDisabled", "NonPositiveNetIncome", "NonPositiveBookEquity", "NonPositiveAverageEquity", "NonPositiveValuationEstimate", "GrowthPriorUnavailable", "FinancingSplitUndeterminable", "ZeroIssuedShares", "PerShareOutOfRange"] as const
+const UNAVAILABLE_UNITS = ["MethodDisabled", "NonPositiveNetIncome", "NonPositiveBookEquity", "NonPositiveAverageEquity", "NonPositiveValuationEstimate", "GrowthPriorUnavailable", "FinancingSplitUndeterminable", "ConsolidatedCashFlowAttributionUnavailable", "ConsolidatedNetIncomeAttributionUnavailable", "ZeroIssuedShares", "PerShareOutOfRange"] as const
 
 export function parseBeliefBooks(value: unknown, path = "belief_books"): StringMap<BeliefBook> {
   return map(value, path, accountKey, parseBeliefBook)
@@ -33,6 +33,9 @@ export function parseBeliefBooks(value: unknown, path = "belief_books"): StringM
 export function parseBeliefBook(value: unknown, path: string): BeliefBook {
   const parsed = record(value, path)
   exact(parsed, ["npc", "profile", "analysis", "assumptions", "entries", "experience", "institution_policy", "institution_account_risk_paused"], path)
+  const profile = parseProfile(parsed.profile, `${path}.profile`)
+  if ("Retail" in profile && parsed.institution_policy !== null) throw new SaveSchemaError(`${path}.institution_policy`, "Retail 不得携带 Institution policy")
+  if ("Retail" in profile && parsed.institution_account_risk_paused !== false) throw new SaveSchemaError(`${path}.institution_account_risk_paused`, "Retail 不得携带 Institution 账户暂停状态")
   return { npc: integer(parsed.npc, `${path}.npc`, 0), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
 }
 
@@ -102,6 +105,8 @@ function parseUnavailable(value: unknown, path: string): ValuationUnavailable {
       case "NonPositiveValuationEstimate": return "NonPositiveValuationEstimate"
       case "GrowthPriorUnavailable": return "GrowthPriorUnavailable"
       case "FinancingSplitUndeterminable": return "FinancingSplitUndeterminable"
+      case "ConsolidatedCashFlowAttributionUnavailable": return "ConsolidatedCashFlowAttributionUnavailable"
+      case "ConsolidatedNetIncomeAttributionUnavailable": return "ConsolidatedNetIncomeAttributionUnavailable"
       case "ZeroIssuedShares": return "ZeroIssuedShares"
       case "PerShareOutOfRange": return "PerShareOutOfRange"
     }

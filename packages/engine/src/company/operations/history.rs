@@ -49,6 +49,7 @@ pub fn generate_history(
     let end = start_date.prev()?;
     let mut ops = CompanyOperations::build(config, start, true)?;
     ops.submit_rolling_interest(start)?;
+    ops.schedule_debt_maturities(start)?;
     let mut cursor = start;
     while cursor <= end {
         ops.advance_civil_day(cursor)?;

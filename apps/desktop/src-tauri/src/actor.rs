@@ -42,7 +42,6 @@ pub const BASE_TICK_MS: u64 = 1000;
 
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
-#[cfg(test)]
 const UI_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
@@ -233,7 +232,7 @@ impl DesktopPacing {
     }
 }
 
-/// 发给 actor 的命令。每条都自带 `oneshot` 回执（`SetSpeed` 除外：fire-and-forget）。
+/// 发给 actor 的命令；控制回执表示 actor 已应用，不只是进入 mpsc。
 ///
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
@@ -245,9 +244,7 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 取完整快照。
-    Snapshot {
-        reply: oneshot::Sender<Snapshot>,
-    },
+    Snapshot { reply: oneshot::Sender<Snapshot> },
     PlayerWorkingOrders {
         generation: u64,
         reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
@@ -257,9 +254,7 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
     },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
-    RuntimeSnapshot {
-        reply: oneshot::Sender<Snapshot>,
-    },
+    RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
     CivilDate {
         generation: u64,
         reply: oneshot::Sender<Result<GenerationResponse<CivilDate>, SessionError>>,
@@ -310,16 +305,19 @@ pub enum SessionCommand {
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed {
         speed: f64,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 暂停或恢复步进，保留会话状态与事件订阅。
     SetRunning {
         running: bool,
+        reply: oneshot::Sender<()>,
     },
     SetPausePreferences {
         preferences: PausePreferences,
+        reply: oneshot::Sender<()>,
     },
     /// 永久结束 actor；用于页面卸载/应用退出释放资源。
-    Shutdown,
+    Shutdown { reply: oneshot::Sender<()> },
 }
 
 /// 一个 session 的对外句柄：命令发送端（克隆廉价）。
@@ -554,32 +552,43 @@ impl SessionHandles {
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
-    /// 改变倍速。fire-and-forget 经 mpsc 保证顺序；actor 已关闭则 `ActorGone`（不静默）。
+    /// 改变倍速并等待 actor 应用；actor 已关闭则 `ActorGone`。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
+        let (reply, applied) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::SetSpeed { speed })
-            .map_err(|_| SendCommandError::ActorGone)
+            .send(SessionCommand::SetSpeed { speed, reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        applied
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn set_running(&self, running: bool) -> Result<(), SendCommandError> {
+        let (reply, applied) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::SetRunning { running })
-            .map_err(|_| SendCommandError::ActorGone)
+            .send(SessionCommand::SetRunning { running, reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        applied.await.map_err(|_| SendCommandError::ActorGone)
     }
 
     pub async fn shutdown(&self) -> Result<(), SendCommandError> {
+        let (reply, applied) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::Shutdown)
-            .map_err(|_| SendCommandError::ActorGone)
+            .send(SessionCommand::Shutdown { reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        applied.await.map_err(|_| SendCommandError::ActorGone)
     }
 
     pub async fn set_pause_preferences(
         &self,
         preferences: PausePreferences,
     ) -> Result<(), SendCommandError> {
+        let (reply, applied) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::SetPausePreferences { preferences })
-            .map_err(|_| SendCommandError::ActorGone)
+            .send(SessionCommand::SetPausePreferences { preferences, reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        applied.await.map_err(|_| SendCommandError::ActorGone)
     }
 }
 
@@ -641,7 +650,6 @@ impl SessionManager {
             cmd_rx,
             session_id: session_id.clone(),
             app,
-            pending_fixed_events: Vec::new(),
             last_fixed_publish: Instant::now(),
             timeline_id: session_id.clone(),
             generation: 1,
@@ -678,8 +686,6 @@ struct SessionActor<R: Runtime> {
     session_id: String,
     /// Tauri 应用句柄：emit 事件给前端窗口。
     app: AppHandle<R>,
-    /// 固定高倍速在 Rust 侧聚合到 16ms 再跨 IPC，避免每 tick 唤醒 WebView。
-    pending_fixed_events: Vec<engine::Event>,
     last_fixed_publish: Instant,
     /// 每次成功读档都会更换；前端据此拒绝晚到的旧时间线 IPC。
     timeline_id: String,
@@ -721,7 +727,6 @@ impl ActorHarness {
             cmd_rx,
             session_id: session_id.to_owned(),
             app: app.handle().clone(),
-            pending_fixed_events: Vec::new(),
             last_fixed_publish: Instant::now(),
             timeline_id: timeline_id.to_owned(),
             generation: 1,
@@ -783,9 +788,6 @@ impl<R: Runtime> SessionActor<R> {
     /// - `cmd_rx` 关闭（所有句柄 drop）→ 退出，task 结束。
     async fn run(mut self) {
         let mut interval = self.fresh_interval();
-        // 跳过首个「立即到期」tick：开局不立刻 step，留给前端连监听对齐基线。
-        // 事件本身带 seq，断线重连靠 snapshot+seq 续传，不依赖开局时序。
-        let _ = interval.tick().await;
 
         loop {
             tokio::select! {
@@ -794,16 +796,13 @@ impl<R: Runtime> SessionActor<R> {
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
                         Some(c) => {
-                            // 命令与 step 严格排序；先发布命令前已经产生的事件，避免读档、
-                            // 暂停或切速让不足 16ms 的尾批次滞留或跨越新基线。
-                            self.flush_fixed_events();
-                            let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
-                            let shutting_down = matches!(c, SessionCommand::Shutdown);
+                            let pacing_changed = matches!(c, SessionCommand::SetSpeed { .. } | SessionCommand::SetRunning { .. });
+                            let shutting_down = matches!(c, SessionCommand::Shutdown { .. });
                             self.handle_command(c).await;
                             if shutting_down {
                                 break;
                             }
-                            if speed_changed {
+                            if pacing_changed {
                                 interval = self.fresh_interval();
                             }
                         }
@@ -824,7 +823,8 @@ impl<R: Runtime> SessionActor<R> {
 
     /// 构造固定倍率计时器（Skip 积压补发）。
     fn fresh_interval(&self) -> tokio::time::Interval {
-        let mut i = tokio::time::interval(self.pacing.tick_interval());
+        let period = self.pacing.tick_interval().max(UI_PUBLISH_INTERVAL);
+        let mut i = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         i
     }
@@ -834,7 +834,13 @@ impl<R: Runtime> SessionActor<R> {
     /// emit 失败（窗口已关闭等）不算致命——actor 继续；下一 tick 自然不再有消费者。
     /// 这里不 panic：游戏循环与 UI 解耦，UI 关闭应允许循环自然结束（cmd_tx drop 后退出）。
     async fn tick_and_emit(&mut self) {
-        self.run_cycle(1);
+        let interval = self.pacing.tick_interval();
+        let due = (self.last_fixed_publish.elapsed().as_nanos() / interval.as_nanos())
+            .clamp(1, FASTEST_BATCH_MAX_STEPS as u128) as usize;
+        let before = self.game.tick();
+        self.run_cycle(due);
+        let completed = self.game.tick().saturating_sub(before);
+        self.last_fixed_publish += interval.saturating_mul(completed as u32);
     }
 
     fn run_cycle(&mut self, limit: usize) {
@@ -889,10 +895,6 @@ impl<R: Runtime> SessionActor<R> {
 
     async fn run_fastest_batch(&mut self) {
         self.run_cycle(FASTEST_BATCH_MAX_STEPS);
-    }
-
-    fn flush_fixed_events(&mut self) {
-        self.pending_fixed_events.clear();
     }
 
     fn rollback_cycle(
@@ -1092,31 +1094,34 @@ impl<R: Runtime> SessionActor<R> {
                 }
                 let _ = reply.send(result);
             }
-            SessionCommand::SetSpeed { speed } => {
-                self.apply_speed(speed);
+            SessionCommand::SetSpeed { speed, reply } => {
+                let result = self.apply_speed(speed);
+                let _ = reply.send(result);
             }
-            SessionCommand::SetRunning { running } => {
+            SessionCommand::SetRunning { running, reply } => {
                 self.pacing.set_running(running, self.game.tick());
+                self.last_fixed_publish = Instant::now();
+                let _ = reply.send(());
             }
-            SessionCommand::SetPausePreferences { preferences } => {
+            SessionCommand::SetPausePreferences { preferences, reply } => {
                 self.pause_preferences = preferences;
+                let _ = reply.send(());
             }
-            SessionCommand::Shutdown => {}
+            SessionCommand::Shutdown { reply } => {
+                let _ = reply.send(());
+            }
         }
     }
 
     /// 应用新倍速：固定倍率使用精确 Duration；Fastest 切到 CPU 时间片 tight-loop。
-    fn apply_speed(&mut self, speed: f64) {
+    fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
         if !self.pacing.apply_speed(speed, self.game.tick()) {
-            eprintln!(
-                "[session {}] 非法速度被忽略（须为有限正数）：{speed}",
-                self.session_id
-            );
-            return;
+            return Err(SessionError::InvalidSave(format!("非法 speed: {speed}")));
         }
         if !self.pacing.is_fastest() {
             self.last_fixed_publish = Instant::now();
         }
+        Ok(())
     }
 
     fn generation_response<T>(
@@ -1262,6 +1267,8 @@ mod tests {
 
     pub(super) fn diagnostic_setup() -> SessionSetup {
         SessionSetup {
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),
                 exchange: StockExchange::Shanghai,

@@ -423,6 +423,113 @@ async fn ws_rejects_missing_or_query_string_credentials() {
     .await;
 }
 
+#[tokio::test]
+async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
+    ServerFixture::run(1_000, |fixture| async move {
+        let (id, handles) = fixture.session(47);
+        let encoded: String = handles
+            .session_token
+            .bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        for credential in ["00", "not-hex", "", &encoded] {
+            let request = WsRequest::builder()
+                .method("GET")
+                .uri(format!("{}/ws?session_id={id}", fixture.ws_url()))
+                .header("Host", "127.0.0.1")
+                .header("Upgrade", "websocket")
+                .header("Connection", "upgrade")
+                .header("Sec-WebSocket-Key", generate_key())
+                .header("Sec-WebSocket-Version", "13")
+                .header(
+                    "Sec-WebSocket-Protocol",
+                    format!("stock-game, stock-game.auth.{credential}"),
+                )
+                .body(())
+                .unwrap();
+            let result = tokio_tungstenite::connect_async(request).await;
+            if credential == encoded {
+                let (mut socket, response) =
+                    result.expect("浏览器可发送的 subprotocol 凭据应完成授权握手");
+                assert_eq!(response.headers()["sec-websocket-protocol"], "stock-game");
+                let baseline = socket.next().await.unwrap().unwrap().into_text().unwrap();
+                assert!(serde_json::from_str::<serde_json::Value>(&baseline)
+                    .unwrap()
+                    .get("Baseline")
+                    .is_some());
+                socket.close(None).await.unwrap();
+            } else {
+                assert!(result.is_err(), "非法 subprotocol 凭据不得开放私有会话");
+            }
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn ws_closes_when_client_does_not_answer_ping_before_deadline() {
+    ServerFixture::run(1_000, |fixture| async move {
+        let (id, handles) = fixture.session(48);
+        let request = WsRequest::builder()
+            .method("GET")
+            .uri(format!("{}/ws?session_id={id}", fixture.ws_url()))
+            .header("authorization", format!("Bearer {}", handles.session_token))
+            .header("Host", "127.0.0.1")
+            .header("Upgrade", "websocket")
+            .header("Connection", "upgrade")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .unwrap();
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let _baseline = socket.next().await.unwrap().unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
+        let ping = tokio::time::timeout(Duration::from_millis(500), socket.next())
+            .await
+            .expect("虚拟 30 秒后应已发送 Ping")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            ping,
+            tokio_tungstenite::tungstenite::Message::Ping(_)
+        ));
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
+        let close = tokio::time::timeout(Duration::from_millis(500), socket.next())
+            .await
+            .expect("Pong 截止后应已终止连接");
+        use tokio_tungstenite::tungstenite::{error::ProtocolError, Error, Message};
+        match close {
+            None
+            | Some(Ok(Message::Close(_)))
+            | Some(Err(
+                Error::ConnectionClosed
+                | Error::AlreadyClosed
+                | Error::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+            )) => {}
+            Some(Err(Error::Io(error))) => assert!(matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::NotConnected
+            )),
+            other => panic!("Pong 截止后应终止连接，实际为 {other:?}"),
+        }
+    })
+    .await;
+}
+
 /// 手工性能探针：release 模式下分别跑 push / pull，并输出服务端权威实际倍率。
 /// 不设置机器相关的胜负阈值；结果用于同一台机器、同一提交上的相对比较。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

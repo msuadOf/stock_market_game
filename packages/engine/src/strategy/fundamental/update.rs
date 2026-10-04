@@ -6,7 +6,7 @@ use crate::account::StockCode;
 use crate::accounting::reports::ReportKind;
 use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
-use crate::information::{PublicationId, PublishedReport};
+use crate::information::{NpcObservationContext, PublicationId, PublishedReport};
 use crate::orderbook::OrderId;
 
 use super::facts::{extract_annual_facts, AnnualFacts};
@@ -20,7 +20,7 @@ use crate::strategy::beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInput
 /// 信念更新因果（唯一变更入口；携带事件/公布 id 供追溯）。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeliefCause {
-    /// 新获知的年报材料：λ 修订增长 + 按新事实重估。
+    /// 新获知的定期材料：年报更新全年基准，中期以同范围同比修订增长。
     NewMaterial { report: PublicationId },
     /// 会计更正：直接重估（丢弃旧预测，绕过 λ 混合；记录公布 id）。
     Correction { report: PublicationId },
@@ -48,6 +48,36 @@ pub(crate) const PROFITABLE_EXIT_CONFIDENCE_DELTA_BP: i32 = 500;
 /// 信心上界（0..=10000bp；饱和是评分定义的一部分，
 /// 不是掩盖异常的 clamp）。
 pub(crate) const CONFIDENCE_MAX_BP: u16 = 10_000;
+
+pub(crate) fn own_known_report_priority(report: &PublishedReport) -> (AccountingPeriod, bool, u32) {
+    (
+        report.reports.period,
+        matches!(
+            report.reports.scope,
+            crate::accounting::consolidation::ScopeId::Consolidated(_)
+        ),
+        report.reports.version.sequence,
+    )
+}
+
+pub(crate) fn preferred_own_report(
+    ctx: &NpcObservationContext<'_, impl Sized>,
+    company: &crate::company::CompanyId,
+) -> Result<Option<PublicationId>, BeliefError> {
+    let mut best = None;
+    for record in ctx
+        .acquired_reports()
+        .into_iter()
+        .filter(|record| &record.company == company)
+    {
+        let report = ctx.report(record.id)?;
+        let key = own_known_report_priority(report);
+        if best.as_ref().is_none_or(|(_, priority)| key > *priority) {
+            best = Some((record.id, key));
+        }
+    }
+    Ok(best.map(|(id, _)| id))
+}
 
 /// 信心调整（界限内饱和）。
 pub(crate) fn apply_confidence_delta(current_bp: u16, delta_bp: i32) -> u16 {
@@ -88,8 +118,8 @@ impl BeliefBook {
         Ok(())
     }
 
-    /// 年报材料：`direct = false` ⇒ λ 修订 + 重估；`direct = true`（更正）⇒
-    /// 直接重估（丢弃旧预测、信心重置为初始规则）。
+    /// 定期材料：年报更新全年事实，中期补充同 scope 的年度基准而不年化。
+    /// `direct = true`（更正）直接重估，丢弃旧预测并重置信心。
     pub(crate) fn apply_material(
         &mut self,
         stock: &StockCode,
@@ -99,10 +129,86 @@ impl BeliefBook {
         direct: bool,
     ) -> Result<(), BeliefError> {
         let report = inputs.ctx.report(report_id)?;
+        if matches!(
+            report.reports.kind,
+            ReportKind::Quarter | ReportKind::HalfYear
+        ) {
+            return self.apply_interim_material(stock, cause, report_id, inputs, direct);
+        }
         self.ensure_annual_for(report_id, report, inputs)?;
+        if !direct
+            && self
+                .entries
+                .get(stock)
+                .is_some_and(|entry| entry.used_report_ids.contains(&report_id))
+        {
+            return Ok(());
+        }
         let observed_at = observed_at_of(inputs, report_id);
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
         self.write_derived_entry(stock, cause, report_id, facts, inputs, direct);
+        Ok(())
+    }
+
+    fn apply_interim_material(
+        &mut self,
+        stock: &StockCode,
+        cause: BeliefCause,
+        report_id: PublicationId,
+        inputs: &BeliefInputs<'_, impl Sized>,
+        direct: bool,
+    ) -> Result<(), BeliefError> {
+        let report = inputs.ctx.report(report_id)?;
+        let observation = super::facts::extract_interim_growth(
+            report,
+            &inputs.company,
+            observed_at_of(inputs, report_id),
+        )?;
+        let (annual_id, annual_at) = self
+            .latest_own_annual_for_scope(inputs, Some(&report.reports.scope))?
+            .ok_or(BeliefError::NoOwnAnnualMaterial)?;
+        let facts =
+            extract_annual_facts(inputs.ctx.report(annual_id)?, &inputs.company, annual_at)?;
+        if !self.entries.contains_key(stock) {
+            self.write_derived_entry(
+                stock,
+                cause.clone(),
+                annual_id,
+                facts.clone(),
+                inputs,
+                false,
+            );
+        }
+        let entry = self.entries.get(stock).ok_or(BeliefError::NoBeliefEntry)?;
+        if entry.used_report_ids.contains(&report_id) {
+            return Ok(());
+        }
+        let forecast = if direct {
+            initial_forecast(observation, self.assumptions.growth_deviation_bp)
+        } else {
+            revise_forecast(
+                &entry.forecast,
+                observation,
+                revision_lambda_bp(capability_center(&self.profile)),
+                self.assumptions.growth_deviation_bp,
+            )
+        };
+        let valuation = self.valuation_for(&facts, forecast.growth_bp, inputs);
+        let entry = self
+            .entries
+            .get_mut(stock)
+            .ok_or(BeliefError::NoBeliefEntry)?;
+        entry.forecast = forecast;
+        if direct {
+            entry.confidence_bp = forecast.initial_confidence_bp();
+        }
+        entry.valuation = valuation;
+        entry.used_report_ids = vec![annual_id, report_id];
+        entry.anchor_trading_day = inputs.as_of_trading_day;
+        entry.last_cause = Some(CauseRecord {
+            cause,
+            as_of_trading_day: inputs.as_of_trading_day,
+        });
         Ok(())
     }
 
@@ -148,8 +254,18 @@ impl BeliefBook {
                 remaining_trading_days: remaining,
             });
         }
+        let baseline_scope = entry
+            .used_report_ids
+            .first()
+            .map(|report| {
+                inputs
+                    .ctx
+                    .report(*report)
+                    .map(|report| report.reports.scope.clone())
+            })
+            .transpose()?;
         let (report_id, observed_at) = self
-            .latest_own_annual(inputs)?
+            .latest_own_annual_for_scope(inputs, baseline_scope.as_ref())?
             .ok_or(BeliefError::NoOwnAnnualMaterial)?;
         let report = inputs.ctx.report(report_id)?;
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
@@ -159,7 +275,9 @@ impl BeliefBook {
             .get_mut(stock)
             .ok_or(BeliefError::NoBeliefEntry)?;
         entry.valuation = valuation;
-        entry.used_report_ids = vec![report_id];
+        if entry.used_report_ids.first() != Some(&report_id) {
+            entry.used_report_ids = vec![report_id];
+        }
         entry.anchor_trading_day = inputs.as_of_trading_day;
         entry.last_cause = Some(CauseRecord {
             cause,
@@ -265,7 +383,15 @@ impl BeliefBook {
         &self,
         inputs: &BeliefInputs<'_, impl Sized>,
     ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
-        let mut best: Option<(PublicationId, CivilInstant, (AccountingPeriod, u32))> = None;
+        self.latest_own_annual_for_scope(inputs, None)
+    }
+
+    fn latest_own_annual_for_scope(
+        &self,
+        inputs: &BeliefInputs<'_, impl Sized>,
+        scope: Option<&crate::accounting::consolidation::ScopeId>,
+    ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
+        let mut best: Option<(PublicationId, CivilInstant, (AccountingPeriod, bool, u32))> = None;
         for entry in inputs.ctx.acquired_reports() {
             if entry.company != inputs.company {
                 continue;
@@ -274,7 +400,10 @@ impl BeliefBook {
             if report.reports.kind != ReportKind::Annual {
                 continue;
             }
-            let key = (report.reports.period, report.reports.version.sequence);
+            if scope.is_some_and(|scope| scope != &report.reports.scope) {
+                continue;
+            }
+            let key = own_known_report_priority(report);
             if best.as_ref().is_none_or(|(_, _, best_key)| key > *best_key) {
                 best = Some((entry.id, entry.observed_at, key));
             }

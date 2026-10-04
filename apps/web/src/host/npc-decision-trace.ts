@@ -1,9 +1,10 @@
 export type NpcDecisionTraceRecord = {
   readonly account: number;
-  readonly tick: number;
+  readonly tick: string;
   readonly source_report_ids: readonly string[];
   readonly expectation_method: string | null;
   readonly plan_ids: readonly number[];
+  readonly plan_changes: readonly string[];
   readonly budget_constraints: readonly string[];
   readonly order_ids: readonly number[];
   readonly codes: readonly string[];
@@ -42,6 +43,7 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
     "source_report_ids",
     "expectation_method",
     "plan_ids",
+    "plan_changes",
     "budget_constraints",
     "order_ids",
     "codes",
@@ -49,9 +51,10 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
   if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段不完整`);
   }
-  if (!isNonNegativeInteger(value["account"]) || !isNonNegativeInteger(value["tick"])
+  if (!isNonNegativeInteger(value["account"]) || !isU64Decimal(value["tick"])
     || !isStringArray(value["source_report_ids"]) || !isStringOrNull(value["expectation_method"])
-    || !isNonNegativeIntegerArray(value["plan_ids"]) || !isStringArray(value["budget_constraints"])
+    || !isNonNegativeIntegerArray(value["plan_ids"]) || !isStringArray(value["plan_changes"])
+    || !isStringArray(value["budget_constraints"])
     || !isNonNegativeIntegerArray(value["order_ids"]) || !isStringArray(value["codes"])) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段无效`);
   }
@@ -61,6 +64,7 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
     source_report_ids: value["source_report_ids"],
     expectation_method: value["expectation_method"],
     plan_ids: value["plan_ids"],
+    plan_changes: value["plan_changes"],
     budget_constraints: value["budget_constraints"],
     order_ids: value["order_ids"],
     codes: value["codes"],
@@ -73,6 +77,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isU64Decimal(value: unknown): value is string {
+  return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value)
+    && value.length <= 20 && BigInt(value) <= 18_446_744_073_709_551_615n;
 }
 
 function isNonNegativeIntegerArray(value: unknown): value is readonly number[] {
