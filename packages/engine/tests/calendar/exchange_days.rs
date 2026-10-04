@@ -8,6 +8,44 @@ use engine::calendar::{
 };
 use std::collections::BTreeSet;
 
+#[test]
+fn audit_boundary_official_year_replaces_fallback_without_opening_weekends() {
+    let default = default_calendar();
+    let policy = policy_with_synthetic_coverage(
+        CalendarExchange::Sse,
+        2030,
+        &[("2030-09-30", "2030-09-30")],
+    );
+    let calendar = TradingCalendar::from_policy(policy).unwrap();
+    assert!(!default
+        .is_trading_day(CalendarExchange::Sse, d("2030-01-01"))
+        .unwrap());
+    assert_eq!(
+        calendar
+            .day_status(CalendarExchange::Sse, d("2030-01-01"))
+            .unwrap(),
+        DayStatus::Trading
+    );
+    assert!(matches!(
+        calendar
+            .day_status(CalendarExchange::Sse, d("2030-09-30"))
+            .unwrap(),
+        DayStatus::Closed(ClosedReason::OfficialHoliday { .. })
+    ));
+    assert_eq!(
+        calendar
+            .day_status(CalendarExchange::Sse, d("2030-01-05"))
+            .unwrap(),
+        DayStatus::Closed(ClosedReason::Weekend)
+    );
+    assert!(!calendar
+        .is_trading_day(CalendarExchange::Szse, d("2030-01-01"))
+        .unwrap());
+    assert!(!calendar
+        .is_trading_day(CalendarExchange::Sse, d("2031-01-01"))
+        .unwrap());
+}
+
 pub(crate) fn default_start_and_runtime_bounds() {
     let cal = default_calendar();
     let policy = cal.policy();
