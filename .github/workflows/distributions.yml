@@ -86,7 +86,8 @@ jobs:
         if: inputs.product == 'all' || inputs.product == 'web'
         env:
           REPOSITORY_NAME: ${{ github.event.repository.name }}
-        run: node -e "const name=process.env.REPOSITORY_NAME; if(!/^[A-Za-z0-9_.-]+$/.test(name)) throw Error('Unsafe repository name'); const base=name.endsWith('.github.io')?'/':'/'+name+'/'; require('node:fs').appendFileSync(process.env.GITHUB_ENV,'PAGES_BASE='+base+'\n');"
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: node -e "const name=process.env.REPOSITORY_NAME; const owner=process.env.REPOSITORY_OWNER; if(typeof name!=='string'||typeof owner!=='string'||!/^[A-Za-z0-9_.-]+$/.test(name)||!/^[A-Za-z0-9-]+$/.test(owner)) throw Error('仓库名称或owner非法'); const base=name.toLowerCase()===owner.toLowerCase()+'.github.io'?'/':'/'+name+'/'; require('node:fs').appendFileSync(process.env.GITHUB_ENV,'PAGES_BASE='+base+'\n');"
       - name: Build static Pages UI reusing verified WASM
         if: inputs.product == 'all' || inputs.product == 'web'
         working-directory: apps/web

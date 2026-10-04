@@ -1,10 +1,28 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 function workflow() {
   return readFileSync(new URL("../.github/workflows/distributions.yml", import.meta.url), "utf8");
 }
+
+test("审计G56：只有与owner对应的github.io仓库编译为根路径", () => {
+  const step = workflow().split("- name: Record Pages repository path")[1].split("- name:")[0];
+  const source = step.match(/run: node -e "([^\n]+)"/)[1];
+  for (const [owner, name, expected] of [["alice", "alice.github.io", "/"], ["Alice", "ALICE.github.io", "/"], ["alice", "bob.github.io", "/bob.github.io/"], ["alice", "stock_market_game", "/stock_market_game/"]]) {
+    const writes = [];
+    runInNewContext(source, {
+      process: { env: { REPOSITORY_OWNER: owner, REPOSITORY_NAME: name, GITHUB_ENV: "fixture-env" } },
+      require(module) { assert.equal(module, "node:fs"); return { appendFileSync(filename, text) { assert.equal(filename, "fixture-env"); writes.push(text); } }; },
+    }, { timeout: 1000 });
+    assert.deepEqual(writes, [`PAGES_BASE=${expected}\n`]);
+  }
+  assert.match(step, /REPOSITORY_OWNER: \$\{\{ github\.repository_owner \}\}/);
+  for (const env of [{ REPOSITORY_NAME: "alice.github.io" }, { REPOSITORY_OWNER: "alice" }, { REPOSITORY_OWNER: "alice", REPOSITORY_NAME: "bad/name" }, { REPOSITORY_OWNER: "bad/owner", REPOSITORY_NAME: "stock_market_game" }, { REPOSITORY_OWNER: "", REPOSITORY_NAME: "stock_market_game" }]) {
+    assert.throws(() => runInNewContext(source, { process: { env }, require() { throw new Error("非法输入不得写GITHUB_ENV"); } }, { timeout: 1000 }), /仓库名称或owner非法/);
+  }
+});
 
 test("Rust caches restore only compilation directories, never prior-run published artifacts", () => {
   for (const [filename, directories] of [["distributions.yml", ["target/release", "target/wasm32-unknown-unknown"]],
