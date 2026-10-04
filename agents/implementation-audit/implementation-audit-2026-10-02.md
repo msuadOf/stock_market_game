@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐27项，剩余52项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐28项，剩余51项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -88,7 +88,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G45 | 已补齐：自选详情返回原列表身份；UX导航/Flow ledger | reducer保留原primaryTab；App使用共用MobileDetailLayer按detailCode显示详情，不再仅允许market页。短测覆盖自选→详情→切股→交易底页→返回，并实际SSR共用详情层，返回仍在自选。 原证据见 [导航](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G48 | 中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML固定lang=en且无运行时修正；AG Grid sortable表头未配置locale，实际使用英文排序辅助文本。两处均需对应中文界面，不能用中文列名核销内置提示。见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
 | G49 | 已补齐：持仓成本及浮盈承接半偶到分语义；account spec:23/63 | 持仓展示共用valueHeldPosition，BigInt中间计算正负对称半偶到每股分，浮盈=(现价−舍入成本)×股数，与Rust Account一致；真实SSR验证200股净投入±200100分的成本与浮盈，单位/费用/T+1不变。 原证据见 [账户消费](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
-| G50 | React渲染异常进入可见详情/反馈出口；错误处理规范 | `render-app.tsx` 无ErrorBoundary或root错误callback；main异步启动catch不覆盖后续React render/layout-effect异常，宿主fatal出口也不覆盖UI自身异常。见 [错误链](exhaustive-review/luna14.md)。 |
+| G50 | 已补齐：React渲染异常进入可见详情/反馈出口；错误处理规范 | `RenderErrorBoundary` 在真实root包裹Provider/App，React render/layout失败复用脱敏、复制反馈与刷新警告；安全读取message描述符，不执行访问器，非法类型显式诊断并保留cause。12项相关短测通过，非作者完整diff复核通过；未运行浏览器异常捕获验收，不泛称覆盖事件/异步异常。实现见 [React错误出口](../implementation-gap-implementation/react-errors.md)，原证据见 [错误链](exhaustive-review/luna14.md)。 |
 | G51 | Desktop释放失败显式上报；错误处理规范 | `tauri-host.ts:165–175` 清fatalCallback后丢弃stop_session的Promise，dispose调用方无法接IPC rejection。unlisten运行时行为是版本限定补充，结论仅依明确stop_session失败出口。见 [释放](exhaustive-review/sweep14.md)。 |
 | G52 | 协议断言保留已知actual/expected上下文；错误详情规范 | 前端generation/cursor不一致仅生成通用ProtocolError文本，coordinator没有补上已知实际值/期望值，复制反馈缺复现事实。三宿主真实engine fatal已有context，不泛称全部错误无详情。见 [协议错误](exhaustive-review/luna14.md)。 |
 | G54 | 已补齐：Money公开解析拒绝完全无数字输入；Money spec/Task4 | Money::from_yuan_str显式拒绝“.”、“+.”、“-.”及带空白形态，保留“.5”“12.”等含数字的既有合法输入。影响限定公开库API，不冒称UI/存档此前已接受。原证据见 [解析](exhaustive-review/luna18.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
