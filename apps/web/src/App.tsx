@@ -232,7 +232,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   useEffect(() => {
     if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>('input[placeholder="委托价"]')?.focus();
   }, [desktopTradingOpen, desktopTradeSide, orientation, tradeSheetRef]);
-  const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
+  const chartPeriod = mobileUi.chartPeriod;
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
   function selectStock(code: string) {
@@ -523,7 +523,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} onTrade={openDesktopTrade} />
+          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={(period) => dispatchMobileUi({ type: "select-period", period })} klineDays={klineDays} onTrade={openDesktopTrade} />
         </Card>
 
         <Card className="panel company-panel-shell" id="section-company">

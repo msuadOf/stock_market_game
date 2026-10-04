@@ -5,6 +5,7 @@ import { type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
+import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
 import { FiveLevelBook } from "../components/FiveLevelBook.tsx";
 import { MarketTradeTape } from "../components/MarketTradeTape.tsx";
 import { marketQuoteFacts } from "../components/market-quote-facts.ts";
@@ -17,8 +18,6 @@ import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
-const chartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
-const enabledChartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K"];
 const infoTabs: MobileInfoTab[] = ["看点", "资讯", "财务", "盘口", "资金", "社区", "简况"];
 
 interface Props {
@@ -176,15 +175,10 @@ export function MobileStockDetail(props: Props) {
         <div className="msd-day-prices">{([["高", prices?.high], ["低", prices?.low], ["开", prices?.open]] as const).map(([label, price]) => <span key={label}>{label} <b className={price === undefined ? "flat" : tone(compareMoney(price, market.last_close))}>{price === undefined ? "--" : yuan(price)}</b></span>)}</div>
         <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(facts.volume)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
-      <div className="msd-period-tabs" role="tablist" aria-label="图表周期">
-        {chartPeriods.map((item) => {
-          const disabled = item === "五日";
-          return <button type="button" role="tab" id={`period-${item}`} aria-controls="mobile-chart-panel" aria-selected={props.period === item} aria-disabled={disabled} disabled={disabled} title={disabled ? "等待引擎提供跨日分钟数据" : undefined} tabIndex={props.period === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, enabledChartPeriods)} onClick={() => props.onPeriodChange(item)}>{item}</button>;
-        })}
-        <button type="button" className="msd-more" aria-label="更多周期（即将开放）" title="更多周期（即将开放）" disabled>更多⌄</button>
-      </div>
-      <div id="mobile-chart-panel" role="tabpanel" aria-labelledby={`period-${props.period}`}>
-      {chartType === "分时" ? <IntradayPanel {...props} /> : <MarketKlinePanel key={`${props.code}-${props.period}`} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} />}
+      <ChartPeriodTabs period={props.period} onChange={props.onPeriodChange} panelId="mobile-chart-panel" variant="detail" />
+      <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
+        <div hidden={chartType !== "分时"}><IntradayPanel {...props} /></div>
+        <div hidden={chartType === "分时"}><MarketKlinePanel key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} /></div>
       </div>
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}

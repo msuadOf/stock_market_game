@@ -2,6 +2,108 @@ import { expect, test } from "@playwright/test";
 
 test.setTimeout(10_000);
 
+test("窄窗口看盘交易的周月K说明不裁切底部指标按钮", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 740 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "买入此股票", exact: true }).click();
+  for (const period of ["周K", "月K"]) {
+    await page.getByRole("tab", { name: period, exact: true }).click();
+    const chart = page.locator(".shared-kline-host .msd-kline");
+    const controls = chart.locator(".shared-indicator-controls");
+    const bounds = await chart.boundingBox();
+    const buttons = await controls.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(buttons).not.toBeNull();
+    expect(buttons!.y + buttons!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1);
+    await controls.getByRole("button", { name: "MACD", exact: true }).click();
+    await expect(controls.getByRole("button", { name: "MACD", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".desktop-account-bar")).toBeInViewport();
+  }
+});
+
+test("图表隐藏后撤下显示菜单，返回看盘不会遗留弹层", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await page.getByRole("button", { name: "图表显示设置", exact: true }).click();
+  await page.getByRole("menuitem", { name: "均线", exact: true }).press("F10");
+  await expect(page.locator("#section-company")).toBeVisible();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.getByRole("button", { name: "走势图", exact: true }).click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "图表显示设置", exact: true })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("320px 手机显示菜单保持边界，多选后切周期保留设置且点击外部关闭", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("button", { name: /稳健实业 600101/ }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await page.getByRole("button", { name: "图表显示设置", exact: true }).click();
+  await page.getByRole("menuitem", { name: "均线", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "MA20", exact: true }).click();
+  const bounds = await page.getByRole("menu").boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(844);
+  await page.getByRole("tab", { name: "周K", exact: true }).click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^MA20：/ })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("tab", { name: "分时", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^MA20：/ })).toHaveAttribute("aria-pressed", "false");
+  expect(await page.locator("html").evaluate(el => el.scrollWidth > el.clientWidth)).toBe(false);
+});
+
+test("桌面与手机共用周期选择，日周月入口和均线设置保持一致", async ({ page }) => {
+  await page.setViewportSize({ width: 1020, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  const tabs = page.getByRole("tablist", { name: "图表周期" });
+  await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveCount(1);
+  await tabs.getByRole("tab", { name: "日K", exact: true }).click();
+  const chart = page.locator(".shared-kline-host .msd-kline");
+  const dailyCount = Number(await chart.getAttribute("data-kline-count"));
+  await chart.getByRole("button", { name: /^MA5：/ }).click();
+  await tabs.getByRole("tab", { name: "日K", exact: true }).press("ArrowRight");
+  await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(chart).toHaveAttribute("data-kline-count", String(Math.ceil(dailyCount / 5)));
+  await expect(chart.getByRole("button", { name: /^MA5：/ })).toHaveAttribute("aria-pressed", "false");
+  await expect(chart).toContainText("每5个游戏交易日合并");
+  await tabs.getByRole("tab", { name: "月K", exact: true }).click();
+  await expect(chart).toHaveAttribute("data-kline-count", String(Math.ceil(dailyCount / 20)));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: /稳健实业 600101/ }).click();
+  await expect(page.getByRole("tab", { name: "月K", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.setViewportSize({ width: 1020, height: 833 });
+  await expect(tabs.getByRole("tab", { name: "月K", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page).toHaveTitle("股票模拟游戏");
+});
+
+test("显示菜单分层选择均线和副图，Escape逐层返回且不影响直接按钮", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
+  const chart = page.locator(".shared-kline-host .msd-kline");
+  await expect(chart.getByRole("button", { name: "图表显示设置", exact: true })).toHaveCount(1);
+  await chart.getByRole("button", { name: "图表显示设置", exact: true }).click();
+  await page.getByRole("menuitem", { name: "均线", exact: true }).press("ArrowRight");
+  await page.getByRole("menuitemcheckbox", { name: "MA5", exact: true }).click();
+  await expect(chart.getByRole("button", { name: /^MA5：/ })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("menuitemcheckbox", { name: "MA5", exact: true }).press("Escape");
+  await expect(page.getByRole("menuitem", { name: "均线", exact: true })).toBeFocused();
+  await page.getByRole("menuitem", { name: "副图指标", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "MACD", exact: true }).click();
+  await expect(chart.getByRole("button", { name: "MACD", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(chart.getByRole("button", { name: "图表显示设置", exact: true })).toBeFocused();
+});
+
 test("个股右栏在盘口、成交明细和行情摘要间切换，键盘与切股保持一致", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 833 });
   await page.goto("/?tradingE2E=1");
@@ -35,7 +137,7 @@ test("行情单击预览、双击进入个股，F10 与返回保持选择和图�
   await row.dblclick();
   await expect(page.locator('.desktop-terminal[data-view="stock"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "个股列表" })).toBeVisible();
-  await page.locator("#section-trade").getByRole("button", { name: "日K", exact: true }).click();
+  await page.locator("#section-trade").getByRole("tab", { name: "日K", exact: true }).click();
   await page.locator("#section-trade").getByRole("button", { name: "无", exact: true }).click();
   await page.getByRole("button", { name: "公司资料 F10", exact: true }).click();
   await expect(page.locator("#section-company")).toBeVisible();
@@ -106,9 +208,10 @@ test("1020窗口个股图保留完整时间轴，价量左右边界一致且盘�
   await expect(page.getByRole("contentinfo", { name: "模拟账户摘要" })).toBeInViewport();
   const overflow = await page.locator(".terminal-body").evaluate(el => el.scrollWidth > el.clientWidth);
   expect(overflow).toBe(false);
-  await page.locator("#section-trade").getByRole("button", { name: "日K", exact: true }).click();
-  await expect(chart).toHaveCount(0);
-  await page.locator("#section-trade").getByRole("button", { name: "分时", exact: true }).click();
+  await page.locator("#section-trade").getByRole("tab", { name: "日K", exact: true }).click();
+  await expect(chart).toHaveCount(1);
+  await expect(chart).toBeHidden();
+  await page.locator("#section-trade").getByRole("tab", { name: "分时", exact: true }).click();
   await expect(chart).toBeVisible();
 });
 
@@ -116,18 +219,19 @@ test("均线按钮可多选，关闭其中一条不影响其他均线", async ({
   await page.setViewportSize({ width: 1020, height: 833 });
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
-  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
   const group = page.getByRole("group", { name: "均线（可多选）" });
   const ma20 = group.getByRole("button", { name: /^MA20：/ });
   const ma60 = group.getByRole("button", { name: /^MA60：/ });
-  await expect(group.getByRole("button")).toHaveCount(5);
+  await expect(group.getByRole("button", { name: /^MA\d+：/ })).toHaveCount(5);
+  await expect(group.getByRole("button", { name: "图表显示设置", exact: true })).toHaveCount(1);
   await expect(ma20).toHaveAttribute("aria-pressed", "true");
   await expect(ma60).toHaveAttribute("aria-pressed", "true");
   await ma20.click();
   await expect(ma20).toHaveAttribute("aria-pressed", "false");
   await expect(ma60).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "分时", exact: true }).click();
-  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("tab", { name: "分时", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
   await expect(ma60).toHaveAttribute("aria-pressed", "true");
   await expect(ma20).toHaveAttribute("aria-pressed", "false");
 });
@@ -136,7 +240,7 @@ test("共用K线支持滚轮、Shift平移、点击对齐和双指缩放", async
   await page.setViewportSize({ width: 1020, height: 833 });
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
-  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
   const panel = page.locator('.shared-kline-host .msd-kline');
   const svg = panel.locator('.msd-candle-chart');
   await svg.dispatchEvent('wheel', { deltaY: -80, bubbles: true, cancelable: true });
@@ -172,7 +276,7 @@ test("详情点击显示，移动吸附更新，关闭后不再跟随，轮廓�
  await page.setViewportSize({ width: 1020, height: 833 });
  await page.goto("/?tradingE2E=1");
  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
- await page.getByRole("button", { name: "日K", exact: true }).click();
+ await page.getByRole("tab", { name: "日K", exact: true }).click();
  const panel = page.locator('.shared-kline-host .msd-kline');
  const svg = panel.locator('.msd-candle-chart');
  await expect(panel.locator('.kline-crosshair')).toHaveCount(0);
@@ -196,7 +300,7 @@ test("盘口买卖展开底部交易栏，保留看盘与草稿，Escape收起�
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
-  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
   const entry = page.getByRole("button", { name: "买入此股票", exact: true });
   await entry.click();
   const dock = page.getByRole("region", { name: "看盘交易栏" });
@@ -247,7 +351,7 @@ test("当前窗口看盘下单的按钮和K线指标无需滚动，完整交易�
   await page.goto("/?tradingE2E=1");
   const nav = page.getByRole("navigation", { name: "桌面主导航" });
   await nav.getByRole("button", { name: "个股", exact: true }).click();
-  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("tab", { name: "日K", exact: true }).click();
   await page.getByRole("button", { name: "买入此股票", exact: true }).click();
   const order = page.locator("#section-order");
   const buy = await order.getByRole("button", { name: "买入", exact: true }).boundingBox();

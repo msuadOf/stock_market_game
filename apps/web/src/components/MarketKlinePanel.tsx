@@ -2,6 +2,8 @@ import { subtractMoney, compareMoney } from "../utils/money.ts";
 import { yuan, formatCentsAmount } from "../utils/format.ts";
 import { useKlineGestures } from "./useKlineGestures.ts";
 import { klineTapIndex } from "./kline-gestures.ts";
+import { ChartDisplayMenu } from "./ChartDisplayMenu.tsx";
+import { CHART_INDICATORS, type ChartIndicator } from "./chart-display-options.ts";
 import { useMemo, useState } from "react";
 import type { KlinePoint } from "./PriceChart.tsx";
 import type { IndicatorCalculator } from "./indicator-results.ts";
@@ -21,9 +23,10 @@ export function MarketKlinePanel({ dailyCandles, period, indicatorCalculator }: 
   }), [allCandles]);
   const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
   const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
-  const [indicator, setIndicator] = useState<"volume" | "kdj" | "macd" | "none">("kdj");
+  const [indicator, setIndicator] = useState<ChartIndicator>("kdj");
   const [selected, setSelected] = useState<readonly number[]>(KLINE_MOVING_AVERAGES.map(item => item.days));
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
+  const toggleAverage = (days: number) => setSelected(current => current.includes(days) ? current.filter(day => day !== days) : [...current, days]);
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
   const gestureRef = useKlineGestures(act, (x, width) => {
     const range = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
@@ -52,14 +55,15 @@ export function MarketKlinePanel({ dailyCandles, period, indicatorCalculator }: 
     data-kline-count={allCandles.length}
     data-kline-signature={projection.latestSignature}
   >
-    <div className="msd-kline-meta" role="group" aria-label="均线（可多选）"><b>MA</b>{averages.map(({ days, color, points }) => <button key={days} type="button" aria-pressed={selected.includes(days)} aria-label={`MA${days}：${maValue(points)?.toFixed(3) ?? "历史不足"}`} style={{ color, background: "transparent", textDecoration: selected.includes(days) ? "none" : "line-through" }} onClick={() => setSelected(current => current.includes(days) ? current.filter(day => day !== days) : [...current, days])}>MA{days}:{maValue(points)?.toFixed(3) ?? "—"}</button>)}</div>
+    <div className="msd-kline-meta" role="group" aria-label="均线（可多选）"><ChartDisplayMenu selected={selected} onToggleAverage={toggleAverage} indicator={indicator} onIndicator={setIndicator} />{averages.map(({ days, color, points }) => <button key={days} type="button" aria-pressed={selected.includes(days)} aria-label={`MA${days}：${maValue(points)?.toFixed(3) ?? "历史不足"}`} style={{ color, background: "transparent", textDecoration: selected.includes(days) ? "none" : "line-through" }} onClick={() => toggleAverage(days)}>MA{days}:{maValue(points)?.toFixed(3) ?? "—"}</button>)}</div>
+    {candlePeriod !== "日K" && <div className="kline-period-note">{candlePeriod}：每{candlePeriod === "周K" ? 5 : 20}个游戏交易日合并（简化）</div>}
     <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}{averages.filter(item => selected.includes(item.days)).map(({ days, color, points }) => <polyline key={days} stroke={color} points={points.map(point => `${projection.slotFor(slots.get(point.time)!).center},${projection.priceY(point.value)}`).join(" ")} />)}<KlineCrosshair x={crosshairX} height={190} /></svg>
     {selectedIndex >= 0 && <KlineDetails period={candlePeriod} previousRawClose={allCandles[window.start + selectedIndex - 1]?.rawPrices?.close} side={crosshairX !== null && crosshairX < 195 ? "right" : "left"} candle={candles[selectedIndex]} previousClose={allCandles[window.start + selectedIndex - 1]?.close} averages={averages.map(item => ({ days: item.days, color: item.color, value: maValue(item.points) }))} onClose={() => setSelectedTime(null)} />}
     <KlineViewportControls total={allCandles.length} viewport={viewport} onAction={act} />
     {indicator !== "none" && <><div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes[displayIndex] ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{projection.volumeMarks().map(({ slot, height, rise }, index) => <rect key={index} className={rise?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>) }<KlineCrosshair x={crosshairX} height={75} /></svg></>}
     {indicator === "kdj" && (kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k[displayIndex]?.toFixed(2)}　<span>D:{kdj.d[displayIndex]?.toFixed(2)}</span>　<em>J:{kdj.j[displayIndex]?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={projection.indicatorLine(kdj.k)}/><polyline className="orange" points={projection.indicatorLine(kdj.d)}/><polyline className="pink" points={projection.indicatorLine(kdj.j)}/><KlineCrosshair x={crosshairX} height={72} /></svg></>)}
     {indicator === "macd" && <MacdPanel projection={projection} result={indicatorResult} crosshairX={crosshairX} displayIndex={displayIndex} />}
-    <div className="shared-indicator-controls">{([ ["volume", "量能"], ["macd", "MACD"], ["kdj", "KDJ"], ["none", "无"] ] as const).map(([value, label]) => <button key={value} className="chart-indicator-button" aria-pressed={indicator === value} onClick={() => setIndicator(value)}>{label}</button>)}</div>
+    <div className="shared-indicator-controls">{CHART_INDICATORS.map(([value, label]) => <button key={value} className="chart-indicator-button" aria-pressed={indicator === value} onClick={() => setIndicator(value)}>{label}</button>)}</div>
   </section>;
 }
 

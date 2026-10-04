@@ -24,10 +24,10 @@ export function useMobileUiController(orientation: "portrait" | "landscape", cha
   }, [mobileDetail, orientation]);
 
   useEffect(() => {
-    document.title = mobileDetail
+    document.title = mobileDetail && orientation === "portrait"
       ? `${STOCK_NAMES[chartCode] ?? chartCode} — 股票模拟游戏`
       : "股票模拟游戏";
-  }, [mobileDetail, chartCode]);
+  }, [mobileDetail, chartCode, orientation]);
 
   useEffect(() => {
     if (!tradeSheetOpen || orientation !== "portrait") return;

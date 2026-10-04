@@ -194,6 +194,6 @@
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-volume-title,
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kdj-title { flex: none; height: 20px; padding: 2px 8px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-k-volume,
-.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kdj { height: 40px; }
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kdj { height: 40px; min-height: 24px; flex: 0 1 40px; }
 @media (max-width: 1100px) { .terminal-dock-content { grid-template-columns: 350px minmax(0, 1fr); } }
 @media (max-height: 650px) { .terminal-trading-region[data-expanded="dock"] { flex-basis: 220px; } }

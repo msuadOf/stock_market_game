@@ -51,6 +51,13 @@ test("返回键先关闭交易底页，再退出详情页", () => {
   assert.equal(afterSecondBack.detailCode, null);
 });
 
+test("共用周期选择不随主导航切换丢失", { timeout: 10000 }, () => {
+  const monthly = reduceMobileUi(initialMobileUiState, { type: "select-period", period: "月K" });
+  const user = reduceMobileUi(monthly, { type: "switch-primary", tab: "user" });
+  assert.equal(user.chartPeriod, "月K");
+  assert.equal(user.detailCode, null);
+});
+
 test("主导航页面拥有稳定标题，持仓和我的能从详情直接进入", () => {
   assert.equal(mobilePrimaryTitle("market"), "模拟自选");
   assert.equal(mobilePrimaryTitle("positions"), "持仓");

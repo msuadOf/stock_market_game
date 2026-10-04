@@ -1,7 +1,8 @@
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
+import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
 import { MarketQuotePanel } from "../components/MarketQuotePanel.tsx";
 import { addMoney, subtractMoney, compareMoney, moneyToBigInt } from "../utils/money.ts";
-import { useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
 import { publicCompanyForStock } from "../components/company/company-catalog.ts";
@@ -105,12 +106,13 @@ export function ConnectedTerminalStockList({ onSelect }: MarketPanelProps) {
 }
 
 interface ChartPanelProps {
-  chartPeriod: "分时" | "日K";
-  setChartPeriod: Dispatch<SetStateAction<"分时" | "日K">>;
+  chartPeriod: MobileChartPeriod;
+  setChartPeriod: (period: MobileChartPeriod) => void;
   klineDays: number;
   onTrade?: (side: "Buy" | "Sell") => void;
 }
 export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade }: ChartPanelProps) {
+  const panelId = useId();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const chartCode = useMarketRuntimeSelection();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
@@ -123,10 +125,9 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
   const pct = priceChangePercent(market.last_price, market.last_close);
   const cls = colorClass(compareMoney(diff, "0"));
   return <>
-    <div className="chart-toolbar"><div className="chart-tabs">{(["分时", "日K"] as const).map((period) => <button key={period} className={`chart-tab ${chartPeriod === period ? "active" : ""}`} onClick={() => setChartPeriod(period)}>{period}</button>)}</div>
-    </div>
+    <div className="chart-toolbar"><ChartPeriodTabs period={chartPeriod} onChange={setChartPeriod} panelId={panelId} variant="terminal" /></div>
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
-    <div className="market-chart-slot"><div hidden={chartPeriod !== "日K"} className="shared-kline-host"><MarketKlinePanel key={chartCode} dailyCandles={dailyChartData} period="日K" indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod === "日K"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
+    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
   </>;
 }

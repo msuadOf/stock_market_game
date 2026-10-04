@@ -37,3 +37,23 @@
 完整浏览器回归本轮26项：21通过、5失败。公司报告公开编号与半年度发布日预期不一致、暂停偏好checkbox、连续竞价活动委托与日终存档验收仍失败；新游戏两项本轮通过。不宣称这些失败都已证明为baseline。全量Web短测仍因desktop生成的acl-manifests.json缺失而失败并取消部分分片；全局lint仍有5项既有children-prop告警，未压制断言或规则。
 
 下一批仍按完整目标继续：二/三级菜单与返回层次、桌面周期入口复用、左侧自选/搜索、公司资料层级，以及上述完整回归问题。手机资金区窄列长文本和横竖屏切换时document.title恢复也需单独核查，本批没有顺带改变它们。
+
+## 2026-10-05 共用周期与分层显示菜单批次
+
+App 的 chartPeriod 统一桌面与手机入口，ChartPeriodTabs 提供分时／日K／周K／月K及自动激活的方向键、Home／End。主导航及横竖屏切换保留周期；手机分时和 K 线改成稳定实例，切换周期保留 MA／indicator／viewport。横竖屏切换仍重建两端图表实例，局部 MA 和窗口配置未跨实例保存，已明确登记，不称为全部设置保持。document.title 按 portrait 详情／landscape 应用名恢复，真实 hook 覆盖往返切屏。
+
+共用 ChartDisplayMenu 接入 Blueprint Popover；显示→均线／副图指标逐级进入，MA 多选保持菜单，副图单选关闭，直接图例和指标按钮继续共用原设置。上下／Home／End 导航，右方向键进入，左方向键／Escape 逐层返回，Tab 退出，外部点击关闭；不可见锚点的 portal 撤下。现有项目未引入 Blueprint 整包 CSS，本批只为该弹层建立共享定位、pointer-events 和 --z-popover 样式，没有扩大到无关弹层。320px手机实看点击、键盘、菜单边界及触发后焦点路径；902×833桌面实看，临时视口已恢复。截图 chart-menu-current-window.jpg 和 chart-menu-mobile-320.jpg。
+
+周K／月K沿用既有 aggregateCandles 的5／20游戏交易日分组，末组保留；UI与trading-rules明确不是公历聚合，MA 的N为所选周期N根收盘价。没有改变engine、委托、撮合、费用、结算或权威日K。正式构建发现 Popper ESM星号转导出解析失败，精确alias到本机包的官方main入口修复，未增加依赖或修改node_modules。该 Vite 配置修复触发开发页整页重载；当前本地预览重新建立为第1日09:16:07暂停局，不声称维持了修复前日内运行状态。
+
+TDD证据包括：共用周期及菜单缺失；F10切公司页遗留portal；320px菜单被详情图表盖住；周月K说明造成同屏交易底部按钮超出chart边界（红测443，预期≤428）。最后问题通过副图40px目标／24px最低的弹性高度修复，主图最低80px不变。现场chart clientHeight和scrollHeight均292，按钮底边与chart底边均428.5，无裁切。
+
+验证：35项相关逻辑短测通过，case/进程树deadline10000ms、concurrency=3；独立reviewer重复35项通过。最终19项桌面专项E2E全部通过，workers=3、共享300000ms外部deadline，覆盖桌面鼠标、触屏手势、窄手机、隐藏菜单、周/月说明与看盘交易。变更文件lint通过，strict audit无finding，git diff --check通过。独立复核记录 chart-controls-independent-review.md，无未修复有效finding。
+
+全量Web短测仍因desktop生成的acl-manifests.json缺失失败并取消部分分片；机器10核，实际启动8个并发测试进程。完整lint仍有5项既有test children-prop告警，新增组件告警已通过纯options模块解决，未压制规则或弱化断言。真实预览的浏览器快速槽quota错误仍可见，未在本批吞掉或伪造成功；该容量问题继续独立排查。
+
+最终完整浏览器回归31项：26通过、5失败，workers=3，共享300000ms外部deadline。公司首次季度报告与半年度披露日期不符fixture预期；自然日暂停偏好checkbox未改变；连续竞价活动委托和日终存档两项找不到预期委托。这些问题继续保留，不认定全部是baseline。生产构建及release WASM校验通过；最后CSS改动后的生产构建另存 chart-controls-production-build-final.log。
+
+暗色主题现场核对：新菜单在共用浅色图表旁保持清楚可见、可点击；已有图表量能／KDJ标题继承暗色浅字到白底，仍需后续明确统一图表文字主题，不能把此处检查当作完整暗色验收。现场已恢复原浅色主题、原902×833视口，留在暂停的周K＋交易栏，不提交模拟委托。
+
+完整终端目标仍在途：左侧自选／搜索、剩余二／三级游戏与公司资料层次、全回归中的报告日期／暂停偏好／活动委托与存档，以及跨实例图表设置保持与暗色图表文字。已有菜单以真实能力分层，不复制无权威数据的金融辅助工具。
