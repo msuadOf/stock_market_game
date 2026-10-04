@@ -6,7 +6,8 @@
 //! - 默认 5 股票（600101/002156/300260/600610/000812）复用
 //!   [`crate::company::default_companies`] 数据表的开局数字；
 //! - 其余股票按「实收资本 = 面值 1 元 × 总股本」推导通用工商公司
-//!   （现金 30% + 固定资产 80% = 资本 + 短期借款 10%，确定性无随机）；
+//!   （现金约 30%、短期借款约 10%，实际融资扣除现金后投入固定资产，
+//!   整数取整仍严格平账，确定性无随机）；
 //! - 经营流参数按实收资本等比缩放（年化收入目标 ≈ 4 × 资本、税前利润率
 //!   ≈ 12.5% 的**高周转简化**——使 PE 档位估值与常见股价同一量级；真实
 //!   行业参数校准属后续任务，不声称现实口径）；
@@ -216,17 +217,19 @@ impl OpeningFigures {
             .unwrap_or_else(|| Self::from_total_shares(stock.total_shares))
     }
 
-    /// 通用推导（游戏假设）：资本 = 面值 1 元 × 总股本；现金 30% + 固定资产
-    /// 80% = 资本 + 短期借款 10%。各科目至少 1 元（极小股本取整归零会让开局
-    /// 凭证出现非正行金额）。确定性纯算术，无随机。
+    /// 通用推导（游戏假设）：资本 = 面值 1 元 × 总股本；现金按 30%、借款按
+    /// 10% 取整且至少 1 元，资金来源扣除现金后的实际投入形成固定资产。
+    /// 整百股时固定资产为资本的 80%；零碎股不独立截断资产用途而损失资金。
     fn from_total_shares(total_shares: u64) -> Self {
         let capital = i128::from(total_shares).max(1);
+        let cash = (capital * 30 / 100).max(1);
+        let short_term_debt = (capital * 10 / 100).max(1);
         OpeningFigures {
-            cash: (capital * 30 / 100).max(1),
+            cash,
             receivables: 0,
-            fixed_assets: (capital * 80 / 100).max(1),
+            fixed_assets: capital + short_term_debt - cash,
             paid_in_capital: capital,
-            short_term_debt: (capital * 10 / 100).max(1),
+            short_term_debt,
         }
     }
 
@@ -508,6 +511,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn odd_share_company_opening_allocates_actual_funding_without_rounding_loss() {
+        let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
+        let mut stock = super::super::npc_working_quote_tests::quote_setup(0)
+            .stocks
+            .remove(0);
+        stock.total_shares = 101;
+        stock.float_shares = 101;
+        let listed = assemble_listed_company(
+            &stock,
+            OpeningFigures::from_total_shares(stock.total_shares),
+            as_of,
+        )
+        .expect("合法小股本公司的开局资金配置必须精确平账");
+        let registry = CompanyRegistry::new(vec![listed.registry]).unwrap();
+        let registry_books = registry
+            .get(&CompanyId(format!("C-{}", stock.code.0)))
+            .unwrap()
+            .books();
+        let operating_books = listed.operating.books.books();
+        for books in [registry_books, operating_books] {
+            let trial = books.ledger().trial_balance().unwrap();
+            assert_eq!(trial.total_debits, yuan(111));
+            assert_eq!(trial.total_credits, yuan(111));
+            assert_eq!(books.ledger().cash_total().unwrap(), yuan(30));
+            assert_eq!(books.ledger().liabilities_total().unwrap(), yuan(10));
+            assert_eq!(books.ledger().equity_rolling().unwrap(), yuan(101));
+            assert_eq!(books.journal().entry_count(), 1);
+        }
+    }
+
+    #[test]
     fn opening_figures_preserve_both_account_orders_and_yuan_units() {
         for (receivables, debt) in [(0, 0), (7, 0), (0, 11), (7, 11)] {
             let figures = OpeningFigures {
@@ -587,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_figures_default_row_and_tiny_share_failure_remain_explicit() {
+    fn opening_figures_default_rows_preserve_explicit_amounts() {
         let as_of = CivilDate::from_ymd(2023, 12, 31).unwrap();
         let defaults = default_companies(as_of).unwrap();
         for row in defaults {
@@ -604,13 +638,51 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn small_and_maximum_share_company_openings_preserve_registered_funding() {
+        let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
+        for total_shares in [1, 2, 9, 10, 99, 100, 109, u64::MAX] {
+            let mut stock = super::super::npc_working_quote_tests::quote_setup(0)
+                .stocks
+                .remove(0);
+            stock.total_shares = total_shares;
+            stock.float_shares = 0;
+            let figures = OpeningFigures::from_total_shares(total_shares);
+            let capital = i128::from(total_shares);
+            let cash = (capital * 30 / 100).max(1);
+            let debt = (capital * 10 / 100).max(1);
+            assert_eq!(figures.paid_in_capital, capital);
+            assert_eq!(figures.cash, cash);
+            assert_eq!(figures.short_term_debt, debt);
+            assert_eq!(figures.fixed_assets, capital + debt - cash);
+            let listed = assemble_listed_company(&stock, figures, as_of).unwrap();
+            let registry = CompanyRegistry::new(vec![listed.registry]).unwrap();
+            let company = registry
+                .get(&CompanyId(format!("C-{}", stock.code.0)))
+                .unwrap();
+            for books in [company.books(), listed.operating.books.books()] {
+                let trial = books.ledger().trial_balance().unwrap();
+                assert_eq!(trial.total_debits, yuan(capital + debt));
+                assert_eq!(trial.total_credits, yuan(capital + debt));
+                assert_eq!(books.ledger().cash_total().unwrap(), yuan(cash));
+                assert_eq!(books.ledger().liabilities_total().unwrap(), yuan(debt));
+                assert_eq!(books.ledger().equity_rolling().unwrap(), yuan(capital));
+            }
+        }
+    }
+
+    #[test]
+    fn zero_share_company_still_rejects_invalid_issuer_specification() {
+        let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
         let mut stock = super::super::npc_working_quote_tests::quote_setup(0)
             .stocks
             .remove(0);
-        stock.total_shares = 2;
-        let result = assemble_listed_company(&stock, OpeningFigures::from_total_shares(2), as_of);
-        assert!(
-            matches!(result, Err(SessionError::InvalidSetup(message)) if message.starts_with("industrial books failed:"))
-        );
+        stock.total_shares = 0;
+        stock.float_shares = 0;
+        let result = assemble_listed_company(&stock, OpeningFigures::from_total_shares(0), as_of);
+        assert!(matches!(result, Err(SessionError::InvalidSetup(message))
+            if message.starts_with("company spec failed:") && message.contains("zero issued shares")));
     }
 }
