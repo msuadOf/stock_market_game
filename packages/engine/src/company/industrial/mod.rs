@@ -23,6 +23,7 @@ mod config;
 mod error;
 mod expenses;
 mod interest;
+mod inventory_sources;
 mod loans;
 #[cfg(test)]
 mod ownership_tests;
@@ -30,6 +31,7 @@ mod production;
 mod purchasing;
 mod repayment;
 mod sales;
+mod trade_events;
 
 pub use config::{IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem};
 pub use error::IndustrialError;
@@ -38,6 +40,8 @@ pub use loans::{InterestAccrualItem, LoanState, RepaymentOutcome, OPENING_DEBT_C
 pub use purchasing::{PurchaseOutcome, Settlement};
 
 pub use chart::industrial_chart_v2;
+pub use inventory_sources::InventorySourceEvent;
+pub use trade_events::TradeCounterpartyEvent;
 
 use crate::accounting::{
     AccountingAmount, Books, BusinessKind, CashFlowClass, FixedAssetRegister, InventoryLedger,
@@ -69,6 +73,8 @@ pub struct IndustrialBooks {
     income_tax_position: IncomeTaxPosition,
     loans: LoanPortfolio,
     next_event_id: u64,
+    trade_counterparty_events: Vec<TradeCounterpartyEvent>,
+    inventory_source_events: Vec<InventorySourceEvent>,
 }
 
 impl IndustrialBooks {
@@ -101,6 +107,15 @@ impl IndustrialBooks {
         }
 
         let (contracts, loans) = reconciliation.seed_debt_after_counterparties(&counterparties)?;
+        let inventory_source_events = config
+            .opening_inventory
+            .iter()
+            .map(|item| InventorySourceEvent {
+                event: opening_event_id(),
+                item: item.item.clone(),
+                account: item.account.clone(),
+            })
+            .collect();
 
         Ok(Self {
             books,
@@ -115,6 +130,8 @@ impl IndustrialBooks {
             income_tax_position: IncomeTaxPosition::default(),
             loans,
             next_event_id: 2,
+            trade_counterparty_events: Vec::new(),
+            inventory_source_events,
         })
     }
 
@@ -274,6 +291,8 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
             income_tax_position: IncomeTaxPosition,
             loans: LoanPortfolio,
             next_event_id: u64,
+            trade_counterparty_events: Vec<TradeCounterpartyEvent>,
+            inventory_source_events: Vec<InventorySourceEvent>,
         }
         let raw = Raw::deserialize(decoder)?;
         let restored = Self {
@@ -289,9 +308,17 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
             income_tax_position: raw.income_tax_position,
             loans: raw.loans,
             next_event_id: raw.next_event_id,
+            trade_counterparty_events: raw.trade_counterparty_events,
+            inventory_source_events: raw.inventory_source_events,
         };
         restored
             .validate_credit_state()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .validate_trade_counterparty_events()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .validate_inventory_source_events()
             .map_err(serde::de::Error::custom)?;
         Ok(restored)
     }

@@ -39,6 +39,35 @@ impl ConsolidatedBalance {
 /// 汇总账本：科目代码 → 合并余额（含后续抵销调整）。
 pub(crate) type AggregatedBalances = BTreeMap<LedgerAccountId, ConsolidatedBalance>;
 
+pub(crate) type AccountKeys = BTreeMap<(MemberId, LedgerAccountId), LedgerAccountId>;
+
+pub(crate) fn account_keys(members: &BTreeMap<MemberId, &Books>) -> AccountKeys {
+    let mut definitions: BTreeMap<LedgerAccountId, Vec<&AccountDef>> = BTreeMap::new();
+    for books in members.values() {
+        for (code, definition) in books.ledger().chart().iter() {
+            definitions
+                .entry(code.clone())
+                .or_default()
+                .push(definition);
+        }
+    }
+    let mut keys = BTreeMap::new();
+    for (member, books) in members {
+        for (code, definition) in books.ledger().chart().iter() {
+            let differs = definitions[code]
+                .iter()
+                .any(|other| other.name != definition.name);
+            let key = if differs {
+                LedgerAccountId(format!("v{}:{}", books.ledger().chart().version(), code.0))
+            } else {
+                code.clone()
+            };
+            keys.insert((member.clone(), code.clone()), key);
+        }
+    }
+    keys
+}
+
 /// 校验期间覆盖一致（基准 = 首个成员的覆盖集合，按 id 序）。
 pub(crate) fn check_period_coverage(
     members: &BTreeMap<MemberId, &Books>,
@@ -73,6 +102,7 @@ pub(crate) fn check_period_coverage(
 pub(crate) fn aggregate_balances(
     members: &BTreeMap<MemberId, &Books>,
 ) -> Result<AggregatedBalances, ConsolidationError> {
+    let keys = account_keys(members);
     let mut merged: AggregatedBalances = BTreeMap::new();
     // code → (首个定义该代码的成员, 定义) —— 语义冲突检测基准。
     let mut def_owners: BTreeMap<LedgerAccountId, (MemberId, AccountDef)> = BTreeMap::new();
@@ -83,11 +113,12 @@ pub(crate) fn aggregate_balances(
             if balance.debit_total().is_zero() && balance.credit_total().is_zero() {
                 continue;
             }
-            match def_owners.get(code) {
+            let key = &keys[&(id.clone(), code.clone())];
+            match def_owners.get(key) {
                 None => {
-                    def_owners.insert(code.clone(), (id.clone(), def.clone()));
+                    def_owners.insert(key.clone(), (id.clone(), def.clone()));
                     merged.insert(
-                        code.clone(),
+                        key.clone(),
                         ConsolidatedBalance {
                             def: def.clone(),
                             debit_total: balance.debit_total(),
@@ -99,7 +130,7 @@ pub(crate) fn aggregate_balances(
                     check_chart_conflict(id, code, def, owner, base)?;
                     // 首见代码时已随 def_owners 一同插入（两映射同键同生命周期）。
                     let entry = merged
-                        .get_mut(code)
+                        .get_mut(key)
                         .expect("aggregation inserts the account on first sight");
                     entry.debit_total = entry.debit_total.add(balance.debit_total())?;
                     entry.credit_total = entry.credit_total.add(balance.credit_total())?;

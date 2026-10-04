@@ -3,10 +3,81 @@
 //! 对手方余额不符必须列出两侧数值，绝不用差额 plug 平账；工作底稿分录
 //! 不得触碰现金科目；申报科目必须存在于对应成员科目表且要素相符。
 
+#[test]
+fn equal_intercompany_declarations_cannot_exceed_actual_balances() {
+    let (parent, sub) = pair_books();
+    let mut req = request(
+        "LIMIT-ROOT",
+        vec![
+            member("LIMIT-ROOT", None, 1_000, 0, &parent),
+            member("LIMIT-SUB", Some("LIMIT-ROOT"), 100, 80, &sub),
+        ],
+    );
+    req.intercompany_balances = vec![
+        ic_balance("LIMIT-SUB", "LIMIT-ROOT", acct::AR, 1),
+        ic_balance("LIMIT-ROOT", "LIMIT-SUB", acct::PAYABLE, 1),
+    ];
+    let error = consolidate(req).expect_err("equal declarations above zero balances must fail");
+    assert!(error.to_string().contains("exceeds book balance"));
+}
+
 use super::super::{acct, ic_balance, ic_sale, member, request, yuan};
 use super::pair_books;
 use engine::accounting::consolidation::{consolidate, ConsolidationError, MemberId};
 use engine::accounting::LedgerAccountId;
+
+#[test]
+fn multi_pair_declarations_share_the_same_account_balance_limit() {
+    use engine::accounting::{BusinessKind, CashFlowClass, PostingSide};
+    let parent = super::super::books_with(
+        engine::company::industrial::industrial_chart_v2(),
+        vec![super::super::entry(
+            1,
+            "2030-01-01",
+            BusinessKind::OpeningBalance,
+            CashFlowClass::Financing,
+            &[
+                (acct::AR, PostingSide::Debit, 100),
+                (acct::CAPITAL, PostingSide::Credit, 100),
+            ],
+        )],
+    );
+    let child = super::super::books_with(
+        engine::company::industrial::industrial_chart_v2(),
+        vec![super::super::entry(
+            1,
+            "2030-01-01",
+            BusinessKind::OpeningBalance,
+            CashFlowClass::NonCash,
+            &[
+                (acct::AR, PostingSide::Debit, 80),
+                (acct::PAYABLE, PostingSide::Credit, 80),
+            ],
+        )],
+    );
+    for reverse in [false, true] {
+        let mut req = request(
+            "root",
+            vec![
+                member("root", None, 100, 0, &parent),
+                member("first", Some("root"), 100, 80, &child),
+                member("second", Some("root"), 100, 80, &child),
+            ],
+        );
+        req.intercompany_balances = vec![
+            ic_balance("root", "first", acct::AR, 80),
+            ic_balance("first", "root", acct::PAYABLE, 80),
+            ic_balance("root", "second", acct::AR, 80),
+            ic_balance("second", "root", acct::PAYABLE, 80),
+        ];
+        if reverse {
+            req.intercompany_balances.reverse();
+        }
+        assert!(
+            matches!(consolidate(req), Err(ConsolidationError::IntercompanyAmountBeyondBalance { amount, balance, .. }) if amount == yuan(160) && balance == yuan(100))
+        );
+    }
+}
 
 #[test]
 fn audit_boundary_equal_nonpositive_intercompany_balances_are_rejected() {

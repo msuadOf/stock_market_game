@@ -18,6 +18,78 @@ fn yuan(v: i128) -> AccountingAmount {
     AccountingAmount::from_cents(v * 100)
 }
 
+#[test]
+fn mixed_industry_receivables_keep_their_statement_meaning() {
+    use crate::fixture::{books_with, entry};
+    use engine::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
+    use engine::accounting::{BusinessKind, CashFlowClass, PostingSide};
+    let make_books = |chart, liability: &str| {
+        books_with(
+            chart,
+            vec![
+                entry(
+                    1,
+                    "2029-12-31",
+                    BusinessKind::OpeningBalance,
+                    CashFlowClass::Financing,
+                    &[
+                        ("1002", PostingSide::Debit, 100),
+                        ("4001", PostingSide::Credit, 100),
+                    ],
+                ),
+                entry(
+                    2,
+                    "2030-03-01",
+                    BusinessKind::CreditSale,
+                    CashFlowClass::NonCash,
+                    &[
+                        ("1122", PostingSide::Debit, 20),
+                        (liability, PostingSide::Credit, 20),
+                    ],
+                ),
+            ],
+        )
+    };
+    let parent = make_books(engine::company::industrial::industrial_chart_v2(), "6001");
+    let sub = make_books(engine::company::insurance::insurance_chart_v4(), "2501");
+    let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+        spec: MemberSpec {
+            id: MemberId(id.into()),
+            group_parent: parent.map(|id| MemberId(id.into())),
+            issued_shares: 100,
+            parent_held_shares: held,
+        },
+        books,
+    };
+    let set = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-03").unwrap(),
+        kind: ReportKind::Monthly,
+        source: ReportSource::Consolidated {
+            request: ConsolidationRequest {
+                root: MemberId("root".into()),
+                members: vec![
+                    member("root", None, 0, &parent),
+                    member("sub", Some("root"), 80, &sub),
+                ],
+                intercompany_balances: vec![],
+                intercompany_sales: vec![],
+            },
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .expect("mixed industry report must generate");
+    set.validate().unwrap();
+    assert_eq!(bs_amount(&set, BsLine::Receivables), yuan(20));
+    assert_eq!(bs_amount(&set, BsLine::InsuranceReceivables), yuan(20));
+    assert_eq!(set.balance_sheet.total_assets, yuan(240));
+    assert_eq!(set.cash_flow.closing_cash, yuan(200));
+}
+
 fn bs_amount(set: &engine::accounting::reports::ReportSet, line: BsLine) -> AccountingAmount {
     set.balance_sheet
         .asset_lines
@@ -27,6 +99,95 @@ fn bs_amount(set: &engine::accounting::reports::ReportSet, line: BsLine) -> Acco
         .find(|(l, _)| *l == line)
         .map(|(_, v)| *v)
         .unwrap_or_else(|| panic!("line {line:?} missing"))
+}
+
+#[test]
+fn consolidated_missing_parent_income_is_rejected_at_report_validation() {
+    let parent = group_parent_books();
+    let sub = group_sub_books();
+    let mut report = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-03").unwrap(),
+        kind: ReportKind::Monthly,
+        source: ReportSource::Consolidated {
+            request: group_request(&parent, &sub),
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .unwrap();
+    report.income.net_income_to_parent = None;
+    let error = report
+        .validate()
+        .expect_err("Consolidated report must carry parent income");
+    assert!(
+        matches!(&error, engine::accounting::reports::ReportError::MissingParentIncome { scope, period } if scope == &ScopeId::Consolidated(MemberId(GROUP_ROOT.into())) && *period == AccountingPeriod::from_iso("2030-03").unwrap())
+    );
+    assert!(error.to_string().contains("net_income_to_parent"));
+    let mut closing = engine::accounting::closing::ClosingEngine::new();
+    assert!(closing.record(report).is_err());
+}
+
+#[test]
+fn standalone_parent_income_none_remains_valid() {
+    let books = crate::fixture::industrial_fixture();
+    let report = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-06").unwrap(),
+        kind: ReportKind::Monthly,
+        source: crate::fixture::standalone(
+            "standalone",
+            &books,
+            engine::accounting::reports::IndustryPresentation::Industrial,
+        ),
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .unwrap();
+    assert_eq!(report.income.net_income_to_parent, None);
+    report.validate().unwrap();
+}
+
+#[test]
+fn closing_deserialize_checks_parent_income_before_key_rebuild() {
+    let parent = group_parent_books();
+    let sub = group_sub_books();
+    let report = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-03").unwrap(),
+        kind: ReportKind::Monthly,
+        source: ReportSource::Consolidated {
+            request: group_request(&parent, &sub),
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .unwrap();
+    let mut closing = engine::accounting::closing::ClosingEngine::new();
+    closing.record(report).unwrap();
+    let original = serde_json::to_value(&closing).unwrap();
+    for duplicate in [false, true] {
+        let mut corrupted = original.clone();
+        corrupted["versions"][0][3][0]["income"]["net_income_to_parent"] = serde_json::Value::Null;
+        if duplicate {
+            corrupted["versions"]
+                .as_array_mut()
+                .unwrap()
+                .push(original["versions"][0].clone());
+        }
+        let error = serde_json::from_value::<engine::accounting::closing::ClosingEngine>(corrupted)
+            .expect_err("closing restore must check each raw report before rebuilding keys");
+        assert!(error.to_string().contains("income.net_income_to_parent"));
+    }
 }
 
 #[test]

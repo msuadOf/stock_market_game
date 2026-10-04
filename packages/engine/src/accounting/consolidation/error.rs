@@ -151,6 +151,15 @@ pub enum ConsolidationError {
         amount: AccountingAmount,
     },
 
+    #[error("intercompany amount {amount} exceeds book balance {balance} for {member:?} account {account:?} against {counterparty:?}")]
+    IntercompanyAmountBeyondBalance {
+        member: MemberId,
+        counterparty: MemberId,
+        account: LedgerAccountId,
+        amount: AccountingAmount,
+        balance: AccountingAmount,
+    },
+
     /// 申报科目是现金类：工作底稿分录绝不触碰现金（集团现金不变的红线）。
     #[error(
         "intercompany declaration touches cash account {account:?} of {member:?}: worksheet entries must never touch cash"

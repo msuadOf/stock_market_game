@@ -374,6 +374,8 @@ mod tests {
             minority_ni: cents(0),
             ni_to_parent: cents(0),
             consolidated_ni: cents(0),
+            window_ni_to_parent: cents(0),
+            window_minority_ni: cents(0),
             non_root_equity: BTreeMap::from([(LedgerAccountId("4001".into()), cents(40))]),
             prior_split: None,
         }

@@ -26,6 +26,7 @@ mod sale;
 mod worksheet;
 
 pub use aggregate::ConsolidatedBalance;
+pub(crate) use aggregate::{account_keys, AccountKeys};
 pub use error::{ConsolidationError, DeclaredSide};
 pub use group::{GroupMember, MemberId, MemberSpec, ScopeId, SubsidiaryOwnership};
 pub use minority::MinorityInterest;
@@ -108,7 +109,7 @@ pub fn consolidate(
         &request.intercompany_balances,
         &request.intercompany_sales,
     )?;
-    eliminate::apply_worksheet(&mut balances, &worksheet)?;
+    eliminate::apply_worksheet(&mut balances, &worksheet, &books)?;
     let economics = minority::adjusted_economics(&books, &worksheet)?;
     let minority = minority::summarize(&group, &economics)?;
 

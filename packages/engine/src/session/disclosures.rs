@@ -48,6 +48,7 @@ pub struct DayEndDisclosures {
 
 /// 日终披露上下文（参数组——closing.rs `StandaloneTarget` 先例）。
 pub struct DayEndDisclosureCtx<'a> {
+    pub groups: &'a [super::company_groups::GroupStructure],
     pub report: &'a CivilDayEndReport,
     /// 已完成当日 finalize 的经营编排（只读）。
     pub ops: &'a CompanyOperations,
@@ -111,7 +112,7 @@ impl DisclosureDispatch {
         {
             for (id, company) in &ctx.ops.companies {
                 for shock in company.economy().active() {
-                    if shock.starts_on != settled {
+                    if shock.starts_on != settled || !shock.kind.applies_to(company.spec().kind) {
                         continue;
                     }
                     let announcement = ctx.library.publish_announcement(AnnouncementRequest {
@@ -122,6 +123,23 @@ impl DisclosureDispatch {
                     })?;
                     out.announcements_published.push(announcement);
                 }
+            }
+            for failure in ctx.ops.payment_failures_on(settled) {
+                let announcement = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: failure.company.clone(),
+                    occurred_on: settled,
+                    published_at: phase,
+                    event: AnnouncedEvent {
+                        kind: crate::company::ShockKind::PaymentFailure {
+                            what: failure.what.clone(),
+                            amount: failure.amount,
+                        },
+                        amplitude_bp: 0,
+                        starts_on: settled,
+                        expires_on: settled,
+                    },
+                })?;
+                out.announcements_published.push(announcement);
             }
             self.announced_through = Some(settled);
         }
@@ -144,6 +162,19 @@ impl DisclosureDispatch {
                     let publication =
                         ctx.publish_scheduled(id, company, instant, fiscal_year, kind, offset)?;
                     out.reports_published.push(publication);
+                    for group in ctx.groups.iter().filter(|group| group.root == *id) {
+                        let publication = super::company_groups::publish_group_scheduled(
+                            group,
+                            ctx.ops,
+                            ctx.closing,
+                            ctx.library,
+                            instant,
+                            fiscal_year,
+                            kind,
+                            offset,
+                        )?;
+                        out.reports_published.push(publication);
+                    }
                 }
             }
         }

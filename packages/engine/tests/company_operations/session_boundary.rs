@@ -12,11 +12,20 @@ use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 
 fn session(date: CivilDate, broke: bool) -> GameSession {
     let as_of = CivilDate::from_ymd(date.year() - 3, 12, 31).unwrap();
-    let mut company = if broke {
+    let company = if broke {
         industrial_broke(as_of)
     } else {
         industrial_a(as_of)
     };
+    session_with_company(date, company, 1, quiet_params())
+}
+
+pub(super) fn session_with_company(
+    date: CivilDate,
+    mut company: engine::company::operations::OperatingCompanyConfig,
+    seed: u64,
+    shock_params: engine::company::ShockParams,
+) -> GameSession {
     company.spec.listed_stock = Some(StockCode("600101".into()));
     GameSession::new(
         SessionSetup {
@@ -31,8 +40,8 @@ fn session(date: CivilDate, broke: bool) -> GameSession {
                 float_shares: 0,
             }],
             company_operations: Some(CompanyOperationsConfig {
-                seed: 1,
-                shock_params: quiet_params(),
+                seed,
+                shock_params,
                 companies: vec![company],
             }),
             groups: Vec::new(),

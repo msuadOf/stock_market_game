@@ -114,6 +114,40 @@ pub(crate) struct ReportClassification {
 }
 
 impl ReportClassification {
+    pub(crate) fn from_members(
+        members: &[crate::accounting::consolidation::GroupMember<'_>],
+    ) -> Result<Self, super::ReportError> {
+        let books = members
+            .iter()
+            .map(|member| (member.spec.id.clone(), member.books))
+            .collect();
+        let keys = crate::accounting::consolidation::account_keys(&books);
+        let mut assignments = BTreeMap::new();
+        for member in members {
+            let industry = super::industry_of_chart(member.books.ledger().chart())?;
+            let source = merge_into(BTreeMap::new(), assignments_for(industry))?;
+            for (code, _) in member.books.ledger().chart().iter() {
+                let target =
+                    source
+                        .get(code)
+                        .ok_or_else(|| super::ReportError::UnclassifiedAccount {
+                            code: code.clone(),
+                        })?;
+                let key = keys[&(member.spec.id.clone(), code.clone())].clone();
+                if let Some(existing) = assignments.insert(key.clone(), target.clone()) {
+                    if existing != *target {
+                        return Err(super::ReportError::DuplicateClassification {
+                            code: key,
+                            first: existing.label(),
+                            second: target.label(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(Self { assignments })
+    }
+
     pub(crate) fn from_industries(
         defs: &BTreeMap<LedgerAccountId, crate::accounting::ledger::AccountDef>,
         industries: &[IndustryPresentation],

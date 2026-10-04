@@ -60,6 +60,9 @@ pub(super) fn assemble_companies(
     seed: u64,
     event_multiplier_bp: u16,
 ) -> Result<CompanyAssembly, SessionError> {
+    if let Some(config) = &setup.company_operations {
+        return assemble_custom_companies(setup, config.clone(), event_multiplier_bp);
+    }
     // 前史首日 = 开局年 − 2 的 1 月 1 日；账套 as_of = 前史首日前一天
     // （generate_history 的调用方契约）。
     let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31)
@@ -96,6 +99,70 @@ pub(super) fn assemble_companies(
         assemble_seeded_prehistory(operations_config, setup.start_date).map_err(|error| {
             SessionError::InvalidSetup(format!("seeded prehistory failed: {error}"))
         })?;
+    Ok(CompanyAssembly {
+        registry,
+        prehistory,
+    })
+}
+
+fn assemble_custom_companies(
+    setup: &SessionSetup,
+    mut config: CompanyOperationsConfig,
+    event_multiplier_bp: u16,
+) -> Result<CompanyAssembly, SessionError> {
+    let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31)
+        .map_err(|error| SessionError::InvalidSetup(format!("company as_of invalid: {error}")))?;
+    let mut registry_configs = Vec::new();
+    for company in &config.companies {
+        let books = company.books.books();
+        let entries = books.journal().entries().collect::<Vec<_>>();
+        if entries.len() != 1
+            || entries[0].date != as_of
+            || entries[0].kind != crate::accounting::BusinessKind::OpeningBalance
+        {
+            return Err(SessionError::InvalidSetup(format!(
+                "company {} custom opening must contain exactly one OpeningBalance at {as_of}",
+                company.spec.id.0
+            )));
+        }
+        registry_configs.push(CompanyConfig {
+            spec: company.spec.clone(),
+            opening: crate::company::CompanyOpening {
+                chart: books.ledger().chart().clone(),
+                as_of,
+                lines: entries[0]
+                    .lines
+                    .iter()
+                    .map(|line| OpeningLine {
+                        account: line.account.clone(),
+                        side: line.side,
+                        amount: line.amount,
+                    })
+                    .collect(),
+            },
+            counterparties: Vec::new(),
+            budget: OperatingBudget::new(AccountingAmount::ZERO, Vec::new())
+                .map_err(company_error("custom operating budget"))?,
+        });
+    }
+    let registry =
+        CompanyRegistry::new(registry_configs).map_err(company_error("custom registry"))?;
+    registry
+        .validate_issuer_mapping(
+            &setup
+                .stocks
+                .iter()
+                .map(|stock| (stock.code.clone(), stock.total_shares))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(company_error("custom issuer mapping"))?;
+    scale_shock_params(&mut config.shock_params, event_multiplier_bp)?;
+    let mut prehistory = assemble_seeded_prehistory(config, setup.start_date).map_err(|error| {
+        SessionError::InvalidSetup(format!("custom seeded prehistory failed: {error}"))
+    })?;
+    super::company_groups::seed_groups(&setup.groups, &mut prehistory, setup.start_date).map_err(
+        |error| SessionError::InvalidSetup(format!("custom group prehistory failed: {error}")),
+    )?;
     Ok(CompanyAssembly {
         registry,
         prehistory,

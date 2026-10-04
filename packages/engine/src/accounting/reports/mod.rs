@@ -34,7 +34,7 @@ pub use error::ReportError;
 pub use income::{IncomeClass, IncomeColumns, IncomeLine, IncomeStatement};
 pub use notes::{Assignment, NoteItem, NoteTarget, Notes};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::accounting::consolidation::{ConsolidationRequest, MemberId, ScopeId};
 use crate::accounting::journal::BusinessEventId;
@@ -205,16 +205,9 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
             if restatement {
                 return Err(ReportError::ConsolidatedRestatementUnsupported);
             }
-            let mut industries: BTreeSet<IndustryPresentation> = BTreeSet::new();
-            for member in &group_request.members {
-                industries.insert(industry_of_chart(member.books.ledger().chart())?);
-            }
+            let classification = notes::ReportClassification::from_members(&group_request.members)?;
             let windows =
                 consolidated_window::consolidated(group_request, (first, last), prior_window)?;
-            let classification = notes::ReportClassification::from_industries(
-                &windows.defs,
-                &industries.into_iter().collect::<Vec<_>>(),
-            )?;
             let root = windows
                 .consolidation
                 .as_ref()

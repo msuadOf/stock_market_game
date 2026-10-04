@@ -42,6 +42,8 @@ pub(crate) struct ConsolidationFacts {
     pub minority_ni: AccountingAmount,
     pub ni_to_parent: AccountingAmount,
     pub consolidated_ni: AccountingAmount,
+    pub window_ni_to_parent: AccountingAmount,
+    pub window_minority_ni: AccountingAmount,
     /// 非根成员权益科目期末净贷方贡献（附注合并拆分披露）。
     pub non_root_equity: BTreeMap<LedgerAccountId, AccountingAmount>,
     /// 上年年末合并拆分；无历史 ⇒ None。
@@ -54,6 +56,33 @@ pub(crate) fn consolidated(
     window: Window,
     prior_window: Window,
 ) -> Result<StatementWindows, ReportError> {
+    let mut bounded = Vec::with_capacity(request.members.len());
+    for member in &request.members {
+        let mut books = Books::new(member.books.ledger().chart().clone());
+        let entries = member
+            .books
+            .journal()
+            .entries()
+            .filter(|entry| entry.period() <= window.1)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !entries.is_empty() {
+            books.post_batch(entries)?;
+        }
+        bounded.push((member.spec.clone(), books));
+    }
+    let request = ConsolidationRequest {
+        root: request.root,
+        members: bounded
+            .iter()
+            .map(|(spec, books)| GroupMember {
+                spec: spec.clone(),
+                books,
+            })
+            .collect(),
+        intercompany_balances: request.intercompany_balances,
+        intercompany_sales: request.intercompany_sales,
+    };
     let mut builder = WindowConsolidationBuilder::new(window, prior_window)?;
     builder.scan_members(&request.root, &request.members)?;
     let output = consolidate(request)?;
@@ -70,6 +99,9 @@ struct WindowConsolidationBuilder {
     member_prior_equity: BTreeMap<MemberId, AccountingAmount>,
     non_root_equity: BTreeMap<LedgerAccountId, AccountingAmount>,
     root_prior_capital: AccountingAmount,
+    keys: crate::accounting::consolidation::AccountKeys,
+    member_ytd_income: BTreeMap<MemberId, AccountingAmount>,
+    member_window_income: BTreeMap<MemberId, AccountingAmount>,
 }
 
 impl WindowConsolidationBuilder {
@@ -82,6 +114,9 @@ impl WindowConsolidationBuilder {
             member_prior_equity: BTreeMap::new(),
             non_root_equity: BTreeMap::new(),
             root_prior_capital: AccountingAmount::ZERO,
+            keys: BTreeMap::new(),
+            member_ytd_income: BTreeMap::new(),
+            member_window_income: BTreeMap::new(),
         })
     }
 
@@ -90,12 +125,18 @@ impl WindowConsolidationBuilder {
         root: &MemberId,
         members: &[GroupMember<'_>],
     ) -> Result<(), ReportError> {
+        let books = members
+            .iter()
+            .map(|member| (member.spec.id.clone(), member.books))
+            .collect();
+        self.keys = crate::accounting::consolidation::account_keys(&books);
         for member in members {
             if member.spec.group_parent.is_some() {
                 self.sub_ids.insert(member.spec.id.clone());
             }
             for (id, def) in member.books.ledger().chart().iter() {
-                self.defs.entry(id.clone()).or_insert_with(|| def.clone());
+                let key = &self.keys[&(member.spec.id.clone(), id.clone())];
+                self.defs.entry(key.clone()).or_insert_with(|| def.clone());
             }
         }
         for member in members {
@@ -103,8 +144,28 @@ impl WindowConsolidationBuilder {
             let is_root = &member.spec.id == root;
             let mut prior_equity = AccountingAmount::ZERO;
             for entry in member.books.journal().entries() {
+                let income = entry_income(entry, member.books)?;
+                if entry.period().year() == self.window.1.year() {
+                    let total = self
+                        .member_ytd_income
+                        .entry(member.spec.id.clone())
+                        .or_default();
+                    *total = total.add(income)?;
+                }
+                if entry.period() >= self.window.0 && entry.period() <= self.window.1 {
+                    let total = self
+                        .member_window_income
+                        .entry(member.spec.id.clone())
+                        .or_default();
+                    *total = total.add(income)?;
+                }
+                let mut mapped = entry.clone();
+                for line in &mut mapped.lines {
+                    line.account =
+                        self.keys[&(member.spec.id.clone(), line.account.clone())].clone();
+                }
                 self.acc
-                    .add_entry(entry, entry.period(), false, &self.defs)
+                    .add_entry(&mapped, entry.period(), false, &self.defs)
                     .map_err(|e| ReportError::Accounting(Box::new(e)))?;
                 prior_equity = prior_equity
                     .add(equity_rolling_delta(
@@ -143,12 +204,63 @@ impl WindowConsolidationBuilder {
         &mut self,
         output: &ConsolidationOutput,
     ) -> Result<(), ReportError> {
+        let mut worksheet = output.worksheet.clone();
+        for entry in &mut worksheet {
+            for line in &mut entry.lines {
+                line.account = self.keys[&(line.member.clone(), line.account.clone())].clone();
+                if matches!(
+                    self.defs[&line.account].element,
+                    AccountElement::Revenue | AccountElement::Expense
+                ) {
+                    let income = match line.side {
+                        PostingSide::Debit => line.amount.neg()?,
+                        PostingSide::Credit => line.amount,
+                    };
+                    let ytd = self
+                        .member_ytd_income
+                        .entry(line.member.clone())
+                        .or_default();
+                    *ytd = ytd.add(income)?;
+                    let window = self
+                        .member_window_income
+                        .entry(line.member.clone())
+                        .or_default();
+                    *window = window.add(income)?;
+                }
+            }
+        }
         self.acc
-            .add_current_worksheet(&output.worksheet)
+            .add_current_worksheet(&worksheet)
             .map_err(|e| ReportError::Accounting(Box::new(e)))
     }
 
     fn finish(self, output: ConsolidationOutput) -> Result<StatementWindows, ReportError> {
+        let mut ytd_income = AccountingAmount::ZERO;
+        let mut window_income = AccountingAmount::ZERO;
+        for income in self.member_ytd_income.values() {
+            ytd_income = ytd_income.add(*income)?;
+        }
+        for income in self.member_window_income.values() {
+            window_income = window_income.add(*income)?;
+        }
+        let mut minority_ytd = AccountingAmount::ZERO;
+        let mut minority_window = AccountingAmount::ZERO;
+        for interest in &output.minority {
+            minority_ytd = minority_ytd.add(apply_minority_bp(
+                self.member_ytd_income
+                    .get(&interest.subsidiary)
+                    .copied()
+                    .unwrap_or(AccountingAmount::ZERO),
+                interest,
+            )?)?;
+            minority_window = minority_window.add(apply_minority_bp(
+                self.member_window_income
+                    .get(&interest.subsidiary)
+                    .copied()
+                    .unwrap_or(AccountingAmount::ZERO),
+                interest,
+            )?)?;
+        }
         let prior_split = prior_year_split(
             &output,
             &self.member_prior_equity,
@@ -159,9 +271,6 @@ impl WindowConsolidationBuilder {
             scope,
             minority_equity_total,
             equity_to_parent,
-            net_income_to_minority,
-            net_income_to_parent,
-            consolidated_net_income,
             ..
         } = output;
         let facts = ConsolidationFacts {
@@ -175,14 +284,38 @@ impl WindowConsolidationBuilder {
             },
             minority_equity: minority_equity_total,
             equity_to_parent,
-            minority_ni: net_income_to_minority,
-            ni_to_parent: net_income_to_parent,
-            consolidated_ni: consolidated_net_income,
+            minority_ni: minority_ytd,
+            ni_to_parent: ytd_income.sub(minority_ytd)?,
+            consolidated_ni: ytd_income,
+            window_ni_to_parent: window_income.sub(minority_window)?,
+            window_minority_ni: minority_window,
             non_root_equity: self.non_root_equity,
             prior_split,
         };
         Ok(self.acc.finish(self.defs, Some(facts)))
     }
+}
+
+fn entry_income(entry: &JournalEntry, books: &Books) -> Result<AccountingAmount, AccountingError> {
+    let mut income = AccountingAmount::ZERO;
+    for line in &entry.lines {
+        let def = books.ledger().chart().get(&line.account).ok_or_else(|| {
+            AccountingError::UnknownAccount {
+                event: entry.source,
+                account: line.account.clone(),
+            }
+        })?;
+        if matches!(
+            def.element,
+            AccountElement::Revenue | AccountElement::Expense
+        ) {
+            income = match line.side {
+                PostingSide::Debit => income.sub(line.amount)?,
+                PostingSide::Credit => income.add(line.amount)?,
+            };
+        }
+    }
+    Ok(income)
 }
 
 /// 单成员权益科目净贷方贡献（≤ bound）：按代码累计（`into` 为 Some 时）

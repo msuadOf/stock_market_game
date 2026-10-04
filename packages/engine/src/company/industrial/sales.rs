@@ -103,9 +103,11 @@ impl IndustrialBooks {
             due_on,
             receivable_amount,
         )?;
+        self.record_trade_counterparty(event, customer, chart::acct::AR);
         self.inventory_mut()
             .apply_issue(&item, quantity)
             .map_err(|error| map_inventory_issue(quantity, error))?;
+        self.record_inventory_source(event, &item, &item_account);
         Ok(CreditSaleOutcome {
             event,
             receivable,
@@ -151,6 +153,7 @@ impl IndustrialBooks {
             }],
         )?;
         self.receivables_mut().apply(receivable, amount)?;
+        self.record_trade_counterparty(event, &party, chart::acct::AR);
         self.counterparties_mut().record_flow(super::flow(
             date,
             &party,
@@ -247,7 +250,15 @@ impl IndustrialBooks {
                 ],
             }],
         )?;
+        let party = CounterpartyId(
+            self.receivables()
+                .get(receivable)
+                .expect("write-off checked item")
+                .party()
+                .to_string(),
+        );
         self.receivables_mut().write_off(receivable)?;
+        self.record_trade_counterparty(event, &party, chart::acct::AR);
         Ok(event)
     }
 }

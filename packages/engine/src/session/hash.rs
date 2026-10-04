@@ -66,6 +66,7 @@ impl GameSession {
             library: _,
             ops_wiring: _,
             disclosures: _,
+            groups: _,
             plans: _,
             urgency_policy: _,
             belief_participants: _,
@@ -136,6 +137,7 @@ impl GameSession {
         hash.field(&self.state.library.hash_projection())?;
         hash.field(&self.state.ops_wiring)?;
         hash.field(&self.state.disclosures)?;
+        hash.field(&self.state.groups)?;
         hash.field(&self.state.plans)?;
         hash.field(&self.state.urgency_policy)?;
         hash.field(

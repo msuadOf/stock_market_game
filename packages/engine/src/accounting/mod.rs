@@ -19,6 +19,7 @@ pub mod consolidation;
 mod error;
 mod fixed_assets;
 mod inventory;
+pub(crate) use inventory::rhe_div;
 mod journal;
 mod ledger;
 mod period;
