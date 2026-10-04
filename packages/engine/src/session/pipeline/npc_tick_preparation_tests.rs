@@ -185,6 +185,64 @@ fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
 }
 
 #[test]
+fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
+    let (mut session, npc) = due_retail(8, 100);
+    super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
+
+    assert!(session
+        .state
+        .pending_npc
+        .as_ref()
+        .unwrap()
+        .intents
+        .is_empty());
+    session.state.pending_npc = None;
+    super::queue_npc_for_next_tick(&mut session).unwrap();
+    let pending = session.state.pending_npc.as_ref().unwrap();
+    assert!(pending.intents.iter().any(|(account, intent)| {
+        *account == npc
+            && matches!(
+                intent,
+                Intent::PlaceLimit {
+                    side: Side::Buy,
+                    ..
+                }
+            )
+    }));
+    session
+        .state
+        .accounts
+        .get_mut(&npc)
+        .unwrap()
+        .fixture_set_cash(Money::ZERO);
+
+    let events = session.step().unwrap();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            account,
+            reason: RejectionReason::InsufficientCash,
+            ..
+        } if *account == npc
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        Event::OrderAccepted { account, .. } if *account == npc
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        Event::Trade { maker, taker, .. } if *maker == npc || *taker == npc
+    )));
+    assert_eq!(session.state.accounts[&npc].cash(), Money::ZERO);
+    assert!(session
+        .state
+        .markets
+        .values()
+        .all(|market| { market.resting_orders_for(npc).is_empty() }));
+}
+
+#[test]
 fn due_institution_plan_roots_are_ready_with_the_npc_source() {
     let mut authority =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 8).unwrap();

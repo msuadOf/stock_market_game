@@ -224,6 +224,12 @@ seed 不包含并发任务的实际到达轨迹。两次自由调度可以产生
 - 已发生事实的重放与恢复：`pipeline/commit_evidence_tests.rs` 检查实际收据重放并拒绝缺失/篡改，
   `tests/company_scenarios/restore.rs` 保留存档恢复字节检查。上述 Rust 路径均相对 `packages/engine`，`pipeline` 位于 `src/session`。
 
+### 多项非法条件与拒绝原子性
+
+当一个委托同时违反多个条件时，当前契约不规定跨 AccountValidation、StockProcessing 或 OrderBook 的拒绝原因优先级；测试只应要求明确产生一个适用的业务拒绝，不应把某个检查顺序写成交易规则。测试仍须核对被拒委托没有部分进入订单簿、没有产生成交或扣减现金/股份；StockProcessing 阶段拒绝消耗已预分配 `OrderId` 的边界按 [ADR-0017](decisions/0017-escrow-parallel-tick.md) 单独断言。
+
+NPC 策略的现金/股份估算只用于减少无效候选，不能替代 T 时的 AccountValidation 和股票处理校验。受理必须使用当前 tick 的 `DecisionResourceSnapshot`、资源竞争结果及实际股票状态；不得因策略预检通过而跳过校验，也不得把合法零费用或非正净成本当成非法交易。
+
 ## 8. 后续质量工作
 
 - [ ] 覆盖率门槛（建议 engine ≥ 90%，整体 ≥ 70%，仅作信号不作强约束）
