@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐21项，剩余58项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐24项，剩余55项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -70,7 +70,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G75 | 已补齐：日内时刻恢复与构造器使用同一秒域；`CivilInstant`输入契约 | serde经过CivilInstant::new校验，0与86399合法，86400及u32::MAX拒绝；公开秒域不再可由私有字段派生serde绕过。原问题见 [原文复核](hidden-review/batch-139.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G76 | 已补齐：冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | policy content digest新增独立source_digest分量；只修改出处摘要即改变身份，旧digest与新摘要组合在validate拒绝。默认official空表身份不变；测试使用合成出处，不使用真实行情。原问题见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G44 | 已补齐：零成交量如实为零；DESIGN:88/110、移动QA:3 | 分时与K线投影在volume=0时保留槽位及零高度，只有正量使用最小可见高度1。短测覆盖零/微小正量/最大量，真实DOM与SVG消费者无额外最小高度；不伪造有成交。 原证据见 [绘图](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
-| G46 | 桌面五档标签对应真实报价rank；DESIGN、UX盘口 | engine asks按低价优先，`LocalRefreshViews.tsx:113` 却把asks[0]标卖5，一档时也标卖5；移动五档映射正确。缺桌面档号/展示顺序一致性，不改撮合。见 [盘口](exhaustive-review/luna02.md)。 |
+| G46 | 已补齐：桌面五档标签对应真实报价rank；DESIGN、UX盘口 | 真实Desktop卖盘先按engine报价索引标rank=index+1，再反转显示，卖一始终邻近买一；一档/两档/五档SSR核对标签与报价，不伪造空档。 原证据见 [盘口](exhaustive-review/luna02.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
 | G47 | 竞价null指示价槽不绘价格线；DESIGN:88、UX:50 | 投影先过滤null，再拼一个polyline，两个有效价之间的null槽被直线跨越。整段null空态已有，缺的是连续有效片段分隔。见 [竞价绘图](exhaustive-review/luna02.md)。 |
 
 ### 2.4 工程、交互和发布
@@ -87,7 +87,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G26 | 手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；仅指手动开发CI，不要求恢复普通 commit/PR 自动运行或发布链路lint。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
 | G45 | 已补齐：自选详情返回原列表身份；UX导航/Flow ledger | reducer保留原primaryTab；App使用共用MobileDetailLayer按detailCode显示详情，不再仅允许market页。短测覆盖自选→详情→切股→交易底页→返回，并实际SSR共用详情层，返回仍在自选。 原证据见 [导航](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G48 | 中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML固定lang=en且无运行时修正；AG Grid sortable表头未配置locale，实际使用英文排序辅助文本。两处均需对应中文界面，不能用中文列名核销内置提示。见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
-| G49 | 持仓成本及浮盈承接半偶到分语义；account spec:23/63 | Rust cost_price半偶到分，Web原始除法/toFixed显示成本并以未舍入净投入算浮盈。200股、净投入200100分、现价1001分时，Web显示成本10.01元/浮盈1元，Rust成本10.00元/浮盈2元；是小额跨层模型漂移，非Q01安全整数争议。见 [账户消费](exhaustive-review/luna15.md)。 |
+| G49 | 已补齐：持仓成本及浮盈承接半偶到分语义；account spec:23/63 | 持仓展示共用valueHeldPosition，BigInt中间计算正负对称半偶到每股分，浮盈=(现价−舍入成本)×股数，与Rust Account一致；真实SSR验证200股净投入±200100分的成本与浮盈，单位/费用/T+1不变。 原证据见 [账户消费](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
 | G50 | React渲染异常进入可见详情/反馈出口；错误处理规范 | `render-app.tsx` 无ErrorBoundary或root错误callback；main异步启动catch不覆盖后续React render/layout-effect异常，宿主fatal出口也不覆盖UI自身异常。见 [错误链](exhaustive-review/luna14.md)。 |
 | G51 | Desktop释放失败显式上报；错误处理规范 | `tauri-host.ts:165–175` 清fatalCallback后丢弃stop_session的Promise，dispose调用方无法接IPC rejection。unlisten运行时行为是版本限定补充，结论仅依明确stop_session失败出口。见 [释放](exhaustive-review/sweep14.md)。 |
 | G52 | 协议断言保留已知actual/expected上下文；错误详情规范 | 前端generation/cursor不一致仅生成通用ProtocolError文本，coordinator没有补上已知实际值/期望值，复制反馈缺复现事实。三宿主真实engine fatal已有context，不泛称全部错误无详情。见 [协议错误](exhaustive-review/luna14.md)。 |
@@ -96,7 +96,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G56 | Pages区分owner根站点和项目路径；ADR-0028 | distributions仅看repository.name的.github.io后缀，没有与owner匹配；非owner同后缀项目被误编为根路径。当前stock_market_game不触发，不推翻其发布验收。见 [Pages](exhaustive-review/luna12.md)。 |
 | G64 | 桌面行情选股有键盘等价入口；UX/设计辅助功能 | MarketGrid仅onRowClicked选择，suppressCellFocus禁用单元格焦点；移动原生按钮在桌面隐藏。静态缺选股入口，不声称所有键盘操作失效或已跑浏览器。见 [桌面Grid](exhaustive-review/sweep41.md)。 |
 | G65 | 主导航/行情分类选中状态程序化公开；UX辅助功能 | 主导航与行情分类只有active CSS，没有向辅助技术提供当前/选中状态；图表/信息tab已有aria-selected。具体角色及属性由实现按组件语义选，不硬指定错误role。见 [状态](exhaustive-review/luna02.md)。 |
-| G67 | 外部baseline持仓必须有行情，估值缺项显式失败；防御/资产契约 | baseline解析未校验持仓代码属于markets，portfolio selector与组件以缺价??0计算零市值并低估资产。runtime-delta账户更新已有引用守卫；缺口限定不一致外部baseline与估值fallback，不泛称所有协议漏验。见 [资产](exhaustive-review/luna15.md)。 |
+| G67 | 已补齐：外部baseline持仓必须有行情，估值缺项显式失败；防御/资产契约 | 外部baseline深验所有账户持仓代码有own行情引用；portfolio selector和组件不再缺价默认为0。覆盖玩家/非玩家、零股引用及继承属性，错误保留持仓代码和协议路径；delta原guard不改。 原证据见 [资产](exhaustive-review/luna15.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
 | G68 | 合法非默认局证券使用当前setup交易规则/选项；存档编辑、交易规则一致性 | 读档安装activeSetup，快捷涨跌停仍查DEFAULT_SETUP，下单选项仍取STOCK_LIST，非默认证券缺规则/选项。不同主板/ST类别未必改变现行限价，不能用“同code改category必算错”作证；缺当前配置消费。见 [表单](exhaustive-review/luna02.md) 与 [裁定](exhaustive-review/resolution.md)。 |
 
 ### 2.5 补充逐章核对发现
