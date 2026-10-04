@@ -69,7 +69,6 @@ pub struct IndustrialBooks {
     counterparties: CounterpartyLedger,
     budget: OperatingBudget,
     tax_policy: TaxPolicy,
-    #[serde(rename = "loss_pool")]
     income_tax_position: IncomeTaxPosition,
     loans: LoanPortfolio,
     next_event_id: u64,
@@ -277,6 +276,7 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
         decoder: Decoder,
     ) -> Result<Self, Decoder::Error> {
         #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Raw {
             books: Books,
             inventory: InventoryLedger,
@@ -287,7 +287,6 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
             counterparties: CounterpartyLedger,
             budget: OperatingBudget,
             tax_policy: TaxPolicy,
-            #[serde(rename = "loss_pool")]
             income_tax_position: IncomeTaxPosition,
             loans: LoanPortfolio,
             next_event_id: u64,
@@ -313,6 +312,14 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
         };
         restored
             .validate_credit_state()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .tax_policy
+            .validate()
+            .map_err(serde::de::Error::custom)?;
+        restored
+            .income_tax_position
+            .validate(&restored.tax_policy.income_tax)
             .map_err(serde::de::Error::custom)?;
         restored
             .validate_trade_counterparty_events()

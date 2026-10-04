@@ -14,6 +14,15 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum IndustrialError {
+    #[error("inconsistent income tax state: {detail}")]
+    IncomeTaxStateInconsistent { detail: String },
+
+    #[error("historical income tax reassessment for {requested_year} before latest assessed year {latest_year} requires cascading recalculation")]
+    HistoricalTaxReassessmentUnsupported {
+        requested_year: i32,
+        latest_year: i32,
+    },
+
     #[error("inconsistent industrial credit state: {detail}")]
     CreditStateInconsistent { detail: String },
     /// 付款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化拒绝，

@@ -40,6 +40,20 @@ test("IndustrialBooks 严格保存库存来源身份而非派生金额或数量"
   for (const invalid of [{ ...events[0], event: "1" }, { ...events[0], amount: "1.00" }, { ...events[0], quantity: 1 }]) assert.throws(() => parseIndustryBooks({ Industrial: { ...saved.Industrial, inventory_source_events: [invalid] } }, "books"), /inventory_source_events/)
 })
 
+test("IndustrialBooks 所得税年度基准必须完整且拒绝旧亏损池结构", () => {
+  const { loss_pool: _oldPool, income_tax_position: _currentPosition, ...base } = industrial.Industrial
+  const position = {
+    loss_pool: [],
+    assessment: { year: 2030, pretax: "3.00", current_tax: "0.25", opening_loss_pool: [{ origin_year: 2029, remaining: "2.00" }] },
+  }
+  const saved = { Industrial: { ...base, income_tax_position: position } }
+  assert.deepEqual(parseIndustryBooks(saved, "books"), saved)
+  assert.throws(() => parseIndustryBooks({ Industrial: { ...base, loss_pool: [] } }, "books"), /income_tax_position/)
+  for (const invalid of [[], { loss_pool: [] }, { ...position, extra: true }, { ...position, assessment: { ...position.assessment, current_tax: 25 } }]) {
+    assert.throws(() => parseIndustryBooks({ Industrial: { ...base, income_tax_position: invalid } }, "books"), /income_tax_position/)
+  }
+})
+
 test("parseIndustryBooks rejects malformed industrial inventory structures with paths", () => {
   assert.throws(() => parseIndustryBooks({ Industrial: { ...industrial.Industrial, inventory: 7 } }, "save.books"), /save\.books\.Industrial\.inventory/)
   assert.throws(() => parseIndustryBooks({ Industrial: { ...industrial.Industrial, inventory: {} } }, "save.books"), /save\.books\.Industrial\.inventory\.items/)

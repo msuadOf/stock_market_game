@@ -42,6 +42,7 @@ pub struct IncomeTaxOutcome {
     pub event: Option<BusinessEventId>,
     pub pretax: AccountingAmount,
     pub current_tax: AccountingAmount,
+    pub current_tax_delta: AccountingAmount,
     pub loss_offset_used: AccountingAmount,
     pub loss_added: AccountingAmount,
     pub losses_expired: AccountingAmount,
@@ -136,19 +137,32 @@ impl IndustrialBooks {
         let computation = preview.computation;
         let pretax = computation.pretax;
         let deferred_delta = preview.deferred_delta;
+        let current_tax_delta = preview.current_tax_delta;
 
         let mut entries = Vec::new();
         let mut lines = Vec::new();
-        if computation.current_tax.is_positive() {
+        if current_tax_delta.is_positive() {
             lines.push(super::line(
                 chart::acct::TAX_EXP,
                 PostingSide::Debit,
-                computation.current_tax,
+                current_tax_delta,
             ));
             lines.push(super::line(
                 chart::acct::CIT_PAYABLE,
                 PostingSide::Credit,
-                computation.current_tax,
+                current_tax_delta,
+            ));
+        } else if current_tax_delta.is_negative() {
+            let reversal = current_tax_delta.neg()?;
+            lines.push(super::line(
+                chart::acct::CIT_PAYABLE,
+                PostingSide::Debit,
+                reversal,
+            ));
+            lines.push(super::line(
+                chart::acct::TAX_EXP,
+                PostingSide::Credit,
+                reversal,
             ));
         }
         if deferred_delta.is_positive() {
@@ -172,8 +186,6 @@ impl IndustrialBooks {
             lines.push(super::line(chart::acct::DTA, PostingSide::Credit, release));
         }
         let event = if lines.is_empty() {
-            // 零税前且无递延变动：无分录、无事件 id 消耗（ending_pool 与当前
-            // 池一致，落地为幂等赋值）。
             None
         } else {
             let base = self.next_event_id;
@@ -188,12 +200,13 @@ impl IndustrialBooks {
             self.post_with_commit(base + 1, entries)?;
             Some(event)
         };
-        self.income_tax_position
-            .commit_loss_pool(computation.ending_pool.clone());
+        self.income_tax_position.loss_pool = computation.ending_pool.clone();
+        self.income_tax_position.assessment = Some(preview.assessment);
         Ok(IncomeTaxOutcome {
             event,
             pretax,
             current_tax: computation.current_tax,
+            current_tax_delta,
             loss_offset_used: computation.loss_offset_used,
             loss_added: computation.loss_added,
             losses_expired: computation.losses_expired,
@@ -239,17 +252,35 @@ impl IndustrialBooks {
     }
 }
 
-/// 跨年亏损池的唯一 owner；IncomeTaxPolicy 借用自账套，税款余额仍由 Books 持有。
-/// transparent 保持原 loss_pool 数组及原反序列化接受集。
+/// 跨年亏损池与当前年度评估的唯一 owner；税款收付余额仍由 Books 持有。
 #[derive(Clone, Eq, PartialEq, Debug, Default, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[serde(deny_unknown_fields)]
 pub(super) struct IncomeTaxPosition {
     loss_pool: Vec<LossEntry>,
+    #[serde(deserialize_with = "deserialize_assessment")]
+    assessment: Option<IncomeTaxAssessment>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IncomeTaxAssessment {
+    year: i32,
+    pretax: AccountingAmount,
+    current_tax: AccountingAmount,
+    opening_loss_pool: Vec<LossEntry>,
+}
+
+fn deserialize_assessment<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<IncomeTaxAssessment>, Decoder::Error> {
+    serde::Deserialize::deserialize(decoder)
 }
 
 struct IncomeTaxPreview {
     computation: IncomeTaxComputation,
     deferred_delta: AccountingAmount,
+    current_tax_delta: AccountingAmount,
+    assessment: IncomeTaxAssessment,
 }
 
 impl IncomeTaxPosition {
@@ -264,20 +295,91 @@ impl IncomeTaxPosition {
         policy: &IncomeTaxPolicy,
     ) -> Result<IncomeTaxPreview, IndustrialError> {
         let pretax = self.year_pretax(year, books)?;
-        let computation = policy.compute(pretax, year, &self.loss_pool)?;
+        if let Some(previous) = &self.assessment {
+            if year < previous.year {
+                return Err(IndustrialError::HistoricalTaxReassessmentUnsupported {
+                    requested_year: year,
+                    latest_year: previous.year,
+                });
+            }
+        }
+        let previous = self
+            .assessment
+            .as_ref()
+            .filter(|previous| previous.year == year);
+        let opening_loss_pool = match previous {
+            Some(previous) => previous.opening_loss_pool.clone(),
+            None => self.loss_pool.clone(),
+        };
+        if opening_loss_pool
+            .iter()
+            .any(|entry| entry.origin_year >= year)
+        {
+            return Err(IndustrialError::IncomeTaxStateInconsistent {
+                detail: format!("{year} 年的年初亏损池不得包含本年或未来年份的亏损"),
+            });
+        }
+        let computation = policy.compute(pretax, year, &opening_loss_pool)?;
+        let previously_accrued = match previous {
+            Some(previous) => previous.current_tax,
+            None => AccountingAmount::ZERO,
+        };
+        let current_tax_delta = computation.current_tax.sub(previously_accrued)?;
         let posted_dta = books
             .ledger()
             .account_net_debit(&LedgerAccountId(chart::acct::DTA.to_string()))?;
         let deferred_delta = computation.deferred_tax_asset.sub(posted_dta)?;
         Ok(IncomeTaxPreview {
+            assessment: IncomeTaxAssessment {
+                year,
+                pretax,
+                current_tax: computation.current_tax,
+                opening_loss_pool,
+            },
             computation,
             deferred_delta,
+            current_tax_delta,
         })
     }
 
-    /// 原成功点提交；零分录路径也照旧提交 ending_pool，不新增幂等语义。
-    fn commit_loss_pool(&mut self, ending_pool: Vec<LossEntry>) {
-        self.loss_pool = ending_pool;
+    pub(super) fn validate(&self, policy: &IncomeTaxPolicy) -> Result<(), IndustrialError> {
+        let invalid = |detail| IndustrialError::IncomeTaxStateInconsistent { detail };
+        let validate_pool = |pool: &[LossEntry]| {
+            for (index, entry) in pool.iter().enumerate() {
+                if !entry.remaining.is_positive()
+                    || !(crate::calendar::CIVIL_YEAR_MIN..=crate::calendar::CIVIL_YEAR_MAX)
+                        .contains(&entry.origin_year)
+                    || (index > 0 && pool[index - 1].origin_year >= entry.origin_year)
+                {
+                    return Err(invalid("亏损池必须按有效起源年严格递增且金额为正".into()));
+                }
+            }
+            Ok(())
+        };
+        validate_pool(&self.loss_pool)?;
+        if let Some(assessment) = &self.assessment {
+            validate_pool(&assessment.opening_loss_pool)?;
+            if !(crate::calendar::CIVIL_YEAR_MIN..=crate::calendar::CIVIL_YEAR_MAX)
+                .contains(&assessment.year)
+                || assessment
+                    .opening_loss_pool
+                    .iter()
+                    .any(|entry| entry.origin_year >= assessment.year)
+            {
+                return Err(invalid("年度评估或年初亏损池的年份非法".into()));
+            }
+            let computation = policy.compute(
+                assessment.pretax,
+                assessment.year,
+                &assessment.opening_loss_pool,
+            )?;
+            if computation.current_tax != assessment.current_tax
+                || computation.ending_pool != self.loss_pool
+            {
+                return Err(invalid("年度评估税额或期末亏损池与年初基准不符".into()));
+            }
+        }
+        Ok(())
     }
 
     /// 年度税前利润 = 全年（1–12 月）收入净贷方 − 费用净借方（总账期间索引派生）。
@@ -293,7 +395,9 @@ impl IncomeTaxPosition {
                     .net_debit()?;
                 match def.element {
                     AccountElement::Revenue => revenue = revenue.sub(balance)?,
-                    AccountElement::Expense => expense = expense.add(balance)?,
+                    AccountElement::Expense if id.0 != chart::acct::TAX_EXP => {
+                        expense = expense.add(balance)?
+                    }
                     _ => {}
                 }
             }

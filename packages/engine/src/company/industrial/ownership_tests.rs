@@ -194,7 +194,7 @@ fn rejected_repayment_keeps_preview_uncommitted_and_serialized_shape() {
         .pay_expense(ExpenseKind::Admin, amount(10_001), date("2030-01-01"))
         .expect("耗尽现金");
     let before = serde_json::to_value(&books).expect("序列化");
-    assert!(before["loss_pool"].is_array());
+    assert!(before["income_tax_position"]["loss_pool"].is_array());
     assert_eq!(
         before["loans"]["TINY"]["outstanding"],
         serde_json::to_value(amount(1)).expect("金额")
@@ -209,7 +209,7 @@ fn rejected_repayment_keeps_preview_uncommitted_and_serialized_shape() {
 }
 
 #[test]
-fn repeated_annual_tax_keeps_existing_non_idempotent_loss_behavior() {
+fn repeated_annual_tax_is_idempotent_and_preserves_pretax_loss() {
     let mut books = IndustrialBooks::new(config()).expect("开局");
     books
         .pay_expense(ExpenseKind::Admin, amount(400), date("2030-01-01"))
@@ -217,21 +217,222 @@ fn repeated_annual_tax_keeps_existing_non_idempotent_loss_behavior() {
     let first = books.accrue_income_tax(date("2030-12-31")).expect("首计提");
     assert_eq!(first.pretax, amount(-400));
     assert_eq!(first.deferred_delta, amount(100));
+    let before = serde_json::to_value(&books).expect("保存首计提");
     let second = books
         .accrue_income_tax(date("2030-12-31"))
         .expect("重复计提");
-    assert_eq!(second.pretax, amount(-300));
-    assert_eq!(second.loss_added, amount(300));
-    assert_eq!(second.deferred_delta, amount(75));
-    assert_eq!(books.loss_pool().len(), 2);
+    assert_eq!(second.pretax, amount(-400));
+    assert_eq!(second.event, None);
+    assert_eq!(second.deferred_delta, amount(0));
+    assert_eq!(books.loss_pool().len(), 1);
+    assert_eq!(books.loss_pool()[0].remaining, amount(400));
+    assert_eq!(serde_json::to_value(&books).expect("重复计提"), before);
+}
+
+#[test]
+fn tax_reassessment_posts_only_delta_and_does_not_reuse_losses() {
+    let mut books = IndustrialBooks::new(config()).expect("开局");
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-01-01"))
+        .unwrap();
+    books.accrue_income_tax(date("2030-12-31")).unwrap();
+    for (source, revenue, when) in [(9000, 800, "2031-03-31"), (9001, 400, "2031-06-30")] {
+        books
+            .books_mut()
+            .post_batch(vec![JournalEntry {
+                source: crate::accounting::BusinessEventId::new(source),
+                date: date(when),
+                kind: BusinessKind::CashRevenue,
+                cash_flow: CashFlowClass::Operating,
+                lines: vec![
+                    line(chart::acct::BANK, PostingSide::Debit, amount(revenue)),
+                    line("6001", PostingSide::Credit, amount(revenue)),
+                ],
+            }])
+            .unwrap();
+        let outcome = books.accrue_income_tax(date(when)).unwrap();
+        assert_eq!(outcome.loss_offset_used, amount(400));
+        assert_eq!(
+            outcome.pretax,
+            amount(if source == 9000 { 800 } else { 1200 })
+        );
+        assert_eq!(
+            outcome.current_tax,
+            amount(if source == 9000 { 100 } else { 200 })
+        );
+        assert_eq!(outcome.current_tax_delta, amount(100));
+        assert_eq!(
+            books.net_of(chart::acct::CIT_PAYABLE).unwrap(),
+            amount(if source == 9000 { -100 } else { -200 })
+        );
+        assert!(books.loss_pool().is_empty());
+        let before = books.clone();
+        assert_eq!(books.accrue_income_tax(date(when)).unwrap().event, None);
+        assert_eq!(books, before);
+    }
+}
+
+#[test]
+fn tax_reassessment_after_payment_can_reverse_tax_without_refunding_cash() {
+    let mut books = IndustrialBooks::new(config()).unwrap();
+    books
+        .books_mut()
+        .post_batch(vec![JournalEntry {
+            source: crate::accounting::BusinessEventId::new(9000),
+            date: date("2030-03-31"),
+            kind: BusinessKind::CashRevenue,
+            cash_flow: CashFlowClass::Operating,
+            lines: vec![
+                line(chart::acct::BANK, PostingSide::Debit, amount(800)),
+                line("6001", PostingSide::Credit, amount(800)),
+            ],
+        }])
+        .unwrap();
+    books.accrue_income_tax(date("2030-03-31")).unwrap();
+    books
+        .pay_income_tax(amount(200), date("2030-04-01"))
+        .unwrap();
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-06-01"))
+        .unwrap();
+    let cash = books.net_of(chart::acct::BANK).unwrap();
+    let outcome = books.accrue_income_tax(date("2030-06-30")).unwrap();
+    assert_eq!(outcome.pretax, amount(400));
+    assert_eq!(outcome.current_tax, amount(100));
+    assert_eq!(outcome.current_tax_delta, amount(-100));
+    assert_eq!(books.net_of(chart::acct::CIT_PAYABLE).unwrap(), amount(100));
+    assert_eq!(books.net_of(chart::acct::BANK).unwrap(), cash);
+    let restored: IndustrialBooks =
+        serde_json::from_value(serde_json::to_value(&books).unwrap()).unwrap();
+    books = restored;
+    let before = books.clone();
+    assert_eq!(
+        books.accrue_income_tax(date("2030-06-30")).unwrap().event,
+        None
+    );
+    assert_eq!(books, before);
+}
+
+#[test]
+fn failed_tax_reassessment_keeps_annual_baseline_and_can_retry() {
+    let mut books = IndustrialBooks::new(config()).unwrap();
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-01-01"))
+        .unwrap();
+    books.accrue_income_tax(date("2030-03-31")).unwrap();
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-06-01"))
+        .unwrap();
+    books
+        .books_mut()
+        .close_period(crate::accounting::AccountingPeriod::from_ymd(2030, 6).unwrap())
+        .unwrap();
+    let before = books.clone();
+    assert!(matches!(
+        books.accrue_income_tax(date("2030-06-30")),
+        Err(IndustrialError::Accounting(_))
+    ));
+    assert_eq!(books, before);
+    let outcome = books.accrue_income_tax(date("2030-07-01")).unwrap();
+    assert_eq!(outcome.pretax, amount(-800));
+    assert_eq!(outcome.deferred_delta, amount(100));
+    assert_eq!(
+        books.loss_pool(),
+        &[LossEntry {
+            origin_year: 2030,
+            remaining: amount(800)
+        }]
+    );
+}
+
+#[test]
+fn first_tax_assessment_rejects_current_or_future_opening_losses_atomically() {
+    let mut books = IndustrialBooks::new(config()).unwrap();
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-01-01"))
+        .unwrap();
+    for origin_year in [2030, 2031] {
+        let mut saved = serde_json::to_value(&books).unwrap();
+        saved["income_tax_position"]["loss_pool"] =
+            serde_json::json!([{ "origin_year": origin_year, "remaining": "1.00" }]);
+        let mut restored: IndustrialBooks = serde_json::from_value(saved).unwrap();
+        let before = restored.clone();
+        assert!(matches!(
+            restored.accrue_income_tax(date("2030-12-31")),
+            Err(IndustrialError::IncomeTaxStateInconsistent { .. })
+        ));
+        assert_eq!(restored, before);
+    }
+}
+
+#[test]
+fn tax_state_restore_requires_annual_baseline_and_rejects_inconsistent_pool() {
+    let mut books = IndustrialBooks::new(config()).unwrap();
+    books
+        .pay_expense(ExpenseKind::Admin, amount(400), date("2030-01-01"))
+        .unwrap();
+    books.accrue_income_tax(date("2030-12-31")).unwrap();
+    let valid = serde_json::to_value(&books).unwrap();
+    for invalid in [
+        {
+            let mut invalid = valid.clone();
+            invalid["income_tax_position"]
+                .as_object_mut()
+                .unwrap()
+                .remove("assessment");
+            invalid
+        },
+        {
+            let mut invalid = valid.clone();
+            invalid["income_tax_position"]["assessment"]["current_tax"] = serde_json::json!("1.00");
+            invalid
+        },
+        {
+            let mut invalid = valid.clone();
+            invalid["income_tax_position"]["loss_pool"][0]["remaining"] = serde_json::json!("3.00");
+            invalid
+        },
+        {
+            let mut invalid = valid.clone();
+            invalid
+                .as_object_mut()
+                .unwrap()
+                .remove("income_tax_position");
+            invalid["loss_pool"] = serde_json::json!([]);
+            invalid
+        },
+    ] {
+        assert!(serde_json::from_value::<IndustrialBooks>(invalid).is_err());
+    }
+    let mut restored: IndustrialBooks = serde_json::from_value(valid).unwrap();
+    let before = restored.clone();
+    assert_eq!(
+        restored
+            .accrue_income_tax(date("2030-12-31"))
+            .unwrap()
+            .event,
+        None
+    );
+    assert_eq!(restored, before);
+    restored.accrue_income_tax(date("2031-12-31")).unwrap();
+    let before = restored.clone();
+    assert!(matches!(
+        restored.accrue_income_tax(date("2030-12-31")),
+        Err(IndustrialError::HistoricalTaxReassessmentUnsupported {
+            requested_year: 2030,
+            latest_year: 2031
+        })
+    ));
+    assert_eq!(restored, before);
 }
 
 #[test]
 fn zero_line_tax_still_commits_expired_loss_pool() {
     let mut books = IndustrialBooks::new(config()).expect("开局");
     let mut value = serde_json::to_value(&books).expect("序列化");
-    value["loss_pool"] = serde_json::json!([{"origin_year": 2020, "remaining": "0.04"}]);
-    books = serde_json::from_value(value).expect("保持现有 loss_pool 接受集");
+    value["income_tax_position"]["loss_pool"] =
+        serde_json::json!([{"origin_year": 2020, "remaining": "0.04"}]);
+    books = serde_json::from_value(value).expect("恢复明确配置的亏损池");
     let outcome = books.accrue_income_tax(date("2030-12-31")).expect("计提");
     assert_eq!(outcome.event, None);
     assert_eq!(outcome.losses_expired, amount(4));

@@ -1,9 +1,9 @@
-import { array, civilDate, exact, integer, map, record, string } from "../../primitives.ts"
+import { array, civilDate, exact, integer, map, nullable, record, string } from "../../primitives.ts"
 import { parseBooks, type Books } from "../accounting/index.ts"
 import { amount } from "../value.ts"
 import { parseBudget, parseContractBook, parseCounterpartyLedger, parseFraction, parseI128Number, parseTradeOpenLedger, type ContractBook, type CounterpartyLedger, type OperatingBudget, type TradeOpenLedger } from "./common.ts"
 
-export type IndustrialBooks = { readonly books: Books; readonly inventory: InventoryLedger; readonly assets: FixedAssetRegister; readonly receivables: TradeOpenLedger; readonly payables: TradeOpenLedger; readonly contracts: ContractBook; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly tax_policy: TaxPolicy; readonly loss_pool: readonly LossEntry[]; readonly loans: Readonly<Record<string, IndustrialLoanState>>; readonly inventory_source_events: readonly { readonly event: number; readonly item: string; readonly account: string }[]; readonly trade_counterparty_events: readonly { readonly event: number; readonly counterparty: string; readonly account: string }[]; readonly next_event_id: number }
+export type IndustrialBooks = { readonly books: Books; readonly inventory: InventoryLedger; readonly assets: FixedAssetRegister; readonly receivables: TradeOpenLedger; readonly payables: TradeOpenLedger; readonly contracts: ContractBook; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly tax_policy: TaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly loans: Readonly<Record<string, IndustrialLoanState>>; readonly inventory_source_events: readonly { readonly event: number; readonly item: string; readonly account: string }[]; readonly trade_counterparty_events: readonly { readonly event: number; readonly counterparty: string; readonly account: string }[]; readonly next_event_id: number }
 type InventoryLedger = { readonly items: Readonly<Record<string, InventoryItemState>> }
 type InventoryItemState = { readonly account: string; readonly quantity: number; readonly total_cost: string }
 type FixedAssetRegister = { readonly assets: Readonly<Record<string, FixedAssetEntry>> }
@@ -12,11 +12,13 @@ type TaxPolicy = { readonly version: number; readonly vat: VatPolicy; readonly i
 type VatPolicy = { readonly output_rate_bp: number; readonly input_rate_bp: number; readonly deductible_share_bp: number }
 type IncomeTaxPolicy = { readonly rate_bp: number; readonly loss_carryforward_years: number }
 type LossEntry = { readonly origin_year: number; readonly remaining: string }
+type IncomeTaxPosition = { readonly loss_pool: readonly LossEntry[]; readonly assessment: IncomeTaxAssessment | null }
+type IncomeTaxAssessment = { readonly year: number; readonly pretax: string; readonly current_tax: string; readonly opening_loss_pool: readonly LossEntry[] }
 type IndustrialLoanState = { readonly outstanding: string; readonly accrued_unpaid: string; readonly carried: string; readonly last_accrual_date: string }
 
 export function parseIndustrialBooks(value: unknown, path: string): IndustrialBooks {
   const parsed = record(value, path)
-  exact(parsed, ["books", "inventory", "assets", "receivables", "payables", "contracts", "counterparties", "budget", "tax_policy", "loss_pool", "loans", "trade_counterparty_events", "inventory_source_events", "next_event_id"], path)
+  exact(parsed, ["books", "inventory", "assets", "receivables", "payables", "contracts", "counterparties", "budget", "tax_policy", "income_tax_position", "loans", "trade_counterparty_events", "inventory_source_events", "next_event_id"], path)
   const tradeEvents = array(parsed.trade_counterparty_events, `${path}.trade_counterparty_events`).map((value, index) => {
     const eventPath = `${path}.trade_counterparty_events[${index}]`
     const event = record(value, eventPath)
@@ -29,7 +31,19 @@ export function parseIndustrialBooks(value: unknown, path: string): IndustrialBo
     exact(event, ["event", "item", "account"], eventPath)
     return { event: integer(event.event, `${eventPath}.event`, 0), item: string(event.item, `${eventPath}.item`), account: string(event.account, `${eventPath}.account`) }
   })
-  return { inventory_source_events: inventoryEvents, trade_counterparty_events: tradeEvents, books: parseBooks(parsed.books, `${path}.books`), inventory: parseInventory(parsed.inventory, `${path}.inventory`), assets: parseAssets(parsed.assets, `${path}.assets`), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), payables: parseTradeOpenLedger(parsed.payables, `${path}.payables`), contracts: parseContractBook(parsed.contracts, `${path}.contracts`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), tax_policy: parseTaxPolicy(parsed.tax_policy, `${path}.tax_policy`), loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+  return { inventory_source_events: inventoryEvents, trade_counterparty_events: tradeEvents, books: parseBooks(parsed.books, `${path}.books`), inventory: parseInventory(parsed.inventory, `${path}.inventory`), assets: parseAssets(parsed.assets, `${path}.assets`), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), payables: parseTradeOpenLedger(parsed.payables, `${path}.payables`), contracts: parseContractBook(parsed.contracts, `${path}.contracts`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), tax_policy: parseTaxPolicy(parsed.tax_policy, `${path}.tax_policy`), income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+}
+
+function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
+  const parsed = record(value, path)
+  exact(parsed, ["loss_pool", "assessment"], path)
+  return { loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), assessment: nullable(parsed.assessment, `${path}.assessment`, parseIncomeTaxAssessment) }
+}
+
+function parseIncomeTaxAssessment(value: unknown, path: string): IncomeTaxAssessment {
+  const parsed = record(value, path)
+  exact(parsed, ["year", "pretax", "current_tax", "opening_loss_pool"], path)
+  return { year: integer(parsed.year, `${path}.year`), pretax: amount(parsed.pretax, `${path}.pretax`), current_tax: amount(parsed.current_tax, `${path}.current_tax`), opening_loss_pool: array(parsed.opening_loss_pool, `${path}.opening_loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.opening_loss_pool[${index}]`)) }
 }
 
 function parseInventory(value: unknown, path: string): InventoryLedger {
