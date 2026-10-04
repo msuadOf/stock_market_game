@@ -10,6 +10,37 @@ import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { applyProtocolRuntimeDelta, installProtocolSnapshotBaseline, installProtocolWorkingOrdersBaseline, store } from "../store/store.ts";
 import { parseBaselineWorkingOrders } from "./protocol/runtime-delta.ts";
 
+function knownProtocolContext(update: Extract<HostUpdate, { type: "protocol" }>, cursor: ProtocolCursor | null): unknown {
+  const actual: Record<string, unknown> = { generation: update.generation };
+  const raw = update.update;
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    const source = raw as Record<string, unknown>;
+    const kinds = (["TickBatch", "CivilUpdate"] as const).filter((kind) => Object.hasOwn(source, kind));
+    for (const kind of kinds.length === 1 ? kinds : []) {
+      const payload = source[kind];
+      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
+      actual.kind = kind;
+      const record = payload as Record<string, unknown>;
+      const frames = record.frames;
+      const first = kind === "CivilUpdate" ? record : Array.isArray(frames) ? frames[0] : undefined;
+      const last = kind === "CivilUpdate" ? record : Array.isArray(frames) ? frames.at(-1) : undefined;
+      for (const [entry, fields] of [[first, [["tick", "tickFrom"], ["seq_from", "seqFrom"]]], [last, [["tick", "tickTo"], ["seq_to", "seqTo"]]]] as const) {
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+        for (const [wire, name] of fields) {
+          const value = (entry as Record<string, unknown>)[wire];
+          if (typeof value === "number" || typeof value === "string") actual[name] = value;
+        }
+      }
+    }
+  }
+  const expected = cursor === null ? { baselineRequired: true } : {
+    generation: cursor.generation,
+    seqFrom: cursor.seq,
+    ...(actual.kind === "CivilUpdate" ? { tickFrom: cursor.tick } : actual.kind === "TickBatch" ? { tickFrom: cursor.tick + 1 } : {}),
+  };
+  return { actual, expected, cursor };
+}
+
 type SnapshotProtocolAction = ReturnType<typeof applyProtocolRuntimeDelta> | ReturnType<typeof installProtocolSnapshotBaseline> | ReturnType<typeof installProtocolWorkingOrdersBaseline>;
 
 export type ProtocolCoordinatorStatus =
@@ -53,14 +84,15 @@ export class ProtocolCoordinator {
     this.currentStatus = { kind: "ready", state: hydrated };
   }
 
-  accept(update: HostUpdate): void {
+  accept(update: HostUpdate): boolean {
     switch (update.type) {
       case "baseline":
         this.installBaseline(update);
-        return;
+        return true;
       case "protocol":
+        if (this.currentStatus.kind === "failure") return false;
         this.applyProtocol(update);
-        return;
+        return this.status().kind !== "failure";
       default:
         return assertNever(update);
     }
@@ -90,9 +122,11 @@ export class ProtocolCoordinator {
         code: "PROTOCOL_BASELINE_REQUIRED",
         where: "protocol-coordinator",
         message: "收到协议更新前必须先安装权威基线",
+        context: knownProtocolContext(update, null),
       });
       return;
     }
+    const attemptCursor = this.current.cursor;
     try {
       const reduction = reduceEngineUpdate(this.current, update.generation, update.update);
       if (reduction.kind === "applied") this.publishSnapshot(reduction);
@@ -103,13 +137,14 @@ export class ProtocolCoordinator {
       }
     } catch (error) {
       if (error instanceof ProtocolError) {
-        this.fail({ code: error.code, where: error.where, message: error.message });
+        this.fail({ code: error.code, where: error.where, message: error.message, context: knownProtocolContext(update, attemptCursor) });
         return;
       }
       this.fail({
         code: "PROTOCOL_UNEXPECTED",
         where: "protocol-coordinator",
         message: error instanceof Error ? error.message : String(error),
+        context: knownProtocolContext(update, attemptCursor),
       });
     }
   }

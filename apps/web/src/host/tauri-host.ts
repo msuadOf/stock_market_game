@@ -97,13 +97,14 @@ function parseRestore(value: unknown): TauriBaselineResponse {
 export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
   let sessionId: string | null = null;
   const timeline = new TauriTimelineState();
-  let callback: ((update: HostUpdate) => void) | null = null;
+  let callback: ((update: HostUpdate) => void | boolean) | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let running = false;
   let disposed = false;
   let eventUnlisten: UnlistenFn | null = null;
   let failureUnlisten: UnlistenFn | null = null;
   let npcDiagnosticsEnabled = false;
+  let deliveredGeneration: string | null = null;
 
   const fail = (failure: HostFailure) => {
     running = false;
@@ -114,7 +115,13 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     try {
       const payload = parseTauriEventPayload(event.payload);
       if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
-      callback?.(createProtocolUpdate(timeline.currentGeneration(), payload.update));
+      if (callback?.(createProtocolUpdate(timeline.currentGeneration(), payload.update)) === false) {
+        callback = null;
+        running = false;
+        void invoke("pause_session", { sessionId: requireSession() }).catch((error: unknown) => {
+          fail({ code: "TAURI_PROTOCOL_STOP", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
+        });
+      }
     } catch (error) {
       fail({ code: "TAURI_EVENT_PROTOCOL", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
     }
@@ -142,45 +149,70 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   }
 
   const requireSession = (): string => {
+    if (disposed) throw new Error("Tauri 会话已销毁，操作已取消");
     if (sessionId === null) throw new Error("Tauri 会话尚未就绪");
     return sessionId;
   };
 
+  const assertResponseCurrent = (generation: string, operation: string): void => {
+    if (disposed) throw new Error(`Tauri ${operation} 响应属于已销毁会话`);
+    timeline.assertGeneration(generation, `Tauri ${operation} 响应属于已过期 generation`);
+  };
+
   return {
     capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled },
-    start(onUpdate, onFatalError) {
+    async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
       callback = onUpdate;
       fatalCallback = onFatalError ?? null;
       const baseline = timeline.baselineForDelivery();
-      if (baseline !== null) callback(baseline);
+      if (baseline !== null && deliveredGeneration !== baseline.generation) {
+        callback(baseline);
+        deliveredGeneration = baseline.generation;
+      }
       const id = requireSession();
-      void invoke("resume_session", { sessionId: id }).then(() => { running = true; }, (error: unknown) => fail({ code: "TAURI_RESUME", where: "tauri-host.start", message: error instanceof Error ? error.message : String(error) }));
+      const generation = timeline.captureGeneration();
+      await invoke("resume_session", { sessionId: id });
+      if (disposed) throw new Error("Tauri start 响应属于已销毁会话");
+      timeline.assertGeneration(generation, "Tauri start 响应属于已过期 generation");
+      running = true;
     },
-    stop() {
+    async stop() {
       const id = requireSession();
+      const generation = timeline.captureGeneration();
+      await invoke("pause_session", { sessionId: id });
+      assertResponseCurrent(generation, "stop");
       running = false;
-      void invoke("pause_session", { sessionId: id }).catch((error: unknown) => fail({ code: "TAURI_PAUSE", where: "tauri-host.stop", message: error instanceof Error ? error.message : String(error) }));
     },
-    dispose() {
+    async dispose() {
       if (disposed) return;
       disposed = true;
       const id = sessionId;
       sessionId = null;
       callback = null;
-      fatalCallback = null;
       timeline.clearForDispose();
-      void eventUnlisten?.();
-      void failureUnlisten?.();
-      if (id !== null) void invoke("stop_session", { sessionId: id });
+      eventUnlisten?.();
+      failureUnlisten?.();
+      try {
+        if (id !== null) await invoke("stop_session", { sessionId: id });
+      } catch (error) {
+        fail({ code: "TAURI_DISPOSE", where: "tauri-host.dispose", message: error instanceof Error ? error.message : String(error), context: { sessionId: id } });
+        throw error;
+      } finally {
+        fatalCallback = null;
+      }
     },
-    setSpeed(multiplier) {
+    async setSpeed(multiplier) {
       assertValidSpeedMultiplier(multiplier);
       const speed = multiplier === Infinity ? "Fastest" : { Fixed: multiplier };
-      void invoke("set_speed", { sessionId: requireSession(), speed }).catch((error: unknown) => fail({ code: "TAURI_SPEED", where: "tauri-host.setSpeed", message: error instanceof Error ? error.message : String(error) }));
+      const generation = timeline.captureGeneration();
+      await invoke("set_speed", { sessionId: requireSession(), speed });
+      assertResponseCurrent(generation, "setSpeed");
     },
     async setPausePreferences(preferences: PausePreferences) {
+      const generation = timeline.captureGeneration();
       await invoke("set_pause_preferences", tauriPausePreferenceArgs(requireSession(), preferences));
+      assertResponseCurrent(generation, "setPausePreferences");
     },
     setFrameRate() {},
     async readSpeedMetrics() {
@@ -222,18 +254,28 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     async refreshBaseline() {
       const queryGeneration = timeline.captureGeneration();
       const restored = parseRestore(await invoke<unknown>("engine_baseline", { sessionId: requireSession(), generation: queryGeneration }));
+      assertResponseCurrent(queryGeneration, "refreshBaseline");
       const baseline = timeline.replaceRefreshedBaseline(restored, queryGeneration);
       callback?.(baseline);
+      deliveredGeneration = baseline.generation;
     },
     async load(slot) {
       const id = requireSession();
       const wasRunning = running;
-      if (wasRunning) await invoke("pause_session", { sessionId: id });
-      const restored = parseRestore(await invoke<unknown>("restore_session", { sessionId: id, generation: timeline.currentGeneration(), slot }));
+      const requestedGeneration = timeline.captureGeneration();
+      if (wasRunning) {
+        await invoke("pause_session", { sessionId: id });
+        assertResponseCurrent(requestedGeneration, "load.pause");
+        running = false;
+      }
+      const restored = parseRestore(await invoke<unknown>("restore_session", { sessionId: id, generation: requestedGeneration, slot }));
+      assertResponseCurrent(requestedGeneration, "load");
       const baseline = timeline.replaceRestoredBaseline(restored);
       callback?.(baseline);
+      deliveredGeneration = baseline.generation;
       if (wasRunning) {
         await invoke("resume_session", { sessionId: id });
+        assertResponseCurrent(restored.generation, "load.resume");
         running = true;
       }
     },

@@ -135,7 +135,7 @@ export function createWorkerHost(
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
     const requests = new WorkerRequestScope(worker);
-    let callback: ((update: HostUpdate) => void) | null = null;
+    let callback: ((update: HostUpdate) => void | boolean) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
     let baselineEpoch = 0;
@@ -153,6 +153,13 @@ export function createWorkerHost(
     }, 10_000);
 
     const notifyFailure = (failure: HostFailure) => {
+      if (disposed) return;
+      disposed = true;
+      callback = null;
+      cachedBaseline = null;
+      const reportFailure = fatalCallback;
+      fatalCallback = null;
+      requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
       if (!initialized) {
         clearTimeout(timeout);
         lifecycle.dispose();
@@ -160,7 +167,7 @@ export function createWorkerHost(
         return;
       }
       lifecycle.dispose();
-      if (fatalCallback !== null) fatalCallback(failure);
+      if (reportFailure !== null) reportFailure(failure);
       else pendingFailure = failure;
     };
 
@@ -170,16 +177,11 @@ export function createWorkerHost(
         where: "worker-host",
         message: `WASM Worker 脚本加载或执行失败：${event.message || "浏览器未提供具体错误"}`,
       };
-      if (!initialized) {
-        clearTimeout(timeout);
-        lifecycle.dispose();
-        reject(new Error(failure.message));
-        return;
-      }
       notifyFailure(failure);
     });
 
     worker.addEventListener("message", (event: MessageEvent<unknown>) => {
+      if (disposed) return;
       try {
         const incoming = message(event.data);
         switch (incoming.type) {
@@ -215,13 +217,27 @@ export function createWorkerHost(
             }
             return;
           }
-          case "protocol": {
+          case "protocol":
+          case "protocolBatch": {
             const updateGeneration = generation(incoming.generation, "Worker protocol generation");
             if (updateGeneration !== currentGeneration || callback === null) return;
-            callback(createProtocolUpdate(String(updateGeneration), incoming.update, {
-              civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
-              revision: typeof incoming.revision === "string" ? incoming.revision : null,
-            }));
+            const deliveryId = generation(incoming.deliveryId, "Worker protocol deliveryId");
+            const updates = incoming.type === "protocol" ? [incoming.update] : incoming.updates;
+            if (!Array.isArray(updates) || updates.length < 1 || updates.length > 64) throw new Error("Worker protocolBatch 必须包含 1–64 个完整提交");
+            for (const update of updates) {
+              const accepted = callback(createProtocolUpdate(String(updateGeneration), update, {
+                civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
+                revision: typeof incoming.revision === "string" ? incoming.revision : null,
+              }));
+              if (accepted === false) {
+                requests.close(new Error("Worker 消费者拒绝协议更新，会话已停止"));
+                lifecycle.dispose();
+                disposed = true;
+                callback = null;
+                return;
+              }
+            }
+            worker.postMessage({ type: "uiFrame", generation: updateGeneration, deliveryId });
             return;
           }
           case "failure":
@@ -246,6 +262,12 @@ export function createWorkerHost(
       ? { type: "init" }
       : { type: "init", threads: options.threadCount });
 
+    async function control(type: string, successType: string, payload: Record<string, unknown> = {}): Promise<void> {
+      const requestedGeneration = currentGeneration;
+      await requests.request({ type, ...payload, requestId: requests.nextRequestId(), generation: requestedGeneration }, successType);
+      if (disposed || currentGeneration !== requestedGeneration) throw new Error(`Worker ${type} 响应属于已过期 generation`);
+    }
+
     function host(): EngineHost & WorkerE2EHost {
       return {
         capabilities: {
@@ -256,7 +278,7 @@ export function createWorkerHost(
           publicCompanyReports: true,
           npcDecisionDiagnostics,
         },
-        start(onUpdate, onFatalError) {
+        async start(onUpdate, onFatalError) {
           if (disposed) throw new Error("WASM Worker 已被销毁");
           if (pendingFailure !== null) throw new Error(`${pendingFailure.code}: ${pendingFailure.message}`);
           callback = onUpdate;
@@ -265,26 +287,26 @@ export function createWorkerHost(
             callback(cachedBaseline);
             deliveredGeneration = cachedBaseline.generation;
           }
-          worker.postMessage({ type: "start" });
+          await control("start", "started");
         },
-        stop() {
-          lifecycle.pause();
+        async stop() {
+          await control("stop", "stopped");
         },
-        dispose() {
+        async dispose() {
           if (disposed) return;
           disposed = true;
+          requests.close(new Error("WASM Worker 已被销毁，操作已取消"));
           callback = null;
           fatalCallback = null;
           cachedBaseline = null;
           lifecycle.dispose();
         },
-        setSpeed(multiplier) {
+        async setSpeed(multiplier) {
           assertValidSpeedMultiplier(multiplier);
-          worker.postMessage({ type: "setSpeed", speed: multiplier });
+          await control("setSpeed", "speedSet", { speed: multiplier });
         },
         async setPausePreferences(preferences: PausePreferences) {
-          const requestId = requests.nextRequestId();
-          await requests.request(workerPausePreferenceRequest(requestId, currentGeneration, preferences), "pausePreferencesSet");
+          await control("setPausePreferences", "pausePreferencesSet", { preferences });
         },
         setFrameRate(fps) {
           worker.postMessage({ type: "setFrameRate", fps });
@@ -356,7 +378,9 @@ export function createWorkerHost(
         },
         async load(slot) {
           const parsedSlot = parseSaveSlot(slot);
-          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), currentGeneration);
+          const requestedGeneration = currentGeneration;
+          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration);
+          if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           currentGeneration = restored.nextGeneration;
           const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
           baselineEpoch += 1;

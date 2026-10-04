@@ -149,11 +149,21 @@ ctx.addEventListener("message", (event) => {
           postBaseline();
           return;
         }
-        case "start":
+        case "start": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
           loop.start();
+          ctx.postMessage({ type: "started", requestId: message.requestId, generation: requestedGeneration });
           return;
-        case "stop":
+        }
+        case "stop": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
           loop.stop();
+          ctx.postMessage({ type: "stopped", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
+        case "uiFrame":
+          if (!Number.isSafeInteger(message.deliveryId) || Number(message.deliveryId) <= 0) throw new Error("Worker uiFrame deliveryId 无效");
+          loop.acknowledge(Number(message.generation), Number(message.deliveryId));
           return;
         case "stepOnce": {
           if (!E2E_STEP_ENABLED) throw new Error("Worker 受控单步只允许在 E2E 构建中调用");
@@ -166,9 +176,12 @@ ctx.addEventListener("message", (event) => {
           ctx.postMessage({ type: "stepped", requestId: message.requestId, generation: requestedGeneration, tick: Number(committedTick) });
           return;
         }
-        case "setSpeed":
+        case "setSpeed": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
           loop.setSpeed(Number(message.speed));
+          ctx.postMessage({ type: "speedSet", requestId: message.requestId, generation: requestedGeneration });
           return;
+        }
         case "setFrameRate":
           loop.setFrameRate(message.fps);
           return;
@@ -214,6 +227,7 @@ ctx.addEventListener("message", (event) => {
         }
         case "refreshBaseline": {
           const requestedGeneration = slot.requireGeneration(message.generation);
+          loop.flushForControl();
           const [session, wasm] = slot.requireHandle();
           slot.prepareBaseline();
           ctx.postMessage({
@@ -250,6 +264,7 @@ ctx.addEventListener("message", (event) => {
         }
         case "endCivilDay": {
           const requestedGeneration = slot.requireGeneration(message.generation);
+          loop.requireDeliveryCapacity();
           const [session, wasm] = slot.requireHandle();
           loop.publish(wasm.end_civil_day(session));
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });

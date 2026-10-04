@@ -81,9 +81,14 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     );
     assert!(!actor.pacing.is_running());
     assert!(harness.cmd_tx.is_closed());
+    let (reply, rejected) = oneshot::channel();
     actor
-        .handle_command(SessionCommand::SetRunning { running: true })
+        .handle_command(SessionCommand::SetRunning {
+            running: true,
+            reply,
+        })
         .await;
+    assert!(rejected.await.is_err());
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.game.tick(), tick);
     assert_eq!(actor.game.seq(), seq);
@@ -113,6 +118,130 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert!(notices_rx.try_recv().is_err());
     assert!(events_rx.try_recv().is_err());
     println!("desktop fatal fastest={fastest} after={successful_steps} restored tick={tick} seq={seq} healthy=0: {payload}");
+}
+
+#[tokio::test]
+async fn fixed_high_speed_production_batches_every_due_frame_before_ipc() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.ticks_per_day = 120;
+    setup.npcs.inst_count = 0;
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    game.step_frame().unwrap();
+    game.prepare_public_baseline();
+    let initial_tick = game.tick();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "batch",
+        "timeline",
+    );
+    harness.subscribe_engine_events();
+    harness.actor.pacing.tick_interval = Duration::from_millis(1);
+    harness.actor.last_fixed_publish -= Duration::from_millis(16);
+    let before_publish = harness.actor.last_fixed_publish;
+    harness.actor.tick_and_emit().await;
+    let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    let frames = value["update"]["TickBatch"]["frames"].as_array().unwrap();
+    assert!(frames.len() > 1, "固定高倍率必须在 Rust 聚合后跨 IPC");
+    for pair in frames.windows(2) {
+        assert_eq!(pair[0]["seq_to"], pair[1]["seq_from"]);
+        assert_eq!(
+            pair[0]["tick"].as_u64().unwrap() + 1,
+            pair[1]["tick"].as_u64().unwrap()
+        );
+    }
+    assert!(harness.events_rx.as_mut().unwrap().try_recv().is_err());
+    let first_tick = harness.actor.game.tick();
+    assert_eq!(
+        harness.actor.last_fixed_publish,
+        before_publish + Duration::from_millis(first_tick - initial_tick)
+    );
+    harness.actor.last_fixed_publish -= Duration::from_millis(16);
+    let second_before_publish = harness.actor.last_fixed_publish;
+    harness.actor.tick_and_emit().await;
+    let second_payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+    let second_value: serde_json::Value = serde_json::from_str(&second_payload).unwrap();
+    let second_frames = second_value["update"]["TickBatch"]["frames"]
+        .as_array()
+        .unwrap();
+    assert!(second_frames.len() > 1);
+    assert_eq!(second_frames[0]["tick"].as_u64().unwrap(), first_tick + 1);
+    assert_eq!(
+        second_frames[0]["seq_from"],
+        frames.last().unwrap()["seq_to"]
+    );
+    assert_eq!(
+        harness.actor.last_fixed_publish,
+        second_before_publish + Duration::from_millis(harness.actor.game.tick() - first_tick)
+    );
+}
+
+#[tokio::test]
+async fn desktop_controls_resolve_only_after_actor_applies_them() {
+    let game = ProtocolSession::new(super::tests::diagnostic_setup(), 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "control",
+        "timeline",
+    );
+    let handles = SessionHandles {
+        cmd_tx: harness.cmd_tx.clone(),
+    };
+    let command = handles.set_running(false);
+    tokio::pin!(command);
+    assert!(tokio::time::timeout(Duration::from_millis(1), &mut command)
+        .await
+        .is_err());
+    assert!(harness.actor.pacing.is_running());
+    let queued = harness.actor.cmd_rx.recv().await.unwrap();
+    harness.actor.handle_command(queued).await;
+    command.await.unwrap();
+    assert!(!harness.actor.pacing.is_running());
+}
+
+#[tokio::test]
+async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.ticks_per_day = 120;
+    setup.npcs.inst_count = 0;
+    let game = ProtocolSession::new(setup, 17).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "cold",
+        "timeline",
+    );
+    harness.subscribe_engine_events();
+    harness.actor.pacing.tick_interval = Duration::from_millis(1);
+    harness.actor.last_fixed_publish -= Duration::from_millis(16);
+    let original = harness.actor.last_fixed_publish;
+    harness.actor.tick_and_emit().await;
+    let completed = harness.actor.game.tick();
+    assert!(completed > 0);
+    assert_eq!(
+        harness.actor.last_fixed_publish,
+        original + Duration::from_millis(completed)
+    );
+    assert!(
+        harness.actor.last_fixed_publish.elapsed()
+            >= Duration::from_millis(16).saturating_sub(Duration::from_millis(completed))
+    );
+    let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(
+        value["update"]["TickBatch"]["frames"]
+            .as_array()
+            .unwrap()
+            .len() as u64,
+        completed
+    );
 }
 
 #[tokio::test]
