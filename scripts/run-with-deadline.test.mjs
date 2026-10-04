@@ -1,8 +1,68 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { it } from "node:test";
+import { readFileSync } from "node:fs";
 
 import { ORDINARY_TEST_MAX_MS, parseArgs, runBoundedCommand, runWithDeadline } from "./run-with-deadline.mjs";
+
+it("嵌套 supervisor 不创建逃离外部 deadline 的进程组", async () => {
+  let spawnOptions;
+  const child = new EventEmitter();
+  const result = runBoundedCommand({ command: "nested", timeoutMs: 200,
+    env: { STOCK_GAME_DEADLINE_GROUP: "owned" },
+    spawnProcess: (_command, _args, options) => { spawnOptions = options; return child; },
+  });
+  child.emit("close", 0, null);
+  await result;
+  assert.equal(spawnOptions.detached, false);
+  assert.equal(spawnOptions.env.STOCK_GAME_DEADLINE_GROUP, "owned");
+});
+
+it("未确认 close 的 hard deadline 不宣称 process tree 已终止", async () => {
+  const child = new EventEmitter();
+  await assert.rejects(runBoundedCommand({ command: "unconfirmed", timeoutMs: 50,
+    cleanupReserveMs: 10, spawnProcess: () => child,
+  }), (error) => {
+    assert.match(error.message, /termination.*unconfirmed/i);
+    assert.doesNotMatch(error.message, /was terminated/);
+    return true;
+  });
+});
+
+it("清理树失败仍保留执行退出码和原始stderr", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const result = runBoundedCommand({ command: "failed-command", timeoutMs: 200,
+    captureOutput: true, spawnProcess: () => child,
+    terminateProcessTree: async () => { throw new Error("taskkill exit 128"); },
+  });
+  child.stderr.emit("data", Buffer.from("compiler failed"));
+  child.emit("close", 2, null);
+  await assert.rejects(result, (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.match(error.message, /exited with 2.*compiler failed.*taskkill exit 128/);
+    assert.equal(error.errors.length, 2);
+    return true;
+  });
+});
+
+it("外部 deadline 终止事件循环阻塞 child 创建的独立进程组", { skip: process.platform !== "linux" }, async () => {
+  let descendantPid;
+  const result = runBoundedCommand({ command: process.execPath,
+    args: ["--input-type=module", "-e", "import {spawn} from 'node:child_process'; const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'}); process.stdout.write(String(child.pid)+'\\n'); while(true) {}"],
+    timeoutMs: 800, cleanupReserveMs: 200, captureOutput: true,
+    onStdout: (chunk) => { descendantPid = Number(chunk.toString().trim()); },
+  });
+  await assert.rejects(result, /total 800ms deadline.*process tree/);
+  assert.ok(Number.isInteger(descendantPid));
+  try {
+    const stat = readFileSync(`/proc/${descendantPid}/stat`, "utf8");
+    assert.equal(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0], "Z");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+});
 
 it("accepts an ordinary command that finishes inside the ten-second gate", async () => {
   await runWithDeadline({
