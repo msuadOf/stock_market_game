@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G29、G54–G55、G58–G59、G69–G71、G74–G80 共17项，剩余62项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐21项，剩余58项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -41,7 +41,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G18 | Worker uiFrame 背压；ADR-0010 宿主能力/不做 | `WasmTickLoop.publish` 每步发完整更新，仍无消费者驱动的有界背压。 定时让出执行机会不等于消费背压；任何合并不得丢弃协议要求保留的提交帧及交易事实，未实测卡顿。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
 | G19 | Tauri 固定高倍率 tick 在 Rust 聚合后约 16ms 发布；ADR-0010 | Desktop 固定倍率仍 `run_cycle(1)` 后直接 emit；Fastest 批次不等于固定倍率聚合。  当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
 | G40 | 三宿主有副作用控制命令等待宿主确认；ADR-0010:60 | `EngineHost.start/stop/setSpeed` 为void，App暂停/继续立即更新running和成功提示；Desktop `set_running/set_speed/set_pause_preferences` 仅mpsc入队，IPC返回不证明actor已应用。订单CommandQueued仍只表示入队，不能改成成交确认。见 [宿主全文](exhaustive-review/luna01.md) 与 [actor](exhaustive-review/luna62.md)。 |
-| G53 | 恢复响应必须推进generation；历史task30:26–27 | `worker-host.ts:79` 的restore helper只验正安全整数，load直接采纳nextGeneration，缺大于原值的守卫。真实WASM绑定正常自增已实现；这里是异常响应校验遗漏，未声称正常恢复失败。见 [Worker](exhaustive-review/luna29.md)。 |
+| G53 | 已补齐：恢复响应必须推进generation；历史task30:26–27 | restoreWorkerSlot先验证nextGeneration为正安全整数且严格大于原generation，再交付snapshot；短测覆盖旧/同代拒绝、推进成功及零/负数/小数/不安全整数/字符串，错误保留actual/expected代次。 原证据见 [Worker](exhaustive-review/luna29.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G66 | 已接受Remote请求保留完成或显式错误出口；ADR-0010、错误处理原则 | dispose忽略后续消息且不reject已登记写请求；刷新单槽waiter可被内部ResyncRequired覆盖，遗失读档恢复链原await。UI交易及保存hook真实等待这些Promise；确认中断应说明结果未知，不能假称请求必未执行。见 [Remote](exhaustive-review/luna60.md) 与 [调用](exhaustive-review/sweep61.md)。 |
 
 ### 2.2 策略、个人信息与估值
@@ -64,12 +64,12 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G10 | 连续竞价一分钟成交量；DESIGN:88、UX-CONTRACT:47 | `market-chart-projection.ts` 仍以每帧累计量差替换分钟量，而非累加该分钟量。 同分钟累计100→200→200最终会只留0；首个连续点还可能带入竞价累计量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G11 | 新日清旧分时且保留新日已到采样；UX-CONTRACT:81 | 普通TickBatch分时合并只按日内槽位；CivilUpdate虽重建历史，相邻交易日AfterClose＋BeforeOpen屏障仍携带旧日全帧，新日未覆盖槽可能保留旧日点。纯空屏障和初始化清理已有，未完成的是正常相邻交易日隔离。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G12 | 分时量涨红空心、跌绿实心；UX-CONTRACT:54 | 连续点方向固定 true、竞价按非空判方向，涨量柱仍非红色空心。 这里审计价格涨跌展示，不把 buy 字段称为真实主动买卖方向。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G13 | 逐笔展示最近成交；DESIGN:126、移动QA | `MobileIntradayProjection` 仍对最新优先成交数组取 `slice(-7).reverse()`。 100条成交带不是全天流水，不得以无限积累修补方向错误。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
+| G13 | 已补齐：逐笔展示最近成交；DESIGN:126、移动QA | 实际最新优先成交带取slice(0,7)，不反转或无界积累。100笔成交短Fixture验证显示100至94，原数组不修改；仍保留三宿主最近100条边界。 原证据见 [界面](reaudit-ui.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G14 | 逐笔时间对应真实成交；DESIGN:126 | 逐笔仍共用当前 `tradeTime`，不取各笔成交时间。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G15 | 已补齐：官方年度覆盖替代模拟回退；`docs/simulation-calendar.md:59` | 对存在Official覆盖的交易所/年度，非周末且不在覆盖休市区间的日期为Trading，不叠加模拟假日；其他交易所/年度保留fallback，周末不开放。合成Fixture短测覆盖上述边界，默认空official表不变。原证据见[基础](reaudit-foundations.md)，验证见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G75 | 已补齐：日内时刻恢复与构造器使用同一秒域；`CivilInstant`输入契约 | serde经过CivilInstant::new校验，0与86399合法，86400及u32::MAX拒绝；公开秒域不再可由私有字段派生serde绕过。原问题见 [原文复核](hidden-review/batch-139.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G76 | 已补齐：冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | policy content digest新增独立source_digest分量；只修改出处摘要即改变身份，旧digest与新摘要组合在validate拒绝。默认official空表身份不变；测试使用合成出处，不使用真实行情。原问题见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
-| G44 | 零成交量如实为零；DESIGN:88/110、移动QA:3 | `market-model.ts:693/772` 的分时/K量对0执行Math.max(1,...)，组件画出正高度量柱。应保留真实零量槽位；非零量最小可见高度不应套到零值。现有测试冻结正高度不核销真源契约。见 [绘图](exhaustive-review/luna02.md)。 |
+| G44 | 已补齐：零成交量如实为零；DESIGN:88/110、移动QA:3 | 分时与K线投影在volume=0时保留槽位及零高度，只有正量使用最小可见高度1。短测覆盖零/微小正量/最大量，真实DOM与SVG消费者无额外最小高度；不伪造有成交。 原证据见 [绘图](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G46 | 桌面五档标签对应真实报价rank；DESIGN、UX盘口 | engine asks按低价优先，`LocalRefreshViews.tsx:113` 却把asks[0]标卖5，一档时也标卖5；移动五档映射正确。缺桌面档号/展示顺序一致性，不改撮合。见 [盘口](exhaustive-review/luna02.md)。 |
 | G47 | 竞价null指示价槽不绘价格线；DESIGN:88、UX:50 | 投影先过滤null，再拼一个polyline，两个有效价之间的null槽被直线跨越。整段null空态已有，缺的是连续有效片段分隔。见 [竞价绘图](exhaustive-review/luna02.md)。 |
 
@@ -85,7 +85,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | 信息 tab 仍调用 `scrollIntoView`。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G25 | 返回/切股至少44px点击热区；DESIGN:86 | 返回/切股横向点击区域仍小于约定 44px。 可见图标可以小，但热区应满足契约；本轮未做像素测量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G26 | 手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；仅指手动开发CI，不要求恢复普通 commit/PR 自动运行或发布链路lint。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
-| G45 | 自选详情返回原列表身份；UX导航/Flow ledger | `mobile-ui-state.ts:71` 打开详情强制primaryTab=market，back只清detailCode，自选返回后变为行情。列表内部缓存存在不能替代原主页面身份，独立于G23焦点。见 [导航](exhaustive-review/luna02.md)。 |
+| G45 | 已补齐：自选详情返回原列表身份；UX导航/Flow ledger | reducer保留原primaryTab；App使用共用MobileDetailLayer按detailCode显示详情，不再仅允许market页。短测覆盖自选→详情→切股→交易底页→返回，并实际SSR共用详情层，返回仍在自选。 原证据见 [导航](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G48 | 中文页面语言与辅助文本一致；UX:8/10、ADR-0007 | HTML固定lang=en且无运行时修正；AG Grid sortable表头未配置locale，实际使用英文排序辅助文本。两处均需对应中文界面，不能用中文列名核销内置提示。见 [页面](exhaustive-review/luna02.md) 与 [Grid](exhaustive-review/sweep41.md)。 |
 | G49 | 持仓成本及浮盈承接半偶到分语义；account spec:23/63 | Rust cost_price半偶到分，Web原始除法/toFixed显示成本并以未舍入净投入算浮盈。200股、净投入200100分、现价1001分时，Web显示成本10.01元/浮盈1元，Rust成本10.00元/浮盈2元；是小额跨层模型漂移，非Q01安全整数争议。见 [账户消费](exhaustive-review/luna15.md)。 |
 | G50 | React渲染异常进入可见详情/反馈出口；错误处理规范 | `render-app.tsx` 无ErrorBoundary或root错误callback；main异步启动catch不覆盖后续React render/layout-effect异常，宿主fatal出口也不覆盖UI自身异常。见 [错误链](exhaustive-review/luna14.md)。 |
