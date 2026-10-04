@@ -14,6 +14,8 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum IndustrialError {
+    #[error("inconsistent industrial credit state: {detail}")]
+    CreditStateInconsistent { detail: String },
     /// 付款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化拒绝，
     /// 账套与子账零改动；逾期/欠款以 Overdue 开项面呈现（不补钱）。
     #[error("payment failed (insufficient cash): {source}")]

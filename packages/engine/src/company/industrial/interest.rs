@@ -53,7 +53,9 @@ impl IndustrialBooks {
                 },
             ));
         }
-        let outstanding = self.loans.outstanding_total()?;
+        let outstanding = self
+            .loans
+            .outstanding_for_lender(self.contracts(), lender)?;
         if let Some(limit) = self.budget().credit_line(lender) {
             let projected = outstanding.add(principal)?;
             if projected > limit {

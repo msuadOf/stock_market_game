@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use crate::accounting::{AccountingAmount, AccountingError, BusinessEventId, FractionUnits};
 use crate::calendar::CivilDate;
 use crate::company::contracts::{ContractBook, ContractId};
+use crate::company::counterparty::CounterpartyId;
 use crate::company::industrial::{chart, IndustrialError};
 
 /// 开局借款隐式合同 id（与 2001 开局余额一一对应；task-7 review O2 治理决策）。
@@ -102,6 +103,56 @@ impl LoanPortfolio {
             total = total.add(loan.outstanding())?;
         }
         Ok(total)
+    }
+
+    pub(super) fn outstanding_for_lender(
+        &self,
+        contracts: &ContractBook,
+        lender: &CounterpartyId,
+    ) -> Result<AccountingAmount, IndustrialError> {
+        let mut total = AccountingAmount::ZERO;
+        for (id, state) in &self.loans {
+            let contract =
+                contracts
+                    .get(id)
+                    .ok_or_else(|| IndustrialError::CreditStateInconsistent {
+                        detail: format!("loan {id:?} has no registered contract"),
+                    })?;
+            if &contract.counterparty == lender {
+                total = total.add(state.outstanding())?;
+            }
+        }
+        Ok(total)
+    }
+
+    pub(super) fn validate(&self, contracts: &ContractBook) -> Result<(), IndustrialError> {
+        self.outstanding_total()?;
+        let mut accrued_total = AccountingAmount::ZERO;
+        for (id, state) in &self.loans {
+            accrued_total = accrued_total.add(state.accrued_unpaid())?;
+            let contract =
+                contracts
+                    .get(id)
+                    .ok_or_else(|| IndustrialError::CreditStateInconsistent {
+                        detail: format!("loan {id:?} has no registered contract"),
+                    })?;
+            contract.validate()?;
+            if contract.id != *id
+                || contract.role != crate::company::ContractRole::Borrowing
+                || state.outstanding().is_negative()
+                || state.accrued_unpaid().is_negative()
+                || state.outstanding() > contract.principal
+                || state.last_accrual_date() < contract.start_date
+                || state.carried().units().unsigned_abs() > (ACT_365F_DIVISOR / 2) as u128
+            {
+                return Err(IndustrialError::CreditStateInconsistent {
+                    detail: format!(
+                        "loan {id:?} has invalid principal, interest, remainder or contract facts"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// 仅在原登记成功点建立状态；不提前改变过账与合同登记的先后顺序。

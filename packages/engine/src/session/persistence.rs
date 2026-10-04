@@ -978,6 +978,13 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
     for (id, company) in &save.company_operations.companies {
+        if let Some(industrial) = company.books().as_industrial() {
+            industrial.validate_credit_state().map_err(|error| {
+                SessionError::InvalidSave(format!(
+                    "saved company {id:?} has an invalid Industrial credit state: {error}"
+                ))
+            })?;
+        }
         if let Some(bank) = company.books().as_bank() {
             bank.ecl_policy().validate().map_err(|error| {
                 SessionError::InvalidSave(format!(

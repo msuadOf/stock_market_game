@@ -45,6 +45,203 @@ fn goods() -> InventoryItemCode {
 }
 
 #[test]
+fn audit_credit_capacity_is_independent_for_each_lender_and_repayment() {
+    let mut config = base_config();
+    config
+        .counterparties
+        .push(engine::company::ExternalCounterparty {
+            id: cp("EXT-BANK-B"),
+            kind: engine::company::CounterpartyKind::Lender,
+            name: "虚构第二贷款人".into(),
+        });
+    config.budget = engine::company::OperatingBudget::new(
+        engine::accounting::AccountingAmount::ZERO,
+        vec![
+            engine::company::CreditLine {
+                lender: cp("EXT-BANK"),
+                limit: yuan(1000),
+            },
+            engine::company::CreditLine {
+                lender: cp("EXT-BANK-B"),
+                limit: yuan(1000),
+            },
+        ],
+    )
+    .unwrap();
+    let mut books = engine::company::industrial::IndustrialBooks::new(config).unwrap();
+    books
+        .borrow(
+            ContractId("A".into()),
+            &cp("EXT-BANK"),
+            yuan(1000),
+            0,
+            d("2030-01-01"),
+            d("2030-02-01"),
+        )
+        .unwrap();
+    books
+        .borrow(
+            ContractId("B".into()),
+            &cp("EXT-BANK-B"),
+            yuan(1000),
+            0,
+            d("2030-01-01"),
+            d("2030-02-01"),
+        )
+        .expect("A的未偿本金不能占用B的独立额度");
+    let before = books.clone();
+    assert!(matches!(
+        books.borrow(
+            ContractId("B-EXCESS".into()),
+            &cp("EXT-BANK-B"),
+            yuan(1),
+            0,
+            d("2030-01-01"),
+            d("2030-02-01")
+        ),
+        Err(IndustrialError::DebtBeyondCreditLine { .. })
+    ));
+    assert_eq!(books, before);
+    books
+        .repay_principal(&ContractId("A".into()), yuan(200), d("2030-01-02"))
+        .unwrap();
+    assert_eq!(
+        books.available_credit(&cp("EXT-BANK")).unwrap(),
+        Some(yuan(200))
+    );
+    assert_eq!(
+        books.available_credit(&cp("EXT-BANK-B")).unwrap(),
+        Some(yuan(0))
+    );
+    assert_eq!(books.available_credit(&cp("EXT-SUPP")).unwrap(), None);
+}
+
+#[test]
+fn audit_credit_restore_rejects_nonaggregable_and_negative_loan_facts() {
+    let mut books = fresh();
+    for id in ["A", "B"] {
+        books
+            .borrow(
+                ContractId(id.into()),
+                &cp("EXT-BANK"),
+                yuan(1),
+                0,
+                d("2030-01-01"),
+                d("2030-02-01"),
+            )
+            .unwrap();
+    }
+    let baseline = serde_json::to_value(&books).unwrap();
+    for field in ["outstanding", "accrued_unpaid"] {
+        let mut negative = baseline.clone();
+        negative["loans"]["A"][field] = serde_json::to_value(yuan(-1)).unwrap();
+        assert!(
+            serde_json::from_value::<engine::company::industrial::IndustrialBooks>(negative)
+                .is_err()
+        );
+        let mut overflowing = baseline.clone();
+        overflowing["loans"]["A"][field] =
+            serde_json::to_value(engine::accounting::AccountingAmount::MAX).unwrap();
+        overflowing["loans"]["B"][field] = serde_json::to_value(yuan(1)).unwrap();
+        assert!(
+            serde_json::from_value::<engine::company::industrial::IndustrialBooks>(overflowing)
+                .is_err()
+        );
+    }
+    let restored: engine::company::industrial::IndustrialBooks =
+        serde_json::from_value(baseline).unwrap();
+    assert_eq!(restored, books);
+}
+
+#[test]
+fn audit_credit_restore_checks_contract_links_and_allows_valid_remainder_boundaries() {
+    use engine::company::industrial::IndustrialBooks;
+    let mut books = fresh();
+    books
+        .borrow(
+            ContractId("A".into()),
+            &cp("EXT-BANK"),
+            yuan(1),
+            0,
+            d("2030-01-01"),
+            d("2030-02-01"),
+        )
+        .unwrap();
+    let baseline = serde_json::to_value(books).unwrap();
+    for case in [
+        "missing-contract",
+        "role",
+        "identity",
+        "principal",
+        "early-date",
+        "high-remainder",
+        "low-remainder",
+        "missing-lender",
+    ] {
+        let mut invalid = baseline.clone();
+        match case {
+            "missing-contract" => {
+                invalid["contracts"]["contracts"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("A");
+            }
+            "role" => {
+                invalid["contracts"]["contracts"]["A"]["role"] =
+                    serde_json::to_value(engine::company::ContractRole::Receivable).unwrap()
+            }
+            "identity" => {
+                invalid["contracts"]["contracts"]["A"]["id"] =
+                    serde_json::to_value(ContractId("WRONG".into())).unwrap()
+            }
+            "principal" => {
+                invalid["loans"]["A"]["outstanding"] = serde_json::to_value(yuan(2)).unwrap()
+            }
+            "early-date" => {
+                invalid["loans"]["A"]["last_accrual_date"] = serde_json::json!("2029-12-31")
+            }
+            "high-remainder" => {
+                invalid["loans"]["A"]["carried"] =
+                    serde_json::to_value(engine::accounting::FractionUnits::from_units(1_825_001))
+                        .unwrap()
+            }
+            "low-remainder" => {
+                invalid["loans"]["A"]["carried"] =
+                    serde_json::to_value(engine::accounting::FractionUnits::from_units(-1_825_001))
+                        .unwrap()
+            }
+            "missing-lender" => {
+                invalid["counterparties"]["counterparties"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("EXT-BANK");
+            }
+            _ => unreachable!(),
+        }
+        let error = serde_json::from_value::<IndustrialBooks>(invalid).unwrap_err();
+        assert!(
+            error.to_string().contains("industrial credit state"),
+            "{case}: {error}"
+        );
+    }
+    for remainder in [-1_825_000, 0, 1_825_000] {
+        let mut valid = baseline.clone();
+        valid["loans"]["A"]["carried"] =
+            serde_json::to_value(engine::accounting::FractionUnits::from_units(remainder)).unwrap();
+        valid["loans"]["A"]["last_accrual_date"] = serde_json::json!("2030-03-01");
+        let restored: IndustrialBooks = serde_json::from_value(valid).unwrap();
+        assert_eq!(
+            restored
+                .loan(&ContractId("A".into()))
+                .unwrap()
+                .carried()
+                .units(),
+            remainder
+        );
+    }
+}
+
+#[test]
 fn borrowing_beyond_credit_line_is_rejected_state_unchanged() {
     let mut co = fresh();
     let before = co.clone();

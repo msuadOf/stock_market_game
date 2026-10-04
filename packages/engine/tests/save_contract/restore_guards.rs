@@ -54,6 +54,51 @@ fn restore_error(wire: serde_json::Value) -> String {
 }
 
 #[test]
+fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
+    let baseline = baseline();
+    let mut invalid = baseline.clone();
+    let company = invalid["company_operations"]["companies"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    let loans = company["books"]["Industrial"]["loans"]
+        .as_object_mut()
+        .unwrap();
+    assert!(!loans.is_empty());
+    loans.values_mut().next().unwrap()["outstanding"] =
+        serde_json::to_value(engine::accounting::AccountingAmount::from_cents(-1)).unwrap();
+    let error = decode_error(invalid);
+    assert!(error.contains("industrial credit state"), "{error}");
+    let mut overflowing = baseline;
+    let company = overflowing["company_operations"]["companies"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    let loans = company["books"]["Industrial"]["loans"]
+        .as_object_mut()
+        .unwrap();
+    let (original_id, original_loan) = loans.iter().next().unwrap();
+    let original_id = original_id.clone();
+    let mut extra = original_loan.clone();
+    extra["outstanding"] = serde_json::to_value(engine::accounting::AccountingAmount::MAX).unwrap();
+    loans.insert("synthetic-overflow-loan".into(), extra);
+    let contracts = company["books"]["Industrial"]["contracts"]["contracts"]
+        .as_object_mut()
+        .unwrap();
+    let mut extra_contract = contracts[&original_id].clone();
+    extra_contract["id"] = serde_json::json!("synthetic-overflow-loan");
+    extra_contract["principal"] =
+        serde_json::to_value(engine::accounting::AccountingAmount::MAX).unwrap();
+    contracts.insert("synthetic-overflow-loan".into(), extra_contract);
+    let error = decode_error(overflowing);
+    assert!(error.contains("amount overflow in add"), "{error}");
+}
+
+#[test]
 fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
     for (created, horizon, reason) in [
         (0, 0, "invalid horizon"),

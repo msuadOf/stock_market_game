@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54–G55、G69–G71、G74–G78、G80 共13项，剩余66项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54–G55、G58、G69–G71、G74–G80 共15项，剩余64项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -121,7 +121,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G37 | DEV因果记录关联实际订单ID和计划变化；公司计划任务35 | DEV 根诊断仍传空交易 events，无法关联随后真实订单 ID/计划变化。新增诊断查询只读/重复查询稳定测试未补上真实订单关联；DEV入口和隔离已有，不得伪造成交或向产品快照泄露私有状态。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G38 | 本人预算区分已有计划续行与新机会；公司计划K6:165/任务22 | 两个生产预算请求仍全标 ExistingPlan，新机会优先级未获实际分类输入。 仅是同一账户软预算分类，不得扩为跨账户撮合优先；AllocationExperience 默认值不单列缺口，避免重复扣减上游已处理的个人信心。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G41 | 真实支付失败/逾期状态持久并公开风险材料；K2:92、任务8/14 | 经营层生成CompanyDayReport.payment_failures，但`session.rs:2105` 日结caller丢弃返回值，权威状态/存档/公开公告不消费失败记录。合法现金不足继续经营已有；缺的是事实保留/获知，不补钱或造违约。见 [日结](exhaustive-review/luna03.md)。 |
-| G58 | 每贷款人独立授信按对应未偿校验；公司商业合同 | IndustrialBooks::borrow/available_credit取全部loans.outstanding_total，却与指定lender额度比较；A/B各授信1000，A借满后B借1也被拒。默认单lender不触发；这是合法公开工商API边界，独立于G35支付调度。见 [授信](exhaustive-review/luna31.md)。 |
+| G58 | 已补齐：每贷款人独立授信按对应未偿校验；公司商业合同 | borrow/available_credit按LoanState关联的真实合同counterparty求该lender未偿本金，包含开局债务与还本。A/B各授信1000且A用满时，B仍可借满1000；各自超额拒绝不改状态，A还款只恢复A额度。独立于G35支付调度，原证据见 [授信](exhaustive-review/luna31.md)，短测及复核见 [工商授信](../implementation-gap-implementation/industrial-credit.md)。 |
 | G59 | 有明确保障期限的保险不在期后新造事故赔案；K3/公司会计 | `operations/insurance.rs:68–75` 只以remaining门控服务释放，赔案日程没有coverage_end门控，合同结束后仍周期创建并立即支付新claim。保障期内已发生未付赔案期后支付仍应允许；该经营边界不因G36缺会话装配而核销。见 [承保期限](exhaustive-review/luna55.md)。 |
 | G70 | 已补齐：工商开局库存子账与对应总账逐科目对账；公开构造契约、历史company D01 | seed_inventory补核工业报表同真源的1403/1405/5001；存在但缺seed的科目按零子账余额对账，不平账补钱。custom chart没有对应科目不强行添加，其余seed仍逐项核。原证据见 [开局审读](hidden-review/batch-037.md) 与 [裁定](hidden-review/candidate-resolution-01.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G71 | 已补齐：经营调度器恢复保持唯一身份及序号耗尽显式错误；保存恢复纪律 | from_parts与serde拒绝跨日期重复ScheduledDueId，完整SaveSlot解码沿用同一守卫。submit先checked_add，MAX游标显式SequenceExhausted且队列/游标不变；MAX-1仍可分配，不混用A股委托ID。原问题见 [调度审读](hidden-review/batch-037.md) 与 [恢复裁定](hidden-review/candidate-resolution-01.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
@@ -129,7 +129,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G74 | 已补齐：P3预检失败后coordinator按既有契约停用；typed failure状态机 | Continuous及Auction身份预检错误调用既有fail锁存；两项短测验证失败后next_ready_batch与finish均拒绝，不改变正常撮合或宣称默认交易曾错序。原证据见 [预检原文](hidden-review/batch-141.md) 与 [裁定](hidden-review/candidate-resolution-03.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G77 | 已补齐：合并往来金额与工作底稿保持既有恒正契约；DTO及公开消除API | precheck_balance拒绝非正声明并携成员、对手方及金额；两种申报顺序均拒零/负配对，真实AR/AP正额仍生成1条底稿，成员账套不变。独立于G28集团接线、账面上界及行业分类。原证据见 [历史对照](hidden-review/batch-175.md) 与 [正额裁定](hidden-review/candidate-resolution-05.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G78 | 已补齐：自然日时钟恢复保持到期业务身份、耗尽错误及日期适用范围；CivilClock保存契约 | from_parts拒绝重复DueBusinessId并按冻结policy查询每条pending日期，完整SaveSlot恢复进入同一守卫。注册先checked_add，MAX游标显式DueSequenceExhausted且零变更，空队列游标0接受集合不变；与G71是不同owner。原问题见 [原裁定](hidden-review/candidate-resolution-06.md) 与 [日期续核](renewed-check/clock-bounds.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
-| G79 | 工商授信计算错误不得伪装无授信；显式错误与外部状态校验 | `available_credit`约定None为无授信，却用`.ok()`折叠贷款加总/减法错误；IndustrialBooks及完整公司恢复不深验贷款状态，外部档可注入无法加总的本金。缺明确错误出口及恢复不变量，不等于G58按lender归属计算，也不泛称正常借款必溢出。见 [公开API复核](hidden-review/batch-176.md) 与 [裁定](hidden-review/candidate-resolution-06.md)。 |
+| G79 | 已补齐：工商授信计算错误不得伪装无授信；显式错误与外部状态校验 | available_credit改Result<Option>，无额度为Ok(None)，算术错误明确Err；IndustrialBooks serde与完整SaveSlot重验本金/利息可加总、非负、合同/贷款人关联及日期/余数边界。保留零本金、半分余数端点与期后计提，不证明编辑资产的历史来源。原证据见 [公开API复核](hidden-review/batch-176.md) 与 [裁定](hidden-review/candidate-resolution-06.md)，短测及复核见 [工商授信](../implementation-gap-implementation/industrial-credit.md)。 |
 | G80 | 已补齐：完整存档恢复校验银行ECL政策；外部输入及行业政策契约 | validate_company_domain对Bank账套调用EclPolicy::validate，错误携公司ID与Bank ECL上下文；完整SaveSlot短测验证合法政策可恢复、两表空值/非法权重及PD拒绝。保持库级serde接受集合及issue_loan次序，不冒称G36四行业闭环已实现。原问题见 [续核](renewed-check/bank-restore.md) 与 [独立裁定](renewed-check/independent-review.md)；实施见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 
 ### 2.7 验收工具契约

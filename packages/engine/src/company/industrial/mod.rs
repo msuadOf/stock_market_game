@@ -54,7 +54,7 @@ use loans::LoanPortfolio;
 
 /// 工商账套：Books + 子账 + 税务/借款状态（全部随存档序列化；`Books` 恢复走
 /// 重放路径，其余结构体 serde 直存）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
 pub struct IndustrialBooks {
     books: Books,
     inventory: InventoryLedger,
@@ -174,11 +174,37 @@ impl IndustrialBooks {
         self.loans.iter()
     }
 
-    /// 某贷款人剩余授信 = 限额 − Σ未偿本金（含开局隐式合同）；无授信 = None。
-    pub fn available_credit(&self, lender: &CounterpartyId) -> Option<AccountingAmount> {
-        let limit = self.budget.credit_line(lender)?;
-        let outstanding = self.loans.outstanding_total().ok()?;
-        limit.sub(outstanding).ok()
+    /// 某贷款人剩余授信 = 限额 − 该贷款人的未偿本金（含开局隐式合同）；无授信 = Ok(None)，计算失败 = Err。
+    pub fn available_credit(
+        &self,
+        lender: &CounterpartyId,
+    ) -> Result<Option<AccountingAmount>, IndustrialError> {
+        let Some(limit) = self.budget.credit_line(lender) else {
+            return Ok(None);
+        };
+        let outstanding = self
+            .loans
+            .outstanding_for_lender(self.contracts(), lender)?;
+        Ok(Some(limit.sub(outstanding)?))
+    }
+
+    pub(crate) fn validate_credit_state(&self) -> Result<(), IndustrialError> {
+        self.loans.validate(self.contracts())?;
+        for (id, _) in self.loans.iter() {
+            let contract = self
+                .contracts()
+                .get(id)
+                .expect("loan validation checked contract existence");
+            if self.counterparties().get(&contract.counterparty).is_none() {
+                return Err(IndustrialError::CreditStateInconsistent {
+                    detail: format!(
+                        "loan {id:?} references unknown lender {:?}",
+                        contract.counterparty
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     // ===== 处理器共享内部 =====
@@ -226,6 +252,48 @@ impl IndustrialBooks {
 
     pub(super) fn contracts_mut(&mut self) -> &mut ContractBook {
         &mut self.contracts
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for IndustrialBooks {
+    fn deserialize<Decoder: serde::Deserializer<'de>>(
+        decoder: Decoder,
+    ) -> Result<Self, Decoder::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            books: Books,
+            inventory: InventoryLedger,
+            assets: FixedAssetRegister,
+            receivables: TradeOpenLedger,
+            payables: TradeOpenLedger,
+            contracts: ContractBook,
+            counterparties: CounterpartyLedger,
+            budget: OperatingBudget,
+            tax_policy: TaxPolicy,
+            #[serde(rename = "loss_pool")]
+            income_tax_position: IncomeTaxPosition,
+            loans: LoanPortfolio,
+            next_event_id: u64,
+        }
+        let raw = Raw::deserialize(decoder)?;
+        let restored = Self {
+            books: raw.books,
+            inventory: raw.inventory,
+            assets: raw.assets,
+            receivables: raw.receivables,
+            payables: raw.payables,
+            contracts: raw.contracts,
+            counterparties: raw.counterparties,
+            budget: raw.budget,
+            tax_policy: raw.tax_policy,
+            income_tax_position: raw.income_tax_position,
+            loans: raw.loans,
+            next_event_id: raw.next_event_id,
+        };
+        restored
+            .validate_credit_state()
+            .map_err(serde::de::Error::custom)?;
+        Ok(restored)
     }
 }
 
