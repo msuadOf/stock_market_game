@@ -99,6 +99,7 @@ impl super::CalendarPolicy {
                 entry.source_citation_id,
                 ranges
             ));
+            parts.push(entry.source_digest.clone());
         }
         parts.push(spec.simulated_fallback.digest.clone());
         let refs = parts.iter().map(String::as_str).collect::<Vec<_>>();

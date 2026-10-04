@@ -249,6 +249,7 @@ impl PlanBook {
         validate_policy(&policy)?;
         let mut by_account_stock = BTreeMap::new();
         for (plan_id, plan) in &plans {
+            plan.validate_horizon()?;
             if plan.plan_id() != *plan_id {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!(

@@ -10,7 +10,7 @@
 
 按用户指定，扫描任务使用独立 `gpt-6-luna medium`，每个只负责1–3篇来源，连续全文读至EOF；截断处补读，完全同SHA正文共享阅读但保留全部路径。原234份已映射80份阅读记录；新增681份正文分为227批，历史分支另分6批。曾尝试50个reader并发，遇到429与文件描述符耗尽，失败批次保留待读并由原reader重试，服务恢复后错峰增加并发，不以换模型或截取摘要绕过全文要求。每章承诺归入生产已接、现行缺口、待定契约、未来/取代、文档漂移或验收证据边界，并反查当前caller、state owner与consumer。第2、3节给出已裁定状态；逐篇证据见 [覆盖清单](coverage-index.md)、[原来源清单](exhaustive-review/source-index.json) 及 [原裁定记录](exhaustive-review/resolution.md)。旧R/S/H记录保留自己的基线，不改写历史验收。
 
-“生产已接”仅针对所列契约，不保证整模块无缺陷。确认缺口、待定需求、未来范围、文档漂移与验收证据分别登记，不用未勾选框、旧符号消失或纯函数测试证明生产功能缺失或完成。本轮没有修改游戏代码，只做源码差异与文档静态核对，未运行游戏测试、构建、浏览器、完整回归、性能矩阵或发布流程。此前发布脚本与工作流契约的4个定向短测文件通过，属于上一基线复核的结果；本轮未重跑，不将测试源码或其他任务的验收记录写成本轮通过。
+“生产已接”仅针对所列契约，不保证整模块无缺陷。确认缺口、待定需求、未来范围、文档漂移与验收证据分别登记，不用未勾选框、旧符号消失或纯函数测试证明生产功能缺失或完成。静态审计阶段没有修改游戏代码，只做源码差异与文档静态核对，未运行游戏测试、构建、浏览器、完整回归、性能矩阵或发布流程。后续按用户授权在同一 worktree 实施，逐项状态和短测证据写入对应行，批次记录见 [补缺实施](../implementation-gap-implementation/README.md)；不改写此前静态审计的验证范围。此前发布脚本与工作流契约的4个定向短测文件通过，属于上一基线复核的结果，实施阶段没有重跑，不将其他任务的验收记录写成本次通过。
 
 本次未重新联网核验制度，沿用文档中登记的 A 股规则及简化；金额为分、数量为股，界面手数仅作换算。DCF和个体策略参数是游戏模型，不冒充交易制度或真实市场校准。本批完整diff已由非作者独立复核，三项门禁通过，见 [覆盖与复核记录](coverage-index.md#独立复核记录)。这是指定基线和文档集合的静态审计，不是程序没有未知缺陷的保证。
 
@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-原G01–G39已经重新追踪当前源码：G27继续在第5节核销，其余38项仍有未完成部分；此前新增G40–G68共29项、G69–G79共11项。本轮纠正Q19的恢复可达性判断并转为G80，现行合计79项；G78补充同一恢复owner的未来待办日期边界，BeliefBook的双profile身份候选保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。编号保留，不把未来产品、仅未运行的验证或主工作区半成品迁移当作本基线的漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G69、G71、G75、G76、G78、G80 六项，剩余73项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -55,7 +55,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G20 | 新局从熵取种、测试可固定；ADR-0005 §4 | `useSessionHostLifecycle.ts:90` 普通新局仍使用固定 `DEFAULT_SEED=42n`。 存档 RNG 和固定 seed 测试注入已存在；不要求自由并发同 seed 整局字节一致。 当前路径、行号及调用链见[宿主](reaudit-host.md)。 |
 | G42 | 个人价格记忆按持仓∪活跃计划＋8修剪，恢复验证同一边界；K5、任务19/25 | `roots.rs:486` 仅prune watchlist，PersonalPriceMemory::prune无生产caller；恢复以全市场股票数＋8设限且条目必须属于全市场，未验证未保护条目最多8个。默认5股不展露此边界；个人认知上限不属于被撤销的世界配额。见 [个人记忆](exhaustive-review/luna21.md) 与 [计划](exhaustive-review/luna03.md)。 |
 | G43 | 淡出股票不再自动获知/分析/建立新计划；K6候选范围、任务25 | `root_candidate_codes` 无条件加入所有belief.entry_stocks，关注驱逐后无持仓/活动计划且未重新发现的旧股仍进入观察、报告获取和新计划候选。缺本次候选资格过滤，不能删除本人历史已知材料来冒充淡出。见 [生产root](exhaustive-review/luna03.md)。 |
-| G69 | 计划恢复保持非零且可表示的期限；输入校验原则、历史strategy D02 | `TradingPlan` 派生Deserialize可绕过开户校验，`PlanBook::from_parts`及Session计划validator不复核horizon；`last_valid_trading_day`仍裸算created＋horizon－1，零期限或越界会产生无效查询，连MAX/1也存在中间加法溢出。字段收窄不等于恢复校验；不改变A股订单有效期。见 [期限原文复核](hidden-review/batch-068.md) 与 [裁定](hidden-review/candidate-resolution-01.md)。 |
+| G69 | 已补齐：计划恢复保持非零且可表示的期限；输入校验原则、历史strategy D02 | 开户、TradingPlan serde、PlanBook与完整Session validator共用期限校验；先减一再求最后有效日，MAX/1合法，零期限及越界显式拒绝。新增直接API及完整SaveSlot定向短测，不改变A股订单有效期。原问题见 [期限原文复核](hidden-review/batch-068.md) 与 [裁定](hidden-review/candidate-resolution-01.md)；实施证据见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 
 ### 2.3 行情显示与日历边界
 
@@ -67,8 +67,8 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G13 | 逐笔展示最近成交；DESIGN:126、移动QA | `MobileIntradayProjection` 仍对最新优先成交数组取 `slice(-7).reverse()`。 100条成交带不是全天流水，不得以无限积累修补方向错误。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G14 | 逐笔时间对应真实成交；DESIGN:126 | 逐笔仍共用当前 `tradeTime`，不取各笔成交时间。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G15 | 官方年度覆盖替代模拟回退；`docs/simulation-calendar.md:59` | `calendar/holidays.rs:72` 官方覆盖当年非假日仍落入模拟回退。 默认 official_coverage 为空；这是非空覆盖输入边界，不声称默认局已触发，也不要求真实行情数据。 当前路径、行号及调用链见[基础](reaudit-foundations.md)。 |
-| G75 | 日内时刻恢复与构造器使用同一秒域；`CivilInstant`输入契约 | `calendar/date.rs`派生Deserialize，可绕过new对second_of_day＜86400的校验；私有字段不能保证serde输入有效。范围限公开序列化边界，不把公历规则或正常时钟已错当作结论。见 [原文复核](hidden-review/batch-139.md) 与 [裁定](hidden-review/candidate-resolution-04.md)。 |
-| G76 | 冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | `compute_content_digest`包含出处ID/日期区间，却遗漏OfficialCoverageEntry.source_digest；恢复仅验该摘要非空，改出处内容摘要不改变policy身份。需补内容绑定，不声称当前默认空official表或官方休市日期错误，不使用真实行情。见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)。 |
+| G75 | 已补齐：日内时刻恢复与构造器使用同一秒域；`CivilInstant`输入契约 | serde经过CivilInstant::new校验，0与86399合法，86400及u32::MAX拒绝；公开秒域不再可由私有字段派生serde绕过。原问题见 [原文复核](hidden-review/batch-139.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
+| G76 | 已补齐：冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | policy content digest新增独立source_digest分量；只修改出处摘要即改变身份，旧digest与新摘要组合在validate拒绝。默认official空表身份不变；测试使用合成出处，不使用真实行情。原问题见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G44 | 零成交量如实为零；DESIGN:88/110、移动QA:3 | `market-model.ts:693/772` 的分时/K量对0执行Math.max(1,...)，组件画出正高度量柱。应保留真实零量槽位；非零量最小可见高度不应套到零值。现有测试冻结正高度不核销真源契约。见 [绘图](exhaustive-review/luna02.md)。 |
 | G46 | 桌面五档标签对应真实报价rank；DESIGN、UX盘口 | engine asks按低价优先，`LocalRefreshViews.tsx:113` 却把asks[0]标卖5，一档时也标卖5；移动五档映射正确。缺桌面档号/展示顺序一致性，不改撮合。见 [盘口](exhaustive-review/luna02.md)。 |
 | G47 | 竞价null指示价槽不绘价格线；DESIGN:88、UX:50 | 投影先过滤null，再拼一个polyline，两个有效价之间的null槽被直线跨越。整段null空态已有，缺的是连续有效片段分隔。见 [竞价绘图](exhaustive-review/luna02.md)。 |
@@ -124,13 +124,13 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G58 | 每贷款人独立授信按对应未偿校验；公司商业合同 | IndustrialBooks::borrow/available_credit取全部loans.outstanding_total，却与指定lender额度比较；A/B各授信1000，A借满后B借1也被拒。默认单lender不触发；这是合法公开工商API边界，独立于G35支付调度。见 [授信](exhaustive-review/luna31.md)。 |
 | G59 | 有明确保障期限的保险不在期后新造事故赔案；K3/公司会计 | `operations/insurance.rs:68–75` 只以remaining门控服务释放，赔案日程没有coverage_end门控，合同结束后仍周期创建并立即支付新claim。保障期内已发生未付赔案期后支付仍应允许；该经营边界不因G36缺会话装配而核销。见 [承保期限](exhaustive-review/luna55.md)。 |
 | G70 | 工商开局库存子账与对应总账逐科目对账；公开构造契约、历史company D01 | `IndustrialBooks::new`经`seed_inventory`仅核seed出现过的科目；库存总账非零但该科目没有seed时可返回无对应库存的账套。缺非法输入拒绝，不是要求补钱或所有底层操作强事务。见 [开局审读](hidden-review/batch-037.md) 与 [裁定](hidden-review/candidate-resolution-01.md)。 |
-| G71 | 经营调度器恢复保持唯一身份及序号耗尽显式错误；保存恢复纪律 | `OperatingScheduler::from_parts`不核待办ID唯一，镜像BTreeSet会折叠重复ID，完整SaveSlot恢复链未补拒绝；可恢复next_seq=MAX，随后submit裸加一会溢出或回绕。两者归同一调度身份owner，不混用A股委托ID，也不声称正常局已耗尽序号。见 [调度审读](hidden-review/batch-037.md) 与 [恢复裁定](hidden-review/candidate-resolution-01.md)。 |
+| G71 | 已补齐：经营调度器恢复保持唯一身份及序号耗尽显式错误；保存恢复纪律 | from_parts与serde拒绝跨日期重复ScheduledDueId，完整SaveSlot解码沿用同一守卫。submit先checked_add，MAX游标显式SequenceExhausted且队列/游标不变；MAX-1仍可分配，不混用A股委托ID。原问题见 [调度审读](hidden-review/batch-037.md) 与 [恢复裁定](hidden-review/candidate-resolution-01.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G73 | 保险组反序列化保持经营不变量；外部存档校验原则 | `ContractGroupState`自定义Deserialize仅搬字段，InsuranceBooks/CompanyOperations恢复不补子账语义校验；既有behavior测试允许损坏released_revenue并观察后续释放先过账、再部分更新后报溢出。缺的是恢复拒绝不一致状态，不据此要求所有合法保险操作强事务，默认工商局与G36行业装配边界仍分开。见 [恢复裁定](hidden-review/candidate-resolution-01.md)；不等于ClosingEngine的Q17。 |
 | G74 | P3预检失败后coordinator按既有契约停用；typed failure状态机 | `advance_after_typed_outcomes`及auction入口在身份排序预检用`?`早退，未设置failed；只有后续batch错误才锁存。生产ready_stock_stream调用该对象，但当前caller传播错误不证明对象自身停止契约兑现。只补两个入口失败后next_ready_batch/finish拒绝，不称默认交易已错序。见 [预检原文](hidden-review/batch-141.md) 与 [裁定](hidden-review/candidate-resolution-03.md)。 |
 | G77 | 合并往来金额与工作底稿保持既有恒正契约；DTO及公开消除API | `IntercompanyBalance.amount`与WorksheetLine约定正金额，但precheck_balance/配对仅检双方相等及类型，不拒成对零额或负额，仍生成工作底稿。独立于G28的集团接线、账面上界和行业分类，不据此声称实际集团已发错报表。见 [历史对照](hidden-review/batch-175.md) 与 [正额裁定](hidden-review/candidate-resolution-05.md)。 |
-| G78 | 自然日时钟恢复保持到期业务身份、耗尽错误及日期适用范围；CivilClock保存契约 | `from_parts`及完整SaveSlot不拒重复DueBusinessId，MAX游标后注册可溢出/回绕；未来pending日期仅验不早于current，未像register_due调用日历查询拒绝policy上界外日期。与G71是不同owner；MAX分配政策待选、空队列游标0不因new初值不同判错，不扩称任意越界current均可恢复。见 [原裁定](hidden-review/candidate-resolution-06.md) 与 [日期续核](renewed-check/clock-bounds.md)。 |
+| G78 | 已补齐：自然日时钟恢复保持到期业务身份、耗尽错误及日期适用范围；CivilClock保存契约 | from_parts拒绝重复DueBusinessId并按冻结policy查询每条pending日期，完整SaveSlot恢复进入同一守卫。注册先checked_add，MAX游标显式DueSequenceExhausted且零变更，空队列游标0接受集合不变；与G71是不同owner。原问题见 [原裁定](hidden-review/candidate-resolution-06.md) 与 [日期续核](renewed-check/clock-bounds.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G79 | 工商授信计算错误不得伪装无授信；显式错误与外部状态校验 | `available_credit`约定None为无授信，却用`.ok()`折叠贷款加总/减法错误；IndustrialBooks及完整公司恢复不深验贷款状态，外部档可注入无法加总的本金。缺明确错误出口及恢复不变量，不等于G58按lender归属计算，也不泛称正常借款必溢出。见 [公开API复核](hidden-review/batch-176.md) 与 [裁定](hidden-review/candidate-resolution-06.md)。 |
-| G80 | 完整存档恢复校验银行ECL政策；外部输入及行业政策契约 | SaveSlot可携带Bank账套，restore校验公司映射等后整体安装CompanyOperations，未调用EclPolicy::validate拒绝空情景表/非法权重。新局仅Industrial不反证恢复可达；库级serde保原接受集合的OOP注释不免除SaveSlot边界校验。仅补恢复validator，不重验每笔贷款或破坏底层错误次序，不同于G36行业闭环/G73保险组/G79工商授信。见 [续核](renewed-check/bank-restore.md) 与 [独立裁定](renewed-check/independent-review.md)。 |
+| G80 | 已补齐：完整存档恢复校验银行ECL政策；外部输入及行业政策契约 | validate_company_domain对Bank账套调用EclPolicy::validate，错误携公司ID与Bank ECL上下文；完整SaveSlot短测验证合法政策可恢复、两表空值/非法权重及PD拒绝。保持库级serde接受集合及issue_loan次序，不冒称G36四行业闭环已实现。原问题见 [续核](renewed-check/bank-restore.md) 与 [独立裁定](renewed-check/independent-review.md)；实施见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 
 ### 2.7 验收工具契约
 

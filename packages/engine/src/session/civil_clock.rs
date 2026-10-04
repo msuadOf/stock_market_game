@@ -183,6 +183,8 @@ pub enum CivilClockError {
     /// 时钟状态自相矛盾（含存档恢复校验失败）。
     #[error("inconsistent civil clock state: {detail}")]
     SaveInconsistent { detail: String },
+    #[error("civil clock due id sequence exhausted")]
+    DueSequenceExhausted,
 }
 
 /// 自然日经营时钟：与 tick/市场分钟严格分离的权威自然日推进（K1）。
@@ -270,7 +272,12 @@ impl CivilClock {
             }
         }
         let mut pending = save.pending_due.clone();
+        let mut ids = std::collections::BTreeSet::new();
         for due in &pending {
+            if !ids.insert(due.id) {
+                return Err(inconsistent(format!("duplicate due id {}", due.id.value())));
+            }
+            calendar.day_status(exchange, due.due_date)?;
             if due.id.value() >= save.next_due_seq {
                 return Err(inconsistent(format!(
                     "due {due:?} id is not below next_due_seq {}",
@@ -345,9 +352,13 @@ impl CivilClock {
             due_date,
             kind,
         };
-        self.next_due_seq += 1;
+        let next_due_seq = self
+            .next_due_seq
+            .checked_add(1)
+            .ok_or(CivilClockError::DueSequenceExhausted)?;
         self.pending.push(due.clone());
         self.pending.sort_by_key(|item| (item.due_date, item.id));
+        self.next_due_seq = next_due_seq;
         Ok(due)
     }
 

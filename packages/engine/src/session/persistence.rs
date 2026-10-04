@@ -978,6 +978,13 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
     for (id, company) in &save.company_operations.companies {
+        if let Some(bank) = company.books().as_bank() {
+            bank.ecl_policy().validate().map_err(|error| {
+                SessionError::InvalidSave(format!(
+                    "saved company {id:?} has an invalid Bank ECL policy: {error}"
+                ))
+            })?;
+        }
         let Some(listed) = company.spec().listed_stock.as_ref() else {
             return Err(SessionError::InvalidSave(format!(
                 "saved company {id:?} has no listed stock mapping"
@@ -1413,6 +1420,9 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
     let npc_count = context.npc_count;
     for plan_id in save.plans.plan_ids() {
         let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
+        plan.validate_horizon().map_err(|error| {
+            SessionError::InvalidSave(format!("plan {plan_id:?} has an invalid horizon: {error}"))
+        })?;
         if plan.account().0 > npc_count {
             return Err(SessionError::InvalidSave(format!(
                 "plan {plan_id:?} belongs to unknown account {:?}",

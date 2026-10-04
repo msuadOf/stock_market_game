@@ -235,22 +235,24 @@ impl<'de> serde::Deserialize<'de> for CivilDate {
 ///
 /// 规则时间与模拟时间分离（K1 §4）的最小承载单元；时区不引入 tz 数据库，
 /// 中国大陆自 1991 年起无夏令时，全年统一 UTC+8，此处直接存"本地日 + 日内秒"。
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Hash,
-    Debug,
-    serde::Serialize,
-    serde::Deserialize,
-    ts_rs::TS,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, ts_rs::TS)]
 pub struct CivilInstant {
     date: CivilDate,
     second_of_day: u32,
+}
+
+impl<'de> serde::Deserialize<'de> for CivilInstant {
+    fn deserialize<Decoder: serde::Deserializer<'de>>(
+        decoder: Decoder,
+    ) -> Result<Self, Decoder::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            date: CivilDate,
+            second_of_day: u32,
+        }
+        let raw = Raw::deserialize(decoder)?;
+        Self::new(raw.date, raw.second_of_day).map_err(serde::de::Error::custom)
+    }
 }
 
 impl CivilInstant {

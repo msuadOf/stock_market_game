@@ -87,6 +87,8 @@ pub enum SchedulerError {
     DueSkipped { on: CivilDate, earliest: CivilDate },
     #[error("scheduler state inconsistent: {detail}")]
     SaveInconsistent { detail: String },
+    #[error("scheduler due id sequence exhausted")]
+    SequenceExhausted,
 }
 
 /// 持久化到期队列。serde 保存 `{next_seq, settled_through, pending}`；恢复走
@@ -144,7 +146,10 @@ impl OperatingScheduler {
             return Err(SchedulerError::DuplicateDueKey { key });
         }
         let id = ScheduledDueId(self.next_seq);
-        self.next_seq += 1;
+        let next_seq = self
+            .next_seq
+            .checked_add(1)
+            .ok_or(SchedulerError::SequenceExhausted)?;
         let due = ScheduledDue {
             id,
             key,
@@ -155,6 +160,7 @@ impl OperatingScheduler {
             .pending
             .partition_point(|existing| (existing.due_date, existing.id) < (due.due_date, id));
         self.pending.insert(position, due);
+        self.next_seq = next_seq;
         Ok(id)
     }
 
@@ -183,6 +189,7 @@ impl OperatingScheduler {
     ) -> Result<Self, SchedulerError> {
         let inconsistent = |detail: String| SchedulerError::SaveInconsistent { detail };
         let mut keys = BTreeSet::new();
+        let mut ids = BTreeSet::new();
         for window in pending.windows(2) {
             if (window[0].due_date, window[0].id) >= (window[1].due_date, window[1].id) {
                 return Err(inconsistent(format!(
@@ -192,6 +199,9 @@ impl OperatingScheduler {
             }
         }
         for due in &pending {
+            if !ids.insert(due.id) {
+                return Err(inconsistent(format!("duplicate due id {}", due.id.value())));
+            }
             if due.id.value() >= next_seq {
                 return Err(inconsistent(format!(
                     "due id {} >= next_seq {next_seq}",

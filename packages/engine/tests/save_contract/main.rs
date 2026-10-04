@@ -14,6 +14,8 @@ use engine::session::{
 };
 
 mod failures;
+mod bank_policy;
+mod restore_guards;
 
 const SEED: u64 = 0x27_C0FFEE;
 const TICKS_PER_DAY: usize = 1;

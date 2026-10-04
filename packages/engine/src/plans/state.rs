@@ -161,7 +161,7 @@ pub struct PlanOpen {
 }
 
 /// 可跨日的个人交易计划（K6）：唯一 per 账户+股票，版本化修订，真实成交计进度。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct TradingPlan {
@@ -251,6 +251,10 @@ impl TradingPlan {
         self.horizon_trading_days
     }
 
+    pub(crate) fn validate_horizon(&self) -> Result<(), PlanError> {
+        super::validation::validate_horizon(self.created_trading_day, self.horizon_trading_days)
+    }
+
     pub fn review(&self) -> ReviewConditions {
         self.review
     }
@@ -335,7 +339,7 @@ impl TradingPlan {
 
     /// 有效期覆盖的最后一个交易日（含开户日共 `horizon_trading_days` 天）。
     pub fn last_valid_trading_day(&self) -> u64 {
-        self.created_trading_day + u64::from(self.horizon_trading_days) - 1
+        self.created_trading_day + u64::from(self.horizon_trading_days - 1)
     }
 
     /// 份额目标下的剩余数量；比例目标或剩余已非正时为 `None`。
@@ -363,6 +367,58 @@ impl TradingPlan {
         self.status = PlanStatus::Terminated { reason };
         self.last_event_trading_day = trading_day;
         Ok(())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TradingPlan {
+    fn deserialize<Decoder: serde::Deserializer<'de>>(
+        decoder: Decoder,
+    ) -> Result<Self, Decoder::Error> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            plan_id: PlanId,
+            account: AccountId,
+            code: StockCode,
+            direction: Side,
+            target: PlanTarget,
+            filled_qty: u32,
+            opinion: PlanOpinion,
+            confidence_bp: u32,
+            urgency: Urgency,
+            status: PlanStatus,
+            version: u32,
+            last_revision: Option<super::revision::RevisionRecord>,
+            last_resume: Option<ResumeReason>,
+            created_trading_day: u64,
+            horizon_trading_days: u32,
+            review: ReviewConditions,
+            active_child_order_id: Option<OrderId>,
+            last_event_trading_day: u64,
+        }
+        let raw = Raw::deserialize(decoder)?;
+        super::validation::validate_horizon(raw.created_trading_day, raw.horizon_trading_days)
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            plan_id: raw.plan_id,
+            account: raw.account,
+            code: raw.code,
+            direction: raw.direction,
+            target: raw.target,
+            filled_qty: raw.filled_qty,
+            opinion: raw.opinion,
+            confidence_bp: raw.confidence_bp,
+            urgency: raw.urgency,
+            status: raw.status,
+            version: raw.version,
+            last_revision: raw.last_revision,
+            last_resume: raw.last_resume,
+            created_trading_day: raw.created_trading_day,
+            horizon_trading_days: raw.horizon_trading_days,
+            review: raw.review,
+            active_child_order_id: raw.active_child_order_id,
+            last_event_trading_day: raw.last_event_trading_day,
+        })
     }
 }
 
