@@ -63,3 +63,13 @@ G04 联合 PASS：Worker 保持 delivered generation 守卫；Tauri 普通暂停
 总账第 2 节逐行脚本核对：79 个唯一 G，63 行为“已补齐”，剩余 16 行为 G07/G08/G09/G42/G43/G16/G28/G35/G36/G37/G38/G41/G73/G39/G57/G72。不是统计全文重复验收表。本轮宿主 11 项为 G01–G05、G18、G19、G40、G51、G52、G66，加 G17 共 12 项，数字与 README 对应分组一致。G16/G57 虽有实施短测记录，尚未被本轮文档核销，未据临近记录擅自改变剩余数量。
 
 Remote 最终 heartbeat 5 项、WS 10 项通过与 1 个既有 probe ignored 均由该作者记录、Remote reviewer 核对，不假称本 reviewer 重跑；G17 native 数值与 WASM target 编译来自 tick-performance-review。真实浏览器、性能长验收、完整回归与发布验收仍未执行，不因文档收敛扩大这些证据边界。历史 pending/失败段落保留但已被最终结论明确取代，不能视作当前仍待复核。
+
+G52 最终状态同步：root 与 host 作者已收到 `web_gap_review` 的最终增量 PASS，三项有效发现均修复并再次复核，host-controls.md 已登记最后闭环。本 reviewer 不重复 G52 审查、也不将其结论改称本人独立审查；这里只核对文档归属和当前状态一致，G52 不再作为现行 pending。
+
+## G19 漏列文件增量复核
+
+最终提交边界检查补入 `apps/desktop/src-tauri/src/actor/failure.rs`，此前 scope 名单漏列该文件。其完整 diff 只有删除 `stop_after_host_failure` 末尾的 `self.pending_fixed_events.clear()` 一行，与 G19 移除陈旧 `pending_fixed_events` 字段一致；不是移除真实协议提交缓冲的清理。
+
+当前 `run_cycle` 以局部 `frames` 收集完整 TickFrame，成功时通过 `publish_protocol_cycle` 聚合发布；失败先以 checkpoint rollback，再停止 pacing、显式发 failure 并关闭 cmd_rx。没有该字段承载的跨周期 pending commits，也没有因本 hunk 丢弃应交付的成功提交。字段移除后仍保留旧引用反而使已提交树无法编译，因此该单行删除为 G19 必需的编译依赖收尾，范围最小、A 股事实与失败回滚语义不变。
+
+此增量 PASS。此前独立执行的 Rust fatal 11/11 与 protocol 4/4 绿色 binary 已编入该工作树 hunk，未将遗漏文件再描述为未验证新行为；本轮没有再运行编译或回归。root 应将其随 G19 收尾纳入提交，避免工作树绿色而 HEAD 遗漏依赖。
