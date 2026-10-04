@@ -668,8 +668,19 @@ export class MobileIntradayProjection {
     return 8 + (this.scale.top - value) / (this.scale.top - this.scale.bottom) * 84;
   }
 
-  auctionLine(): string {
-    return this.visibleAuctionPricePoints.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${this.priceY(point.value)}`).join(" ");
+  auctionSegments(): readonly (readonly Readonly<AuctionPoint & { value: number }>[])[] {
+    const segments: Readonly<AuctionPoint & { value: number }>[][] = [];
+    let segment: Readonly<AuctionPoint & { value: number }>[] = [];
+    for (const point of this.visibleAuctionPoints) {
+      if (point.value === null) {
+        if (segment.length > 0) segments.push(segment);
+        segment = [];
+      } else {
+        segment.push({ ...point, value: point.value });
+      }
+    }
+    if (segment.length > 0) segments.push(segment);
+    return segments;
   }
 
   continuousLine(): string {

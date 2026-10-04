@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐24项，剩余55项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐25项，剩余54项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -71,7 +71,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G76 | 已补齐：冻结日历政策内容身份包含官方出处摘要；政策来源绑定契约 | policy content digest新增独立source_digest分量；只修改出处摘要即改变身份，旧digest与新摘要组合在validate拒绝。默认official空表身份不变；测试使用合成出处，不使用真实行情。原问题见 [来源审读](hidden-review/batch-156.md) 与 [裁定](hidden-review/candidate-resolution-04.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G44 | 已补齐：零成交量如实为零；DESIGN:88/110、移动QA:3 | 分时与K线投影在volume=0时保留槽位及零高度，只有正量使用最小可见高度1。短测覆盖零/微小正量/最大量，真实DOM与SVG消费者无额外最小高度；不伪造有成交。 原证据见 [绘图](exhaustive-review/luna02.md)，实施与短测见 [前端边界](../implementation-gap-implementation/web-boundaries.md)。 |
 | G46 | 已补齐：桌面五档标签对应真实报价rank；DESIGN、UX盘口 | 真实Desktop卖盘先按engine报价索引标rank=index+1，再反转显示，卖一始终邻近买一；一档/两档/五档SSR核对标签与报价，不伪造空档。 原证据见 [盘口](exhaustive-review/luna02.md)，验证见 [资产与盘口](../implementation-gap-implementation/portfolio-and-book.md)。 |
-| G47 | 竞价null指示价槽不绘价格线；DESIGN:88、UX:50 | 投影先过滤null，再拼一个polyline，两个有效价之间的null槽被直线跨越。整段null空态已有，缺的是连续有效片段分隔。见 [竞价绘图](exhaustive-review/luna02.md)。 |
+| G47 | 已补齐：竞价null指示价槽不绘价格线；DESIGN:88、UX:50 | MobileIntradayProjection按null竞价槽分割连续有效片段，真实SVG逐段绘价格线，孤立有效点仍绘dot；空/全null不绘价，所有量槽保留。原证据见 [竞价绘图](exhaustive-review/luna02.md)，短测与复核见 [竞价片段](../implementation-gap-implementation/auction-segments.md)。 |
 
 ### 2.4 工程、交互和发布
 

@@ -12,7 +12,7 @@ test("空分时以昨收显示均价，保持空 signature 和价格中轴", () 
   const p = model.MobileIntradayProjection.fromInputs(inputs());
   assert.equal(p.displayedAverage, 10);
   assert.equal(p.priceY(10), 50);
-  assert.equal(p.auctionLine(), "");
+  assert.deepEqual(p.auctionSegments(), []);
   assert.equal(p.continuousLine(), "");
   assert.equal(p.averageLine(), "");
   assert.equal(p.signature, "3:empty");
@@ -42,7 +42,7 @@ test("分时保留单点竞价、最新优先的最近七笔及游戏时钟", ()
   const source = { ...inputs(), auctionPoints: [{ time: 99, value: 11, volume: 0, buy: true }], trades, elapsedMinutes: 121, gameTick: 8100 };
   const p = model.MobileIntradayProjection.fromInputs(source);
   assert.equal(p.displayedAverage, 11);
-  assert.equal(p.auctionLine(), `16,${p.priceY(11)}`);
+  assert.deepEqual(p.auctionSegments().map(segment => segment.map(point => point.value)), [[11]]);
   assert.equal(p.signature, "3:auction:99:11:0");
   assert.deepEqual(p.recentTrades.map(t => t.seq), [8, 7, 6, 5, 4, 3, 2]);
   assert.equal(p.tradeTime, "13:00");
@@ -64,6 +64,14 @@ test("审计G44：分时零量槽位为零高，非零量仍有可见高度", ()
     minutePoints: [{ time: 0, value: 10, volume: 0 }, { time: 1, value: 10, volume: 1 }, { time: 2, value: 10, volume: 1000 }],
   });
   assert.deepEqual(projection.volumeMarks().map(mark => mark.height), [0, 0, 1, 100]);
+});
+
+test("审计G47：null竞价槽切断价格线，同时保留有效单点与所有量槽", () => {
+  const auctionPoints = [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null }));
+  const projection = model.MobileIntradayProjection.fromInputs({ ...inputs(), auctionPoints });
+  assert.deepEqual(projection.auctionSegments().map(segment => segment.map(point => point.time)), [[0], [2, 3], [5]]);
+  assert.equal(projection.volumeMarks().length, 6);
+  assert.deepEqual(model.MobileIntradayProjection.fromInputs({ ...inputs(), auctionPoints: auctionPoints.map(point => ({ ...point, value: null })) }).auctionSegments(), []);
 });
 
 test("分时按原 slice 限制连续与竞价可见点，异常价与量继续显式拒绝", () => {

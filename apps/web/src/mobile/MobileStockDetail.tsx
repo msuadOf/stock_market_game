@@ -100,9 +100,10 @@ function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "
 
 function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
   const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
-  const { visiblePoints, visibleAuctionPoints, visibleAuctionPricePoints, scale, displayedAverage, progress, recentTrades } = projection;
+  const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress, recentTrades } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
+  const auctionSegments = projection.auctionSegments();
 
   return (
     <section
@@ -130,8 +131,10 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
             <line className="msd-session-line" x1="37" x2="37" y1="0" y2="100" />
             <line className="msd-session-line" x1="58" x2="58" y1="0" y2="100" />
             <line className="msd-session-line" x1="79" x2="79" y1="0" y2="100" />
-            <polyline className="msd-auction-line" points={projection.auctionLine()} />
-            {visibleAuctionPricePoints.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: visibleAuctionPricePoints[0].time })} cy={projection.priceY(visibleAuctionPricePoints[0].value)} r="0.8" />}
+            {auctionSegments.map((segment, index) => <g key={index}>
+              <polyline className="msd-auction-line" points={segment.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${projection.priceY(point.value)}`).join(" ")} />
+              {segment.length === 1 && <circle className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: segment[0].time })} cy={projection.priceY(segment[0].value)} r="0.8" />}
+            </g>)}
             <polyline className="msd-average-line" points={projection.averageLine()} />
             <polyline className="msd-price-line" points={projection.continuousLine()} />
           </svg>

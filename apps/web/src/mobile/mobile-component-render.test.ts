@@ -142,6 +142,14 @@ test("分时 projection 经真实组件保留 null 竞价量、阶段独立高�
   assert.match(html, /msd-auction-dot/);
 });
 
+test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null })) });
+  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 2);
+  const lines = [...html.matchAll(/class="msd-auction-line" points="([^"]+)"/g)];
+  assert.deepEqual(lines.map(line => line[1].split(" ").length), [1, 2, 1]);
+});
+
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
   const html = renderDetail("日K", "盘口");
   assert.match(html, /data-kline-signature="0:10:10\.2:9\.8:10\.1:250"/);
