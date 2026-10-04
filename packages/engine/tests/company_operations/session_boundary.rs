@@ -102,10 +102,15 @@ fn real_session_failure_history_is_saved_restored_and_publicly_queryable() {
                 .public_library
                 .announcement(publication_id, report.disclosure_instant)
                 .unwrap();
-            if let ShockKind::PaymentFailure { what, amount } = &announcement.event.kind {
-                assert!(failures
-                    .iter()
-                    .any(|failure| &failure.what == what && &failure.amount == amount));
+            if let ShockKind::PaymentFailure {
+                what,
+                amount,
+                obligation_status,
+            } = &announcement.event.kind
+            {
+                assert!(failures.iter().any(|failure| &failure.what == what
+                    && &failure.amount == amount
+                    && &failure.obligation_status == obligation_status));
                 published += 1;
             }
         }

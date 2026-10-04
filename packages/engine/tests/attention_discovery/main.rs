@@ -52,6 +52,12 @@ fn market_of(stocks: Vec<(StockCode, StockView)>) -> MarketView {
 /// 固定初始 rng_state 的注意力状态（个体 RNG 流可重放）。
 fn attention(seed: u64) -> NpcAttentionState {
     NpcAttentionState {
+        information_cadence: engine::session::NpcInformationCadence::Immediate,
+        next_information_check: engine::CivilInstant::new(
+            engine::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            0,
+        )
+        .unwrap(),
         base_probability: 0.10,
         next_attention_candidate_tick: 0,
         rng_state: seed,

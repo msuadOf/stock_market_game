@@ -138,7 +138,16 @@ pub enum ShockKind {
     PaymentFailure {
         what: String,
         amount: crate::accounting::AccountingAmount,
+        obligation_status: PaymentObligationStatus,
     },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum PaymentObligationStatus {
+    UncommittedExpense,
+    ContractualPayable,
+    ContractualOverdue,
+    StatutoryPaymentFailure,
 }
 
 impl ShockKind {

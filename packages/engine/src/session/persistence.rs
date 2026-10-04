@@ -476,6 +476,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         ));
     }
     for (id, state) in &save.npc_attention {
+        state.information_cadence.validate().map_err(|reason| {
+            SessionError::InvalidSave(format!("NPC {id:?} 信息关注节奏无效: {reason}"))
+        })?;
         if !(state.base_probability.is_finite()
             && 0.0 < state.base_probability
             && state.base_probability <= 1.0)

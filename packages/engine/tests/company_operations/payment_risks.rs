@@ -3,6 +3,56 @@ use engine::company::operations::{CompanyOperations, CompanyOperationsConfig, Fl
 use engine::company::CompanyId;
 
 #[test]
+fn newly_recognized_insurance_claim_is_payable_not_contractual_overdue() {
+    use engine::company::events::PaymentObligationStatus;
+    use engine::company::insurance::InsuranceProductKind;
+    use engine::company::operations::IndustryBooks;
+    use engine::company::{ContractId, CounterpartyId};
+    let date = d("2030-01-01");
+    let mut company = insurance_c(date.prev().unwrap());
+    let IndustryBooks::Insurance(books) = &mut company.books else {
+        unreachable!()
+    };
+    books
+        .establish_group(
+            InsuranceProductKind::TermProtection,
+            ContractId("claim-status".into()),
+            &CounterpartyId("EXT-POL".into()),
+            yuan(60),
+            yuan(50),
+            yuan(3),
+            date.prev().unwrap(),
+            d("2030-01-31"),
+        )
+        .unwrap();
+    let FlowParams::Insurance(params) = &mut company.flow else {
+        unreachable!()
+    };
+    params.daily_groups_base = 0;
+    params.claim_every_days = 1;
+    params.claim_size = yuan(30_000);
+    let mut operations = CompanyOperations::new(
+        CompanyOperationsConfig {
+            seed: 17,
+            shock_params: quiet_params(),
+            companies: vec![company],
+        },
+        date,
+    )
+    .unwrap();
+    let report = operations.advance_civil_day(date).unwrap();
+    assert_eq!(report.payment_failures.len(), 1);
+    assert_eq!(
+        report.payment_failures[0].obligation_status,
+        PaymentObligationStatus::ContractualPayable
+    );
+    assert_eq!(report.payment_failures[0].amount, yuan(30_000));
+    let restored: CompanyOperations =
+        serde_json::from_value(serde_json::to_value(&operations).unwrap()).unwrap();
+    assert_eq!(restored.payment_failures_on(date), report.payment_failures);
+}
+
+#[test]
 fn failed_payments_are_authoritative_and_survive_restore() {
     let date = d("2030-01-01");
     let mut ops = CompanyOperations::new(
@@ -63,6 +113,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         assert_eq!(
             announcement.event.kind,
             engine::company::ShockKind::PaymentFailure {
+                obligation_status: failure.obligation_status,
                 what: failure.what.clone(),
                 amount: failure.amount
             }
@@ -179,6 +230,8 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
             published_at: engine::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
             event: AnnouncedEvent {
                 kind: engine::company::ShockKind::PaymentFailure {
+                    obligation_status:
+                        engine::company::events::PaymentObligationStatus::ContractualOverdue,
                     what: "overdue principal".into(),
                     amount: amt(100),
                 },
@@ -190,6 +243,7 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
         .unwrap();
     let mut saved = library.save();
     saved.announcements[0].event.kind = engine::company::ShockKind::PaymentFailure {
+        obligation_status: engine::company::events::PaymentObligationStatus::ContractualOverdue,
         what: "overdue principal".into(),
         amount: amt(0),
     };

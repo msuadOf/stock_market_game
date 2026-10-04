@@ -71,6 +71,7 @@ use decision_chain::personal_state::BeliefParticipantState;
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
+mod notices;
 pub use civil_clock::{
     CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
     DueBusinessId, DueKind,
@@ -84,6 +85,7 @@ pub use disclosures::{
 };
 pub use execution::ParentOrderPlan;
 pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
+pub use notices::NpcInformationCadence;
 pub use persistence::{
     decode_save_slot, SaveDecodeLimits, SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank,
     SavedLiveEnvelope, SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition,
@@ -2080,6 +2082,15 @@ impl GameSession {
                 self.state.npc_attention.insert(
                     id,
                     NpcAttentionState {
+                        information_cadence: NpcInformationCadence::for_profile(
+                            &acc.strategy().expect("NPC strategy exists").profile(),
+                            id,
+                        ),
+                        next_information_check: crate::CivilInstant::new(
+                            self.state.civil_clock.current_date(),
+                            0,
+                        )
+                        .expect("午夜有效"),
                         base_probability,
                         next_attention_candidate_tick: first_candidate_tick,
                         rng_state: attention_rng.state,
@@ -2269,6 +2280,7 @@ impl GameSession {
             .ops_wiring
             .prune_dispatched(&self.state.operations);
         self.record_civil_day_events(&mut report, disclosures)?;
+        self.deliver_public_information(report.disclosure_instant)?;
         self.prune_all_personal_memories();
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(report.disclosure_instant);
@@ -3005,6 +3017,8 @@ impl GameSession {
             restored_attention.insert(
                 *id,
                 NpcAttentionState {
+                    information_cadence: saved_state.information_cadence,
+                    next_information_check: saved_state.next_information_check,
                     base_probability: reconstructed.base_probability,
                     next_attention_candidate_tick: saved_state.next_attention_candidate_tick,
                     rng_state: saved_state.rng_state,

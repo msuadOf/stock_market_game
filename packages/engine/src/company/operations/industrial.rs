@@ -53,6 +53,7 @@ pub(in crate::company::operations) fn advance_day(
 ) -> Result<(), OperationsError> {
     let record_failure = |failures: &mut Vec<PaymentFailureRecord>, what: &str, amount| {
         failures.push(PaymentFailureRecord {
+            obligation_status: crate::company::events::PaymentObligationStatus::UncommittedExpense,
             company: company.clone(),
             what: what.to_string(),
             amount,

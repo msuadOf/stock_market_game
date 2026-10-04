@@ -894,15 +894,28 @@ impl GameSession {
             })
             .collect();
         let budget_constraints = Vec::new();
+        let mut source_report_ids: BTreeSet<_> = reports
+            .iter()
+            .map(|(_, report)| report.value().to_string())
+            .collect();
+        if let Some(participant) = self.state.belief_participants.get(&account) {
+            for code in candidates {
+                if let Some(entry) = participant.belief().entry(code) {
+                    source_report_ids.extend(
+                        entry
+                            .used_report_ids
+                            .iter()
+                            .map(|report| report.value().to_string()),
+                    );
+                }
+            }
+        }
         self.state
             .npc_decision_traces
             .record(NpcDecisionTraceRecord {
                 account,
                 tick: self.state.tick,
-                source_report_ids: reports
-                    .iter()
-                    .map(|(_, report)| report.value().to_string())
-                    .collect(),
+                source_report_ids: source_report_ids.into_iter().collect(),
                 expectation_method,
                 plan_ids,
                 plan_changes: Vec::new(),

@@ -12,6 +12,8 @@ use std::collections::BinaryHeap;
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct NpcAttentionState {
+    pub information_cadence: super::NpcInformationCadence,
+    pub next_information_check: crate::calendar::CivilInstant,
     /// 平静市场下每 tick 至少观察一次的基础概率，∈(0,1]。
     pub base_probability: f64,
     /// 下一次评估实时观察概率的候选绝对游戏 tick。

@@ -126,6 +126,7 @@ impl DisclosureDispatch {
                     published_at: phase,
                     event: AnnouncedEvent {
                         kind: crate::company::ShockKind::PaymentFailure {
+                            obligation_status: failure.obligation_status,
                             what: failure.what.clone(),
                             amount: failure.amount,
                         },

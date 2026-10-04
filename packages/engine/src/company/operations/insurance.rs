@@ -81,6 +81,8 @@ pub(in crate::company::operations) fn advance_day(
             if let Err(error) = books.pay_claim(&group, &claim, params.claim_size, date) {
                 if matches!(error, InsuranceError::PaymentFailed { .. }) {
                     failures.push(PaymentFailureRecord {
+                        obligation_status:
+                            crate::company::events::PaymentObligationStatus::ContractualPayable,
                         company: company.clone(),
                         what: format!("claim payment {}", claim.0),
                         amount: params.claim_size,

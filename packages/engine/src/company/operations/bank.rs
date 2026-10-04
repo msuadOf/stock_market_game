@@ -90,6 +90,8 @@ pub(in crate::company::operations) fn advance_day(
         ) {
             if matches!(error, BankError::PaymentFailed { .. }) {
                 failures.push(PaymentFailureRecord {
+                    obligation_status:
+                        crate::company::events::PaymentObligationStatus::UncommittedExpense,
                     company: company.clone(),
                     what: "loan disbursement".to_string(),
                     amount: params.loan_principal,

@@ -60,6 +60,8 @@ pub(in crate::company::operations) fn advance_day(
         ) {
             if matches!(error, RealEstateError::PaymentFailed { .. }) {
                 failures.push(PaymentFailureRecord {
+                    obligation_status:
+                        crate::company::events::PaymentObligationStatus::UncommittedExpense,
                     company: company.clone(),
                     what: "land acquisition".to_string(),
                     amount: params.land_cost,
@@ -117,6 +119,8 @@ pub(in crate::company::operations) fn advance_day(
             {
                 if matches!(error, RealEstateError::PaymentFailed { .. }) {
                     failures.push(PaymentFailureRecord {
+                        obligation_status:
+                            crate::company::events::PaymentObligationStatus::UncommittedExpense,
                         company: company.clone(),
                         what: "development spend".to_string(),
                         amount: spend,

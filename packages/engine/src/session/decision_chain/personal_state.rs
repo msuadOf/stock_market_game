@@ -37,6 +37,14 @@ impl BeliefParticipantState {
     pub(in crate::session) fn information(&self) -> &NpcInformationState {
         &self.information
     }
+    pub(in crate::session) fn install_information_update(
+        &mut self,
+        information: NpcInformationState,
+        belief: BeliefBook,
+    ) {
+        self.information = information;
+        self.belief = belief;
+    }
     #[cfg(test)]
     pub(in crate::session) fn information_mut(&mut self) -> &mut NpcInformationState {
         &mut self.information

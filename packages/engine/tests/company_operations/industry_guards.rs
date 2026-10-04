@@ -39,6 +39,7 @@ fn unsupported_production_or_payment_fact_cannot_be_injected_as_bank_shock() {
         ShockKind::ProductionInterruption,
         ShockKind::AssetImpairmentSignal,
         ShockKind::PaymentFailure {
+            obligation_status: engine::company::events::PaymentObligationStatus::UncommittedExpense,
             what: "payment".into(),
             amount: amt(100),
         },

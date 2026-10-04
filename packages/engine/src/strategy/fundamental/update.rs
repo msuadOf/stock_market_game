@@ -129,6 +129,51 @@ impl BeliefBook {
         direct: bool,
     ) -> Result<(), BeliefError> {
         let report = inputs.ctx.report(report_id)?;
+        if report.company != inputs.company {
+            return Err(BeliefError::MaterialNotForCompany {
+                report: report_id,
+                company: inputs.company.clone(),
+            });
+        }
+        if direct {
+            if let Some(preferred_id) = preferred_own_report(inputs.ctx, &inputs.company)? {
+                let preferred = inputs.ctx.report(preferred_id)?;
+                if preferred_id != report_id {
+                    if preferred.reports.scope != report.reports.scope {
+                        return if self.entries.contains_key(stock) {
+                            Ok(())
+                        } else {
+                            Err(BeliefError::NoBeliefEntry)
+                        };
+                    }
+                    if report.reports.kind == ReportKind::Annual {
+                        let latest_annual =
+                            self.latest_own_annual_for_scope(inputs, Some(&report.reports.scope))?;
+                        if latest_annual.is_some_and(|(latest, _)| latest == report_id)
+                            && matches!(
+                                preferred.reports.kind,
+                                ReportKind::Quarter | ReportKind::HalfYear
+                            )
+                        {
+                            return self.apply_interim_material(
+                                stock,
+                                cause,
+                                preferred_id,
+                                inputs,
+                                true,
+                            );
+                        }
+                    }
+                    if own_known_report_priority(preferred) > own_known_report_priority(report) {
+                        return if self.entries.contains_key(stock) {
+                            Ok(())
+                        } else {
+                            Err(BeliefError::NoBeliefEntry)
+                        };
+                    }
+                }
+            }
+        }
         if matches!(
             report.reports.kind,
             ReportKind::Quarter | ReportKind::HalfYear
@@ -180,7 +225,7 @@ impl BeliefBook {
             );
         }
         let entry = self.entries.get(stock).ok_or(BeliefError::NoBeliefEntry)?;
-        if entry.used_report_ids.contains(&report_id) {
+        if entry.used_report_ids.contains(&report_id) && !direct {
             return Ok(());
         }
         let forecast = if direct {

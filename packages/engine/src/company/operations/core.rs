@@ -67,6 +67,7 @@ pub struct PaymentFailureRecord {
     pub company: CompanyId,
     pub what: String,
     pub amount: AccountingAmount,
+    pub obligation_status: crate::company::events::PaymentObligationStatus,
 }
 
 /// 一次经营日的权威记录（确定性金样的比较面之一）。

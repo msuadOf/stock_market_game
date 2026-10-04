@@ -3,18 +3,18 @@ import { amount } from "../value.ts"
 
 const unitShockKinds = ["MarketDemandShift", "CompanyDemandShift", "ContractWon", "ContractCancelled", "CreditDeterioration", "ProductionInterruption", "AssetImpairmentSignal"] as const
 type UnitShockKind = (typeof unitShockKinds)[number]
-export type PaymentFailure = { readonly what: string; readonly amount: string }
+export type PaymentFailure = { readonly what: string; readonly amount: string; readonly obligation_status: "UncommittedExpense" | "ContractualPayable" | "ContractualOverdue" | "StatutoryPaymentFailure" }
 export type ShockKind = UnitShockKind | { readonly IndustryCostShift: { readonly industry: string } } | { readonly PaymentFailure: PaymentFailure }
 
 export function parsePaymentFailure(value: unknown, path: string): PaymentFailure {
   const item = record(value, path)
-  exact(item, ["what", "amount"], path)
+  exact(item, ["what", "amount", "obligation_status"], path)
   const what = string(item.what, `${path}.what`)
   if (what.trim().length === 0) throw new SaveSchemaError(`${path}.what`, "不能为空")
   const parsedAmount = amount(item.amount, `${path}.amount`)
   const cents = BigInt(parsedAmount.replace(".", ""))
   if (cents <= 0n || cents > (1n << 127n) - 1n) throw new SaveSchemaError(`${path}.amount`, "必须为 i128 分范围内的正数")
-  return { what, amount: parsedAmount }
+  return { what, amount: parsedAmount, obligation_status: oneOf(item.obligation_status, `${path}.obligation_status`, ["UncommittedExpense", "ContractualPayable", "ContractualOverdue", "StatutoryPaymentFailure"] as const) }
 }
 export type ActiveShock = { readonly kind: ShockKind; readonly amplitude_bp: number; readonly starts_on: string; readonly expires_on: string }
 export type ShockParams = { readonly version: number; readonly market_candidate_bp: number; readonly industry_candidate_bp: number; readonly company_candidate_bp: number; readonly duration_min_days: number; readonly duration_max_days: number; readonly market_demand_band_bp: number; readonly industry_cost_band_bp: number; readonly company_demand_band_bp: number; readonly credit_deterioration_add_bp: number }

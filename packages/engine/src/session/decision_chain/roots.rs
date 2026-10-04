@@ -349,6 +349,8 @@ impl InstitutionDecisionRoot {
         let mut causal_facts =
             vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];
         let mut new_reports: Vec<(StockCode, PublicationId)> = Vec::new();
+        let mut credit_defaults = Vec::new();
+        let mut corrections = Vec::new();
         for code in &candidates {
             let Some(company_id) = context.company_registry.issuer_of(code).cloned() else {
                 continue;
@@ -404,6 +406,16 @@ impl InstitutionDecisionRoot {
                     });
                 }
                 if is_report {
+                    if matches!(
+                        context
+                            .library
+                            .report(publication_id, now)
+                            .expect("刚获知报告可读取")
+                            .origin,
+                        crate::information::PublicationOrigin::Correction
+                    ) {
+                        corrections.push((code.clone(), publication_id));
+                    }
                     if let Some((_, latest)) =
                         new_reports.iter_mut().find(|(stock, _)| stock == code)
                     {
@@ -423,6 +435,14 @@ impl InstitutionDecisionRoot {
                     } else {
                         new_reports.push((code.clone(), publication_id));
                     }
+                } else if let Some(cause) = crate::session::notices::credit_default_cause(
+                    &context.library,
+                    publication_id,
+                    now,
+                )
+                .expect("刚获知公告可读取")
+                {
+                    credit_defaults.push((code.clone(), cause));
                 }
             }
         }
@@ -472,14 +492,41 @@ impl InstitutionDecisionRoot {
                 belief
                     .apply_cause(
                         code,
-                        BeliefCause::NewMaterial {
-                            report: *publication_id,
-                        },
+                        crate::session::notices::material_cause(
+                            &context.library,
+                            *publication_id,
+                            now,
+                        )
+                        .expect("刚获知报告可读取"),
                         inputs,
                     )
                     .unwrap_or_else(|error| {
                         panic!("belief update failed for {id:?} {code:?}: {error}")
                     });
+            }
+            for (code, report) in corrections {
+                let (_, inputs) = issuer_inputs
+                    .iter()
+                    .find(|(candidate, _)| candidate == &code)
+                    .expect("更正发行人输入存在");
+                belief
+                    .apply_cause(&code, BeliefCause::Correction { report }, inputs)
+                    .unwrap_or_else(|error| {
+                        panic!("correction update failed for {id:?} {code:?}: {error}")
+                    });
+            }
+            for (code, cause) in credit_defaults {
+                let (_, inputs) = issuer_inputs
+                    .iter()
+                    .find(|(candidate, _)| candidate == &code)
+                    .expect("公告发行人输入存在");
+                if belief.entry(&code).is_some() {
+                    belief
+                        .apply_cause(&code, cause, inputs)
+                        .unwrap_or_else(|error| {
+                            panic!("credit default update failed for {id:?} {code:?}: {error}")
+                        });
+                }
             }
             for (code, inputs) in &issuer_inputs {
                 let Some(entry) = belief.entry(code) else {

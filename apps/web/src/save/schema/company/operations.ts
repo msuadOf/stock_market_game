@@ -82,10 +82,10 @@ export function parseCompanyOperations(value: unknown, path = "company_operation
     failures[date] = entries.map((value, index) => {
       const itemPath = `${datePath}[${index}]`
       const item = record(value, itemPath)
-      exact(item, ["company", "what", "amount"], itemPath)
+      exact(item, ["company", "what", "amount", "obligation_status"], itemPath)
       const company = string(item.company, `${itemPath}.company`)
       if (!Object.hasOwn(parsedCompanies, company)) throw new SaveSchemaError(`${itemPath}.company`, "公司不存在")
-      return { company, ...parsePaymentFailure({ what: item.what, amount: item.amount }, itemPath) }
+      return { company, ...parsePaymentFailure({ what: item.what, amount: item.amount, obligation_status: item.obligation_status }, itemPath) }
     })
   }
   return {

@@ -30,6 +30,7 @@ impl CompanyOperations {
                     if let Err(error) = books.pay_income_tax(payable, date) {
                         if matches!(error, IndustrialError::PaymentFailed { .. }) {
                             failures.push(PaymentFailureRecord {
+                                obligation_status: crate::company::events::PaymentObligationStatus::StatutoryPaymentFailure,
                                 company: id.clone(),
                                 what: "overdue income tax payment".into(),
                                 amount: payable,

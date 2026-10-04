@@ -18,6 +18,7 @@ pub(super) fn pay_maturity(
     let contract = ContractId(reference.into());
     let mut failed = |what: &str, amount| {
         failures.push(PaymentFailureRecord {
+            obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
             company: company.clone(),
             what: format!("overdue {what}:{}", contract.0),
             amount,

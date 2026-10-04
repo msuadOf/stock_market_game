@@ -135,7 +135,7 @@ impl AnnouncedEvent {
         &self,
         occurred_on: CivilDate,
     ) -> Result<(), InformationError> {
-        if let crate::company::ShockKind::PaymentFailure { what, amount } = &self.kind {
+        if let crate::company::ShockKind::PaymentFailure { what, amount, .. } = &self.kind {
             if what.trim().is_empty()
                 || !amount.is_positive()
                 || self.amplitude_bp != 0

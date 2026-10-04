@@ -101,6 +101,9 @@ impl GameSession {
         );
         let day = u64::from(self.state.day);
         let mut reports: BTreeMap<StockCode, PublicationId> = BTreeMap::new();
+        let mut credit_defaults = Vec::new();
+        let mut corrections = Vec::new();
+        let checks_information = personal.attention.information_check_due(observation.now);
         for code in &candidates {
             let stock = observation.market.stocks.get(code).ok_or_else(|| {
                 invariant(format!("retail {id:?} candidate {code:?} has no market"))
@@ -112,6 +115,9 @@ impl GameSession {
             let Some(company) = self.state.company_registry.issuer_of(code) else {
                 continue;
             };
+            if !checks_information {
+                continue;
+            }
             for report in discovery_candidates(&self.state.library, company, observation.now) {
                 if personal
                     .information
@@ -126,6 +132,12 @@ impl GameSession {
                     .record_acquisition(id, &self.state.library, report, observation.now)
                     .map_err(|error| invariant(error.to_string()))?;
                 if let Ok(material) = self.state.library.report(report, observation.now) {
+                    if matches!(
+                        material.origin,
+                        crate::information::PublicationOrigin::Correction
+                    ) {
+                        corrections.push((code.clone(), report));
+                    }
                     let newer = match reports.get(code) {
                         Some(prior) => {
                             let prior = self
@@ -141,6 +153,14 @@ impl GameSession {
                     if newer {
                         reports.insert(code.clone(), report);
                     }
+                } else if let Some(cause) = crate::session::notices::credit_default_cause(
+                    &self.state.library,
+                    report,
+                    observation.now,
+                )
+                .map_err(|error| invariant(error.to_string()))?
+                {
+                    credit_defaults.push((code.clone(), cause));
                 }
             }
         }
@@ -180,8 +200,31 @@ impl GameSession {
                     })?;
                 personal
                     .belief
-                    .apply_cause(code, BeliefCause::NewMaterial { report }, &inputs)
+                    .apply_cause(
+                        code,
+                        crate::session::notices::material_cause(
+                            &self.state.library,
+                            report,
+                            observation.now,
+                        )
+                        .map_err(|error| invariant(error.to_string()))?,
+                        &inputs,
+                    )
                     .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
+            }
+            for (_, report) in corrections.iter().filter(|(stock, _)| stock == code) {
+                personal
+                    .belief
+                    .apply_cause(code, BeliefCause::Correction { report: *report }, &inputs)
+                    .map_err(|error| invariant(error.to_string()))?;
+            }
+            for (_, cause) in credit_defaults.iter().filter(|(stock, _)| stock == code) {
+                if personal.belief.entry(code).is_some() {
+                    personal
+                        .belief
+                        .apply_cause(code, cause.clone(), &inputs)
+                        .map_err(|error| invariant(error.to_string()))?;
+                }
             }
             if personal.belief.entry(code).is_some_and(|entry| {
                 day >= entry.anchor_trading_day + u64::from(entry.horizon_trading_days)
@@ -197,6 +240,12 @@ impl GameSession {
             .retail_experience
             .get(&id)
             .ok_or_else(|| invariant(format!("retail {id:?} has no personal experience")))?;
+        if checks_information {
+            personal
+                .attention
+                .record_information_check(observation.now)
+                .map_err(|error| invariant(error.to_string()))?;
+        }
         apply_personal_experience_feedback(&mut personal.belief, experience, day).map_err(
             |error| {
                 invariant(format!(
