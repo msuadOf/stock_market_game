@@ -5,7 +5,6 @@ type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
   return {
-    schema_version: 3,
     runtime_state: {
       poisoned: false,
       next_receipt_base: "0",

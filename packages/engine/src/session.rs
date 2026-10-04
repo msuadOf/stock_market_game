@@ -79,8 +79,7 @@ pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use persistence::{
     decode_save_slot, SaveDecodeLimits, SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank,
     SavedLiveEnvelope, SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition,
-    SavedRetailReceiptIdentity, SavedRuntimeState, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION,
-    SIMULATION_POLICY_ID,
+    SavedRetailReceiptIdentity, SavedRuntimeState, MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
 };
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
@@ -407,8 +406,6 @@ pub struct DailyTradeStats {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
-    /// 存档契约版本。旧 schema_version=1/2 及缺失版本均显式拒绝，不提供迁移器。
-    pub schema_version: u32,
     /// Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
     #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
@@ -2591,7 +2588,6 @@ impl GameSession {
 
     fn save_projection(&self, runtime_state: SavedRuntimeState) -> SaveSlot {
         SaveSlot {
-            schema_version: SAVE_SCHEMA_VERSION,
             runtime_state,
             setup: self.state.setup.clone(),
             seed: self.state.seed,

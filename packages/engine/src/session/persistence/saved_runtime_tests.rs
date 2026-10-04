@@ -354,16 +354,29 @@ fn restore_error(save: &SaveSlot) -> SessionError {
 }
 
 #[test]
-fn schema_header_accepts_only_current_supported_version() {
-    validate_schema_version_header(br#"{"schema_version":3}"#).unwrap();
-
-    for (json, message) in [
-        (br#"{}"#.as_slice(), "缺失"),
-        (br#"{"schema_version":1}"#.as_slice(), "不支持旧版本"),
-        (br#"{"schema_version":2}"#.as_slice(), "不支持旧版本"),
-        (br#"{"schema_version":4}"#.as_slice(), "高于当前支持版本"),
+fn save_decoder_accepts_current_structure_and_rejects_version_markers() {
+    let session = session_with_runtime_state();
+    let mut value = serde_json::to_value(session.save().unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("schema_version");
+    let json = serde_json::to_vec(&value).unwrap();
+    decode_save_slot(&json, &SaveDecodeLimits::default()).unwrap();
+    for marker in [
+        serde_json::json!(1),
+        serde_json::json!(2),
+        serde_json::json!(3),
+        serde_json::json!(4),
+        serde_json::Value::Null,
+        serde_json::json!("3"),
     ] {
-        assert_invalid_save(validate_schema_version_header(json).unwrap_err(), message);
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("schema_version".to_owned(), marker);
+        let json = serde_json::to_vec(&value).unwrap();
+        assert_invalid_save(
+            decode_save_slot(&json, &SaveDecodeLimits::default()).unwrap_err(),
+            "schema_version",
+        );
     }
 }
 
@@ -1397,10 +1410,10 @@ fn saved_receipt_source_accepts_quote_expiry_and_rejects_old_tag() {
 }
 
 #[test]
-fn save_slot_names_current_schema_and_rejects_legacy_runtime_key() {
+fn save_slot_uses_current_structure_and_rejects_legacy_runtime_key() {
     let session = session_with_runtime_state();
     let encoded = serde_json::to_value(session.save().unwrap()).unwrap();
-    assert_eq!(encoded["schema_version"], 3);
+    assert!(encoded.get("schema_version").is_none());
     assert!(encoded.get("runtime_state").is_some());
     assert!(encoded.get("runtime_v2").is_none());
     let mut legacy = encoded;

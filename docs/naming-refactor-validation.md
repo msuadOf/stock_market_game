@@ -1,15 +1,16 @@
 # 命名重构验证记录与历史边界
 
 当前命名与格式契约见 [命名约定](naming-conventions.md) 和
-[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。本轮使用 schema 3，
-旧 schema 1/2 和旧字段/tag 显式拒绝。下面的旧提交、通过数、失败、未运行项及当时标签
+[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。当前存档不设代际版本，
+额外版本字段和旧字段/tag 显式拒绝。下面的旧提交、通过数、失败、未运行项及当时标签
 仅记录 2026-10-01 的事实，不作为本轮验证结果；本轮 Clippy、独立复核与提交由实际执行记录证明。
 
 ## 当前实施验证
 
 2026-10-04 的职责改名依据全量调查实施：63 个必改名字的 128 条定位、6 个路径目标、
-2385 条文本与契约位置及 48 类可选角色名逐项核销。当前存档使用 `schema_version=3`、
-`runtime_state` 和 `a-share-simulation`；真实业务版本、数值、法源和密封历史证据保留。
+2385 条文本与契约位置及 48 类可选角色名逐项核销。该提交曾增加存档版本标记，已按用户要求
+移除；当前存档使用 `runtime_state` 和 `a-share-simulation`，不设代际版本或兼容路径。
+真实业务版本、数值、法源和密封历史证据保留。
 新增遗漏也纳入收尾清单，不用关键词零命中代替完整 AST 核查。
 
 剩余符号实际使用 rust-analyzer LSP 与 TypeScript LanguageService 的 rename；已改名字重新

@@ -2,15 +2,14 @@
 //!
 //! 公司域、结账登记簿、公开信息库、披露游标、计划簿、个人信息集、信念簿、
 //! 关注列表、待应用事实、冻结日历政策与模拟政策身份均不可缺失。
-//! 当前 schema_version=3；旧版、未来版与缺失字段显式拒绝，不提供兼容迁移。
+//! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, SAVE_SCHEMA_VERSION,
-    SIMULATION_POLICY_ID,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, SIMULATION_POLICY_ID,
 };
 
 mod failures;
@@ -212,7 +211,10 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let session = seasoned_fixture().build_session();
     let save = session.save().expect("healthy save");
 
-    assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION);
+    assert!(serde_json::to_value(&save)
+        .unwrap()
+        .get("schema_version")
+        .is_none());
     assert!(!save.runtime_state.poisoned);
 
     // 确认 fixture 的个人决策状态非空，以捕获恢复时丢失信念或信息集的错误。

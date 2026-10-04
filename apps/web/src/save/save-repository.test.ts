@@ -55,7 +55,7 @@ test("compressed browser save repository reports malformed JSON and rejects old 
   }, "save", { encode: async (text) => text, decode: async (text) => text })
   await assert.rejects(repository.load(), /存档不是合法 JSON/)
   stored = `gzip:${JSON.stringify({ ...mature, schema_version: 1 })}`
-  await assert.rejects(repository.load(), /schema_version 1：不支持旧版本；仅支持 schema_version=3/)
+  await assert.rejects(repository.load(), /schema_version/)
   stored = `gzip:${JSON.stringify({ ...mature, seed: Number.MAX_SAFE_INTEGER + 1 })}`
   await assert.rejects(repository.load(), /seed/)
   const candle = mature.snapshot.daily_candles["600101"]?.[0]

@@ -65,8 +65,7 @@ pub use session::{
     SaveSlot, SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
     SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
     SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64,
-    StockExchange, StockSpec, TradingPhase, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION,
-    SIMULATION_POLICY_ID,
+    StockExchange, StockSpec, TradingPhase, MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
 };
 
 pub mod diagnostics;

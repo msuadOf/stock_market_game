@@ -61,8 +61,8 @@ Session 生命周期的 ordinal scope 为 `session_lifecycle`，数值 6 保持�
 机器契约的 `schema`、`format`、source 与 scenario 身份表达用途，真实数值版本放在
 独立的 `version`、`schema_version` 或对应明确版本字段中。生产者、严格消费者、CLI、
 复用身份、fixture 与精确键集校验必须同步，不靠别名或静默转换维持旧拼写。
-当前存档使用 `schema_version=3`，只接受 `runtime_state` 与当前来源 tag；schema 1/2
-明确拒绝。`simulation_policy_id` 使用 `a-share-simulation`，本轮只改身份，不改模拟行为。
+游戏存档不设 `schema_version` 或代际版本，只接受完整当前结构、`runtime_state` 与当前来源 tag；
+额外版本字段和旧字段明确拒绝，不设兼容路径。`simulation_policy_id` 使用 `a-share-simulation`，只改身份，不改模拟行为。
 详见 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
 
 当前机器契约明确分开身份与版本：
@@ -84,7 +84,7 @@ Session 生命周期的 ordinal scope 为 `session_lifecycle`，数值 6 保持�
 表达实验假设回显，不能声称已校准真实成交量；`external_market_calibration_scope` 的值为
 `not_applicable_synthetic_history_only`，继续遵守虚拟开局前史与撮合生成行情的边界。
 
-真实数值不可因含有数字而清理：会计科目表的 `version` 及 `version()`、存档 schema 数值、
+真实数值不可因含有数字而清理：会计科目表的 `version` 及 `version()`、工具契约的真实数值版本、
 协议 generation、报告 revision、quarter、交易日与分钟、T+1、ECL `Stage1/Stage2/Stage3`、
 价格或数量单位以及第三方 API 的固定版本均保留。例如 UUID `new_v4` 和 Tauri 2 是外部
 真实契约，不属于内部实施编号。金额 cash 使用 Money 分，shares 与委托数量使用股，不能合并单位。

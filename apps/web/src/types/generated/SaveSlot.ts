@@ -26,10 +26,6 @@ import type { UrgencyPolicy } from "./UrgencyPolicy";
  */
 export type SaveSlot = {
   /**
-   * 存档契约版本。旧 schema_version=1/2 及缺失版本均显式拒绝，不提供迁移器。
-   */
-  schema_version: number;
-  /**
    * Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
    * parser 共同维护，避免把策略私有结构扩成通用宿主命令。
    */

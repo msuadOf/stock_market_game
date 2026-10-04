@@ -76,7 +76,6 @@ macro_rules! missing_field_tests {
 }
 
 missing_field_tests! {
-    missing_schema_version_is_rejected => "schema_version",
     missing_runtime_state_field_is_rejected => "runtime_state",
     missing_company_operations_is_rejected => "company_operations",
     missing_closing_registry_is_rejected => "closing_registry",
@@ -105,21 +104,19 @@ fn missing_calendar_policy_is_rejected() {
 }
 
 #[test]
-fn legacy_schema_is_rejected_before_full_decoding() {
-    // 旧版与未来版本都在完整反序列化前由 schema header 显式拒绝。
+fn obsolete_version_marker_is_rejected_as_unknown_field() {
     let mut legacy = seasoned_fixture().clone_save_value();
     legacy["schema_version"] = Value::from(1);
     let error = expect_rejection(&legacy);
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message == "存档 schema_version 1：不支持旧版本，请创建 schema_version=3 的新存档"),
-        "旧 schema_version=1 必须在完整解码前明确拒绝：{error:?}"
+        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        "额外版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }
 
 #[test]
-fn previous_schema_is_rejected_before_decoding_renamed_runtime_fields() {
+fn obsolete_runtime_key_is_rejected_without_migration() {
     let mut previous = seasoned_fixture().clone_save_value();
-    previous["schema_version"] = Value::from(2);
     let runtime = previous
         .as_object_mut()
         .unwrap()
@@ -128,19 +125,19 @@ fn previous_schema_is_rejected_before_decoding_renamed_runtime_fields() {
     previous["runtime_v2"] = runtime;
     let error = expect_rejection(&previous);
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message == "存档 schema_version 2：不支持旧版本，请创建 schema_version=3 的新存档"),
-        "旧 schema 不能误用新字段契约：{error:?}"
+        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `runtime_v2`")),
+        "旧 runtime 字段不能误用当前结构：{error:?}"
     );
 }
 
 #[test]
-fn future_schema_is_rejected_before_full_decoding() {
+fn arbitrary_version_marker_is_rejected_as_unknown_field() {
     let mut future = seasoned_fixture().clone_save_value();
     future["schema_version"] = Value::from(4);
     let error = expect_rejection(&future);
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message == "存档 schema_version 4 高于当前支持版本 3"),
-        "未来 schema_version=4 必须在完整解码前明确拒绝：{error:?}"
+        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        "任意版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }
 

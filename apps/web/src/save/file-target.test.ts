@@ -132,7 +132,7 @@ test("非法候选在创建 writable 前拒绝，不掩盖存档校验失败", a
   const browser = browserTarget(context);
   const target = await selectTarget();
   assert.ok(target);
-  await assert.rejects(target.write({ schema_version: 3 }), /存档|根节点/);
+  await assert.rejects(target.write({}), /存档|根节点/);
   assert.deepEqual(browser.calls, ["picker"]);
 });
 

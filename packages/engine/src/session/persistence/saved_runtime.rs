@@ -2,7 +2,6 @@ use super::super::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SAVE_SCHEMA_VERSION: u32 = 3;
 pub const SIMULATION_POLICY_ID: &str = "a-share-simulation";
 
 /// 并行 tick 的权威运行时状态，在 quiet point 以 DTO 保存。
@@ -83,40 +82,12 @@ pub struct SavedReceiptTransition {
     pub ordinal: u64,
 }
 
-#[derive(Deserialize)]
-struct SchemaVersionHeader {
-    schema_version: Option<u32>,
-}
-
-/// 在完整存档反序列化前显式拒绝缺失、旧版及未来版本；不提供迁移分支。
-pub fn validate_schema_version_header(json: &[u8]) -> Result<(), SessionError> {
-    let header: SchemaVersionHeader = serde_json::from_slice(json).map_err(|error| {
-        SessionError::InvalidSave(format!("存档 schema_version header 无法解码：{error}"))
-    })?;
-    let version = header.schema_version.ok_or_else(|| {
-        SessionError::InvalidSave("存档 schema_version 缺失；不支持旧版本存档".to_owned())
-    })?;
-    validate_schema_version(version)
-}
-
-pub fn validate_schema_version(version: u32) -> Result<(), SessionError> {
-    match version.cmp(&SAVE_SCHEMA_VERSION) {
-        std::cmp::Ordering::Equal => Ok(()),
-        std::cmp::Ordering::Less => Err(SessionError::InvalidSave(format!(
-            "存档 schema_version {version}：不支持旧版本，请创建 schema_version={SAVE_SCHEMA_VERSION} 的新存档"
-        ))),
-        std::cmp::Ordering::Greater => Err(SessionError::InvalidSave(format!(
-            "存档 schema_version {version} 高于当前支持版本 {SAVE_SCHEMA_VERSION}"
-        ))),
-    }
-}
-
 /// 从健康且已提交的 quiet point 捕获全部权威运行状态。
 pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState, StepFatal> {
     session.require_healthy()?;
     if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         return Err(invariant(format!(
-            "simulation_policy_id {:?} 不允许写入 schema_version={SAVE_SCHEMA_VERSION}",
+            "simulation_policy_id {:?} 不允许写入当前存档",
             session.state.setup.simulation_policy_id
         )));
     }
@@ -228,7 +199,7 @@ pub fn validate_runtime_state(
     }
     if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         return Err(SessionError::InvalidSave(format!(
-            "schema_version={SAVE_SCHEMA_VERSION} 要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
+            "当前存档要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
             session.state.setup.simulation_policy_id
         )));
     }

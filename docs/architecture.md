@@ -76,10 +76,10 @@ Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务
 
 ## 4. 状态与持久化
 
-当前 `SaveSlot` 使用 `schema_version = 3`，恢复事实放在 `runtime_state: SavedRuntimeState`。
+当前 `SaveSlot` 不设代际版本标记，恢复事实放在 `runtime_state: SavedRuntimeState`。
 Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime-state.ts` 分别负责
 投影/恢复和严格输入校验；生成类型与三宿主消费同一契约。仅成功自然日日结产生持久存档候选，
-日内回滚使用内存 checkpoint；旧 schema 1/2 显式拒绝，不建立格式迁移。见
+日内回滚使用内存 checkpoint；额外版本字段、旧字段与不完整当前结构显式拒绝，不建立格式迁移。见
 [ADR-0025](decisions/0025-day-end-only-persistence.md) 和
 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
 

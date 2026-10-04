@@ -231,12 +231,13 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
   }
 })
 
-test("存档运行时校验边界拒绝旧版、缺失和未来 schema_version", () => {
+test("存档仅接受当前结构，不接受任何 schema_version 标记", () => {
   const current = currentSaveFixture()
   const { schema_version: _removed, ...missing } = current
-  assert.throws(() => parseSaveSlot(missing), /schema_version/)
-  assert.throws(() => parseSaveSlot({ ...current, schema_version: 1 }), /schema_version 1：不支持旧版本；仅支持 schema_version=3/)
-  assert.throws(() => parseSaveSlot({ ...current, schema_version: 4 }), /schema_version 4 高于当前支持版本 3/)
+  assert.deepEqual(parseSaveSlot(missing), missing)
+  for (const schema_version of [1, 2, 3, 4, null, "3"]) {
+    assert.throws(() => parseSaveSlot({ ...missing, schema_version }), /schema_version/)
+  }
 })
 
 test("auction save identifies orders without accepting the old arrival field", () => {
@@ -442,15 +443,15 @@ test("存档运行时校验边界拒绝非法回执来源标签及未知嵌套�
 })
 
 
-test("当前存档明确使用 schema_version 3 与 runtime_state，拒绝旧身份与旧字段", () => {
+test("当前存档使用 runtime_state，不含实施代号与版本标记", () => {
   const current = currentSaveFixture()
-  assert.equal(current.schema_version, 3)
+  assert.equal("schema_version" in current, false)
   assert.ok("runtime_state" in current)
   assert.equal("runtime_v2" in current, false)
   const runtime = current.runtime_state
   assert.deepEqual(parseSaveSlot(current), current)
-  for (const schema_version of [1, 2]) {
-    assert.throws(() => parseSaveSlot({ ...current, schema_version }), /schema_version.*不支持旧版本/)
+  for (const schema_version of [1, 2, 3]) {
+    assert.throws(() => parseSaveSlot({ ...current, schema_version }), /schema_version/)
   }
   assert.throws(() => parseSaveSlot({ ...current, runtime_v2: runtime }), /runtime_v2/)
   const { runtime_state: _removed, ...missing } = current
@@ -469,10 +470,9 @@ test("SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签",
 })
 
 
-test("旧存档先按 schema_version 显式拒绝；当前存档拒绝旧 simulation_policy_id", () => {
+test("存档拒绝额外版本字段及旧 simulation_policy_id", () => {
   const current = currentSaveFixture()
-  const { runtime_state, ...legacy } = current
-  assert.throws(() => parseSaveSlot({ ...legacy, schema_version: 2, runtime_v2: runtime_state }), /schema_version.*不支持旧版本/)
+  assert.throws(() => parseSaveSlot({ ...current, schema_version: 2 }), /schema_version/)
   const setup = current.setup as Record<string, unknown>
   assert.throws(() => parseSaveSlot({ ...current, setup: { ...setup, simulation_policy_id: "a-share-simulation-v2" } }), /simulation_policy_id/)
 })

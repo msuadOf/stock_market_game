@@ -35,9 +35,9 @@
   `scripts/check-wasm-threading.mjs` 会拒绝产出非共享内存的伪多线程绑定。执行
   `scripts/wasm-build.sh`（Windows 用 `.bat`），成员目录不重复声明 rustflags。
 - 状态以 JSON 序列化跨端传输。`SaveSlot.runtime_state` 的类型为 `SavedRuntimeState`；
-  Rust `saved_runtime` 与 Web `runtime-state` 负责同一 schema 3 的严格恢复契约。
-  类型、模块和函数不附带内部版本后缀，真实格式版本保存在 `schema_version` 数值字段中，
-  旧 schema 1/2 显式拒绝。见 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
+  Rust `saved_runtime` 与 Web `runtime-state` 负责同一严格当前结构的恢复契约。
+  类型、模块和函数不附带内部版本后缀，游戏存档不设代际版本标记，
+  额外版本字段及旧字段显式拒绝，不做兼容。见 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
 
 ### 后端：Rust（[ADR-0003](decisions/0003-backend-rust.md)）
 - Stage 1 不依赖后端；当前 Stage 2 服务直接依赖 engine crate。

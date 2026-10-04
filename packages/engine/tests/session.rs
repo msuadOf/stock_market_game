@@ -923,7 +923,6 @@ fn current_save_json_requires_explicit_stock_fields() {
     }
 
     for required_field in [
-        "schema_version",
         "runtime_state",
         "price_history",
         "market_minute_closes",
@@ -945,19 +944,13 @@ fn current_save_json_requires_explicit_stock_fields() {
 
     let mut legacy = current.clone();
     legacy["schema_version"] = serde_json::json!(1);
-    let decoded: engine::SaveSlot = serde_json::from_value(legacy).unwrap();
-    assert!(matches!(
-        GameSession::restore(&decoded),
-        Err(engine::SessionError::InvalidSave(message)) if message == "存档 schema_version 1：不支持旧版本，请创建 schema_version=3 的新存档"
-    ));
+    let error = serde_json::from_value::<engine::SaveSlot>(legacy).unwrap_err();
+    assert!(error.to_string().contains("unknown field `schema_version`"));
 
     let mut future = current;
     future["schema_version"] = serde_json::json!(4);
-    let decoded: engine::SaveSlot = serde_json::from_value(future).unwrap();
-    assert!(matches!(
-        GameSession::restore(&decoded),
-        Err(engine::SessionError::InvalidSave(message)) if message == "存档 schema_version 4 高于当前支持版本 3"
-    ));
+    let error = serde_json::from_value::<engine::SaveSlot>(future).unwrap_err();
+    assert!(error.to_string().contains("unknown field `schema_version`"));
 
     let save = GameSession::new(sample_setup(), 42)
         .unwrap()

@@ -85,9 +85,11 @@ const REPLAY_DAYS: u64 = 3;
 /// 完整旧字节精确复现，现金、股份、费用、RNG、策略与公司会计等事实全部相同。
 /// 旧锚保留：events=5948645237561155125、mid=13459915162223779483、
 /// end=7939505419576849145。只更新存档表示锚，原有独立业务断言全部保留。
+/// 当前无代际标记契约移除存档根字段，不引入兼容。表示锚由上述真实 capture
+/// 仅删除该字段的原字节独立计算，事件锚不变；依据见工作记录 current-save-contract。
 const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 14_482_572_867_267_443_968;
-const PINNED_SAVE_END_FNV: u64 = 13_430_331_173_908_825_780;
+const PINNED_SAVE_MID_FNV: u64 = 11_144_175_475_449_247_039;
+const PINNED_SAVE_END_FNV: u64 = 11_114_411_633_457_169_759;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());

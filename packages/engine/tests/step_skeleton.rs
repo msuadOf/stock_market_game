@@ -133,6 +133,8 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 逆替换原文 token 后，全部 projection 原字节精确复现，业务事实与顺序不变。
     // 旧锚保留（auction_ticks=0/3/6）：1454294662355836716 /
     // 5242099653663156573 / 4627285058458614055。只重钉当前表示锚。
+    // 当前契约移除根版本字段；表示锚由既有原字节仅删除该字段独立计算，
+    // 保留事件、快照及所有业务事实。依据见工作记录 current-save-contract。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -142,17 +144,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 4_551_912_575_944_664_394);
+    assert_complete_projection(0, 16_816_661_624_066_813_714);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 8_964_527_389_656_814_803);
+    assert_complete_projection(3, 17_087_109_400_303_676_999);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 16_877_315_163_896_328_895);
+    assert_complete_projection(6, 2_354_296_198_442_943_349);
 }
 
 #[test]

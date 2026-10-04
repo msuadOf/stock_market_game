@@ -1,4 +1,4 @@
-# ADR-0029：职责名称与独立契约版本
+# ADR-0029：职责名称与严格当前契约
 
 - 状态：accepted（用户授权完成命名重构；验证与本地提交另行记录）
 - 日期：2026-10-04
@@ -13,11 +13,11 @@
 
 ## 决策
 
-1. 当前存档使用真实数值 `schema_version=3`。`SaveSlot.runtime_state` 的类型为
+1. 当前存档不设 `schema_version` 或代际版本，不以命名重构引入新版本。`SaveSlot.runtime_state` 的类型为
    `SavedRuntimeState`；Rust 模块为 `saved_runtime`，Web 模块为 `runtime-state`，解析入口为
    `parseSaveRuntime`。当前来源 tag 使用 `QuoteExpiry` 等职责名称；字段和 tag 的旧拼写
    不作 alias。类型、函数与模块不加 `V3` 后缀。
-2. 公共存档入口明确拒绝 schema 1/2、旧 `runtime_v2` key、旧来源 tag 和不完整当前结构。
+2. 公共存档入口只接受完整当前结构，明确拒绝任何 `schema_version` 字段、旧 `runtime_v2` key、旧来源 tag 和不完整结构。
    不建立旧格式转换器、双字段恢复、默认补齐或另一套游戏运行路径。完整自然日日结、
    不可变保存候选和失败时保留旧候选的边界继续按 ADR-0025 执行。
 3. `simulation_policy_id` 使用职责身份 `a-share-simulation`。算法、随机流、NPC 策略、
@@ -43,8 +43,8 @@ T+1、申报数量、价格时间优先、实际受理顺序、集合竞价、�
 
 ## 验证与后果
 
-新契约需覆盖新字段/tag 的 round-trip、schema 1/2 与旧标签拒绝、严格键集、版本身份及失败前
-候选/存储不变；内部纯改名不增加实现镜像测试。真实数值版本、会计 `version`、报告 revision、
+当前契约需覆盖职责字段/tag 的 round-trip、额外版本字段与旧标签拒绝、严格键集、policy 身份及失败前
+候选/存储不变；内部纯改名不增加实现镜像测试。工具契约的真实数值版本、会计 `version`、报告 revision、
 quarter、ECL 阶段与第三方 API 保留。完整 diff 须由未参与实施者独立复核，大 A 语义、必要性
 和跨层契约一致性通过后才可报告完成；测试和 Clippy 结果以实际执行记录为准。
 
