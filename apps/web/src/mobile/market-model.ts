@@ -1,3 +1,4 @@
+import { moneyToChartNumber, subtractMoney, ratioMoney } from "../utils/money.ts";
 import type { IndicatorResultState } from "../components/useIndicatorResults.ts";
 import type { TradeEvent, MarketSnap } from "../types/engine.ts";
 import type { EngineEvent, PriceLevel } from "../types/engine";
@@ -137,8 +138,8 @@ export function chartSlotGeometry(index: number, count: number, width = 390, cap
 }
 
 /** A 股涨跌幅：当前价相对上一交易日收盘价。首日或异常零基准显示 0。 */
-export function priceChangePercent(lastPrice: number, previousClose: number): number {
-  return previousClose === 0 ? 0 : ((lastPrice - previousClose) / previousClose) * 100;
+export function priceChangePercent(lastPrice: string, previousClose: string): number {
+  return previousClose === "0" ? 0 : ratioMoney(subtractMoney(lastPrice, previousClose), previousClose) * 100;
 }
 
 /** A 股逐笔成交按手展示；非整手数量保留两位精度，不能四舍五入成 0。 */
@@ -440,12 +441,12 @@ export class MinutePointCollector {
         this.currentMinute = null;
         this.minuteOpeningVolume = auction.matched_volume;
         this.lastDailyVolume = auction.matched_volume;
-        this.currentMinutePrice = auction.clearing_price === null ? null : auction.clearing_price / 100;
+        this.currentMinutePrice = auction.clearing_price === null ? null : moneyToChartNumber(auction.clearing_price) / 100;
         this.lastTradePrice = null;
         continue;
       }
       if ("Trade" in event && event.Trade.code === this.code) {
-        this.lastTradePrice = event.Trade.price / 100;
+        this.lastTradePrice = moneyToChartNumber(event.Trade.price) / 100;
         continue;
       }
       if (!("PriceTick" in event) || event.PriceTick.code !== this.code) continue;
@@ -461,7 +462,7 @@ export class MinutePointCollector {
       }
       const minute = Math.floor((dayTick - this.auctionTicks) / this.ticksPerMinute);
       const dailyVolume = event.PriceTick.daily_candle.volume ?? 0;
-      const value = event.PriceTick.last_price / 100;
+      const value = moneyToChartNumber(event.PriceTick.last_price) / 100;
       const directionPrice = this.lastTradePrice ?? value;
 
       if (this.currentDay !== day) {
@@ -547,7 +548,7 @@ export class AuctionPointCollector {
         this.currentDay = day;
         this.previousPrice = null;
       }
-      const value = data.indicative_price === null ? null : data.indicative_price / 100;
+      const value = data.indicative_price === null ? null : moneyToChartNumber(data.indicative_price) / 100;
       const ticksPerLine = this.ticksPerMinute / AUCTION_VOLUME_LINES_PER_MINUTE;
       const lineSlot = Math.min(Math.ceil(this.auctionTicks / ticksPerLine) - 1, Math.floor(dayTick / ticksPerLine));
       byMinute.set(lineSlot, {
@@ -661,7 +662,7 @@ export class MobileIntradayProjection {
     this.visibleAuctionPricePoints = this.visibleAuctionPoints.filter(
       (point): point is Readonly<AuctionPoint & { value: number }> => point.value !== null,
     );
-    const lastClose = inputs.market.last_close / 100;
+    const lastClose = moneyToChartNumber(inputs.market.last_close) / 100;
     this.scale = symmetricIntradayScale([...this.visibleAuctionPricePoints, ...this.visiblePoints].map(point => point.value), lastClose);
     this.volumeScale = intradayVolumeScale(this.visibleAuctionPoints.map(point => point.volume ?? 0), this.visiblePoints.map(point => point.volume ?? 0));
     this.progress = tradingDayProgress(this.visibleAuctionPoints.length / AUCTION_VOLUME_LINES_PER_MINUTE + inputs.elapsedMinutes, CALL_AUCTION_ENTRY_MINUTES + inputs.totalMinutes);

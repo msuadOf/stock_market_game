@@ -4,8 +4,8 @@ import type { MarketSnap } from "../types/engine.ts";
 import { buildMarketRows, diffMarketRows } from "./market-grid-rows.ts";
 
 const market = (lastPrice: number): MarketSnap => ({
-  last_price: lastPrice,
-  last_close: 1_000,
+  last_price: String(lastPrice),
+  last_close: "1000",
   best_bid: null,
   best_ask: null,
   bids: [],

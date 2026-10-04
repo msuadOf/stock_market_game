@@ -9,7 +9,7 @@ export type HotParams = {
    */
   lookback: number;
   /**
-   * 触发动作的相对变化阈值（绝对值），≥0。
+   * 触发动作的相对变化阈值（绝对值），有限且≥0。
    */
   trend_threshold: number;
   /**

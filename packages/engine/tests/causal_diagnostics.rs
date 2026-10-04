@@ -5,6 +5,67 @@ use engine::diagnostics::causal::{CausalError, CausalFactKind, CausalReport, Ter
 use engine::{AccountId, Event, GameSession, Intent, Money, Side, StockCode};
 
 #[test]
+fn causal_money_fields_use_full_precision_decimal_cents_strings() {
+    use engine::diagnostics::causal::Quote;
+    let code = StockCode("600101".to_owned());
+    let quote = Quote {
+        code: code.clone(),
+        bid_cents: Some(i64::MIN),
+        ask_cents: Some(i64::MAX),
+        bid_depth: 0,
+        ask_depth: 0,
+    };
+    let value = serde_json::to_value(&quote).unwrap();
+    assert_eq!(value["bid_cents"], i64::MIN.to_string());
+    assert_eq!(value["ask_cents"], i64::MAX.to_string());
+    let absent = Quote {
+        bid_cents: None,
+        ask_cents: None,
+        ..quote.clone()
+    };
+    let value = serde_json::to_value(absent).unwrap();
+    assert!(value["bid_cents"].is_null());
+    assert!(value["ask_cents"].is_null());
+    let budget = CausalFactKind::Budget {
+        account: AccountId(0),
+        available_cents: i64::MAX,
+        allocated_cents: vec![i64::MIN, 0, 9_007_199_254_740_993],
+    };
+    let value = serde_json::to_value(budget).unwrap();
+    assert_eq!(value["Budget"]["available_cents"], i64::MAX.to_string());
+    assert_eq!(
+        value["Budget"]["allocated_cents"],
+        serde_json::json!([i64::MIN.to_string(), "0", "9007199254740993"])
+    );
+    let fill = CausalFactKind::Filled {
+        order: engine::OrderId(1),
+        account: AccountId(0),
+        code: code.clone(),
+        qty: 100,
+        value_before: i64::MIN,
+        gross: i64::MAX,
+    };
+    let value = serde_json::to_value(fill).unwrap();
+    assert_eq!(value["Filled"]["value_before"], i64::MIN.to_string());
+    assert_eq!(value["Filled"]["gross"], i64::MAX.to_string());
+    let execution = CausalFactKind::Execution {
+        code,
+        maker: engine::OrderId(1),
+        taker: engine::OrderId(2),
+        side: Some(Side::Buy),
+        qty: 100,
+        price_cents: i64::MAX,
+        before: quote,
+    };
+    let value = serde_json::to_value(execution).unwrap();
+    assert_eq!(value["Execution"]["price_cents"], i64::MAX.to_string());
+    let mut report = canceled_session(false).causal_diagnostics().unwrap();
+    report.orders[0].filled_value = i64::MAX;
+    let value = serde_json::to_value(report).unwrap();
+    assert_eq!(value["orders"][0]["filled_value"], i64::MAX.to_string());
+}
+
+#[test]
 fn causal_json_preserves_large_unsigned_values_as_decimal_strings() {
     let session = canceled_session(false);
     let mut report = session.causal_diagnostics().unwrap();

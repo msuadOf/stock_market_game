@@ -5,7 +5,7 @@ import { buildPlayerOrderIntent, orderPriceInputState, playerOrderDescription } 
 
 test("player limit selection maps to fixed, highest, and lowest limit prices", () => {
   assert.deepEqual(buildPlayerOrderIntent("600101", "Buy", 100, "limit", "fixed", "10.01"), {
-    PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: 1_001 }, qty: 100 },
+    PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1001" }, qty: 100 },
   });
   assert.deepEqual(buildPlayerOrderIntent("600101", "Buy", 100, "limit", "highest", ""), {
     PlaceLimit: { code: "600101", side: "Buy", price: "Highest", qty: 100 },

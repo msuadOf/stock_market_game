@@ -7,7 +7,7 @@ import { parseEngineUpdate } from "./protocol/parse.ts";
 import { baseState, snapshot, timeseries, tickBatch } from "./protocol-test-fixtures.ts";
 
 test("Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped", () => {
-  const trade = { Trade: { seq: 1, code: "600000", price: 1_000, qty: 100, maker: 0, taker: 1 } };
+  const trade = { Trade: { seq: 1, code: "600000", price: "1000", qty: 100, maker: 0, taker: 1 } };
   const rejected = { IntentRejected: { seq: 2, account: 0, code: "600000", reason: "InsufficientCash" } };
   const update = {
     TickBatch: {
@@ -40,7 +40,7 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
 
 test("跨帧成交效果保留各自 tick，重试不重复追加", { timeout: 10000 }, () => {
   const frames = [1, 2].map((tick) => {
-    const event = { Trade: { seq: tick, code: "600000", price: 1_000, qty: 100, maker: 0, taker: 1 } };
+    const event = { Trade: { seq: tick, code: "600000", price: "1000", qty: 100, maker: 0, taker: 1 } };
     return { tick, events: [event], facts: [{
       key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
       event, canonical_payload: canonicalJson(event),

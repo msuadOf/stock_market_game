@@ -1,11 +1,12 @@
 import type { StrictSaveEnvelope } from "../save/schema/root.ts"
 import type { Event } from "../types/generated/Event.ts"
+import type { Cents } from "../types/engine.ts"
 
 export type PlayerWorkingOrder = {
   readonly id: number
   readonly code: string
   readonly side: "Buy" | "Sell"
-  readonly price: number
+  readonly price: Cents
   readonly remainingQty: number
   readonly venue: "auction" | "continuous"
   readonly frozen: "cash" | "shares"

@@ -138,30 +138,40 @@ fn gameconfig_serde_roundtrip_preserves_all_fields() {
 }
 
 #[test]
-fn gameconfig_money_fields_serialize_as_bare_i64() {
+fn gameconfig_money_fields_serialize_as_decimal_cents_strings() {
     let cfg = sample_config();
     let json = serde_json::to_string(&cfg).expect("serialize must succeed");
     let value: serde_json::Value = serde_json::from_str(&json).expect("json must parse");
 
-    // commission_min == 500 分 → 裸整数 500（而非 {"cents":500} 之类对象）。
     let min = value
         .get("commission_min")
         .expect("commission_min key present");
     assert_eq!(
-        min.as_i64(),
-        Some(500),
-        "commission_min must be bare i64: {min}"
+        min.as_str(),
+        Some("500"),
+        "commission_min must be a decimal cents string: {min}"
     );
 
-    // starting_cash == 10_000_000 分 → 裸整数。
     let cash = value
         .get("starting_cash")
         .expect("starting_cash key present");
     assert_eq!(
-        cash.as_i64(),
-        Some(10_000_000),
-        "starting_cash must be bare i64: {cash}"
+        cash.as_str(),
+        Some("10000000"),
+        "starting_cash must be a decimal cents string: {cash}"
     );
+}
+
+#[test]
+fn gameconfig_money_fields_reject_numeric_cents_without_compatibility() {
+    for field in ["commission_min", "starting_cash"] {
+        let mut value = serde_json::to_value(sample_config()).unwrap();
+        value[field] = serde_json::json!(500);
+        assert!(
+            serde_json::from_value::<GameConfig>(value).is_err(),
+            "金额字段 {field} 必须拒绝数字格式"
+        );
+    }
 }
 
 // GameConfig::new(...) 构造即校验。

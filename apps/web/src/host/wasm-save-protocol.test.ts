@@ -4,7 +4,7 @@ import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize.ts";
 
 test("Given a WASM save Map, when crossing the host save boundary, then its market keys survive JSON persistence", () => {
   const saved = normalizeSerdeMaps({
-    snapshot: new Map([["markets", new Map([["600101", { last_price: 1_120 }]])]]),
+    snapshot: new Map([["markets", new Map([["600101", { last_price: "1120" }]])]]),
   });
 
   const encoded = JSON.stringify(saved);

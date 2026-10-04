@@ -10,13 +10,13 @@ import type { AccountSnap, Intent } from "../types/engine.ts";
 import type { EngineHost } from "../host/engine-host.ts";
 import { store, clearAutoOrders } from "../store/store.ts";
 
-const order: PlayerWorkingOrder = { id: 1, code: "600101", side: "Buy", price: 1000, remainingQty: 100, venue: "continuous", frozen: "cash" };
+const order: PlayerWorkingOrder = { id: 1, code: "600101", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
 function fixture() {
   const notices: string[] = [], intents: Intent[] = [];
   const host = commandHostFixture({ submitIntent: async (intent: Intent) => { intents.push(intent); }, playerWorkingOrders: async () => [order] });
   const options = { hostRef: { current: host as EngineHost | null }, playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
     autoOrderMgrRef: { current: new AutoOrderManager(async () => {}) }, activeSetup: DEFAULT_SETUP,
-    playerAccount: { cash: 1_000_000, reserved_cash: 0, reserved_sell_qty: { "600101": 100 }, positions: { "600101": { qty: 250, t1_locked: 100, invested_cents: 250_000, recovered_cents: 0 } } } satisfies AccountSnap,
+    playerAccount: { cash: "1000000", reserved_cash: "0", reserved_sell_qty: { "600101": 100 }, positions: { "600101": { qty: 250, t1_locked: 100, invested_cents: "250000", recovered_cents: "0" } } } satisfies AccountSnap,
     protocolPlayerOrders: {} as Record<number, PlayerWorkingOrder>, playerOrdersReady: false, setNotice: (value: string) => { notices.push(value); } };
   return { options, host, notices, intents, hook: memoryHook(useTradingCommands, options) };
 }
@@ -62,7 +62,7 @@ test("条件单先按活动规则预检，再复用现有 manager/Redux 登记",
   const f = fixture(); store.dispatch(clearAutoOrders()); let commands = f.hook.render();
   commands.setAutoType("buyTrigger"); commands.setAutoTrigger("10.00"); commands = f.hook.render(); commands.addAuto();
   const item = store.getState().autoOrders.items.at(-1)!;
-  assert.equal(item.triggerPrice, 1000); assert.equal(item.qty, 100); assert.equal(item.side, "Buy");
+  assert.equal(item.triggerPrice, "1000"); assert.equal(item.qty, 100); assert.equal(item.side, "Buy");
   assert.equal(f.options.autoOrderMgrRef.current.list().at(-1)?.id, item.id); store.dispatch(clearAutoOrders());
 });
 

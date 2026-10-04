@@ -1,8 +1,11 @@
+import { parseMoney, compareMoney } from "../utils/money.ts";
+import type { Cents } from "../types/engine.ts";
+
 export type PlayerWorkingOrder = {
   readonly id: number;
   readonly code: string;
   readonly side: "Buy" | "Sell";
-  readonly price: number;
+  readonly price: Cents;
   readonly remainingQty: number;
   readonly venue: "auction" | "continuous";
   readonly frozen: "cash" | "shares";
@@ -36,8 +39,8 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     if (order.venue !== "auction" && order.venue !== "continuous") throw new TypeError(`${path}.venue 无效`);
     if (order.frozen !== "cash" && order.frozen !== "shares") throw new TypeError(`${path}.frozen 无效`);
     if (order.frozen !== (order.side === "Buy" ? "cash" : "shares")) throw new TypeError(`${path}.frozen 与 side 不一致`);
-    const price = nonnegativeSafeInteger(order.price, `${path}.price`);
-    if (price === 0) throw new TypeError(`${path}.price 必须是正数（Money 原始分值）`);
+    const price = parseMoney(order.price, `${path}.price`);
+    if (compareMoney(price, "0") <= 0) throw new TypeError(`${path}.price 必须是正数（Money 原始分值）`);
     const remainingQty = nonnegativeSafeInteger(order.remainingQty, `${path}.remainingQty`);
     if (remainingQty === 0) throw new TypeError(`${path}.remainingQty 必须是正股数`);
     if (remainingQty > 0xffff_ffff) throw new TypeError(`${path}.remainingQty 必须是 u32`);

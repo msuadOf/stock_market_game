@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildMarketRows, type MarketRowTransaction } from "./market-grid-rows.ts";
 import { MarketGridRowSynchronizer } from "./market-grid-row-synchronizer.ts";
 
-const market = (last_price: number) => ({ last_price, last_close: 1000, best_bid: null, best_ask: null, bids: [], asks: [] });
+const market = (last_price: number) => ({ last_price: String(last_price), last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] });
 const rows = (price: number) => buildMarketRows({ AAA: market(price), BBB: market(2000) }, ["AAA", "BBB"]);
 
 test("迟绑定只提交最新目标，连续异步提交以前一次目标为基准", { timeout: 10000 }, () => {

@@ -28,12 +28,12 @@ after(async () => {
 });
 
 const market: MarketSnap = {
-  last_price: 1_000,
-  last_close: 1_000,
-  best_bid: 999,
-  best_ask: 1_001,
-  bids: [[999, 250], [998, 500]],
-  asks: [[1_001, 500], [1_002, 1_000]],
+  last_price: "1000",
+  last_close: "1000",
+  best_bid: "999",
+  best_ask: "1001",
+  bids: [["999", 250], ["998", 500]],
+  asks: [["1001", 500], ["1002", 1_000]],
 };
 
 test("审计G45：App共用详情层从自选打开会实际渲染，返回后撤下且保留自选", () => {
@@ -52,11 +52,12 @@ const candle: KlinePoint = {
   high: 10.2,
   low: 9.8,
   close: 10.1,
+  rawPrices: { open: "1000", high: "1020", low: "980", close: "1010" },
   volume: 250,
   tradeStats: { turnoverCents: "69900", tradeCount: 2 },
 };
 
-const trade: TradeEvent = { seq: 1, code: "600101", price: 1_000, qty: 100, maker: 1, taker: 2 };
+const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 2 };
 
 type DetailProps = Parameters<typeof DetailComponent>[0];
 

@@ -7,7 +7,7 @@ import type { Snapshot } from "../types/engine.ts";
 
 function quote(tick: number, volume: number, code = "600000"): NormalizedTickFrame {
   return { tick, seqFrom: 0, seqTo: 0, events: [], facts: [], markets: {}, closedDailyCandles: {}, activeDailyCandles: {}, auctionPoints: {},
-    continuousPoints: { [code]: { tick, phase: "Continuous", last_price: 1200, cumulative_volume: volume, bids: [], asks: [] } } };
+    continuousPoints: { [code]: { tick, phase: "Continuous", last_price: "1200", cumulative_volume: volume, bids: [], asks: [] } } };
 }
 
 test("分时跨批次累计量基线、分钟替换与输入不变", { timeout: 10000 }, () => {
@@ -37,7 +37,7 @@ test("重建清除旧代码与累计量，竞价保留空指示价并排除收�
   owner.upsertFrames([quote(901, 100, "old")]);
   const input: NormalizedTickFrame = { ...quote(901, 20), auctionPoints: { "600000": [
     { key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 }, tick: 1, kind: "Indication", phase: "CallAuction", indicative_price: null, matched_volume: 0, imbalance: null },
-    { key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 1 }, tick: 2, kind: "Indication", phase: "ClosingAuction", indicative_price: 1000, matched_volume: 10, imbalance: null },
+    { key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 1 }, tick: 2, kind: "Indication", phase: "ClosingAuction", indicative_price: "1000", matched_volume: 10, imbalance: null },
   ] } };
   const before = structuredClone(input);
   owner.rebuildHistory([input]);
@@ -51,7 +51,7 @@ test("重建清除旧代码与累计量，竞价保留空指示价并排除收�
 
 test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组不能反写缓存", { timeout: 10000 }, () => {
   const initial = baseState();
-  const snapshot: Snapshot = { ...initial.snapshot, daily_candles: { "600000": [{ time: -1, open: 900, high: 900, low: 900, close: 900, volume: 100 }] } };
+  const snapshot: Snapshot = { ...initial.snapshot, daily_candles: { "600000": [{ time: -1, open: "900", high: "900", low: "900", close: "900", volume: 100 }] } };
   const owner = new MarketChartProjection();
   owner.installBaseline({ ...initial, snapshot, intraday: [quote(901, 100)] });
   const selected = owner.pricePointsFor("600000");
@@ -61,7 +61,7 @@ test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组
   assert.throws(() => { (owner.history() as Record<string, unknown>)["600000"] = []; }, TypeError);
   assert.throws(() => { (owner.activeCandles() as Record<string, unknown>)["600000"] = null; }, TypeError);
   const completed = owner.candlesFor("600000")[0];
-  owner.replaceActiveCandles({ "600000": { ...snapshot.active_daily_candles["600000"], close: 1300 } });
+  owner.replaceActiveCandles({ "600000": { ...snapshot.active_daily_candles["600000"], close: "1300" } });
   assert.equal(owner.candlesFor("600000")[0], completed);
   assert.equal(owner.candlesFor("600000").at(-1)!.close, 13);
   owner.replaceActiveCandles({});
@@ -74,7 +74,7 @@ test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组
 test("竞价成交量不混入连续分钟量，新日只保留新日采样且方向取相邻有效价格", { timeout: 10000 }, () => {
   const owner = new MarketChartProjection();
   const auction = { ...quote(600, 0), continuousPoints: {}, auctionPoints: { "600000": [
-    { key: { phase_rank: 4, entity: { Stock: "600000" } as const, source: "Sealed" as const, local_event_index: 0 }, tick: 600, kind: "Completion" as const, phase: "CallAuction" as const, indicative_price: 1300, matched_volume: 100, imbalance: null },
+    { key: { phase_rank: 4, entity: { Stock: "600000" } as const, source: "Sealed" as const, local_event_index: 0 }, tick: 600, kind: "Completion" as const, phase: "CallAuction" as const, indicative_price: "1300", matched_volume: 100, imbalance: null },
   ] } };
   owner.upsertFrames([auction, quote(901, 120), quote(902, 130)]);
   assert.deepEqual(owner.pricePointsFor("600000"), [{ time: 0, value: 12, volume: 30, buy: false }]);
@@ -92,15 +92,15 @@ test("同分钟涨跌以最后价对前分钟价判定，不被分钟内部反�
   const owner = new MarketChartProjection();
   const falling = quote(961, 120);
   const rebound = quote(962, 130);
-  falling.continuousPoints["600000"].last_price = 1100;
-  rebound.continuousPoints["600000"].last_price = 1150;
+  falling.continuousPoints["600000"].last_price = "1100";
+  rebound.continuousPoints["600000"].last_price = "1150";
   owner.upsertFrames([quote(901, 100), falling, rebound]);
   assert.deepEqual(owner.pricePointsFor("600000").at(-1), { time: 1, value: 11.5, volume: 30, buy: false });
 });
 
 test("竞价方向跳过 null 指示价，下降指示价不冒充买入方向", { timeout: 10000 }, () => {
   const owner = new MarketChartProjection();
-  const prices = [1300, 1200, null, 1100];
+  const prices = ["1300", "1200", null, "1100"];
   owner.upsertFrames(prices.map((price, index) => {
     const tick = index * 6 + 1;
     return { ...quote(tick, 0), continuousPoints: {}, auctionPoints: { "600000": [{
@@ -115,7 +115,7 @@ test("同六秒竞价槽无变化不翻色刷新，槽内反弹仍与前有效�
   const owner = new MarketChartProjection();
   const auction = (tick: number, price: number): NormalizedTickFrame => ({ ...quote(tick, 0), continuousPoints: {}, auctionPoints: { "600000": [{
     key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
-    tick, kind: "Indication", phase: "CallAuction", indicative_price: price, matched_volume: 10, imbalance: null,
+    tick, kind: "Indication", phase: "CallAuction", indicative_price: String(price), matched_volume: 10, imbalance: null,
   }] } });
   owner.upsertFrames([auction(1, 1300), auction(7, 1200)]);
   const before = owner.auctionPointsFor("600000");

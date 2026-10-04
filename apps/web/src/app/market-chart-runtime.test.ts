@@ -25,8 +25,8 @@ after(async () => { if (vite) await vite.close(); });
 function baseline() {
   return createBaselineUpdate("1", parseProtocolSnapshot({
     ...snapshot(0, 0), markets: { "600101": market(), "000001": market() },
-    accounts: { "0": { cash: 100_000, reserved_cash: 0, positions: {}, reserved_sell_qty: {} } },
-    daily_candles: { "600101": [{ ...dailyCandle(), time: -1, open: 900, high: 900, low: 900, close: 900 }], "000001": [] },
+    accounts: { "0": { cash: "100000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
+    daily_candles: { "600101": [{ ...dailyCandle(), time: -1, open: "900", high: "900", low: "900", close: "900" }], "000001": [] },
     active_daily_candles: { "600101": dailyCandle(), "000001": dailyCandle() },
   }));
 }
@@ -60,8 +60,8 @@ function render(updates: readonly Extract<HostUpdate, { type: "protocol" }>[], o
 }
 
 test("production delta updates selected daily K and mobile active K cache while retaining completed history", () => {
-  const active = { ...dailyCandle(), high: 1_250, close: 1_200, volume: 250, trade_stats: { turnover_cents: "300000", trade_count: 2 } };
-  const { before, after } = render([update({ "600101": active, "000001": { ...active, close: 1_100 } })]);
+  const active = { ...dailyCandle(), high: "1250", close: "1200", volume: 250, trade_stats: { turnover_cents: "300000", trade_count: 2 } };
+  const { before, after } = render([update({ "600101": active, "000001": { ...active, close: "1100" } })]);
   assert.equal(after.active["600101"]!.close, 12);
   assert.equal(after.active["000001"]!.close, 11);
   assert.deepEqual(after.daily.at(-1), after.active["600101"]);
@@ -73,12 +73,12 @@ test("production delta updates selected daily K and mobile active K cache while 
 
 test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot", { timeout: 10000 }, () => {
   const authoritative = { ...baseline().snapshot, tick: 1,
-    daily_candles: { "600101": [{ ...dailyCandle(), time: -2, close: 800 }] },
-    active_daily_candles: { "600101": { ...dailyCandle(), close: 1400 } },
+    daily_candles: { "600101": [{ ...dailyCandle(), time: -2, close: "800" }] },
+    active_daily_candles: { "600101": { ...dailyCandle(), close: "1400" } },
   };
   const { after } = render([createProtocolUpdate("1", { TickBatch: {
     frames: [{ ...frame(1, 0, []), timeseries_payload: { ...timeseries(1),
-      continuous_points: {}, active_daily_candles: { "600101": { ...dailyCandle(), close: 1200 } },
+      continuous_points: {}, active_daily_candles: { "600101": { ...dailyCandle(), close: "1200" } },
     } }], runtime_snapshot: authoritative,
   } })]);
   assert.equal(after.daily.length, 2);
@@ -91,7 +91,7 @@ test("production AfterClose+BeforeOpen 即使携旧日历史也清空分时并�
   const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(0, 0)));
   const first = createProtocolUpdate("1", { TickBatch: {
     frames: [{ ...frame(1, 0, ["600000"]), timeseries_payload: {
-      ...timeseries(1), continuous_points: { old: { tick: 1, phase: "Continuous", last_price: 1000, cumulative_volume: 100, bids: [], asks: [] } },
+      ...timeseries(1), continuous_points: { old: { tick: 1, phase: "Continuous", last_price: "1000", cumulative_volume: 100, bids: [], asks: [] } },
     } }], runtime_snapshot: snapshot(1, 1),
   } });
   const civil = createProtocolUpdate("1", civilUpdate());
@@ -112,8 +112,8 @@ test("production AfterClose+BeforeOpen 即使携旧日历史也清空分时并�
 
 test("successive production deltas use final authoritative active candles and remove absent active codes", () => {
   const { before, after } = render([
-    update({ "600101": { ...dailyCandle(), close: 1_200 }, "000001": dailyCandle() }),
-    update({ "600101": { ...dailyCandle(), high: 1_400, close: 1_300, volume: 300 } }, 2),
+    update({ "600101": { ...dailyCandle(), close: "1200" }, "000001": dailyCandle() }),
+    update({ "600101": { ...dailyCandle(), high: "1400", close: "1300", volume: 300 } }, 2),
   ]);
   assert.equal(after.daily.at(-1)!.close, 13);
   assert.equal(after.active["600101"]!.volume, 300);

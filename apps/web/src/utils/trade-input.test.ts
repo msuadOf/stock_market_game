@@ -10,9 +10,11 @@ import {
 } from "./trade-input.ts";
 
 test("trade price parsing never silently rounds sub-cent input", () => {
-  assert.equal(parseYuanPrice("10.01"), 1_001);
-  assert.equal(parseYuanPrice("10.1"), 1_010);
+  assert.equal(parseYuanPrice("10.01"), "1001");
+  assert.equal(parseYuanPrice("10.1"), "1010");
+  assert.equal(parseYuanPrice("90071992547409.93"), "9007199254740993");
   assert.throws(() => parseYuanPrice("10.001"), /两位小数/);
+  assert.throws(() => parseYuanPrice("invalid"), /价格/);
 });
 
 test("A-share quantities use board lots while permitting one complete odd-lot remainder", () => {
@@ -25,12 +27,13 @@ test("A-share quantities use board lots while permitting one complete odd-lot re
 });
 
 test("A-share UI limits use category rules and positive half-up rounding", () => {
-  assert.deepEqual(aSharePriceLimits(1_015, "MainBoard"), { down: 914, up: 1_117 });
-  assert.deepEqual(aSharePriceLimits(1_000, "StMainBoard"), { down: 900, up: 1_100 });
-  assert.deepEqual(aSharePriceLimits(3_680, "ChiNext"), { down: 2_944, up: 4_416 });
+  assert.deepEqual(aSharePriceLimits("1015", "MainBoard"), { down: "914", up: "1117" });
+  assert.deepEqual(aSharePriceLimits("1000", "StMainBoard"), { down: "900", up: "1100" });
+  assert.deepEqual(aSharePriceLimits("3680", "ChiNext"), { down: "2944", up: "4416" });
+  assert.deepEqual(aSharePriceLimits("9007199254740993", "ChiNext"), { down: "7205759403792794", up: "10808639105689192" });
   assert.throws(
-    () => aSharePriceLimits(Number.MAX_SAFE_INTEGER, "ChiNext"),
-    /超出可安全处理范围/,
+    () => aSharePriceLimits("9223372036854775807", "ChiNext"),
+    /金额超出 i64 范围/,
   );
 });
 

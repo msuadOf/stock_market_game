@@ -42,7 +42,7 @@ test("Given WASM Map fields, when parsed, then nested maps normalize at the boun
           ["active_daily_candles", new Map([["600000", dailyCandle()]])],
           ["closed_daily_candles", new Map()],
           ["auction_points", new Map()],
-          ["continuous_points", new Map([["600000", { tick: 1n, phase: "Continuous", last_price: 1_000n, cumulative_volume: 1n, bids: [], asks: [] }]])],
+          ["continuous_points", new Map([["600000", { tick: 1n, phase: "Continuous", last_price: "1000", cumulative_volume: 1n, bids: [], asks: [] }]])],
         ]),
       }],
     },
@@ -57,9 +57,9 @@ test("Given WASM Map fields, when parsed, then nested maps normalize at the boun
 test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts survive baseline parsing", () => {
   const raw = snapshot(10, 20);
   const player = {
-    cash: 999_890_000n,
+    cash: "999890000",
     positions: new Map(),
-    reserved_cash: 110_000n,
+    reserved_cash: "110000",
     reserved_sell_qty: new Map(),
   };
   const withMaps = {
@@ -72,24 +72,24 @@ test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts s
 
   const parsed = parseProtocolSnapshot(withMaps);
 
-  assert.equal(parsed.accounts["0"]?.cash, 999_890_000);
-  assert.equal(parsed.accounts["0"]?.reserved_cash, 110_000);
-  assert.equal(parsed.markets["600000"]?.last_price, 1_000);
+  assert.equal(parsed.accounts["0"]?.cash, "999890000");
+  assert.equal(parsed.accounts["0"]?.reserved_cash, "110000");
+  assert.equal(parsed.markets["600000"]?.last_price, "1000");
 });
 
 test("Given every Event wire variant, when parsed in an update, then all eleven tags are accepted", () => {
   const events: readonly JsonRecord[] = [
-    { Trade: { seq: 1, code: "600000", price: 1_000, qty: 100, maker: 0, taker: 1 } },
+    { Trade: { seq: 1, code: "600000", price: "1000", qty: 100, maker: 0, taker: 1 } },
     { AuctionTick: { seq: 2, tick: 1, phase: "CallAuction", code: "600000", indicative_price: null, matched_volume: 0, imbalance: 0 } },
-    { AuctionCompleted: { seq: 3, tick: 1, phase: "ClosingAuction", code: "600000", clearing_price: 1_000, matched_volume: 100 } },
-    { PriceTick: { seq: 4, tick: 1, code: "600000", last_price: 1_000, daily_candle: dailyCandle(), bids: [], asks: [] } },
+    { AuctionCompleted: { seq: 3, tick: 1, phase: "ClosingAuction", code: "600000", clearing_price: "1000", matched_volume: 100 } },
+    { PriceTick: { seq: 4, tick: 1, code: "600000", last_price: "1000", daily_candle: dailyCandle(), bids: [], asks: [] } },
     { DayBoundary: { seq: 5, day: 1, closed_daily_candles: { "600000": dailyCandle() } } },
     { CivilDateAdvanced: { seq: 6, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: { OfficialHoliday: { citation_id: "SSE-2030" } } } } },
     { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: "C-600000", published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
     { IntentRejected: { seq: 8, account: 0, code: "600000", reason: "OrderAlreadyFilled" } },
     { SettlementError: { seq: 9, account: 0, code: "600000", reason: "settlement failed" } },
     { OrderCanceled: { seq: 10, account: 0, code: "600000", id: 8, remaining_qty: 100 } },
-    { OrderAccepted: { seq: 11, account: 0, code: "600000", id: 9, side: "Buy", price: 1_000, remaining_qty: 100 } },
+    { OrderAccepted: { seq: 11, account: 0, code: "600000", id: 9, side: "Buy", price: "1000", remaining_qty: 100 } },
   ];
   const keys: readonly JsonRecord[] = [
     { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
@@ -158,7 +158,7 @@ test("Given a decimal string beyond u64, when parsed, then opaque protocol IDs a
       refresh: {
         ticks_per_day: 1,
         snapshot: snapshot(0, 1),
-        securities: [{ code: "600000", exchange: "Shanghai", initial_price: 1_000, category: "MainBoard", limit_pct: 0.1, tick: 1, total_shares: "18446744073709551616", float_shares: 0 }],
+        securities: [{ code: "600000", exchange: "Shanghai", initial_price: "1000", category: "MainBoard", limit_pct: 0.1, tick: "1", total_shares: "18446744073709551616", float_shares: 0 }],
         intraday: [],
         public_publication_ids: [],
       },
@@ -184,10 +184,10 @@ test("Given malformed StockSpec structural fields, when parsed, then transport r
   const valid = {
     code: "600000",
     exchange: "Shanghai",
-    initial_price: 1_000,
+    initial_price: "1000",
     category: "MainBoard",
     limit_pct: 0.1,
-    tick: 1,
+    tick: "1",
     total_shares: "1000000",
     float_shares: 1_000_000,
   };
@@ -206,7 +206,7 @@ test("Given malformed StockSpec structural fields, when parsed, then transport r
 test("Given structural-key attacks or normalized Map collisions, when parsed, then the boundary rejects them", () => {
   const valid = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
   const current = firstFrame(valid.TickBatch);
-  const parsedJson: unknown = JSON.parse('{"TickBatch":{"frames":[{"tick":1,"events":[],"facts":[],"timeseries_payload":{"markets":{"__proto__":{"last_price":1000}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}');
+  const parsedJson: unknown = JSON.parse('{"TickBatch":{"frames":[{"tick":1,"events":[],"facts":[],"timeseries_payload":{"markets":{"__proto__":{"last_price":"1000"}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}');
   const collidingMaps = {
     TickBatch: {
       ...valid.TickBatch,
@@ -318,10 +318,10 @@ test("Given a future structurally valid security, when parsed, then transport do
   const future = {
     code: "688001",
     exchange: "Shanghai",
-    initial_price: 0,
+    initial_price: "0",
     category: "MainBoard",
     limit_pct: 0.35,
-    tick: 2,
+    tick: "2",
     total_shares: "0",
     float_shares: 0,
   };

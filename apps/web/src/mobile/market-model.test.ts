@@ -38,20 +38,20 @@ function priceTick(seq: number, code: string, lastPrice: number, tick = seq, vol
     seq,
     tick,
     code,
-    last_price: lastPrice,
-    daily_candle: { time: 0, open: lastPrice, high: lastPrice, low: lastPrice, close: lastPrice, volume },
+    last_price: String(lastPrice),
+    daily_candle: { time: 0, open: String(lastPrice), high: String(lastPrice), low: String(lastPrice), close: String(lastPrice), volume },
     bids: [],
     asks: [],
   } };
 }
 
 test("五档盘口固定展示十个真实档位槽，缺失档位保持为空", () => {
-  const book = buildFiveLevelBook([[1000, 300], [999, 500]], [[1001, 200], [1002, 400]]);
+  const book = buildFiveLevelBook([["1000", 300], ["999", 500]], [["1001", 200], ["1002", 400]]);
   assert.deepEqual(book.sells.map((slot) => [slot.label, slot.level]), [
-    ["卖5", null], ["卖4", null], ["卖3", null], ["卖2", [1002, 400]], ["卖1", [1001, 200]],
+    ["卖5", null], ["卖4", null], ["卖3", null], ["卖2", ["1002", 400]], ["卖1", ["1001", 200]],
   ]);
   assert.deepEqual(book.buys.map((slot) => [slot.label, slot.level]), [
-    ["买1", [1000, 300]], ["买2", [999, 500]], ["买3", null], ["买4", null], ["买5", null],
+    ["买1", ["1000", 300]], ["买2", ["999", 500]], ["买3", null], ["买4", null], ["买5", null],
   ]);
 });
 
@@ -126,8 +126,8 @@ test("集合竞价指示价按固定六秒槽聚合且不伪造空价格", () =>
   const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
   const events: EngineEvent[] = [
     { AuctionTick: { seq: 1, tick: 1, phase: "CallAuction", code: "600460", indicative_price: null, matched_volume: 0, imbalance: 100 } },
-    { AuctionTick: { seq: 2, tick: 60, phase: "CallAuction", code: "600460", indicative_price: 3030, matched_volume: 200, imbalance: 50 } },
-    { AuctionTick: { seq: 3, tick: 61, phase: "CallAuction", code: "600460", indicative_price: 3040, matched_volume: 300, imbalance: 20 } },
+    { AuctionTick: { seq: 2, tick: 60, phase: "CallAuction", code: "600460", indicative_price: "3030", matched_volume: 200, imbalance: 50 } },
+    { AuctionTick: { seq: 3, tick: 61, phase: "CallAuction", code: "600460", indicative_price: "3040", matched_volume: 300, imbalance: 20 } },
   ];
 
   assert.deepEqual(collector.collect(events), [
@@ -162,9 +162,9 @@ test("第二和第三个交易日即使没有指示价也保留真实集合竞�
 test("集合竞价累计量按每分钟十根细线随权威时间向右推进", () => {
   const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
   const events: EngineEvent[] = [
-    { AuctionTick: { seq: 1, tick: 1, phase: "CallAuction", code: "600460", indicative_price: 3030, matched_volume: 100, imbalance: 50 } },
-    { AuctionTick: { seq: 2, tick: 6, phase: "CallAuction", code: "600460", indicative_price: 3035, matched_volume: 180, imbalance: 20 } },
-    { AuctionTick: { seq: 3, tick: 7, phase: "CallAuction", code: "600460", indicative_price: 3040, matched_volume: 240, imbalance: 10 } },
+    { AuctionTick: { seq: 1, tick: 1, phase: "CallAuction", code: "600460", indicative_price: "3030", matched_volume: 100, imbalance: 50 } },
+    { AuctionTick: { seq: 2, tick: 6, phase: "CallAuction", code: "600460", indicative_price: "3035", matched_volume: 180, imbalance: 20 } },
+    { AuctionTick: { seq: 3, tick: 7, phase: "CallAuction", code: "600460", indicative_price: "3040", matched_volume: 240, imbalance: 10 } },
   ];
 
   assert.equal(AUCTION_VOLUME_LINES_PER_MINUTE, 10);
@@ -177,8 +177,8 @@ test("集合竞价累计量按每分钟十根细线随权威时间向右推进",
 test("09:25 的竞价结果占满集合竞价区且不绘制盘前静默期", () => {
   const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
   const points = collector.collect([
-    { AuctionTick: { seq: 1, tick: 600, phase: "CallAuction", code: "600460", indicative_price: 3040, matched_volume: 2_400, imbalance: 0 } },
-    { AuctionCompleted: { seq: 2, tick: 600, phase: "CallAuction", code: "600460", clearing_price: 3040, matched_volume: 2_400 } },
+    { AuctionTick: { seq: 1, tick: 600, phase: "CallAuction", code: "600460", indicative_price: "3040", matched_volume: 2_400, imbalance: 0 } },
+    { AuctionCompleted: { seq: 2, tick: 600, phase: "CallAuction", code: "600460", clearing_price: "3040", matched_volume: 2_400 } },
   ]);
 
   assert.equal(points[0].time, 99);
@@ -190,7 +190,7 @@ test("09:25 的竞价结果占满集合竞价区且不绘制盘前静默期", ()
     buy: true,
   });
   assert.throws(() => collector.collect([
-    { AuctionTick: { seq: 3, tick: 601, phase: "CallAuction", code: "600460", indicative_price: 3040, matched_volume: 2_400, imbalance: 0 } },
+    { AuctionTick: { seq: 3, tick: 601, phase: "CallAuction", code: "600460", indicative_price: "3040", matched_volume: 2_400, imbalance: 0 } },
   ]), /超出开盘集合竞价阶段/);
 });
 
@@ -211,9 +211,9 @@ test("连续分时从集合竞价结束后的 09:30 槽位重新计分钟", () =
 test("09:30 连续竞价首分钟量不重复计入集合竞价成交量", () => {
   const collector = new MinutePointCollector("600460", 60, 15_300, 900);
   const events: EngineEvent[] = [
-    { AuctionCompleted: { seq: 1, tick: 900, phase: "CallAuction", code: "600460", clearing_price: 3030, matched_volume: 529_070 } },
+    { AuctionCompleted: { seq: 1, tick: 900, phase: "CallAuction", code: "600460", clearing_price: "3030", matched_volume: 529_070 } },
     priceTick(2, "600460", 3030, 901, 529_070),
-    { Trade: { seq: 3, code: "600460", price: 3031, qty: 100, maker: 1, taker: 2 } },
+    { Trade: { seq: 3, code: "600460", price: "3031", qty: 100, maker: 1, taker: 2 } },
     priceTick(4, "600460", 3031, 902, 529_170),
   ];
 
@@ -225,7 +225,7 @@ test("09:30 连续竞价首分钟量不重复计入集合竞价成交量", () =>
 test("同一分钟跨事件批次持续更新同一根分时点和量柱", () => {
   const collector = new MinutePointCollector("600460");
   const firstSecond: EngineEvent[] = [
-    { Trade: { seq: 1, code: "600460", price: 3030, qty: 200, maker: 1, taker: 2 } },
+    { Trade: { seq: 1, code: "600460", price: "3030", qty: 200, maker: 1, taker: 2 } },
     priceTick(2, "600460", 3030, 1, 200),
   ];
   const remainingSeconds: EngineEvent[] = Array.from({ length: 59 }, (_, index) =>
@@ -277,7 +277,7 @@ test("高倍率批次跨日时只把最后日界后的事件交给新日分时",
 test("其它股票的成交量不会混入当前股票", () => {
   const collector = new MinutePointCollector("600460", 1);
   const events: EngineEvent[] = [
-    { Trade: { seq: 1, code: "000001", price: 1000, qty: 900, maker: 1, taker: 2 } },
+    { Trade: { seq: 1, code: "000001", price: "1000", qty: 900, maker: 1, taker: 2 } },
     priceTick(2, "000001", 1000),
     priceTick(3, "600460", 3034),
   ];
@@ -290,8 +290,8 @@ test("其它股票的成交量不会混入当前股票", () => {
 test("一分钟内最后成交价决定量柱方向", () => {
   const collector = new MinutePointCollector("600460");
   const events: EngineEvent[] = [
-    { Trade: { seq: 7, code: "600460", price: 3033, qty: 200, maker: 1, taker: 2 } },
-    { Trade: { seq: 8, code: "600460", price: 3034, qty: 300, maker: 3, taker: 4 } },
+    { Trade: { seq: 7, code: "600460", price: "3033", qty: 200, maker: 1, taker: 2 } },
+    { Trade: { seq: 8, code: "600460", price: "3034", qty: 300, maker: 3, taker: 4 } },
     priceTick(9, "600460", 3034, 1, 500),
   ];
 
@@ -335,9 +335,9 @@ test("行情列表包含快照里的动态股票，并按真实持仓筛选", ()
 });
 
 test("涨跌幅始终以前一交易日收盘价为分母", () => {
-  assert.equal(priceChangePercent(1_100, 1_000), 10);
-  assert.equal(priceChangePercent(1_155, 1_100), 5);
-  assert.equal(priceChangePercent(1_000, 0), 0);
+  assert.equal(priceChangePercent("1100", "1000"), 10);
+  assert.equal(priceChangePercent("1155", "1100"), 5);
+  assert.equal(priceChangePercent("1000", "0"), 0);
 });
 
 test("迷你走势图只由真实价格历史生成", () => {

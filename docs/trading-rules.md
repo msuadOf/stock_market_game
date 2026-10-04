@@ -3,6 +3,11 @@
 游戏的证券交易规则以中国大陆沪深 A 股竞价交易为基线。参数属于权威会话配置，
 前端只能预检查，最终由 Rust engine 拒单或结算。
 
+金额与每股价格的 `Money` 内部单位为分，跨端统一使用规范有符号 `i64` 十进制分
+字符串；例如 `"1"` 为0.01元，`"1000000000000"` 为100亿元。Web 金融计算保持整数
+精度，不接受旧数字金额；`AccountingAmount` 仍为独立元字符串。编码不改变下列交易
+规则、费用或舍入，图表近似不能用于反算委托。见 [ADR-0031](decisions/0031-money-decimal-cents-wire.md)。
+
 Escrow 并行候选的资源边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md)：
 SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期处理后的资源；其他密封批释放不回补本批预算。
 买单使用现金 envelope，卖单现金预留恒为零。分歧 #9 的卖费实收封顶/后腿追收是明确批准的

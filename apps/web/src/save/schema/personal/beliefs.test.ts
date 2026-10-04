@@ -101,17 +101,17 @@ const withExitFact = {
 }
 
 test("holding fee history is a required nullable nonnegative fact", () => {
-  const epoch = { entry_moment: moment, last_own_observation: null, institutional_fees_paid: 77 }
+  const epoch = { entry_moment: moment, last_own_observation: null, institutional_fees_paid: "77" }
   const withEpoch = (value: unknown) => ({
     ...withExitFact,
     experience: { ...withExitFact.experience, feedback: {
       ...withExitFact.experience.feedback, stocks: { "600001": value },
     } },
   })
-  assert.equal(parseBeliefBook(withEpoch(epoch), "book").experience.feedback!.stocks["600001"].institutional_fees_paid, 77)
+  assert.equal(parseBeliefBook(withEpoch(epoch), "book").experience.feedback!.stocks["600001"].institutional_fees_paid, "77")
   assert.equal(parseBeliefBook(withEpoch({ ...epoch, institutional_fees_paid: null }), "book").experience.feedback!.stocks["600001"].institutional_fees_paid, null)
   assert.throws(() => parseBeliefBook(withEpoch({ entry_moment: moment, last_own_observation: null }), "book"), /institutional_fees_paid/)
-  assert.throws(() => parseBeliefBook(withEpoch({ ...epoch, institutional_fees_paid: -1 }), "book"), /institutional_fees_paid/)
+  assert.throws(() => parseBeliefBook(withEpoch({ ...epoch, institutional_fees_paid: "-1" }), "book"), /institutional_fees_paid/)
 })
 
 test("institution belief book requires its independent experience state", () => {

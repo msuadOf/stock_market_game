@@ -99,6 +99,12 @@ export type SaveSlot = {
    * 自然日经营时钟权威状态；完整存档携带冻结的日历政策。
    */
   civil_clock: CivilClockSave;
+  /**
+   * ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
+   *    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
+   * 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
+   * 余额在反序列化重放边界校验）。
+   */
   company_operations:
     import("../../save/schema/company/operations").CompanyOperations;
   /**

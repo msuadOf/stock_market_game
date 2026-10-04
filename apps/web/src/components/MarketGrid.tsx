@@ -1,3 +1,4 @@
+import { compareMoney, centsToYuanText, moneyToChartNumber } from "../utils/money.ts";
 /**
  * AG Grid 行情表（替代简单 HTML 表格）。
  * 密集金融表格：代码/名称/现价/涨跌额/涨跌幅，红涨绿跌单元格渲染。
@@ -31,7 +32,7 @@ interface Props {
 }
 
 function yuan(cents: Cents): number {
-  return cents / 100;
+  return moneyToChartNumber(cents) / 100;
 }
 
 export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
@@ -67,7 +68,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
   const marketIndex = useMemo(() => {
     if (allRowData.length === 0) return { value: 0, change: 0 };
     return {
-      value: allRowData.reduce((sum, stock) => sum + stock.lastPrice, 0) / allRowData.length * 100,
+      value: allRowData.reduce((sum, stock) => sum + yuan(stock.lastPrice), 0) / allRowData.length * 100,
       change: allRowData.reduce((sum, stock) => sum + stock.changePct, 0) / allRowData.length,
     };
   }, [allRowData]);
@@ -97,21 +98,23 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
         field: "lastPrice",
         width: 80,
         type: "numericColumn",
-        valueFormatter: (p) => (p.value as number).toFixed(2),
+        valueFormatter: (p) => centsToYuanText(p.value as Cents),
+        comparator: compareMoney,
         cellClass: (p: CellClassParams<RowData>) =>
-          p.data ? colorClass(p.data._rawLastPrice - p.data._rawLastClose) : "",
+          p.data ? colorClass(compareMoney(p.data._rawLastPrice, p.data._rawLastClose)) : "",
       },
       {
         headerName: "涨跌额",
         field: "changeAbs",
+        comparator: compareMoney,
         width: 80,
         type: "numericColumn",
         valueFormatter: (p) => {
-          const v = p.value as number;
-          return (v >= 0 ? "+" : "") + v.toFixed(2);
+          const value = p.value as Cents;
+          return (compareMoney(value, "0") >= 0 ? "+" : "") + centsToYuanText(value);
         },
         cellClass: (p: CellClassParams<RowData>) =>
-          p.data ? colorClass(p.data.changeAbs) : "",
+          p.data ? colorClass(compareMoney(p.data.changeAbs, "0")) : "",
       },
       {
         headerName: "涨跌幅",
@@ -225,7 +228,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
               </svg>
               <span className={`mobile-market-price ${trend}`}>
                 <strong>{stock.changePct >= 0 ? "+" : ""}{stock.changePct.toFixed(2)}%</strong>
-                <small>{stock.lastPrice < 10 ? stock.lastPrice.toFixed(3) : stock.lastPrice.toFixed(2)}</small>
+                <small>{centsToYuanText(stock.lastPrice)}{compareMoney(stock.lastPrice, "1000") < 0 ? "0" : ""}</small>
               </span>
             </button>
           );

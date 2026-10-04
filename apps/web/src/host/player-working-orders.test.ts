@@ -7,7 +7,7 @@ test("preserves raw Money minor units in the read-only player order DTO", () => 
     id: 7,
     code: "600000",
     side: "Buy",
-    price: 1000,
+    price: "1000",
     remainingQty: 200,
     venue: "auction",
     frozen: "cash",
@@ -15,7 +15,7 @@ test("preserves raw Money minor units in the read-only player order DTO", () => 
     id: 7,
     code: "600000",
     side: "Buy",
-    price: 1000,
+    price: "1000",
     remainingQty: 200,
     venue: "auction",
     frozen: "cash",
@@ -28,7 +28,7 @@ test("rejects malformed order DTOs and unsafe u64 projections", () => {
     id: Number.MAX_SAFE_INTEGER + 1,
     code: "600000",
     side: "Buy",
-    price: 1234,
+    price: "1234",
     remainingQty: 200,
     venue: "auction",
     frozen: "cash",
@@ -37,7 +37,7 @@ test("rejects malformed order DTOs and unsafe u64 projections", () => {
     id: 7,
     code: "600000",
     side: "Buy",
-    price: 1234,
+    price: "1234",
     remainingQty: 200,
     venue: "continuous",
     frozen: "shares",
@@ -46,8 +46,9 @@ test("rejects malformed order DTOs and unsafe u64 projections", () => {
 });
 
 test("requires positive price and remaining quantity with side-matched frozen assets", () => {
-  const order = { id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "continuous", frozen: "cash" };
-  assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: 0 }]), /Money 原始分值/);
+  const order = { id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash" };
+  assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: "0" }]), /Money 原始分值/);
+  assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: 1234 }]), /金额必须是规范十进制整数分字符串/);
   assert.throws(() => normalizePlayerWorkingOrders([{ ...order, remainingQty: 0 }]), /正股数/);
   assert.throws(() => normalizePlayerWorkingOrders([{ ...order, frozen: "shares" }]), /与 side 不一致/);
 });

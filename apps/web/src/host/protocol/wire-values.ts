@@ -18,6 +18,7 @@ import {
   values,
 } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
+import { parseMoney as parseCanonicalMoney } from "../../utils/money.ts";
 
 export const TRADING_PHASES = ["CallAuction", "PreOpen", "ClosingAuction", "Continuous"] as const;
 export const HOLIDAY_KINDS = [
@@ -45,11 +46,16 @@ export function parseIsoDate(value: unknown, path: string): string {
   return parsed;
 }
 
-export function parseMoney(value: unknown, path: string): number {
-  return signedSafeInteger(value, path);
+export function parseMoney(value: unknown, path: string): string {
+  try {
+    return parseCanonicalMoney(value, path);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return malformed(path, error.message);
+  }
 }
 
-export function parseDepth(value: unknown, path: string): Array<[number, number]> {
+export function parseDepth(value: unknown, path: string): Array<[string, number]> {
   return values(value, path).map((entry, index) => {
     const pair = values(entry, `${path}[${index}]`);
     if (pair.length !== 2) malformed(`${path}[${index}]`, "盘口档位必须含价格与数量");

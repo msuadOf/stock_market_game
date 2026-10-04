@@ -840,7 +840,7 @@ fn auction_event_json_matches_frontend_contract() {
     assert_eq!(body["seq"], 4);
     assert_eq!(body["tick"], 2);
     assert_eq!(body["code"], "600000");
-    assert_eq!(body["indicative_price"], 10_123);
+    assert_eq!(body["indicative_price"], "10123");
     assert_eq!(body["matched_volume"], 50);
     assert_eq!(body["imbalance"], 7);
 }

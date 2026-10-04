@@ -1,6 +1,7 @@
 //! 定点货币表示：金额与股价统一存「分」(元×100) 的 i64。
 //!
-//! 设计见 docs/superpowers/specs/2026-06-29-money-fixed-point-design.md。
+//! 定点计算设计见 docs/superpowers/specs/2026-06-29-money-fixed-point-design.md；
+//! 当前分字符串传输契约以 docs/decisions/0031-money-decimal-cents-wire.md 为准。
 //! 铁律：内部永不存 f64；f64 仅作为 apply_rate 的比率入参，立即银行家舍入回整数分。
 
 use thiserror::Error;
@@ -23,23 +24,91 @@ pub enum MoneyError {
 
 /// 金额/股价的定点表示。内部恒为「分」(元×100) 的 i64，无 f64、无误差。
 /// 有符号：盈亏/浮亏可为负。价格 = 每股元值，2 位小数，与资金同尺度。
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Hash,
-    Debug,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    ts_rs::TS,
-)]
-#[ts(type = "number")]
-#[serde(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct Money(i64);
+
+impl serde::Serialize for Money {
+    fn serialize<Serializer: serde::Serializer>(
+        &self,
+        serializer: Serializer,
+    ) -> Result<Serializer::Ok, Serializer::Error> {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Money {
+    fn deserialize<Deserializer: serde::Deserializer<'de>>(
+        deserializer: Deserializer,
+    ) -> Result<Self, Deserializer::Error> {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        let digits = text.strip_prefix('-').unwrap_or(&text);
+        if digits.is_empty()
+            || !digits.bytes().all(|digit| digit.is_ascii_digit())
+            || (digits.len() > 1 && digits.starts_with('0'))
+            || text == "-0"
+        {
+            return Err(serde::de::Error::custom(format!(
+                "Money must be a canonical decimal integer cents string: {text:?}"
+            )));
+        }
+        text.parse::<i64>().map(Self).map_err(|error| {
+            serde::de::Error::custom(format!(
+                "Money cents string is outside i64 range: {text:?}: {error}"
+            ))
+        })
+    }
+}
+
+pub(crate) mod cents_decimal {
+    #[cfg(feature = "simulation-diagnostics")]
+    use serde::ser::{SerializeMap, SerializeSeq};
+
+    pub fn serialize<Serializer: serde::Serializer>(
+        cents: &i64,
+        serializer: Serializer,
+    ) -> Result<Serializer::Ok, Serializer::Error> {
+        serde::Serialize::serialize(&super::Money::from_cents(*cents), serializer)
+    }
+
+    pub fn deserialize<'de, Deserializer: serde::Deserializer<'de>>(
+        deserializer: Deserializer,
+    ) -> Result<i64, Deserializer::Error> {
+        <super::Money as serde::Deserialize>::deserialize(deserializer).map(|money| money.cents())
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub fn optional<Serializer: serde::Serializer>(
+        cents: &Option<i64>,
+        serializer: Serializer,
+    ) -> Result<Serializer::Ok, Serializer::Error> {
+        serde::Serialize::serialize(&cents.map(super::Money::from_cents), serializer)
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub fn list<Serializer: serde::Serializer>(
+        cents: &[i64],
+        serializer: Serializer,
+    ) -> Result<Serializer::Ok, Serializer::Error> {
+        let mut sequence = serializer.serialize_seq(Some(cents.len()))?;
+        for value in cents {
+            sequence.serialize_element(&super::Money::from_cents(*value))?;
+        }
+        sequence.end()
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub fn map<Key: serde::Serialize, Serializer: serde::Serializer>(
+        cents: &std::collections::BTreeMap<Key, i64>,
+        serializer: Serializer,
+    ) -> Result<Serializer::Ok, Serializer::Error> {
+        let mut map = serializer.serialize_map(Some(cents.len()))?;
+        for (order, value) in cents {
+            map.serialize_entry(order, &super::Money::from_cents(*value))?;
+        }
+        map.end()
+    }
+}
 
 impl Money {
     /// 零金额。

@@ -1,3 +1,4 @@
+import { money as parseCanonicalMoney } from "./primitives.ts"
 import type { AccountId } from "../../types/generated/AccountId.ts"
 import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
 import type { Money } from "../../types/generated/Money.ts"
@@ -25,17 +26,17 @@ function parsePosition(value: unknown, path: string): PositionSnap {
   const position = {
     qty: integer(parsed.qty, `${path}.qty`, 0),
     t1_locked: integer(parsed.t1_locked, `${path}.t1_locked`, 0),
-    invested_cents: integer(parsed.invested_cents, `${path}.invested_cents`),
-    recovered_cents: integer(parsed.recovered_cents, `${path}.recovered_cents`),
+    invested_cents: money(parsed.invested_cents, `${path}.invested_cents`),
+    recovered_cents: money(parsed.recovered_cents, `${path}.recovered_cents`),
   }
-  if (position.qty === 0 || position.t1_locked > position.qty || position.invested_cents < 0 || position.recovered_cents < 0) {
+  if (position.qty === 0 || position.t1_locked > position.qty || BigInt(position.invested_cents) < 0n || BigInt(position.recovered_cents) < 0n) {
     throw new Error(`存档 ${path} 持仓不满足数量、T+1 锁定或成本基础约束`)
   }
   return position
 }
 
-function money(value: unknown, path: string): Money {
-  return integer(value, path)
+function money(value: unknown, path: string): string {
+  return parseCanonicalMoney(value, path)
 }
 
 export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
@@ -53,7 +54,7 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
     const account = record(item, itemPath)
     exact(account, ["cash", "positions"], itemPath)
     const cash = money(account.cash, `${itemPath}.cash`)
-    if (cash < 0) throw new Error(`存档 ${itemPath}.cash 不能为负数`)
+    if (BigInt(cash) < 0n) throw new Error(`存档 ${itemPath}.cash 不能为负数`)
     return {
       cash,
       positions: map(account.positions, `${itemPath}.positions`, stockKey, parsePosition),

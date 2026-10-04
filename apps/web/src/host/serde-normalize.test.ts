@@ -46,13 +46,13 @@ const publicReport = {
 test("WASM save normalization preserves nested Rust maps as JSON objects", () => {
   const raw = new Map<unknown, unknown>([
     ["snapshot", new Map([
-      ["markets", new Map<unknown, unknown>([["600000", new Map([["last_price", 1_000]])]])],
-      ["accounts", new Map<unknown, unknown>([[0, new Map([["cash", 100_000]])]])],
+      ["markets", new Map<unknown, unknown>([["600000", new Map([["last_price", "1000"]])]])],
+      ["accounts", new Map<unknown, unknown>([[0, new Map([["cash", "100000"]])]])],
     ])],
     ["resting_orders", new Map<unknown, unknown>([["600000", []]])],
-    ["price_history", new Map<unknown, unknown>([["600000", [1_000, 1_001]]])],
+    ["price_history", new Map<unknown, unknown>([["600000", ["1000", "1001"]]])],
     ["market_minute_closes", new Map<unknown, unknown>([["600000", [
-      { absolute_trading_minute: 0, close: 1_001 },
+      { absolute_trading_minute: 0, close: "1001" },
     ]]])],
   ]);
 
@@ -60,25 +60,25 @@ test("WASM save normalization preserves nested Rust maps as JSON objects", () =>
 
   assert.deepEqual(normalized, {
     snapshot: {
-      markets: { "600000": { last_price: 1_000 } },
-      accounts: { "0": { cash: 100_000 } },
+      markets: { "600000": { last_price: "1000" } },
+      accounts: { "0": { cash: "100000" } },
     },
     resting_orders: { "600000": [] },
-    price_history: { "600000": [1_000, 1_001] },
+    price_history: { "600000": ["1000", "1001"] },
     market_minute_closes: {
-      "600000": [{ absolute_trading_minute: 0, close: 1_001 }],
+      "600000": [{ absolute_trading_minute: 0, close: "1001" }],
     },
   });
   assert.doesNotThrow(() => JSON.stringify(normalized));
 });
 
-test("WASM save normalization converts safe bigint money values for strict JSON saves", () => {
+test("WASM save normalization preserves Money strings and converts safe bigint integers", () => {
   const normalized = normalizeSerdeMaps<Record<string, unknown>>({
-    snapshot: { markets: new Map([["300260", { best_bid: 3_680n }]]) },
+    snapshot: { seq: 3_680n, markets: new Map([["300260", { best_bid: "3680" }]]) },
   });
 
   assert.deepEqual(normalized, {
-    snapshot: { markets: { "300260": { best_bid: 3_680 } } },
+    snapshot: { seq: 3_680, markets: { "300260": { best_bid: "3680" } } },
   });
 });
 
@@ -124,8 +124,8 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
   const slot = {
     snapshot: {
       accounts: {
-        "0": { cash: 100_000, positions: {} },
-        "12": { cash: 200_000, positions: {} },
+        "0": { cash: "100000", positions: {} },
+        "12": { cash: "200000", positions: {} },
       },
     },
     retail_experience: {

@@ -15,11 +15,11 @@ export type TickBatchWire = {
 };
 
 export function dailyCandle(): JsonRecord {
-  return { time: 0, open: 1_000, high: 1_000, low: 1_000, close: 1_000, volume: 0 };
+  return { time: 0, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 };
 }
 
 export function market(): JsonRecord {
-  return { last_price: 1_000, last_close: 1_000, best_bid: null, best_ask: null, bids: [], asks: [] };
+  return { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] };
 }
 
 export function snapshot(tick: number, seq: number): JsonRecord {
@@ -55,7 +55,7 @@ export function timeseries(tick: number): JsonRecord {
     closed_daily_candles: {},
     auction_points: {},
     continuous_points: {
-      "600000": { tick, phase: "Continuous", last_price: 1_000, cumulative_volume: tick, bids: [], asks: [] },
+      "600000": { tick, phase: "Continuous", last_price: "1000", cumulative_volume: tick, bids: [], asks: [] },
     },
   };
 }
@@ -103,10 +103,10 @@ export function securities(): readonly JsonRecord[] {
   return [{
     code: "600000",
     exchange: "Shanghai",
-    initial_price: 1_000,
+    initial_price: "1000",
     category: "MainBoard",
     limit_pct: 0.1,
-    tick: 1,
+    tick: "1",
     total_shares: "1000000",
     float_shares: 1_000_000,
   }];

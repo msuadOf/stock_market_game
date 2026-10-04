@@ -6,10 +6,10 @@ import { reduceEngineUpdate } from "./reduce.ts";
 import { frame, snapshot } from "../protocol-test-fixtures.ts";
 
 const account = {
-  cash: 100_000, reserved_cash: 1_000, reserved_sell_qty: {},
-  positions: { "600000": { qty: 100, t1_locked: 100, invested_cents: 1_000, recovered_cents: 0 } },
+  cash: "100000", reserved_cash: "1000", reserved_sell_qty: {},
+  positions: { "600000": { qty: 100, t1_locked: 100, invested_cents: "1000", recovered_cents: "0" } },
 };
-const order = { id: 1, code: "600000", side: "Buy", price: 1_000, remainingQty: 100, venue: "continuous", frozen: "cash" };
+const order = { id: 1, code: "600000", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
 
 function initial() {
   return createProtocolState(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }), "1");
@@ -24,7 +24,7 @@ type DeltaWire = {
 function delta(tick = 1, seqFrom = 0, seqTo = 1): DeltaWire {
   return {
     tick, seq_from: seqFrom, seq_to: seqTo, day: 0, phase: "Continuous",
-    accounts: { "0": { ...account, cash: 99_000 } },
+    accounts: { "0": { ...account, cash: "99000" } },
     working_orders: { reset: tick === 1, upserts: [order], removed: [] as number[] },
   };
 }
@@ -41,9 +41,9 @@ test("runtime delta consumes account reservations, T+1, clock and player orders 
   let reduction: ReturnType<typeof reduceEngineUpdate> | undefined;
   assert.doesNotThrow(() => { reduction = reduceEngineUpdate(state, "1", batch()); });
   assert.ok(reduction);
-  assert.equal(reduction.state.snapshot.accounts[0]!.cash, 99_000);
+  assert.equal(reduction.state.snapshot.accounts[0]!.cash, "99000");
   assert.equal(reduction.state.snapshot.accounts[0]!.positions["600000"]!.t1_locked, 100);
-  assert.equal(reduction.state.snapshot.accounts[0]!.reserved_cash, 1_000);
+  assert.equal(reduction.state.snapshot.accounts[0]!.reserved_cash, "1000");
   assert.equal(reduction.state.snapshot.daily_candles, state.snapshot.daily_candles);
   assert.deepEqual([reduction.state.snapshot.tick, reduction.state.snapshot.seq], [1, 1]);
   assert.deepEqual(Reflect.get(reduction.state, "playerWorkingOrders"), { "1": order });
@@ -74,7 +74,7 @@ test("delta exact retry is effect-free but mutation at the accepted cursor is re
   assert.equal(retry.kind, "exact-retry");
   assert.equal(retry.state, first.state);
   assert.deepEqual(retry.effects, []);
-  assert.throws(() => reduceEngineUpdate(first!.state, "1", batch({ ...delta(), accounts: { "0": { ...account, cash: 98_000 } } })), { code: "PROTOCOL_REPLAY" });
+  assert.throws(() => reduceEngineUpdate(first!.state, "1", batch({ ...delta(), accounts: { "0": { ...account, cash: "98000" } } })), { code: "PROTOCOL_REPLAY" });
 });
 
 test("full-snapshot batches and complete baselines remain supported alongside explicit delta batches", () => {
@@ -103,7 +103,7 @@ test("delta rejects mismatched cursors and simultaneous full snapshot authority 
       return true;
     });
     assert.deepEqual(state.cursor, { generation: "1", tick: 0, seq: 0 });
-    assert.equal(state.snapshot.accounts[0]!.cash, 100_000);
+    assert.equal(state.snapshot.accounts[0]!.cash, "100000");
   }
 });
 
@@ -111,7 +111,7 @@ test("delta rejects NPC account data, invalid reservations and inconsistent orde
   for (const runtimeDelta of [
     { ...delta(), accounts: { "1": account } },
     { ...delta(), accounts: { "00": account } },
-    { ...delta(), accounts: { "0": { ...account, reserved_cash: 100_001 } } },
+    { ...delta(), accounts: { "0": { ...account, reserved_cash: "100001" } } },
     { ...delta(), accounts: { "0": { ...account, positions: { "600000": { ...account.positions["600000"], t1_locked: 101 } } } } },
     { ...delta(), working_orders: { reset: true, upserts: [order, order], removed: [] } },
     { ...delta(), working_orders: { reset: false, upserts: [order], removed: [1] } },

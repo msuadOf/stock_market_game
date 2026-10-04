@@ -8,5 +8,5 @@ import type { OwnObservation } from "./OwnObservation";
 export type HoldingEpoch = {
   entry_moment: ExperienceMoment;
   last_own_observation: OwnObservation | null;
-  institutional_fees_paid: number | null;
+  institutional_fees_paid: string | null;
 };

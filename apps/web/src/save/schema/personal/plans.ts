@@ -15,8 +15,8 @@ export type TerminationReason = "HorizonExpired" | "FundsUnavailable" | "Cancell
 export type ResumeReason = "TriggerCleared" | "OpinionReaffirmed"
 export type RevisionRecord = { readonly version: number; readonly reason: RevisionReason; readonly trading_day: number }
 export type RevisionReason = "SignalShift" | "PriceMove" | "ConstraintsChanged" | "RiskTriggered" | "HorizonReview" | "NewInformation"
-export type ReviewConditions = { readonly min_signal_delta_bp: number; readonly min_price_change_bp: number; readonly last_review_signal_score_bp: number; readonly last_review_trading_day: number; readonly last_review_price: number | null; readonly last_review_acquired_count: number; readonly last_review_resources: ReviewResources | null }
-export type ReviewResources = { readonly cash: number; readonly frozen_cash: number; readonly held_qty: number; readonly t1_locked: number }
+export type ReviewConditions = { readonly min_signal_delta_bp: number; readonly min_price_change_bp: number; readonly last_review_signal_score_bp: number; readonly last_review_trading_day: number; readonly last_review_price: string | null; readonly last_review_acquired_count: number; readonly last_review_resources: ReviewResources | null }
+export type ReviewResources = { readonly cash: string; readonly frozen_cash: string; readonly held_qty: number; readonly t1_locked: number }
 export type PendingPlanEvent = { readonly Accepted: { readonly plan_id: number; readonly order_id: number; readonly trading_day: number } } | { readonly Filled: { readonly plan_id: number; readonly order_id: number; readonly qty: number; readonly child_complete: boolean; readonly trading_day: number } } | { readonly DayEnded: { readonly plan_id: number; readonly trading_day: number } }
 
 const SIDE = ["Buy", "Sell"] as const
@@ -53,8 +53,8 @@ function parseReview(value: unknown, path: string): ReviewConditions { const par
 function parseReviewResources(value: unknown, path: string): ReviewResources {
   const parsed = record(value, path)
   exact(parsed, ["cash", "frozen_cash", "held_qty", "t1_locked"], path)
-  const result = { cash: integer(parsed.cash, `${path}.cash`, 0), frozen_cash: integer(parsed.frozen_cash, `${path}.frozen_cash`, 0), held_qty: integer(parsed.held_qty, `${path}.held_qty`, 0), t1_locked: integer(parsed.t1_locked, `${path}.t1_locked`, 0) }
-  if (result.frozen_cash > result.cash || result.t1_locked > result.held_qty) throw new Error(`存档 ${path} 的历史复核资源事实不一致`)
+  const result = { cash: money(parsed.cash, `${path}.cash`), frozen_cash: money(parsed.frozen_cash, `${path}.frozen_cash`), held_qty: integer(parsed.held_qty, `${path}.held_qty`, 0), t1_locked: integer(parsed.t1_locked, `${path}.t1_locked`, 0) }
+  if (BigInt(result.cash) < 0n || BigInt(result.frozen_cash) < 0n || BigInt(result.frozen_cash) > BigInt(result.cash) || result.t1_locked > result.held_qty) throw new Error(`存档 ${path} 的历史复核资源事实不一致`)
   return result
 }
 function parsePendingPlanEvent(value: unknown, path: string): PendingPlanEvent { const [tag, payload] = tagged(value, path); if (tag === "Accepted") { exact(payload, ["plan_id", "order_id", "trading_day"], `${path}.Accepted`); return { Accepted: { plan_id: integer(payload.plan_id, `${path}.Accepted.plan_id`, 0), order_id: orderId(payload.order_id, `${path}.Accepted.order_id`), trading_day: integer(payload.trading_day, `${path}.Accepted.trading_day`, 0) } } }; if (tag === "Filled") { exact(payload, ["plan_id", "order_id", "qty", "child_complete", "trading_day"], `${path}.Filled`); return { Filled: { plan_id: integer(payload.plan_id, `${path}.Filled.plan_id`, 0), order_id: orderId(payload.order_id, `${path}.Filled.order_id`), qty: integer(payload.qty, `${path}.Filled.qty`, 0), child_complete: boolean(payload.child_complete, `${path}.Filled.child_complete`), trading_day: integer(payload.trading_day, `${path}.Filled.trading_day`, 0) } } }; if (tag === "DayEnded") { exact(payload, ["plan_id", "trading_day"], `${path}.DayEnded`); return { DayEnded: { plan_id: integer(payload.plan_id, `${path}.DayEnded.plan_id`, 0), trading_day: integer(payload.trading_day, `${path}.DayEnded.trading_day`, 0) } } }; throw new Error(`存档 ${path}.${tag} 不是已知待应用计划事件`) }

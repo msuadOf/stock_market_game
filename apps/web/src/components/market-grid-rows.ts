@@ -1,3 +1,4 @@
+import { subtractMoney } from "../utils/money.ts";
 import type { Cents, MarketSnap } from "../types/engine.ts";
 import { STOCK_NAMES } from "../config/defaults.ts";
 import { priceChangePercent } from "../mobile/market-model.ts";
@@ -5,8 +6,8 @@ import { priceChangePercent } from "../mobile/market-model.ts";
 export interface MarketGridRow {
   code: string;
   name: string;
-  lastPrice: number;
-  changeAbs: number;
+  lastPrice: Cents;
+  changeAbs: Cents;
   changePct: number;
   _rawLastPrice: Cents;
   _rawLastClose: Cents;
@@ -30,12 +31,12 @@ export function buildMarketRows(
     if (!market) return [];
     const oldRow = previousByCode.get(code);
     if (oldRow?._source === market) return [oldRow];
-    const difference = market.last_price - market.last_close;
+    const difference = subtractMoney(market.last_price, market.last_close);
     return [{
       code,
       name: STOCK_NAMES[code] ?? code,
-      lastPrice: market.last_price / 100,
-      changeAbs: difference / 100,
+      lastPrice: market.last_price,
+      changeAbs: difference,
       changePct: priceChangePercent(market.last_price, market.last_close),
       _rawLastPrice: market.last_price,
       _rawLastClose: market.last_close,

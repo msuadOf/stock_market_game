@@ -28,9 +28,9 @@ fn sample_setup_json() -> Value {
             "code": "600101",
             "exchange": "Shanghai",
             "category": "MainBoard",
-            "initial_price": 1000,
+            "initial_price": "1000",
             "limit_pct": 0.10,
-            "tick": 1,
+            "tick": "1",
             "total_shares": "10000000",
             "float_shares": 0
         }],
@@ -38,7 +38,7 @@ fn sample_setup_json() -> Value {
             "retail_count": 2,
             "inst_count": 1,
             "hot_count": 1,
-            "retail_cash_median": 10_000_000
+            "retail_cash_median": "10000000"
         },
         "config": engine::GameConfig::proposed_defaults(),
         "strategy_params": {

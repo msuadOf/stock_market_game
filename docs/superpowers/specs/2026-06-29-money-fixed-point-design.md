@@ -1,7 +1,9 @@
 # 设计：engine `money` 模块 —— 定点货币（元×100=分）
 
 - **日期 (Date):** 2026-06-29
-- **状态 (Status):** 已批准（设计稿，待 TDD 实现）
+- **状态 (Status):** 历史批准稿；内部定点设计已实现，§4–5 的裸数字传输约定已由
+  [ADR-0031](../../decisions/0031-money-decimal-cents-wire.md) 取代为十进制分字符串，
+  不提供旧数字兼容；以下保留原设计证据。
 - **决策者 (Deciders):** msuad + Claude
 - **关联 (Related):** [ADR-0002](../../decisions/0002-engine-rust-wasm.md)（engine 用 Rust）、[ADR-0004](../../decisions/0004-frontend-state-redux-toolkit.md)（engine 持权威状态）
 

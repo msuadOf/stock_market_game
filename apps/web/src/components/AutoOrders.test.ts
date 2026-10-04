@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AutoOrderManager } from "./auto-order-manager.ts";
 function continuousPoint(price: number, tick = 1) {
-  return { code: "600101", tick, phase: "Continuous" as const, last_price: price, cumulative_volume: 0, bids: [], asks: [] };
+  return { code: "600101", tick, phase: "Continuous" as const, last_price: String(price), cumulative_volume: 0, bids: [], asks: [] };
 }
 
 function addSellTrigger(manager: AutoOrderManager) {
   return manager.add({
     code: "600101",
     type: "sellTrigger",
-    triggerPrice: 1_000,
+    triggerPrice: "1000",
     qty: 100,
     side: "Sell",
     enabled: true,

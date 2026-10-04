@@ -8,17 +8,17 @@ test("Given normalized continuous points, when an automatic order crosses its tr
   manager.add({
     code: "600101",
     type: "sellTrigger",
-    triggerPrice: 1_000,
+    triggerPrice: "1000",
     qty: 100,
     side: "Sell",
     enabled: true,
   });
 
   await manager.consumePoints([
-    { code: "600101", tick: 1, phase: "Continuous", last_price: 1_000, cumulative_volume: 100, bids: [], asks: [] },
-    { code: "600101", tick: 2, phase: "Continuous", last_price: 1_001, cumulative_volume: 100, bids: [], asks: [] },
+    { code: "600101", tick: 1, phase: "Continuous", last_price: "1000", cumulative_volume: 100, bids: [], asks: [] },
+    { code: "600101", tick: 2, phase: "Continuous", last_price: "1001", cumulative_volume: 100, bids: [], asks: [] },
   ]);
 
   assert.equal(submitted.length, 1);
-  assert.deepEqual(submitted[0], { PlaceLimit: { code: "600101", side: "Sell", price: { Fixed: 1_000 }, qty: 100 } });
+  assert.deepEqual(submitted[0], { PlaceLimit: { code: "600101", side: "Sell", price: { Fixed: "1000" }, qty: 100 } });
 });

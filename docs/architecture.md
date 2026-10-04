@@ -84,6 +84,10 @@ Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime
 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
 
 - 游戏状态是**可序列化的纯数据**（JSON 友好），不含函数、不含类实例的隐藏状态。
+- `Money` 内部为 `i64` 分，跨 JSON、WASM、Server、Tauri 与存档统一为规范十进制分
+  字符串。Web 使用 `BigInt` 运算后返回字符串，Redux 不存 `BigInt`；图表仅末端坐标
+  允许近似，原始报价不得丢失。`AccountingAmount` 仍是独立元字符串。见
+  [ADR-0031](decisions/0031-money-decimal-cents-wire.md)，不接受数字金额或建立兼容路径。
 - 持久化通过**单一数据访问层**（[`principles.md`](principles.md) 原则 4）进行：
   - 接口定义在适配层（`loadState` / `saveState`）。
   - 实现可替换：LocalStorage（前端）/ 文件或 DB（后端 / 桌面）。

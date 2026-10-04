@@ -277,7 +277,9 @@ pub struct DecisionChainDiagnostics {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct BeliefDebugSummary {
     pub method: Option<String>,
+    #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
     pub per_share_pessimistic_cents: i64,
+    #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
     pub per_share_optimistic_cents: i64,
     pub confidence_bp: u16,
     pub unavailable_reason: Option<String>,

@@ -94,9 +94,14 @@ const REPLAY_DAYS: u64 = 3;
 /// 新 fixture 将每股既有 1000 股及初始成本从 NPC 转给 Player，现金和股份不变，
 /// 作为开局可卖库存；真实 Player 卖单与自然 NPC 买单撮合，不预制造 Trade。
 /// 独立 capture、旧业务对照与摘要证据见 merge-characterization.md。
-const PINNED_EVENTS_FNV: u64 = 7_922_886_018_261_573_110;
-const PINNED_SAVE_MID_FNV: u64 = 9_809_656_468_401_244_634;
-const PINNED_SAVE_END_FNV: u64 = 15_011_441_865_679_768_707;
+/// Q01 的两个真实 producer 使用相同 fixture 与单 worker 分别链接 675ac4c 和当前
+/// engine；旧三锚完整复现。仅在已核对类型的 Money／持仓成本分 path 给原文数字
+/// token 加引号，新 events/mid/end 原字节全部精确复现，其他业务事实与顺序不变。
+/// 旧锚保留：7922886018261573110 / 9809656468401244634 / 15011441865679768707。
+/// 独立 FNV/SHA、逐 path 核验与真实业务 guards 见 money-wire-golden.md。
+const PINNED_EVENTS_FNV: u64 = 9_977_927_079_659_249_770;
+const PINNED_SAVE_MID_FNV: u64 = 9_397_357_771_902_842_944;
+const PINNED_SAVE_END_FNV: u64 = 10_556_944_033_955_451_089;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());

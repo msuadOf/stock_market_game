@@ -43,6 +43,7 @@ pub struct OrderLifecycle {
     pub lifetime_market_minutes: Option<u64>,
     pub lifetime_civil_seconds: Option<i64>,
     pub censored_reason: Option<&'static str>,
+    #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
     pub filled_value: i64,
 }
 
