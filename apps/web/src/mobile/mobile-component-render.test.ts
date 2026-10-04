@@ -6,9 +6,11 @@ import { createServer, type ViteDevServer } from "vite";
 import type { KlinePoint } from "../components/PriceChart.tsx";
 import type { MarketSnap, TradeEvent } from "../types/engine.ts";
 import type { MobileStockDetail as DetailComponent } from "./MobileStockDetail.tsx";
+import { initialMobileUiState, reduceMobileUi } from "./mobile-ui-state.ts";
 
 let vite: ViteDevServer;
 let MobileStockDetail: typeof DetailComponent;
+let MobileDetailLayer: typeof import("./MobileDetailLayer.tsx").MobileDetailLayer;
 
 before(async () => {
   vite = await createServer({
@@ -18,6 +20,7 @@ before(async () => {
     optimizeDeps: { noDiscovery: true },
   });
   ({ MobileStockDetail } = await vite.ssrLoadModule("/src/mobile/MobileStockDetail.tsx") as typeof import("./MobileStockDetail.tsx"));
+  ({ MobileDetailLayer } = await vite.ssrLoadModule("/src/mobile/MobileDetailLayer.tsx") as typeof import("./MobileDetailLayer.tsx"));
 });
 
 after(async () => {
@@ -32,6 +35,16 @@ const market: MarketSnap = {
   bids: [[999, 250], [998, 500]],
   asks: [[1_001, 500], [1_002, 1_000]],
 };
+
+test("审计G45：App共用详情层从自选打开会实际渲染，返回后撤下且保留自选", () => {
+  const list = reduceMobileUi(initialMobileUiState, { type: "switch-primary", tab: "watchlist" });
+  const detail = reduceMobileUi(list, { type: "open-detail", code: "600101" });
+  const children = createElement("span", null, "实际详情内容");
+  assert.match(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: detail, children })), /mobile-detail-page.*实际详情内容/);
+  const returned = reduceMobileUi(detail, { type: "back" });
+  assert.equal(returned.primaryTab, "watchlist");
+  assert.equal(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: returned, children })), "");
+});
 
 const candle: KlinePoint = {
   time: 0 as KlinePoint["time"],

@@ -62,6 +62,7 @@ import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./m
 import { yuan } from "./utils/format";
 import { orderPriceInputState, type LimitPriceChoice } from "./utils/symbolic-limit-order.ts";
 import { useMobileUiController } from "./app/useMobileUiController";
+import { MobileDetailLayer } from "./mobile/MobileDetailLayer.tsx";
 import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelection } from "./app/MarketRuntimeProvider.tsx";
 import {
   ClockMarker,
@@ -664,11 +665,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
         <>
-        {mobileTab === "market" && mobileDetail && (
-          <div className="mobile-detail-page">
+        <MobileDetailLayer ui={mobileUi}>
             <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
-          </div>
-        )}
+        </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
             <button key={tab} type="button" className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {

@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MOBILE_SPEED_OPTIONS, formatMeasuredSpeed, initialMobileUiState, mobilePrimaryTitle, mobileSpeedLabel, reduceMobileUi } from "./mobile-ui-state.ts";
 
+test("审计G45：详情返回保留行情或自选原列表身份", () => {
+  for (const tab of ["market", "watchlist"] as const) {
+    const list = reduceMobileUi(initialMobileUiState, { type: "switch-primary", tab });
+    const detail = reduceMobileUi(list, { type: "open-detail", code: "600101" });
+    const switched = reduceMobileUi(detail, { type: "open-detail", code: "600102" });
+    const trading = reduceMobileUi(switched, { type: "open-trade" });
+    const returned = reduceMobileUi(reduceMobileUi(trading, { type: "back" }), { type: "back" });
+    assert.equal(returned.primaryTab, tab);
+    assert.equal(returned.detailCode, null);
+  }
+});
+
 test("详情页的图表周期与信息标签互不重置", () => {
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600460" });
   const daily = reduceMobileUi(detail, { type: "select-period", period: "日K" });

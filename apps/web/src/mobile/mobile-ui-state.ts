@@ -69,7 +69,7 @@ export function reduceMobileUi(state: MobileUiState, action: MobileUiAction): Mo
     case "switch-primary":
       return { ...initialMobileUiState, primaryTab: action.tab };
     case "open-detail":
-      return { ...state, primaryTab: "market", detailCode: action.code, tradeSheetOpen: false };
+      return { ...state, detailCode: action.code, tradeSheetOpen: false };
     case "select-period":
       return { ...state, chartPeriod: action.period };
     case "select-info":
