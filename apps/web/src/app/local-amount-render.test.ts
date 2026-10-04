@@ -54,10 +54,10 @@ const snapshot: Snapshot = {
   active_daily_candles: {},
 };
 
-function renderView(view: ReactElement): string {
+function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   const state: RootState = {
     ...store.getState(),
-    snapshot: { snapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
+    snapshot: { snapshot: activeSnapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
     trades: { items: [{ seq: 1, code: "600101", price: 1_000, qty: 250, maker: 1, taker: 2 }] },
   };
   const testStore = configureStore({ reducer: () => state });
@@ -90,4 +90,14 @@ test("桌面逐笔与五档盘口以手显示权威股数，不把零股量舍�
   assert.match(book, /五档盘口（手）/);
   assert.match(book, /class="ob-qty">5<\/span>/);
   assert.match(book, /class="ob-qty">2\.5<\/span>/);
+});
+
+test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一靠近买一", () => {
+  for (const count of [1, 2, 5]) {
+    const active = structuredClone(snapshot);
+    active.markets["600101"].asks = Array.from({ length: count }, (_, index) => [1001 + index, 100]);
+    const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20, setKlineDays() {} }), active);
+    const rows = [...book.matchAll(/ob-row ob-ask[^>]*><span class="ob-label">卖(\d)<\/span><span class="ob-price[^"]*">([^<]+)</g)];
+    assert.deepEqual(rows.map(row => [Number(row[1]), row[2]]), Array.from({ length: count }, (_, index) => [count - index, ((1000 + count - index) / 100).toFixed(2)]));
+  }
 });

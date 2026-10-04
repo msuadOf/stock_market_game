@@ -110,7 +110,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, se
     <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close / 100} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} />
     {chartPeriod === "日K" && <div className="kline-period-bar">{[20, 60, 120, 240, MAX_DAILY_CANDLES].map((days) => <button key={days} className={`kline-period-btn ${klineDays === days ? "active" : ""}`} onClick={() => setKlineDays(days)}>{days}日</button>)}</div>}
     <div className="order-book"><div className="ob-title">五档盘口（手）</div><div className="ob-rows">
-      {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{5 - index}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>)}
+      {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{index + 1}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>).reverse()}
       <div className="ob-divider" />
       {market.bids.slice(0, 5).map((level, index) => <div key={`b${index}`} className="ob-row ob-bid"><span className="ob-label">买{index + 1}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>)}
     </div></div>
