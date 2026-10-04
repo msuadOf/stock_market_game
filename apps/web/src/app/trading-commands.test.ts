@@ -65,3 +65,29 @@ test("条件单先按活动规则预检，再复用现有 manager/Redux 登记",
   assert.equal(item.triggerPrice, 1000); assert.equal(item.qty, 100); assert.equal(item.side, "Buy");
   assert.equal(f.options.autoOrderMgrRef.current.list().at(-1)?.id, item.id); store.dispatch(clearAutoOrders());
 });
+
+test("G22：输入即刻产生字段错误，修正清除；买卖方向预检关联数量", { timeout: 10000 }, () => {
+  const f = fixture(); let commands = f.hook.render();
+  assert.deepEqual(commands.fieldErrors, {});
+  commands.setPriceText("1.234"); commands.setQtyText("非数字"); commands = f.hook.render();
+  assert.match(commands.fieldErrors.price!, /两位小数/);
+  assert.match(commands.fieldErrors.quantity!, /正整数股/);
+  assert.equal(commands.buildIntent("Buy"), null);
+  commands.setPriceText("10.00"); commands.setQtyText("50"); commands = f.hook.render();
+  assert.equal(commands.fieldErrors.price, undefined); assert.equal(commands.fieldErrors.quantity, undefined);
+  assert.equal(commands.buildIntent("Buy"), null);
+  assert.match(f.hook.render().fieldErrors.quantity!, /100 股的整数倍/);
+  assert.ok(commands.buildIntent("Sell"));
+  assert.equal(f.hook.render().fieldErrors.quantity, undefined);
+  commands.setAutoTrigger("0"); commands.setAutoQty("-1"); commands = f.hook.render();
+  assert.match(commands.autoFieldErrors.price!, /价格/); assert.match(commands.autoFieldErrors.quantity!, /正整数股/);
+});
+
+test("G68：配置替换后的委托证券只能从当前 activeSetup 选择", { timeout: 10000 }, () => {
+  const f = fixture(); f.hook.render();
+  const stock = { ...DEFAULT_SETUP.stocks[0]!, code: "300999", name: "当前证券", category: "ChiNext" as const };
+  f.options.activeSetup = { ...DEFAULT_SETUP, stocks: [stock] };
+  let commands = f.hook.render(); assert.equal(commands.form.tradeCode, "300999");
+  commands.setPriceChoice("highest"); commands = f.hook.render();
+  assert.deepEqual(commands.buildIntent("Buy"), { PlaceLimit: { code: "300999", side: "Buy", price: "Highest", qty: 100 } });
+});

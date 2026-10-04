@@ -15,9 +15,9 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
   const calls: string[] = [];
   let update!: (value: HostUpdate) => void, failure!: (value: HostFailure) => void;
   const host = commandHostFixture({
-    start: (onUpdate: typeof update, onFailure: typeof failure) => { calls.push("start"); update = onUpdate; failure = onFailure; },
-    stop: () => { calls.push("stop"); }, dispose: () => { calls.push("dispose"); },
-    setSpeed: () => { calls.push("speed"); }, setPausePreferences: async () => { calls.push("preferences"); },
+    start: async (onUpdate: typeof update, onFailure: typeof failure) => { calls.push("start"); update = onUpdate; failure = onFailure; },
+    stop: async () => { calls.push("stop"); }, dispose: async () => { calls.push("dispose"); },
+    setSpeed: async () => { calls.push("speed"); }, setPausePreferences: async () => { calls.push("preferences"); },
     load: async () => { calls.push("load"); }, submitIntent: async () => {},
   });
   const source = new InitialSaveSource<StrictSaveEnvelope>();
@@ -28,6 +28,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     hostUpdateRef: { current: () => { calls.push("update"); } }, fatalHostErrorRef: { current: () => { calls.push("failure"); } },
     startupTarget: { kind: "wasm" }, sessionSetup: DEFAULT_SETUP, speed: 1, pauseAfterClose: true, pauseBeforeOpen: false,
     TRADING_E2E_MODE: false, malformedProtocolFixture: () => false,
+    createSeed: () => 123456789n,
     setIndicatorCalculator: () => { calls.push("register"); return () => { calls.push("unregister"); }; },
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
@@ -51,7 +52,7 @@ test("停止共享会话先失效令牌再 stop，释放 registration/coordinato
   const refresh = f.ports.playerOrderRefreshGateRef.current.next();
   f.ports.autoOrderMgrRef.current = new AutoOrderManager(async () => {});
   f.ports.autoOrderMgrRef.current.clear = () => { f.calls.push("manager-clear"); };
-  f.runtime.stopCurrentSession();
+  await f.runtime.stopCurrentSession();
   assert.deepEqual(f.calls, ["stop", "unregister", "disconnect", "manager-clear", "dispose"]);
   assert.equal(f.ports.hostRef.current, null); assert.equal(f.ports.autoOrderMgrRef.current, null);
   assert.equal(f.ports.sessionReplacementGateRef.current.isCurrent(replacement), false);
@@ -65,7 +66,7 @@ test("StrictMode cleanup 后创建完成的宿主只 dispose，不向 Shell 写�
   const creating = new Promise<void>((done) => { entered = done; });
   const f = fixture({ createHost: () => new Promise((done) => { resolve = done; entered(); }) });
   const starting = f.runtime.start(); await creating;
-  f.runtime.dispose(); resolve(f.host); await starting;
+  await f.runtime.dispose(); resolve(f.host); await starting;
   assert.equal(f.ports.hostRef.current, null); assert.equal(f.calls.includes("start"), false); assert.equal(f.calls.includes("ready"), false);
   assert.equal(f.calls.filter((value) => value === "dispose").length, 1);
 });
@@ -100,7 +101,7 @@ test("初始化 load 或偏好确认尚未完成时 cleanup，晚到确认不能
 
     const starting = f.runtime.start();
     await entered;
-    f.runtime.dispose();
+    await f.runtime.dispose();
     const callsAfterCleanup = [...f.calls];
     complete();
     await starting;
@@ -151,12 +152,61 @@ test("stop 抛错仍释放 indicator、协议与宿主资源并保留原错误",
   const f = fixture();
   await f.runtime.start();
   const stopError = new Error("宿主 stop 失败");
-  f.host.stop = () => { f.calls.push("stop-failed"); throw stopError; };
+  f.host.stop = async () => { f.calls.push("stop-failed"); throw stopError; };
   f.calls.length = 0;
 
-  assert.throws(() => f.runtime.stopCurrentSession(), (error) => error === stopError);
+  await assert.rejects(f.runtime.stopCurrentSession(), (error) => error === stopError);
 
   assert.deepEqual(f.calls, ["stop-failed", "unregister", "disconnect", "dispose"]);
   assert.equal(f.ports.hostRef.current, null);
   assert.equal(f.ports.autoOrderMgrRef.current, null);
+});
+
+test("G20：无存档新局使用熵端口，E2E固定seed与读档seed不消耗熵", { timeout: 10000 }, async () => {
+  for (const mode of ["new", "e2e", "save"] as const) {
+    let seeds = 0; let seen: bigint | null = null;
+    const f = fixture({ createSeed: () => { seeds++; return 9007199254740999n; }, TRADING_E2E_MODE: mode === "e2e" });
+    if (mode === "save") f.source.select({ ...commandDayEndArchiveFixture(), seed: "9007199254740993" });
+    f.ports.createHost = async (_setup, seed) => { seen = seed; return f.host; };
+    if (mode === "e2e") {
+      Object.assign(f.host, { stepOnceForE2E: async () => 0 });
+      f.host.tick = () => 0;
+      Object.assign(globalThis, { window: {} });
+    }
+    await createSessionHostLifecycle(f.ports).start();
+    assert.equal(seeds, mode === "new" ? 1 : 0);
+    assert.equal(seen, mode === "new" ? 9007199254740999n : mode === "save" ? 9007199254740993n : 42n);
+  }
+});
+
+test("G40：speed/start异步确认前不得ready，dispose失败不能消失", { timeout: 10000 }, async () => {
+  let confirm!: () => void; let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const f = fixture();
+  f.host.setSpeed = async () => { entered(); await new Promise<void>((resolve) => { confirm = resolve; }); };
+  const starting = f.runtime.start(); await waiting;
+  assert.equal(f.calls.includes("start"), false); assert.equal(f.calls.includes("ready"), false);
+  confirm(); await starting;
+  f.host.dispose = async () => { throw new Error("释放 IPC 失败"); };
+  await assert.rejects(f.runtime.dispose(), /释放 IPC 失败/);
+});
+
+test("G20：0 seed无损进入host，熵失败显错且不创建或ready", { timeout: 10000 }, async () => {
+  const zero = fixture({ createSeed: () => 0n });
+  let seen: bigint | null = null;
+  zero.ports.createHost = async (_setup, seed) => { seen = seed; return zero.host; };
+  await createSessionHostLifecycle(zero.ports).start();
+  assert.equal(seen, 0n); assert.equal(zero.calls.includes("ready"), true);
+  const failed = fixture({ createSeed: () => { throw new Error("crypto 熵获取被拒绝"); } });
+  await failed.runtime.start();
+  assert.equal(failed.calls.includes("create"), false); assert.equal(failed.calls.includes("ready"), false);
+  assert.ok(failed.calls.some((call) => call.includes("crypto 熵获取被拒绝")));
+});
+
+test("宿主callback同步传回协议失败，不将false变成void或继续消费旧会话", { timeout: 10000 }, async () => {
+  const f = fixture({ hostUpdateRef: { current: () => false } });
+  await f.runtime.start();
+  assert.equal(f.update()({} as HostUpdate), false);
+  await f.runtime.dispose();
+  assert.equal(f.update()({} as HostUpdate), false);
 });

@@ -1088,3 +1088,15 @@
 
 .layout-mobile .new-game-control { display: none; }
 .layout-mobile .new-game-panel { margin: 8px 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .layout-mobile .order-panel.mobile-sheet,
+  .layout-mobile .sheet-mask {
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+}
+
+.field-error { display: block; color: #a62020; font-size: .85em; }
+.auto-form > label { min-width: 0; flex: 1; }
+.auto-form > label .auto-input { width: 100%; }

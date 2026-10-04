@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { Snapshot } from "../types/engine.ts";
 import { store, type RootState } from "../store/store.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
 
 let vite: ViteDevServer;
 let views: typeof import("./LocalRefreshViews.tsx");
@@ -111,4 +112,18 @@ test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口�
     assert.match(html, new RegExp(`<td class="num">${cost.replace(".", "\\.")}<\\/td>`));
     assert.ok(html.includes(`${pnl}元`), html);
   }
+});
+
+test("G68：快捷涨跌停从当前setup读取非默认证券的创业板规则", { timeout: 10000 }, () => {
+  const active = structuredClone(snapshot);
+  active.markets = { "300999": active.markets["600101"]! };
+  const setup = { ...DEFAULT_SETUP, stocks: [{ ...DEFAULT_SETUP.stocks[0]!, code: "300999", category: "ChiNext" as const }] };
+  const html = renderView(createElement(views.TradeMarketControls, { activeSetup: setup, tradeCode: "300999", setPriceText() {}, setQtyText() {} }), active);
+  assert.match(html, /跌停 8\.00/); assert.match(html, /涨停 12\.00/);
+  assert.doesNotMatch(html, /缺少.*交易规则/);
+});
+
+test("G65：行情分类SSR公开当前分类而非只有active class", { timeout: 10000 }, () => {
+  const html = renderView(createElement(views.ConnectedMarketPanel, { onSelect() {} }));
+  assert.match(html, /aria-current="page"[^>]*>自选/);
 });

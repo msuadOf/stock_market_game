@@ -127,6 +127,16 @@ test("分时图真实渲染压缩午休后的统一时间轴和权威时间槽",
   assert.match(html, /data-auction-volume-line-count="1"/);
 });
 
+test("G32：价格SVG、昨收中轴和0%标签共用价格绘图区，不含时间轴", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口");
+  assert.match(html, /class="msd-price-plot">[\s\S]*?class="msd-scale msd-scale-mid"[\s\S]*?<svg[\s\S]*?<\/svg><\/div><div class="msd-time-axis"/);
+});
+
+test("G14：逐笔时间取自身tick，缺失明确显示而不借用当前时钟", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { trades: [{ ...trade, tick: 901 }, { ...trade, seq: 2, tick: 960 }, { ...trade, seq: 3 }] });
+  assert.match(html, /09:30:01/); assert.match(html, /09:31:00/); assert.match(html, /成交时间缺失/);
+});
+
 
 test("分时 projection 经真实组件保留 null 竞价量、阶段独立高度与算术均价", () => {
   const html = renderDetail("分时", "盘口", {
@@ -137,9 +147,15 @@ test("分时 projection 经真实组件保留 null 竞价量、阶段独立高�
   assert.match(html, /均价:9\.00/);
   assert.match(html, /data-intraday-signature="3:continuous:120:8:200"/);
   assert.match(html, /data-auction-count="2"/);
-  const heights = [...html.matchAll(/<i[^>]*style="left:[^;]+;height:([^%]+)%"/g)].map(match => Number(match[1]));
+  const heights = [...html.matchAll(/<rect class="msd-minute-volume-mark [^"]+"[^>]*height="([^%]+)%"/g)].map(match => Number(match[1]));
   assert.deepEqual(heights, [100, 50, 50, 100]);
   assert.match(html, /msd-auction-dot/);
+});
+
+test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变半像素槽宽", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [], minutePoints: [{ time: 0, value: 11, volume: 100, buy: true }, { time: 1, value: 10, volume: 200, buy: false }] });
+  assert.match(html, /class="msd-minute-volume-mark rise"[^>]*width="0\.5"[^>]*fill="none"[^>]*stroke="var\(--msd-rise\)"/);
+  assert.match(html, /class="msd-minute-volume-mark fall"[^>]*width="0\.5"[^>]*fill="var\(--msd-fall\)"[^>]*stroke="none"/);
 });
 
 test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {

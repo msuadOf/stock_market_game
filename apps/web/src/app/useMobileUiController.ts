@@ -1,5 +1,6 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import { STOCK_NAMES } from "../config/defaults";
+import { MobileDetailFocus } from "./mobile-detail-focus.ts";
 import {
   initialMobileUiState,
   reduceMobileUi,
@@ -15,6 +16,12 @@ export function useMobileUiController(orientation: "portrait" | "landscape") {
   const mobileDetail = mobileUi.detailCode !== null;
   const tradeSheetRef = useRef<HTMLDivElement | null>(null);
   const tradeSheetTriggerRef = useRef<HTMLElement | null>(null);
+  const detailFocusRef = useRef(new MobileDetailFocus());
+
+  useLayoutEffect(() => {
+    if (orientation !== "portrait") return;
+    detailFocusRef.current.apply(mobileDetail, () => document.querySelector<HTMLElement>(mobileDetail ? ".msd-back" : "#section-market"));
+  }, [mobileDetail, orientation]);
 
   useEffect(() => {
     document.title = mobileDetail
@@ -70,7 +77,11 @@ export function useMobileUiController(orientation: "portrait" | "landscape") {
 
   function showDetailInfo(tab: MobileInfoTab) {
     dispatchMobileUi({ type: "select-info", tab });
-    requestAnimationFrame(() => document.querySelector(".msd-info-tabs")?.scrollIntoView({ block: "start" }));
+  }
+
+  function openDetail(code: string) {
+    detailFocusRef.current.remember(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    dispatchMobileUi({ type: "open-detail", code });
   }
 
   return {
@@ -84,5 +95,6 @@ export function useMobileUiController(orientation: "portrait" | "landscape") {
     openTradeSheet,
     closeTradeSheet,
     showDetailInfo,
+    openDetail,
   };
 }

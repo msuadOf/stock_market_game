@@ -7,6 +7,7 @@ import { createRemoteHost } from "../host/remote-host.ts";
 import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";
 import { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";
 import { DEFAULT_SEED } from "../config/defaults.ts";
+import { createNewSessionSeed } from "../config/session-seed.ts";
 import type { SessionSetup } from "../types/engine.ts";
 import { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
@@ -24,7 +25,7 @@ export interface SessionHostLifecyclePorts {
   sessionReplacementGateRef: MutableRefObject<SessionReplacementGate>;
   saveSelectionGenerationRef: MutableRefObject<number>;
   playerOrderRefreshGateRef: MutableRefObject<PlayerOrderRefreshGate>;
-  hostUpdateRef: MutableRefObject<(update: HostUpdate) => void>;
+  hostUpdateRef: MutableRefObject<(update: HostUpdate) => void | boolean>;
   fatalHostErrorRef: MutableRefObject<(failure: string | HostFailure) => void>;
   startupTarget: StartupTarget;
   sessionSetup: SessionSetup;
@@ -37,6 +38,7 @@ export interface SessionHostLifecyclePorts {
   connectProtocol(host: EngineHost): void;
   disconnectProtocol(): void;
   createHost(setup: SessionSetup, seed: bigint, target: StartupTarget): Promise<EngineHost>;
+  createSeed?(): bigint;
   checkWasmEnvironment(): void;
   isDocumentHidden(): boolean;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
@@ -61,11 +63,13 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
     isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
+    createSeed = createNewSessionSeed,
   } = ports;
   let cancelled = false;
   let ownedHost: EngineHost | null = null;
   let unsetIndicatorCalculator: (() => void) | null = null;
-  const releaseOwnedHost = () => {
+  let releasingHost = Promise.resolve();
+  const releaseOwnedHost = async () => {
     unsetIndicatorCalculator?.();
     unsetIndicatorCalculator = null;
     if (hostRef.current === ownedHost) hostRef.current = null;
@@ -74,14 +78,21 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     autoOrderMgrRef.current = null;
     const host = ownedHost;
     ownedHost = null;
-    host?.dispose();
+    if (host) releasingHost = host.dispose();
+    await releasingHost;
   };
-  const stopCurrentSession = () => {
+  const stopCurrentSession = async () => {
     cancelled = true;
     saveSelectionGenerationRef.current += 1;
     sessionReplacementGateRef.current.invalidate();
     playerOrderRefreshGateRef.current.invalidate();
-    try { ownedHost?.stop(); } finally { releaseOwnedHost(); }
+    let stopFailure: unknown;
+    try { await ownedHost?.stop(); } catch (failure) { stopFailure = failure; }
+    try { await releaseOwnedHost(); } catch (failure) {
+      if (stopFailure !== undefined) throw new AggregateError([stopFailure, failure], "停止宿主与释放资源均失败");
+      throw failure;
+    }
+    if (stopFailure !== undefined) throw stopFailure;
   };
   const playerOrderRefreshGate = playerOrderRefreshGateRef.current;
   const start = async () => {
@@ -94,12 +105,12 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       });
       if (cancelled) return;
       const setup = initialSlot === null ? sessionSetup : initialSlot.setup;
-      const seed = initialSlot === null ? DEFAULT_SEED : BigInt(initialSlot.seed);
+      const seed = initialSlot === null ? (TRADING_E2E_MODE ? DEFAULT_SEED : createSeed()) : BigInt(initialSlot.seed);
       const host = await createHost(setup, seed, startupTarget);
       ownedHost = host;
       if (cancelled) {
         // React StrictMode 会执行一次探测性挂载；异步创建完成后必须停掉该宿主，避免泄漏 Worker/线程池。
-        host.dispose();
+        await releaseOwnedHost();
         return;
       }
       if (initialSlot !== null) await host.load(initialSlot);
@@ -133,13 +144,15 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         if (!cancelled) setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
       });
       // 同步 RTK autoOrders → Manager
-      host.setSpeed(speed);
+      await host.setSpeed(speed);
+      if (cancelled) return;
       await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
       if (cancelled) return;
-      host.start(
-        (update) => { if (!cancelled && host === hostRef.current) hostUpdateRef.current(update); },
+      await host.start(
+        (update) => !cancelled && host === hostRef.current ? hostUpdateRef.current(update) : false,
         (failure) => { if (!cancelled && host === hostRef.current) fatalHostErrorRef.current(failure); },
       );
+      if (cancelled) return;
       if (TRADING_E2E_MODE) {
         const controlledHost = host as EngineHost & Partial<WorkerE2EHost>;
         if (typeof controlledHost.stepOnceForE2E !== "function") {
@@ -147,8 +160,9 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         }
         let controlledTick = host.tick();
         window.__STOCK_GAME_E2E__ = {
-          pause() {
-            host.stop();
+          async pause() {
+            await host.stop();
+            if (cancelled || host !== hostRef.current) return;
             onRunning(false);
           },
           async advanceToTick(target) {
@@ -167,9 +181,11 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
       // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
       // 避免隐藏页持续以 720x/最快占满 CPU。
-      if (isDocumentHidden()) host.stop();
+      if (isDocumentHidden()) await host.stop();
+      if (cancelled) return;
       if (TRADING_E2E_MODE) {
-        host.stop();
+        await host.stop();
+        if (cancelled) return;
         onRunning(false);
       } else {
         onRunning(true);
@@ -179,8 +195,11 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         setReady(true);
       }
     } catch (e) {
+      if (cancelled) setNotice(`已结束会话的启动或资源释放失败：${e instanceof Error ? e.message : String(e)}；请反馈此错误。`);
       if (!cancelled) {
-        releaseOwnedHost();
+        try { await releaseOwnedHost(); } catch (cleanupFailure) {
+          setNotice(`初始化资源释放失败：${cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure)}；请反馈此错误。`);
+        }
         onRunning(false);
         setError(startupTarget.kind === "tauri"
           ? fatalDesktopInitializationMessage(e)
@@ -190,14 +209,14 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
     }
   };
-  const dispose = () => {
+  const dispose = async () => {
     cancelled = true;
     dayEndPersistenceRef.current.invalidate();
     saveSelectionGenerationRef.current += 1;
     sessionReplacementGateRef.current.invalidate();
     if (TRADING_E2E_MODE) delete window.__STOCK_GAME_E2E__;
-    releaseOwnedHost();
     playerOrderRefreshGate.invalidate();
+    await releaseOwnedHost();
   };
   return { start, stopCurrentSession, releaseOwnedHost, dispose };
 }
@@ -208,7 +227,7 @@ function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: Sta
 }
 
 interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkWasmEnvironment" | "isDocumentHidden"> {
-  stopStartupRef: MutableRefObject<() => void>;
+  stopStartupRef: MutableRefObject<() => Promise<void>>;
   returningToStartupRef: MutableRefObject<boolean>;
   pausePreferencesReady: boolean;
   setHostBaselineReady(ready: boolean): void;
@@ -227,7 +246,7 @@ export function useSessionHostLifecycle(options: Options): void {
     if (!pausePreferencesReady || options.returningToStartupRef.current) return undefined;
     options.setHostBaselineReady(false);
     void lifecycle.start();
-    return lifecycle.dispose;
+    return () => { void lifecycle.dispose().catch((failure) => options.setError(`释放宿主失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈此错误。`)); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator]);
 }
