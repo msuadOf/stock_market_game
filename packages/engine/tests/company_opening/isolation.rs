@@ -48,7 +48,7 @@ fn trading_session() -> GameSession {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
-        float_allocation: FloatAllocation::Random,
+        float_allocation: FloatAllocation::random(),
         start_date: d("2030-01-01"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     };

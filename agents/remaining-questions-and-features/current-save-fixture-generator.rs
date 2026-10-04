@@ -27,6 +27,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("旧 fixture 的 setup 不是对象")?;
     setup_object.insert("company_operations".to_owned(), Value::Null);
     setup_object.insert("groups".to_owned(), Value::Array(Vec::new()));
+    setup_object.insert(
+        "float_allocation".to_owned(),
+        serde_json::json!({
+            "between_kinds": { "Percentage": { "retail": 0.4, "inst": 0.5, "hot": 0.1 } },
+            "within_kind": "Random"
+        }),
+    );
     let setup: SessionSetup = serde_json::from_value(setup_value)?;
 
     if seed != 666_959_854

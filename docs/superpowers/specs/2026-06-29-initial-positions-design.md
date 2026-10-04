@@ -1,7 +1,7 @@
 # 设计：engine 初始持仓 —— 流通盘分配（让市场「活」起来）
 
 - **日期 (Date):** 2026-06-29
-- **状态 (Status):** 已批准（设计稿，待 TDD 实现）
+- **状态 (Status):** 已批准（实现中，待验收）
 - **决策者 (Deciders):** msuad + Claude
 - **关联 (Related):** [`session` 设计](2026-06-29-session-design.md)、[ADR-0005](../../decisions/0005-unified-engine-three-deployments.md)（统一账户、确定性 RNG）。
 
@@ -22,14 +22,8 @@ msuad 2026-06-29 定调：**初始持仓**——把每只股票的流通盘在 s
 ## 2. 核心决策
 
 1. **`StockSpec` 增加 `float_shares: u32`**：每只股票的流通盘总量。
-2. **新增 `FloatAllocation`**：
-   ```rust
-   pub enum FloatAllocation {
-       Random,                              // 默认：所有 NPC 随机分配（权重随机，筹码守恒）
-       ByKind { retail: f64, inst: f64, hot: f64 }, // 三类各占比例（类内随机）
-   }
-   ```
-   默认 `Random`。`ByKind` 比例之和≈1（构造校验；运行时按「有 NPC 的种类」归一化）。
+2. **新增 `FloatAllocation`**：类间和类内方式独立配置。类间可随机，或配置散户、机构、游资比例；类内可随机，或在该类 NPC 间等比例分配。
+   默认类间按散户 45%、机构 53%、游资 2% 分配，类内等比例。比例字段是权重，运行时按有 NPC 的类别归一化；不存在的类别会剔除后重新归一化。
 3. **`SessionSetup` 增加 `float_allocation: FloatAllocation`**。
 4. **`new()` 自动分配**：若 `float_shares > 0` 且有 NPC，按 `float_allocation` 把每只股票流通盘分配给 NPC；玩家**0 持仓**（新进场）。`float_shares == 0` 时不分配（保留「设精确仓位」给加载存档路径）。
 5. **筹码守恒**：所有 NPC 对某股票的持仓之和 == 该股票 `float_shares`（绝不超发/凭空）。
@@ -40,18 +34,14 @@ msuad 2026-06-29 定调：**初始持仓**——把每只股票的流通盘在 s
 
 ## 3. 分配算法（确定性、筹码守恒）
 
-### Random（默认）
-1. 收集所有 NPC 的 AccountId（升序，确定性顺序），`n` 个。
-2. 每个 NPC 抽随机权重 `w_i = rng.next_f64()`（`>0` 加 epsilon 防零）。
-3. `total_w = Σw_i`。
-4. 逐 NPC：`q_i = round(float × w_i / total_w)`（f64 算权重归一，最终落 u32 量），clamp 到剩余量。
-5. **最后一个 NPC 拿全部剩余** → `Σq_i == float`（精确守恒）。
+### 类间 Percentage / Random
+1. 类间 Percentage 按有 NPC 的类别归一化配置权重；最后一个正权重类别取得整数舍入余量。类间 Random 使用种子化随机权重。
+2. 类别缺少 NPC 时不参与分配，其配置比例归一给其余类别。
 
-### ByKind { retail, inst, hot }
-1. 按「有 NPC 的种类」归一化比例（某类 0 个 NPC → 其比例分摊给其余类）。
-2. 每类分到 `kind_float = float × 归一化比例`。
-3. 类内用 Random 同款方法分给该类 NPC（筹码在类内守恒）。
-4. 各类合计 == float。
+### 类内 EqualPercentage / Random
+1. 类内 EqualPercentage 在该类账户间等分股数；无法整除的余股按 AccountId 升序逐股分配。
+2. 类内 Random 使用种子化随机权重；散户随机分配给部分账户，以保留稀疏持仓。
+3. 每类分配额在类内精确守恒，因此各类别合计仍等于 `float_shares`。低于账户数的股数允许部分 NPC 持仓为零。
 
 > f64 仅用于「权重归一/比例」，最终量是 u32；这是**股数分配**，非金额，不违反 money 模块「金额不存 f64」铁律。
 
@@ -68,10 +58,10 @@ pub struct StockSpec {
     pub float_shares: u32,        // 新增：流通盘
 }
 
-// 新增：
-pub enum FloatAllocation {
-    Random,
-    ByKind { retail: f64, inst: f64, hot: f64 },
+// 新增：类间 Percentage 配有三类比例，类内 EqualPercentage 或 Random。
+pub struct FloatAllocation {
+    pub between_kinds: BetweenKindDistribution,
+    pub within_kind: WithinKindDistribution,
 }
 
 // SessionSetup 增加：
@@ -97,7 +87,7 @@ impl GameSession {
 
 ## 5. 错误处理（铁律二）
 
-- `FloatAllocation::ByKind` 比例非法（负值/非有限）→ 构造期/session 校验 → `SessionError::InvalidSetup`，绝不静默用默认。
+- `BetweenKindDistribution::Percentage` 比例非法（负值/非有限）→ 构造期/session 校验 → `SessionError::InvalidSetup`，绝不静默用默认。
 - 分配用整数 checked 运算防溢出（`qty × price.cents()` 用 i64 checked）。
 - **绝不**超发（`Σq_i == float` 强守恒）、绝不静默截断。
 - `float_shares==0` → 不分配（合法，留给加载存档路径），不报错。
@@ -116,10 +106,10 @@ impl GameSession {
 3. **确定性**：同种子两次 new() → 各 NPC 持仓完全相同。
 4. **成本价正确**：某 NPC 持仓的 `cost_price == initial_price`、`invested_cents == qty × initial_price.cents()`、`t1_locked == 0`。
 5. **float_shares==0 不分配**：`float_shares=0` → 所有账户 0 持仓（兼容加载存档路径）。
-6. **ByKind 比例**：`ByKind{retail:0.2,inst:0.5,hot:0.3}` → 三类持仓总量≈2:5:3（容差，因整数取整）。
-7. **ByKind 缺类**：某类 0 个 NPC → 其比例分摊给其余类，筹码仍守恒。
+6. **类间 Percentage 比例**：配置散户、机构、游资权重 → 三类持仓总量符合归一后权重，整数股数严格守恒。
+7. **类间 Percentage 缺类**：某类 0 个 NPC → 其比例分摊给其余类，筹码仍守恒。
 8. **市场转活（集成）**：分配后跑若干 step → 出现 `Event::Trade`（NPC 有持仓可卖 → 卖盘有货 → 成交）。**这是「缺口已修」的端到端验证。**
-9. **非法比例**：`ByKind` 负值 → `InvalidSetup`。
+9. **非法比例**：类间 `Percentage` 负值 → `InvalidSetup`。
 10. **grant_position 单测**：直接设仓位 → invested/recovered/cost 正确。
 
 ## 8. 文件布局

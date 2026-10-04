@@ -42,6 +42,19 @@ test("存档运行时校验边界保留必填权威状态，不保存旧 profile
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
 })
 
+test("存档流通盘设置完整保存类间与类内方式，并拒绝旧 shape", () => {
+  const save = currentSaveFixture()
+  const setup = save.setup as Record<string, unknown>
+  assert.deepEqual(setup.float_allocation, {
+    between_kinds: { Percentage: { retail: 1, inst: 0, hot: 0 } },
+    within_kind: "Random",
+  })
+  const oldShape = structuredClone(save)
+  const oldSetup = oldShape.setup as Record<string, unknown>
+  oldSetup.float_allocation = { ByKind: { retail: 1, inst: 0, hot: 0 } }
+  assert.throws(() => parseSaveSlot(oldShape), /setup\.float_allocation\.between_kinds/)
+})
+
 test("存档 Money 保留完整 i64 分值并拒绝旧 number 编码", { timeout: 10_000 }, () => {
   for (const cash of ["0", "9007199254740993", "9223372036854775807"]) {
     const save = currentSaveFixture()

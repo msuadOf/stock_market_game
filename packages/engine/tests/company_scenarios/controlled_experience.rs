@@ -13,11 +13,7 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     };
     setup.auction_ticks = 0;
     setup.closing_auction_ticks = 0;
-    setup.float_allocation = FloatAllocation::ByKind {
-        retail: 0.0,
-        inst: 1.0,
-        hot: 0.0,
-    };
+    setup.float_allocation = FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
     let mut fresh = GameSession::new(setup, SEED).unwrap();
     for _ in 0..1 {
         fresh.step().expect("healthy step");

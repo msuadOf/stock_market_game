@@ -203,11 +203,12 @@ fn matrix_setup() -> SessionSetup {
         closing_auction_ticks: 180,
         history_len: 20,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.45,
-            inst: 0.53,
-            hot: 0.02,
-        },
+        float_allocation: FloatAllocation::class_percentages(
+            0.45,
+            0.53,
+            0.02,
+            engine::WithinKindDistribution::Random,
+        ),
         // 冻结日历与双时钟的默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -268,11 +269,12 @@ fn compressed_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.45,
-            inst: 0.53,
-            hot: 0.02,
-        },
+        float_allocation: FloatAllocation::class_percentages(
+            0.45,
+            0.53,
+            0.02,
+            engine::WithinKindDistribution::Random,
+        ),
         // 冻结日历与双时钟的默认开局日期（与 matrix 场景一致的基准语义）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -379,11 +381,11 @@ mod tests {
         );
         assert_eq!(setup.history_len, 20);
         assert!(setup.t1_enabled);
-        match setup.float_allocation {
-            engine::FloatAllocation::ByKind { retail, inst, hot } => {
+        match setup.float_allocation.between_kinds {
+            engine::BetweenKindDistribution::Percentage { retail, inst, hot } => {
                 assert_eq!((retail, inst, hot), (0.45, 0.53, 0.02));
             }
-            engine::FloatAllocation::Random => panic!("matrix 必须使用 ByKind 浮筹分配"),
+            engine::BetweenKindDistribution::Random => panic!("matrix 必须使用按比例浮筹分配"),
         }
     }
 

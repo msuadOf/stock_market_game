@@ -53,7 +53,7 @@ fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        float_allocation: FloatAllocation::Random,
+        float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso(start_date).expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }

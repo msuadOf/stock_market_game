@@ -5121,7 +5121,7 @@ mod chain_restructure_tests {
             closing_auction_ticks: 10,
             history_len: 5,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         };

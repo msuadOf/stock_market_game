@@ -77,11 +77,7 @@ fn contract_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.4,
-            inst: 0.5,
-            hot: 0.1,
-        },
+        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
     }

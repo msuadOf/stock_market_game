@@ -23,13 +23,13 @@ function fixture() {
     dayEndFileTargetRef: { current: null }, playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
     speedMetricsLoadInProgressRef: { current: false }, speedMetricsRequestGateRef: { current: new SpeedMetricsRequestGate() },
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
-    activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false,
+    activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation,
     loadFromFile: async () => archive, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
     getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
     setSessionSetup: (value) => { assert.equal(typeof value, "object"); setup = typeof value === "function" ? value(DEFAULT_SETUP) : value; calls.push("session-setup"); },
-    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); },
+    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); }, setFloatAllocationDraft: () => { calls.push("allocation-draft"); },
     setStartDateError: (value) => { calls.push(`date-error:${String(value)}`); }, setSpeedMetricsPollingGeneration: (value) => { calls.push(`poll:${value}`); },
     setSpeedMetrics: (value) => { calls.push(`metrics:${value}`); }, setSpeedMetricsError: (value) => { calls.push(`metrics-error:${value}`); },
   };
@@ -60,7 +60,7 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
       assert.equal(f.ports.playerOrderRefreshGateRef.current.isCurrent(refresh), false); f.calls.push("load");
     };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "allocation-draft", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
   }
@@ -91,6 +91,7 @@ test("新局日期错误不进入替换；合法新局只请求重建并保留�
   f.calls.length = 0; f.ports.startDateDraft = "2031-02-03"; await createSaveCommands(f.ports).newGame();
   assert.deepEqual(f.calls, ["date-error:null", "orders-clear", "error:null", "ready:false", "session-setup"]);
   assert.equal(f.setup()?.start_date, "2031-02-03"); assert.equal(f.setup()?.config.price_cage_enabled, false);
+  assert.deepEqual(f.setup()?.float_allocation, f.ports.floatAllocationDraft);
   let reads = 0; assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { reads++; return f.archive; }), null); assert.equal(reads, 0);
 });
 
@@ -111,7 +112,7 @@ test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同�
     f.calls.length = 0;
     f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "allocation-draft", "orders-refresh"]);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/);
   }
 });

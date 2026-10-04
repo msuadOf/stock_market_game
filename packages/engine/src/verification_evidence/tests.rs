@@ -826,7 +826,7 @@ fn civil_protocol_session() -> ProtocolSession {
             closing_auction_ticks: 2,
             history_len: 20,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: CivilDate::from_iso("2030-01-05").unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
         },

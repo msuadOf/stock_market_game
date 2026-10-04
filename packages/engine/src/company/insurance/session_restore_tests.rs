@@ -117,7 +117,7 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
             closing_auction_ticks: 0,
             history_len: 5,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: date("2030-01-05"),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.into(),
         },

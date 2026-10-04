@@ -113,7 +113,7 @@ mod tests {
                 "hot": {"lookback": 3, "trend_threshold": 0.01, "order_size": 300}
             },
             "ticks_per_day": 30, "auction_ticks": 0, "closing_auction_ticks": 0,
-            "history_len": 20, "t1_enabled": true, "float_allocation": "Random",
+            "history_len": 20, "t1_enabled": true, "float_allocation": { "between_kinds": "Random", "within_kind": "Random" },
             "start_date": "2030-01-01", "simulation_policy_id": engine::SIMULATION_POLICY_ID
         })
     }

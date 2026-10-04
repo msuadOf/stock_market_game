@@ -52,7 +52,7 @@ fn setup(retail_count: u32) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        float_allocation: engine::FloatAllocation::Random,
+        float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }

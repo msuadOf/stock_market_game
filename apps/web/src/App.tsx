@@ -21,6 +21,7 @@ import { DEFAULT_SETUP, STOCK_NAMES } from "./config/defaults";
 import { SessionControlCommands } from "./app/session-control-commands.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
+import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { StartupScreen } from "./app/StartupScreen.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
@@ -89,7 +90,7 @@ const INITIAL_SESSION_SETUP: SessionSetup = TRADING_E2E_MODE
   ? {
       ...DEFAULT_SETUP,
       npcs: { ...DEFAULT_SETUP.npcs, retail_count: 0, inst_count: 0, hot_count: 0 },
-      float_allocation: "Random",
+      float_allocation: { between_kinds: "Random", within_kind: "Random" },
       ticks_per_day: 30,
       auction_ticks: 9,
       closing_auction_ticks: 3,
@@ -151,6 +152,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const [activeSetup, setActiveSetup] = useState<SessionSetup>(sessionSetup);
   const [startDateDraft, setStartDateDraft] = useState(sessionSetup.start_date);
   const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(sessionSetup.config.price_cage_enabled);
+  const [floatAllocationDraft, setFloatAllocationDraft] = useState(sessionSetup.float_allocation);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
@@ -300,7 +302,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
-    setIndicatorCalculator, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState,
+    setIndicatorCalculator, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setDeliveryModes, setDeliveryModeState,
     setNotice, setReady, setError, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
     disconnectProtocol() {
       companyCoordinatorRef.current?.dispose();
@@ -347,9 +349,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef,
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
     resetMarketHistory, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
-    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setStartDateError, setSpeedMetricsPollingGeneration,
+    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,
     loadFile: handleLoadFile, newGame: handleNewGame } = saveCommands;
@@ -483,6 +485,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <div className="new-game-control">
             <StartDateInput compact value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
+            <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <Button onClick={handleNewGame}>新游戏</Button>
           </div>
           <DesktopDayTag />
@@ -630,6 +633,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
+            <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </section>
           <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen })} onPauseBeforeOpenChange={(value) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value })} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />

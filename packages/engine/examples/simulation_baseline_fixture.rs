@@ -299,11 +299,12 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.45,
-            inst: 0.53,
-            hot: 0.02,
-        },
+        float_allocation: FloatAllocation::class_percentages(
+            0.45,
+            0.53,
+            0.02,
+            engine::WithinKindDistribution::Random,
+        ),
         start_date: CivilDate::from_iso(if scenario == "cross-year" {
             "2030-12-27"
         } else {

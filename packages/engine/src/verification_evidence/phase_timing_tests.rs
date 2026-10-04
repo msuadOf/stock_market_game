@@ -55,7 +55,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
         },

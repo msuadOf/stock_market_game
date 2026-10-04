@@ -11,6 +11,7 @@ import type { Money } from "./generated/Money";
 export type { AccountId } from "./generated/AccountId";
 export type { AccountSnap } from "./generated/AccountSnap";
 export type { AuctionOrderSnap } from "./generated/AuctionOrderSnap";
+export type { BetweenKindDistribution } from "./generated/BetweenKindDistribution";
 export type { DailyTradeStats } from "./generated/DailyTradeStats";
 export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
@@ -54,6 +55,7 @@ export type { StockCode } from "./generated/StockCode";
 export type { StockSpec } from "./generated/StockSpec";
 export type { StrategyParams } from "./generated/StrategyParams";
 export type { TradingPhase } from "./generated/TradingPhase";
+export type { WithinKindDistribution } from "./generated/WithinKindDistribution";
 
 /** 金额（分）。 */
 export type Cents = Money;

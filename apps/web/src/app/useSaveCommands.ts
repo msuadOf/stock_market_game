@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { EngineHost, SpeedMetrics } from "../host/engine-host.ts";
 import type { HostFailure } from "../host/host-update.ts";
-import type { SessionSetup, Snapshot } from "../types/engine.ts";
+import type { FloatAllocation, SessionSetup, Snapshot } from "../types/engine.ts";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { PlayerOrderRefreshGate } from "../components/player-orders.ts";
 import type { DayEndFileTarget } from "../save/save-file.ts";
@@ -29,6 +29,7 @@ export interface SaveCommandPorts {
   activeSetup: SessionSetup;
   startDateDraft: string;
   priceCageEnabledDraft: boolean;
+  floatAllocationDraft: FloatAllocation;
   loadFromFile(): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
@@ -42,6 +43,7 @@ export interface SaveCommandPorts {
   setActiveSetup(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
+  setFloatAllocationDraft(allocation: FloatAllocation): void;
   setStartDateError(error: string | null): void;
   setSpeedMetricsPollingGeneration(generation: number): void;
   setSpeedMetrics(metrics: SpeedMetrics | null): void;
@@ -53,10 +55,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
-    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft,
+    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -128,6 +130,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setActiveSetup(slot.setup);
       setStartDateDraft(slot.setup.start_date);
       setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+      setFloatAllocationDraft(slot.setup.float_allocation);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -194,6 +197,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setActiveSetup(slot.setup);
       setStartDateDraft(slot.setup.start_date);
       setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+      setFloatAllocationDraft(slot.setup.float_allocation);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -231,6 +235,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setSessionSetup({
         ...setupWithStartDate(activeSetup, result.value),
         config: { ...activeSetup.config, price_cage_enabled: priceCageEnabledDraft },
+        float_allocation: floatAllocationDraft,
       });
       setNotice(`已按 ${result.value} 创建新模拟会话`);
     } finally {

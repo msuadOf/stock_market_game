@@ -45,6 +45,7 @@ export interface SessionHostLifecyclePorts {
   setActiveSetup(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
+  setFloatAllocationDraft(allocation: SessionSetup["float_allocation"]): void;
   setDeliveryModes(modes: readonly DeliveryMode[]): void;
   setDeliveryModeState(mode: DeliveryMode | null): void;
   setNotice(notice: string): void;
@@ -60,7 +61,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, startupTarget, sessionSetup, speed, pauseAfterClose,
     pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
     isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
     createSeed = createNewSessionSeed,
@@ -118,6 +119,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       setActiveSetup(setup);
       setStartDateDraft(setup.start_date);
       setPriceCageEnabledDraft(setup.config.price_cage_enabled);
+      setFloatAllocationDraft(setup.float_allocation);
       hostRef.current = host;
       unsetIndicatorCalculator = setIndicatorCalculator(host.calculateIndicators);
       connectProtocol(host);

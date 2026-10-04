@@ -35,12 +35,24 @@ function stock(value: unknown, path: string): SessionSetup["stocks"][number] {
 }
 
 function floatAllocation(value: unknown, path: string): FloatAllocation {
-  if (value === "Random") return value
   const parsed = record(value, path)
-  exact(parsed, ["ByKind"], path)
-  const byKind = record(parsed.ByKind, `${path}.ByKind`)
-  exact(byKind, ["retail", "inst", "hot"], `${path}.ByKind`)
-  return { ByKind: { retail: finite(byKind.retail, `${path}.ByKind.retail`), inst: finite(byKind.inst, `${path}.ByKind.inst`), hot: finite(byKind.hot, `${path}.ByKind.hot`) } }
+  exact(parsed, ["between_kinds", "within_kind"], path)
+  let betweenKinds: FloatAllocation["between_kinds"]
+  if (parsed.between_kinds === "Random") {
+    betweenKinds = parsed.between_kinds
+  } else {
+    const percentage = record(parsed.between_kinds, `${path}.between_kinds`)
+    exact(percentage, ["Percentage"], `${path}.between_kinds`)
+    const weights = record(percentage.Percentage, `${path}.between_kinds.Percentage`)
+    exact(weights, ["retail", "inst", "hot"], `${path}.between_kinds.Percentage`)
+    betweenKinds = { Percentage: {
+      retail: finite(weights.retail, `${path}.between_kinds.Percentage.retail`),
+      inst: finite(weights.inst, `${path}.between_kinds.Percentage.inst`),
+      hot: finite(weights.hot, `${path}.between_kinds.Percentage.hot`),
+    } }
+  }
+  const withinKind = oneOf(parsed.within_kind, `${path}.within_kind`, ["Random", "EqualPercentage"] as const)
+  return { between_kinds: betweenKinds, within_kind: withinKind }
 }
 
 export function parseSetup(value: unknown, path: string): SessionSetup {

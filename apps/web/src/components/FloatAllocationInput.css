@@ -1,0 +1,70 @@
+.float-allocation-details {
+  position: relative;
+  align-self: center;
+}
+
+.float-allocation-details > summary {
+  min-height: 28px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.float-allocation-input {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 300px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+}
+
+.float-allocation-input > label,
+.float-allocation-weights > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.float-allocation-input .bp6-html-select,
+.float-allocation-input input {
+  width: 110px;
+}
+
+.float-allocation-weights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.float-allocation-weights > label {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.float-allocation-input small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 520px) {
+  .float-allocation-details { align-self: stretch; }
+  .float-allocation-input { width: min(300px, calc(100vw - 40px)); }
+  .float-allocation-weights {
+    grid-template-columns: 1fr;
+  }
+}

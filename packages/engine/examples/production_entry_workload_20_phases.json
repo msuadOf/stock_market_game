@@ -240,11 +240,14 @@
     "history_len": 5,
     "t1_enabled": true,
     "float_allocation": {
-      "ByKind": {
-        "retail": 0.45,
-        "inst": 0.53,
-        "hot": 0.02
-      }
+      "between_kinds": {
+        "Percentage": {
+          "retail": 0.45,
+          "inst": 0.53,
+          "hot": 0.02
+        }
+      },
+      "within_kind": "Random"
     },
     "start_date": "2030-01-01",
     "simulation_policy_id": "a-share-simulation"

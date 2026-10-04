@@ -159,7 +159,7 @@ fn replay_setup() -> SessionSetup {
         closing_auction_ticks: 6,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::Random,
+        float_allocation: FloatAllocation::random(),
         // 双时钟场景日期：2030-01-02（周三）起连续三个交易日
         // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),

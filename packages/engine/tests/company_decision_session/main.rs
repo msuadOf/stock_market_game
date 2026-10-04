@@ -72,11 +72,7 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
         closing_auction_ticks: 3,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.4,
-            inst: 0.5,
-            hot: 0.1,
-        },
+        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso(start_iso).unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }

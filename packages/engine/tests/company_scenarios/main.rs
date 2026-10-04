@@ -97,11 +97,7 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 1,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::ByKind {
-            retail: 0.4,
-            inst: 0.5,
-            hot: 0.1,
-        },
+        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
     }
@@ -123,11 +119,7 @@ pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     focused.auction_ticks = 0;
     focused.closing_auction_ticks = 0;
     focused.history_len = 1;
-    focused.float_allocation = FloatAllocation::ByKind {
-        retail: 0.0,
-        inst: 1.0,
-        hot: 0.0,
-    };
+    focused.float_allocation = FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
     GameSession::new(focused, SEED).expect("focused disclosure fixture must assemble")
 }
 

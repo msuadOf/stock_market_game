@@ -53,7 +53,7 @@ export async function smokePages(input, base) {
             if (message.type === "create") {
               message = { ...message, setup: { ...message.setup, stocks: message.setup.stocks.slice(0, 2),
                 npcs: { ...message.setup.npcs, retail_count: 4, inst_count: 2, hot_count: 1 },
-                float_allocation: "Random", history_len: 2, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 } };
+                float_allocation: { between_kinds: "Random", within_kind: "Random" }, history_len: 2, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 } };
             }
             return postMessage.call(this, message, ...options);
           };

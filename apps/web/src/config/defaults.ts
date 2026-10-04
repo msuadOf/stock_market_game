@@ -112,7 +112,10 @@ export const DEFAULT_SETUP: SessionSetup = {
   closing_auction_ticks: CLOSING_AUCTION_TICKS,
   history_len: 20,
   t1_enabled: true,
-  float_allocation: { ByKind: { retail: 0.45, inst: 0.53, hot: 0.02 } },
+  float_allocation: {
+    between_kinds: { Percentage: { retail: 0.45, inst: 0.53, hot: 0.02 } },
+    within_kind: "EqualPercentage",
+  },
   start_date: "2030-01-01",
   simulation_policy_id: "a-share-simulation",
 };

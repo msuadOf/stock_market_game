@@ -85,7 +85,7 @@ fn sample_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        float_allocation: engine::FloatAllocation::Random,
+        float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
@@ -1280,11 +1280,7 @@ fn large_retail_account_setup(retail_count: u32) -> SessionSetup {
     setup.npcs.inst_count = 5;
     setup.npcs.hot_count = 2;
     setup.npcs.retail_cash_median = Money::from_cents(20_000_000);
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.45,
-        inst: 0.53,
-        hot: 0.02,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(0.45, 0.53, 0.02, engine::WithinKindDistribution::Random);
     let template = setup.stocks[0].clone();
     setup.stocks = ["600101", "002156", "300260", "600610", "000812"]
         .into_iter()
@@ -2349,17 +2345,9 @@ fn float_setup(float: u32) -> SessionSetup {
 #[test]
 fn audit_zero_npc_skips_positive_float_allocation_without_gifting_player_shares() {
     for allocation in [
-        engine::FloatAllocation::Random,
-        engine::FloatAllocation::ByKind {
-            retail: 0.4,
-            inst: 0.5,
-            hot: 0.1,
-        },
-        engine::FloatAllocation::ByKind {
-            retail: 0.0,
-            inst: 0.0,
-            hot: 0.0,
-        },
+        engine::FloatAllocation::random(),
+        engine::FloatAllocation::class_percentages(0.4, 0.5, 0.1, engine::WithinKindDistribution::Random),
+        engine::FloatAllocation::class_percentages(0.0, 0.0, 0.0, engine::WithinKindDistribution::Random),
     ] {
         let mut setup = float_setup(1000);
         setup.npcs.retail_count = 0;
@@ -2398,11 +2386,7 @@ fn audit_zero_npc_does_not_relax_invalid_allocation_parameter_guard() {
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
         setup.npcs.hot_count = 0;
-        setup.float_allocation = engine::FloatAllocation::ByKind {
-            retail: weight,
-            inst: 0.0,
-            hot: 0.0,
-        };
+        setup.float_allocation = engine::FloatAllocation::class_percentages(weight, 0.0, 0.0, engine::WithinKindDistribution::Random);
         let error = setup.validate().unwrap_err();
         assert!(error.to_string().contains("finite >=0"), "{error}");
     }
@@ -2429,11 +2413,7 @@ fn by_kind_distribution_gives_individual_retailers_sparse_portfolios() {
     setup.npcs.retail_count = 100;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 1.0,
-        inst: 0.0,
-        hot: 0.0,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
     let codes = ["600101", "600102", "600103", "600104", "600105"];
     let template = setup.stocks[0].clone();
     setup.stocks = codes
@@ -2501,6 +2481,68 @@ fn seed_float_deterministic() {
 }
 
 #[test]
+fn seed_float_percentage_class_random_within_is_deterministic() {
+    let mut setup = float_setup(1_000_000);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        0.45,
+        0.53,
+        0.02,
+        engine::WithinKindDistribution::Random,
+    );
+    let first = GameSession::new(setup.clone(), 0xA110_CA7E).unwrap();
+    let second = GameSession::new(setup, 0xA110_CA7E).unwrap();
+    let code = StockCode("600101".to_string());
+
+    for id in 1..first.account_count() as u64 {
+        let first_qty = first
+            .account(AccountId(id))
+            .unwrap()
+            .positions()
+            .get(&code)
+            .map(|position| position.qty())
+            .unwrap_or(0);
+        let second_qty = second
+            .account(AccountId(id))
+            .unwrap()
+            .positions()
+            .get(&code)
+            .map(|position| position.qty())
+            .unwrap_or(0);
+        assert_eq!(first_qty, second_qty, "同种子同分配 (AccountId({id}))");
+    }
+}
+
+#[test]
+fn seed_float_random_class_equal_within_is_deterministic() {
+    let mut setup = float_setup(1_000_000);
+    setup.float_allocation = engine::FloatAllocation {
+        between_kinds: engine::BetweenKindDistribution::Random,
+        within_kind: engine::WithinKindDistribution::EqualPercentage,
+    };
+    let first = GameSession::new(setup.clone(), 0xA110_CA7E).unwrap();
+    let second = GameSession::new(setup, 0xA110_CA7E).unwrap();
+    let code = StockCode("600101".to_string());
+
+    for id in 1..first.account_count() as u64 {
+        let first_qty = first
+            .account(AccountId(id))
+            .unwrap()
+            .positions()
+            .get(&code)
+            .map(|position| position.qty())
+            .unwrap_or(0);
+        let second_qty = second
+            .account(AccountId(id))
+            .unwrap()
+            .positions()
+            .get(&code)
+            .map(|position| position.qty())
+            .unwrap_or(0);
+        assert_eq!(first_qty, second_qty, "同种子同分配 (AccountId({id}))");
+    }
+}
+
+#[test]
 fn seed_float_cost_is_initial_price() {
     let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
     // 任一有持仓的 NPC：cost_price == initial_price(1000分)、t1_locked==0
@@ -2525,7 +2567,7 @@ fn seed_float_zero_float_no_allocation() {
     assert_eq!(total, 0, "float_shares==0 不分配（兼容加载存档路径）");
 }
 
-// seed_float ByKind 比例分配（比例/缺类守恒/非法比例校验）。
+// seed_float 类间 Percentage 分配（比例/缺类守恒/非法比例校验）。
 
 /// 按种类聚合 NPC（id!=0）对某股票的持仓。走公共 account() 访问器（accounts 字段私有）。
 fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -> u32 {
@@ -2537,15 +2579,11 @@ fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -
 }
 
 #[test]
-fn seed_float_bykind_ratios() {
+fn seed_float_percentage_ratios() {
     let mut s = sample_setup();
     s.stocks[0].total_shares = 1_000_000;
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.2,
-        inst: 0.5,
-        hot: 0.3,
-    };
+    s.float_allocation = engine::FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
     // sample_setup: retail2, inst1, hot1
     let sess = GameSession::new(s, 42).unwrap();
     let code = StockCode("600101".to_string());
@@ -2572,7 +2610,7 @@ fn seed_float_bykind_ratios() {
 }
 
 #[test]
-fn seed_float_bykind_missing_kind_redistributes() {
+fn seed_float_percentage_missing_kind_redistributes() {
     let mut s = sample_setup();
     s.stocks[0].total_shares = 1_000_000;
     s.stocks[0].float_shares = 1_000_000;
@@ -2582,11 +2620,7 @@ fn seed_float_bykind_missing_kind_redistributes() {
         hot_count: 1,
         retail_cash_median: Money::from_cents(10_000_000),
     };
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.2,
-        inst: 0.5,
-        hot: 0.3,
-    };
+    s.float_allocation = engine::FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
     // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
     let sess = GameSession::new(s, 42).unwrap();
     let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
@@ -2594,28 +2628,20 @@ fn seed_float_bykind_missing_kind_redistributes() {
 }
 
 #[test]
-fn seed_float_bykind_invalid_ratio_rejected() {
+fn seed_float_percentage_invalid_ratio_rejected() {
     let mut s = sample_setup();
     s.stocks[0].total_shares = 1_000_000;
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: -0.1,
-        inst: 0.5,
-        hot: 0.6,
-    };
+    s.float_allocation = engine::FloatAllocation::class_percentages(-0.1, 0.5, 0.6, engine::WithinKindDistribution::Random);
     assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
 }
 
 #[test]
-fn seed_float_bykind_rejects_zero_weight_for_every_existing_kind() {
+fn seed_float_percentage_rejects_zero_weight_for_every_existing_kind() {
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 1_000_000;
     setup.stocks[0].float_shares = 1_000_000;
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.0,
-        inst: 0.0,
-        hot: 0.0,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(0.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
 
     let error = GameSession::new(setup, 42)
         .err()
@@ -2624,17 +2650,13 @@ fn seed_float_bykind_rejects_zero_weight_for_every_existing_kind() {
 }
 
 #[test]
-fn seed_float_bykind_rejects_weight_assigned_only_to_an_absent_kind() {
+fn seed_float_percentage_rejects_weight_assigned_only_to_an_absent_kind() {
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 1_000_000;
     setup.stocks[0].float_shares = 1_000_000;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.0,
-        inst: 1.0,
-        hot: 0.0,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(0.0, 1.0, 0.0, engine::WithinKindDistribution::Random);
 
     let error = GameSession::new(setup, 42)
         .err()
@@ -2643,20 +2665,73 @@ fn seed_float_bykind_rejects_weight_assigned_only_to_an_absent_kind() {
 }
 
 #[test]
-fn seed_float_bykind_rejects_a_non_finite_sum_of_individually_finite_weights() {
+fn seed_float_percentage_rejects_a_non_finite_sum_of_individually_finite_weights() {
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 1_000_000;
     setup.stocks[0].float_shares = 1_000_000;
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: f64::MAX,
-        inst: f64::MAX,
-        hot: 0.0,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(f64::MAX, f64::MAX, 0.0, engine::WithinKindDistribution::Random);
 
     let error = GameSession::new(setup, 42)
         .err()
         .expect("有限大权重的溢出和必须失败");
     assert!(error.to_string().contains("finite sum"));
+}
+
+#[test]
+fn seed_float_supports_random_class_budgets_and_percentage_within_kind() {
+    let mut setup = sample_setup();
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 1;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].total_shares = 1_000_000;
+    setup.stocks[0].float_shares = 101;
+    setup.float_allocation = engine::FloatAllocation {
+        between_kinds: engine::BetweenKindDistribution::Percentage {
+            retail: 1.0,
+            inst: 0.0,
+            hot: 0.0,
+        },
+        within_kind: engine::WithinKindDistribution::EqualPercentage,
+    };
+
+    let session = GameSession::new(setup, 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let retail = [1, 2].map(|id| {
+        session
+            .account(AccountId(id))
+            .unwrap()
+            .positions()
+            .get(&code)
+            .map(|position| position.qty())
+            .unwrap_or(0)
+    });
+    assert_eq!(npc_total_qty(&session, &code), 101);
+    assert_eq!(retail, [51, 50], "余股按 AccountId 升序分配");
+    assert_eq!(session.account(AccountId(0)).unwrap().positions().len(), 0);
+}
+
+#[test]
+fn seed_float_random_class_budgets_within_kind_percentage_keeps_small_float_conserved() {
+    let mut setup = float_setup(1);
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 1;
+    setup.npcs.hot_count = 1;
+    setup.float_allocation = engine::FloatAllocation {
+        between_kinds: engine::BetweenKindDistribution::Random,
+        within_kind: engine::WithinKindDistribution::EqualPercentage,
+    };
+
+    let session = GameSession::new(setup, 7).unwrap();
+    let code = StockCode("600101".to_string());
+    assert_eq!(npc_total_qty(&session, &code), 1);
+    assert!(session.account(AccountId(0)).unwrap().positions().is_empty());
+    assert!(
+        (1..session.account_count() as u64)
+            .filter_map(|id| session.account(AccountId(id)))
+            .filter(|account| account.positions().contains_key(&code))
+            .count()
+            <= 1
+    );
 }
 
 #[test]
@@ -2686,11 +2761,7 @@ fn allocated_market_produces_trades() {
         retail_cash_median: Money::from_cents(10_000_000),
     };
     s.strategy_params.retail.arrival_rate = 0.0;
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 1.0,
-        inst: 0.0,
-        hot: 0.0,
-    };
+    s.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
     let session = GameSession::new(s, 42).unwrap();
     let code = StockCode("600101".to_string());
     let seller = AccountId(1);
@@ -2779,11 +2850,7 @@ fn all_stocks_produce_trades_multistock() {
         retail_cash_median: Money::from_cents(100_000_000),
     };
     setup.strategy_params.retail.arrival_rate = 0.0;
-    setup.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 1.0,
-        inst: 0.0,
-        hot: 0.0,
-    };
+    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
     let all: HashSet<String> = ["600101", "002156", "300260", "600610", "000812"]
         .iter()
         .map(|s| s.to_string())
@@ -2862,12 +2929,8 @@ fn all_stocks_produce_trades_multistock() {
 #[test]
 fn reexport_float_allocation() {
     use engine::FloatAllocation;
-    let _: FloatAllocation = FloatAllocation::Random;
-    let _: FloatAllocation = FloatAllocation::ByKind {
-        retail: 0.2,
-        inst: 0.5,
-        hot: 0.3,
-    };
+    let _: FloatAllocation = FloatAllocation::random();
+    let _: FloatAllocation = FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
 }
 
 // crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。

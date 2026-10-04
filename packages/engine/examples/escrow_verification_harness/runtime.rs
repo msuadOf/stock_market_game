@@ -563,7 +563,7 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len: 24,
         t1_enabled: true,
-        float_allocation: FloatAllocation::Random,
+        float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02").map_err(|error| error.to_string())?,
         simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
     };

@@ -73,7 +73,7 @@ pub(super) fn session_with_company(
             closing_auction_ticks: 0,
             history_len: 5,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: date,
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
         },

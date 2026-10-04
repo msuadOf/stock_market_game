@@ -55,7 +55,10 @@ export function currentSaveFixture(): JsonObject {
       closing_auction_ticks: 180,
       history_len: 20,
       t1_enabled: true,
-      float_allocation: { ByKind: { retail: 1, inst: 0, hot: 0 } },
+      float_allocation: {
+        between_kinds: { Percentage: { retail: 1, inst: 0, hot: 0 } },
+        within_kind: "Random",
+      },
       start_date: "2030-01-01",
       simulation_policy_id: "a-share-simulation",
     },

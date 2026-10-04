@@ -900,13 +900,91 @@ pub struct StockSpec {
     pub float_shares: u32,
 }
 
-/// 流通盘分配方式。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-pub enum FloatAllocation {
-    /// 默认：所有 NPC 随机分配（权重随机，筹码守恒）。
+/// 类间流通盘分配方式。
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum BetweenKindDistribution {
+    /// 按种子化随机权重分配给存在的 NPC 类别。
     Random,
-    /// 三类各占比例（类内随机）。比例应 ≈ 1（运行时按「有 NPC 的种类」归一化）。
-    ByKind { retail: f64, inst: f64, hot: f64 },
+    /// 三类各占比例；缺失类别的比例由存在类别按权重归一分配。
+    Percentage { retail: f64, inst: f64, hot: f64 },
+}
+
+/// 类内流通盘分配方式。
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum WithinKindDistribution {
+    /// 按种子化随机权重分配；散户随机分配给部分账户以形成稀疏持仓。
+    Random,
+    /// 在该类所有 NPC 账户间尽可能等分，股数余数按 AccountId 升序分配。
+    EqualPercentage,
+}
+
+/// 流通盘类间与类内的独立分配设置。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct FloatAllocation {
+    pub between_kinds: BetweenKindDistribution,
+    pub within_kind: WithinKindDistribution,
+}
+
+impl FloatAllocation {
+    pub const fn random() -> Self {
+        Self {
+            between_kinds: BetweenKindDistribution::Random,
+            within_kind: WithinKindDistribution::Random,
+        }
+    }
+
+    pub const fn class_percentages(
+        retail: f64,
+        inst: f64,
+        hot: f64,
+        within_kind: WithinKindDistribution,
+    ) -> Self {
+        Self {
+            between_kinds: BetweenKindDistribution::Percentage { retail, inst, hot },
+            within_kind,
+        }
+    }
+}
+
+fn split_by_weights(float: u32, weights: &[f64]) -> Vec<u32> {
+    let total = weights.iter().sum::<f64>();
+    let last_positive = weights.iter().rposition(|weight| *weight > 0.0);
+    let mut remaining = float;
+    weights
+        .iter()
+        .enumerate()
+        .map(|(index, weight)| {
+            if *weight == 0.0 {
+                0
+            } else if Some(index) == last_positive {
+                remaining
+            } else {
+                let quantity = ((float as f64 * *weight / total).round() as u32).min(remaining);
+                remaining -= quantity;
+                quantity
+            }
+        })
+        .collect()
+}
+
+fn split_equally(float: u32, account_ids: &[AccountId]) -> Vec<(AccountId, u32)> {
+    if account_ids.is_empty() {
+        return Vec::new();
+    }
+    let account_count = account_ids.len() as u64;
+    let base_quantity = u64::from(float) / account_count;
+    let remainder = u64::from(float) % account_count;
+    account_ids
+        .iter()
+        .enumerate()
+        .map(|(index, account_id)| {
+            let remainder_share = u64::from((index as u64) < remainder);
+            (*account_id, (base_quantity + remainder_share) as u32)
+        })
+        .collect()
 }
 
 /// NPC 账户配置。每个计数都创建对应数量的独立账户；现金从散户中位数及
@@ -1105,11 +1183,13 @@ impl SessionSetup {
                 )));
             }
         }
-        if let FloatAllocation::ByKind { retail, inst, hot } = &self.float_allocation {
+        if let BetweenKindDistribution::Percentage { retail, inst, hot } =
+            &self.float_allocation.between_kinds
+        {
             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
                 if !value.is_finite() || value < 0.0 {
                     return Err(SessionError::InvalidSetup(format!(
-                        "float_allocation ByKind {name}={value} invalid (must be finite >=0)"
+                        "float_allocation between_kinds Percentage {name}={value} invalid (must be finite >=0)"
                     )));
                 }
             }
@@ -1129,7 +1209,7 @@ impl SessionSetup {
                 .sum::<f64>();
                 if !effective_weight.is_finite() || effective_weight <= 0.0 {
                     return Err(SessionError::InvalidSetup(
-                        "float_allocation ByKind weights for existing NPC kinds must have a finite sum > 0"
+                        "float_allocation between_kinds Percentage weights for existing NPC kinds must have a finite sum > 0"
                             .to_string(),
                     ));
                 }
@@ -1695,8 +1775,7 @@ impl GameSession {
     /// 分配流通盘给 NPC（按 setup.float_allocation）。float_shares==0 或无 NPC 则跳过。
     ///
     /// 筹码守恒：Σ NPC 持仓 == float_shares（最后一个 NPC/最后一类 拿余量）。玩家不分配（新进场）。
-    /// [`FloatAllocation::Random`]→全 NPC 随机；[`FloatAllocation::ByKind`]→按种类比例（类内随机、
-    /// 缺类自动归一化分摊）。
+    /// 类间与类内各自按配置采用随机或等比例策略；玩家始终不分配。
     fn seed_float(&mut self) -> Result<(), SessionError> {
         let npc_ids: Vec<AccountId> = self
             .state
@@ -1714,12 +1793,8 @@ impl GameSession {
             }
             let code = spec.code.clone();
             let price = spec.initial_price;
-            let alloc: Vec<(AccountId, u32)> = match &self.state.setup.float_allocation {
-                FloatAllocation::Random => self.split_random(spec.float_shares, &npc_ids),
-                FloatAllocation::ByKind { retail, inst, hot } => {
-                    self.split_by_kind(spec.float_shares, *retail, *inst, *hot)
-                }
-            };
+            let allocation = self.state.setup.float_allocation.clone();
+            let alloc = self.split_float(spec.float_shares, &npc_ids, &allocation);
             for (id, qty) in alloc {
                 if qty > 0 {
                     if let Some(acc) = self.state.accounts.get_mut(&id) {
@@ -1731,84 +1806,94 @@ impl GameSession {
         Ok(())
     }
 
-    /// 按种类比例分：归一化到「有 NPC 的种类」→ 类内 [`Self::split_random`]。Σ==float。
+    /// 按类间与类内配置分配流通盘，整数股数严格守恒。
     ///
     /// 缺类（该种类无 NPC）自动剔除并重归一化（其比例分摊给剩余种类）。最后一类拿整体余量
     /// → 全局精确守恒。f64 仅用于「比例归一」（股数分配，非金额）；最终量 u32。
-    fn split_by_kind(
+    fn split_float(
         &mut self,
         float: u32,
-        r_retail: f64,
-        r_inst: f64,
-        r_hot: f64,
+        npc_ids: &[AccountId],
+        allocation: &FloatAllocation,
     ) -> Vec<(AccountId, u32)> {
-        // 收集每类 NPC（按 id 升序，BTreeMap keys 天然有序 → 确定性）。固定 [3] 数组免动态分配。
-        let mut by_kind: [(AccountKind, f64, Vec<AccountId>); 3] = [
-            (AccountKind::Retail, r_retail, Vec::new()),
-            (AccountKind::Inst, r_inst, Vec::new()),
-            (AccountKind::Hot, r_hot, Vec::new()),
+        let mut by_kind: [(AccountKind, Vec<AccountId>); 3] = [
+            (AccountKind::Retail, Vec::new()),
+            (AccountKind::Inst, Vec::new()),
+            (AccountKind::Hot, Vec::new()),
         ];
-        for id in self.state.accounts.keys().copied().filter(|id| id.0 != 0) {
-            let kind = self
-                .state
-                .accounts
-                .get(&id)
-                .map(|a| a.kind())
-                .unwrap_or(AccountKind::Retail);
+        for id in npc_ids.iter().copied() {
+            let kind = self.state.accounts[&id].kind();
             for entry in by_kind.iter_mut() {
                 if entry.0 == kind {
-                    entry.2.push(id);
+                    entry.1.push(id);
                     break;
                 }
             }
         }
-        // 归一化：只算有 NPC 的种类（缺类不计入 norm → 其比例自动分摊给剩余种类）。
-        let norm: f64 = by_kind
-            .iter()
-            .filter(|entry| !entry.2.is_empty())
-            .map(|entry| entry.1)
-            .sum();
         let nonempty: Vec<usize> = by_kind
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !entry.2.is_empty())
+            .filter(|(_, entry)| !entry.1.is_empty())
             .map(|(i, _)| i)
             .collect();
-        let mut out: Vec<(AccountId, u32)> = Vec::new();
-        let mut remaining = float;
-        for (idx, &i) in nonempty.iter().enumerate() {
-            let (kind, ratio, ids) = &by_kind[i];
-            let kind_float = if idx == nonempty.len() - 1 {
-                remaining // 最后一类拿整体余量 → 全局守恒
-            } else if norm > 0.0 {
-                ((float as f64 * *ratio / norm).round() as u32).min(remaining)
-            } else {
-                0
-            };
-            let eligible_ids: Vec<AccountId> = if *kind == AccountKind::Retail && ids.len() > 1 {
-                let mut selected: Vec<AccountId> = ids
+
+        let kind_budgets = match &allocation.between_kinds {
+            BetweenKindDistribution::Random => {
+                let slots: Vec<AccountId> = nonempty
                     .iter()
-                    .copied()
-                    .filter(|_| self.state.rng.next_f64() < 0.40)
+                    .map(|index| AccountId(*index as u64))
                     .collect();
-                if selected.is_empty() {
-                    selected.push(ids[self.state.rng.next_range_u32(0, ids.len() as u32) as usize]);
-                }
-                selected
-            } else {
-                ids.clone()
-            };
-            let tail_exponent = match *kind {
-                AccountKind::Retail => 1.5,
-                AccountKind::Inst => 2.0,
-                AccountKind::Hot => 1.7,
-                AccountKind::Player => 3.0,
-            };
-            let parts = self.split_random_with_tail(kind_float, &eligible_ids, tail_exponent);
-            for (id, q) in parts {
-                out.push((id, q));
-                remaining = remaining.saturating_sub(q);
+                self.split_random(float, &slots)
+                    .into_iter()
+                    .map(|(_, qty)| qty)
+                    .collect()
             }
+            BetweenKindDistribution::Percentage { retail, inst, hot } => {
+                let weights = [*retail, *inst, *hot];
+                split_by_weights(
+                    float,
+                    &nonempty
+                        .iter()
+                        .map(|index| weights[*index])
+                        .collect::<Vec<_>>(),
+                )
+            }
+        };
+
+        let mut out: Vec<(AccountId, u32)> = Vec::new();
+        for (index, &kind_index) in nonempty.iter().enumerate() {
+            let (kind, ids) = &by_kind[kind_index];
+            let kind_float = kind_budgets[index];
+            let parts = match allocation.within_kind {
+                WithinKindDistribution::EqualPercentage => split_equally(kind_float, ids),
+                WithinKindDistribution::Random => {
+                    let eligible_ids: Vec<AccountId> = if *kind == AccountKind::Retail
+                        && ids.len() > 1
+                    {
+                        let mut selected: Vec<AccountId> = ids
+                            .iter()
+                            .copied()
+                            .filter(|_| self.state.rng.next_f64() < 0.40)
+                            .collect();
+                        if selected.is_empty() {
+                            selected.push(
+                                ids[self.state.rng.next_range_u32(0, ids.len() as u32) as usize],
+                            );
+                        }
+                        selected
+                    } else {
+                        ids.clone()
+                    };
+                    let tail_exponent = match *kind {
+                        AccountKind::Retail => 1.5,
+                        AccountKind::Inst => 2.0,
+                        AccountKind::Hot => 1.7,
+                        AccountKind::Player => 3.0,
+                    };
+                    self.split_random_with_tail(kind_float, &eligible_ids, tail_exponent)
+                }
+            };
+            out.extend(parts);
         }
         out
     }
@@ -1997,11 +2082,10 @@ impl GameSession {
                     .attention_scheduler
                     .enqueue(first_candidate_tick, id);
             }
-                self.state.accounts.insert(id, acc);
-                self.state.history_reads.insert(
-                    id,
-                    crate::experience::PersonalHistoryReadLedger::default(),
-                );
+            self.state.accounts.insert(id, acc);
+            self.state
+                .history_reads
+                .insert(id, crate::experience::PersonalHistoryReadLedger::default());
         }
         Ok(())
     }
@@ -3142,7 +3226,7 @@ mod candle_open_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         }
@@ -3450,7 +3534,7 @@ mod npc_working_quote_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            float_allocation: FloatAllocation::Random,
+            float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         }
@@ -3660,9 +3744,11 @@ mod npc_working_quote_tests {
                         ..Default::default()
                     },
                 );
-            assert!(matches!(GameSession::restore(&invalid),
+            assert!(
+                matches!(GameSession::restore(&invalid),
                 Err(SessionError::InvalidSave(message)) if message.contains("invalid trade experience")),
-                "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected");
+                "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected"
+            );
         }
     }
 
