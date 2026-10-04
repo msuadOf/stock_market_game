@@ -92,8 +92,11 @@ struct SpringFestivalScenario {
 
 impl SpringFestivalScenario {
     fn new_spring_festival() -> Self {
-        let mut session = GameSession::new(civil_setup(PRE_HOLIDAY_FRIDAY), 42)
-            .expect("spring festival setup must be valid");
+        Self::with_setup(civil_setup(PRE_HOLIDAY_FRIDAY))
+    }
+
+    fn with_setup(setup: SessionSetup) -> Self {
+        let mut session = GameSession::new(setup, 42).expect("spring festival setup must be valid");
         let mut registered = Vec::new();
         for (due_date, kind) in [
             (POST_HOLIDAY_WEDNESDAY, DueKind::InterestAccrual),
@@ -157,8 +160,16 @@ fn assert_fired_once_each(reports: &[CivilDayEndReport], registered: &[DueBusine
 
 #[test]
 fn closed_days_accrue_without_trading() {
-    let mut scenario = SpringFestivalScenario::new_spring_festival();
-    let code = StockCode("600101".to_string());
+    let mut setup = civil_setup(PRE_HOLIDAY_FRIDAY);
+    setup.stocks[0].code = StockCode("000812".to_string());
+    setup.stocks[0].exchange = StockExchange::Shenzhen;
+    setup.stocks[0].initial_price = Money::from_cents(600);
+    setup.stocks[0].total_shares = 1_052_631_579;
+    setup.stocks[0].category = SecurityCategory::StMainBoard;
+    setup.stocks[0].limit_pct = setup.stocks[0].category.limit_pct();
+    setup.npcs.inst_count = 20;
+    let code = setup.stocks[0].code.clone();
+    let mut scenario = SpringFestivalScenario::with_setup(setup);
     let player = AccountId(0);
 
     // 休市起点不挪日期：开局 civil 日期就是 setup 声明的周五。
@@ -168,8 +179,8 @@ fn closed_days_accrue_without_trading() {
         CivilPhase::IntradayTrading
     );
 
-    // 周五盘中买入。价格必须在连续竞价价格笼子内（基准价 102%/98% 与十个
-    // 最小价位孰宽）；1005 恰好会在前几个 tick 与 NPC 卖方报价交叉成交。
+    // 发行股份与默认公司经营规模一致，让 NPC 依据本人估值自然卖出已有股份。
+    // 玩家按最高合法买入价申报，成交仍须经过真实对手盘和正常撮合。
     scenario
         .session
         .enqueue_player_intent(
@@ -177,14 +188,32 @@ fn closed_days_accrue_without_trading() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: engine::LimitPrice::Fixed(Money::from_cents(1005)),
+                price: engine::LimitPrice::Highest,
                 qty: 100,
             },
         )
         .expect("player buy intent must enqueue");
     let mut filled = false;
+    let mut player_trade_qty = 0_u32;
     for _ in 0..TICKS_PER_DAY {
-        scenario.session.step().expect("healthy step");
+        let events = scenario.session.step().expect("healthy step");
+        for event in &events {
+            if let Event::Trade {
+                code: traded_code,
+                qty,
+                maker,
+                taker,
+                ..
+            } = event
+            {
+                if *traded_code == code && (*maker == player || *taker == player) {
+                    assert_ne!(maker, taker);
+                    let seller = if *maker == player { *taker } else { *maker };
+                    assert_ne!(seller, player);
+                    player_trade_qty += qty;
+                }
+            }
+        }
         if let Some(position) = scenario
             .session
             .account(player)
@@ -210,6 +239,7 @@ fn closed_days_accrue_without_trading() {
         }
     }
     assert!(filled, "the seeded Friday buy must fill within the session");
+    assert_eq!(player_trade_qty, 100, "玩家股份必须来自真实成交");
 
     // 当日卖出被 T+1 拒绝（卖出价同样保持在价格笼子内，避免先撞笼子）。
     scenario
@@ -219,7 +249,7 @@ fn closed_days_accrue_without_trading() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
+                price: engine::LimitPrice::Fixed(Money::from_cents(600)),
                 qty: 100,
             },
         )
@@ -569,29 +599,67 @@ fn closed_civil_day_emits_one_date_advance_without_market_events() {
         .end_civil_day()
         .expect("closed start day must settle and advance");
 
-    // Then: exactly one public civil transition is emitted after the actual advancement.
+    let advances: Vec<&Event> = report
+        .events
+        .iter()
+        .filter(|event| matches!(event, Event::CivilDateAdvanced { .. }))
+        .collect();
     assert_eq!(
-        report.events.len(),
+        advances.len(),
         1,
-        "a civil advancement must emit exactly one event when nothing publishes"
+        "一次自然日日结恰好产生一次日期推进，经营披露不算市场事件"
     );
     assert!(matches!(
-        report.events.as_slice(),
-        [Event::CivilDateAdvanced {
-            seq,
+        report.events.last(),
+        Some(Event::CivilDateAdvanced {
             settled_date,
             next_date,
+            next_status,
             ..
-        }]
-            if *seq == previous_seq + 1
-                && *settled_date == date("2030-01-01")
+        })
+            if *settled_date == date("2030-01-01")
                 && *next_date == date("2030-01-02")
+                && *next_status == report.next_status
     ));
+    let saved = session.save().expect("日结后的公开信息必须可读取");
+    for (offset, event) in report.events.iter().enumerate() {
+        assert_eq!(event.seq(), previous_seq + offset as u64 + 1);
+        match event {
+            Event::CompanyDisclosurePublished {
+                company,
+                publication_id,
+                published_at,
+                kind,
+                ..
+            } => {
+                assert_eq!(company.0, "C-600101");
+                assert_eq!(*published_at, report.disclosure_instant);
+                match kind {
+                    engine::session::CompanyDisclosureKind::Announcement => {
+                        let item = saved
+                            .public_library
+                            .announcement(*publication_id, *published_at)
+                            .expect("披露事件必须对应真实公开公告");
+                        assert_eq!(&item.company, company);
+                    }
+                    engine::session::CompanyDisclosureKind::Report { .. } => {
+                        let item = saved
+                            .public_library
+                            .report(*publication_id, *published_at)
+                            .expect("披露事件必须对应真实公开报告");
+                        assert_eq!(&item.company, company);
+                    }
+                }
+            }
+            Event::CivilDateAdvanced { .. } => {}
+            unexpected => panic!("休市日不得产生非日结事件：{unexpected:?}"),
+        }
+    }
     assert!(report.events.iter().all(|event| !matches!(
         event,
         Event::Trade { .. } | Event::PriceTick { .. } | Event::DayBoundary { .. }
     )));
-    assert_eq!(session.seq(), previous_seq + 1);
+    assert_eq!(session.seq(), previous_seq + report.events.len() as u64);
     assert_eq!(session.tick(), 0);
     assert_eq!(session.day(), 0);
 }
