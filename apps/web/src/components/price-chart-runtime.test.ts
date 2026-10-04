@@ -50,7 +50,7 @@ function fixture(indicator = true) {
 }
 
 const points = [{ time: 0, value: 10, volume: 100, buy: true }, { time: 1, value: 12, volume: 200, buy: true }];
-const candles = [1, 2, 3].map((time) => ({ time: time as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 100 }));
+const candles = [1, 2, 3].map((day) => ({ time: (1893456000 + day * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 100 }));
 const values = [1, 2];
 const results: IndicatorResults = { macd: { dif: values, dea: values, histogram: values }, priceKdj: { k: values, d: values, j: values }, candleKdj: { k: [], d: [], j: [] } };
 

@@ -76,7 +76,7 @@ export function currentSaveFixture(): JsonObject {
         "0": { cash: "1000000000", positions: {} },
       },
       daily_candles: {
-        "600101": [{ time: 0, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
+        "600101": [{ time: 1893369600, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
       },
       active_daily_candles: {},
     },

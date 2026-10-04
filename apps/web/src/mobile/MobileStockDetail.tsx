@@ -12,6 +12,7 @@ import { aggregateCandles, buildFiveLevelBook, formatTradeLots, formatTradeTime,
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
+import { loadCandleAggregationBasis, parseCandleAggregationBasis, saveCandleAggregationBasis } from "../config/candle-aggregation.ts";
 
 const chartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
 const enabledChartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K"];
@@ -67,14 +68,17 @@ function FiveLevelBook({ market }: { market: MarketSnap }) {
 
 function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "dailyCandles" | "period" | "indicatorCalculator">) {
   const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
-  const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod), [candlePeriod, dailyCandles]);
+  const [aggregationBasis, setAggregationBasis] = useState(() => typeof window === "undefined" ? "calendar" as const : loadCandleAggregationBasis(window.localStorage));
+  const [settingError, setSettingError] = useState<string | null>(null);
+  const periodLabel = aggregationBasis === "trading-days" && candlePeriod !== "日K" ? `${candlePeriod === "周K" ? 5 : 20}交易日K` : period;
+  const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod, aggregationBasis), [candlePeriod, dailyCandles, aggregationBasis]);
   const indicatorInput = useMemo(() => ({
     prices: [],
     candles: allCandles.map(({ high, low, close }) => ({ high, low, close })),
   }), [allCandles]);
   const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
   const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
-  if (allCandles.length === 0) return <section className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
+  if (allCandles.length === 0) return <section className="msd-kline msd-chart-empty" aria-label={`${periodLabel}图`}><b>{periodLabel}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
   const projection = MobileKlineProjection.fromInputs(allCandles, viewport, indicatorResult);
   const candles = projection.visibleCandles;
   const ma5 = projection.movingAverage(5); const ma10 = projection.movingAverage(10); const ma20 = projection.movingAverage(20);
@@ -83,14 +87,26 @@ function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
   return <section
     className="msd-kline"
-    aria-label={`${period}图`}
+    aria-label={`${periodLabel}图`}
     data-kline-count={allCandles.length}
     data-kline-signature={projection.latestSignature}
   >
-    <div className="msd-kline-meta"><button type="button" title="均线设置尚未开放" disabled>均线⌄</button><b>{period}</b><span>M5:{ma5.at(-1)?.toFixed(2)}</span><span>M10:{ma10.at(-1)?.toFixed(2)}</span><span>M20:{ma20.at(-1)?.toFixed(2)}</span></div>
+    {candlePeriod !== "日K" && <label>K线聚合口径<select aria-label="K线聚合口径" value={aggregationBasis} onChange={(event) => {
+      const next = parseCandleAggregationBasis(event.target.value);
+      try {
+        saveCandleAggregationBasis(window.localStorage, next);
+        setAggregationBasis(next);
+        setViewport({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
+        setSettingError(null);
+      } catch (error) {
+        setSettingError(`保存K线聚合设置失败：${error instanceof Error ? error.message : String(error)}；原口径保持不变，请反馈此错误。`);
+      }
+    }}><option value="calendar">自然周／自然月</option><option value="trading-days">5／20个交易日</option></select></label>}
+    {settingError !== null && <p role="alert">{settingError}</p>}
+    <div className="msd-kline-meta"><button type="button" title="均线设置尚未开放" disabled>均线⌄</button><b>{periodLabel}</b><span>M5:{ma5.at(-1)?.toFixed(2)}</span><span>M10:{ma10.at(-1)?.toFixed(2)}</span><span>M20:{ma20.at(-1)?.toFixed(2)}</span></div>
     <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}<polyline className="ma5" points={projection.movingAverageLine(5)}/><polyline className="ma10" points={projection.movingAverageLine(10)}/><polyline className="ma20" points={projection.movingAverageLine(20)}/></svg>
     <KlineViewportControls total={allCandles.length} viewport={viewport} onAction={act} />
-    <div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes.at(-1) ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{projection.volumeMarks().map(({ slot, height, rise }, index) => <rect key={index} className={rise?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>)}</svg>
+    <div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes.at(-1) ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${periodLabel}成交量，单位为手`}>{projection.volumeMarks().map(({ slot, height, rise }, index) => <rect key={index} className={rise?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>)}</svg>
     {kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k.at(-1)?.toFixed(2)}　<span>D:{kdj.d.at(-1)?.toFixed(2)}</span>　<em>J:{kdj.j.at(-1)?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={projection.indicatorLine(kdj.k)}/><polyline className="orange" points={projection.indicatorLine(kdj.d)}/><polyline className="pink" points={projection.indicatorLine(kdj.j)}/></svg></>}
   </section>;
 }

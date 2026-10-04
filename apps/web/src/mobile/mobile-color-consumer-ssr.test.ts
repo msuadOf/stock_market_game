@@ -54,7 +54,7 @@ const snapshot: Snapshot = {
 };
 
 const candle: KlinePoint = {
-  time: 0 as KlinePoint["time"],
+  time: 1893456000 as KlinePoint["time"],
   open: 10,
   high: 10.1,
   low: 9.9,

@@ -131,12 +131,11 @@ impl SessionCandleBook {
 impl SessionCandleBook {
     pub(super) fn record_trade_or_mark(
         &mut self,
-        day: u32,
+        time: i64,
         code: &StockCode,
         price: Money,
         added_volume: u64,
     ) {
-        let time = i64::from(day) * SECONDS_PER_DAY;
         let candle = self.active.entry(code.clone()).or_insert(DailyCandle {
             time,
             open: price,
@@ -195,9 +194,12 @@ impl GameSession {
         price: Money,
         added_volume: u64,
     ) {
-        self.state
-            .candle_book
-            .record_trade_or_mark(self.state.day, code, price, added_volume);
+        self.state.candle_book.record_trade_or_mark(
+            candle_date_time(self.state.civil_clock.current_date()),
+            code,
+            price,
+            added_volume,
+        );
     }
 
     pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
@@ -212,11 +214,13 @@ const SECONDS_PER_DAY: i64 = 86_400;
 pub(super) fn generate_preset_daily_candles(
     setup: &SessionSetup,
     seed: u64,
-) -> BTreeMap<StockCode, DailyCandleHistory> {
+) -> Result<BTreeMap<StockCode, DailyCandleHistory>, SessionError> {
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()?;
     setup
         .stocks
         .iter()
         .map(|stock| {
+            let dates = preset_candle_dates(&calendar, setup.start_date, stock.exchange)?;
             let mut rng =
                 SplitMix64::new(seed ^ stock_code_hash(&stock.code) ^ 0xD1A1_C4AD_1E50_0360);
             let tick = stock.tick.cents().max(1);
@@ -243,7 +247,7 @@ pub(super) fn generate_preset_daily_candles(
                 let base_volume = u64::from(stock.float_shares).max(100_000) / 1_250;
                 let volume = base_volume + rng.next_u64() % (base_volume.saturating_mul(5).max(1));
                 newest_first.push(DailyCandle {
-                    time: -((recency as i64) + 1) * SECONDS_PER_DAY,
+                    time: candle_date_time(dates[PRESET_HISTORY_DAYS - 1 - recency]),
                     open: Money::from_cents(open),
                     high: Money::from_cents(high),
                     low: Money::from_cents(low),
@@ -260,9 +264,30 @@ pub(super) fn generate_preset_daily_candles(
                 );
             }
             newest_first.reverse();
-            (stock.code.clone(), newest_first.into())
+            Ok((stock.code.clone(), newest_first.into()))
         })
         .collect()
+}
+
+pub(super) fn candle_date_time(date: crate::calendar::CivilDate) -> i64 {
+    let epoch =
+        crate::calendar::CivilDate::from_ymd(1970, 1, 1).expect("1970-01-01 is a valid civil date");
+    date.days_since(epoch) * SECONDS_PER_DAY
+}
+
+pub(super) fn preset_candle_dates(
+    calendar: &crate::calendar::TradingCalendar,
+    start: crate::calendar::CivilDate,
+    exchange: StockExchange,
+) -> Result<Vec<crate::calendar::CivilDate>, crate::calendar::CalendarError> {
+    let mut dates = Vec::with_capacity(PRESET_HISTORY_DAYS);
+    let mut before = start;
+    for _ in 0..PRESET_HISTORY_DAYS {
+        before = calendar.previous_trading_day(session_calendar_exchange(exchange), before)?;
+        dates.push(before);
+    }
+    dates.reverse();
+    Ok(dates)
 }
 
 impl DailyTradeStats {

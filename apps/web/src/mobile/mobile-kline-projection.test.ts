@@ -3,7 +3,7 @@ import { test } from "node:test";
 import * as model from "./market-model.ts";
 import type { KlinePoint } from "../components/PriceChart.tsx";
 import type { IndicatorResultState } from "../components/useIndicatorResults.ts";
-const candle = (i: number): KlinePoint => ({ time: i as KlinePoint["time"], open: i + 10, close: i + 11, high: i + 12, low: i + 9, volume: i * 100 });
+const candle = (i: number): KlinePoint => ({ time: (1893456000 + i * 86400) as KlinePoint["time"], open: i + 10, close: i + 11, high: i + 12, low: i + 9, volume: i * 100 });
 const pending: IndicatorResultState = { kind: "pending" };
 
 test("审计G44：K线零量不画正高度，微小正量保留最小可见高度", () => {
@@ -36,10 +36,10 @@ test("MA 与 Rust KDJ 先覆盖完整历史再截取窗口，三个图共享槽�
   const result: IndicatorResultState = { kind: "ready", value: { macd: { dif: [], dea: [], histogram: [] }, priceKdj: { k: [], d: [], j: [] }, candleKdj: kdj } };
   const before = structuredClone({ candles, result });
   const p = model.MobileKlineProjection.fromInputs(candles, { capacity: 3, offsetFromEnd: 1 }, result);
-  assert.deepEqual(p.visibleCandles.map(c => c.time), [4, 5, 6]);
+  assert.deepEqual(p.visibleCandles.map(c => c.time), [1893801600, 1893888000, 1893974400]);
   assert.deepEqual(p.movingAverage(5), [13, 14, 15]);
   assert.deepEqual(p.kdj, { k: [40, 50, 60], d: [36, 45, 54], j: [50, 70, 90] });
-  assert.equal(p.latestSignature, "7:17:19:16:18:700");
+  assert.equal(p.latestSignature, "1894060800:17:19:16:18:700");
   assert.equal(p.movingAverageLine(5).split(" ")[0], `${p.slotFor(0).center},${p.priceY(13)}`);
   assert.equal(p.indicatorLine(p.kdj!.k).split(" ")[0], `${p.slotFor(0).center},${68 - 40 / 100 * 64}`);
   assert.equal(p.volumeMarks()[0].slot.center, p.slotFor(0).center);
@@ -55,11 +55,11 @@ test("KDJ 未就绪或失败时不制造指标，ready 时域包含 J 极值", (
   assert.equal(p.indicatorLine(p.kdj!.j), `${p.slotFor(0).center},68 ${p.slotFor(1).center},4`);
 });
 
-test("周月 K 沿用 5/20 游戏交易日聚合，offset 超界归一与原始 OHLCV 保持不变", () => {
+test("显式交易日模式按 5/20 日聚合，offset 超界归一与原始 OHLCV 保持不变", () => {
   const candles = Array.from({ length: 21 }, (_, i) => candle(i));
   const before = structuredClone(candles);
   for (const period of ["周K", "月K"] as const) {
-    const aggregated = model.aggregateCandles(candles, period);
+    const aggregated = model.aggregateCandles(candles, period, "trading-days");
     const p = model.MobileKlineProjection.fromInputs(aggregated, { capacity: 2, offsetFromEnd: 99 }, pending);
     assert.equal(aggregated.length, period === "周K" ? 5 : 2);
     assert.equal(p.visibleWindow.offsetFromEnd, p.visibleWindow.maxOffset);

@@ -843,6 +843,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "daily-candle market set does not exactly match setup".to_string(),
         ));
     }
+    let candle_calendar = crate::calendar::TradingCalendar::from_policy(
+        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())?,
+    )?;
     for (code, candles) in &save.snapshot.daily_candles {
         if !expected_markets.contains(code) {
             return Err(SessionError::InvalidSave(format!(
@@ -864,17 +867,35 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 expected_candles,
             )));
         }
+        let stock = save
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| &stock.code == code)
+            .expect("daily candle market is validated against setup");
+        let exchange = session_calendar_exchange(stock.exchange);
+        let mut expected_dates =
+            candles::preset_candle_dates(&candle_calendar, save.setup.start_date, stock.exchange)?;
+        let mut live_date = save.setup.start_date;
+        if !candle_calendar.is_trading_day(exchange, live_date)? {
+            live_date = candle_calendar.next_trading_day(exchange, live_date)?;
+        }
+        for completed in 0..context.saved_day {
+            if completed > 0 {
+                live_date = candle_calendar.next_trading_day(exchange, live_date)?;
+            }
+            expected_dates.push(live_date);
+        }
         let mut previous_time = None;
         for (index, candle) in candles.iter().enumerate() {
-            validate_candle(code, candle)?;
+            validate_candle(code, candle, index >= 360)?;
             if previous_time.is_some_and(|time| candle.time <= time) {
                 return Err(SessionError::InvalidSave(format!(
                     "daily candles for {} are not strictly ordered",
                     code.0
                 )));
             }
-            let expected_time =
-                (i64::try_from(index).expect("daily index fits i64") - 360) * 86_400;
+            let expected_time = candles::candle_date_time(expected_dates[index]);
             if candle.time != expected_time {
                 return Err(SessionError::InvalidSave(format!(
                     "daily candle {} for {} has time {}; expected {}",
@@ -949,7 +970,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        validate_candle(code, candle)?;
+        validate_candle(code, candle, true)?;
+        if candle.time != candles::candle_date_time(save.civil_clock.current_date) {
+            return Err(SessionError::InvalidSave(format!(
+                "active candle for {} does not match the current civil date",
+                code.0
+            )));
+        }
     }
 
     if save.next_order_id == 0
@@ -1667,7 +1694,11 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
     Ok(())
 }
 
-fn validate_candle(code: &StockCode, candle: &DailyCandle) -> Result<(), SessionError> {
+fn validate_candle(
+    code: &StockCode,
+    candle: &DailyCandle,
+    real_day: bool,
+) -> Result<(), SessionError> {
     if candle.open.cents() <= 0
         || candle.high.cents() <= 0
         || candle.low.cents() <= 0
@@ -1683,7 +1714,7 @@ fn validate_candle(code: &StockCode, candle: &DailyCandle) -> Result<(), Session
             code.0, candle.time
         )));
     }
-    if candle.time >= 0 {
+    if real_day {
         let statistics_are_valid = match (&candle.trade_stats, candle.volume) {
             (Some(stats), 0) => stats.turnover_cents == 0 && stats.trade_count == 0,
             (Some(stats), volume) => {

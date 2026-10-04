@@ -382,9 +382,9 @@ test("迷你走势图只由真实价格历史生成", () => {
   );
 });
 
-test("周 K 和月 K 按真实交易日 OHLCV 聚合", () => {
+test("可选交易日数量口径按5根日 K 聚合OHLCV", () => {
   const candles: KlinePoint[] = Array.from({ length: 6 }, (_, index) => ({
-    time: (index + 1) as KlinePoint["time"],
+    time: (1893542400 + index * 86400) as KlinePoint["time"],
     open: 10 + index,
     high: 12 + index,
     low: 9 + index,
@@ -392,9 +392,9 @@ test("周 K 和月 K 按真实交易日 OHLCV 聚合", () => {
     volume: 100 * (index + 1),
   }));
 
-  assert.deepEqual(aggregateCandles(candles, "周K"), [
-    { time: 1, open: 10, high: 16, low: 9, close: 15, volume: 1500 },
-    { time: 6, open: 15, high: 17, low: 14, close: 16, volume: 600 },
+  assert.deepEqual(aggregateCandles(candles, "周K", "trading-days"), [
+    { time: 1893542400, open: 10, high: 16, low: 9, close: 15, volume: 1500 },
+    { time: 1893974400, open: 15, high: 17, low: 14, close: 16, volume: 600 },
   ]);
   assert.deepEqual(aggregateCandles(candles, "日K"), candles);
 });

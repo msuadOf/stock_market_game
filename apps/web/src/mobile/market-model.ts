@@ -5,6 +5,7 @@ import type { EngineEvent, PriceLevel } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
 import { formatSharesAsLots } from "../utils/format.ts";
+export { aggregateCandles } from "./calendar-candles.ts";
 
 export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
@@ -352,25 +353,6 @@ export function sparklineGeometry(points: readonly PricePoint[], baseline: numbe
   const firstX = pointCoordinates[0].x;
   const lastX = pointCoordinates.at(-1)!.x;
   return { linePoints, areaPoints: `${firstX},${axisY} ${linePoints} ${lastX},${axisY}`, axisY };
-}
-
-/** 按游戏交易日聚合 OHLCV；一周 5 日、一月 20 日。 */
-export function aggregateCandles(candles: readonly KlinePoint[], period: "日K" | "周K" | "月K"): KlinePoint[] {
-  const daysPerCandle = period === "日K" ? 1 : period === "周K" ? 5 : 20;
-  if (daysPerCandle === 1) return candles.map((candle) => ({ ...candle }));
-
-  const groups: KlinePoint[][] = [];
-  for (let index = 0; index < candles.length; index += daysPerCandle) {
-    groups.push(candles.slice(index, index + daysPerCandle));
-  }
-  return groups.map((group) => ({
-    time: group[0].time,
-    open: group[0].open,
-    high: Math.max(...group.map((candle) => candle.high)),
-    low: Math.min(...group.map((candle) => candle.low)),
-    close: group.at(-1)!.close,
-    volume: group.reduce((sum, candle) => sum + (candle.volume ?? 0), 0),
-  }));
 }
 
 /** 一个游戏世界分钟包含的 tick 数：每 tick = 游戏世界 1 秒。 */

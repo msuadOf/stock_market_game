@@ -11,7 +11,7 @@ test("价格事件把权威游戏 tick 同步到 Redux 时钟", () => {
         tick: 7_200,
         code: "000812",
         last_price: "286",
-        daily_candle: { time: 0, open: "285", high: "286", low: "285", close: "286", volume: 1 },
+        daily_candle: { time: 1893456000, open: "285", high: "286", low: "285", close: "286", volume: 1 },
       },
     },
   ]);

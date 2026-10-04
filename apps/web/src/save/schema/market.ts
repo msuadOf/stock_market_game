@@ -1,4 +1,5 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
+import { candleDate } from "../../utils/candle-date.ts"
 import type { FloatAllocation, SessionSetup, Snapshot } from "../../types/engine"
 import type { DailyCandle } from "../../types/generated/DailyCandle"
 import { parseCompanyOperationsConfig } from "./company/operations.ts"
@@ -83,6 +84,12 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
 
 export function parseDailyCandle(value: unknown, path: string): DailyCandle {
   const parsed = record(value, path)
+  const time = integer(parsed.time, `${path}.time`)
+  try {
+    candleDate(time)
+  } catch (error) {
+    throw new Error(`存档 ${path}.time 日期无效：${error instanceof Error ? error.message : String(error)}`)
+  }
   const keys = "trade_stats" in parsed ? ["time", "open", "high", "low", "close", "volume", "trade_stats"] : ["time", "open", "high", "low", "close", "volume"]
   exact(parsed, keys, path)
   const stats = parsed.trade_stats === undefined ? undefined : nullable(parsed.trade_stats, `${path}.trade_stats`, (nested, statsPath) => {

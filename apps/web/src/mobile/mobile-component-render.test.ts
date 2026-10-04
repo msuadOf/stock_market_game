@@ -47,7 +47,7 @@ test("审计G45：App共用详情层从自选打开会实际渲染，返回后�
 });
 
 const candle: KlinePoint = {
-  time: 0 as KlinePoint["time"],
+  time: 1893456000 as KlinePoint["time"],
   open: 10,
   high: 10,
   low: 8,
@@ -182,7 +182,7 @@ test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
 
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
   const html = renderDetail("日K", "盘口");
-  assert.match(html, /data-kline-signature="0:10:10:8:8:250"/);
+  assert.match(html, /data-kline-signature="1893456000:10:10:8:8:250"/);
   const upper = html.match(/class="upper-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
   const lower = html.match(/class="lower-wick" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)" y2="([^"]+)"/);
   assert.ok(upper); assert.ok(lower);

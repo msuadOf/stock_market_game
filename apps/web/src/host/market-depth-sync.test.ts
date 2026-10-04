@@ -17,7 +17,7 @@ test("PriceTick refreshes the visible top-five order book instead of leaving the
     tick: 2,
     code: "600101",
     last_price: "1002",
-    daily_candle: { time: 0, open: "1000", high: "1002", low: "1000", close: "1002", volume: 300 },
+    daily_candle: { time: 1893456000, open: "1000", high: "1002", low: "1000", close: "1002", volume: 300 },
     bids: [["1001", 300], ["1000", 500]],
     asks: [["1003", 400], ["1004", 600]],
   };

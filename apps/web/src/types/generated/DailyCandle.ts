@@ -3,8 +3,8 @@ import type { DailyTradeStats } from "./DailyTradeStats";
 import type { Money } from "./Money";
 
 /**
- * 单个交易日的 OHLCV。价格全部为分，time 为游戏内相对 Unix 秒：第 0 日为 0，
- * 启动预置历史使用负数，确保前端图表可直接按时间排序。
+ * 单个交易日的 OHLCV。价格全部为分，time 是该公历日 UTC 零点的 Unix 秒日期标签，
+ * 不是 Asia/Shanghai 的真实开盘时刻。虚拟前史和真实撮合日使用相同日期口径。
  */
 export type DailyCandle = {
   time: number;

@@ -4,6 +4,7 @@ import type { DailyCandle } from "../../types/generated/DailyCandle.ts";
 import type { DayStatus } from "../../types/generated/DayStatus.ts";
 import type { MarketSnap } from "../../types/generated/MarketSnap.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
+import { candleDate } from "../../utils/candle-date.ts";
 import {
   enumValue,
   exact,
@@ -77,6 +78,11 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
     close: parseMoney(field(source, "close", path), `${path}.close`),
     volume: safeInteger(field(source, "volume", path), `${path}.volume`),
   };
+  try {
+    candleDate(candle.time);
+  } catch (error) {
+    malformed(`${path}.time`, error instanceof Error ? error.message : String(error));
+  }
   if (!hasTradeStats) return candle;
   const rawStats = field(source, "trade_stats", path);
   if (rawStats === null) return { ...candle, trade_stats: null };

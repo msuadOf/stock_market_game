@@ -15,7 +15,7 @@ export type TickBatchWire = {
 };
 
 export function dailyCandle(): JsonRecord {
-  return { time: 0, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 };
+  return { time: 1893456000, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 };
 }
 
 export function market(): JsonRecord {

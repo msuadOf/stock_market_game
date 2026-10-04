@@ -30,7 +30,7 @@ function baseline() {
   return createBaselineUpdate("1", parseProtocolSnapshot({
     ...snapshot(0, 0), markets: { "600101": market(), "000001": market() },
     accounts: { "0": { cash: "100000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
-    daily_candles: { "600101": [{ ...dailyCandle(), time: -1, open: "900", high: "900", low: "900", close: "900" }], "000001": [] },
+    daily_candles: { "600101": [{ ...dailyCandle(), time: 1893369600, open: "900", high: "900", low: "900", close: "900" }], "000001": [] },
     active_daily_candles: { "600101": dailyCandle(), "000001": dailyCandle() },
   }));
 }
@@ -77,7 +77,7 @@ test("production delta updates selected daily K and mobile active K cache while 
 
 test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot", { timeout: 10000 }, () => {
   const authoritative = { ...baseline().snapshot, tick: 1,
-    daily_candles: { "600101": [{ ...dailyCandle(), time: -2, close: "800" }] },
+    daily_candles: { "600101": [{ ...dailyCandle(), time: 1893283200, close: "800" }] },
     active_daily_candles: { "600101": { ...dailyCandle(), close: "1400" } },
   };
   const { after } = render([createProtocolUpdate("1", { TickBatch: {
@@ -136,15 +136,15 @@ test("详情历史查询丢弃换股前响应，并在 hook rerender 后交付�
   runtime = harness.render();
   const currentRequest = runtime.queryChartHistory("000001");
   const candle = (time: number, close: string) => ({ time, open: close, high: close, low: close, close, volume: 0 });
-  pending.get("000001")!({ code: "000001", daily_candles: [candle(-2, "800")], active_daily_candle: null });
+  pending.get("000001")!({ code: "000001", daily_candles: [candle(1893283200, "800")], active_daily_candle: null });
   await currentRequest;
   runtime = harness.render();
-  assert.ok(runtime.dailyChartData.some((item) => item.time === -2 && item.close === 8));
-  assert.ok(runtime.dailyChartData.some((item) => item.time === 0 && item.close === 10));
-  pending.get("600101")!({ code: "600101", daily_candles: [candle(-2, "700")], active_daily_candle: null });
+  assert.ok(runtime.dailyChartData.some((item) => item.time === 1893283200 && item.close === 8));
+  assert.ok(runtime.dailyChartData.some((item) => item.time === 1893456000 && item.close === 10));
+  pending.get("600101")!({ code: "600101", daily_candles: [candle(1893283200, "700")], active_daily_candle: null });
   await oldRequest;
   runtime = harness.render();
-  assert.ok(runtime.dailyChartData.some((item) => item.time === -2 && item.close === 8));
+  assert.ok(runtime.dailyChartData.some((item) => item.time === 1893283200 && item.close === 8));
   assert.equal(runtime.chartCode, "000001");
 });
 

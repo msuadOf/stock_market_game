@@ -27,7 +27,7 @@ test("Money wire：活动委托严格拒绝 Number 并保留大金额原值", { 
 
 test("Money wire：图表坐标相同不能吞掉原始 OHLC 一分变化", { timeout: 10000 }, () => {
   const projection = new MarketChartProjection();
-  const candle = { time: 1, open: "9007199254740992", high: "9007199254740993", low: "9007199254740992", close: "9007199254740992", volume: 0, trade_stats: null };
+  const candle = { time: 1893456000, open: "9007199254740992", high: "9007199254740993", low: "9007199254740992", close: "9007199254740992", volume: 0, trade_stats: null };
   projection.replaceActiveCandles({ "600101": candle });
   const before = projection.activeCandles()["600101"];
   projection.replaceActiveCandles({ "600101": { ...candle, close: "9007199254740993" } });

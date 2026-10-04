@@ -15,7 +15,7 @@ const tick = (seq: number, code: string, close: string): EngineEvent => ({
     code,
     last_price: close,
     daily_candle: {
-      time: 0,
+      time: 1893456000,
       open: "100",
       high: close,
       low: "100",
@@ -42,7 +42,7 @@ describe("fast-forward event buffer", () => {
         seq: 4,
         day: 1,
         closed_daily_candles: {
-          AAA: { time: 0, open: "100", high: "120", low: "90", close: "110", volume: 20 },
+          AAA: { time: 1893456000, open: "100", high: "120", low: "90", close: "110", volume: 20 },
         },
       },
     };
@@ -120,7 +120,7 @@ describe("fast-forward event buffer", () => {
         seq: 1,
         day: 1,
         closed_daily_candles: new Map([
-          ["AAA", { time: 0, open: "100", high: "110", low: "90", close: "105", volume: 20 }],
+          ["AAA", { time: 1893456000, open: "100", high: "110", low: "90", close: "105", volume: 20 }],
         ]),
       },
     } as unknown as EngineEvent;
@@ -130,7 +130,7 @@ describe("fast-forward event buffer", () => {
         seq: 1,
         day: 1,
         closed_daily_candles: {
-          AAA: { time: 0, open: "100", high: "110", low: "90", close: "105", volume: 20 },
+          AAA: { time: 1893456000, open: "100", high: "110", low: "90", close: "105", volume: 20 },
         },
       },
     }]);
@@ -156,7 +156,7 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: new Map([
-          ["600101", { time: 1, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 }],
+          ["600101", { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 }],
         ]),
       },
     }, {
@@ -174,7 +174,7 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: {
-          "600101": { time: 1, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 },
+          "600101": { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 },
         },
       },
     }, {

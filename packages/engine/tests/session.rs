@@ -1280,7 +1280,12 @@ fn large_retail_account_setup(retail_count: u32) -> SessionSetup {
     setup.npcs.inst_count = 5;
     setup.npcs.hot_count = 2;
     setup.npcs.retail_cash_median = Money::from_cents(20_000_000);
-    setup.float_allocation = engine::FloatAllocation::class_percentages(0.45, 0.53, 0.02, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        0.45,
+        0.53,
+        0.02,
+        engine::WithinKindDistribution::Random,
+    );
     let template = setup.stocks[0].clone();
     setup.stocks = ["600101", "002156", "300260", "600610", "000812"]
         .into_iter()
@@ -1859,6 +1864,11 @@ fn new_session_generates_360_authoritative_daily_candles() {
     let setup = sample_setup();
     let code = setup.stocks[0].code.clone();
     let initial_price = setup.stocks[0].initial_price;
+    let calendar = engine::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let epoch = engine::calendar::CivilDate::from_iso("1970-01-01").unwrap();
+    let newest_date = calendar
+        .previous_trading_day(engine::calendar::CalendarExchange::Sse, setup.start_date)
+        .unwrap();
     let snapshot = GameSession::new(setup, 42).unwrap().snapshot();
     let candles = snapshot
         .daily_candles
@@ -1867,7 +1877,10 @@ fn new_session_generates_360_authoritative_daily_candles() {
 
     assert_eq!(candles.len(), 360);
     assert_eq!(candles.last().unwrap().close, initial_price);
-    assert!(candles.last().unwrap().time < 0);
+    assert_eq!(
+        candles.last().unwrap().time,
+        newest_date.days_since(epoch) * 86_400
+    );
     for (index, candle) in candles.iter().enumerate() {
         assert!(candle.low <= candle.open.min(candle.close));
         assert!(candle.high >= candle.open.max(candle.close));
@@ -1901,8 +1914,83 @@ fn generated_daily_candles_are_seed_deterministic() {
 }
 
 #[test]
-fn day_boundary_commits_engine_owned_daily_candle() {
+fn dated_candles_bridge_virtual_prehistory_and_real_sessions_across_weekend() {
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-04").unwrap();
+    let mut session = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
+    for _ in 0..4 {
+        while !session.civil_day_ready().unwrap() {
+            session.step_frame().unwrap();
+        }
+        session.end_civil_day_update().unwrap();
+    }
+    let snapshot = session.snapshot();
+    let candles = &snapshot.daily_candles[&StockCode("600101".into())];
+    let epoch = engine::CivilDate::from_iso("1970-01-01").unwrap();
+    let date_time =
+        |date: &str| engine::CivilDate::from_iso(date).unwrap().days_since(epoch) * 86_400;
+    assert_eq!(candles.len(), 362);
+    assert_eq!(candles[359].time, date_time("2030-01-03"));
+    assert_eq!(candles[360].time, date_time("2030-01-04"));
+    assert_eq!(candles[361].time, date_time("2030-01-07"));
+    assert!(candles[359].trade_stats.is_none());
+    assert!(candles[360].trade_stats.is_some());
+    assert!(candles[361].trade_stats.is_some());
+    assert!(snapshot.active_daily_candles.is_empty());
+    assert_eq!(
+        serde_json::to_value(
+            engine::session::protocol::ProtocolSession::restore(&session.save().unwrap())
+                .unwrap()
+                .snapshot()
+        )
+        .unwrap(),
+        serde_json::to_value(snapshot).unwrap()
+    );
+}
+
+#[test]
+fn restore_rejects_relative_history_seconds_and_wrong_active_civil_date() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step().unwrap();
+    let save = session.save().unwrap();
+    let code = StockCode("600101".into());
+    let mut old_relative_history = save.clone();
+    old_relative_history
+        .snapshot
+        .daily_candles
+        .get_mut(&code)
+        .unwrap()[0]
+        .time = -360 * 86_400;
+    assert!(
+        matches!(GameSession::restore(&old_relative_history), Err(engine::session::SessionError::InvalidSave(message)) if message.contains("expected"))
+    );
+    let mut wrong_active_date = save;
+    wrong_active_date
+        .snapshot
+        .active_daily_candles
+        .get_mut(&code)
+        .unwrap()
+        .time += 86_400;
+    assert!(
+        matches!(GameSession::restore(&wrong_active_date), Err(engine::session::SessionError::InvalidSave(message)) if message.contains("current civil date"))
+    );
+}
+
+#[test]
+fn day_boundary_commits_engine_owned_daily_candle() {
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let calendar = engine::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let epoch = engine::CivilDate::from_iso("1970-01-01").unwrap();
+    let first_history_date = calendar
+        .trading_days_before(
+            engine::calendar::CalendarExchange::Sse,
+            setup.start_date,
+            360,
+        )
+        .unwrap();
+    let first_live_date = setup.start_date;
+    let mut session = GameSession::new(setup, 42).unwrap();
     for _ in 0..10 {
         session.step().expect("healthy step");
     }
@@ -1911,8 +1999,14 @@ fn day_boundary_commits_engine_owned_daily_candle() {
     let candles = snapshot.daily_candles.get(&code).unwrap();
 
     assert_eq!(candles.len(), 361, "the completed day extends full history");
-    assert_eq!(candles.first().unwrap().time, -360 * 86_400);
-    assert_eq!(candles.last().unwrap().time, 0);
+    assert_eq!(
+        candles.first().unwrap().time,
+        first_history_date.days_since(epoch) * 86_400
+    );
+    assert_eq!(
+        candles.last().unwrap().time,
+        first_live_date.days_since(epoch) * 86_400
+    );
     assert!(snapshot.active_daily_candles.is_empty());
 }
 
@@ -2028,7 +2122,9 @@ fn restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow()
 
 #[test]
 fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
-    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
     let code = StockCode("600101".to_string());
     let mut final_tick_candle = None;
     let mut closed_candle = None;
@@ -2044,7 +2140,13 @@ fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
                     ..
                 } if event_code == code => {
                     assert_eq!(tick, session.snapshot().tick);
-                    assert_eq!(daily_candle.time, 0);
+                    assert_eq!(
+                        daily_candle.time,
+                        engine::CivilDate::from_iso("2030-01-02")
+                            .unwrap()
+                            .days_since(engine::CivilDate::from_iso("1970-01-01").unwrap())
+                            * 86_400
+                    );
                     assert_eq!(daily_candle.close, last_price);
                     final_tick_candle = Some(daily_candle);
                 }
@@ -2346,8 +2448,18 @@ fn float_setup(float: u32) -> SessionSetup {
 fn audit_zero_npc_skips_positive_float_allocation_without_gifting_player_shares() {
     for allocation in [
         engine::FloatAllocation::random(),
-        engine::FloatAllocation::class_percentages(0.4, 0.5, 0.1, engine::WithinKindDistribution::Random),
-        engine::FloatAllocation::class_percentages(0.0, 0.0, 0.0, engine::WithinKindDistribution::Random),
+        engine::FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            engine::WithinKindDistribution::Random,
+        ),
+        engine::FloatAllocation::class_percentages(
+            0.0,
+            0.0,
+            0.0,
+            engine::WithinKindDistribution::Random,
+        ),
     ] {
         let mut setup = float_setup(1000);
         setup.npcs.retail_count = 0;
@@ -2386,7 +2498,12 @@ fn audit_zero_npc_does_not_relax_invalid_allocation_parameter_guard() {
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
         setup.npcs.hot_count = 0;
-        setup.float_allocation = engine::FloatAllocation::class_percentages(weight, 0.0, 0.0, engine::WithinKindDistribution::Random);
+        setup.float_allocation = engine::FloatAllocation::class_percentages(
+            weight,
+            0.0,
+            0.0,
+            engine::WithinKindDistribution::Random,
+        );
         let error = setup.validate().unwrap_err();
         assert!(error.to_string().contains("finite >=0"), "{error}");
     }
@@ -2413,7 +2530,12 @@ fn by_kind_distribution_gives_individual_retailers_sparse_portfolios() {
     setup.npcs.retail_count = 100;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
-    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        1.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
     let codes = ["600101", "600102", "600103", "600104", "600105"];
     let template = setup.stocks[0].clone();
     setup.stocks = codes
@@ -2583,7 +2705,12 @@ fn seed_float_percentage_ratios() {
     let mut s = sample_setup();
     s.stocks[0].total_shares = 1_000_000;
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
+    s.float_allocation = engine::FloatAllocation::class_percentages(
+        0.2,
+        0.5,
+        0.3,
+        engine::WithinKindDistribution::Random,
+    );
     // sample_setup: retail2, inst1, hot1
     let sess = GameSession::new(s, 42).unwrap();
     let code = StockCode("600101".to_string());
@@ -2620,7 +2747,12 @@ fn seed_float_percentage_missing_kind_redistributes() {
         hot_count: 1,
         retail_cash_median: Money::from_cents(10_000_000),
     };
-    s.float_allocation = engine::FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
+    s.float_allocation = engine::FloatAllocation::class_percentages(
+        0.2,
+        0.5,
+        0.3,
+        engine::WithinKindDistribution::Random,
+    );
     // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
     let sess = GameSession::new(s, 42).unwrap();
     let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
@@ -2632,7 +2764,12 @@ fn seed_float_percentage_invalid_ratio_rejected() {
     let mut s = sample_setup();
     s.stocks[0].total_shares = 1_000_000;
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::class_percentages(-0.1, 0.5, 0.6, engine::WithinKindDistribution::Random);
+    s.float_allocation = engine::FloatAllocation::class_percentages(
+        -0.1,
+        0.5,
+        0.6,
+        engine::WithinKindDistribution::Random,
+    );
     assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
 }
 
@@ -2641,7 +2778,12 @@ fn seed_float_percentage_rejects_zero_weight_for_every_existing_kind() {
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 1_000_000;
     setup.stocks[0].float_shares = 1_000_000;
-    setup.float_allocation = engine::FloatAllocation::class_percentages(0.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        0.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
 
     let error = GameSession::new(setup, 42)
         .err()
@@ -2656,7 +2798,12 @@ fn seed_float_percentage_rejects_weight_assigned_only_to_an_absent_kind() {
     setup.stocks[0].float_shares = 1_000_000;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
-    setup.float_allocation = engine::FloatAllocation::class_percentages(0.0, 1.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        0.0,
+        1.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
 
     let error = GameSession::new(setup, 42)
         .err()
@@ -2669,7 +2816,12 @@ fn seed_float_percentage_rejects_a_non_finite_sum_of_individually_finite_weights
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 1_000_000;
     setup.stocks[0].float_shares = 1_000_000;
-    setup.float_allocation = engine::FloatAllocation::class_percentages(f64::MAX, f64::MAX, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        f64::MAX,
+        f64::MAX,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
 
     let error = GameSession::new(setup, 42)
         .err()
@@ -2724,7 +2876,11 @@ fn seed_float_random_class_budgets_within_kind_percentage_keeps_small_float_cons
     let session = GameSession::new(setup, 7).unwrap();
     let code = StockCode("600101".to_string());
     assert_eq!(npc_total_qty(&session, &code), 1);
-    assert!(session.account(AccountId(0)).unwrap().positions().is_empty());
+    assert!(session
+        .account(AccountId(0))
+        .unwrap()
+        .positions()
+        .is_empty());
     assert!(
         (1..session.account_count() as u64)
             .filter_map(|id| session.account(AccountId(id)))
@@ -2761,7 +2917,12 @@ fn allocated_market_produces_trades() {
         retail_cash_median: Money::from_cents(10_000_000),
     };
     s.strategy_params.retail.arrival_rate = 0.0;
-    s.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    s.float_allocation = engine::FloatAllocation::class_percentages(
+        1.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
     let session = GameSession::new(s, 42).unwrap();
     let code = StockCode("600101".to_string());
     let seller = AccountId(1);
@@ -2850,7 +3011,12 @@ fn all_stocks_produce_trades_multistock() {
         retail_cash_median: Money::from_cents(100_000_000),
     };
     setup.strategy_params.retail.arrival_rate = 0.0;
-    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        1.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
     let all: HashSet<String> = ["600101", "002156", "300260", "600610", "000812"]
         .iter()
         .map(|s| s.to_string())
@@ -2930,7 +3096,8 @@ fn all_stocks_produce_trades_multistock() {
 fn reexport_float_allocation() {
     use engine::FloatAllocation;
     let _: FloatAllocation = FloatAllocation::random();
-    let _: FloatAllocation = FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
+    let _: FloatAllocation =
+        FloatAllocation::class_percentages(0.2, 0.5, 0.3, engine::WithinKindDistribution::Random);
 }
 
 // crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。

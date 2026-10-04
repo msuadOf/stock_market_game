@@ -22,7 +22,7 @@ describe("runtime snapshot policy", () => {
         tick: 1,
         code: "600101",
         last_price: "1000",
-        daily_candle: { time: 0, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 },
+        daily_candle: { time: 1893456000, open: "1000", high: "1000", low: "1000", close: "1000", volume: 0 },
         bids: [],
         asks: [],
       },

@@ -6,9 +6,9 @@ import { buildPriceChartIndicatorSource, priceChartIndicatorData, priceChartVolu
 
 const intraday = [{ time: 1, value: 9, volume: 100, buy: true }, { time: 2, value: 8, volume: 200, buy: false }];
 const daily = [
-  { time: 100, open: 10, high: 13, low: 9, close: 12, volume: 1000 },
-  { time: 200, open: 12, high: 15, low: 11, close: 14, volume: 2000 },
-  { time: 300, open: 14, high: 16, low: 10, close: 11, volume: 3000 },
+  { time: 1893456000, open: 10, high: 13, low: 9, close: 12, volume: 1000 },
+  { time: 1893542400, open: 12, high: 15, low: 11, close: 14, volume: 2000 },
+  { time: 1893628800, open: 14, high: 16, low: 10, close: 11, volume: 3000 },
 ].map((candle) => ({ ...candle, time: candle.time as UTCTimestamp }));
 const results: IndicatorResults = {
   macd: { dif: [1, 2, 3], dea: [2, 1, 4], histogram: [-2, 2, -2] },
@@ -22,10 +22,10 @@ test("daily indicators use all authoritative closes and OHLC, never intraday pri
     { high: 13, low: 9, close: 12 }, { high: 15, low: 11, close: 14 }, { high: 16, low: 10, close: 11 },
   ] });
   const plotted = priceChartIndicatorData(source, results, 2);
-  assert.deepEqual(plotted.dif, [{ time: 200, value: 2 }, { time: 300, value: 3 }]);
-  assert.deepEqual(plotted.k, [{ time: 200, value: 30 }, { time: 300, value: 40 }]);
-  assert.deepEqual(plotted.histogram.map(({ time, value }) => ({ time, value })), [{ time: 200, value: 2 }, { time: 300, value: -2 }]);
-  assert.deepEqual(priceChartVolumeData(source, 2).map(({ time, value }) => ({ time, value })), [{ time: 200, value: 20 }, { time: 300, value: 30 }]);
+  assert.deepEqual(plotted.dif, [{ time: 1893542400, value: 2 }, { time: 1893628800, value: 3 }]);
+  assert.deepEqual(plotted.k, [{ time: 1893542400, value: 30 }, { time: 1893628800, value: 40 }]);
+  assert.deepEqual(plotted.histogram.map(({ time, value }) => ({ time, value })), [{ time: 1893542400, value: 2 }, { time: 1893628800, value: -2 }]);
+  assert.deepEqual(priceChartVolumeData(source, 2).map(({ time, value }) => ({ time, value })), [{ time: 1893542400, value: 20 }, { time: 1893628800, value: 30 }]);
 });
 
 test("intraday indicators and volumes keep the intraday timeline and close-only KDJ", () => {

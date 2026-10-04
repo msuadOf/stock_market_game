@@ -27,7 +27,7 @@ function quoteWithDailyStats(
       "600000": { ...source.continuousPoints["600000"], last_price: lastPrice },
     },
     activeDailyCandles: { "600000": {
-      time: 0, ...ohlc, volume: volumeShares,
+      time: 1893456000, ...ohlc, volume: volumeShares,
       trade_stats: { turnover_cents: turnoverCents, trade_count: tradeCount },
     } },
   };
@@ -74,7 +74,7 @@ test("重建清除旧代码与累计量，竞价保留空指示价并排除收�
 
 test("baseline、活动日 K 替换和 reset 保留权威日 K，selected 数组不能反写缓存", { timeout: 10000 }, () => {
   const initial = baseState();
-  const snapshot: Snapshot = { ...initial.snapshot, daily_candles: { "600000": [{ time: -1, open: "900", high: "900", low: "900", close: "900", volume: 100 }] } };
+  const snapshot: Snapshot = { ...initial.snapshot, daily_candles: { "600000": [{ time: 1893369600, open: "900", high: "900", low: "900", close: "900", volume: 100 }] } };
   const owner = new MarketChartProjection();
   owner.installBaseline({ ...initial, snapshot, intraday: [quote(901, 100)] });
   const selected = owner.pricePointsFor("600000");
