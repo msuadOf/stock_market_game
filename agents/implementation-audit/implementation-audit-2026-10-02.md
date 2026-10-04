@@ -26,7 +26,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 
 ## 2. 已确认的现行缺口
 
-静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54–G55、G58、G69–G71、G74–G80 共15项，剩余64项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
+静态审计确认79项：原G01–G39除第5节核销的G27外有38项，此后G40–G68共29项、G69–G79共11项，Q19纠正恢复可达性判断后转G80。实施阶段已补齐 G06、G15、G54–G55、G58–G59、G69–G71、G74–G80 共16项，剩余63项；以下保留编号、原需求与证据，并在对应行登记修复，不把历史发现删除。G78包含同一恢复owner的未来待办日期边界；BeliefBook的双profile身份候选仍保留Q25，不虚构必需全等契约。分类及拒绝项见 [扩展裁定](hidden-review/README.md) 与 [固定基线续核](renewed-check/README.md)。未来产品、仅未运行的验证和主工作区半成品迁移不列为本分支漏实现。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -122,7 +122,7 @@ ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标�
 | G38 | 本人预算区分已有计划续行与新机会；公司计划K6:165/任务22 | 两个生产预算请求仍全标 ExistingPlan，新机会优先级未获实际分类输入。 仅是同一账户软预算分类，不得扩为跨账户撮合优先；AllocationExperience 默认值不单列缺口，避免重复扣减上游已处理的个人信心。 当前路径、行号及调用链见[策略与公司](reaudit-engine.md)。 |
 | G41 | 真实支付失败/逾期状态持久并公开风险材料；K2:92、任务8/14 | 经营层生成CompanyDayReport.payment_failures，但`session.rs:2105` 日结caller丢弃返回值，权威状态/存档/公开公告不消费失败记录。合法现金不足继续经营已有；缺的是事实保留/获知，不补钱或造违约。见 [日结](exhaustive-review/luna03.md)。 |
 | G58 | 已补齐：每贷款人独立授信按对应未偿校验；公司商业合同 | borrow/available_credit按LoanState关联的真实合同counterparty求该lender未偿本金，包含开局债务与还本。A/B各授信1000且A用满时，B仍可借满1000；各自超额拒绝不改状态，A还款只恢复A额度。独立于G35支付调度，原证据见 [授信](exhaustive-review/luna31.md)，短测及复核见 [工商授信](../implementation-gap-implementation/industrial-credit.md)。 |
-| G59 | 有明确保障期限的保险不在期后新造事故赔案；K3/公司会计 | `operations/insurance.rs:68–75` 只以remaining门控服务释放，赔案日程没有coverage_end门控，合同结束后仍周期创建并立即支付新claim。保障期内已发生未付赔案期后支付仍应允许；该经营边界不因G36缺会话装配而核销。见 [承保期限](exhaustive-review/luna55.md)。 |
+| G59 | 已补齐：有明确保障期限的保险不在期后新造事故赔案；K3/公司会计 | 经营赔案日程新增coverage_end门控，结束日及之前仍按elapsed节奏发生，期后不新增；服务释放和已发生未付赔案期后支付保留。真实CompanyOperations短Fixture验证结束日、两个期后日期及原赔案结付，不因G36会话装配未完而伪核销。原证据见 [承保期限](exhaustive-review/luna55.md)，实施见 [保险期限](../implementation-gap-implementation/insurance-coverage.md)。 |
 | G70 | 已补齐：工商开局库存子账与对应总账逐科目对账；公开构造契约、历史company D01 | seed_inventory补核工业报表同真源的1403/1405/5001；存在但缺seed的科目按零子账余额对账，不平账补钱。custom chart没有对应科目不强行添加，其余seed仍逐项核。原证据见 [开局审读](hidden-review/batch-037.md) 与 [裁定](hidden-review/candidate-resolution-01.md)，短测见 [模型边界](../implementation-gap-implementation/model-boundaries.md)。 |
 | G71 | 已补齐：经营调度器恢复保持唯一身份及序号耗尽显式错误；保存恢复纪律 | from_parts与serde拒绝跨日期重复ScheduledDueId，完整SaveSlot解码沿用同一守卫。submit先checked_add，MAX游标显式SequenceExhausted且队列/游标不变；MAX-1仍可分配，不混用A股委托ID。原问题见 [调度审读](hidden-review/batch-037.md) 与 [恢复裁定](hidden-review/candidate-resolution-01.md)；短测见 [恢复批](../implementation-gap-implementation/restore-guards.md)。 |
 | G73 | 保险组反序列化保持经营不变量；外部存档校验原则 | `ContractGroupState`自定义Deserialize仅搬字段，InsuranceBooks/CompanyOperations恢复不补子账语义校验；既有behavior测试允许损坏released_revenue并观察后续释放先过账、再部分更新后报溢出。缺的是恢复拒绝不一致状态，不据此要求所有合法保险操作强事务，默认工商局与G36行业装配边界仍分开。见 [恢复裁定](hidden-review/candidate-resolution-01.md)；不等于ClosingEngine的Q17。 |

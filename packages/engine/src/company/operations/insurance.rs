@@ -67,10 +67,15 @@ pub(in crate::company::operations) fn advance_day(
         };
         let remaining = state.units_remaining();
         let elapsed = date.days_since(state.coverage_start());
+        let within_coverage = date <= state.coverage_end();
         if remaining > 0 {
             books.release_service(&group, 1, date)?;
         }
-        if elapsed > 0 && params.claim_every_days >= 1 && elapsed % params.claim_every_days == 0 {
+        if within_coverage
+            && elapsed > 0
+            && params.claim_every_days >= 1
+            && elapsed % params.claim_every_days == 0
+        {
             let claim = ClaimId(format!("CLM-{}-{elapsed}", group.0));
             books.record_claim(&group, claim.clone(), params.claim_size, date)?;
             if let Err(error) = books.pay_claim(&group, &claim, params.claim_size, date) {
