@@ -54,6 +54,8 @@ test("当前个股交易入口纠正另一证券草稿，F10 与公司页始终�
   await code.selectOption("002156");
   await page.getByPlaceholder("买入按手；零股一次卖完").fill("300");
   await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await expect(page.locator(".stock-detail-header")).toContainText("002156");
+  await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /稳健实业/ }).click();
   await page.getByRole("button", { name: "交易此股票", exact: true }).click();
   await expect(code).toHaveValue("600101");
   await expect(page.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
@@ -166,4 +168,134 @@ test("详情点击显示，移动吸附更新，关闭后不再跟随，轮廓�
  expect(styles).toEqual({ effect: 'non-scaling-stroke', width: '1px' });
  await page.setViewportSize({width:1440,height:900});
  await expect(panel.locator('.msd-candle-chart g rect').first()).toHaveCSS('stroke-width', '1px');
+});
+
+test("盘口买卖展开底部交易栏，保留看盘与草稿，Escape收起并恢复入口焦点", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "日K", exact: true }).click();
+  const entry = page.getByRole("button", { name: "买入此股票", exact: true });
+  await entry.click();
+  const dock = page.getByRole("region", { name: "看盘交易栏" });
+  await expect(dock).toBeVisible();
+  await expect(page.locator("#section-trade")).toBeVisible();
+  await expect(page.locator(".msd-candle-chart")).toBeVisible();
+  const order = page.locator("#section-order");
+  await order.getByPlaceholder("委托价").fill("10.75");
+  await order.getByPlaceholder("买入按手；零股一次卖完").fill("300");
+  await page.getByRole("button", { name: "卖出此股票", exact: true }).click();
+  await expect(order).toHaveAttribute("data-trade-side", "Sell");
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("10.75");
+  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  const bounds = await dock.boundingBox();
+  const chart = await page.locator("#section-trade").boundingBox();
+  if (!bounds || !chart) throw new Error("看盘交易栏或图表不可见");
+  expect(bounds.y).toBeGreaterThanOrEqual(chart.y + chart.height - 1);
+  await page.keyboard.press("Escape");
+  await expect(dock).toBeHidden();
+  await expect(page.getByRole("button", { name: "卖出此股票", exact: true })).toBeFocused();
+  await entry.click();
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("10.75");
+  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await page.getByRole("button", { name: "资金持仓", exact: true }).click();
+  await expect(page.locator("#section-positions")).toBeVisible();
+  await expect(page.locator("#section-order")).toBeVisible();
+  expect(await page.locator("#section-order").count()).toBe(1);
+});
+
+test("看盘交易栏在1020横屏和竖屏切换时复用同一份委托草稿", async ({ page }) => {
+  await page.setViewportSize({ width: 1020, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "买入此股票", exact: true }).click();
+  await page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完").fill("500");
+  await expect(page.locator("#section-trade")).toBeVisible();
+  expect(await page.locator(".app-root").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "交易", exact: true }).click();
+  await expect(page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("500");
+  await page.getByRole("button", { name: "关闭交易面板", exact: true }).click({ position: { x: 10, y: 10 } });
+  await page.setViewportSize({ width: 1020, height: 833 });
+  await expect(page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("500");
+});
+
+test("当前窗口看盘下单的按钮和K线指标无需滚动，完整交易页两个面板从同一行开始", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 833 });
+  await page.goto("/?tradingE2E=1");
+  const nav = page.getByRole("navigation", { name: "桌面主导航" });
+  await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "日K", exact: true }).click();
+  await page.getByRole("button", { name: "买入此股票", exact: true }).click();
+  const order = page.locator("#section-order");
+  const buy = await order.getByRole("button", { name: "买入", exact: true }).boundingBox();
+  const panel = await order.boundingBox();
+  const indicator = await page.locator(".msd-kdj").boundingBox();
+  const controls = await page.locator(".shared-kline-host .shared-indicator-controls").boundingBox();
+  const chart = await page.locator("#section-trade").boundingBox();
+  if (!buy || !panel || !indicator || !chart || !controls) throw new Error("看盘下单区域不可见");
+  expect(buy.y + buy.height).toBeLessThanOrEqual(panel.y + panel.height);
+  expect(indicator.y + indicator.height).toBeLessThanOrEqual(chart.y + chart.height);
+  expect(controls.y + controls.height).toBeLessThanOrEqual(chart.y + chart.height);
+  await nav.getByRole("button", { name: "交易", exact: true }).click();
+  const left = await page.locator(".terminal-slot-section-order").boundingBox();
+  const right = await page.locator(".terminal-slot-section-positions").boundingBox();
+  if (!left || !right) throw new Error("交易页面板不可见");
+  expect(Math.abs(left.y - right.y)).toBeLessThan(1);
+});
+
+test("同屏委托切换证券同步图表，重复选择不覆盖草稿，隐藏底栏不接管Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  const nav = page.getByRole("navigation", { name: "桌面主导航" });
+  await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "买入此股票", exact: true }).click();
+  const order = page.locator("#section-order");
+  await order.getByLabel("股票", { exact: true }).selectOption("002156");
+  await expect(page.locator(".stock-detail-header")).toContainText("002156");
+  await order.getByPlaceholder("委托价").fill("27.50");
+  await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /芯片科技/ }).click();
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+  await nav.getByRole("button", { name: "游戏", exact: true }).click();
+  const save = page.getByRole("button", { name: "保存当前进度" });
+  await save.focus();
+  await page.keyboard.press("Escape");
+  await expect(save).toBeFocused();
+  await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await expect(page.getByRole("region", { name: "看盘交易栏" })).toBeVisible();
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+});
+
+test("完整交易页切股后返回看盘，行情与委托标的一致且保持草稿", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  const nav = page.getByRole("navigation", { name: "桌面主导航" });
+  await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "买入此股票", exact: true }).click();
+  await nav.getByRole("button", { name: "交易", exact: true }).click();
+  const order = page.locator("#section-order");
+  await order.getByLabel("股票", { exact: true }).selectOption("002156");
+  await order.getByPlaceholder("委托价").fill("27.50");
+  await order.getByPlaceholder("买入按手；零股一次卖完").fill("300");
+  await nav.getByRole("button", { name: "个股", exact: true }).click();
+  await expect(page.locator(".stock-detail-header")).toContainText("002156");
+  await expect(order.getByLabel("股票", { exact: true })).toHaveValue("002156");
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await nav.getByRole("button", { name: "行情", exact: true }).click();
+  await expect(page.locator(".stock-detail-header")).toContainText("002156");
+  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+});
+
+test("移动详情从委托切股后标题和详情证券保持一致", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?tradingE2E=1");
+  await page.locator(".mobile-market-row").first().click();
+  await expect(page).toHaveTitle("稳健实业 — 股票模拟游戏");
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "交易", exact: true }).click();
+  await page.locator("#section-order").getByLabel("股票", { exact: true }).selectOption("002156");
+  await expect(page).toHaveTitle("芯片科技 — 股票模拟游戏");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".msd-security-title")).toContainText("芯片科技");
+  await expect(page.locator(".msd-security-title")).toContainText("002156");
 });

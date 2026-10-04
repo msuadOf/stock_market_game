@@ -22,6 +22,8 @@ export interface WorkspaceGridProps extends HTMLAttributes<HTMLDivElement> {
   onDesktopViewChange?: (view: DesktopView) => void;
   stockList?: ReactNode;
   onTradeCurrent?: () => void;
+  desktopTradingOpen?: boolean;
+  onDesktopTradingOpenChange?: (open: boolean) => void;
   "data-mobile-tab"?: string;
   "data-mobile-detail"?: string;
 }
@@ -85,11 +87,11 @@ export function WorkspaceDesktopLayout({ width, layouts, children, onLayoutChang
   </ResponsiveGridLayout>;
 }
 
-export function WorkspaceGrid({ orientation, children, className = "", desktopView = "quotes", onDesktopViewChange, stockList, onTradeCurrent, ...attributes }: WorkspaceGridProps) {
+export function WorkspaceGrid({ orientation, children, className = "", desktopView = "quotes", onDesktopViewChange, stockList, onTradeCurrent, desktopTradingOpen, onDesktopTradingOpenChange, ...attributes }: WorkspaceGridProps) {
   const [localView, setLocalView] = useState<DesktopView>("quotes");
   const panels = namedPanels(children);
   if (orientation === "portrait") return <div className={`app-grid ${className}`.trim()} {...attributes}>{children}</div>;
   return <div className={`workspace-desktop ${className}`.trim()} {...attributes}>
-    <DesktopTerminal view={onDesktopViewChange ? desktopView : localView} onViewChange={onDesktopViewChange ?? setLocalView} stockList={stockList} panels={panels} onTradeCurrent={onTradeCurrent} />
+    <DesktopTerminal view={onDesktopViewChange ? desktopView : localView} onViewChange={onDesktopViewChange ?? setLocalView} stockList={stockList} panels={panels} onTradeCurrent={onTradeCurrent} tradingOpen={desktopTradingOpen} onTradingOpenChange={onDesktopTradingOpenChange} />
   </div>;
 }

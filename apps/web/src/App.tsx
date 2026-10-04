@@ -177,6 +177,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     store.dispatch(setRunning(false));
     setError(failure);
   };
+  const chartCode = useMarketRuntimeSelection();
   const {
     mobileUi,
     dispatchMobileUi,
@@ -189,8 +190,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     closeTradeSheet,
     showDetailInfo,
     openDetail,
-  } = useMobileUiController(orientation);
-  const chartCode = useMarketRuntimeSelection();
+  } = useMobileUiController(orientation, chartCode);
   const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator } = useMarketRuntimeActions();
   const acceptReductionRef = useRef(acceptReduction);
   acceptReductionRef.current = acceptReduction;
@@ -211,14 +211,37 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     onError: setError,
   }));
   const [desktopView, setDesktopView] = useState<DesktopView>("quotes");
+  const [desktopTradingOpen, setDesktopTradingOpen] = useState(false);
+  const [desktopTradeSide, setDesktopTradeSide] = useState<"Buy" | "Sell">("Buy");
+  const desktopTradeTriggerRef = useRef<HTMLElement | null>(null);
+  const changeDesktopTradingOpen = (open: boolean) => {
+    if (open && document.activeElement instanceof HTMLElement && !document.activeElement.closest("#section-order")) desktopTradeTriggerRef.current = document.activeElement;
+    setDesktopTradingOpen(open);
+    const trigger = desktopTradeTriggerRef.current;
+    if (!open && trigger?.isConnected && trigger.getClientRects().length > 0) trigger.focus();
+  };
+  const openDesktopTrade = (side: "Buy" | "Sell" = "Buy") => {
+    if (tradeCode !== chartCode || priceText.length === 0) {
+      setTradeCode(chartCode);
+      const market = store.getState().snapshot.snapshot?.markets[chartCode];
+      if (market) setPriceText(yuan(market.last_price));
+    }
+    setDesktopTradeSide(side);
+    changeDesktopTradingOpen(true);
+  };
+  useEffect(() => {
+    if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>('input[placeholder="委托价"]')?.focus();
+  }, [desktopTradingOpen, desktopTradeSide, orientation, tradeSheetRef]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
   function selectStock(code: string) {
     selectChart(code);
-    setTradeCode(code);
-    const market = store.getState().snapshot.snapshot?.markets[code];
-    if (market) setPriceText(yuan(market.last_price));
+    if (tradeCode !== code || priceText.length === 0) {
+      setTradeCode(code);
+      const market = store.getState().snapshot.snapshot?.markets[code];
+      if (market) setPriceText(yuan(market.last_price));
+    }
     if (orientation === "portrait") openDetail(code);
   }
 
@@ -491,7 +514,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         </div>
       </header>
 
-      <WorkspaceGrid orientation={orientation} desktopView={desktopView} onDesktopViewChange={setDesktopView} onTradeCurrent={() => selectStock(chartCode)} stockList={<ConnectedTerminalStockList onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
+      <WorkspaceGrid orientation={orientation} desktopView={desktopView} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market" tabIndex={-1} aria-label="行情列表">
           <h3 className="panel-title">行情</h3>
@@ -500,7 +523,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} />
+          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} onTrade={openDesktopTrade} />
         </Card>
 
         <Card className="panel company-panel-shell" id="section-company">
@@ -513,6 +536,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           ref={tradeSheetRef}
           className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`}
           id="section-order"
+          data-trade-side={orientation === "landscape" ? desktopTradeSide : undefined}
           role={orientation === "portrait" && tradeSheetOpen ? "dialog" : undefined}
           aria-modal={orientation === "portrait" && tradeSheetOpen ? true : undefined}
           aria-hidden={orientation === "portrait" && !tradeSheetOpen ? true : undefined}
@@ -520,8 +544,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           aria-label={orientation === "portrait" ? "交易面板" : undefined}
         >
           <h3 className="panel-title">委托下单</h3>
+          <div className="order-entry">
           <label className="field"><span>股票</span>
-            <HTMLSelect aria-label="股票" value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
+            <HTMLSelect aria-label="股票" value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { const code = e.target.value; setTradeCode(code); selectChart(code); const m = store.getState().snapshot.snapshot?.markets[code]; if (m) setPriceText(yuan(m.last_price)); }}
               options={activeSetup.stocks.map((stock) => ({ label: STOCK_NAMES[stock.code] ? `${stock.code} ${STOCK_NAMES[stock.code]}` : stock.code, value: stock.code }))} />
             {fieldErrors.code && <span id="trade-code-error" className="field-error" role="alert">{fieldErrors.code}</span>}
           </label>
@@ -537,8 +562,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} aria-invalid={Boolean(fieldErrors.quantity)} aria-describedby={fieldErrors.quantity ? "trade-quantity-error" : undefined} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" />{fieldErrors.quantity && <span id="trade-quantity-error" className="field-error" role="alert">{fieldErrors.quantity}</span>}</label>
           <TradeMarketControls activeSetup={activeSetup} tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
-            <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
-            <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
+            <Button intent="danger" onClick={() => { setDesktopTradeSide("Buy"); void submit("Buy"); }}>买入</Button>
+            <Button intent="success" onClick={() => { setDesktopTradeSide("Sell"); void submit("Sell"); }}>卖出</Button>
+          </div>
+
           </div>
 
           <section className="player-orders" aria-labelledby="player-orders-title">

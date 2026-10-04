@@ -108,8 +108,9 @@ interface ChartPanelProps {
   chartPeriod: "分时" | "日K";
   setChartPeriod: Dispatch<SetStateAction<"分时" | "日K">>;
   klineDays: number;
+  onTrade?: (side: "Buy" | "Sell") => void;
 }
-export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays }: ChartPanelProps) {
+export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade }: ChartPanelProps) {
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const chartCode = useMarketRuntimeSelection();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
@@ -123,7 +124,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays }: 
   return <>
     <div className="chart-toolbar"><div className="chart-tabs">{(["分时", "日K"] as const).map((period) => <button key={period} className={`chart-tab ${chartPeriod === period ? "active" : ""}`} onClick={() => setChartPeriod(period)}>{period}</button>)}</div>
     </div>
-    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div></div>
+    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
     <div className="market-chart-slot"><div hidden={chartPeriod !== "日K"} className="shared-kline-host"><MarketKlinePanel key={chartCode} dailyCandles={dailyChartData} period="日K" indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod === "日K"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
     <div className="order-book"><div className="ob-title">五档盘口<span>价格（元） / 数量（手）</span></div><FiveLevelBook market={market} /><dl className="terminal-quote-facts"><dt>昨收</dt><dd>{yuan(market.last_close)}</dd><dt>最新</dt><dd className={cls}>{yuan(market.last_price)}</dd></dl></div>
   </>;
