@@ -132,6 +132,13 @@ impl Money {
             None => (digits, ""),
         };
 
+        if int_part.is_empty() && frac_part.is_empty() {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "decimal point without digits".to_string(),
+            });
+        }
+
         // 小数部分最多 2 位
         if frac_part.len() > 2 {
             return Err(MoneyError::ParseFailed {
