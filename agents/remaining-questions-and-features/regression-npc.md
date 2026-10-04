@@ -43,3 +43,29 @@ Cargo artifact，日志为同目录 `npc-imbalance-0.log` 至 `npc-imbalance-12.
 真实现金支持、T+1、来源身份、生命周期与原有效断言均保持，不改生产策略；记录中
 continuous 测试 helper 与正式受理链的区别已按其发现修正。完整回归由主任务统一
 执行，本记录不冒称完整回归已经通过。
+
+## 完整回归暴露的相邻 fixture 与预算边界
+
+正式完整回归进一步发现，共用 `due_retail_pre_open_session` 的失败回滚测试不能再
+假设 receipt cursor 为0：合法 opening auction rollover 已经使用收据索引。
+故障注入改为真实 `receipt_base_before.checked_add(1)`，并检查原 authority 的
+receipt base 精确保持原值；失败、状态、RNG、队列、策略和 seq 的断言全部保留。
+
+executor 预算矩阵原单 case 独跑7.39秒，64个进程同时验收时超过普通10秒边界。
+保留 auction 两类、threads 1/2/4 与 Canonical/Reverse/RotateLeft 的全部组合，
+拆为6个独立 case，每个 case 验证一个 phase/budget 的3个 permutation，所有
+nonempty boundary、真实成交和账户断言不变。每个 case 构造一个合法 prototype，
+各运行 `clone_for_tick_shadow` 隔离，避免反复生成相同两年公司前史；实际新增
+Canonical 2/4预算运行，而不是删除原来任何预算或扰动维度。
+
+已完整核对 `CommittableSessionState::clone_for_shadow`：RNG/时钟/ledger/plan/队列
+按值 clone；account 与个人状态采用 `Arc::make_mut` 分离写入；经营/公开库的共享
+为不可变读取与 COW，strategy 用独立 `StrategyState` 恢复后决策。另增加每批运行
+后 prototype 的完整 `session_state_hash` 保持原值断言，防止 mutable state 泄漏。
+相邻修复已完成独立复核与整个 PreOpen、executor 模块18项短测，全部通过。
+每 case 仍以独立外部10000ms deadline，最多8个进程并行、每进程 Rayon 2；
+最慢 case 为0.98秒，6个完整预算矩阵 case 各为0.89至0.91秒。
+实际编译来源为 `.tmp/main-regression-2026-10-05/repair-npc-final-build.jsonl`，
+日志为同目录 `npc-neighbor-final-0.log` 至 `npc-neighbor-final-17.log`。
+非作者复核确认 receipt 故障仍真实触发、原回滚与成交断言未弱化、全部矩阵与
+COW 隔离证据可靠。源码冻结交给主任务再执行完整回归，不将这批短测冒充完整验收。

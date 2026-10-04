@@ -438,6 +438,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
     let seq_before = authority.seq();
+    let receipt_base_before = authority.state.next_receipt_base;
     let queue_before = serde_json::to_vec(&authority.state.pending_player).unwrap();
     let strategy_before = authority.state.accounts[&npc]
         .strategy()
@@ -450,7 +451,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     .unwrap();
     plan.state
         .execute(|candidate| {
-            candidate.state.next_receipt_base = 1;
+            candidate.state.next_receipt_base = receipt_base_before.checked_add(1).unwrap();
             Ok(())
         })
         .unwrap();
@@ -471,7 +472,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     );
     assert_eq!(authority.tick(), 600);
     assert_eq!(authority.seq(), seq_before);
-    assert_eq!(authority.state.next_receipt_base, 0);
+    assert_eq!(authority.state.next_receipt_base, receipt_base_before);
     assert_eq!(
         authority.state.accounts[&npc]
             .strategy()
