@@ -14,6 +14,7 @@
 pub mod bank;
 mod contracts;
 mod counterparty;
+pub mod customer_finance;
 mod defaults;
 mod error;
 pub mod events;
@@ -34,6 +35,11 @@ pub use contracts::{
 pub use counterparty::{
     CounterpartyFlow, CounterpartyId, CounterpartyKind, CounterpartyLedger, ExternalCounterparty,
     FlowDirection,
+};
+pub use customer_finance::{
+    CashEndpoint, CustomerCashFlow, CustomerDebt, CustomerFinanceBook, CustomerFinanceError,
+    CustomerFinanceEventId, CustomerFinanceState, DebtId, DebtPayment, DebtWriteOff,
+    WriteOffEvidence,
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
