@@ -44,6 +44,9 @@ root 以默认 feature、32 Cargo jobs 共享构建实际得到
 新增 fixture 结构测试在 0.00 秒通过。诊断用例的权威存档为 2,051,990 bytes，
 并仍比较全部事件与存档字节。上述结果是定向短测，不替代完整回归与下述独立复核。
 
+完整搜索确认原 `session()` 与 `fixture_session()` helper 已无调用，也无 feature
+条件引用，故删除这两个 helper，保留五发行人 `setup()`、日期 fixture 与全部测试。
+
 ## 非作者独立复核
 
 `fix_regression_civil` 未实施本项，已完整核对上述五个测试文件的 diff、被替换场景的完整断言与 fixture 实现。复核通过：

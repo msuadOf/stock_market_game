@@ -107,10 +107,6 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
     }
 }
 
-pub(crate) fn session(start_date: &str) -> GameSession {
-    GameSession::new(setup(start_date), SEED).expect("公司经营与交易场景 fixture 必须成功装配")
-}
-
 /// Disclosure-focused scenarios still use the real company, information and
 /// belief pipelines, but do not need five issuers or six market ticks on every
 /// trading day while advancing through a civil reporting window.
@@ -139,10 +135,6 @@ pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
     session
         .step()
         .expect("focused one-tick trading day must complete");
-}
-
-pub(crate) fn fixture_session() -> GameSession {
-    session(&fixture().start_date)
 }
 
 fn representative_setup(start_date: &str) -> SessionSetup {
