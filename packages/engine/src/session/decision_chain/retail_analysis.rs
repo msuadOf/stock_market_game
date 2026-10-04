@@ -428,6 +428,63 @@ mod tests {
     }
 
     #[test]
+    fn retail_analysis_accepts_recovered_nonpositive_position_cost() {
+        for (recovered_price, expected_cost) in [(1_500, 0), (2_000, -1_000)] {
+            let mut session = session();
+            let id = AccountId(1);
+            let code = session
+                .build_market_view()
+                .stocks
+                .keys()
+                .next()
+                .unwrap()
+                .clone();
+            let config = session.state.setup.config.clone();
+            let account = session.state.accounts.get_mut(&id).unwrap();
+            account
+                .grant_position(code.clone(), 300, Money::from_cents(1_000))
+                .unwrap();
+            account
+                .apply_sell(
+                    &config,
+                    code.clone(),
+                    Money::from_cents(recovered_price),
+                    200,
+                )
+                .unwrap();
+            let cost = account.position(&code).unwrap().cost_price().unwrap();
+            assert_eq!(cost.cents(), expected_cost);
+            assert_eq!(account.position(&code).unwrap().qty(), 100);
+            let market = session.build_market_view();
+            let account = session.account(id).unwrap();
+            let equity = account
+                .cash()
+                .add(market.stocks[&code].last_price.mul_shares(100).unwrap())
+                .unwrap();
+            session
+                .state
+                .retail_experience
+                .get_mut(&id)
+                .unwrap()
+                .observe_equity(equity)
+                .unwrap();
+            let assessments = session
+                .capture_retail_analysis(&[id], &market)
+                .expect("回收投入后的非正成本不能中止本人分析");
+            assert!(assessments[&id].contains_key(&code));
+            assert_eq!(
+                session
+                    .account(id)
+                    .unwrap()
+                    .position(&code)
+                    .unwrap()
+                    .cost_price(),
+                Some(cost)
+            );
+        }
+    }
+
+    #[test]
     fn retail_belief_state_is_created_without_institution_policy() {
         let session = session();
         let participant = session

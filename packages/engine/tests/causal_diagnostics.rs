@@ -234,6 +234,10 @@ fn absence_is_not_a_zero_metric() {
 }
 
 fn npc_execution_session() -> GameSession {
+    npc_execution_session_with_player_quantity(100)
+}
+
+fn npc_execution_session_with_player_quantity(player_quantity: u32) -> GameSession {
     const TRADING_DAYS: u32 = 3;
     let mut setup = fixture::setup();
     setup.stocks[0].code = StockCode("000812".to_owned());
@@ -269,7 +273,7 @@ fn npc_execution_session() -> GameSession {
         while session.civil_clock().phase() == engine::session::CivilPhase::ClosedDay {
             session.end_civil_day().expect("休市日正常日结");
         }
-        // 每日一手玩家买单仅为诊断提供真实对手盘，不保证生产市场的流动性。
+        // 玩家买单仅为诊断提供真实对手盘，不保证生产市场的流动性。
         session
             .enqueue_player_intent(
                 AccountId(0),
@@ -277,7 +281,7 @@ fn npc_execution_session() -> GameSession {
                     code: StockCode("000812".to_owned()),
                     side: Side::Buy,
                     price: engine::LimitPrice::Highest,
-                    qty: 100,
+                    qty: player_quantity,
                 },
             )
             .expect("真实玩家买单必须入队");
@@ -339,6 +343,12 @@ fn npc_execution_session() -> GameSession {
         "真实成交必须扣费，不能补钱"
     );
     session
+}
+
+#[test]
+fn large_real_fill_stream_does_not_reject_recovered_position_cost() {
+    let session = npc_execution_session_with_player_quantity(10_000);
+    assert!(session.causal_diagnostics().unwrap().filled_qty > 0);
 }
 
 #[test]

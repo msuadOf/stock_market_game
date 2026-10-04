@@ -165,7 +165,7 @@ Q02–Q04、Q06–Q09、Q11继续保留；Q01、Q05、Q18已按用户选择补�
 | Q13 | 政策保存沪深分别official覆盖，CivilClock按首只股票取exchange；默认政策v1同轨。见 [日历](exhaustive-review/sweep04.md)。 | 混合局异步交易日是否支持需明确；不能与G15覆盖替代问题混淆，也不声称当前默认官方日历有差异。 |
 | Q14 | 工商CreditDeterioration会增加准备，到期应收仍全额回款，未独立延期。见 [经营](exhaustive-review/luna03.md)。 | K4“客户延付/信用恶化”的替代范围需明确，不能把斜线承诺自动当两个独立模型；已批准只记录行业假设保留。 |
 | Q15 | 精确颜色token静态计算的小字号白底对比与AA目标冲突。见 [颜色](exhaustive-review/luna02.md)。 | 需明确文字与图形/品牌色的作用范围；尚未computed-style验收，不擅自改token或弱化AA。 |
-| Q16 | 旧“负成本显示-而非xx%”混淆金额与收益率；当前显示负净成本金额。见 [账户](exhaustive-review/luna15.md)。 | 非正净成本收益率不可用不等于必须隐藏负成本金额；G49舍入/浮盈公式是已确认的另一问题。 |
+| Q16 | 旧“负成本显示-而非xx%”混淆金额与收益率；当前显示负净成本金额。用户已确认负成本合法，共享风险观测的错误正数限制已修复，零/负成本分析及真实大额成交短测通过，见 [净成本修复](../remaining-questions-and-features/nonpositive-net-cost-fix.md)；原界面疑问见 [账户](exhaustive-review/luna15.md)。 | 非正净成本收益率不可用不等于必须隐藏负成本金额；收益率显示选择仍需讨论，不用修复分析校验冒称已决定UI。G49舍入/浮盈公式是已确认的另一问题。 |
 | Q17 | ClosingEngine::correct先过账/记录重述，再生成报告；合法派生汇总溢出可Err且留部分状态。见 [更正](exhaustive-review/luna23.md)。 | Journal批次原子已有，未找到整个更正/报告API失败零状态变化的明确保证或Session生产caller；保留真实边界，不擅自要求所有底层操作强事务。 |
 | Q18（已补齐） | 用户已选择最终Release collector也校验最低格式，与producer复用requireDistributionFormats；缺格式即拒绝。原疑问见 [制品](exhaustive-review/luna77.md)，实施见 [发行收集](../remaining-questions-and-features/release-collection.md)。 | 十组全部通过身份、文件/大小/摘要及格式校验后才创建收集目录，不改变unsigned或手动单产品范围。27项定向短测及非作者完整diff/独立短测通过；不是已有正常Release漏包的证据，未运行真实发版或完整回归。 |
 | Q19（已转G80） | 新局默认Industrial不代表完整存档恢复拒绝Bank variant；恢复整体安装CompanyOperations，未校验EclPolicy。见 [银行续核](renewed-check/bank-restore.md)。 | 纠正原降级理由；缺口限SaveSlot外部恢复，不要求改变库级serde/issue_loan错误次序，也不称默认新局已具备完整银行产品。 |
