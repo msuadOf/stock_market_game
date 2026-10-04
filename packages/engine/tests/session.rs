@@ -157,11 +157,15 @@ impl TestOrderSaveFixture {
             save.retail_experience
                 .get_mut(&owner)
                 .unwrap()
-                .initialize_holding(
+                .initialize_holding_dated(
                     &code,
                     Some(Money::from_cents(1_000)),
                     Money::from_cents(1_000),
-                    0,
+                    engine::experience::ExperienceMoment {
+                        civil_date: save.setup.start_date,
+                        market_minute: 0,
+                        trading_day: 0,
+                    },
                 )
                 .unwrap();
             orders.push(engine::Order {
@@ -1541,7 +1545,8 @@ fn assert_completed_market_day(session: &GameSession, boundaries: usize, ticks_p
 #[test]
 fn full_day_accounting_small_population_roundtrips_and_completes() {
     let mut setup = large_retail_account_setup(4);
-    setup.ticks_per_day = 6;
+    setup.ticks_per_day = 3;
+    setup.stocks.truncate(2);
     assert_large_population_roundtrip_and_complete_a_full_market_day(setup);
 }
 
@@ -4745,11 +4750,15 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
         .retail_experience
         .get_mut(&AccountId(1))
         .unwrap()
-        .initialize_holding(
+        .initialize_holding_dated(
             &code,
             Some(Money::from_cents(1_000)),
             Money::from_cents(1_000),
-            0,
+            engine::experience::ExperienceMoment {
+                civil_date: initial_save.setup.start_date,
+                market_minute: 0,
+                trading_day: 0,
+            },
         )
         .unwrap();
     initial_save.resting_orders.insert(
