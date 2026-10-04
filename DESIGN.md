@@ -3,15 +3,22 @@ version: alpha
 name: "股票模拟游戏"
 description: "面向中国 A 股玩家的高密度、移动优先模拟交易终端"
 colors:
-  primary: "#F52D38"
-  rise: "#EF3F49"
-  fall: "#009B22"
+  primary: "#D4202A"
+  riseGraphic: "#EF3F49"
+  fallGraphic: "#009B22"
+  riseLabelSurface: "#C21807"
+  fallLabelSurface: "#007A36"
+  fallLabelSurfaceDark: "#006E32"
+  riseText: "#C21807"
+  fallText: "#007A36"
+  riseTextOnDark: "#FF8B94"
+  fallTextOnDark: "#65E6A0"
   average: "#D8A100"
   information: "#2588C7"
   background: "#F5F5F5"
   surface: "#FFFFFF"
   text: "#222222"
-  muted: "#777777"
+  muted: "#767676"
   border: "#E7E7E7"
   focus: "#126FD1"
 typography:
@@ -46,7 +53,7 @@ components:
 ### Product context and register
 
 - **Audience and primary job:** 中国 A 股模拟交易玩家；观察行情、判断量价、下单并复盘。
-- **Target market and evidence:** 中国 A 股；产品需求、红涨绿跌规则及用户提供的同花顺截图。
+- **Target market and evidence:** 中国 A 股；产品需求、红涨绿跌规则及 `design/ui/mobile/` 中的同花顺风格页面草图。当前工作区未找到原始同花顺截图；草图用于结构参考，不承诺像素复刻。
 - **Locale and language:** 简体中文；证券名词使用国内行情软件惯例。
 - **Usage scene:** 手机竖屏高频查看，桌面端保留多面板工作台。
 - **Register:** Product。熟悉度、密度与即时可读性优先。
@@ -57,7 +64,7 @@ components:
 
 ## Colors
 
-红色表示上涨，绿色表示下跌，不沿用西方交易软件的相反语义。`primary` 仅承担移动端标题栏和选中指示；均价线使用金色，普通分时线使用近黑，信息链接使用蓝色。白色数据面与浅灰分隔线建立层级，不能用色块替代结构。
+红色表示上涨，绿色表示下跌，不沿用西方交易软件的相反语义。`riseGraphic` / `fallGraphic` 供 K 线、成交量柱、面积条等图形使用；`riseText` / `fallText` 供浅色数据面上的正文与行情数字使用，`riseTextOnDark` / `fallTextOnDark` 仅供暗色数据面上的文字使用；组件必须按实际不透明背景选择 token，并满足 WCAG 2.2 AA。白字行情价签使用 `riseLabelSurface`、`fallLabelSurface` 或暗色主题专用 `fallLabelSurfaceDark` 背景 token，不能直接复用图形颜色。`primary` 仅承担移动端标题栏和选中指示，需保证标题栏文字对比度；均价线使用金色，普通分时线使用近黑，信息链接使用蓝色。白色数据面与浅灰分隔线建立层级，不能用色块替代结构。
 
 ## Typography
 

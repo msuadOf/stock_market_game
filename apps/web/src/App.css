@@ -186,14 +186,17 @@
 
 /* ── 涨跌颜色 ── */
 .up {
-  color: var(--up);
+  color: var(--up-text);
 }
 .down {
-  color: var(--down);
+  color: var(--down-text);
 }
 .flat {
-  color: var(--flat);
+  color: var(--flat-text);
 }
+[data-theme="dark"] .up { color: var(--up-text-on-dark); }
+[data-theme="dark"] .down { color: var(--down-text-on-dark); }
+[data-theme="dark"] .flat { color: var(--flat-text-on-dark); }
 
 /* ── 委托面板 ── */
 .field {
@@ -368,16 +371,16 @@
 .layout-mobile .market-grid-container { display: none; }
 .layout-mobile .mobile-market-dashboard { display: block; background: var(--card-bg); }
 .layout-mobile .mobile-market-list { display: block; }
-.mobile-market-empty { margin: 0; padding: 52px 16px; color: #999; text-align: center; }
+.mobile-market-empty { margin: 0; padding: 52px 16px; color: var(--muted); text-align: center; }
 .mobile-index-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 10px 12px 7px; }
 .mobile-index-card { min-width: 0; padding: 6px 3px; border-right: 1px solid #ececec; border-radius: 0; text-align: center; background: #fff; }
 .mobile-index-card:last-child { border-right: 0; }
 .mobile-index-card.up, .mobile-index-card.down { background: #fff; }
-.mobile-index-card span { display: block; color: #888; font-size: 11px; }
+.mobile-index-card span { display: block; color: var(--muted); font-size: 11px; }
 .mobile-index-card strong { display: block; margin: 3px 0 1px; color: var(--text); font-size: 15px; line-height: 1.1; }
-.mobile-index-card.up strong, .mobile-index-card.up small { color: var(--up); }
-.mobile-index-card.down strong, .mobile-index-card.down small { color: var(--down); }
-.mobile-index-card small { color: var(--flat); font-size: 10px; }
+.mobile-index-card.up strong, .mobile-index-card.up small { color: var(--up-text); }
+.mobile-index-card.down strong, .mobile-index-card.down small { color: var(--down-text); }
+.mobile-index-card small { color: var(--flat-text); font-size: 10px; }
 .mobile-market-breadth { padding: 2px 16px 8px; }
 .breadth-labels { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; }
 .breadth-bar { display: flex; height: 7px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: #eee; }
@@ -386,11 +389,11 @@
 .breadth-bar .down { background: var(--down); }
 .breadth-bar .flat { background: var(--flat); }
 .mobile-market-tabs { display: flex; min-height: 40px; padding: 0 12px; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #eee; }
-.mobile-market-tabs button { flex: 1; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #777; font-family: inherit; font-size: 14px; }
-.mobile-market-tabs button.active { border-color: var(--up); color: var(--up); font-weight: 700; }
-.mobile-market-toolbar { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #eee; background: #fff; color: #777; font-size: 13px; }
-.mobile-market-toolbar button { min-height: 34px; padding: 0 4px; border: 0; background: transparent; color: #777; font: inherit; cursor: pointer; }
-.mobile-market-empty { padding: 48px 16px; color: #999; font-size: 13px; text-align: center; }
+.mobile-market-tabs button { flex: 1; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-family: inherit; font-size: 14px; }
+.mobile-market-tabs button.active { border-color: var(--up); color: var(--up-text); font-weight: 700; }
+.mobile-market-toolbar { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #eee; background: #fff; color: #767676; font-size: 13px; }
+.mobile-market-toolbar button { min-height: 34px; padding: 0 4px; border: 0; background: transparent; color: #767676; font: inherit; cursor: pointer; }
+.mobile-market-empty { padding: 48px 16px; color: var(--muted); font-size: 13px; text-align: center; }
 .mobile-market-row {
   display: grid;
   grid-template-columns: 104px minmax(72px, 1fr) 84px;
@@ -411,7 +414,7 @@
 .mobile-market-name,
 .mobile-market-price { display: flex; flex-direction: column; min-width: 0; }
 .mobile-market-name strong { overflow: hidden; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.mobile-market-name small { margin-top: 3px; color: #999; font-size: 11px; }
+.mobile-market-name small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .mobile-market-trend { width: 100%; height: 46px; padding: 0 8px; }
 .mobile-market-trend.up { color: var(--up); }
 .mobile-market-trend.down { color: var(--down); }
@@ -423,9 +426,9 @@
 .mobile-market-trend.down polyline { stroke: var(--down); }
 .mobile-market-price { align-items: flex-end; text-align: right; }
 .mobile-market-price strong { min-width: 76px; padding: 6px 5px; border-radius: 3px; background: #eee; color: #555; font-size: 16px; line-height: 1.1; text-align: center; }
-.mobile-market-price.up strong { background: var(--up); color: #fff; }
-.mobile-market-price.down strong { background: var(--down); color: #fff; }
-.mobile-market-price small { margin-top: 2px; font-size: 12px; }
+.mobile-market-price.up strong { background: var(--up-solid); color: #fff; }
+.mobile-market-price.down strong { background: var(--down-solid); color: #fff; }
+.mobile-market-price small { margin-top: 2px; color: var(--muted); font-size: 12px; }
 
 /* 移动端分时图面板 */
 .layout-mobile .chart-panel { min-width: unset !important; }
@@ -462,7 +465,7 @@
   align-items: center;
   gap: 2px;
 }
-.mobile-tabbar .tab-btn.active { color: var(--up); font-weight: bold; }
+.mobile-tabbar .tab-btn.active { color: var(--up-text); font-weight: bold; }
 .mobile-tabbar .tab-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .tab-icon { position: relative; display: block; width: 20px; height: 18px; color: currentColor; }
 .tab-icon-market::before { content: ""; position: absolute; inset: 5px 1px 1px; border: 1.7px solid currentColor; border-top: 0; }
@@ -649,8 +652,10 @@
   cursor: pointer;
   transition: background 0.12s;
 }
-.ll-btn.down { color: var(--down); }
-.ll-btn.up { color: var(--up); }
+.ll-btn.down { color: var(--down-text); }
+.ll-btn.up { color: var(--up-text); }
+[data-theme="dark"] .ll-btn.down { color: var(--down-text-on-dark); }
+[data-theme="dark"] .ll-btn.up { color: var(--up-text-on-dark); }
 .ll-btn:hover:not(:disabled) { background: #f7f7f7; }
 .ll-btn:disabled { opacity: 0.35; cursor: default; }
 .ll-btn:active { background: #dcdcdc; }
@@ -813,10 +818,10 @@
   background: #fff;
 }
 .mobile-portfolio-summary span,
-.mobile-portfolio-summary small { color: #888; font-size: 12px; font-weight: 400; }
+.mobile-portfolio-summary small { color: #767676; font-size: 12px; font-weight: 400; }
 .mobile-portfolio-summary b { margin-top: 5px; color: #222; font-size: 17px; font-variant-numeric: tabular-nums; }
-.mobile-portfolio-summary b.up { color: var(--up); }
-.mobile-portfolio-summary b.down { color: var(--down); }
+.mobile-portfolio-summary b.up { color: var(--up-text); }
+.mobile-portfolio-summary b.down { color: var(--down-text); }
 .mobile-assets-total { grid-row: span 2; }
 .mobile-assets-total strong { margin: 5px 0; color: #191919; font-size: 26px; font-variant-numeric: tabular-nums; }
 .layout-mobile .mobile-position-list-head {
@@ -848,7 +853,7 @@
 }
 .mobile-position-empty b { color: #555; font-size: 15px; }
 .mobile-position-empty span { max-width: 260px; line-height: 1.5; text-align: center; }
-.mobile-position-empty button { min-height: 36px; margin-top: 4px; padding: 0 18px; border: 1px solid var(--up); border-radius: 3px; background: #fff; color: var(--up); font-family: inherit; }
+.mobile-position-empty button { min-height: 36px; margin-top: 4px; padding: 0 18px; border: 1px solid var(--up); border-radius: 3px; background: #fff; color: var(--up-text); font-family: inherit; }
 .layout-mobile .mobile-user-overview {
   display: block;
   padding: 20px 16px 18px;
@@ -960,7 +965,13 @@
 [data-theme="dark"] .mobile-user-section button { background: var(--card-bg); color: var(--text); border-color: var(--border); }
 [data-theme="dark"] .mobile-index-card.up { background: #35232a; }
 [data-theme="dark"] .mobile-index-card.down { background: #1c352c; }
+[data-theme="dark"] .mobile-index-card.up strong,
+[data-theme="dark"] .mobile-index-card.up small { color: var(--up-text-on-dark); }
+[data-theme="dark"] .mobile-index-card.down strong,
+[data-theme="dark"] .mobile-index-card.down small { color: var(--down-text-on-dark); }
 [data-theme="dark"] .mobile-market-tabs { border-color: var(--border); }
+[data-theme="dark"] .mobile-market-tabs button.active { color: var(--up-text-on-dark); }
+[data-theme="dark"] .mobile-tabbar .tab-btn.active { color: var(--up-text-on-dark); }
 [data-theme="dark"] .mobile-market-row.selected { background: var(--surface-selected); }
 
 @media (max-width: 1360px) and (orientation: landscape) {
@@ -1025,9 +1036,12 @@
   .mobile-index-strip { height:65px; display:grid; grid-template-columns:1.85fr repeat(4, .76fr); padding:0 10px; border-bottom:4px solid #f5f5f5; }
   .mobile-index-quote { display:flex; flex-direction:column; justify-content:center; min-width:0; }
   .mobile-index-quote strong { font-size:18px; line-height:1.15; }
-  .mobile-index-quote.up strong,.mobile-index-quote.up b { color:var(--up); }
-  .mobile-index-quote.down strong,.mobile-index-quote.down b { color:var(--down); }
-  .mobile-index-quote.flat strong,.mobile-index-quote.flat b { color:var(--flat); }
+  .mobile-index-quote.up strong,.mobile-index-quote.up b { color:var(--up-text); }
+  .mobile-index-quote.down strong,.mobile-index-quote.down b { color:var(--down-text); }
+  .mobile-index-quote.flat strong,.mobile-index-quote.flat b { color:var(--flat-text); }
+  [data-theme="dark"] .mobile-index-quote.up strong,[data-theme="dark"] .mobile-index-quote.up b { color:var(--up-text-on-dark); }
+  [data-theme="dark"] .mobile-index-quote.down strong,[data-theme="dark"] .mobile-index-quote.down b { color:var(--down-text-on-dark); }
+  [data-theme="dark"] .mobile-index-quote.flat strong,[data-theme="dark"] .mobile-index-quote.flat b { color:var(--flat-text-on-dark); }
   .mobile-index-quote strong small { font-size:14px; }
   .mobile-index-quote span { margin-top:5px; font-size:13px; font-weight:700; }
   .mobile-index-quote b { font-weight:600; }
@@ -1044,14 +1058,15 @@
   .mobile-market-name strong { font-size:16px; font-weight:650; }
   .mobile-market-name small { display:flex; align-items:center; gap:3px; margin-top:1px; font-size:11px; }
   .mobile-market-name small i { padding:0 2px; background:#e99b48; color:#fff; font-style:normal; }
-  .mobile-market-name small em { padding:0 2px; border:1px solid #bbb; color:#999; font-style:normal; }
+  .mobile-market-name small em { padding:0 2px; border:1px solid #bbb; color:var(--muted); font-style:normal; }
   .mobile-market-trend { height:43px; padding:0 7px; }
   .mobile-market-trend polyline { stroke-width:1.15; }
   .mobile-market-price strong { min-width:74px; padding:4px 2px; border-radius:2px; font-size:17px; }
-  .mobile-market-price small { margin-top:0; color:#888; font-size:12px; }
+  .mobile-market-price small { margin-top:0; color:var(--muted); font-size:12px; }
   .mobile-tabbar { height:68px; background:#f7f7f7; }
   .mobile-tabbar .tab-btn { min-height:68px; padding:7px 0 11px; gap:3px; color:#222; font-size:12px; }
-  .mobile-tabbar .tab-btn.active { color:#f52c38; }
+  .mobile-tabbar .tab-btn.active { color:var(--up-text); }
+  [data-theme="dark"] .mobile-tabbar .tab-btn.active { color:var(--up-text); }
   .mobile-tabbar .tab-icon { width:22px; height:22px; }
   .tab-icon-home::before,.tab-icon-news::before,.tab-icon-money::before,.tab-icon-deal::before { content:""; position:absolute; inset:2px; border:1.7px solid currentColor; border-radius:3px; }
   .layout-mobile .app-grid { padding-bottom:68px; }

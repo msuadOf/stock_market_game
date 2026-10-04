@@ -16,7 +16,7 @@
 | 状态所有权 | `docs/decisions/0004-frontend-state-redux-toolkit.md` | ADR | 2026-09-06 |
 | 多端前端架构 | `docs/decisions/0007-three-deployment-frontend-framework.md` | ADR | 2026-09-06 |
 | 核心逻辑边界 | `docs/architecture.md` | Architecture | 2026-09-06 |
-| 市场展示惯例 | `DESIGN.md` 与用户提供的参考截图 | Product brief | 2026-09-06 |
+| 市场展示惯例 | `DESIGN.md` 与 `design/ui/mobile/` 页面草图 | Product brief | 2026-09-06 |
 
 ## Visual contract
 
@@ -94,4 +94,4 @@
 - Required static commands: `pnpm --filter web test`, `pnpm --filter web lint`, `pnpm --filter web build`
 - Browser matrix: 320px、390px、430px 竖屏；桌面现有布局回归
 - Accessibility: 原生按钮/标签语义、可见焦点、缩减动效、固定导航不遮挡焦点
-- Visual regression: 与 `design/ui/mobile/` 参考及用户截图并排检查
+- Visual regression: 与 `design/ui/mobile/` 草图并排核对结构和尺寸；工作区没有原始同花顺截图时，不以像素复刻作为验收依据

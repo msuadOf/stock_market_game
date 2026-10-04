@@ -16,7 +16,15 @@
   --shadow-panel: 0 1px 2px rgb(20 32 56 / 6%), 0 8px 24px rgb(20 32 56 / 4%);
   --up: #d81e06; /* 红涨 */
   --down: #009944; /* 绿跌 */
+  --up-solid: #c21807;
+  --down-solid: #007a36;
+  --up-text: #c21807;
+  --down-text: #007a36;
+  --up-text-on-dark: #ff8b94;
+  --down-text-on-dark: #65e6a0;
   --flat: #b8b8b8; /* 平 */
+  --flat-text: #767676;
+  --flat-text-on-dark: #aebbd0;
   --accent: #1677ff;
   --font: "Microsoft YaHei", 微软雅黑, "PingFang SC", sans-serif;
   --scrollbar-track: #f1f1f1;
@@ -104,6 +112,8 @@ body {
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 20%), 0 10px 28px rgb(0 0 0 / 18%);
   --up: #ff6975;
   --down: #46d98b;
+  --up-solid: #c21807;
+  --down-solid: #006e32;
   --flat: #9aa9bb;
   --scrollbar-track: #101722;
   --scrollbar-thumb: #56667a;
