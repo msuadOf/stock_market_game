@@ -53,17 +53,29 @@ test("WorkerRequestScope 的 operationError 与 timeout 回收 listener 和登�
   assert.equal(port.listeners.size, 0);
 });
 
-test("WorkerRequestScope 保留 postMessage 同步抛错后到 timeout 才清理的边界", async (context) => {
+test("WorkerRequestScope postMessage 同步抛错立即释放资源，晚到 timeout 不影响后续请求", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
+  const sendFailure = new Error("postMessage 失败");
   class ThrowingPort extends Port {
-    postMessage() { throw new Error("postMessage 失败"); }
+    failing = true;
+    postMessage(message: unknown) {
+      if (this.failing) throw sendFailure;
+      super.postMessage(message);
+    }
   }
   const port = new ThrowingPort();
   const scope = new requests.WorkerRequestScope(port);
-  await assert.rejects(scope.request({ type: "save", requestId: scope.nextRequestId(), generation: 1 }, "saved", 20), /postMessage 失败/);
+  await assert.rejects(scope.request({ type: "save", requestId: scope.nextRequestId(), generation: 1 }, "saved", 20), (error) => error === sendFailure);
+  assert.equal(scope.pendingCount(), 0);
+  assert.equal(port.listeners.size, 0);
+  port.failing = false;
+  const retryId = scope.nextRequestId();
+  const retry = scope.request({ type: "save", requestId: retryId, generation: 1 }, "saved", 40);
+  context.mock.timers.tick(20);
   assert.equal(scope.pendingCount(), 1);
   assert.equal(port.listeners.size, 1);
-  context.mock.timers.tick(20);
+  port.emit({ type: "saved", requestId: retryId, generation: 1, slot: "retried" });
+  assert.equal((await retry).slot, "retried");
   assert.equal(scope.pendingCount(), 0);
   assert.equal(port.listeners.size, 0);
 });

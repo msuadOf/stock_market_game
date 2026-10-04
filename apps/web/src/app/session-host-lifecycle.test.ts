@@ -46,6 +46,36 @@ test("SessionHostLifecycle 先校验环境和读取，再创建/注册/启动；
   assert.equal(f.ports.hostRef.current, f.host);
   let reads = 0; await f.source.read(async () => { reads++; return null; }); assert.equal(reads, 0);
 });
+test("宿主创建期间进入后台，就绪必须等待暂停确认后再发布 ready", { timeout: 10000 }, async () => {
+  let hidden = false;
+  let created!: (host: EngineHost) => void;
+  let enterCreate!: () => void;
+  let confirmStop!: () => void;
+  let enterStop!: () => void;
+  const creating = new Promise<void>((resolve) => { enterCreate = resolve; });
+  const stopping = new Promise<void>((resolve) => { enterStop = resolve; });
+  const f = fixture({
+    isDocumentHidden: () => hidden,
+    createHost: () => new Promise((resolve) => { created = resolve; enterCreate(); }),
+  });
+  f.host.stop = async () => {
+    f.calls.push("stop-pending");
+    enterStop();
+    await new Promise<void>((resolve) => { confirmStop = resolve; });
+    f.calls.push("stop-confirmed");
+  };
+  const starting = f.runtime.start();
+  await creating;
+  hidden = true;
+  created(f.host);
+  await stopping;
+  assert.ok(f.calls.indexOf("start") < f.calls.indexOf("stop-pending"));
+  assert.equal(f.calls.includes("ready"), false);
+  confirmStop();
+  await starting;
+  assert.ok(f.calls.indexOf("stop-confirmed") < f.calls.indexOf("ready"));
+  await f.runtime.dispose();
+});
 test("停止共享会话先失效令牌再 stop，释放 registration/coordinator/manager/host；晚到消息丢弃", async () => {
   const f = fixture(); await f.runtime.start(); f.calls.length = 0;
   const replacement = f.ports.sessionReplacementGateRef.current.begin()!;
