@@ -49,13 +49,25 @@ pub(crate) const PROFITABLE_EXIT_CONFIDENCE_DELTA_BP: i32 = 500;
 /// 不是掩盖异常的 clamp）。
 pub(crate) const CONFIDENCE_MAX_BP: u16 = 10_000;
 
-pub(crate) fn own_known_report_priority(report: &PublishedReport) -> (AccountingPeriod, bool, u32) {
+pub(crate) const fn report_kind_rank(kind: ReportKind) -> u8 {
+    match kind {
+        ReportKind::Annual => 4,
+        ReportKind::HalfYear => 3,
+        ReportKind::Quarter => 2,
+        ReportKind::Monthly => 1,
+    }
+}
+
+pub(crate) fn own_known_report_priority(
+    report: &PublishedReport,
+) -> (AccountingPeriod, bool, u8, u32) {
     (
         report.reports.period,
         matches!(
             report.reports.scope,
             crate::accounting::consolidation::ScopeId::Consolidated(_)
         ),
+        report_kind_rank(report.reports.kind),
         report.reports.version.sequence,
     )
 }
@@ -436,7 +448,11 @@ impl BeliefBook {
         inputs: &BeliefInputs<'_, impl Sized>,
         scope: Option<&crate::accounting::consolidation::ScopeId>,
     ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
-        let mut best: Option<(PublicationId, CivilInstant, (AccountingPeriod, bool, u32))> = None;
+        let mut best: Option<(
+            PublicationId,
+            CivilInstant,
+            (AccountingPeriod, bool, u8, u32),
+        )> = None;
         for entry in inputs.ctx.acquired_reports() {
             if entry.company != inputs.company {
                 continue;
@@ -467,4 +483,241 @@ fn observed_at_of(inputs: &BeliefInputs<'_, impl Sized>, id: PublicationId) -> C
         .find(|entry| entry.id == id)
         .map(|entry| entry.observed_at)
         .expect("ctx.report success implies the acquisition entry exists")
+}
+
+#[cfg(test)]
+mod material_priority_tests {
+    use super::*;
+    use crate::accounting::consolidation::MemberId;
+    use crate::accounting::reports::{
+        generate_report_set, IndustryPresentation, ReportRequest, ReportSource, ReportVersion,
+        VersionKind,
+    };
+    use crate::accounting::{
+        AccountingAmount, Books, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry,
+        JournalLine, LedgerAccountId, PostingSide,
+    };
+    use crate::calendar::CivilDate;
+    use crate::company::CompanyId;
+    use crate::information::{
+        AccountingPolicyRef, NpcInformationState, PublicLibrary, PublicationOrigin,
+        PublicationRequest, ScheduledReportKind,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn four_report_kind_ranks_follow_confirmed_order() {
+        let ranks = [
+            ReportKind::Annual,
+            ReportKind::HalfYear,
+            ReportKind::Quarter,
+            ReportKind::Monthly,
+        ]
+        .map(report_kind_rank);
+        assert_eq!(ranks, [4, 3, 2, 1]);
+    }
+
+    fn annual_report(year: i32) -> PublishedReport {
+        report(ReportKind::Annual, year, 12, false)
+    }
+
+    fn report(kind: ReportKind, year: i32, month: u8, consolidated: bool) -> PublishedReport {
+        let mut books = Books::new(crate::company::industrial::industrial_account_chart());
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(1),
+                date: CivilDate::from_ymd(2027, 12, 31).unwrap(),
+                kind: BusinessKind::OpeningBalance,
+                cash_flow: CashFlowClass::Financing,
+                lines: vec![
+                    JournalLine {
+                        account: LedgerAccountId("1002".into()),
+                        side: PostingSide::Debit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                    JournalLine {
+                        account: LedgerAccountId("4001".into()),
+                        side: PostingSide::Credit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                ],
+            }])
+            .unwrap();
+        let root = MemberId("company".into());
+        let subsidiary = MemberId("subsidiary".into());
+        let subsidiary_books = books.clone();
+        let source = if consolidated {
+            ReportSource::Consolidated {
+                request: crate::accounting::consolidation::ConsolidationRequest {
+                    root: root.clone(),
+                    members: vec![
+                        crate::accounting::consolidation::GroupMember {
+                            spec: crate::accounting::consolidation::MemberSpec {
+                                id: root.clone(),
+                                group_parent: None,
+                                issued_shares: 100,
+                                parent_held_shares: 0,
+                            },
+                            books: &books,
+                        },
+                        crate::accounting::consolidation::GroupMember {
+                            spec: crate::accounting::consolidation::MemberSpec {
+                                id: subsidiary,
+                                group_parent: Some(root.clone()),
+                                issued_shares: 100,
+                                parent_held_shares: 80,
+                            },
+                            books: &subsidiary_books,
+                        },
+                    ],
+                    intercompany_balances: vec![],
+                    intercompany_sales: vec![],
+                },
+            }
+        } else {
+            ReportSource::Standalone {
+                id: root,
+                books: &books,
+                industry: IndustryPresentation::Industrial,
+            }
+        };
+        let reports = generate_report_set(ReportRequest {
+            period: AccountingPeriod::from_ymd(year, month).unwrap(),
+            kind,
+            source,
+            version: if kind == ReportKind::Annual {
+                ReportVersion {
+                    sequence: 1,
+                    supersedes: None,
+                    kind: VersionKind::Original,
+                }
+            } else {
+                ReportVersion {
+                    sequence: 2,
+                    supersedes: Some(1),
+                    kind: VersionKind::Correction {
+                        reason: "材料排序纯元数据测试".into(),
+                    },
+                }
+            },
+            adjustments: &BTreeMap::new(),
+        })
+        .unwrap();
+        let published_at =
+            crate::information::scheduled_instant(ScheduledReportKind::Annual, year, 0).unwrap();
+        PublishedReport {
+            id: PublicationId::new(if kind == ReportKind::Annual { 0 } else { 1000 }),
+            company: CompanyId("company".into()),
+            policy: AccountingPolicyRef { chart_version: 2 },
+            approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
+            published_at,
+            origin: if kind == ReportKind::Annual {
+                PublicationOrigin::SeededPrehistory {
+                    fiscal_year: year,
+                    kind: ScheduledReportKind::Annual,
+                    offset_days: 0,
+                }
+            } else {
+                PublicationOrigin::Correction
+            },
+            supersedes: if kind == ReportKind::Annual {
+                None
+            } else {
+                Some(PublicationId::new(999))
+            },
+            reports,
+        }
+    }
+
+    #[test]
+    fn same_period_same_scope_prefers_annual_half_year_quarter_monthly_before_version() {
+        let december = [ReportKind::Annual, ReportKind::Quarter, ReportKind::Monthly]
+            .map(|kind| own_known_report_priority(&report(kind, 2029, 12, false)));
+        assert!(december.windows(2).all(|pair| pair[0] > pair[1]));
+        let june = [
+            ReportKind::HalfYear,
+            ReportKind::Quarter,
+            ReportKind::Monthly,
+        ]
+        .map(|kind| own_known_report_priority(&report(kind, 2029, 6, false)));
+        assert!(june.windows(2).all(|pair| pair[0] > pair[1]));
+        let annual = annual_report(2029);
+        let mut monthly = report(ReportKind::Monthly, 2029, 12, false);
+        monthly.reports.version.sequence = 99;
+        monthly.reports.version.supersedes = Some(98);
+        monthly.reports.validate().unwrap();
+        assert!(own_known_report_priority(&annual) > own_known_report_priority(&monthly));
+        let mut corrected_annual = annual.clone();
+        corrected_annual.reports.version.sequence = 2;
+        corrected_annual.reports.version.supersedes = Some(1);
+        corrected_annual.reports.version.kind = VersionKind::Correction {
+            reason: "年度更正纯元数据测试".into(),
+        };
+        corrected_annual.origin = PublicationOrigin::Correction;
+        corrected_annual.id = PublicationId::new(1);
+        corrected_annual.supersedes = Some(annual.id);
+        corrected_annual.reports.validate().unwrap();
+        assert!(own_known_report_priority(&corrected_annual) > own_known_report_priority(&annual));
+    }
+
+    #[test]
+    fn report_kind_rank_does_not_override_newer_period_or_consolidated_scope() {
+        let annual = annual_report(2029);
+        let later_monthly = report(ReportKind::Monthly, 2030, 1, false);
+        assert!(own_known_report_priority(&later_monthly) > own_known_report_priority(&annual));
+        let consolidated_monthly = report(ReportKind::Monthly, 2029, 12, true);
+        assert!(
+            own_known_report_priority(&consolidated_monthly) > own_known_report_priority(&annual)
+        );
+    }
+
+    #[test]
+    fn preferred_material_excludes_unacquired_annual_even_when_public() {
+        let mut closing = crate::accounting::closing::ClosingEngine::new();
+        let mut library = PublicLibrary::new();
+        let mut ids = Vec::new();
+        for year in [2028, 2029] {
+            let report = annual_report(year);
+            closing.record(report.reports.clone()).unwrap();
+            ids.push(
+                library
+                    .publish_closed(
+                        &closing,
+                        PublicationRequest {
+                            company: report.company,
+                            scope: report.reports.scope,
+                            period: report.reports.period,
+                            kind: report.reports.kind,
+                            sequence: 1,
+                            policy: report.policy,
+                            approved_at: report.approved_at,
+                            published_at: report.published_at,
+                            origin: report.origin,
+                            supersedes: None,
+                        },
+                    )
+                    .unwrap(),
+            );
+        }
+        let owner = crate::AccountId(1);
+        let now =
+            CivilInstant::from_hms(CivilDate::from_ymd(2030, 4, 1).unwrap(), 12, 0, 0).unwrap();
+        let mut information = NpcInformationState::new(owner);
+        information
+            .record_acquisition(owner, &library, ids[0], now)
+            .unwrap();
+        let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
+        assert_eq!(
+            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            Some(ids[0])
+        );
+        information
+            .record_acquisition(owner, &library, ids[1], now)
+            .unwrap();
+        let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
+        assert_eq!(
+            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            Some(ids[1])
+        );
+    }
 }
