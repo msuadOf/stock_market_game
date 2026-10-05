@@ -69,7 +69,7 @@ test("当前桌面窗口下单栏展开后周K坐标和底部指标按钮完整�
       expect(label.bottom).toBeLessThanOrEqual(.1);
     }
     const positions = await coordinate.evaluate(element => [...element.querySelectorAll("span")].map(span => span.getBoundingClientRect()).filter(rect => rect.height > 0).map(rect => ({ top: rect.top, bottom: rect.bottom })));
-    for (let index = 1; index < positions.length; index++) expect(positions[index].top).toBeGreaterThanOrEqual(positions[index - 1].bottom - .1);
+    for (let index = 1; index < positions.length; index++) expect(positions[index].top, JSON.stringify({ label: await coordinate.getAttribute("aria-label"), positions })).toBeGreaterThanOrEqual(positions[index - 1].bottom - .1);
   }
   await expectAlignedPlots(chart);
   expect(await page.locator("html").evaluate(el => el.scrollWidth > el.clientWidth)).toBe(false);

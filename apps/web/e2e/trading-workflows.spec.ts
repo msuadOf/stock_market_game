@@ -34,14 +34,14 @@ async function advanceToTick(page: Page, target: number): Promise<number> {
 }
 
 function orderPanel(page: Page): Locator {
-  return page.locator("#section-order");
+  return page.locator('#section-order .trade-ticket[data-side="Buy"]');
 }
 
 async function fillLimitBuy(page: Page, price: string, quantity = "100"): Promise<void> {
   const panel = orderPanel(page);
   await panel.getByLabel("委托类型").selectOption("limit");
   await panel.getByPlaceholder("委托价").fill(price);
-  await panel.getByPlaceholder("买入按手；零股一次卖完").fill(quantity);
+  await panel.getByPlaceholder("买入按手；零股一次卖完").fill(String(Number(quantity) / 100));
   await panel.getByRole("button", { name: "买入", exact: true }).click();
 }
 
@@ -64,10 +64,11 @@ test("开盘集合竞价明确拒绝市价委托", async ({ page }) => {
   await panel.getByLabel("委托类型").selectOption("market");
   await expect(panel.getByPlaceholder("市价委托无需价格")).toBeDisabled();
   await panel.getByRole("button", { name: "买入", exact: true }).click();
+  await expect(page.locator(".notice")).toContainText("集合竞价仅接受限价委托");
 
   await advanceToTick(page, 1);
 
-  await expect(page.locator(".notice")).toContainText("集合竞价仅接受限价委托");
+  await expect(panel.locator(".trade-ticket-feedback")).toContainText("集合竞价仅接受限价委托");
   await expect(playerOrder(page)).toHaveCount(0);
 });
 

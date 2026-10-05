@@ -63,7 +63,7 @@ export function DesktopTerminal({ view, securityView, onViewChange, stockList, p
           </section>;
         })}
 
-        {view === "stock" && <div className="terminal-contextbar"><button onClick={() => onViewChange("company")}>公司资料与公告</button><button onClick={openTradeCurrent}>委托下单 / 查看持仓</button><span>行情数量：手 · 委托数量：股</span></div>}
+        {view === "stock" && <div className="terminal-contextbar"><button onClick={() => onViewChange("company")}>公司资料与公告</button><button onClick={openTradeCurrent}>委托下单 / 查看持仓</button><span>行情 / 快捷委托：手 · 持仓 / 条件单：股</span></div>}
       </div>
       <section className="terminal-trading-region" aria-label="看盘交易栏" hidden={!dockVisible} data-expanded={fullTrading ? "full" : "dock"}>
         <div className="terminal-dockbar"><strong>{fullTrading ? "模拟交易" : "看盘交易"}</strong><div className="terminal-ledger-tabs" role="group" aria-label="交易查询"><button aria-pressed={dock === "section-positions"} onClick={() => setDock("section-positions")}>资金持仓</button><button aria-pressed={dock === "section-trades"} onClick={() => setDock("section-trades")}>市场逐笔成交</button></div>

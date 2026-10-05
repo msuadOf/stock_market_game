@@ -11,6 +11,8 @@ import { DEFAULT_SETUP } from "../config/defaults.ts";
 
 let vite: ViteDevServer;
 let views: typeof import("./LocalRefreshViews.tsx");
+let QuickTradingPanel: typeof import("./QuickTradingPanel.tsx").QuickTradingPanel;
+let QuickTrading: typeof import("./quick-trading.ts").QuickTrading;
 let MarketRuntimeProvider: typeof import("./MarketRuntimeProvider.tsx").MarketRuntimeProvider;
 
 before(async () => {
@@ -20,6 +22,8 @@ before(async () => {
     server: { middlewareMode: true, ws: false },
     optimizeDeps: { noDiscovery: true },
   });
+  ({ QuickTradingPanel } = await vite.ssrLoadModule("/src/app/QuickTradingPanel.tsx"));
+  ({ QuickTrading } = await vite.ssrLoadModule("/src/app/quick-trading.ts"));
   views = await vite.ssrLoadModule("/src/app/LocalRefreshViews.tsx") as typeof views;
   ({ MarketRuntimeProvider } = await vite.ssrLoadModule("/src/app/MarketRuntimeProvider.tsx") as typeof import("./MarketRuntimeProvider.tsx"));
 });
@@ -132,8 +136,11 @@ test("G68：快捷涨跌停从当前setup读取非默认证券的创业板规则
   const active = structuredClone(snapshot);
   active.markets = { "300999": active.markets["600101"]! };
   const setup = { ...DEFAULT_SETUP, stocks: [{ ...DEFAULT_SETUP.stocks[0]!, code: "300999", category: "ChiNext" as const }] };
-  const html = renderView(createElement(views.TradeMarketControls, { activeSetup: setup, tradeCode: "300999", setPriceText() {}, setQtyText() {} }), active);
-  assert.match(html, /跌停 8\.00/); assert.match(html, /涨停 12\.00/);
+  const trading = new QuickTrading({ setup: () => setup, snapshot: () => active, autoAllowed: () => true, submit: async () => {} });
+  trading.edit("300999", "Buy", { priceMode: "highest" });
+  trading.edit("300999", "Sell", { priceMode: "lowest" });
+  const html = renderView(createElement(QuickTradingPanel, { trading, setup, code: "300999", side: "Buy", onSideChange() {}, onSelect() {}, notice() {} }), active);
+  assert.match(html, /预留估算边界 8\.00元/); assert.match(html, /预留估算边界 12\.00元/);
   assert.doesNotMatch(html, /缺少.*交易规则/);
 });
 

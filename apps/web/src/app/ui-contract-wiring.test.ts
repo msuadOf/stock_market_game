@@ -65,7 +65,9 @@ test("G48/G64：真实Grid消费中文locale与单元格键盘选择，不禁止
 test("G22/G23/G24/G65：App消费字段错误与详情焦点owner，信息切换不请求滚动", { timeout: 10000 }, () => {
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   const controller = readFileSync(new URL("./useMobileUiController.ts", import.meta.url), "utf8");
-  assert.match(source, /aria-describedby=\{fieldErrors\.quantity \? "trade-quantity-error"/);
+  const ticket = readFileSync(new URL("./QuickTradingPanel.tsx", import.meta.url), "utf8");
+  assert.match(source, /QuickTradingPanel/);
+  assert.match(ticket, /aria-describedby=\{touched && error/);
   assert.match(source, /openDetail\(code\)/);
   assert.match(controller, /detailFocusRef\.current\.apply\(mobileDetail/);
   assert.doesNotMatch(controller, /scrollIntoView/);

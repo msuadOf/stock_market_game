@@ -106,7 +106,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elap
           <div className="msd-time-axis" aria-hidden="true"><span style={{ left: "0%" }}>09:15</span><span className="after-auction" style={{ left: "16%" }}>09:30</span><span style={{ left: "37%" }}>10:30</span><span className="lunch-turn" style={{ left: "58%" }}>11:30/13:00</span><span style={{ left: "79%" }}>14:00</span><span className="market-close">15:00</span></div>
         </div>
       </div>
-      <FiveLevelBook market={market} />
+      <FiveLevelBook code={code} market={market} />
       <div className="msd-minute-volume">
         <div className="msd-volume-meta"><b>分时量（手）⌄</b><span>量:{formatTradeLots(volumeMarks.at(-1)?.volume ?? 0)}手</span><small>{projection.clockTime}</small></div>
         <svg
@@ -197,7 +197,7 @@ export function MobileStockDetail(props: Props) {
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
       </div>
       <div id="mobile-info-panel" role="tabpanel" aria-labelledby={`info-${props.infoTab}`}>
-        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : props.companyContent}
+        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook code={props.code} market={market} /></section> : props.companyContent}
       </div>
     </main>
   );
