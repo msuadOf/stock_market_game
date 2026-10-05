@@ -300,3 +300,13 @@ IAB真实320全局CSS最终四值clientWidth=scrollWidth=63，2893手全文可�
 完整Web841/841、155文件8分片、wall2609ms；完整E2E62/63通过1.1分钟，唯一旧净利gold12928574075.43对12822166575.42，未改gold或公式。所有普通case/进程树10000ms，长验收共享300000ms、3workers、RAYON10；浏览器完结后独立production1.74s/tsc/release WASM成功，没有并写dist。全库lint5原有children-prop警告exit1，定向新改源码/模型/E2E lint、diff-check、premium strict0finding通过，不混称全绿。初次lint缺corepack PATH失败后使用已有工具目录重跑，非产品故障。
 
 IAB源码HMR重建宿主，实际重新启动后推进第1日09:34:48、暂停恢复1x；002156+10.02%桌面轴50%和手机轴141/282px实看。手机留白保持±10.42%，桌面±10.02%，不称设备范围完全相同。财务实际报告和四报表入口已检查，截图手机报表为滚动后内容，不冒称包含顶层菜单。保存两端轴截图，重置临时viewport保留原tab2及localhost服务；未提交玩家订单。两功能分开提交。全goal其余边界按requirements-completion-audit保留。
+
+## 2026-10-05 无诊断能力 DEV 入口批次
+
+App仅新增host capability严格true条件，与既有DEV门禁并用，两端同一入口。不可用release WASM页面不再显示灰按钮，正向按钮/lazy/错误反馈未改，无新交易制度或宿主契约。真实Vite DEV验收单独playwright.dev.config，保留e2e MODE的真实WASM无NPC fixture并证明模块DEV=true。
+
+两case有效红button count1!=0；首次绿DEV停在引擎加载、5s readiness失败，同时Web普通批10000ms超时，保留原日志。不能据此断言二者因果已证明。调整执行顺序隔离，全量Web841/841 wall3019ms（155文件8worker），DEV902/320两case2/2通过5.1s，各case仍10000ms，未用production无入口冒充DEV修复。此前Inspector有能力组件测试通过，未新测debug宿主App正向入口；独立静态review确认原分支完整。
+
+production完整63项62通过，唯一旧净利gold不改；浏览器退出后production318ms、tsc/release WASM成功，产物JS两个诊断标签均缺席。全库lint5既有告警exit1，定向lint、premium0finding、diff-check通过。多核参数Web8分片、E2Eworkers3/DEV实际2、RAYON10、长验收300000ms，CPU采样时进程已结束，不能说liveCPU通过。
+
+IAB真实App HMR重建host，当前暂停第1日09:16:47、1x、自选范围，未改名单或提交玩家委托；不是上一批09:34:48状态延续。保存dev-diagnostics-hidden-desktop-current.png及mobile-current.png，重置临时viewport保留原页面/服务。桌面0只自选现场还发现标题仍“全部股票”，下一批修正。整体目标仍须关闭财务gold因果、文件pending边界和最终需求逐项门禁。

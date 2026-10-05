@@ -664,7 +664,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <span className="desktop-account-note">行情量：手 · 委托量：股</span>
       </footer>}
 
-      {DevNpcInspector !== null && <section>
+      {DevNpcInspector !== null && hostRef.current?.capabilities.npcDecisionDiagnostics === true && <section>
         <Button disabled={hostRef.current?.capabilities.npcDecisionDiagnostics !== true}
           title="仅当当前后端以诊断 feature 的 debug 构建明确启用时可用"
           onClick={() => setShowNpcInspector((shown) => !shown)}>当前局 NPC 诊断</Button>
