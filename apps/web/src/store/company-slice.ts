@@ -1,6 +1,15 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { PublicReportSummary } from "../types/engine.ts";
 import type { DayStatus } from "../types/generated/DayStatus.ts";
+import { COMPANY_STATEMENT_IDS, type CompanyStatementId } from "../components/company/company-presentation.ts";
+
+export interface CompanyReading {
+  selectedReportId: string | null;
+  selectedStatementId: CompanyStatementId;
+  exactAmountsVisible: boolean;
+}
+
+const defaultReading: Readonly<CompanyReading> = Object.freeze({ selectedReportId: null, selectedStatementId: "balance", exactAmountsVisible: false });
 
 type CompanyPage =
   | { kind: "loading" }
@@ -24,6 +33,7 @@ interface CompanyState {
   lastEventSeq: number;
   selectedCompanyId: string | null;
   companies: Record<string, CompanyCache>;
+  readingByCompany: Record<string, CompanyReading>;
 }
 
 interface BaselinePayload {
@@ -86,7 +96,13 @@ const initialState: CompanyState = {
   lastEventSeq: 0,
   selectedCompanyId: null,
   companies: {},
+  readingByCompany: {},
 };
+
+/** 阅读选择只属于当前界面会话，按公司隔离；未操作过的公司使用初始阅读位置。 */
+export function selectCompanyReading(state: CompanyState, companyId: string | null): Readonly<CompanyReading> {
+  return companyId !== null && Object.hasOwn(state.readingByCompany, companyId) ? state.readingByCompany[companyId] : defaultReading;
+}
 
 function pageKey(cursor: string | null): string {
   return cursor ?? "root";
@@ -117,10 +133,24 @@ const companySlice = createSlice({
         lastEventSeq: action.payload.seq,
         selectedCompanyId: null,
         companies: {},
+        readingByCompany: {},
       };
     },
     selectCompany(state, action: PayloadAction<string | null>) {
       state.selectedCompanyId = action.payload;
+    },
+    updateCompanyReading(state, action: PayloadAction<{ generation: number; companyId: string; changes: Partial<CompanyReading> }>) {
+      const { generation, companyId, changes } = action.payload;
+      if (!isCurrentGeneration(state, generation)) return;
+      const cache = state.companies[companyId];
+      if (cache === undefined) throw new RangeError(`公司阅读操作缺少公开报告缓存：${companyId}`);
+      if (changes === null || typeof changes !== "object" || Array.isArray(changes)
+        || Object.keys(changes).some(key => !["selectedReportId", "selectedStatementId", "exactAmountsVisible"].includes(key))) throw new RangeError("公司阅读操作字段无效");
+      if (Object.hasOwn(changes, "selectedReportId") && changes.selectedReportId !== null
+        && (typeof changes.selectedReportId !== "string" || !Object.hasOwn(cache.reports, changes.selectedReportId))) throw new RangeError("公司阅读操作引用未知公开报告");
+      if (Object.hasOwn(changes, "selectedStatementId") && !COMPANY_STATEMENT_IDS.includes(changes.selectedStatementId!)) throw new RangeError("公司阅读操作引用不支持的报表");
+      if (Object.hasOwn(changes, "exactAmountsVisible") && typeof changes.exactAmountsVisible !== "boolean") throw new RangeError("公司阅读操作金额显示必须是布尔值");
+      state.readingByCompany[companyId] = { ...selectCompanyReading(state, companyId), ...changes };
     },
     startCompanyQuery(state, action: PayloadAction<QueryPayload>) {
       if (!isCurrentGeneration(state, action.payload.generation)) return;
@@ -186,6 +216,7 @@ const companySlice = createSlice({
 export const {
   installCompanyBaseline,
   selectCompany,
+  updateCompanyReading,
   startCompanyQuery,
   recordCompanyPage,
   recordCompanyReport,

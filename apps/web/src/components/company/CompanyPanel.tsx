@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import type { CompanyState } from "../../store/company-slice.ts";
+import { useEffect, useMemo, type KeyboardEvent } from "react";
+import { selectCompanyReading, type CompanyReading, type CompanyState } from "../../store/company-slice.ts";
 import { publicCompanies, publicCompanyById, type PublicCompany } from "./company-catalog.ts";
 import { DisclosureList } from "./DisclosureList.tsx";
 import { FinancialStatementTable } from "./FinancialStatementTable.tsx";
@@ -21,6 +21,7 @@ interface CompanyPanelProps {
   readonly companyState: CompanyState;
   readonly initialCivilDate: string;
   readonly onCompanyChange: (companyId: string) => void;
+  readonly onReadingChange: (changes: Partial<CompanyReading>) => void;
   readonly onQuery: (companyId: string, cursor: string | null) => void;
   readonly onAdvanceCivilDay: () => Promise<void>;
 }
@@ -38,16 +39,15 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
   const state = reportViewState(rootPage);
   const pageSummary = useMemo(() => visibleReports(cache), [cache]);
   const reports = pageSummary.reports;
-  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
-  const [selectedStatementId, setSelectedStatementId] = useState("balance");
-  const [exactAmountsVisible, setExactAmountsVisible] = useState(false);
+  const reading = selectCompanyReading(companyState, companyId);
+  const { selectedReportId, selectedStatementId, exactAmountsVisible } = reading;
   const currentReportId = selectVisibleReportId(selectedReportId ?? cache?.currentReportId ?? null, reports.map((report) => report.id));
   const report = currentReportId === null ? undefined : reports.find((item) => item.id === currentReportId);
   const statements = report === undefined ? [] : reportStatementRows(report.financials);
@@ -59,8 +59,8 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
 
   useEffect(() => {
     if (state.kind !== "ready" && state.kind !== "empty") return;
-    setSelectedReportId((current) => selectVisibleReportId(current, reports.map((item) => item.id)));
-  }, [reports, state.kind]);
+    if (currentReportId !== selectedReportId) onReadingChange({ selectedReportId: currentReportId });
+  }, [currentReportId, onReadingChange, selectedReportId, state.kind]);
 
   if (company === undefined || companyId === null) {
     return <section className="company-panel" aria-label="公司信息"><p className="company-empty">当前证券没有可公开查询的公司映射。</p></section>;
@@ -86,17 +86,17 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
       {state.kind === "unavailable" && <p className="company-state is-error" role="alert">公开报告不可用：{state.message}</p>}
       {state.kind === "ready" && report !== undefined && selectedStatement !== undefined && (
         <div className="company-report">
-          <DisclosureList reports={reports} selectedReportId={currentReportId} onSelect={setSelectedReportId} />
+          <DisclosureList reports={reports} selectedReportId={currentReportId} onSelect={(id) => onReadingChange({ selectedReportId: id })} />
           {pageSummary.nextCursor !== null && <button className="company-load-more" type="button" onClick={() => onQuery(company.id, pageSummary.nextCursor)}>加载更多公开报告</button>}
           <div className="company-report-summary">
             <span>{formatReportKind(report.kind)} · 期间 {formatReportPeriod(report.period)}</span>
             <span>公开编号 {report.id} · 版本 {report.version_sequence}</span>
-            <button type="button" onClick={() => setExactAmountsVisible((visible) => !visible)} aria-pressed={exactAmountsVisible}>
+            <button type="button" onClick={() => onReadingChange({ exactAmountsVisible: !exactAmountsVisible })} aria-pressed={exactAmountsVisible}>
               {exactAmountsVisible ? "显示缩写金额" : "查看精确值"}
             </button>
           </div>
           <div className="company-statement-tabs" role="tablist" aria-label="财务报表">
-            {statements.map((statement) => <button id={`company-statement-tab-${statement.id}`} key={statement.id} type="button" role="tab" aria-controls={`company-statement-panel-${statement.id}`} aria-selected={selectedStatement.id === statement.id} tabIndex={selectedStatement.id === statement.id ? 0 : -1} onKeyDown={(event) => moveTabFocus(event, statements.map((item) => item.id))} onClick={() => setSelectedStatementId(statement.id)}>{statement.title}</button>)}
+            {statements.map((statement) => <button id={`company-statement-tab-${statement.id}`} key={statement.id} type="button" role="tab" aria-controls={`company-statement-panel-${statement.id}`} aria-selected={selectedStatement.id === statement.id} tabIndex={selectedStatement.id === statement.id ? 0 : -1} onKeyDown={(event) => moveTabFocus(event, statements.map((item) => item.id))} onClick={() => onReadingChange({ selectedStatementId: statement.id })}>{statement.title}</button>)}
           </div>
           <div id={`company-statement-panel-${selectedStatement.id}`} role="tabpanel" aria-labelledby={`company-statement-tab-${selectedStatement.id}`}>
             <FinancialStatementTable statement={selectedStatement} exactAmountsVisible={exactAmountsVisible} />

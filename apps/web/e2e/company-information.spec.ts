@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { gunzipSync } from "node:zlib";
+import { readQuickArchive } from "./quick-archive.ts";
 
 test.beforeEach(async ({ page }) => {
   // 精确披露日期、公开编号和金额来自 seed42；仅固定测试页的新局熵输入。
@@ -194,6 +196,17 @@ test("日终读档后公司资料立即显示存档自然日，横竖屏一致",
     await controls.advanceToTick(31);
   });
   await expect(page.getByRole("status").filter({ hasText: "日终存档已更新" })).toBeVisible();
+  // 旧自然日的成功提示可能仍在；以目标日终档的 IndexedDB 提交为读取前提。
+  await expect.poll(async () => {
+    const raw = await readQuickArchive(page);
+    if (raw === null) return null;
+    expect(raw.startsWith("gzip:")).toBe(true);
+    const slot = JSON.parse(gunzipSync(Buffer.from(raw.slice(5), "base64")).toString("utf8")) as {
+      snapshot: { tick: number };
+      civil_clock: { current_date: string };
+    };
+    return { tick: slot.snapshot.tick, civilDate: slot.civil_clock.current_date };
+  }).toEqual({ tick: 30, civilDate: "2030-01-03" });
   await page.getByRole("button", { name: "游戏与存档", exact: true }).click();
   await page.getByRole("button", { name: "读取本地进度", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "已读档" })).toBeVisible();
@@ -206,4 +219,63 @@ test("日终读档后公司资料立即显示存档自然日，横竖屏一致",
   await page.getByRole("tab", { name: "财务", exact: true }).click();
   await expectPublicReportReady(page);
   await expect(companyPanel(page).getByLabel("当前模拟日历")).toContainText("2030-01-03");
+});
+
+test("公司阅读选择按公司保存，切股往返保持报告、报表及金额显示", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  await expectEngineReady(page);
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "公司资料 F10", exact: true }).click();
+  await expectPublicReportReady(page);
+  const panel = companyPanel(page);
+  const firstReport = panel.getByRole("button", { name: /^半年度报告 · 2028-06-30 / });
+  await firstReport.click();
+  await panel.getByRole("tab", { name: "利润表", exact: true }).click();
+  await panel.getByRole("button", { name: "查看精确值", exact: true }).click();
+  const stocks = page.getByRole("navigation", { name: "个股列表" });
+  await stocks.getByRole("button", { name: /芯片科技/ }).click();
+  await expectPublicReportReady(page);
+  await expect(panel.getByRole("tab", { name: "资产负债表", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("button", { name: "查看精确值", exact: true })).toBeVisible();
+  const secondReport = panel.getByRole("button", { name: /^年度报告 · 2028-12-31 / });
+  await secondReport.click();
+  await panel.getByRole("tab", { name: "现金流量表", exact: true }).click();
+  await stocks.getByRole("button", { name: /稳健实业/ }).click();
+  await expect(firstReport).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByRole("tab", { name: "利润表", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("table", { name: "利润表", exact: true }).locator("caption")).toHaveText("金额（元，精确值）");
+  await stocks.getByRole("button", { name: /芯片科技/ }).click();
+  await expect(secondReport).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByRole("tab", { name: "现金流量表", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("button", { name: "查看精确值", exact: true })).toBeVisible();
+});
+
+test("公司阅读选择在横竖屏间共用，重新进入页面保持双向修改", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  await expectEngineReady(page);
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "公司资料 F10", exact: true }).click();
+  await expectPublicReportReady(page);
+  const panel = companyPanel(page);
+  const semiannual = panel.getByRole("button", { name: /^半年度报告 · 2028-06-30 / });
+  await semiannual.click();
+  await panel.getByRole("tab", { name: "利润表", exact: true }).click();
+  await panel.getByRole("button", { name: "查看精确值", exact: true }).click();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.locator(".mobile-market-row").first().click();
+  await page.getByRole("tab", { name: "财务", exact: true }).click();
+  await expectPublicReportReady(page);
+  await expect(semiannual).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByRole("tab", { name: "利润表", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("button", { name: "显示缩写金额", exact: true })).toBeVisible();
+  const annual = panel.getByRole("button", { name: /^年度报告 · 2028-12-31 / });
+  await annual.click();
+  await panel.getByRole("tab", { name: "现金流量表", exact: true }).click();
+  await panel.getByRole("button", { name: "显示缩写金额", exact: true }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(annual).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.getByRole("tab", { name: "现金流量表", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("button", { name: "查看精确值", exact: true })).toBeVisible();
 });

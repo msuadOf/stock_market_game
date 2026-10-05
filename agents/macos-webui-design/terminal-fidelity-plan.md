@@ -178,3 +178,20 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 独立复核初批52/52通过1.19秒，最终增量18/18通过192ms，无有效finding；记录civil-date-independent-review.md。真实IAB默认902×833读取现有日终档后F10立即显示2030-01-02，暂停第1日09:15:00；截图civil-date-restored-current-window.png。保留当前F10页面和本地服务，截图不加入源代码提交。
 
 完整目标继续在途：公司切换/横竖屏阅读状态、行情排序统一及旧净利润gold差额尚未解决。本批只解除baseline日期及生成权限artifact/完整Web单测缺口，不声称完整浏览器gold或整个终端目标全部通过。
+
+
+## 2026-10-05 每公司共用阅读选择批次
+
+实看与有效浏览器红测复现：切到另一家公司会沿用前一公司的报表/精确金额，横屏转竖屏后所选半年度报告丢失。三项 CompanyReading（selectedReportId / selectedStatementId / exactAmountsVisible）集中到 company slice，readingByCompany 按公司隔离，两端 ConnectedCompanyPanel 与同一个 controlled CompanyPanel 共用。切股往返和双向横竖屏修改保留选择；loading/error 不清除，真正 empty 沿用原报告回退契约。新局、读档、显式 baseline 更换重置 UI 阅读状态，旧 generation 不写入新会话。报告内容、发布日期、财务公式与游戏存档契约不变，无新增依赖。
+
+最初 E2E 猜测 seed42 半年度发布日期，locator 超时属于测试准备错误，保留 company-reading-red-e2e.log，不算有效红证据。按真实期间定位后，company-reading-valid-red-e2e.log 两项均复现行为失败；store 短测旧 reducer 5失败/1通过。绿阶段23项相关短测通过318ms，4项真实 WASM 浏览器专项通过11.6秒。完整 Web 154文件823/823通过3650ms，8个进程，case/命令进程树10000ms，见 company-reading-complete-web-unit.log。
+
+完整浏览器第一次48项46通过/2失败：旧精确净利12928574075.43与实际12822166575.42不一致仍未解决；另一日终读档用例并发时5秒内没有已读档提示。错误页仍是第2日09:16:40且显示generic日终成功，无UI_RENDER_FAILED。随后日期+阅读3项重复3次，9/9通过38.4秒，不能抹除第一次失败或证明没有竞态。
+
+查验测试前提：generic日终提示可能属于上一休市日，不保证目标tick30档已提交。将 trading-workflows 的只读 readQuickArchive 原样抽为 E2E 共用 helper，在原日期case读档前轮询真实 IndexedDB gzip槽的 snapshot.tick=30 / civil_clock.current_date=2030-01-03。原已读档、横竖屏日期与5秒等待断言全部保留，坏格式/解压/字段错误仍失败。最终完整48项47通过/1失败，1.4分钟，见 company-reading-final-complete-e2e.log；新阅读、日期以及原委托/保存/刷新用例均通过，唯一失败仍旧财务gold。该同步修正验证的是目标档已提交后的读取正确，不验证提交中立即读档竞态，不能据此关闭产品并发边界。
+
+浏览器长验收显式workers=3、RAYON_NUM_THREADS=10、共享300000ms外部deadline；运行中观察到3个Node worker同时运行及多个Chromium进程使用CPU（抽样Node11.5%/12.1%，Chromium17.8%/10.7%），没有单核串跑。独立初次9项短测通过514ms，增量只读复核确认helper不改行为和新断言不弱化，并明确保留竞态边界；见 company-reading-independent-review.md，无剩余有效finding。strict premium audit无finding，改动源码/测试定向lint与git diff --check通过。最终production构建/release WASM验证通过，RAYON_NUM_THREADS=10，见company-reading-production-build.log。
+
+真实IAB902×833实看：600101选择半年度报告/利润表/精确金额，切002156首次仍为资产负债表/缩写金额，返回600101恢复原三项选择；截图 company-reading-current-window.png。document.scrollWidth=902，无横向溢出。保留F10页面与服务；没有提交模拟委托，也不声称HMR保留先前游戏局。
+
+完整终端目标继续在途：旧财务gold差额、行情排序共用核心与状态设计、写档过程中读取的实际并发边界仍未关闭。全回归trace另观察到AG Grid LocaleModule缺失导致console #200，需独立批次验证中文表格反馈。仅本批阅读状态完成，不把它等同所有终端细节完成。

@@ -18,7 +18,7 @@ import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent, MobileIntradayProjection } from "../mobile/market-model.ts";
 import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state.ts";
 import { store, type RootState } from "../store/store.ts";
-import { selectCompany } from "../store/company-slice.ts";
+import { selectCompany, updateCompanyReading, type CompanyReading } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
@@ -196,7 +196,10 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
   const onCompanyChange = (nextCompanyId: string) => {
     store.dispatch(selectCompany(nextCompanyId));
   };
-  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />;
+  const onReadingChange = (changes: Partial<CompanyReading>) => {
+    if (companyId !== null) store.dispatch(updateCompanyReading({ generation: companyState.generation, companyId, changes }));
+  };
+  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />;
 }
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {

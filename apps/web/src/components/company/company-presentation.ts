@@ -13,7 +13,9 @@ export type ComparisonPresentation =
 
 export type StatementCell = string | { readonly kind: "unavailable"; readonly text: string };
 export type StatementRow = { readonly subject: string; readonly amount: StatementCell; readonly comparisons?: readonly StatementCell[] };
-export type StatementSection = { readonly id: string; readonly title: string; readonly columns?: readonly string[]; readonly rows: readonly StatementRow[]; readonly details?: readonly PublicReportLine[] };
+export const COMPANY_STATEMENT_IDS = ["balance", "income", "cash-flow", "equity"] as const;
+export type CompanyStatementId = typeof COMPANY_STATEMENT_IDS[number];
+export type StatementSection = { readonly id: CompanyStatementId; readonly title: string; readonly columns?: readonly string[]; readonly rows: readonly StatementRow[]; readonly details?: readonly PublicReportLine[] };
 export type ReportViewState =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
