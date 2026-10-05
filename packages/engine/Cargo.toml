@@ -52,6 +52,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
+num-bigint = "0.4.8"
 ts-rs = { workspace = true }
 
 # TypeScript formatting is used only by binding export tests, not runtime builds.
