@@ -1,5 +1,11 @@
 export type SecurityListView = "all" | "watchlist" | "holdings";
 
+export const SECURITY_LIST_VIEW_LABELS: Readonly<Record<SecurityListView, string>> = {
+  all: "全部",
+  watchlist: "自选",
+  holdings: "持仓",
+};
+
 interface SecurityFilter {
   codes: readonly string[];
   names: Readonly<Record<string, string>>;

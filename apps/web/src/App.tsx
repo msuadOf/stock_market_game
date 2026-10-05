@@ -522,7 +522,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         </div>
       </header>
 
-      <WorkspaceGrid orientation={orientation} desktopView={desktopView} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList browser={securityBrowser} onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
+      <WorkspaceGrid orientation={orientation} desktopView={desktopView} securityView={securityBrowser.view} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList browser={securityBrowser} onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market" tabIndex={-1} aria-label="行情列表">
           <h3 className="panel-title">行情</h3>

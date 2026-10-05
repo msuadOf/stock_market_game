@@ -1,5 +1,6 @@
 import { useId, useRef } from "react";
 import type { SecurityBrowser } from "../app/useSecurityBrowser.ts";
+import { SECURITY_LIST_VIEW_LABELS, type SecurityListView } from "../app/security-browser-model.ts";
 import "./security-list-controls.css";
 
 interface Props {
@@ -14,7 +15,7 @@ export function SecurityListControls({ browser, codes, onOpen }: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   return <div className="security-list-controls">
     <nav className="security-list-views" aria-label="股票范围">
-      {([ ["all", "全部"], ["watchlist", "自选"], ["holdings", "持仓"] ] as const).map(([view, label]) => <button key={view} type="button" aria-pressed={browser.view === view} onClick={() => browser.setView(view)}>{label}</button>)}
+      {(["all", "watchlist", "holdings"] as const satisfies readonly SecurityListView[]).map(view => <button key={view} type="button" aria-pressed={browser.view === view} onClick={() => browser.setView(view)}>{SECURITY_LIST_VIEW_LABELS[view]}</button>)}
       <span className="security-list-count" role="status">{codes.length}只</span>
     </nav>
     <form noValidate className="security-search" role="search" aria-label="股票查询" onSubmit={event => { event.preventDefault(); if (codes.length > 0) onOpen(codes[0]); }}>

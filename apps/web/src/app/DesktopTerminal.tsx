@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { SECURITY_LIST_VIEW_LABELS, type SecurityListView } from "./security-browser-model.ts";
 
 export type DesktopView = "quotes" | "stock" | "company" | "trading" | "settings";
 interface Props {
   view: DesktopView;
+  securityView: SecurityListView;
   onViewChange: (view: DesktopView) => void;
   stockList: ReactNode;
   panels: ReactElement<{ id: string }>[];
@@ -16,7 +18,7 @@ const NAVIGATION = [
 ] as const;
 
 /** 桌面入口只负责内容层次；委托、公司查询与行情仍由原面板持有。 */
-export function DesktopTerminal({ view, onViewChange, stockList, panels, onTradeCurrent, tradingOpen, onTradingOpenChange }: Props) {
+export function DesktopTerminal({ view, securityView, onViewChange, stockList, panels, onTradeCurrent, tradingOpen, onTradingOpenChange }: Props) {
   const [dock, setDock] = useState<"section-positions" | "section-trades">("section-positions");
   const [localTradingOpen, setLocalTradingOpen] = useState(false);
   const dockOpen = tradingOpen === undefined ? localTradingOpen : tradingOpen;
@@ -44,7 +46,7 @@ export function DesktopTerminal({ view, onViewChange, stockList, panels, onTrade
     <div className="terminal-workspace">
       <div className="terminal-viewbar">
         {detail ? <><button onClick={() => onViewChange("quotes")}>返回行情</button><span className="terminal-separator" /><button aria-pressed={view === "stock"} onClick={() => onViewChange("stock")}>走势图</button><button aria-keyshortcuts="F10" aria-pressed={view === "company"} onClick={() => onViewChange("company")}>公司资料 F10</button><button onClick={openTradeCurrent}>交易此股票</button></>
-          : <><strong>{{ quotes: "沪深行情", trading: "模拟交易", settings: "游戏管理", stock: "个股", company: "公司资料" }[view]}</strong><span className="terminal-view-description">{{ quotes: "全部模拟股票", trading: "委托 · 持仓 · 市场成交", settings: "进度与运行设置", stock: "", company: "" }[view]}</span></>}
+          : <><strong>{{ quotes: "沪深行情", trading: "模拟交易", settings: "游戏管理", stock: "个股", company: "公司资料" }[view]}</strong><span className="terminal-view-description">{{ quotes: `${SECURITY_LIST_VIEW_LABELS[securityView]}模拟股票`, trading: "委托 · 持仓 · 市场成交", settings: "进度与运行设置", stock: "", company: "" }[view]}</span></>}
       </div>
       <div className="terminal-body" hidden={fullTrading}>
         <aside className="terminal-stocklist" hidden={!detail}>{stockList}</aside>
@@ -55,7 +57,7 @@ export function DesktopTerminal({ view, onViewChange, stockList, panels, onTrade
             : id === "section-company" ? view === "company"
             : id === "section-user" && view === "settings";
           return <section key={id} className={`terminal-slot terminal-slot-${id}`} hidden={!visible}>
-            {id === "section-market" && <div className="terminal-sectionbar"><strong>全部股票</strong><span>单击预览 · 双击 / Enter 进入个股</span></div>}
+            {id === "section-market" && <div className="terminal-sectionbar"><strong>{SECURITY_LIST_VIEW_LABELS[securityView]}股票</strong><span>单击预览 · 双击 / Enter 进入个股</span></div>}
             {id === "section-trade" && view === "quotes" && <div className="terminal-sectionbar"><strong>个股预览</strong><button onClick={() => onViewChange("stock")}>进入个股 →</button></div>}
             {panel}
           </section>;

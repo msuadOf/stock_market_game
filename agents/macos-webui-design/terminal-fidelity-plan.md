@@ -310,3 +310,11 @@ App仅新增host capability严格true条件，与既有DEV门禁并用，两端�
 production完整63项62通过，唯一旧净利gold不改；浏览器退出后production318ms、tsc/release WASM成功，产物JS两个诊断标签均缺席。全库lint5既有告警exit1，定向lint、premium0finding、diff-check通过。多核参数Web8分片、E2Eworkers3/DEV实际2、RAYON10、长验收300000ms，CPU采样时进程已结束，不能说liveCPU通过。
 
 IAB真实App HMR重建host，当前暂停第1日09:16:47、1x、自选范围，未改名单或提交玩家委托；不是上一批09:34:48状态延续。保存dev-diagnostics-hidden-desktop-current.png及mobile-current.png，重置临时viewport保留原页面/服务。桌面0只自选现场还发现标题仍“全部股票”，下一批修正。整体目标仍须关闭财务gold因果、文件pending边界和最终需求逐项门禁。
+
+## 2026-10-05 证券范围反馈一致性批次
+
+桌面标题与顶部说明经WorkspaceGrid读取securityBrowser.view，SecurityListControls共用范围标签；无新状态。真实WASM TDD揭示全部股票标题及0行→0行残留自选空态两项问题，使用稳定React空态组件、原文案函数及刷新params修正；查询、排序及行同步owner均未改。参数刷新机制核对本地AG Grid源码及官方React overlays文档：https://www.ag-grid.com/react-data-grid/overlays/ 。
+
+新真实WASM case覆盖自选/持仓/无匹配/清空查询/两端保持/恢复全部。完整Web841/841 wall3032ms；首轮64项62通过2失败49.6s（新空态、旧财务gold），随后62通过2失败47.2s（旧财务gold、分时fixture切屏竞态）。trace证明切viewport后立即isVisible=false跳过进入个股，原轴断言不改，改等待真实列表可见再点入。最终完整64项63通过1旧gold45.2s exit1；保留所有失败及trace证据，不提高10秒case时限。production297ms/tsc/release WASM成功，全库lint5既有告警exit1，变更lint/premium0finding/diff-check通过。
+
+IAB当前原tab2第1日09:24:23暂停1x，两空范围标题/提示实看并截图，恢复原自选及viewport。HMR重建host不冒称上一批进度保留。本批只关闭范围反馈及真实轴验收的前置步骤竞态，财务和文件pending边界继续开放。

@@ -41,6 +41,10 @@ function yuan(cents: Cents): number {
   return moneyToChartNumber(cents) / 100;
 }
 
+function SecurityListEmptyOverlay({ message }: { readonly message: string }) {
+  return <span className="security-list-empty">{message}</span>;
+}
+
 export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes, priceHistoryByCode, browser }: Props) {
   const { sortRules, setSortRules } = browser;
   const builtRowsRef = useRef<RowData[]>([]);
@@ -55,6 +59,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes,
   const visibleCodes = useMemo(() => filterSecurityCodes({ codes: allMarketRowData.map(row => row.code), names: STOCK_NAMES, favorites: browser.favorites, heldCodes, query: browser.query, view: browser.view }), [allMarketRowData, browser.favorites, browser.query, browser.view, heldCodes]);
   const allRowData = useMemo(() => { const available = new Set(visibleCodes); return allMarketRowData.filter(row => available.has(row.code)); }, [allMarketRowData, visibleCodes]);
   const emptyMessage = securityListEmptyMessage(browser.view, browser.query, browser.ready);
+  const noRowsOverlayParams = useMemo(() => ({ message: emptyMessage }), [emptyMessage]);
   const initialRowsRef = useRef(allRowData);
   const [rowSynchronizer] = useState(() => new MarketGridRowSynchronizer(initialRowsRef.current));
   rowSynchronizer.recordLatest(allRowData);
@@ -223,7 +228,8 @@ export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes,
         <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，空格预览当前股票，Enter 进入个股。</p>
         <AgGridReact<RowData>
           theme="legacy"
-          overlayNoRowsTemplate={`<span class="security-list-empty">${emptyMessage}</span>`}
+          noRowsOverlayComponent={SecurityListEmptyOverlay}
+          noRowsOverlayComponentParams={noRowsOverlayParams}
           rowData={initialRowsRef.current}
           getRowId={getRowId}
           onGridReady={onGridReady}

@@ -2,6 +2,39 @@ import { expect, test } from "@playwright/test";
 
 test.setTimeout(10_000);
 
+test("桌面行情标题随证券范围更新，搜索及横竖屏切换保持范围", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  const title = page.locator(".terminal-slot-section-market > .terminal-sectionbar strong");
+  const description = page.locator(".terminal-view-description");
+  const scope = page.getByRole("navigation", { name: "股票范围", exact: true });
+  await expect(title).toHaveText("全部股票");
+  await expect(description).toHaveText("全部模拟股票");
+  await scope.getByRole("button", { name: "自选", exact: true }).click();
+  await expect(title).toHaveText("自选股票");
+  await expect(description).toHaveText("自选模拟股票");
+  await expect(page.getByRole("region", { name: "股票行情", exact: true })).toContainText("暂无自选股票");
+  const query = page.getByRole("searchbox", { name: "搜索股票" });
+  await query.fill("600101");
+  await expect(title).toHaveText("自选股票");
+  await expect(page.getByRole("region", { name: "股票行情", exact: true })).toContainText("没有匹配股票");
+  await query.press("Escape");
+  await expect(page.getByRole("region", { name: "股票行情", exact: true })).toContainText("暂无自选股票");
+  await scope.getByRole("button", { name: "持仓", exact: true }).click();
+  await expect(title).toHaveText("持仓股票");
+  await expect(description).toHaveText("持仓模拟股票");
+  await expect(page.getByRole("region", { name: "股票行情", exact: true })).toContainText("暂无持仓");
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect(page.locator(".mobile-market-list")).toContainText("暂无持仓");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(title).toHaveText("持仓股票");
+  await expect(scope.getByRole("button", { name: "持仓", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await scope.getByRole("button", { name: "全部", exact: true }).click();
+  await expect(title).toHaveText("全部股票");
+  await expect(description).toHaveText("全部模拟股票");
+  await expect(page.locator('.ag-row [col-id="code"]')).toHaveCount(5);
+});
+
 test("查询恢复原行序，Enter 与首行一致，主动列排序继续保留", async ({ page }) => {
   await page.goto("/?tradingE2E=1");
   const query = page.getByRole("searchbox", { name: "搜索股票" });

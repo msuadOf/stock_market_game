@@ -11,7 +11,8 @@ test("分时昨收0%参考轴在桌面与手机切换后始终位于价格绘图
   await expect(desktop.locator(".intraday-baseline")).toHaveAttribute("y2", "50");
   await expect(desktop.locator('.intraday-percent-label[style="top: 50%;"]')).toHaveText("0.00%");
   await page.setViewportSize({ width: 320, height: 844 });
-  if (await page.locator(".mobile-market-row").first().isVisible()) await page.locator(".mobile-market-row").first().click();
+  await expect(page.locator(".mobile-market-row").first()).toBeVisible();
+  await page.locator(".mobile-market-row").first().click();
   const plot = page.locator(".msd-price-plot");
   const middle = await plot.evaluate((element) => {
     const box = element.getBoundingClientRect();

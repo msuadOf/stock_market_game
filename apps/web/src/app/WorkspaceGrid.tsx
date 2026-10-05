@@ -12,6 +12,7 @@ import {
   type WorkspacePanelId,
 } from "./workspace-layout.ts";
 import { DesktopTerminal, type DesktopView } from "./DesktopTerminal.tsx";
+import type { SecurityListView } from "./security-browser-model.ts";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./workspace-grid.css";
@@ -19,6 +20,7 @@ import "./workspace-grid.css";
 export interface WorkspaceGridProps extends HTMLAttributes<HTMLDivElement> {
   orientation: Orientation;
   desktopView?: DesktopView;
+  securityView?: SecurityListView;
   onDesktopViewChange?: (view: DesktopView) => void;
   stockList?: ReactNode;
   onTradeCurrent?: () => void;
@@ -87,11 +89,11 @@ export function WorkspaceDesktopLayout({ width, layouts, children, onLayoutChang
   </ResponsiveGridLayout>;
 }
 
-export function WorkspaceGrid({ orientation, children, className = "", desktopView = "quotes", onDesktopViewChange, stockList, onTradeCurrent, desktopTradingOpen, onDesktopTradingOpenChange, ...attributes }: WorkspaceGridProps) {
+export function WorkspaceGrid({ orientation, children, className = "", desktopView = "quotes", securityView = "all", onDesktopViewChange, stockList, onTradeCurrent, desktopTradingOpen, onDesktopTradingOpenChange, ...attributes }: WorkspaceGridProps) {
   const [localView, setLocalView] = useState<DesktopView>("quotes");
   const panels = namedPanels(children);
   if (orientation === "portrait") return <div className={`app-grid ${className}`.trim()} {...attributes}>{children}</div>;
   return <div className={`workspace-desktop ${className}`.trim()} {...attributes}>
-    <DesktopTerminal view={onDesktopViewChange ? desktopView : localView} onViewChange={onDesktopViewChange ?? setLocalView} stockList={stockList} panels={panels} onTradeCurrent={onTradeCurrent} tradingOpen={desktopTradingOpen} onTradingOpenChange={onDesktopTradingOpenChange} />
+    <DesktopTerminal view={onDesktopViewChange ? desktopView : localView} securityView={securityView} onViewChange={onDesktopViewChange ?? setLocalView} stockList={stockList} panels={panels} onTradeCurrent={onTradeCurrent} tradingOpen={desktopTradingOpen} onTradingOpenChange={onDesktopTradingOpenChange} />
   </div>;
 }

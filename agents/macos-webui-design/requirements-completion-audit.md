@@ -21,7 +21,7 @@
 | 触屏双指缩放、单指点按对齐 | 同一useKlineGestures处理pinch/tap，拖动阈值与合成click抑制 | desktop工作台触屏用例 | 真实实体触屏未实测，浏览器合成手势已验收 |
 | 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最新58项详情用例通过，保留此前耗时/失败记录 |
 | SVG拉伸边框不变粗 | SVG renderer的non-scaling-stroke，坐标文字DOM | desktop轮廓拉伸、kline-coordinates | 自动几何/样式检查已做，任意系统缩放组合未全部验证 |
-| 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | DEV无诊断能力入口已按统一host能力过滤，真实DEV两尺寸/导航后通过；production本就不显示；桌面列表标题未随自选范围更新，新现场已复现 |
+| 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | DEV无诊断能力入口已按统一host能力过滤，真实DEV两尺寸/导航后通过；production本就不显示；桌面标题及空态已按同一范围更新，真实WASM及IAB复核通过 |
 | 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 精确净利gold12928574075.43对actual12822166575.42因果仍未核清，不可改gold凑绿 |
 | 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | 文件选择在pending写入期间的边界未本批扩展；首日缺DB的旧E2E helper检查会造空库，不应复用到该前提 |
 | 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c0ea9f1本地==origin；每批review记录 | 全部goal未完成，不将阶段提交当整体收尾 |
@@ -55,3 +55,13 @@ App仅一行新增当前宿主npcDecisionDiagnostics===true门禁，与原DEV/la
 新增独立playwright.dev.config使用真实Vite --mode e2e及DEV=true，沿原受控无NPC局，release WASM；不是production preview。两个尺寸先红：诊断button实际1、期望0。第一次绿DEV启动加载超过5s未进入App，且同时启动的全量unit触及整命令10000ms；保留两份失败日志，不将并行与失败推断为已证明因果。改为隔离运行、原case期限不变，完整Web841/841、8分片、wall3019ms；DEV2/2通过5.1秒，含个股/游戏导航后无入口。普通门禁10000ms，长验收共享300000ms，DEV配置workers3实际2个case用2worker；CPU采样已结束未取到live样本，不冒称测得。
 
 完整production E2E62/63、1.1分钟，仅旧净利gold失败。确认浏览器结束再build：tsc、vite318ms、release WASM成功，production JS不含两个检查器标签。定向lint/diff-check/strict premium0finding成功，全库5原children-prop告警exit1。IAB源码HMR重建host，实看并暂停第1日09:16:47、1x；保持当时自选范围，不声称延续09:34:48。902/320实际无入口，保存dev-diagnostics-hidden-desktop-current.png/mobile-current.png，重置viewport保留tab2/服务。独立复核待最终日志增量确认。新现场发现桌面自选范围仍标题“全部股票”，下一批需修正；文件pending与财务gold因果仍待核实。
+
+## 2026-10-05 证券范围标题与空态更新
+
+桌面标题/说明读取已有securityBrowser.view，标签与原范围按钮共用SECURITY_LIST_VIEW_LABELS，无新增范围或标题状态。真实WASM先复现自选仍显示全部股票；新标题断言修正后又发现0行自选→0行持仓仍残留旧提示。MarketGrid改用稳定React overlay及params，文案仍来自securityListEmptyMessage，未重建表格、修改筛选/排序/撮合。新case同时检验无匹配→清空搜索、持仓空态、320→1440及恢复全部5行。
+
+TDD首轮标题1失败6.5s；完整首轮64项62通过2失败49.6s（新空态及旧财务gold）。最终源码完整Web841/841、8分片/155文件、wall3032ms；浏览器下一轮62/64、47.2s，新case通过，另有分时轴fixture切屏竞态。保留trace/error-context于security-scope-title-axis-failure：setViewport结束后约2ms即isVisible=false，因此未执行进入个股，最终停在真实手机行情列表；桌面三条中心轴断言已通过。仅将非等待条件改为等待列表出现后点击，未改轴断言、10秒case或产品切屏逻辑。重跑完整64项63通过1旧财务gold失败45.2s，exit1，不能拼为全绿。
+
+长验收共享300000ms、workers3/RAYON10；首轮实际采到多个Chromium进程CPU15.6%/8.0%/94.3%/27.1%，最终采样已结束，无新live样本。浏览器exit1结束后独立production297ms、tsc/release WASM成功。全库lint5原有children-prop告警exit1，全部变更source/E2E定向lint、diff-check、premium strict0finding通过。
+
+IAB原tab2真实DEV页面已实看自选/持仓正确标题及提示，保存security-scope-holdings-desktop-current.png和watchlist截图。当前第1日09:24:23暂停、1x；源码HMR后重建host，不冒称延续此前局。恢复原自选范围和临时viewport，未改名单/玩家委托，保留localhost服务。整体目标仍留财务gold因果、文件读取pending边界及需求最终门禁。
