@@ -6,7 +6,7 @@ import { compareMoney, centsToYuanText, moneyToChartNumber } from "../utils/mone
  */
 import { AgGridReact } from "ag-grid-react";
 import type { GridApi, ColDef, CellClassParams, GridReadyEvent, IRowNode, CellKeyDownEvent, FullWidthCellKeyDownEvent } from "ag-grid-community";
-import { RowApiModule, CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, ModuleRegistry, RowStyleModule } from "ag-grid-community";
+import { RowApiModule, CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, LocaleModule, ModuleRegistry, RowStyleModule } from "ag-grid-community";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cents, MarketSnap } from "../types/engine";
 import type { PricePoint } from "./PriceChart";
@@ -20,7 +20,7 @@ import { filterSecurityCodes, securityListEmptyMessage } from "../app/security-b
 import { STOCK_NAMES } from "../config/defaults";
 import { MARKET_GRID_LOCALE, selectMarketByKeyboard } from "./market-grid-accessibility.ts";
 
-ModuleRegistry.registerModules([RowApiModule, ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule]);
+ModuleRegistry.registerModules([RowApiModule, ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule, LocaleModule]);
 
 if (import.meta.env.DEV) {
   enableDevValidations();

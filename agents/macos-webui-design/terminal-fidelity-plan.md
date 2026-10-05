@@ -195,3 +195,16 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 真实IAB902×833实看：600101选择半年度报告/利润表/精确金额，切002156首次仍为资产负债表/缩写金额，返回600101恢复原三项选择；截图 company-reading-current-window.png。document.scrollWidth=902，无横向溢出。保留F10页面与服务；没有提交模拟委托，也不声称HMR保留先前游戏局。
 
 完整终端目标继续在途：旧财务gold差额、行情排序共用核心与状态设计、写档过程中读取的实际并发边界仍未关闭。全回归trace另观察到AG Grid LocaleModule缺失导致console #200，需独立批次验证中文表格反馈。仅本批阅读状态完成，不把它等同所有终端细节完成。
+
+
+## 2026-10-05 行情表中文提示模块补齐批次
+
+完整浏览器trace发现AG Grid console #200：配置localeText却未注册LocaleModule。只导入并注册当前AG Grid36已有模块，复用既有MARKET_GRID_LOCALE；无新依赖，无排序比较器、市场数据、资金或交易单位变化。首次测试误认辅助文字位于aria-label，定位超时不算有效TDD证据；对照当前依赖源码，改为实际聚焦表头后的live-region，market-locale-valid-red-e2e.log明确收到Press ENTER to sort而非按 Enter 排序。随后两行生产修改使中文提示生效。
+
+新增真实浏览器验收同时验证焦点中文提示、Enter排序ascending、空查询中文反馈及无LocaleModule错误；没有压制console或伪造文案。相关短测9/9通过1218ms，concurrency3、case/外部进程树10000ms；独立可访问性2/2通过157ms并复核完整diff，无有效finding，见market-locale-independent-review.md。行情suite首次8/9通过33.9秒，既有自选刷新case超过10000ms，新增locale当轮通过3.5秒；相同workers3/期限重跑最终9/9通过29.1秒，刷新case9.0秒。保留两次完整日志，不放宽或删弱断言，不把重跑通过当作所有并发不稳定已解决。
+
+浏览器按长验收共享300000ms外部deadline，workers3、RAYON_NUM_THREADS10；生产构建/release WASM检查、变更文件lint、strict premium audit与git diff--check均通过。本批没有重复全量Web或完整49项浏览器矩阵：上一阅读批全量Web823通过，完整48浏览器47通过/1旧财务gold失败，不能合并成“本批全量全部通过”。
+
+真实IAB旧AG Grid实例在HMR后仍保留英文Locale bean，刷新并通过正常启动入口重新连接本地游戏，重新暂停第1日09:16:03；聚焦代码表头后现场live-region已为按 Enter 排序。dev日志缓存仍有03:51:56的旧错误，不以历史日志声称新的回归；新浏览器用例已检查新实例没有该错误。该刷新会重建宿主并清空界面阅读选择，不声称保持旧游戏局或阅读状态。保留内置浏览器与本地服务，未提交模拟委托。
+
+终端目标仍在途：既有精确财务gold差异、行情排序的共用设计及写档期间立即读档竞态边界继续保留，原有自选刷新用例10秒边缘耗时也不据本次重跑关闭。

@@ -148,3 +148,21 @@ test("桌面左列表支持方向键与首尾定位，窄窗口按钮保持可�
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(box!.x + box!.width + 1);
   }
 });
+
+
+test("行情表真实表头使用中文排序提示，不产生 LocaleModule 缺失错误", async ({ page }) => {
+  const localeErrors: string[] = [];
+  page.on("console", message => {
+    if (message.type() === "error" && message.text().includes("LocaleModule")) localeErrors.push(message.text());
+  });
+  await page.goto("/?tradingE2E=1");
+  const grid = page.getByRole("region", { name: "股票行情", exact: true });
+  const codeHeader = grid.getByRole("columnheader", { name: /^代码/ });
+  await codeHeader.focus();
+  await expect(grid.locator(".ag-aria-description-container")).toContainText("按 Enter 排序");
+  await codeHeader.press("Enter");
+  await expect(codeHeader).toHaveAttribute("aria-sort", "ascending");
+  await page.getByRole("searchbox", { name: "搜索股票" }).fill("找不到");
+  await expect(grid).toContainText("没有匹配股票");
+  expect(localeErrors).toEqual([]);
+});
