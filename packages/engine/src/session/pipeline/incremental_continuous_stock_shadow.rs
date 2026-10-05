@@ -14,8 +14,9 @@ use super::{
     ContinuousPlaceFact, ContinuousStockInput, ContinuousStockOutput, ContinuousTradeFact,
 };
 use crate::market::MarketDelta;
+use crate::session::pipeline::private_stock_ledger::PrivateStockLedger;
 use crate::session::pipeline::{
-    EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, IntentCandidateKey, StepFatal, ValidatedOperation,
+    EnvelopeKey, EnvelopeReceipt, IntentCandidateKey, StepFatal, ValidatedOperation,
 };
 use crate::{GameConfig, Market, Money, StockCode, TradingPhase};
 use rayon::prelude::*;
@@ -71,7 +72,7 @@ pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
 struct IncrementalContinuousStockShadow {
     phase: TradingPhase,
     market: Market,
-    ledger: EnvelopeLedger,
+    ledger: PrivateStockLedger,
     config: GameConfig,
     next_trade_event_index: u64,
     created_envelopes: Vec<crate::session::pipeline::Envelope>,

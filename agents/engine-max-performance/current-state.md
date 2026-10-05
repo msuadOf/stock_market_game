@@ -38,3 +38,20 @@
 - 当前热点：SealAllocationSnapshot全表reservation投影，ledger守恒/evidence与live orders重复核对，逐股private ledger每tick重构，多个很短的Rayon屏障。稀疏COW只能降低复制，尚未消除验证的全量工作。
 - 下一批主agent设计不可变page证据缓存/资源投影复用，以实际mutation使缓存失效；保留首错顺序/checked累计/全局守恒/失败原子性。资源校验先筛cache命中再派发失效页也是可测方向。
 - 前端保持暂停；Rust server达到1000x之后，才恢复真实UI路径验证。
+
+## 追加：已撤回的 page proof 实验
+
+- `5bc20409` 已本地提交且独立终审通过；此后探索过 whole/page conservation proof 与 complete evidence page proof。
+- 所有实验正确性短测通过，但真实server相邻配对仅原版103.75x、candidate107.09x（约3.2%，单次样本），局部重验1024→32没有形成明显总吞吐收益。
+- 为保持必要性和最小复杂度，已把本任务5个实验源码/测试文件逐字节回退到HEAD5bc20409；没有保留那约325行派生cache。证明proof-cache-rollback-proof.json，详细判定proof-cache-experiment.md，逆向实验源码proof-cache-rollback.patch。无需再审已撤回实验。
+- 当前唯一未提交源码是 `packages/engine/examples/max_speed_probe.rs` 计时结束后的final_load诊断字段，不改生产代码；尚未做独立review，作为在途探针，不报告已完成批次。
+- final-load-native-16实测：3835 live envelopes、14 plans、上一tick12retail decisions/3order diagnostics，约106.36x。phase耗时仍为decision/coordinator11.64s、SealAllocation3.61s、stock3.28s、receipt2.57s、precommit2.55s、expiry2.55s /3000tick。
+- 最新test binary曾编译实验源码，虽然当前已回退生产文件，下一轮测试必须重新编译HEAD对应binary；不能拿带cache的test binary验收当前代码。
+- Cargo共享target跨archive会受mtime影响：git archive旧mtime曾让Cargo错误复用candidate产物。已刷新archive输入mtime强制实际重编，核对SHA不同才配对；生产baseline独立binary `.tmp/server-proof-baseline-5bc20409`，candidate `.tmp/server-page-proof-candidate`。继续构建当前worktree时核对Cargo确实重编/产物指纹，不把Fresh当成源码同一的证明。
+- 已读取本scope及父cgroup cpu.max均为max，nr_throttled=0；CPU空闲主要不能归因于配额限制。16worker实际只用约3.7核。
+- 后续应沿实际订单扫描/逐股重复构建/细碎Rayon屏障定位更大成本；不能继续仅堆低收益校验cache。Rust server仍是主验收、frontend继续暂停、1000x目标active且未达成。
+
+
+## 追加：当前 PrivateStockLedger 批次
+
+上述“唯一未提交源码是探针”仅描述 page proof 撤回瞬间，当前已新增 private_stock_ledger.rs 并接线 Continuous worker。详细当前实现、128.45x 真实 server 证据、短测与撤回的无收益实验见 private-stock-ledger-findings.md。最新 profile：server-private-values-stack-samples.log，共48组864线程栈，全部16个Rayon worker和actor均采样；调试耗时不作性能证据。生产数学 helper 实验已回退，最新test binary为撤回后的实现。全新独立Sol reviewer已通过本批门禁，报告private-stock-ledger-independent-review.md；准备聚焦本地提交。最终server复测127.50x，与初次128.45x接近，目标远未达成。Rust server先达标、frontend暂停的顺序不变。

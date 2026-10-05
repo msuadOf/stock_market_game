@@ -34,7 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let wall_s = started.elapsed().as_secs_f64();
-        println!("{}", serde_json::json!({"ticks":ticks,"threads":threads,"wall_s":wall_s,"speed_x":ticks as f64 / wall_s,"events":events,"phase_ns":phases}));
+        // 在计时结束后记录实际负载，避免仅凭配置账户数猜测活跃订单与决策规模。
+        let final_load = serde_json::json!({
+            "live_envelopes": game.project_live_envelopes()?.len(),
+            "last_retail_decisions": game.last_retail_decisions().len(),
+            "last_retail_order_events": game.last_retail_order_events().len(),
+            "plans": game.plans_debug().len(),
+        });
+        println!("{}", serde_json::json!({"ticks":ticks,"threads":threads,"wall_s":wall_s,"speed_x":ticks as f64 / wall_s,"events":events,"phase_ns":phases,"final_load":final_load}));
         Ok(())
     })().map_err(|error| -> Box<dyn std::error::Error> { error })
 }

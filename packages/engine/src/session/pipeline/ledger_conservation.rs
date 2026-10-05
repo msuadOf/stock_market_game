@@ -1,7 +1,7 @@
 use super::{
-    Envelope, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt, JournalRank, ResVec, StepFatal,
     conservation::{ConservationBasis, ConservationRow},
     ledger::ConservationState,
+    Envelope, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt, JournalRank, ResVec, StepFatal,
 };
 use rayon::prelude::*;
 
@@ -24,6 +24,13 @@ pub(super) fn record(
         .conservation
         .get_mut(&receipt.envelope)
         .ok_or_else(|| super::ledger_validation::invariant("missing conservation state"))?;
+    record_state(state, receipt)
+}
+
+pub(super) fn record_state(
+    state: &mut ConservationState,
+    receipt: &EnvelopeReceipt,
+) -> Result<(), StepFatal> {
     if receipt.local_key.journal() == JournalRank::PreSeal {
         state.expiry_released = state.expiry_released.checked_add(receipt.delta.released)?;
     } else {
@@ -31,6 +38,28 @@ pub(super) fn record(
         state.sealed_released = state.sealed_released.checked_add(receipt.delta.released)?;
     }
     Ok(())
+}
+
+/// 私有逐股 row 已共同拥有 envelope 和守恒事实，不再从三份独立 map 重复查找。
+/// 仍复用相同的逐行方程与原顺序 checked 汇总，保留首错与资源溢出合同。
+pub(super) fn validate_owned_rows(
+    rows: &[(&Envelope, &ConservationState)],
+) -> Result<(), StepFatal> {
+    let checked = map_rows(rows, |(envelope, state)| {
+        let row = row(envelope, state)?;
+        row.validate_with_preseal(state.expiry_released)?;
+        Ok(RowTotals {
+            basis: row.basis,
+            sealed_spent: row.sealed_spent,
+            sealed_released: row.sealed_released,
+            commit_live: row.commit_live,
+        })
+    });
+    let mut totals = [ResVec::ZERO; 5];
+    for row in checked {
+        accumulate_totals(&mut totals, row?)?;
+    }
+    validate_aggregate(totals)
 }
 
 pub(super) fn validate(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {

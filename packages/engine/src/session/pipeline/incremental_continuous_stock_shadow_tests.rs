@@ -902,7 +902,10 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
         .unwrap()
         .next_trade_event_index = u64::MAX;
     coordinator.stocks.get_mut(&second_code).unwrap().ledger =
-        EnvelopeLedger::new(0, Vec::<Envelope>::new()).unwrap();
+        crate::session::pipeline::private_stock_ledger::PrivateStockLedger::new(
+            Vec::<Envelope>::new(),
+        )
+        .unwrap();
 
     let first_error = coordinator.stocks[&first_code]
         .clone()

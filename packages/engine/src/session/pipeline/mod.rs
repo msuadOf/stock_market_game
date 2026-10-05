@@ -36,6 +36,7 @@ mod institutional_experience_projection;
 mod intent_candidates;
 mod ledger;
 mod ledger_paged_map;
+mod private_stock_ledger;
 mod ledger_rows;
 mod ledger_candidate;
 mod ledger_conservation;

@@ -1,8 +1,11 @@
+use super::private_stock_ledger::PrivateStockLedger;
+#[cfg(test)]
+use super::EnvelopeLedger;
 use super::{
     transition::{BuyFillInput, FillTransition, SellFillInput},
-    Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt,
-    FeeComponents, JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey,
-    ReceiptSource, ReceiptTransition, ResVec, StepFatal, ValidatedOperation,
+    Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeOrigin, EnvelopeReceipt, FeeComponents,
+    JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource,
+    ReceiptTransition, ResVec, StepFatal, ValidatedOperation,
 };
 use crate::market::MarketDelta;
 use crate::{
@@ -185,7 +188,7 @@ pub(super) struct ContinuousStockStepOutput {
     pub(super) output: ContinuousStockOutput,
     pub(super) execution_facts: Vec<ContinuousExecutionFact>,
     pub(super) next_trade_event_index: u64,
-    pub(super) ledger: EnvelopeLedger,
+    pub(super) ledger: PrivateStockLedger,
     pub(super) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
     pub(super) market_delta: MarketDelta,
     #[cfg(feature = "simulation-diagnostics")]
@@ -237,7 +240,7 @@ pub(super) fn process_continuous_stock_step(
 pub(super) fn process_continuous_stock_step_with_ledger(
     input: ContinuousStockInput,
     next_trade_event_index: u64,
-    ledger: EnvelopeLedger,
+    ledger: PrivateStockLedger,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
     process_continuous_stock_step_inner(input, next_trade_event_index, Some(ledger))
 }
@@ -245,7 +248,7 @@ pub(super) fn process_continuous_stock_step_with_ledger(
 fn process_continuous_stock_step_inner(
     input: ContinuousStockInput,
     next_trade_event_index: u64,
-    prior_ledger: Option<EnvelopeLedger>,
+    prior_ledger: Option<PrivateStockLedger>,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
     ContinuousStockRoundProcessor::new(input, next_trade_event_index, prior_ledger)?.run()
 }
@@ -261,7 +264,7 @@ struct ContinuousStockRoundProcessor {
     before_next_seq: u64,
     original_orders: BTreeMap<OrderId, Option<crate::Order>>,
     output: ContinuousStockOutput,
-    ledger: EnvelopeLedger,
+    ledger: PrivateStockLedger,
     execution_facts: Vec<ContinuousExecutionFact>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
     next_trade_event_index: u64,
@@ -273,7 +276,7 @@ impl ContinuousStockRoundProcessor {
     fn new(
         input: ContinuousStockInput,
         next_trade_event_index: u64,
-        prior_ledger: Option<EnvelopeLedger>,
+        prior_ledger: Option<PrivateStockLedger>,
     ) -> Result<Self, StepFatal> {
         let private_round = prior_ledger.is_some();
         let before_last_price = input.market.last_price();
@@ -307,10 +310,10 @@ impl ContinuousStockRoundProcessor {
         } else {
             let ledger_envelopes = input
                 .envelopes
-                .iter()
-                .map(|snapshot| snapshot.envelope.clone())
+                .into_iter()
+                .map(|snapshot| snapshot.envelope)
                 .chain(created_envelopes.iter().cloned());
-            EnvelopeLedger::new(0, ledger_envelopes)?
+            PrivateStockLedger::new(ledger_envelopes)?
         };
         let output = ContinuousStockOutput {
             market: input.market,
@@ -870,7 +873,7 @@ fn validate_initial_snapshots(
 
 pub(super) fn validate_private_market_ledger(
     market: &Market,
-    ledger: &EnvelopeLedger,
+    ledger: &PrivateStockLedger,
     config: &GameConfig,
 ) -> Result<(), StepFatal> {
     let mut matched = 0_usize;
@@ -1036,9 +1039,26 @@ pub(super) fn fill_receipts(
 }
 
 /// 单 Place 的收据和审计副本；成功后仍交由 round ledger 校验与采纳。
+trait LiveEnvelopeLookup {
+    fn get(&self, key: &EnvelopeKey) -> Result<&Envelope, StepFatal>;
+}
+
+impl LiveEnvelopeLookup for PrivateStockLedger {
+    fn get(&self, key: &EnvelopeKey) -> Result<&Envelope, StepFatal> {
+        PrivateStockLedger::get(self, key)
+    }
+}
+
+#[cfg(test)]
+impl LiveEnvelopeLookup for EnvelopeLedger {
+    fn get(&self, key: &EnvelopeKey) -> Result<&Envelope, StepFatal> {
+        EnvelopeLedger::get(self, key)
+    }
+}
+
 struct ContinuousFillReceiptProjection<'a> {
     draft: &'a super::EnvelopeDraft,
-    ledger: &'a EnvelopeLedger,
+    ledger: &'a dyn LiveEnvelopeLookup,
     config: &'a GameConfig,
     states: BTreeMap<EnvelopeKey, Envelope>,
     ordinals: BTreeMap<EnvelopeKey, u64>,
@@ -1048,7 +1068,7 @@ struct ContinuousFillReceiptProjection<'a> {
 impl<'a> ContinuousFillReceiptProjection<'a> {
     fn capture(
         draft: &'a super::EnvelopeDraft,
-        ledger: &'a EnvelopeLedger,
+        ledger: &'a dyn LiveEnvelopeLookup,
         config: &'a GameConfig,
         resolution: Option<&EnvelopeReceipt>,
     ) -> Result<Self, StepFatal> {
@@ -1293,7 +1313,7 @@ pub(super) fn cancel_continuous_order(
 
 fn cancel_continuous_order_from_private_ledger(
     market: &mut Market,
-    ledger: &EnvelopeLedger,
+    ledger: &PrivateStockLedger,
     operation: ContinuousCancelOperation,
 ) -> Result<ContinuousCancelEffect, StepFatal> {
     cancel_continuous_order_in_place(market, operation, |operation, order| {
