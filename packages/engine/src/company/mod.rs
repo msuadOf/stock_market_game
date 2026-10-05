@@ -1,13 +1,15 @@
-//! 公司域：公司实体、开局账套、外部对手方与四行业经营会计。
+//! 公司域：共同身份、CompanySystem、Simple 汇总财务与公司行为基础。
 //!
-//! 资金边界：公司经营资金只存在于公司账套（[`Books`]，现金走科目
-//! 1001/1002），外部商业对手方用独立 `CounterpartyId`；投资者交易 `Account`
-//! 与公司账套互不复用。发行人映射要求股本精确匹配（`issued_shares` == 股票
-//! `total_shares`），不依据初始股价反推任何资产负债价值。
+//! Simple 公司现金只作账面展示，不是实际分红预算；投资者交易 `Account`
+//! 与公司账套互不复用。旧经营实体的资金仍由 [`Books`] 的现金科目持有，
+//! 外部商业对手方用独立 `CounterpartyId`。发行人映射要求股本精确匹配
+//! （`issued_shares` == 股票 `total_shares`）；Simple 允许开局按显式虚拟估值
+//! 倍率反推初值，后续结算和恢复不重新锚定股价。
 //!
-//! 本模块提供公司实体、显式平衡开局账套、合同与授信数据、四行业处理器，
-//! 以及自然日经营演化、事件目录、到期调度、RNG 分流与前史生成
-//! （`operations`/`events`/`scheduler`/`rng`）。报表由 `accounting` 提供，
+//! Session 使用 CompanySystem 分派选定实现；原经营实体、账套、合同、授信与
+//! 行业处理器仍保留为后续 Simulation 接入基础，不在 Simple 后台执行。
+//! 公司行为的登记、税务、方案事实和除息计算是共用基础，不等于已完成投资者付款。
+//! 报表由 `accounting` 提供，
 //! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
@@ -42,6 +44,7 @@ pub mod scheduler;
 mod spec;
 pub mod share_registry;
 pub mod cash_dividend_tax;
+pub mod cash_dividend;
 pub mod ex_reference_price;
 
 pub use contracts::{

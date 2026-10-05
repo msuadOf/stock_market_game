@@ -25,6 +25,8 @@
 | Web 类型检查 | 强制重新检查通过，日志保留命令、deadline 与 exit code | `.tmp/checklist-wave4/host79-types-evidence.log` |
 | WASM 多线程与 Web release 构建 | 通过，jobs=32，共享 300000ms deadline | `.tmp/checklist-wave4/host75-frontend-build-direct-pnpm.log` |
 | 面板最后修复后的 Web 成品 | 类型检查、Vite 构建与 release WASM 产物检查再次通过 | `.tmp/checklist-wave4/host78-final-web-build.log` |
+| 公司行为基础 | 整数分纯现金除息 9 项、分红方案与登记／付款结果事实 14 项通过；各命令外部 10000ms deadline、非作者限定复核通过 | `.tmp/company-system/ex-reference-short.log`、`.tmp/company-system/checklist-common/cash-final-green.log` |
+| 期间时间加权权益分析基础 | basis 错配先产生真实失败，修复后 7 项通过；显式区分报告范围和权益归属 | `.tmp/company-system/checklist-common/basis-red.log`、`.tmp/company-system/checklist-common/roe-fresh-green.log` |
 
 本机旧 Corepack 直接启动 pnpm 时失败，原日志保留于 `.tmp/checklist-wave4/host75-frontend-build.log`；实际构建使用 Node 启动已缓存的同版 pnpm 11.19.0，之后仍运行原 WASM／Web 构建和发布产物检查步骤。没有修改系统工具或用失败结果冒充通过。
 
@@ -33,5 +35,7 @@
 ## 未完成边界
 
 共同股本行为的实际投资者结算、公司行为偏好与自动方案尚未接通。登记、个人股息税及整数分纯现金除息底层有独立短测，但不能当作分红、送转、认购或回购已能从 Session 执行；当前 `cash_settlement=false` 明示此缺口。除息基础按证券交易所日历计算标准参考价，获批特殊调整显式拒绝，尚未接入市场；9 项定向短测及限定独立复核见 [除息基础复核](ex-reference-price-review.md)。
+
+`cash_dividend` 已提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；它只记录付款执行者返回的事实，不自行改变真实账户现金。宿主恢复必须显式提供日历调用 `validate_with_calendar`，不默认补齐日历。真实付款仍须与此状态同事务提交，具体边界见 [分红基础复核](cash-dividend-book-review.md)。`accounting::period_roe` 提供同范围、同权益归属的精确时间加权分析基础，不冒充法定披露 ROE，也未从报表或 Simple 自动构造消费者输入；法定口径与接线仍未完成，见 [期间权益分析复核](period-roe-review.md)。
 
 完整经营、客户有限现金和行业业务由后续 `company/simulation/` 分支实现。旧集团／冲击经营 Session 的特定集成原文已归档；现有独立账务用例不等于这些旧接线仍存在或全部已验收。具体状态按[实施清单](implementation-checklist.md)和[历史审计总账](../implementation-audit/implementation-audit-2026-10-02.md)继续推进，不从归档或编译成功推断全部功能完成。
