@@ -33,6 +33,9 @@
   相同。`HostUpdate` 只包含 `baseline` 与带 seq 覆盖区间的 `delta`；`postMessage`、Tauri IPC、
   REST/WebSocket 只是适配层传输细节，不得渗透为 UI 条件分支。宿主专属能力通过
   `HostCapabilities` 显式暴露，详见 [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md)。
+  初始化、读档和显式刷新交付的 `baseline` 必须携带当前权威 `civilDate`；本地 Worker 与
+  Tauri actor 在同一次会话读取中生成 snapshot 与日期。日期缺失或无效时显式报错，
+  UI 不得根据交易日序或新局起始日期补造读档后的自然日。
 
 ## 2. 分层与依赖方向（**无环依赖**）
 

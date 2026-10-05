@@ -88,10 +88,10 @@ function parseFailurePayload(value: unknown): EngineFailurePayload {
 function parseRestore(value: unknown): TauriBaselineResponse {
   const source = record(value, "Tauri restore_session");
   const keys = Object.keys(source);
-  if (keys.length !== 3 || !["snapshot", "timeline_id", "generation"].every((key) => Object.hasOwn(source, key))) {
+  if (keys.length !== 4 || !["snapshot", "timeline_id", "generation", "civil_date"].every((key) => Object.hasOwn(source, key))) {
     throw new Error("Tauri restore_session 响应字段无效");
   }
-  return { snapshot: source.snapshot, timeline_id: text(source.timeline_id, "Tauri restore_session.timeline_id"), generation: generation(source.generation, "Tauri restore_session.generation") };
+  return { snapshot: source.snapshot, civil_date: source.civil_date, timeline_id: text(source.timeline_id, "Tauri restore_session.timeline_id"), generation: generation(source.generation, "Tauri restore_session.generation") };
 }
 
 export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {

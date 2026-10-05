@@ -183,3 +183,27 @@ test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async
   await panel.scrollIntoViewIfNeeded();
   await expect(panel.getByRole("alert")).toContainText("公开报告查询失败：public report page size 0 outside 1..=100");
 });
+
+test("日终读档后公司资料立即显示存档自然日，横竖屏一致", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/?tradingE2E=1");
+  await expectEngineReady(page);
+  await page.evaluate(async () => {
+    const controls = (globalThis as typeof globalThis & { __STOCK_GAME_E2E__?: { advanceToTick(tick: number): Promise<number> } }).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("缺少真实 WASM 单步控制");
+    await controls.advanceToTick(31);
+  });
+  await expect(page.getByRole("status").filter({ hasText: "日终存档已更新" })).toBeVisible();
+  await page.getByRole("button", { name: "游戏与存档", exact: true }).click();
+  await page.getByRole("button", { name: "读取本地进度", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "已读档" })).toBeVisible();
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
+  await page.getByRole("button", { name: "公司资料 F10", exact: true }).click();
+  await expectPublicReportReady(page);
+  await expect(companyPanel(page).getByLabel("当前模拟日历")).toContainText("2030-01-03");
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.locator(".mobile-market-row").first().click();
+  await page.getByRole("tab", { name: "财务", exact: true }).click();
+  await expectPublicReportReady(page);
+  await expect(companyPanel(page).getByLabel("当前模拟日历")).toContainText("2030-01-03");
+});

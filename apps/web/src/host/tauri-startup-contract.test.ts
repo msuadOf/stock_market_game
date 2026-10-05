@@ -14,8 +14,9 @@ describe("Tauri host startup contract", () => {
     assert.match(hostSource, /await invoke<unknown>\("engine_baseline", \{ sessionId, generation: timeline\.currentGeneration\(\) \}\)/);
     assert.match(hostSource, /timeline\.installInitialBaseline\(initialBaseline\)/);
     assert.match(timelineSource, /response\.generation !== this\.generation/);
-    assert.match(timelineSource, /this\.installSnapshot\(response\.snapshot, "Tauri engine_baseline.snapshot"\)/);
-    assert.match(timelineSource, /parseProtocolSnapshot\(snapshot, where\)/);
+    assert.match(timelineSource, /this\.installSnapshot\(response\.snapshot, response\.civil_date, "Tauri engine_baseline"\)/);
+    assert.match(timelineSource, /parseProtocolSnapshot\(snapshot, `\$\{where\}\.snapshot`\)/);
+    assert.match(timelineSource, /parseIsoDate\(civilDate, `\$\{where\}\.civil_date`\)/);
   });
 
   it("uses an explicit JSON-safe protocol for the fastest desktop speed", () => {

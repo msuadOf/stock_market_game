@@ -166,3 +166,15 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 真实IAB切入F10检查公开列表、报表与附注。App源码HMR重建了会话并恢复运行、生成新随机局；不能称保留刚读档局。随后重新暂停第1日09:18:35、600101日K、五条MA/KDJ、交易栏关闭，见company-fixture-current-window.png。新局实际日终快速槽显示已更新。实看还发现：恢复后WASM baseline缺公共自然日元数据，F10临时显示起始日期及等待状态，后续CivilDateAdvanced才恢复正确日历；日历不能以setup.start_date冒充已恢复当前自然日，列为下一批必要修复。
 
 完整目标保持在途：精确财务gold差额、恢复自然日元数据、公司切换/横竖屏阅读状态、行情排序统一及全量Web生成artifact缺口继续保留。
+
+## 2026-10-05 baseline 权威自然日修复批次
+
+实看读档后的 F10 错将新局起始2030-01-01显示为当前日期。有效短测红证据4项收到null，期望真实日期；原生actor红证据序列化civil_date为Null。Worker初始/刷新/恢复与Tauri actor均在同一会话读取中交付snapshot及既有CivilDate；前端复用parseIsoDate拒绝缺失/不存在日期。未新增日历推导或改变A股规则。恢复后读取新handle，保持microtask重启前恢复回应与新baseline的既有顺序。Tauri保留generation/timeline先切换、无效解析保留旧baseline的错误边界，未修改旧净利gold。
+
+58项相关宿主短测通过；最后新增日期fixture类型纠正后7项日期专测通过。原生32/32通过3.71秒，harness10线程/Rayon10，外部10000ms进程树deadline；编译以CARGO_BUILD_JOBS=10、外部共享300000ms完成。真实WASM三项浏览器验收全部通过22.9秒，workers3，包含读档后横/竖屏立即显示2030-01-03及平板/移动报告用例。第一次浏览器尝试因测试fixture的EventTarget端口TS类型不符合契约未启动；修正为显式WorkerRequestPort。第一次行为运行桌面日期已通过，手机需从行情进入个股才有财务tab，按真实入口修正新用例后通过；未弱化日期断言。
+
+完整Web第一次与构建并跑触发普通10秒截止；独立运行发现旧Tauri源码契约断言仍要求旧参数/旧path。随契约更新精确断言并新增parseIsoDate检查，未删除旧语义。最终整批153文件817/817通过，8个进程，6195ms，总/每case10000ms外部deadline保持。此前缺失acl-manifests.json由真实Tauri build生成，未伪造fixture或跳过权限测试。production构建/release WASM检查、改动文件lint、目标Rust格式、strict premium audit与git diff --check通过。全库cargo fmt --all --check仍指出两处既有engine测试格式，本批未改无关文件。
+
+独立复核初批52/52通过1.19秒，最终增量18/18通过192ms，无有效finding；记录civil-date-independent-review.md。真实IAB默认902×833读取现有日终档后F10立即显示2030-01-02，暂停第1日09:15:00；截图civil-date-restored-current-window.png。保留当前F10页面和本地服务，截图不加入源代码提交。
+
+完整目标继续在途：公司切换/横竖屏阅读状态、行情排序统一及旧净利润gold差额尚未解决。本批只解除baseline日期及生成权限artifact/完整Web单测缺口，不声称完整浏览器gold或整个终端目标全部通过。

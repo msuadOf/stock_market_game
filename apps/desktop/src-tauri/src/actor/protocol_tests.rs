@@ -1,6 +1,38 @@
 use super::*;
 use engine::session::protocol::ReplayGuard;
 
+#[tokio::test]
+async fn baseline_and_restore_include_authoritative_civil_date() {
+    let game = ProtocolSession::new(super::tests::diagnostic_setup(), 41).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "calendar",
+        "calendar-timeline",
+    );
+    let actor = &mut harness.actor;
+    for expected in ["2030-01-01", "2030-01-02"] {
+        let (reply, received) = oneshot::channel();
+        actor
+            .handle_command(SessionCommand::QueryBaseline {
+                generation: 1,
+                reply,
+            })
+            .await;
+        let baseline = serde_json::to_value(received.await.unwrap().unwrap()).unwrap();
+        assert_eq!(baseline["civil_date"], expected);
+        assert_eq!(baseline["snapshot"]["day"], actor.game.snapshot().day);
+        if expected == "2030-01-01" {
+            actor.game.end_civil_day_update().unwrap();
+        }
+    }
+    let slot = actor.game.save().unwrap();
+    let restored = serde_json::to_value(actor.restore(1, Box::new(slot)).unwrap()).unwrap();
+    assert_eq!(restored["civil_date"], "2030-01-02");
+    assert_eq!(restored["generation"], "2");
+}
+
 async fn capture(fastest: bool, preferences: PausePreferences) {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();

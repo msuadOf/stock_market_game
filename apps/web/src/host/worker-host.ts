@@ -10,6 +10,7 @@ import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost, SpeedMetrics } from "./engine-host.ts";
 import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { parseIsoDate } from "./protocol/wire-values.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
@@ -81,7 +82,7 @@ export async function restoreWorkerSlot(
   slot: unknown,
   requestId: number,
   currentGeneration: number,
-): Promise<{ readonly snapshot: Snapshot; readonly nextGeneration: number }> {
+): Promise<{ readonly snapshot: Snapshot; readonly civilDate: string; readonly nextGeneration: number }> {
   const response = await requests.request({
     type: "restore",
     requestId,
@@ -94,13 +95,17 @@ export async function restoreWorkerSlot(
   }
   return {
     snapshot: parseProtocolSnapshot(response.snapshot, "Worker restored.snapshot"),
+    civilDate: parseIsoDate(response.civilDate, "Worker restored.civilDate"),
     nextGeneration,
   };
 }
 
-export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<Snapshot> {
+export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<{ readonly snapshot: Snapshot; readonly civilDate: string }> {
   const response = await requests.request({ type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
-  return parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot");
+  return {
+    snapshot: parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot"),
+    civilDate: parseIsoDate(response.civilDate, "Worker refreshed.civilDate"),
+  };
 }
 
 export function workerPausePreferenceRequest(
@@ -214,7 +219,9 @@ export function createWorkerHost(
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
             currentGeneration = nextGeneration;
-            const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"));
+            const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"), {
+              civilDate: parseIsoDate(incoming.civilDate, "Worker baseline.civilDate"), revision: null,
+            });
             if (deliveredGeneration === next.generation) return;
             baselineEpoch += 1;
             cachedBaseline = next;
@@ -382,9 +389,9 @@ export function createWorkerHost(
         },
         async refreshBaseline() {
           const requestedGeneration = currentGeneration;
-          const snapshot = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
+          const response = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
           if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
-          const baseline = createBaselineUpdate(String(requestedGeneration), snapshot);
+          const baseline = createBaselineUpdate(String(requestedGeneration), response.snapshot, { civilDate: response.civilDate, revision: null });
           baselineEpoch += 1;
           cachedBaseline = baseline;
           deliverLiveBaseline(baseline);
@@ -396,7 +403,7 @@ export function createWorkerHost(
           if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           currentGeneration = restored.nextGeneration;
           onRestored?.();
-          const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
+          const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot, { civilDate: restored.civilDate, revision: null });
           baselineEpoch += 1;
           cachedBaseline = baseline;
           if (callback !== null && deliveredGeneration !== baseline.generation) {
