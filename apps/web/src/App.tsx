@@ -9,7 +9,7 @@
  * - 亮/暗主题切换。
  */
 import { useEffect, useRef, useState, useCallback, lazy, Suspense, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
+import { Button, Card, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
 import type { HostFailure, HostUpdate } from "./host/host-update.ts";
@@ -17,7 +17,7 @@ import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "./host/startup-policy";
-import { DEFAULT_SETUP, STOCK_NAMES } from "./config/defaults";
+import { DEFAULT_SETUP } from "./config/defaults";
 import { SessionControlCommands } from "./app/session-control-commands.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
@@ -68,7 +68,9 @@ import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
 import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
 import { yuan } from "./utils/format";
-import { orderPriceInputState, type LimitPriceChoice } from "./utils/symbolic-limit-order.ts";
+import { QuickTrading } from "./app/quick-trading.ts";
+import { QuickTradingPanel } from "./app/QuickTradingPanel.tsx";
+import { QuickTradingContext } from "./app/QuickTradingContext.ts";
 import { useMobileUiController } from "./app/useMobileUiController";
 import { MobileDetailLayer } from "./mobile/MobileDetailLayer.tsx";
 import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelection } from "./app/MarketRuntimeProvider.tsx";
@@ -83,7 +85,6 @@ import {
   DesktopAssets,
   DesktopDayTag,
   PositionsPanel,
-  TradeMarketControls,
   TradesPanel,
   UserPanel,
 } from "./app/LocalRefreshViews.tsx";
@@ -175,6 +176,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const playerOrderRefreshGateRef = useRef(new PlayerOrderRefreshGate());
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
+  const activeSetupRef = useRef(activeSetup);
+  activeSetupRef.current = activeSetup;
+  const [quickTrading] = useState(() => new QuickTrading({ setup: () => activeSetupRef.current, snapshot: () => store.getState().snapshot.snapshot, autoAllowed: () => store.getState().settings.running || TRADING_E2E_MODE, submit: async (intent) => { const host = hostRef.current; if (!host) throw new Error("游戏引擎尚未就绪"); await host.submitIntent(intent); } }));
   const stopStartupRef = useRef<() => Promise<void>>(async () => {});
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
@@ -239,7 +243,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     changeDesktopTradingOpen(true);
   };
   useEffect(() => {
-    if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>('input[placeholder="委托价"]')?.focus();
+    if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>(`.trade-ticket[data-side="${desktopTradeSide}"] input:not(:disabled)`)?.focus();
   }, [desktopTradingOpen, desktopTradeSide, orientation, tradeSheetRef]);
   const securityBrowser = useSecurityBrowser(setNotice);
   function switchMobileTab(tab: MobilePrimaryTab) {
@@ -262,15 +266,33 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const protocolPlayerOrders = useSelector((state: RootState) => state.snapshot.playerWorkingOrders);
   const playerOrdersReady = useSelector((state: RootState) => state.snapshot.playerOrdersReady);
   const tradingCommands = useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrderMgrRef, activeSetup, playerAccount, protocolPlayerOrders, playerOrdersReady, setNotice });
-  const { tradeCode, orderKind, priceChoice, priceText, qtyText, autoType, autoTrigger, autoQty } = tradingCommands.form;
-  const { fieldErrors, autoFieldErrors } = tradingCommands;
-  const { setTradeCode, setOrderKind, setPriceChoice, setPriceText, setQtyText, setAutoType, setAutoTrigger, setAutoQty,
-    playerOrders, cancelingOrderIds, clearPlayerOrders, clearCancelingOrderIds, submit, cancelPlayerOrder, addAuto, refreshPlayerOrders } = tradingCommands;
+  const { tradeCode, priceText, autoType, autoTrigger, autoQty } = tradingCommands.form;
+  const { autoFieldErrors } = tradingCommands;
+  const { setTradeCode, setPriceText, setAutoType, setAutoTrigger, setAutoQty,
+    playerOrders, cancelingOrderIds, clearPlayerOrders, clearCancelingOrderIds, cancelPlayerOrder, addAuto, refreshPlayerOrders } = tradingCommands;
+
+  const [cancelAllPending, setCancelAllPending] = useState(false);
+  async function cancelAllOrders() {
+    if (cancelAllPending) return;
+    setCancelAllPending(true);
+    try {
+      const host = hostRef.current;
+      if (!host) throw new Error("游戏引擎尚未就绪");
+      const generation = saveSelectionGenerationRef.current;
+      const orders = await host.playerWorkingOrders();
+      if (host !== hostRef.current || generation !== saveSelectionGenerationRef.current) throw new Error("游戏会话已发生变化，请重新核对挂单后撤单");
+      await quickTrading.cancelAll(orders);
+      setNotice(orders.length ? `已提交全部 ${orders.length} 笔挂单的撤单请求；自动保持开启` : "暂无活动挂单；自动保持开启");
+    } catch (error) { setNotice(`取消所有失败：${error instanceof Error ? error.message : String(error)}`); }
+    finally { setCancelAllPending(false); }
+  }
 
   function connectProtocol(host: EngineHost) {
     companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
     protocolCoordinatorRef.current = new ProtocolCoordinator({
       onBaseline(protocolState, baseline) {
+        if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
+        quickTrading.reset();
         saveSelectionGenerationRef.current += 1;
         dayEndPersistenceRef.current.install(baseline.generation);
         clearPlayerOrders();
@@ -305,6 +327,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           void refreshPlayerOrders();
         }
         acceptReductionRef.current(reduction);
+        void quickTrading.advance(reduction.state.snapshot);
         const playerOrderChanged = reduction.update.kind === "tick-batch" && reduction.update.frames.some((frame) =>
           frame.facts.some(({ event }) =>
             ("OrderAccepted" in event && event.OrderAccepted.account === 0)
@@ -473,6 +496,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         : "等待完成首个至少 500ms 的采样窗口");
 
   return (
+    <QuickTradingContext.Provider value={{ trading: quickTrading, notice: setNotice, open: (code, side) => { setTradeCode(code); selectChart(code); setDesktopTradeSide(side); if (orientation === "portrait") openTradeSheet(); else changeDesktopTradingOpen(true); } }}>
     <div
       className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`}
       data-theme={theme}
@@ -557,32 +581,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           aria-label={orientation === "portrait" ? "交易面板" : undefined}
         >
           <h3 className="panel-title">委托下单</h3>
-          <div className="order-entry">
-          <label className="field"><span>股票</span>
-            <HTMLSelect aria-label="股票" value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { const code = e.target.value; setTradeCode(code); selectChart(code); const m = store.getState().snapshot.snapshot?.markets[code]; if (m) setPriceText(yuan(m.last_price)); }}
-              options={activeSetup.stocks.map((stock) => ({ label: STOCK_NAMES[stock.code] ? `${stock.code} ${STOCK_NAMES[stock.code]}` : stock.code, value: stock.code }))} />
-            {fieldErrors.code && <span id="trade-code-error" className="field-error" role="alert">{fieldErrors.code}</span>}
-          </label>
-          <label className="field"><span>委托类型</span>
-            <HTMLSelect aria-label="委托类型" value={orderKind} onChange={(event) => setOrderKind(event.target.value as "limit" | "market")}
-              options={[{ label: "限价委托", value: "limit" }, { label: "市价委托", value: "market" }]} />
-          </label>
-          {orderKind === "limit" && <label className="field"><span>限价方式</span>
-            <HTMLSelect aria-label="限价方式" value={priceChoice} onChange={(event) => setPriceChoice(event.target.value as LimitPriceChoice)}
-              options={[{ label: "指定价格", value: "fixed" }, { label: "最高限价", value: "highest" }, { label: "最低限价", value: "lowest" }]} />
-          </label>}
-          <label className="field"><span>价格（元）</span><InputGroup value={priceText} aria-invalid={Boolean(fieldErrors.price)} aria-describedby={fieldErrors.price ? "trade-price-error" : undefined} onChange={(e) => setPriceText(e.target.value)} {...orderPriceInputState(orderKind, priceChoice)} />{fieldErrors.price && <span id="trade-price-error" className="field-error" role="alert">{fieldErrors.price}</span>}</label>
-          <label className="field"><span>数量（股）</span><InputGroup value={qtyText} aria-invalid={Boolean(fieldErrors.quantity)} aria-describedby={fieldErrors.quantity ? "trade-quantity-error" : undefined} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" />{fieldErrors.quantity && <span id="trade-quantity-error" className="field-error" role="alert">{fieldErrors.quantity}</span>}</label>
-          <TradeMarketControls activeSetup={activeSetup} tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
-          <div className="order-buttons">
-            <Button intent="danger" onClick={() => { setDesktopTradeSide("Buy"); void submit("Buy"); }}>买入</Button>
-            <Button intent="success" onClick={() => { setDesktopTradeSide("Sell"); void submit("Sell"); }}>卖出</Button>
-          </div>
-
-          </div>
+          <QuickTradingPanel trading={quickTrading} code={tradeCode} setup={activeSetup} side={desktopTradeSide} onSideChange={setDesktopTradeSide} onSelect={(code) => { setTradeCode(code); selectChart(code); }} notice={setNotice} />
 
           <section className="player-orders" aria-labelledby="player-orders-title">
-            <h4 id="player-orders-title" className="auto-title">当前活动委托</h4>
+            <h4 id="player-orders-title" className="auto-title">当前活动委托 <Button small disabled={cancelAllPending} loading={cancelAllPending} onClick={() => void cancelAllOrders()}>取消所有</Button></h4><p className="trade-timing-note">撤销本人全部股票的买卖挂单；自动保持开启。撤单结果以引擎受理为准。</p>
             {playerOrders.length === 0 ? (
               <p className="player-orders-empty">暂无活动委托；限价单未成交时会显示在这里。</p>
             ) : (
@@ -603,7 +605,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
           {/* 条件单 */}
           <div className="auto-order-section">
-            <h4 className="auto-title">条件单 / 自动单</h4>
+            <h4 className="auto-title">条件单</h4>
             <div className="auto-form">
               <HTMLSelect value={autoType} onChange={(e) => setAutoType(e.target.value as AutoOrderType)}
                 options={(Object.keys(AUTO_ORDER_LABELS) as AutoOrderType[]).map((t) => ({ label: AUTO_ORDER_LABELS[t], value: t }))} />
@@ -704,6 +706,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       <SpeedMetricsAlert error={speedMetricsError} />
       {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
+    </QuickTradingContext.Provider>
   );
 }
 

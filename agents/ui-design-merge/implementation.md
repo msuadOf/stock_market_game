@@ -18,6 +18,8 @@
 
 Web 生命周期32项短测、日历坐标14项短测和 AA 消费者 SSR 1项短测通过。SSR 使用新版真实 `SecurityBrowser` 和 `ChartSettingsFixture`，原可读性断言未弱化。所有普通测试保留10000ms case／进程树期限；不执行复杂回归或浏览器 E2E。TypeScript 检查结果单独记录于 `base-web-tsc-final.log`。
 
+基础设计已在 `2c3b3bb6` 合入 main。最新 `0110e9db` 增量整合保留双向 QuickTrading 及手数输入，并修复可用金额未扣跨证券待受理买单预占的问题：金额与可买手数复用精确计算，界面明确说明预占。当前单玩家整合版16项纯逻辑短测、相关28项调用／SSR短测和最终 TypeScript 检查通过，非作者完整及修复增量复核见 `latest-quick-trading-review.md`。恢复共享市场代码后仍须绑定真实本人账户，不能沿用单玩家的账户0；这项接线门禁不因基础 UI 合并通过而取消。
+
 NPC 日界融合保留设计分支的正常 producer `pending_npc=None` 与下一真实观察时的 deferred preparation，并保持 main 的异步决定完成顺序和 ingress receipts。日终不能生成下一日决定或消耗 RNG／attention。合法同格式的空批输入不是旧存档兼容；本次不扩大公共存档校验或引入迁移。该层实际短测及独立签核见 `npc-boundary-review.md`。
 
 完整限定复核分别见 `base-ui-layout-review.md`、`base-lifecycle-independent-review.md` 和日历坐标工作记录。每份证据只证明其覆盖范围，不把基本合并通过宣称为整个 checklist 或恢复 stash 后全部新功能已完成。

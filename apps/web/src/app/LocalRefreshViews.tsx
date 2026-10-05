@@ -5,7 +5,7 @@ import { SecurityListControls, WatchlistToggle } from "../components/SecurityLis
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
 import { MarketQuotePanel } from "../components/MarketQuotePanel.tsx";
-import { addMoney, subtractMoney, compareMoney, moneyToBigInt } from "../utils/money.ts";
+import { addMoney, subtractMoney, compareMoney } from "../utils/money.ts";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
@@ -13,7 +13,6 @@ import { publicCompanyForStock } from "../components/company/company-catalog.ts"
 import { MarketGrid } from "../components/MarketGrid.tsx";
 import { PriceChart } from "../components/PriceChart.tsx";
 import { STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
-import type { SessionSetup } from "../types/engine.ts";
 import { MobileGameClock } from "../mobile/MobileGameClock.tsx";
 import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent, MobileIntradayProjection } from "../mobile/market-model.ts";
@@ -21,7 +20,6 @@ import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state
 import { store, type RootState } from "../store/store.ts";
 import { selectCompany, updateCompanyReading, type CompanyReading } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
-import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
 import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
@@ -151,19 +149,6 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><WatchlistToggle browser={browser} code={chartCode} /><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
     <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel code={chartCode} key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
-  </>;
-}
-
-interface TradeMarketControlsProps { activeSetup: SessionSetup; tradeCode: string; setPriceText: (value: string) => void; setQtyText: (value: string) => void }
-export function TradeMarketControls({ activeSetup, tradeCode, setPriceText, setQtyText }: TradeMarketControlsProps) {
-  const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[tradeCode]);
-  const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
-  const availableCash = subtractMoney(account?.cash ?? "0", account?.reserved_cash ?? "0");
-  const price = market?.last_price ?? "0";
-  const maxLots = compareMoney(price, "0") > 0 ? moneyToBigInt(availableCash) / moneyToBigInt(price) / 100n : 0n;
-  return <>
-    <div className="quick-position">{[{ label: "全仓", divisor: 1n }, { label: "1/2", divisor: 2n }, { label: "1/3", divisor: 3n }, { label: "1/4", divisor: 4n }].map((button) => { const quantity = maxLots / button.divisor * 100n; return <button key={button.label} className="qp-btn" onClick={() => setQtyText(String(quantity))} disabled={quantity < 100n}>{button.label}</button>; })}</div>
-    {market && (() => { const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode); if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>; const { up, down } = aSharePriceLimits(market.last_close, stock.category); return <div className="limit-links"><button className="ll-btn down" onClick={() => setPriceText(yuan(down))}>跌停 {yuan(down)}</button><button className="ll-btn up" onClick={() => setPriceText(yuan(up))} disabled={compareMoney(market.last_price, up) >= 0}>涨停 {yuan(up)}</button></div>; })()}
   </>;
 }
 

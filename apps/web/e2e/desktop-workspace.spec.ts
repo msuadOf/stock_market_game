@@ -156,12 +156,12 @@ test("交易和游戏管理各有入口，切换不丢委托草稿，横竖屏�
   await page.goto("/?tradingE2E=1");
   const nav = page.getByRole("navigation", { name: "桌面主导航" });
   await nav.getByRole("button", { name: "交易", exact: true }).click();
-  const quantity = page.getByPlaceholder("买入按手；零股一次卖完");
-  await quantity.fill("300");
+  const quantity = page.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完");
+  await quantity.fill("3");
   await nav.getByRole("button", { name: "游戏", exact: true }).click();
   await expect(page.getByRole("button", { name: "日终存档说明" })).toBeVisible();
   await nav.getByRole("button", { name: "交易", exact: true }).click();
-  await expect(quantity).toHaveValue("300");
+  await expect(quantity).toHaveValue("3");
   await expect(page.locator("#section-positions")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
@@ -176,13 +176,13 @@ test("当前个股交易入口纠正另一证券草稿，F10 与公司页始终�
   await nav.getByRole("button", { name: "交易", exact: true }).click();
   const code = page.locator('#section-order').getByLabel('股票', {exact:true});
   await code.selectOption("002156");
-  await page.getByPlaceholder("买入按手；零股一次卖完").fill("300");
+  await page.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完").fill("3");
   await nav.getByRole("button", { name: "个股", exact: true }).click();
   await expect(page.locator(".stock-detail-header")).toContainText("002156");
   await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /稳健实业/ }).click();
   await page.getByRole("button", { name: "交易此股票", exact: true }).click();
   await expect(code).toHaveValue("600101");
-  await expect(page.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await expect(page.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("1");
   await nav.getByRole("button", { name: "个股", exact: true }).click();
   await page.keyboard.press("F10");
   await expect(page.getByRole("region", {name:"公司信息"})).toHaveAttribute("data-company-id", "C-600101");
@@ -308,12 +308,12 @@ test("盘口买卖展开底部交易栏，保留看盘与草稿，Escape收起�
   await expect(page.locator("#section-trade")).toBeVisible();
   await expect(page.locator(".msd-candle-chart")).toBeVisible();
   const order = page.locator("#section-order");
-  await order.getByPlaceholder("委托价").fill("10.75");
-  await order.getByPlaceholder("买入按手；零股一次卖完").fill("300");
+  await order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价").fill("10.75");
+  await order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完").fill("3");
   await page.getByRole("button", { name: "卖出此股票", exact: true }).click();
   await expect(order).toHaveAttribute("data-trade-side", "Sell");
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("10.75");
-  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("10.75");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("3");
   const bounds = await dock.boundingBox();
   const chart = await page.locator("#section-trade").boundingBox();
   if (!bounds || !chart) throw new Error("看盘交易栏或图表不可见");
@@ -322,8 +322,8 @@ test("盘口买卖展开底部交易栏，保留看盘与草稿，Escape收起�
   await expect(dock).toBeHidden();
   await expect(page.getByRole("button", { name: "卖出此股票", exact: true })).toBeFocused();
   await entry.click();
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("10.75");
-  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("10.75");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("3");
   await page.getByRole("button", { name: "资金持仓", exact: true }).click();
   await expect(page.locator("#section-positions")).toBeVisible();
   await expect(page.locator("#section-order")).toBeVisible();
@@ -335,15 +335,15 @@ test("看盘交易栏在1020横屏和竖屏切换时复用同一份委托草稿"
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
   await page.getByRole("button", { name: "买入此股票", exact: true }).click();
-  await page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完").fill("500");
+  await page.locator('#section-order .trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完").fill("5");
   await expect(page.locator("#section-trade")).toBeVisible();
   expect(await page.locator(".app-root").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "交易", exact: true }).click();
-  await expect(page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("500");
+  await expect(page.locator('#section-order .trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("5");
   await page.getByRole("button", { name: "关闭交易面板", exact: true }).click({ position: { x: 10, y: 10 } });
   await page.setViewportSize({ width: 1020, height: 833 });
-  await expect(page.locator("#section-order").getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("500");
+  await expect(page.locator('#section-order .trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("5");
 });
 
 test("当前窗口看盘下单的按钮和K线指标无需滚动，完整交易页两个面板从同一行开始", async ({ page }) => {
@@ -379,9 +379,9 @@ test("同屏委托切换证券同步图表，重复选择不覆盖草稿，隐�
   const order = page.locator("#section-order");
   await order.getByLabel("股票", { exact: true }).selectOption("002156");
   await expect(page.locator(".stock-detail-header")).toContainText("002156");
-  await order.getByPlaceholder("委托价").fill("27.50");
+  await order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价").fill("27.50");
   await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /芯片科技/ }).click();
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("27.50");
   await nav.getByRole("button", { name: "游戏", exact: true }).click();
   const save = page.getByRole("button", { name: "日终存档说明" });
   await save.focus();
@@ -389,7 +389,7 @@ test("同屏委托切换证券同步图表，重复选择不覆盖草稿，隐�
   await expect(save).toBeFocused();
   await nav.getByRole("button", { name: "个股", exact: true }).click();
   await expect(page.getByRole("region", { name: "看盘交易栏" })).toBeVisible();
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("27.50");
 });
 
 test("完整交易页切股后返回看盘，行情与委托标的一致且保持草稿", async ({ page }) => {
@@ -401,16 +401,16 @@ test("完整交易页切股后返回看盘，行情与委托标的一致且保�
   await nav.getByRole("button", { name: "交易", exact: true }).click();
   const order = page.locator("#section-order");
   await order.getByLabel("股票", { exact: true }).selectOption("002156");
-  await order.getByPlaceholder("委托价").fill("27.50");
-  await order.getByPlaceholder("买入按手；零股一次卖完").fill("300");
+  await order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价").fill("27.50");
+  await order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完").fill("3");
   await nav.getByRole("button", { name: "个股", exact: true }).click();
   await expect(page.locator(".stock-detail-header")).toContainText("002156");
   await expect(order.getByLabel("股票", { exact: true })).toHaveValue("002156");
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
-  await expect(order.getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("300");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("27.50");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("买入按手；零股一次卖完")).toHaveValue("3");
   await nav.getByRole("button", { name: "行情", exact: true }).click();
   await expect(page.locator(".stock-detail-header")).toContainText("002156");
-  await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
+  await expect(order.locator('.trade-ticket[data-side="Buy"]').getByPlaceholder("委托价")).toHaveValue("27.50");
 });
 
 test("移动详情从委托切股后标题和详情证券保持一致", async ({ page }) => {

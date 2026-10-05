@@ -53,7 +53,7 @@ export function MarketQuotePanel(props: Props) {
     <div className="market-quote-tabs" role="tablist" aria-label="个股行情信息" ref={tablist}>
       {tabs.map((item, index) => <button key={item} type="button" role="tab" id={`${id}-tab-${index}`} aria-controls={`${id}-panel-${index}`} aria-selected={tab === item} tabIndex={tab === item ? 0 : -1} onKeyDown={event => onKeyDown(event, index)} onClick={() => setTab(item)}>{item}</button>)}
     </div>
-    <div role="tabpanel" tabIndex={0} id={`${id}-panel-0`} aria-labelledby={`${id}-tab-0`} hidden={tab !== "盘口"}><div className="ob-title">五档盘口<span>价格（元） / 数量（手）</span></div><FiveLevelBook market={props.market} /></div>
+    <div role="tabpanel" tabIndex={0} id={`${id}-panel-0`} aria-labelledby={`${id}-tab-0`} hidden={tab !== "盘口"}><div className="ob-title">五档盘口<span>价格（元） / 数量（手）</span></div><FiveLevelBook code={props.code} market={props.market} /></div>
     <div role="tabpanel" tabIndex={0} id={`${id}-panel-1`} aria-labelledby={`${id}-tab-1`} hidden={tab !== "明细"}><MarketTradeTape key={props.code} code={props.code} market={props.market} trades={props.trades} /></div>
     <div role="tabpanel" tabIndex={0} id={`${id}-panel-2`} aria-labelledby={`${id}-tab-2`} hidden={tab !== "行情"}><QuoteFacts market={props.market} candle={props.candle} /></div>
   </>;

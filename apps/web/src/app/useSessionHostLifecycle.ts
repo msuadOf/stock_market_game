@@ -235,7 +235,8 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
 function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
   if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
-  return createWorkerHost(setup, seed, { enableE2EStepping: tradingE2EMode });
+  // 受控验收页面各保留双线程，避免并行页面重复占满全部核心；生产继续读取浏览器能力。
+  return createWorkerHost(setup, seed, { enableE2EStepping: tradingE2EMode, threadCount: tradingE2EMode ? 2 : undefined });
 }
 
 interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkWasmEnvironment" | "isDocumentHidden"> {

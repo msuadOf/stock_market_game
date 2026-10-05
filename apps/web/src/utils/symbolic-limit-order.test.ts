@@ -34,10 +34,11 @@ test("price selection labels retain limit intent and only market disables price 
 
 test("App wires symbolic limit choices without reclassifying them as market orders", () => {
   const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-  assert.match(appSource, /最高限价/);
-  assert.match(appSource, /最低限价/);
+  const ticketSource = readFileSync(new URL("../app/QuickTradingPanel.tsx", import.meta.url), "utf8");
+  assert.match(ticketSource, /"highest", "最大"/);
+  assert.match(ticketSource, /"lowest", "最小"/);
   const commandsSource = readFileSync(new URL("../app/useTradingCommands.ts", import.meta.url), "utf8");
   assert.match(appSource, /useTradingCommands/);
   assert.match(commandsSource, /buildPlayerOrderIntent/);
-  assert.match(appSource, /orderPriceInputState/);
+  assert.match(appSource, /QuickTradingPanel/);
 });
