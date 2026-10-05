@@ -1,5 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  // 精确披露日期、公开编号和金额来自 seed42；仅固定测试页的新局熵输入。
+  // 首局使用现有 tradingE2E 的 seed42/零 NPC fixture；固定熵也覆盖手动新局。
+  // 不替换真实 WASM、自然日历或公开报告查询返回值。
+  await page.addInitScript({ content: `
+    {
+      const originalGetRandomValues = Crypto.prototype.getRandomValues;
+      Crypto.prototype.getRandomValues = function(array) {
+        if (array instanceof Uint32Array && array.length === 2) {
+          array.set([0, 42]);
+          return array;
+        }
+        return originalGetRandomValues.call(this, array);
+      };
+    }
+  ` });
+});
+
 async function expectEngineReady(page: Page): Promise<void> {
   await expect(page.locator(".app-root")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".app-error")).toHaveCount(0);
@@ -18,7 +36,7 @@ async function expectPublicReportReady(page: Page): Promise<void> {
 
 test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和附注", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto("/");
+  await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
@@ -56,7 +74,7 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
 
 test("平板端以真实 WASM 切换公司和报告期间并保持规范公开内容", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 700 });
-  await page.goto("/");
+  await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
@@ -84,7 +102,7 @@ test("平板端以真实 WASM 切换公司和报告期间并保持规范公开�
 
 test("移动端复用真实 WASM 公司内容并保持表格滚动在面板内", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto("/");
+  await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.locator(".mobile-market-row").first().click();
   await page.getByRole("tab", { name: "财务", exact: true }).click();
@@ -104,7 +122,7 @@ test("移动端复用真实 WASM 公司内容并保持表格滚动在面板内",
 
 test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真实 WASM 会话", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto("/");
+  await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
@@ -157,7 +175,7 @@ test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async
       };
     }
   ` });
-  await page.goto("/");
+  await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();

@@ -409,7 +409,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   }, [setNotice]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
-    if (TRADING_E2E_MODE) return;
     void companyCoordinatorRef.current?.query({ companyId, cursor });
   }, []);
 
