@@ -165,8 +165,6 @@
 .msd-fund-bar i { position: absolute; right: 21%; left: 21%; display: block; background: currentColor; }
 .msd-fund-bar b { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); font-size: clamp(8px, 2.5cqw, 11px); }
 .msd-fund-bar span { position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: clamp(9px, 2.7cqw, 12px); font-weight: 700; white-space: nowrap; }
-.msd-placeholder { min-height: 240px; padding: 28px 18px; background: #fff; }
-.msd-placeholder b { font-size: 19px; }.msd-placeholder p { color: #777; line-height: 1.7; }
 
 @media (max-width: 350px) {
   .msd-market-composite { grid-template-columns: minmax(0, 66%) minmax(0, 34%); }

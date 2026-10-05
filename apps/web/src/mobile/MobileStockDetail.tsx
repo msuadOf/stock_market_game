@@ -15,11 +15,11 @@ import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { formatTradeLots, intradayChartX, MobileIntradayProjection, priceChangePercent, type AuctionPoint } from "./market-model";
-import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
+import { MOBILE_INFO_TABS, type MobileChartPeriod, type MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
-const infoTabs: MobileInfoTab[] = ["看点", "资讯", "财务", "盘口", "资金", "社区", "简况"];
+const infoTabs = MOBILE_INFO_TABS;
 
 interface Props {
   code: string;
@@ -152,12 +152,18 @@ export function MobileStockDetail(props: Props) {
   const chartType = props.period === "分时" ? "分时" : "日K";
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, items: readonly string[]) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
     const buttons = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
     const current = buttons.indexOf(event.currentTarget);
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    buttons[(current + direction + items.length) % items.length]?.focus();
+    let next: number;
+    switch (event.key) {
+      case "ArrowLeft": next = (current + items.length - 1) % items.length; break;
+      case "ArrowRight": next = (current + 1) % items.length; break;
+      case "Home": next = 0; break;
+      case "End": next = items.length - 1; break;
+      default: return;
+    }
+    event.preventDefault();
+    buttons[next]?.focus();
   }
 
   return (
@@ -191,7 +197,7 @@ export function MobileStockDetail(props: Props) {
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
       </div>
       <div id="mobile-info-panel" role="tabpanel" aria-labelledby={`info-${props.infoTab}`}>
-        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : props.infoTab === "财务" ? props.companyContent : <section className="msd-placeholder"><b>{props.infoTab}</b><p>该内容区独立于上方图表周期，切换分时或日 K 时保持不变。</p></section>}
+        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : props.companyContent}
       </div>
     </main>
   );

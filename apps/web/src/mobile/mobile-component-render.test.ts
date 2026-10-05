@@ -97,6 +97,14 @@ function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘
   })));
 }
 
+test("手机信息菜单只提供已接入的财务、盘口和资金，不展示参考软件占位入口", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "资金");
+  const list = html.match(/class="msd-info-tabs"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(list);
+  assert.deepEqual([...list.matchAll(/role="tab"[\s\S]*?>(.*?)<\/button>/g)].map((item) => item[1]), ["财务", "盘口", "资金"]);
+  assert.doesNotMatch(html, /info-(看点|资讯|社区|简况)|msd-placeholder/);
+});
+
 test("手机分时09:30连接已存在的两个阶段端点，不额外生成粗点", { timeout: 10000 }, () => {
   const overrides = { auctionPoints: [{ time: 99, value: 11, volume: 100, buy: true }], minutePoints: [{ time: 0, value: 12, volume: 200 }], elapsedMinutes: 1 };
   const html = renderDetail("分时", "盘口", overrides);

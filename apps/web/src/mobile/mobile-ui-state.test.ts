@@ -17,11 +17,11 @@ test("审计G45：详情返回保留行情或自选原列表身份", () => {
 test("详情页的图表周期与信息标签互不重置", () => {
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600460" });
   const daily = reduceMobileUi(detail, { type: "select-period", period: "日K" });
-  const news = reduceMobileUi(daily, { type: "select-info", tab: "资讯" });
+  const financial = reduceMobileUi(daily, { type: "select-info", tab: "财务" });
 
-  assert.equal(news.detailCode, "600460");
-  assert.equal(news.chartPeriod, "日K");
-  assert.equal(news.infoTab, "资讯");
+  assert.equal(financial.detailCode, "600460");
+  assert.equal(financial.chartPeriod, "日K");
+  assert.equal(financial.infoTab, "财务");
 });
 
 test("交易底页关闭后回到原详情状态，切主导航则清空临时层", () => {
