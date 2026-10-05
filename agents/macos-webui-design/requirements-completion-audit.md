@@ -13,7 +13,7 @@
 | 尽可能以手机版为准复用 | MarketKlinePanel/renderer/gestures/MA、盘口FiveLevelBook、CompanyPanel、UserPanel及命令共用 | shared-mobile-audit、shared-chart-state，两端运行用例 | 分时仅投影及竞价显示共用，桌面与紧凑手机renderer保持不同，不能称全部单renderer |
 | 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏；手机暂停选项独立44px整行 | 902/1020/1440/844横屏、320/390竖屏验收及IAB；暂停设置新6项通过，IAB两行44×309px | 手机暂停触控间距已关闭；报价320/390普通/较长/零成交量完整可见、涨跌与日内价格列无重叠；其他更长数据继续实测 |
 | 分时数据积累后核对 | MobileIntradayProjection与真实权威minute/auction/day candle，时间简化明确 | desktop-intraday、mobile-intraday-projection；先前默认局实看 | 默认20007 NPC局已实际推进至09:48:49并核对两端截图；未据此声明全天正确 |
-| 分时上下界是当日已有最高/最低 | DesktopIntradayChart采样域纳入有成交权威OHLC，零成交占位不污染域 | desktop-intraday.test精确上下界/单价/重渲染 | 手机继续自己的紧凑scale；用户原要求的两端范围需对照确认，不猜测扩大 |
+| 分时0%轴永远居中（最新纠正，替代旧高低贴边要求） | symmetricIntradayScale共同对称价域；DesktopIntradayChart纳入有成交OHLC，手机保持原留白，迷你图中轴height/2 | 新单边上下/空/唯一点/极值短测、跨屏E2E；IAB09:34:48真实上涨行情桌面y50、手机141/282px | 显示边界不冒称成交高低；K线未改 |
 | 集合竞价左侧不空、无单0轴、更新粗点，连续竞价无点 | auctionDisplayPoints无指示价映射昨收0%，updated标指示价/可匹配量更新；两端auction dots，连续仅polyline | 两端projection/SSR，desktop连续无circle断言 | 粗点为竞价指示更新，不冒充已成交；默认09:48:49两端已实看，09:30连接仅已有末/首槽，不补数据 |
 | 去掉图内TradingView标 | Lightweight Charts attributionLogo=false；SVG K线无logo | price-chart-runtime，游戏管理保留关于图表归属说明 | 不删除库必须的归属信息；当前K线截图可见无图内标 |
 | 均线多选、鲜明颜色、MA5/10/20/30/60数量/顶部布局 | kline-moving-averages五条橙/蓝/紫/青/橙红；MarketKlinePanel共享开关和数值图例 | desktop多选、shared-chart-state，颜色源常量核对 | 不把viewport天数当MA；不改变其他外壳配色 |
@@ -39,3 +39,11 @@
 - 手机320动态成交量省略已修复，真实2893手完整可见，涨跌列重叠已修复；新两端几何与相关共7项通过。信息tab能力范围与DEV灰诊断入口仍开放，正式production从来不显示诊断入口。
 
 - 手机报价批：实际组件几何TDD先复现量值截断，再以Range复现列内文字重叠；最终7/7相关浏览器8.5秒，production304ms/release WASM、新test lint/premium0finding/独立review通过。真实320默认局2893手完整且涨跌文本不侵入高低开，恢复原电脑窗口及暂停。没有重复全量测试，财务gold仍开放。
+
+## 2026-10-05 分时0%居中与信息能力范围
+
+最新用户纠正明确是分时线，不是K线。桌面与迷你图复用已有symmetricIntradayScale：相对昨收最大绝对偏离上下对称；桌面参考轴固定50%、中心刻度直接昨收，有成交权威OHLC仍纳入。手机原对称实现保留，三个入口都居中，设备留白参数未强行统一。旧贴边契约已同步撤下。信息标签仅保留财务/盘口/资金，删除四个同文占位入口，MOBILE_INFO_TABS定义类型及菜单；真实报告、盘口和资金组件保留，周期/返回保持选择。Home/End补齐同一手动激活owner，没有新增键盘状态。
+
+有效TDD红分别为新桌面中心缺轴、迷你轴43.35不等于24，以及菜单7项不等于3；原坐标期望随用户新契约更新，未删极值/null/分钟/连接/量能边界。初次相关E2E3/5通过、2项Home失败，补实现及首尾/循环/只focus断言后5/5通过8.7s。完整Web841/841、155文件8分片、wall2609ms、case及进程树10000ms。完整E2E63项62通过1旧净利gold失败，workers3/共享300000ms；期间实际多个Chromium进程采到CPU，不把短测试与长验收混为一项。production1.74s、tsc及release WASM验证成功；变更文件lint/diff-check/strict premium0finding通过，全库lint仍5条原children-prop告警exit1。
+
+IAB源码HMR重建host，启动后实际推进至第1日09:34:48，暂停并恢复1x，未提交玩家委托。002156实际+10.02%，桌面上下±10.02%且轴y50；320手机priceplot282px、轴141px，原留白上下±10.42%。两端截图intraday-centered-axis-desktop-current.png/mobile-current.png。财务入口实看公开报告与四张报表。重置临时viewport并保留原tab2、本地服务。不声称延续前批09:48:49状态。两项需求独立review通过，见intraday-axis-info-independent-review.md；全终端goal的旧财务gold、DEV无能力诊断入口及文件pending边界仍未关闭。

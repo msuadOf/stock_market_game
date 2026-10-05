@@ -2,7 +2,7 @@ import { auctionContinuousJoin, auctionDisplayPoints } from "./intraday-auction-
 import { centsToYuanText, moneyToChartNumber } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
 import { Fragment } from "react";
-import { intradayChartX, type MobileIntradayProjection } from "../mobile/market-model.ts";
+import { intradayChartX, symmetricIntradayScale, type MobileIntradayProjection } from "../mobile/market-model.ts";
 import { formatSharesAsLots } from "../utils/format.ts";
 import { parseIndicatorResults, type IndicatorResultState } from "./indicator-results.ts";
 import type { PriceChartIndicator } from "./price-chart-runtime.ts";
@@ -25,15 +25,14 @@ function TimeAxis() {
 
 /** 与移动端共享行情投影；价格、量能和指标使用同一全天槽位，不拉伸已发生行情。 */
 export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indicator, result }: Props) {
-  // 桌面按用户指定的已有行情极值贴边；不再强制昨收居中或添加价格留白。
+  // 分时0%轴固定居中；复用手机的对称价域，按已出现的最大偏离展开。
   const close = moneyToChartNumber(lastClose) / 100;
   const auction = auctionDisplayPoints(p.visibleAuctionPoints, close);
   const prices = [...auction, ...p.visiblePoints].map(point => point.value);
   if (dayRange && dayRange.volume !== undefined && dayRange.volume > 0) prices.push(dayRange.high, dayRange.low);
-  const high = prices.length === 0 ? close : Math.max(...prices);
-  const low = prices.length === 0 ? close : Math.min(...prices);
-  const priceY = (value: number) => high === low ? 50 : (high - value) / (high - low) * 100;
-  const rows = high === low ? [{ y: 50, value: high }] : [0, 1, 2, 3, 4].map(index => ({ y: index * 25, value: high - (high - low) * index / 4 }));
+  const { top: high, bottom: low } = symmetricIntradayScale(prices, close, 0);
+  const priceY = (value: number) => value === close ? 50 : (high - value) / (high - low) * 100;
+  const rows = [0, 1, 2, 3, 4].map(index => ({ y: index * 25, value: index === 2 ? close : high - (high - low) * index / 4 }));
   const priceClass = (value: number) => value > close ? "up" : value < close ? "down" : "";
   const empty = p.visiblePoints.length === 0 && p.visibleAuctionPricePoints.length === 0;
   const points = p.visiblePoints;
@@ -54,7 +53,7 @@ export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indic
       <svg className="intraday-price-plot" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="全天分时走势，左侧价格，右侧相对昨收涨跌幅">
         <Grid />
         {rows.map(({ y }) => <line key={y} x1="0" x2="100" y1={y} y2={y} className="intraday-gridline" />)}
-        {close >= low && close <= high && <line x1="0" x2="100" y1={priceY(close)} y2={priceY(close)} className="intraday-baseline" />}
+        <line x1="0" x2="100" y1="50" y2="50" className="intraday-baseline" />
         {auction.length > 0 && <polyline className="intraday-auction-line" points={auction.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${priceY(point.value)}`).join(" ")}><title>无指示价时沿昨收0%参考轴显示；粗点表示竞价指示更新，并非已成交</title></polyline>}
         {auction.filter(point => point.updated).map(point => <circle key={point.time} className="intraday-auction-point" cx={intradayChartX({ phase: "auction", minute: point.time })} cy={priceY(point.value)} r="0.15" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke"><title>竞价指示价或可匹配量更新</title></circle>)}
         {sessionJoin.length > 0 && <polyline className="intraday-session-join" points={sessionJoin.map(point => `${point.x},${priceY(point.value)}`).join(" ")} />}

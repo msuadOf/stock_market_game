@@ -290,3 +290,13 @@ E2E确认exit1并结束后独立production480ms/release WASM验证成功，未�
 实际截图继续发现涨跌文本+1.12　+10.00%右边91.26，而高低开列起79.36；页面无横向滚动并不意味着列内不重叠。先加Range实测文本边界与所属列检查，有效red320越界9.25、390越界7.078；再仅改报价三列24/26/50→31/23/46，保留87px高、原字号及全部字段。最终7/7相关浏览器8.5秒，workers3/RAYON10/共享外部300000ms、新两case10000ms，未降低原断言。独立review完整diff及增量通过无finding，见mobile-quote-layout-independent-review.md。
 
 IAB真实320全局CSS最终四值clientWidth=scrollWidth=63，2893手全文可见，涨跌textRight91.26<priceLeft99.59，scrollWidth320；保存mobile-quote-layout-320-current.jpg。CSS HMR保持第1日09:48:49已暂停，未提交玩家订单/修改偏好；恢复902×833与1x。相关E2E结束后独立production304ms/release WASM成功，新E2E lint、strict premium audit0finding、git diff--check通过。纯CSS增量不重复上一批837完整Web与58浏览器；上一批57/58、唯一旧财务gold失败仍开放。本批只解决报价完整可见与列重叠，不把其等同整个终端目标完成。
+
+## 2026-10-05 分时中心轴及手机信息入口批次
+
+用户最终明确“分时线0轴永远放在最中间”，替代旧高低贴边要求，K线不改。DesktopIntradayChart和行情迷你图延伸已有symmetricIntradayScale；手机保持既有中心投影。桌面计入有效OHLC高低点，价格域以昨收最大绝对偏离对称展开，中点直接昨收避免负零；空/唯一/单边行情均有中心轴。迷你图保留固定分钟位置与12%空间，axisY明确height/2，不变原始Cents、撮合、竞价粗点或量能。
+
+手机四个无实际内容的信息占位入口删除，保留真实财务/盘口/资金并通过MOBILE_INFO_TABS同时定义类型和菜单，默认资金不变；财务继续CompanyPanel，资金仍权威日内统计。独立review未发现语义漂移。首次5项相关E2E两项Home失败揭示旧键盘owner仅左右键；同一moveTabFocus加Home/End，Enter/Space原生激活，新增聚焦不改选中、首尾循环断言后5/5通过8.7s。未删弱原失败断言。
+
+完整Web841/841、155文件8分片、wall2609ms；完整E2E62/63通过1.1分钟，唯一旧净利gold12928574075.43对12822166575.42，未改gold或公式。所有普通case/进程树10000ms，长验收共享300000ms、3workers、RAYON10；浏览器完结后独立production1.74s/tsc/release WASM成功，没有并写dist。全库lint5原有children-prop警告exit1，定向新改源码/模型/E2E lint、diff-check、premium strict0finding通过，不混称全绿。初次lint缺corepack PATH失败后使用已有工具目录重跑，非产品故障。
+
+IAB源码HMR重建宿主，实际重新启动后推进第1日09:34:48、暂停恢复1x；002156+10.02%桌面轴50%和手机轴141/282px实看。手机留白保持±10.42%，桌面±10.02%，不称设备范围完全相同。财务实际报告和四报表入口已检查，截图手机报表为滚动后内容，不冒称包含顶层菜单。保存两端轴截图，重置临时viewport保留原tab2及localhost服务；未提交玩家订单。两功能分开提交。全goal其余边界按requirements-completion-audit保留。

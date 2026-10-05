@@ -300,8 +300,7 @@ export interface SparklineGeometry {
 }
 
 /**
- * 以昨收为真实 0% 轴生成自适应坐标域。
- * 坐标域包含昨收和全部价格，并在上下各留 12% 呼吸空间；因此单边行情的零轴会靠近边缘而非强制居中。
+ * 以昨收为居中的0%轴，复用详情图的对称价域并保留12%留白。
  */
 export function sparklineGeometry(points: readonly PricePoint[], baseline: number, width = 64, height = 48): SparklineGeometry {
   if (!Number.isFinite(baseline)) throw new RangeError("迷你走势图基准价必须是有限数值");
@@ -323,12 +322,10 @@ export function sparklineGeometry(points: readonly PricePoint[], baseline: numbe
     return { linePoints, areaPoints: `${firstX},${axisY} ${linePoints} ${lastX},${axisY}`, axisY };
   }
 
-  const padding = rawRange * 0.12;
-  const min = rawMin - padding;
-  const max = rawMax + padding;
+  const { bottom: min, top: max } = symmetricIntradayScale(values, baseline, 0.12);
   const range = max - min;
   const y = (value: number) => Number((((max - value) / range) * height).toFixed(2));
-  const axisY = y(baseline);
+  const axisY = height / 2;
   const pointCoordinates = points.map((point) => ({ x: sparklineSlotX(point.time, width), y: y(point.value) }));
   const linePoints = pointCoordinates.map(({ x, y: pointY }) => `${x},${pointY}`).join(" ");
   const firstX = pointCoordinates[0].x;

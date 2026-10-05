@@ -26,7 +26,7 @@ test("竞价缺价使用参考轴，连续价格与成交量共享固定槽位�
   const p = MobileIntradayProjection.fromInputs(inputs);
   const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "volume", result: { kind: "idle" } }));
   assert.equal((html.match(/class="intraday-auction-point"/g) || []).length, 2);
-  assert.ok(html.includes(`points="16,66.66666666666666 ${intradayChartX({ phase: "continuous", minute: 29 })},0"`));
+  assert.ok(html.includes(`points="16,50 ${intradayChartX({ phase: "continuous", minute: 29 })},0"`));
   assert.ok(html.includes(`x1="${intradayChartX({ phase: "continuous", minute: 29 })}"`));
   assert.ok(intradayChartX({ phase: "continuous", minute: 29 }) < 30);
 });
@@ -47,19 +47,33 @@ test("昨收文字保留精确分值，不由近似坐标反算", { timeout: 100
   assert.ok(html.includes("昨收 90071992547409.93"));
 });
 
-test("分时上下界贴合已有最高最低价，单边行情不强制包含昨收", { timeout: 10000 }, () => {
-  const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 11 }, { time: 1, value: 12 }] });
-  const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
-  assert.ok(html.includes('points="16,100 16.351464435146443,0"'));
-  assert.ok(html.includes('top:0%">12.00'));
-  assert.ok(html.includes('top:100%">11.00'));
-  assert.ok(!html.includes('class="intraday-baseline"'));
+test("分时0%轴在单边上涨、单边下跌、空行情和日内极值变化时始终居中", { timeout: 10000 }, () => {
+  for (const minutePoints of [[], [{ time: 0, value: 11 }, { time: 1, value: 12 }], [{ time: 0, value: 9 }, { time: 1, value: 8 }], [{ time: 0, value: 11 }]]) {
+    const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints });
+    const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
+    assert.match(html, /y1="50" y2="50" class="intraday-baseline"/);
+    assert.match(html, /intraday-percent-label[^>]*style="top:50%">0\.00%/);
+  }
+  const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 11 }] });
+  const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", dayRange: { high: 13, low: 9, volume: 100 }, indicator: "none", result: { kind: "idle" } }));
+  assert.match(html, /y1="50" y2="50" class="intraday-baseline"/);
+  assert.ok(html.includes('top:0%">13.00'));
+  assert.ok(html.includes('top:100%">7.00'));
 });
 
-test("唯一价格不伪造高低价，横线居中且不产生非法坐标", { timeout: 10000 }, () => {
+test("分时单边上涨按昨收对称展开，0%轴保持正中", { timeout: 10000 }, () => {
+  const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 11 }, { time: 1, value: 12 }] });
+  const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
+  assert.ok(html.includes('points="16,25 16.351464435146443,0"'));
+  assert.ok(html.includes('top:0%">12.00'));
+  assert.ok(html.includes('top:100%">8.00'));
+  assert.ok(html.includes('y1="50" y2="50" class="intraday-baseline"'));
+});
+
+test("唯一上涨价格保持真实点位，昨收参考轴居中且不产生非法坐标", { timeout: 10000 }, () => {
   const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 11 }, { time: 1, value: 11 }] });
   const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
-  assert.ok(html.includes('points="16,50 16.351464435146443,50"'));
+  assert.ok(html.includes('points="16,0 16.351464435146443,0"'));
   assert.ok(!html.includes('NaN'));
 });
 
@@ -67,19 +81,19 @@ test("当日权威 OHLC 极值纳入价域，不因分钟采样而遗漏盘中�
   const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 11 }] });
   const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", dayRange: { high: 13, low: 9, volume: 100 }, indicator: "none", result: { kind: "idle" } }));
   assert.ok(html.includes('top:0%">13.00'));
-  assert.ok(html.includes('top:100%">9.00'));
-  assert.ok(html.includes('points="16,50"'));
+  assert.ok(html.includes('top:100%">7.00'));
+  assert.ok(html.includes('points="16,33.33333333333333"'));
 });
 
 
-test("零成交 OHLC 占位不把昨收强行并入竞价价域，重新渲染不保留旧极值", { timeout: 10000 }, () => {
+test("零成交 OHLC 占位不污染对称竞价价域，重新渲染不保留旧极值", { timeout: 10000 }, () => {
   const p = MobileIntradayProjection.fromInputs({ ...base, auctionPoints: [{ time: 0, value: 11, volume: 100, buy: true }, { time: 1, value: 12, volume: 200, buy: true }] });
   const renderRange = (high: number, low: number, volume: number) => renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", dayRange: { high, low, volume }, indicator: "none", result: { kind: "idle" } }));
   assert.ok(renderRange(20, 8, 100).includes('top:0%">20.00'));
   const html = renderRange(10, 10, 0);
   assert.ok(html.includes('top:0%">12.00'));
-  assert.ok(html.includes('top:100%">11.00'));
-  assert.ok(!html.includes('class="intraday-baseline"'));
+  assert.ok(html.includes('top:100%">8.00'));
+  assert.ok(html.includes('y1="50" y2="50" class="intraday-baseline"'));
 });
 
 test("竞价 null 槽使用昨收参考轴，更新点只标有效指示变化", { timeout: 10000 }, () => {
@@ -87,7 +101,7 @@ test("竞价 null 槽使用昨收参考轴，更新点只标有效指示变化",
   const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
   assert.ok(html.includes("无指示价时沿昨收0%参考轴显示"));
   assert.ok(!html.includes("intraday-no-price-slot"));
-  assert.ok(html.includes('points="0,100 0.16161616161616163,0 0.32323232323232326,100"'));
+  assert.ok(html.includes('points="0,50 0.16161616161616163,0 0.32323232323232326,50"'));
   assert.equal((html.match(/class="intraday-auction-point"/g) || []).length, 1);
   assert.ok(html.includes(`cx="${intradayChartX({ phase: "auction", minute: 1 })}"`));
   assert.ok(html.includes('class="intraday-auction-line"'));
@@ -103,7 +117,7 @@ test("连续竞价有成交也只绘折线，不添加粗点", { timeout: 10000 
 test("竞价结束与首个连续槽不同价时在09:30连接，不产生新的成交点", { timeout: 10000 }, () => {
   const p = MobileIntradayProjection.fromInputs({ ...base, auctionPoints: [{ time: 99, value: 11, volume: 100, buy: true }], minutePoints: [{ time: 0, value: 12, volume: 200 }] });
   const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
-  assert.ok(html.includes('class="intraday-session-join" points="16,100 16,0"'));
+  assert.ok(html.includes('class="intraday-session-join" points="16,25 16,0"'));
   assert.equal((html.match(/<circle/g) || []).length, 1);
   assert.ok(html.includes('class="intraday-price-line" points="16,0"'));
 });

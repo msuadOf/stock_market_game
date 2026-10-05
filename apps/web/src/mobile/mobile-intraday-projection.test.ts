@@ -83,3 +83,13 @@ test("分时按原 slice 限制连续与竞价可见点，异常价与量继续�
   assert.throws(() => model.MobileIntradayProjection.fromInputs({ ...inputs(), minutePoints: [{ time: 0, value: -1 }] }), /分时图价格/);
   assert.throws(() => model.MobileIntradayProjection.fromInputs({ ...inputs(), auctionPoints: [{ time: 0, value: null, volume: -1, buy: false }] }), /分时量/);
 });
+
+test("手机分时单边上涨和下跌始终将昨收0%映射到正中，坐标不改变价格样本", () => {
+  for (const values of [[11, 12], [9, 8], [10], []]) {
+    const minutePoints = values.map((value, time) => ({ time, value }));
+    const p = model.MobileIntradayProjection.fromInputs({ ...inputs(), minutePoints });
+    assert.equal(p.priceY(10), 50);
+    assert.equal(p.scale.topPercent, -p.scale.bottomPercent);
+    assert.deepEqual(p.visiblePoints, minutePoints);
+  }
+});
