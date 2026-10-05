@@ -7,7 +7,7 @@
 | 用户要求 | 当前实现及复用边界 | 已有证据 | 仍需关闭的边界 |
 |---|---|---|---|
 | macOS编译、网页可玩、内置浏览器打开 | release WASM/本地Vite服务，原IAB tab2 | 最新独立production成功，实际902×833启动/读档 | 保留本地服务；不把源码HMR当无状态恢复 |
-| 横屏电脑版、竖屏手机版 | App方向判据与各自导航，公共数据/命令 | desktop-workspace、mobile-layout，IAB902及320 | 完整稳定性复验继续 |
+| 横屏电脑版、竖屏手机版 | App方向判据与各自导航，公共数据/命令 | desktop-workspace、mobile-layout，IAB902及320 | 最新完整64/64浏览器跨屏/导航通过；保留历史失败与具体设备限制 |
 | 同花顺信息层次、模拟器看盘下单布局 | desktop-terminal，右买卖展开底部非模态栏，委托组件唯一实例 | desktop-workspace的多尺寸、草稿、Escape、焦点用例 | 最新58项看盘栏路径通过；保留此前27项超时历史，不冒称各次均稳定 |
 | 二三级菜单、进入/返回、当前选择 | ChartDisplayMenu：显示→均线/副图→选项；公司报告/报表/附注，行情/个股/F10返回 | 先前完整54项对应通过，实际参考观察见terminal-fidelity-plan | 最新58项相应菜单/返回路径通过；历史19/27失败仍保留 |
 | 尽可能以手机版为准复用 | MarketKlinePanel/renderer/gestures/MA、盘口FiveLevelBook、CompanyPanel、UserPanel及命令共用 | shared-mobile-audit、shared-chart-state，两端运行用例 | 分时仅投影及竞价显示共用，桌面与紧凑手机renderer保持不同，不能称全部单renderer |
@@ -22,8 +22,8 @@
 | 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最新58项详情用例通过，保留此前耗时/失败记录 |
 | SVG拉伸边框不变粗 | SVG renderer的non-scaling-stroke，坐标文字DOM | desktop轮廓拉伸、kline-coordinates | 自动几何/样式检查已做，任意系统缩放组合未全部验证 |
 | 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | DEV无诊断能力入口已按统一host能力过滤，真实DEV两尺寸/导航后通过；production本就不显示；桌面标题及空态已按同一范围更新，真实WASM及IAB复核通过 |
-| 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 精确净利gold12928574075.43对actual12822166575.42因果仍未核清，不可改gold凑绿 |
-| 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | 文件选择在pending写入期间的边界未本批扩展；首日缺DB的旧E2E helper检查会造空库，不应复用到该前提 |
+| 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 因果已关闭：独立历史/单调用反事实完整报告相等，当前精确gold与分项/1602附注验收通过；见company-causal-audit |
+| 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | FS/Tauri/upload提交前读档、失败/取消及新局pending短测已关闭；不冒称所有原生文件系统环境都实测；首日缺DB不可用会造空库的旧helper |
 | 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c0ea9f1本地==origin；每批review记录 | 全部goal未完成，不将阶段提交当整体收尾 |
 
 ## 验证状态不能合并
@@ -65,3 +65,17 @@ TDD首轮标题1失败6.5s；完整首轮64项62通过2失败49.6s（新空态�
 长验收共享300000ms、workers3/RAYON10；首轮实际采到多个Chromium进程CPU15.6%/8.0%/94.3%/27.1%，最终采样已结束，无新live样本。浏览器exit1结束后独立production297ms、tsc/release WASM成功。全库lint5原有children-prop告警exit1，全部变更source/E2E定向lint、diff-check、premium strict0finding通过。
 
 IAB原tab2真实DEV页面已实看自选/持仓正确标题及提示，保存security-scope-holdings-desktop-current.png和watchlist截图。当前第1日09:24:23暂停、1x；源码HMR后重建host，不冒称延续此前局。恢复原自选范围和临时viewport，未改名单/玩家委托，保留localhost服务。整体目标仍留财务gold因果、文件读取pending边界及需求最终门禁。
+
+## 2026-10-05 财务因果及文件读取最终边界
+
+两个旧门禁已关闭：财务精确gold的差额通过历史源码和20e160b仅省略settle_period_end调用的反事实，首份完整报告逐字段恢复旧报告；新增折旧109278690.49及减值减少2871190.48精确解释106407500.01差额。正式游戏简化已有docs/company-accounting2.6契约，主engine未改，不以当期实际值直接替换预期。E2E保留精确net并新增admin/impair/1602科目断言。具体输入、原样历史编译失败、mtime缓存/政策错误和隔离边界见company-causal-audit.md。
+
+文件读档/recover在完成用户选择后复用beforeRead，再抓取FS File/读取Tauri路径/上传text；保留选择器用户激活与取消语义，不提前invalidate写入。只有选择器的AbortError为取消，屏障AbortError明确错误。新测试覆盖3adapter及命令转交，新局原有失效后等待退出也验收；无第二队列或新会话状态。有效功能红为提前getFile及漏拒绝，后续AbortError误吞为取消的红；Tauri字节mock、upload复用listener和tsc测试类型错误分开保留，不能说每轮绿。
+
+最终完整Web847/847、155文件8分片、wall2173ms；最后纯类型标注后的定向33/33、410.49ms及tsc exit0。完整浏览器64/64、50.6s、3workers/RAYON10、共享300000ms，旧财务gold不再失败；这是一次真正完整绿色，不能覆盖此前各轮失败。结束后独立production343ms、releaseWASMverified/tsc成功。定向5文件lint、diff-check、strictpremium0finding通过；全库仍5既有children-prop告警exit1，未顺带改无关测试。实际采到多个headless进程24.5%/4.1%，不声称10核始终满载。
+
+用户新要求：每轮Independent review新建gpt-6.1-sol high，不复用旧agent或astra。本批此前reviewer及第一次sol reviewer均已按要求中断，independent_review_fresh_sol_high完成的审查保留在final-boundaries-independent-review.md。用户再次要求重新新建后，启动全新independent_review_restart_sol_high，对当前完整diff自行复核；本次结论另记final-boundaries-restarted-independent-review.md，不以旧审查替代。IAB当前第1日09:27:19暂停1x，实际000812+10.18%两端截图final-intraday-centered-desktop.png及mobile.png，设备留白维持原差异；恢复600101/自选/列表和viewport，本批未新增玩家委托/改名单，保留已有委托拒绝notice。源码HMR曾重建host，不能说延续上一轮09:24:23局。
+
+## 当前剩余范围反馈细节
+
+最终现场又观察到手机列表在自选页切范围为全部后，按钮/数据为全部，但顶栏仍显示自选。下一小批需先用实际App复现并判断标题owner，再复用已有范围状态修正；不混入当前两个门禁修复，不因64项绿色就宣布全goal结束。任意硬件/全天全部行情的无限组合不是已验收声明，已有浏览器输入及实际窗口证据按上表保留。

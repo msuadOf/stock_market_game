@@ -318,3 +318,11 @@ IAB真实App HMR重建host，当前暂停第1日09:16:47、1x、自选范围，�
 新真实WASM case覆盖自选/持仓/无匹配/清空查询/两端保持/恢复全部。完整Web841/841 wall3032ms；首轮64项62通过2失败49.6s（新空态、旧财务gold），随后62通过2失败47.2s（旧财务gold、分时fixture切屏竞态）。trace证明切viewport后立即isVisible=false跳过进入个股，原轴断言不改，改等待真实列表可见再点入。最终完整64项63通过1旧gold45.2s exit1；保留所有失败及trace证据，不提高10秒case时限。production297ms/tsc/release WASM成功，全库lint5既有告警exit1，变更lint/premium0finding/diff-check通过。
 
 IAB当前原tab2第1日09:24:23暂停1x，两空范围标题/提示实看并截图，恢复原自选及viewport。HMR重建host不冒称上一批进度保留。本批只关闭范围反馈及真实轴验收的前置步骤竞态，财务和文件pending边界继续开放。
+
+## 2026-10-05 财务gold与文件读取边界关闭
+
+财务因果证据见company-causal-audit.md：36b6f83父原样old报告；20e160b原样new；同一20仅删期末处理调用，完整首报告JSON回到old。折旧/减值净差严格复算，按已有正式游戏简化更新精确gold并增分项与累计折旧附注断言。engine无产品修改。
+
+文件选择后再等beforeRead、再读取，FS/Tauri/upload及命令共用callback；取消不进入屏障，不提前invalidate；选择器以外AbortError错误可见，新局pending已有逻辑补回归。有效功能红、mock/类型失败分别保存，未增时限。最终847Web/33定向/64浏览器全通过，wall2173ms/410.49ms/50.6s；production343ms/tsc/releaseWASM通过，定向lint/premium/diff通过，全库仍5旧告警exit1。完整日志final-boundaries-*；全新gpt-6.1-sol high的历史审查保留在final-boundaries-independent-review.md，用户再次要求重新新建后的独立审查另记final-boundaries-restarted-independent-review.md，不以旧结论替代。
+
+IAB实际第1日09:27:19暂停1x、000812+10.18%两端零轴截图已保存；恢复原600101、自选范围及列表/viewport；本批未新增玩家委托，保留已有拒绝notice。HMR重建host的事实保留。手机自选页范围切全部时顶栏仍自选的新现场待下一批定位，整个goal不在本批误关。

@@ -70,7 +70,11 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
   await expect(incomeTable.locator("caption")).toHaveText("金额（缩写，元/万元/亿元）");
   await panel.getByRole("button", { name: "查看精确值" }).click();
   await expect(incomeTable.locator("caption")).toHaveText("金额（元，精确值）");
-  await expect(panel.getByRole("table", { name: "利润表" })).toContainText("12928574075.43");
+  // 期末折旧接入后的 seed42 gold；独立反事实与科目勾稽见 company-causal-audit.md。
+  await expect(incomeTable.getByRole("row", { name: /管理费用/ })).toContainText("2059278651.49");
+  await expect(incomeTable.getByRole("row", { name: /减值损失/ })).toContainText("411543090.41");
+  await expect(incomeTable.getByRole("row", { name: /净利润/ })).toContainText("12822166575.42");
+  await expect(panel.getByRole("table", { name: "已披露科目明细" }).getByRole("row", { name: /1602.*累计折旧/ })).toContainText("-109278690.49");
   await page.screenshot({ path: "../../.tmp/evidence/company-information/statement-details/desktop-1280.png" });
 });
 
