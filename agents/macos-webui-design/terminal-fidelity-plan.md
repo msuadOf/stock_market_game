@@ -248,3 +248,17 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 当前IAB旧页面HMR保留旧队列实例，新方法beforeRead不存在而明确报错；quick-load-stale-hmr-instance.jpg保存证据，不将新实例自动验收冒充旧页面可用。实际刷新并通过启动入口初始化后，暂停第1日09:15:22，再点击读取本地进度，最终显示已读档（第1个交易日）、09:15:00已暂停。quick-load-restored-current-window.jpg保存真实902×833成功读档现场，保留原tab2与本地服务。刷新重建宿主，不声称保留此前日内行情；未提交模拟委托。
 
 完整终端目标仍在途：原财务gold因果差额和最终逐项需求审计未关闭。实看游戏管理“保存当前进度”和“另存为文件”文案与日终专用行为可能不符，需独立TDD批次核对；不能把快速槽屏障完成等同所有菜单细节完成。
+
+## 2026-10-05 日终存档入口诚实文案批次
+
+UserPanel 两端同一份DOM，将即时保存暗示改为日终存档说明/设置日终存档文件。常驻完整自然日结束自动存档、日内不保存、文件仅后续日终更新与首个日终前无档可读说明；两个按钮通过useId/aria-describedby关联。单条CSS控制说明字号/行高/主题色，保留四个原操作handler；仅更正useSaveCommands旧“降级下载”注释，不改保存行为。DESIGN/UX同步，既有三处E2E按钮名称随新文案更新，草稿、焦点及档案字节断言保持。
+
+第一次红测桌面缺新入口、手机错误使用桌面入口，手机不算有效红证据；修正为实际“打开我的与存档”后，两端有效红均复现缺新入口。首轮27项25通过2失败：新case用原只适合已创建DB的readQuickArchive，open()先造空库后transaction无store导致promise未决，保留日志。新case改为只读indexedDB.databases，说明点击前后都断言SAVE_DATABASE不存在，比null档更强；没有改共享helper或产品。
+
+第二轮27项19通过8失败2.7分钟，exit1；新两端case各4.4秒通过。原desktop7项超过10000ms，另返回行情case未出现quotes元素；不能据源代码改动小或前轮通过就称都是资源竞争。该轮未结束时主agent误启动production，发现后在tsc阶段终止父/子26206/26211/26250/26251，未进入vite；先保留save-control-labels-production-build.log和exit143，再确认E2E全部退出。不能省略验证顺序错误或据此假定8失败都有因果解释。最终参数与断言不变、workers3下定向重跑实际受影响5项，5/5通过15.2秒；见save-control-labels-affected-e2e.log。不将两轮拼成27项全绿。
+
+相关存档短测24/24通过171.15ms，case/整命令进程树10000ms、concurrency3；变更文件lint、strict premium audit0finding、git diff--check通过。独立复核完整diff及新fixture增量通过，无有效finding，见save-control-labels-independent-review.md。浏览器结束后独立production构建348ms/release WASM验证通过，RAYON_NUM_THREADS10、外部共享300000ms；最终日志save-control-labels-final-production-build.log。本批不重复833全量Web，上一批全量833与完整54项53通过/原财务gold失败是此前结果，不混记本批。
+
+IAB现场902×833与320×844核对常驻说明及四按钮，无横向溢出，手机document.scrollWidth/clientWidth均320。截图save-control-labels-current-window.jpg及save-control-labels-mobile-320.jpg保留。源码HMR重建宿主并恢复运行，最后重新暂停第1日09:15:34，不声称保留前批刚读档局；恢复原902×833与原tab2。未选文件、未提交模拟委托。手机两项暂停偏好的标签仍紧贴同一行，触控热区/换行需在后续独立批次确认，不混入本批文案修改。
+
+完整终端目标继续在途：财务gold因果差额、完整浏览器时限/返回路径稳定性及逐项需求复验仍保留。

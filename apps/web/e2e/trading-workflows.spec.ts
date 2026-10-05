@@ -140,7 +140,7 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
   // 1 月 1 日是休市自然日，进入次日可能已自动归档；日内保存必须逐字节保留该存档。
   const priorArchive = await readQuickArchive(page);
   await page.getByRole("button", {name:"游戏与存档"}).click();
-  await page.getByRole("button", {name:"保存当前进度"}).click();
+  await page.getByRole("button", {name:"日终存档说明"}).click();
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"交易", exact:true}).click();
   await expect(page.locator(".notice")).toContainText("日内不写档");
   expect(await readQuickArchive(page)).toBe(priorArchive);

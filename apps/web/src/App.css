@@ -869,6 +869,7 @@
 .mobile-user-section { display: grid; gap: 10px; }
 .layout-mobile .mobile-user-section { margin-top: 8px; padding: 14px; background: #fff; }
 .mobile-user-section h4 { margin: 0 0 2px; color: #333; font-size: 15px; }
+.save-policy-description { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .mobile-user-section button { min-height: 42px; border: 1px solid #eee; border-radius: 4px; background: #fff; color: #333; font-family: inherit; font-size: 14px; text-align: left; padding: 0 12px; }
 
 /* ── 工作台精修：以 token 统一亮/暗主题的层级与密度 ── */

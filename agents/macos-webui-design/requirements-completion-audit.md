@@ -1,0 +1,35 @@
+# 终端需求逐项完成审计
+
+2026-10-05。这是仍在更新的工作审计，不是全部完成声明。将用户原要求、当前owner和证据分开；自动验收通过仅代表相应用例，不替代默认NPC局、真实窗口和全部边界。后续同主题复用此文件。
+
+## 当前需求映射
+
+| 用户要求 | 当前实现及复用边界 | 已有证据 | 仍需关闭的边界 |
+|---|---|---|---|
+| macOS编译、网页可玩、内置浏览器打开 | release WASM/本地Vite服务，原IAB tab2 | 最新独立production成功，实际902×833启动/读档 | 保留本地服务；不把源码HMR当无状态恢复 |
+| 横屏电脑版、竖屏手机版 | App方向判据与各自导航，公共数据/命令 | desktop-workspace、mobile-layout，IAB902及320 | 完整稳定性复验继续 |
+| 同花顺信息层次、模拟器看盘下单布局 | desktop-terminal，右买卖展开底部非模态栏，委托组件唯一实例 | desktop-workspace的多尺寸、草稿、Escape、焦点用例 | 最新27项看盘栏一个超时保留，定向草稿/游戏管理通过不消除它 |
+| 二三级菜单、进入/返回、当前选择 | ChartDisplayMenu：显示→均线/副图→选项；公司报告/报表/附注，行情/个股/F10返回 | 先前完整54项对应通过，实际参考观察见terminal-fidelity-plan | 最新27项菜单/返回8项失败中包含相应路径，不以旧绿代替最新稳定性 |
+| 尽可能以手机版为准复用 | MarketKlinePanel/renderer/gestures/MA、盘口FiveLevelBook、CompanyPanel、UserPanel及命令共用 | shared-mobile-audit、shared-chart-state，两端运行用例 | 分时仅投影及竞价显示共用，桌面与紧凑手机renderer保持不同，不能称全部单renderer |
+| 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏 | 902/1020/1440/844横屏、320/390竖屏验收及IAB | 手机暂停checkbox触控间距实看待改；全局溢出有限fixture不能覆盖任意数据长度 |
+| 分时数据积累后核对 | MobileIntradayProjection与真实权威minute/auction/day candle，时间简化明确 | desktop-intraday、mobile-intraday-projection；先前默认局实看 | 需补最终默认NPC运行后截图，不能只用空局宣布全程正确 |
+| 分时上下界是当日已有最高/最低 | DesktopIntradayChart采样域纳入有成交权威OHLC，零成交占位不污染域 | desktop-intraday.test精确上下界/单价/重渲染 | 手机继续自己的紧凑scale；用户原要求的两端范围需对照确认，不猜测扩大 |
+| 集合竞价左侧不空、无单0轴、更新粗点，连续竞价无点 | auctionDisplayPoints无指示价映射昨收0%，updated标指示价/可匹配量更新；两端auction dots，连续仅polyline | 两端projection/SSR，desktop连续无circle断言 | 粗点为竞价指示更新，不冒充已成交；仍需最终默认局动态视觉证据 |
+| 去掉图内TradingView标 | Lightweight Charts attributionLogo=false；SVG K线无logo | price-chart-runtime，游戏管理保留关于图表归属说明 | 不删除库必须的归属信息；当前K线截图可见无图内标 |
+| 均线多选、鲜明颜色、MA5/10/20/30/60数量/顶部布局 | kline-moving-averages五条橙/蓝/紫/青/橙红；MarketKlinePanel共享开关和数值图例 | desktop多选、shared-chart-state，颜色源常量核对 | 不把viewport天数当MA；不改变其他外壳配色 |
+| 滚轮缩放、Shift滚轮平移 | useKlineGestures共同输入，无设备两份逻辑 | desktop-workspace鼠标与手势；kline-gestures短测 | 最新27项对应通过，但不声称任何硬件滚轮都实测 |
+| 触屏双指缩放、单指点按对齐 | 同一useKlineGestures处理pinch/tap，拖动阈值与合成click抑制 | desktop工作台触屏用例 | 真实实体触屏未实测，浏览器合成手势已验收 |
+| 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最新27项详情用例通过但耗时贴近限制 |
+| SVG拉伸边框不变粗 | SVG renderer的non-scaling-stroke，坐标文字DOM | desktop轮廓拉伸、kline-coordinates | 自动几何/样式检查已做，任意系统缩放组合未全部验证 |
+| 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | 产品仍显示不可用NPC诊断入口，需按实际debug能力核对是否应隐藏 |
+| 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 精确净利gold12928574075.43对actual12822166575.42因果仍未核清，不可改gold凑绿 |
+| 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | 文件选择在pending写入期间的边界未本批扩展；首日缺DB的旧E2E helper检查会造空库，不应复用到该前提 |
+| 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c0ea9f1本地==origin；每批review记录 | 全部goal未完成，不将阶段提交当整体收尾 |
+
+## 验证状态不能合并
+
+- 快速槽屏障批：833/833 Web，完整54浏览器53通过1旧财务gold失败42.3秒，production成功。
+- 日终文案首轮：27浏览器25通过2新fixture失败；修正只读DB检查后第二轮19通过8原路径失败，2.7分钟。
+- 文案最终仅受影响5项重跑5/5通过15.2秒、24项短测及production成功。没有完整56项全绿的证据。
+- 全库lint仍有5项原有children-prop警告；变更文件lint通过不能冒充全局通过。
+- 完成门禁仍开放：财务gold因果、浏览器时限/返回路径稳定性、默认局分时动态最终证据、手机实际触控热区和不可用诊断入口范围。

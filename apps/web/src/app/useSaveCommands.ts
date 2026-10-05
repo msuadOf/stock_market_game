@@ -154,7 +154,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     }
   }
 
-  // 另存为文件（浏览器 File System Access API / 降级下载；Tauri 原生对话框）
+  // 选择可复用日终文件目标；不在选择时写档，也不以下载冒充文件覆盖。
   async function handleSaveFile() {
     const host = hostRef.current;
     if (host === null) return;

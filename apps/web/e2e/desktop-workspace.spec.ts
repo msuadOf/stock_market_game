@@ -159,7 +159,7 @@ test("交易和游戏管理各有入口，切换不丢委托草稿，横竖屏�
   const quantity = page.getByPlaceholder("买入按手；零股一次卖完");
   await quantity.fill("300");
   await nav.getByRole("button", { name: "游戏", exact: true }).click();
-  await expect(page.getByRole("button", { name: "保存当前进度" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "日终存档说明" })).toBeVisible();
   await nav.getByRole("button", { name: "交易", exact: true }).click();
   await expect(quantity).toHaveValue("300");
   await expect(page.locator("#section-positions")).toBeVisible();
@@ -383,7 +383,7 @@ test("同屏委托切换证券同步图表，重复选择不覆盖草稿，隐�
   await page.getByRole("navigation", { name: "个股列表" }).getByRole("button", { name: /芯片科技/ }).click();
   await expect(order.getByPlaceholder("委托价")).toHaveValue("27.50");
   await nav.getByRole("button", { name: "游戏", exact: true }).click();
-  const save = page.getByRole("button", { name: "保存当前进度" });
+  const save = page.getByRole("button", { name: "日终存档说明" });
   await save.focus();
   await page.keyboard.press("Escape");
   await expect(save).toBeFocused();
