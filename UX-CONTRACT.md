@@ -36,7 +36,8 @@
 | Toast | 现有 `notice` live region | `App.tsx` | success/error 文案 | 屏幕阅读器语义检查 |
 | Layer / overlay | `apps/web/src/index.css` 全局层级 token | `DESIGN.md` | 详情、底栏、遮罩、交易底页 | 浏览器叠层与焦点检查 |
 | 图表周期 | `ChartPeriodTabs` | App 共用 chartPeriod | 桌面／手机容器；分时、日K、周K、月K | 键盘、横竖屏与聚合根数测试 |
-| 图表设置菜单 | `ChartDisplayMenu` + Blueprint Popover | MarketKlinePanel 的 MA／indicator 状态 | 均线多选、副图单选；直接按钮与菜单共享状态 | 窄屏、逐层 Escape、外部点击及隐藏页测试 |
+| 图表设置菜单 | `ChartDisplayMenu` + Blueprint Popover | Redux chartSettings 的 MA／indicator 状态 | 均线多选、副图单选；直接按钮与菜单共享状态 | 窄屏、逐层 Escape、外部点击及隐藏页测试 |
+| K线窗口 | `MarketKlinePanel` + `KlineViewportControls` | Redux chartSettings.viewports，按证券 code | 两端共用窗口，短历史夹住可见范围，显式操作先归一化 | 切股、横竖屏、短历史边界及手势检查 |
 | 个股行情摘要 | `marketQuoteFacts` | 引擎活动日K精确 OHLCV 与成交统计 | 桌面行情标签、手机报价和资金页 | 零成交、缺失统计与精确金额测试 |
 | 个股成交明细 | `MarketTradeTape` | 统一宿主最近100笔市场成交缓存 | 桌面右栏、手机分时右栏 | 证券筛选、小数手、缓存展开浏览器检查 |
 | 证券范围与查询 | `SecurityListControls` | App/useSecurityBrowser | 原生 search 无浏览器约束校验，名称／代码查询；全部／自选／持仓 | 空态、Enter／Escape、横竖屏与真实行序检查 |
@@ -115,7 +116,7 @@
 - 桌面图表标题中的昨收来自精确 `Cents`，不能由近似坐标反算；MACD 纵轴按实际数据缩放，全零结果居中。
 - 按用户最新要求，桌面和移动端的竞价 `null` 槽沿昨收 0% 参考轴显示，不更改原始行情。有效指示价或可匹配量改变时绘粗点（不是已成交）；连续竞价保持普通折线，不绘粗点。未来未发生槽位不补线。
 - 两端 K 线顶部周期栏下的 MA5/MA10/MA20/MA30/MA60 数值图例是均线多选开关，默认全部显示，数值显示三位小数，历史不足时显示“—”，不改变 K 线显示范围。各线按当前周期连续 N 根 K 线收盘价计算 SMA，未满 N 根不补值；按钮选中色与对应曲线一致，再次点击独立关闭。周K、月K按现有每5／20个游戏交易日聚合，图内必须明确标注简化，不冒充公历周期。
-- “显示 → 均线／副图指标”在同一 Popover 内逐级进入，均线多选不关闭，副图单选关闭并把焦点还给显示按钮。上下／Home／End 浏览条目，右方向键进入、左方向键或 Escape 返回；根级 Escape 关闭，Tab 退出，外部点击关闭。图表隐藏、锚点不可见时撤下 portal，不在 F10 公司页遗留。菜单和直接按钮共享状态，无第二份配置。MA／indicator 在同一组件的分时、日周月切换中保留；横竖屏实例重建仍使用局部默认配置，该限制不称为跨端设置保持。
+- “显示 → 均线／副图指标”在同一 Popover 内逐级进入，均线多选不关闭，副图单选关闭并把焦点还给显示按钮。上下／Home／End 浏览条目，右方向键进入、左方向键或 Escape 返回；根级 Escape 关闭，Tab 退出，外部点击关闭。图表隐藏、锚点不可见时撤下 portal，不在 F10 公司页遗留。菜单和直接按钮共享状态，无第二份配置。MA／indicator 由 Redux chartSettings 在全部证券及横竖屏共用；viewport 按证券 code 保存。对齐线/详情只属于当前图表实例，重建后关闭；图表偏好只在当前应用会话保留，刷新使用初始值，不写入游戏存档。
 - 两端 K 线复用 MarketKlinePanel，默认72槽、同一组缩放/历史窗口操作；五档盘口复用 FiveLevelBook。MA、蜡烛、成交量及指标横向槽位一致，价格域包含选中 MA，桌面切换分时/日K保留开关与窗口。
 - K线交互不按设备分支：滚轮向上放大、向下缩小；Shift+滚轮向上向较早历史移动、向下向较新历史移动；双指张开放大、合拢缩小。点击或轻点吸附真实K线，黑色竖线同步穿过价/量/指标；空白槽位不虚构选中数据，未选中时单指拖动保留页面滚动。
 - 点选K线后显示详情小窗；鼠标移动/触屏单指拖动按真实槽位吸附，小窗及MA/量/指标数值同步。关闭小窗后恢复最新可见值和单指页面滚动。引擎历史时间按游戏交易日序显示，不伪造公历日期；无权威成交额时显示“—”。蜡烛与量柱轮廓采用 non-scaling-stroke，SVG 拉伸不放大线宽。

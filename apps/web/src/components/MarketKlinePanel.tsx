@@ -3,18 +3,21 @@ import { yuan, formatCentsAmount } from "../utils/format.ts";
 import { useKlineGestures } from "./useKlineGestures.ts";
 import { klineTapIndex } from "./kline-gestures.ts";
 import { ChartDisplayMenu } from "./ChartDisplayMenu.tsx";
-import { CHART_INDICATORS, type ChartIndicator } from "./chart-display-options.ts";
+import { CHART_INDICATORS } from "./chart-display-options.ts";
+import { useDispatch, useSelector } from "react-redux";
+import type { AppDispatch, RootState } from "../store/store.ts";
+import { changeChartViewport, selectChartViewport, setChartIndicator, toggleChartAverage } from "../store/chart-settings-slice.ts";
 import { useMemo, useState } from "react";
 import type { KlinePoint } from "./PriceChart.tsx";
 import type { IndicatorCalculator } from "./indicator-results.ts";
 import { useIndicatorResults } from "./useIndicatorResults.ts";
 import { KLINE_MOVING_AVERAGES, klineMovingAverage } from "./kline-moving-averages.ts";
 import { KlineViewportControls } from "../mobile/KlineViewportControls.tsx";
-import { aggregateCandles, klineWindow, formatTradeLots, priceChangePercent, MOBILE_KLINE_DEFAULT_CAPACITY, MobileKlineProjection, reduceKlineViewport, type KlineViewportAction } from "../mobile/market-model.ts";
+import { aggregateCandles, klineWindow, formatTradeLots, priceChangePercent, MobileKlineProjection, type KlineViewportAction } from "../mobile/market-model.ts";
 import type { MobileChartPeriod } from "../mobile/mobile-ui-state.ts";
 import "../mobile/MobileStockDetail.css";
-interface Props { dailyCandles: readonly KlinePoint[]; period: MobileChartPeriod; indicatorCalculator: IndicatorCalculator | null; }
-export function MarketKlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "dailyCandles" | "period" | "indicatorCalculator">) {
+interface Props { code: string; dailyCandles: readonly KlinePoint[]; period: MobileChartPeriod; indicatorCalculator: IndicatorCalculator | null; }
+export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculator }: Props) {
   const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
   const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod), [candlePeriod, dailyCandles]);
   const indicatorInput = useMemo(() => ({
@@ -22,12 +25,15 @@ export function MarketKlinePanel({ dailyCandles, period, indicatorCalculator }: 
     candles: allCandles.map(({ high, low, close }) => ({ high, low, close })),
   }), [allCandles]);
   const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
-  const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
-  const [indicator, setIndicator] = useState<ChartIndicator>("kdj");
-  const [selected, setSelected] = useState<readonly number[]>(KLINE_MOVING_AVERAGES.map(item => item.days));
+  const dispatch = useDispatch<AppDispatch>();
+  const storedViewport = useSelector((state: RootState) => selectChartViewport(state.chartSettings, code));
+  const viewport = klineWindow(allCandles.length, storedViewport.capacity, storedViewport.offsetFromEnd);
+  const indicator = useSelector((state: RootState) => state.chartSettings.indicator);
+  const selected = useSelector((state: RootState) => state.chartSettings.selectedAverages);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
-  const toggleAverage = (days: number) => setSelected(current => current.includes(days) ? current.filter(day => day !== days) : [...current, days]);
-  const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
+  const toggleAverage = (days: number) => dispatch(toggleChartAverage(days));
+  const setIndicator = (value: typeof indicator) => dispatch(setChartIndicator(value));
+  const act = (action: KlineViewportAction) => dispatch(changeChartViewport({ code, total: allCandles.length, action }));
   const gestureRef = useKlineGestures(act, (x, width) => {
     const range = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
     const index = klineTapIndex(x, width, range.capacity, range.end - range.start);

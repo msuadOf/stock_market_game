@@ -88,3 +88,19 @@ TDD证据包括：共用周期及菜单缺失；F10切公司页遗留portal；32
 原浏览器红测复现失败；第一次修复后 check() 仍因异步确认要求即时状态失败，保留日志而不称通过。最终用 click 后逐步等待选中/取消状态，并加强两次 sessionStorage 精确断言；不采用乐观状态、不弱化确认要求。9项相关短测通过（case/命令10000ms、concurrency=3），2项移动浏览器验收通过（实际2 workers、8.1秒含构建、暂停偏好case1.7秒）。production build与release WASM验证通过（RAYON_NUM_THREADS=10），四个变更源码/测试文件lint与git diff --check通过。独立复核再次通过，见pause-preferences-independent-review.md。
 
 本批未重复完整回归，不据此称其他四项公司报告/活动委托/存档失败已解决。完整终端目标继续在途；暗色共享图表/盘口、横竖屏图表设置保持及剩余层级继续处理。
+
+## 2026-10-05 共用图表设置与数据面主题批次
+
+将 MarketKlinePanel 的 MA 开关与 indicator 迁入独立 Redux chartSettings，两端及全部证券共用；viewport 按证券 code 保存，不同证券互不串窗口。当前应用会话/横竖屏/切股往返保留，刷新恢复初始值，不写游戏存档；selectedTime 保持局部，实例重建或切股后关闭。沿用共用 klineWindow/reduceKlineViewport，较短历史限制可见窗口，用户操作先按当前 total 归一化，不在 render/隐藏实例自动改写窗口。
+
+共用 MobileStockDetail.css 拥有浅色 K 线/FiveLevelBook 文字与涨跌/平价/深度 token，移除桌面重复覆盖，暗色外壳不再把浅字继承到白底；MA 调色、外壳主题及领域行情都未改变。
+
+TDD：深色文字实际rgb237/243/251，预期34/34/34；跨屏MA5误恢复true，预期false，均有有效行为红证据。第一次状态红用了非exact的 getByLabel 同时匹配关闭按钮，不能算有效状态失败；纠正后再取得跨屏红证据。复核发现旧桌面flat高优先级覆盖、.test.tsx不能原生执行、短历史首次右移无动作，三项均修复再次通过。原生测试保留.ts入口，用单个现有Vite编译的ChartSettingsFixture.tsx创建独立SSR store；保留全部原断言，没有新增依赖/抑制规则。短历史红测实际offset8，预期0；归一化后通过。
+
+最终31项相关短测通过1.39秒（case/命令10000ms、concurrency=3），独立复核23项通过0.808秒。21项专项浏览器全部通过17.3秒（workers=3、共享300000ms外部deadline），覆盖菜单、桌面/触屏手势、详情吸附、线宽、看盘交易、320px与切股/横竖屏设置保持。production构建与release WASM验证通过，RAYON_NUM_THREADS=10；新/生产变更文件lint、strict audit及git diff --check通过，手机改动test仍有原先2项children-prop告警，未称该文件lint clean。独立记录shared-chart-state-independent-review.md无未修复有效finding，旧DESIGN/UX跨实例恢复默认描述已直接替换。
+
+完整浏览器41项：37通过、4失败，56.2秒。暂停偏好通过；公司报告2项、连续竞价活动委托与日终存档2项仍失败，未证明全部baseline。全量Web短测仍缺desktop生成acl-manifests.json而2个shard失败，未完成全量；10核机器实际8个worker，CPU抽样有146.3%、89.6%、85.2%的独立进程。全局lint仍5项原先children-prop告警。
+
+真实窗口实看902×833深色及320×844手机：MA5关闭/MACD/48槽offset12往返保留，手机chart clientWidth/scrollWidth均309；最终恢复实际视口、浅色、全部MA/KDJ/72最新窗口，选择002156，暂停第1日09:15:55。store源文件热更新触发回启动页，重新启动本地宿主后检查，不声称保留此前局日内行情。未提交模拟交易。日终存档未处理请求错误仍明确显示。截图shared-chart-dark-desktop.jpg、shared-chart-mobile-320.jpg、shared-chart-current-window.jpg。
+
+完整目标仍在途：公司资料/游戏剩余层级和阅读保持、全回归四失败与真实日终错误、行情排序共用状态。后续还须对照参考细查 K 线价格/时间/量能坐标读数、焦点路径及盘口/下单尺寸，不把本批共用状态完成当作全部终端细节完成。

@@ -181,7 +181,7 @@ export function MobileStockDetail(props: Props) {
       <ChartPeriodTabs period={props.period} onChange={props.onPeriodChange} panelId="mobile-chart-panel" variant="detail" />
       <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
         <div hidden={chartType !== "分时"}><IntradayPanel {...props} /></div>
-        <div hidden={chartType === "分时"}><MarketKlinePanel key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} /></div>
+        <div hidden={chartType === "分时"}><MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} /></div>
       </div>
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}

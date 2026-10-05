@@ -150,10 +150,6 @@
 .desktop-terminal .market-chart-slot .msd-kline-meta { height: auto; min-height: 32px; flex: none; }
 .desktop-terminal .market-chart-slot .msd-chart-tools { position: static; flex: none; height: 30px; }
 .desktop-terminal .market-chart-slot .msd-k-volume, .desktop-terminal .market-chart-slot .msd-kdj { flex: none; }
-.desktop-terminal .msd-order-book { --msd-rise: #ef3f49; --msd-fall: #009b22; }
-.desktop-terminal .msd-order-book .rise { color: var(--msd-rise); }
-.desktop-terminal .msd-order-book .fall { color: var(--msd-fall); }
-.desktop-terminal .msd-order-book .flat { color: var(--flat); }
 
 .desktop-terminal .shared-kline-host, .desktop-terminal .shared-intraday-host { height: 100%; }
 

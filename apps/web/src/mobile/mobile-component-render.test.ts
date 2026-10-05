@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createElement } from "react";
+let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { KlinePoint } from "../components/PriceChart.tsx";
@@ -19,6 +20,7 @@ before(async () => {
     server: { middlewareMode: true, ws: false },
     optimizeDeps: { noDiscovery: true },
   });
+  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
   ({ MobileStockDetail } = await vite.ssrLoadModule("/src/mobile/MobileStockDetail.tsx") as typeof import("./MobileStockDetail.tsx"));
   ({ MobileDetailLayer } = await vite.ssrLoadModule("/src/mobile/MobileDetailLayer.tsx") as typeof import("./MobileDetailLayer.tsx"));
 });
@@ -62,7 +64,7 @@ const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, mak
 type DetailProps = Parameters<typeof DetailComponent>[0];
 
 function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘口" | "资金", overrides: Partial<DetailProps> = {}): string {
-  return renderToStaticMarkup(createElement(MobileStockDetail, {
+  return renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MobileStockDetail, {
     code: "600101",
     name: "测试股份",
     market,
@@ -92,7 +94,7 @@ function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘
     onNext() {},
     companyContent: null,
     ...overrides,
-  }));
+  })));
 }
 
 test("移动详情将权威股数接入盘口、逐笔和两种图表的手数显示", () => {

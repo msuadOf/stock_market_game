@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createServer, type ViteDevServer } from "vite";
 import { createElement } from "react";
+let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { aggregateCandles, MobileKlineProjection } from "../mobile/market-model.ts";
 let KlineDetails: typeof import("./MarketKlinePanel.tsx").KlineDetails;
@@ -10,13 +11,14 @@ let vite: ViteDevServer;
 let MarketKlinePanel: typeof import("./MarketKlinePanel.tsx").MarketKlinePanel;
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
+  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
   ({ MarketKlinePanel, MacdPanel, KlineDetails } = await vite.ssrLoadModule("/src/components/MarketKlinePanel.tsx"));
 });
 after(async () => { if (vite) await vite.close(); });
 
 test("共用 K 线包含五条可选均线、手机版蜡烛与量柱及缩放控件", { timeout: 10000 }, () => {
   const dailyCandles = Array.from({ length: 75 }, (_, i) => ({ time: (i * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 250 }));
-  const html = renderToStaticMarkup(createElement(MarketKlinePanel, { dailyCandles, period: "日K", indicatorCalculator: null }));
+  const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
   assert.match(html, /msd-candle-chart/);
   assert.match(html, /msd-k-volume/);
   assert.match(html, /MA60:11.000/);

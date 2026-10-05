@@ -1,4 +1,4 @@
-.mobile-stock-detail {
+:where(.mobile-stock-detail, .msd-kline, .msd-order-book) {
   --msd-red: #f52d38;
   --msd-rise: #ef3f49;
   --msd-fall: #009b22;
@@ -7,10 +7,14 @@
   --msd-border: #e7e7e7;
   --msd-muted: #777;
   --msd-focus: #126fd1;
+  --msd-data-text: #222;
+}
+
+.mobile-stock-detail {
   min-height: 100%;
   padding-bottom: 18px;
   background: #f5f5f5;
-  color: #222;
+  color: var(--msd-data-text);
   container-type: inline-size;
   font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
   font-size: clamp(11px, 3.2cqw, 14px);
@@ -24,6 +28,12 @@
 .mobile-stock-detail .fall { color: var(--msd-fall); }
 .mobile-stock-detail .flat { color: #777; }
 .mobile-stock-detail button:focus-visible { outline: 2px solid #126fd1; outline-offset: -2px; }
+
+/* 共用浅色数据面拥有自己的文字和涨跌色，不继承桌面暗色外壳。 */
+.msd-kline, .msd-order-book { color: var(--msd-data-text); }
+.msd-order-book .rise { color: var(--msd-rise); }
+.msd-order-book .fall { color: var(--msd-fall); }
+.msd-order-book .flat { color: var(--msd-muted); }
 
 .msd-header {
   position: sticky;
