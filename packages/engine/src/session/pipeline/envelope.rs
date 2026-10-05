@@ -111,6 +111,20 @@ impl Envelope {
         self.pending_price
     }
 
+    /// 只重置已校验 private candidate 的 tick 局部资源，不复制键或累计费用。
+    pub(super) fn rebase_for_next_tick(&mut self) -> Result<(), StepFatal> {
+        if self.pending_price.is_some() {
+            return Err(super::ledger_validation::invariant(
+                "live envelope reached tick commit with an unresolved price",
+            ));
+        }
+        self.origin = EnvelopeOrigin::TickStart;
+        self.basis = self.live;
+        self.spent = ResVec::ZERO;
+        self.released = ResVec::ZERO;
+        self.validate()
+    }
+
     pub fn apply(
         &mut self,
         delta: ReceiptDelta,

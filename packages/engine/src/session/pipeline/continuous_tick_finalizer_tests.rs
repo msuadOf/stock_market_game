@@ -7,6 +7,8 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
     setup.ticks_per_day = ticks_per_day;
     setup.closing_auction_ticks = closing_ticks;
     setup.history_len = 2;
+    // 直接测试交易 tick 的 fixture 必须从交易日开始，避免绕过休市日推进。
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
     GameSession::new(setup, 42).unwrap()
 }
 

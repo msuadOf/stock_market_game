@@ -425,6 +425,8 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
 fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockCode) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // 本用例的现金断言以 10 万元开局；不跟随产品默认开局资金变化。
+    setup.config.starting_cash = Money::from_cents(10_000_000);
     let mut game = GameSession::new(setup, 42).unwrap();
     // Product sessions are correctly fixed to A-share T+1. The false branch is an
     // in-crate test seam for the lower settlement transaction only.

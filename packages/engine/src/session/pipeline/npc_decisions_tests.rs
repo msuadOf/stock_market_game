@@ -16,6 +16,29 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[test]
+fn external_host_consumes_npc_results_on_its_calling_thread() {
+    assert!(rayon::current_thread_index().is_none());
+    let caller = std::thread::current().id();
+    let mut consumed = Vec::new();
+    stream_npc_decisions(
+        snapshot(vec![AccountId(1), AccountId(2)]),
+        &crate::GameConfig::proposed_defaults(),
+        |completed| {
+            assert_eq!(
+                std::thread::current().id(),
+                caller,
+                "外部宿主不应为每个 tick 创建消费线程"
+            );
+            consumed.push(completed.account);
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+    consumed.sort();
+    assert_eq!(consumed, [AccountId(1), AccountId(2)]);
+}
+
+#[test]
 fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;

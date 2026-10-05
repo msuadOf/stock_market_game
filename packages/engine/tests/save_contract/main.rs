@@ -9,7 +9,7 @@ use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, SIMULATION_POLICY_ID,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, WithinKindDistribution, SIMULATION_POLICY_ID,
 };
 
 mod bank_policy;

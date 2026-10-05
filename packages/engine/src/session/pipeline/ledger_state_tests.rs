@@ -8,6 +8,34 @@ use super::{
 use crate::{GameConfig, Money};
 
 #[test]
+fn active_rebase_keeps_untouched_pages_shared_and_preserves_fee_audit() {
+    let first = existing(key(), Money::from_cents(100));
+    let mut far_key = key();
+    far_key.account = crate::AccountId(512);
+    far_key.order = crate::OrderId(512);
+    let untouched = existing(far_key.clone(), Money::from_cents(200));
+    let mut candidate = EnvelopeLedger::new(7, [first.clone(), untouched.clone()]).unwrap();
+    let mut release = expiry_release(first.key().clone(), ResVec::new(Money::from_cents(100), 0));
+    candidate.apply(std::slice::from_mut(&mut release)).unwrap();
+    candidate
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    let before = candidate.clone();
+    candidate.rebase_private_for_tick_commit().unwrap();
+    assert!(
+        std::ptr::eq(
+            before.get(&far_key).unwrap(),
+            candidate.get(&far_key).unwrap()
+        ),
+        "处理其他账户的终结行不应重建未触及 page"
+    );
+    assert_eq!(candidate.get(&far_key).unwrap(), &untouched);
+    assert_eq!(candidate.next_receipt_index(), before.next_receipt_index());
+    assert_eq!(candidate.terminal_count(), 0);
+    candidate.validate_complete_evidence().unwrap();
+}
+
+#[test]
 fn hydration_rejects_same_length_field_key_and_terminal_mismatches_atomically() {
     let first = existing(key(), Money::from_cents(100));
     let second =

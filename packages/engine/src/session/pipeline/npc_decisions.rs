@@ -305,7 +305,8 @@ where
 
     let (sender, receiver) = mpsc::channel();
     #[cfg(not(target_arch = "wasm32"))]
-    {
+    if rayon::current_thread_index().is_some() {
+        // Rayon worker 调用时，独立 consumer 让并发会话不会占满 pool 后相互等待。
         return std::thread::scope(|threads| {
             let account_count = snapshot.due_npc_ids().len();
             let consumer = threads
@@ -328,7 +329,7 @@ where
                 .expect("NPC completion consumer thread must not panic")
         });
     }
-    #[cfg(target_arch = "wasm32")]
+    // 外部宿主在原调用线程消费，避免每个市场 tick 新建一个 OS thread。
     rayon::in_place_scope(|scope| {
         for account in snapshot.due_npc_ids().iter().copied() {
             let sender = sender.clone();

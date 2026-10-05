@@ -35,6 +35,7 @@ mod executor_perturbation_tests;
 mod institutional_experience_projection;
 mod intent_candidates;
 mod ledger;
+mod ledger_paged_map;
 mod ledger_rows;
 mod ledger_candidate;
 mod ledger_conservation;

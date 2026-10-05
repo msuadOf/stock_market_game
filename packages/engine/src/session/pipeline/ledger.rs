@@ -1,9 +1,10 @@
+use super::ledger_paged_map::LedgerPagedMap;
 use super::ledger_rows::SharedRows;
 use super::{
     ledger_candidate, ledger_conservation, ledger_validation, Envelope, EnvelopeAudit, EnvelopeKey,
     EnvelopeOrigin, FeeComponents, ReceiptDelta, ReceiptLocalKey, ResVec, StepFatal,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, Weak};
 
 #[cfg(test)]
@@ -61,10 +62,10 @@ impl ConservationState {
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct EnvelopeLedger {
-    pub(super) envelopes: SharedRows<BTreeMap<EnvelopeKey, Envelope>>,
-    pub(super) terminal_envelopes: SharedRows<BTreeMap<EnvelopeKey, Envelope>>,
-    pub(super) audits: SharedRows<BTreeMap<EnvelopeKey, EnvelopeAudit>>,
-    pub(super) conservation: SharedRows<BTreeMap<EnvelopeKey, ConservationState>>,
+    pub(super) envelopes: SharedRows<LedgerPagedMap<Envelope>>,
+    pub(super) terminal_envelopes: SharedRows<LedgerPagedMap<Envelope>>,
+    pub(super) audits: SharedRows<LedgerPagedMap<EnvelopeAudit>>,
+    pub(super) conservation: SharedRows<LedgerPagedMap<ConservationState>>,
     pub(super) seen_local_keys: BTreeSet<ReceiptLocalKey>,
     pub(super) next_receipt_index: u64,
     #[serde(skip)]
@@ -73,10 +74,10 @@ pub struct EnvelopeLedger {
 
 #[derive(Debug)]
 struct EvidenceCache {
-    envelopes: Weak<BTreeMap<EnvelopeKey, Envelope>>,
-    terminal: Weak<BTreeMap<EnvelopeKey, Envelope>>,
-    audits: Weak<BTreeMap<EnvelopeKey, EnvelopeAudit>>,
-    conservation: Weak<BTreeMap<EnvelopeKey, ConservationState>>,
+    envelopes: Weak<LedgerPagedMap<Envelope>>,
+    terminal: Weak<LedgerPagedMap<Envelope>>,
+    audits: Weak<LedgerPagedMap<EnvelopeAudit>>,
+    conservation: Weak<LedgerPagedMap<ConservationState>>,
 }
 
 impl PartialEq for EnvelopeLedger {
@@ -120,15 +121,17 @@ impl EnvelopeLedger {
     ) -> Result<Self, StepFatal> {
         #[cfg(test)]
         LEDGER_CONSTRUCTION_COUNT.with(|count| count.set(count.get() + 1));
-        let mut values = BTreeMap::new();
-        let mut audits = BTreeMap::new();
-        let mut conservation = BTreeMap::new();
+        // 直接构建分页行；不先分配完整 BTreeMap 再逐行转入第二份树。
+        let mut values = LedgerPagedMap::default();
+        let mut audits = LedgerPagedMap::default();
+        let mut conservation = LedgerPagedMap::default();
         for envelope in envelopes {
             let key = envelope.key().clone();
-            if values.insert(key.clone(), envelope.clone()).is_some() {
+            let audit = envelope.audit();
+            if values.insert(key.clone(), envelope).is_some() {
                 return Err(ledger_validation::invariant("duplicate envelope"));
             }
-            audits.insert(key.clone(), envelope.audit());
+            audits.insert(key.clone(), audit);
             conservation.insert(key, ConservationState::EMPTY);
         }
         Ok(Self {
@@ -345,8 +348,7 @@ impl EnvelopeLedger {
         Ok(())
     }
 
-    /// CommitTick owner 在失败时已丢弃完整 tick candidate。
-    /// 直接移出 candidate 的 live rows，避免再次复制账本。
+    /// CommitTick owner 在失败时丢弃完整 tick candidate；只 detach 实际变化的页。
     pub(super) fn rebase_private_for_tick_commit(&mut self) -> Result<(), StepFatal> {
         validate_ledger_evidence(self)?;
 
@@ -367,37 +369,43 @@ impl EnvelopeLedger {
             return Ok(());
         }
 
-        let mut envelopes = BTreeMap::new();
-        for (key, envelope) in std::mem::take(&mut self.envelopes) {
-            if envelope.pending_price().is_some() {
-                return Err(ledger_validation::invariant(
-                    "live envelope reached tick commit with an unresolved price",
-                ));
-            }
-            let live = envelope.live();
-            let rebased = Envelope::tick_start_existing(
-                key.clone(),
-                live.cash,
-                live.shares,
-                envelope.audit(),
-            );
-            rebased.validate()?;
-            envelopes.insert(key, rebased);
+        let changed: Vec<_> = self
+            .envelopes
+            .iter()
+            .filter_map(|(key, envelope)| {
+                (envelope.origin() != EnvelopeOrigin::TickStart
+                    || envelope.basis() != envelope.live()
+                    || envelope.pending_price().is_some())
+                .then(|| key.clone())
+            })
+            .collect();
+        for key in changed {
+            let envelope = self
+                .envelopes
+                .get_mut(&key)
+                .expect("rebase 行来自仍拥有的 private ledger");
+            envelope.rebase_for_next_tick()?;
         }
 
         // Source evidence was checked above. Each new basis equals its live
         // balance, so its empty conservation row is valid by construction.
         // Keep the already owned audit rows instead of cloning every live key.
-        self.audits.retain(|key, _| envelopes.contains_key(key));
-        self.conservation.retain(|key, state| {
-            if envelopes.contains_key(key) {
-                *state = ConservationState::EMPTY;
-                true
-            } else {
-                false
-            }
-        });
-        self.envelopes = envelopes.into();
+        let terminal: Vec<_> = self.terminal_envelopes.keys().cloned().collect();
+        for key in terminal {
+            self.audits.remove(&key);
+            self.conservation.remove(&key);
+        }
+        let changed_conservation: Vec<_> = self
+            .conservation
+            .iter()
+            .filter_map(|(key, state)| (*state != ConservationState::EMPTY).then(|| key.clone()))
+            .collect();
+        for key in changed_conservation {
+            *self
+                .conservation
+                .get_mut(&key)
+                .expect("rebase 守恒行来自仍拥有的 private ledger") = ConservationState::EMPTY;
+        }
         self.terminal_envelopes.clear();
         self.seen_local_keys.clear();
         Ok(())

@@ -71,6 +71,11 @@ struct LiveOrderReservations {
     reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static RESERVATION_RECORD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl LiveOrderReservations {
     // 订单事实按原调用点逐项传入，避免增加仅用于参数打包的 DTO。
     #[allow(clippy::too_many_arguments)]
@@ -84,6 +89,8 @@ impl LiveOrderReservations {
         filled_value: Money,
         config: &GameConfig,
     ) {
+        #[cfg(test)]
+        RESERVATION_RECORD_COUNT.with(|count| count.set(count.get() + 1));
         if side == Side::Sell {
             let reserved = self
                 .reserved_sell_qty
@@ -134,7 +141,9 @@ impl GameSession {
     ) -> Snapshot {
         let mut reservations = LiveOrderReservations::default();
         for (code, market) in &self.state.markets {
-            for order in market.resting_orders() {
+            for order in market.resting_order_refs()
+                .filter(|order| include_npc_accounts || order.owner == AccountId(0))
+            {
                 reservations.record_order(
                     order.owner,
                     code,
@@ -147,7 +156,9 @@ impl GameSession {
             }
         }
         for (code, orders) in &self.state.auction_orders {
-            for order in orders {
+            for order in orders.iter()
+                .filter(|order| include_npc_accounts || order.owner == AccountId(0))
+            {
                 reservations.record_order(
                     order.owner,
                     code,
@@ -177,11 +188,16 @@ impl GameSession {
                 )
             })
             .collect();
-        let accounts = self
-            .state
-            .accounts
-            .iter()
-            .filter(|(id, _)| include_npc_accounts || id.0 == 0)
+        // 高频 protocol 只发布玩家账户；直接查找，避免每帧扫描全部 NPC 账户。
+        let player = AccountId(0);
+        let selected_accounts: Box<dyn Iterator<Item = (&AccountId, &Account)> + '_> =
+            if include_npc_accounts {
+                Box::new(self.state.accounts.iter())
+            } else {
+                Box::new(self.state.accounts.get(&player)
+                    .map(|account| (&player, account)).into_iter())
+            };
+        let accounts = selected_accounts
             .map(|(id, a)| {
                 let (reserved_cash, reserved_sell_qty) = reservations.take_for(*id);
                 (
@@ -236,6 +252,39 @@ impl GameSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_snapshot_projects_only_player_reservations_but_full_snapshot_keeps_npcs() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.npcs.inst_count = 1;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let code = session.state.setup.stocks[0].code.clone();
+        for owner in [AccountId(0), AccountId(1)] {
+            session.state.markets.get_mut(&code).unwrap().place(Order {
+                id: OrderId(owner.0 + 1), owner, side: Side::Buy,
+                price: Money::from_cents(900), qty: 100, original_qty: 100,
+                filled_qty: 0, filled_value: Money::ZERO, seq: owner.0 + 1,
+            }).unwrap();
+            session.state.auction_orders.entry(code.clone()).or_default().push(AuctionOrderSnap {
+                order_id: owner.0 + 3, owner, side: Side::Sell,
+                limit: Money::from_cents(1100), qty: 200,
+            });
+        }
+        RESERVATION_RECORD_COUNT.with(|count| count.set(0));
+        let player = session.runtime_snapshot();
+        assert_eq!(RESERVATION_RECORD_COUNT.with(|count| count.get()), 2,
+            "只发布玩家账户时，不应计算并分配 NPC 的资源预留");
+        RESERVATION_RECORD_COUNT.with(|count| count.set(0));
+        let full = session.snapshot_inner(false, true);
+        assert_eq!(RESERVATION_RECORD_COUNT.with(|count| count.get()), 4);
+        assert_eq!(player.accounts.len(), 1);
+        for owner in [AccountId(0), AccountId(1)] {
+            assert_eq!(full.accounts[&owner].reserved_cash, Money::from_cents(90_501));
+            assert_eq!(full.accounts[&owner].reserved_sell_qty[&code], 200);
+        }
+        assert_eq!(serde_json::to_value(&player.accounts[&AccountId(0)]).unwrap(),
+            serde_json::to_value(&full.accounts[&AccountId(0)]).unwrap());
+    }
 
     #[test]
     fn snapshot_reservations_combine_continuous_auction_and_partial_orders() {

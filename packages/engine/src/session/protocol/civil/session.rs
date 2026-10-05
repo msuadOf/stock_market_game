@@ -8,7 +8,8 @@ use std::sync::Arc;
 /// 一个未发布宿主批次的共同回滚集合；GameSession 保留自身 tick authority。
 struct ProtocolState {
     game: GameSession,
-    intraday: AppendOnlyHistory<TickFrame>,
+    // 回滚点只复制 chunk 中的 Arc，已提交 frame 的 events/facts/payload 保持不可变共享。
+    intraday: AppendOnlyHistory<Arc<TickFrame>>,
     fact_cursor: PublicationFactCursor,
     day_end_save: Option<Arc<crate::SaveSlot>>,
     published_runtime: RefCell<Option<super::super::PublicRuntimeState>>,
@@ -268,7 +269,7 @@ impl ProtocolSession {
         };
         drop(checkpoint);
         self.state.fact_cursor.append_committed_facts(&frame.facts);
-        self.state.intraday.push(frame.clone());
+        self.state.intraday.push(Arc::new(frame.clone()));
         Ok(frame)
     }
 
@@ -298,7 +299,7 @@ impl ProtocolSession {
         };
         drop(checkpoint);
         self.state.fact_cursor.append_committed_facts(&frame.facts);
-        self.state.intraday.push(frame.clone());
+        self.state.intraday.push(Arc::new(frame.clone()));
         Ok((frame, evidence))
     }
 
@@ -314,7 +315,8 @@ impl ProtocolSession {
         let checkpoint = self.checkpoint()?;
         // Only civil publication needs the full day's transport array. Tick and
         // outer host checkpoints retain shared immutable history chunks.
-        let intraday = self.state.intraday.iter().cloned().collect::<Vec<_>>();
+        let intraday = self.state.intraday.iter()
+            .map(|frame| frame.as_ref().clone()).collect::<Vec<_>>();
         let result = self
             .state
             .game
@@ -1211,6 +1213,28 @@ mod rollback_tests {
             session.state.intraday.len(),
             checkpoint.state.intraday.len() + 1
         );
+    }
+
+    #[test]
+    fn checkpoint_append_shares_frames_in_the_incomplete_tail_chunk() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.ticks_per_day = 48;
+        let mut session = ProtocolSession::new(setup, 50).unwrap();
+        for _ in 0..33 {
+            session.step_frame().unwrap();
+        }
+        let checkpoint = session.checkpoint().unwrap();
+        let before = serde_json::to_value(&checkpoint.state.intraday).unwrap();
+        session.step_frame().unwrap();
+        assert!(std::ptr::eq(
+            &session.state.intraday[32].timeseries_payload,
+            &checkpoint.state.intraday[32].timeseries_payload,
+        ), "宿主批次回滚点不得让未满 chunk 中的已提交 TickFrame 深复制");
+        session.rollback(checkpoint);
+        assert_eq!(serde_json::to_value(&session.state.intraday).unwrap(), before);
+        assert_eq!(session.tick(), 33);
+        assert_eq!(session.step_frame().unwrap().tick, 34);
     }
 
     #[test]

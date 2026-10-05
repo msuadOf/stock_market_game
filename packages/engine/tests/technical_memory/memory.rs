@@ -109,6 +109,7 @@ fn public_read_refreshes_recency_for_eviction() {
     // 9 个未持仓股：X 最早观察（minute 1），Y1..Y8 在 2..=9。X 在 minute 100
     // 主动读取公开历史 → last_touched=100，超过所有 Y；驱逐最旧的 Y1 而非 X。
     let mut memory = PersonalPriceMemory::default();
+    let mut reads = PersonalHistoryReadLedger::default();
     let earliest = code("600100");
     memory.observe_price(&earliest, price(1000), 1).unwrap();
     for minute in 2..=9_u64 {
