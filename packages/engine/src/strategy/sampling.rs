@@ -6,7 +6,7 @@ pub(super) fn daily_observations_to_tick_probability(
     observations_per_day: f64,
     ticks_per_day: u64,
 ) -> f64 {
-    1.0 - (-observations_per_day / ticks_per_day as f64).exp()
+    -(-observations_per_day / ticks_per_day as f64).exp_m1()
 }
 
 pub(super) fn sample_between(rng: &mut dyn Rng, low: f64, high: f64) -> f64 {
@@ -54,6 +54,36 @@ pub(super) fn sample_individual_order_size(
 fn sample_u64_inclusive(rng: &mut dyn Rng, low: u64, high: u64) -> u64 {
     let width = high - low + 1;
     low + ((rng.next_f64() * width as f64) as u64).min(width - 1)
+}
+
+#[cfg(test)]
+mod observation_probability_tests {
+    use super::daily_observations_to_tick_probability;
+
+    fn assert_probability(observations_per_day: f64, ticks_per_day: u64, expected_bits: u64) {
+        let actual = daily_observations_to_tick_probability(observations_per_day, ticks_per_day);
+        assert!(actual.is_finite() && actual > 0.0 && actual <= 1.0);
+        assert!(
+            actual.to_bits().abs_diff(expected_bits) <= 1,
+            "观察概率应在高精度参考值的一 ULP 内：actual={actual}, expected={}",
+            f64::from_bits(expected_bits)
+        );
+    }
+
+    #[test]
+    fn moderate_observation_probability_avoids_subtractive_cancellation() {
+        assert_probability(2.4, 60, 0x3fa4_1368_18ff_472b);
+    }
+
+    #[test]
+    fn rare_observation_probability_retains_relative_precision() {
+        assert_probability(0.1, 100_000_000, 0x3e11_2e0b_e801_f1d9);
+    }
+
+    #[test]
+    fn positive_observation_probability_does_not_round_to_zero_at_u64_tick_limit() {
+        assert_probability(0.1, u64::MAX, 0x3bb9_9999_9999_999a);
+    }
 }
 
 #[cfg(test)]
