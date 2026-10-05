@@ -332,3 +332,7 @@ IAB实际第1日09:27:19暂停1x、000812+10.18%两端零轴截图已保存；�
 mobilePrimaryTitle复用securityBrowser.view与共用标签，不以旧入口推断列表标题；其他主页面不变。protocol.effects仅将account0的普通IntentRejected作为玩家拒单通知；NPC事件/facts和游标保留、非玩家SettlementError也继续错误可见。有效红及canonical顺序fixture失败分开保存，13短测/849完整Web/65完整浏览器通过，production362ms/releaseWASM成功，五个旧全库lint告警仍exit1。记录feedback-scope-audit.md，Independent review另建全新gpt-6.1-sol high。
 
 IAB HMR重新回启动，新本地局09:15:51暂停，实际320标题及空态、902跨屏已核对。最终看盘栏实际截图又发现sr-only标签越过滚动容器，document996px而viewport833px；source owner在index.css，下一批专门TDD修复，不能把当前65绿当整个goal完成。
+
+## 2026-10-05 看盘栏外层滚动修复
+
+公共sr-only两锚点修复，保留内滚动和辅助名称；实际IAB同一会话document996→833，面板203/497。新两尺寸真实几何红999/833，初次fixture TS错误单列；增强后完整67/67、1.2分钟及最终production1.15s/tsc/releaseWASM成功，新test lint/strictpremium0finding/diff通过，普通10秒和长300000ms不变。原CPU采样超10秒预算exit1，缩小后exit0但空样本、相关两case2/2，诚实记录于desktop-scroll-audit.md，不以配置冒充实测；五个旧全库lint告警继续保留。新建desktop_scroll_restarted_review_sol_high独立核对本批和19需求，旧desktop_scroll_final_review_sol_high已按用户要求中断，正式新记录desktop-scroll-restarted-independent-review.md。IAB已收栏、分时、自选列表及reset viewport恢复，原tab2保留，09:15:51暂停不推进；自然902×833的document833/833、scrollY0，截图terminal-restored-final-current-window.png。全新review已核对本批与19项并确认产品/测试/契约门禁通过，无待修复finding，正式记录desktop-scroll-restarted-independent-review.md。最后Git在本记录之后执行并验证，不提前编造提交或推送结果。

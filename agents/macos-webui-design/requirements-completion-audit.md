@@ -1,30 +1,30 @@
 # 终端需求逐项完成审计
 
-2026-10-05。这是仍在更新的工作审计，不是全部完成声明。将用户原要求、当前owner和证据分开；自动验收通过仅代表相应用例，不替代默认NPC局、真实窗口和全部边界。后续同主题复用此文件。
+2026-10-05。这是本轮产品交互验收的工作审计；Git结果由本记录之后的提交/推送命令及最终回报验证。将用户原要求、当前owner和证据分开；自动验收通过仅代表相应用例，不替代默认NPC局、真实窗口和全部边界。后续同主题复用此文件。
 
 ## 当前需求映射
 
-| 用户要求 | 当前实现及复用边界 | 已有证据 | 仍需关闭的边界 |
+| 用户要求 | 当前实现及复用边界 | 已有证据 | 状态及验证边界 |
 |---|---|---|---|
 | macOS编译、网页可玩、内置浏览器打开 | release WASM/本地Vite服务，原IAB tab2 | 最新独立production成功，实际902×833启动/读档 | 保留本地服务；不把源码HMR当无状态恢复 |
-| 横屏电脑版、竖屏手机版 | App方向判据与各自导航，公共数据/命令 | desktop-workspace、mobile-layout，IAB902及320 | 最新完整64/64浏览器跨屏/导航通过；保留历史失败与具体设备限制 |
-| 同花顺信息层次、模拟器看盘下单布局 | desktop-terminal，右买卖展开底部非模态栏，委托组件唯一实例 | desktop-workspace的多尺寸、草稿、Escape、焦点用例 | 最新58项看盘栏路径通过；保留此前27项超时历史，不冒称各次均稳定 |
-| 二三级菜单、进入/返回、当前选择 | ChartDisplayMenu：显示→均线/副图→选项；公司报告/报表/附注，行情/个股/F10返回 | 先前完整54项对应通过，实际参考观察见terminal-fidelity-plan | 最新58项相应菜单/返回路径通过；历史19/27失败仍保留 |
+| 横屏电脑版、竖屏手机版 | App方向判据与各自导航，公共数据/命令 | desktop-workspace、mobile-layout，IAB902及320 | 最终完整67/67浏览器跨屏/导航通过；保留历史失败与具体设备限制 |
+| 同花顺信息层次、模拟器看盘下单布局 | desktop-terminal，右买卖展开底部非模态栏，委托组件唯一实例 | desktop-workspace的多尺寸、草稿、Escape、焦点用例 | 最终67项看盘栏路径通过；保留此前27项超时历史，不冒称各次均稳定 |
+| 二三级菜单、进入/返回、当前选择 | ChartDisplayMenu：显示→均线/副图→选项；公司报告/报表/附注，行情/个股/F10返回 | 历史54项及最终67项对应通过，实际参考观察见terminal-fidelity-plan | 最终67项相应菜单/返回路径通过；历史19/27失败仍保留 |
 | 尽可能以手机版为准复用 | MarketKlinePanel/renderer/gestures/MA、盘口FiveLevelBook、CompanyPanel、UserPanel及命令共用 | shared-mobile-audit、shared-chart-state，两端运行用例 | 分时仅投影及竞价显示共用，桌面与紧凑手机renderer保持不同，不能称全部单renderer |
-| 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏；手机暂停选项独立44px整行 | 902/1020/1440/844横屏、320/390竖屏验收及IAB；暂停设置新6项通过，IAB两行44×309px | 手机暂停触控间距已关闭；报价320/390普通/较长/零成交量完整可见、涨跌与日内价格列无重叠；其他更长数据继续实测 |
+| 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏；手机暂停选项独立44px整行 | 902/1020/1440/844横屏、320/390竖屏验收及IAB；暂停设置新6项通过，IAB两行44×309px | 手机暂停触控间距已关闭；报价320/390普通/较长/零成交量完整可见、涨跌与日内价格列无重叠；本批document越界已以真实833/833和新增跨屏case关闭；未据此声称任意数据/硬件组合全覆盖 |
 | 分时数据积累后核对 | MobileIntradayProjection与真实权威minute/auction/day candle，时间简化明确 | desktop-intraday、mobile-intraday-projection；先前默认局实看 | 默认20007 NPC局已实际推进至09:48:49并核对两端截图；未据此声明全天正确 |
 | 分时0%轴永远居中（最新纠正，替代旧高低贴边要求） | symmetricIntradayScale共同对称价域；DesktopIntradayChart纳入有成交OHLC，手机保持原留白，迷你图中轴height/2 | 新单边上下/空/唯一点/极值短测、跨屏E2E；IAB09:34:48真实上涨行情桌面y50、手机141/282px | 显示边界不冒称成交高低；K线未改 |
 | 集合竞价左侧不空、无单0轴、更新粗点，连续竞价无点 | auctionDisplayPoints无指示价映射昨收0%，updated标指示价/可匹配量更新；两端auction dots，连续仅polyline | 两端projection/SSR，desktop连续无circle断言 | 粗点为竞价指示更新，不冒充已成交；默认09:48:49两端已实看，09:30连接仅已有末/首槽，不补数据 |
 | 去掉图内TradingView标 | Lightweight Charts attributionLogo=false；SVG K线无logo | price-chart-runtime，游戏管理保留关于图表归属说明 | 不删除库必须的归属信息；当前K线截图可见无图内标 |
 | 均线多选、鲜明颜色、MA5/10/20/30/60数量/顶部布局 | kline-moving-averages五条橙/蓝/紫/青/橙红；MarketKlinePanel共享开关和数值图例 | desktop多选、shared-chart-state，颜色源常量核对 | 不把viewport天数当MA；不改变其他外壳配色 |
-| 滚轮缩放、Shift滚轮平移 | useKlineGestures共同输入，无设备两份逻辑 | desktop-workspace鼠标与手势；kline-gestures短测 | 最新58项对应通过，但不声称任何硬件滚轮都实测 |
+| 滚轮缩放、Shift滚轮平移 | useKlineGestures共同输入，无设备两份逻辑 | desktop-workspace鼠标与手势；kline-gestures短测 | 最终67项对应通过，但不声称任何硬件滚轮都实测 |
 | 触屏双指缩放、单指点按对齐 | 同一useKlineGestures处理pinch/tap，拖动阈值与合成click抑制 | desktop工作台触屏用例 | 真实实体触屏未实测，浏览器合成手势已验收 |
-| 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最新58项详情用例通过，保留此前耗时/失败记录 |
+| 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最终67项详情用例通过，保留此前耗时/失败记录 |
 | SVG拉伸边框不变粗 | SVG renderer的non-scaling-stroke，坐标文字DOM | desktop轮廓拉伸、kline-coordinates | 自动几何/样式检查已做，任意系统缩放组合未全部验证 |
 | 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | DEV无诊断能力入口已按统一host能力过滤，真实DEV两尺寸/导航后通过；production本就不显示；桌面标题及空态已按同一范围更新，真实WASM及IAB复核通过 |
 | 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 因果已关闭：独立历史/单调用反事实完整报告相等，当前精确gold与分项/1602附注验收通过；见company-causal-audit |
 | 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | FS/Tauri/upload提交前读档、失败/取消及新局pending短测已关闭；不冒称所有原生文件系统环境都实测；首日缺DB不可用会造空库的旧helper |
-| 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c0ea9f1本地==origin；每批review记录 | 全部goal未完成，不将阶段提交当整体收尾 |
+| 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c8dfe6e本地==origin；各批独立review记录 | 本批全新review产品/测试/契约门禁通过，最后commit/push由本记录之后的命令验证；编译agent已停，服务保留 |
 
 ## 验证状态不能合并
 
@@ -88,6 +88,22 @@ IAB原tab2真实DEV页面已实看自选/持仓正确标题及提示，保存sec
 
 IAB HMR回启动页后重新本地启动，新会话09:15:51暂停1x；320实际自选入口→全部标题模拟行情/5行→持仓标题及空态一致，902保持范围。未提交玩家委托、改名单或读私人档；不冒称延续旧09:27:19，也不把早盘无notice当NPC拒单现场证据。
 
-## 当前剩余布局边界
+## 手机反馈批次结束时的布局边界
 
 最终902×833真实K线/MA及报价买入展开交易栏，截图terminal-kline-trade-final-902.png。工作区与body高度833，但html.scrollHeight996；只读DOM定位两个auto-form sr-only绝对定位标签的bottom959.3125/996.3125，无显式锚点，逃离内部滚动区导致document额外滚动。原始几何terminal-trade-scroll-before.json已保存。该问题需下一小批先加真实浏览器失败几何断言，再修公共sr-only owner；本批标题/notice复核不替代它，整体goal仍未闭合。
+
+## 2026-10-05 document滚动边界最终验证
+
+22a1c68/c8dfe6e分主题提交并推送，与origin一致；feedback_scope独立复核逐项读取19需求owner、对应65项真实回归和实际截图，唯一已证实的UI未闭合项是上段document越界。该批没有把原生Tauri打包、任意实体触屏/所有全天组合当本次已验证事实，也不把旧lint告警隐去。
+
+本批公共sr-only仅补top:0/left:0，无页面overflow禁令或新scroll owner。先修新fixture的Node侧document/window类型错误（不作行为红），随后真实902/1020两case均999px对833px为有效红；2/2初绿8.2s，补完整交易页/手机条件单可访问名、编辑、草稿及关闭后2/2、7.4s。增强前完整67/67、47.9s及增强后最终完整67/67、1.2分钟分开记录；每case仍10000ms，workers3/外部300000ms。生产在最后浏览器结束后tsc/Vite1.15s/releaseWASMverified；新增test lint/premium0finding/diff-check通过，JS产品与上批849/849完整Web源相同，不因纯CSS重复短测。
+
+CPU观察的16次ps/8秒sleep超过总10000ms，监督exit1且无样本；缩为6次、逐条flush/单ps1秒后为资源核对重跑两case2/2、27.2s，观察器exit0但六次均未见headless进程。两轮均不冒称本批liveCPU证据；没有抬高时限，也不无限重跑以取得漂亮数值。完整日志及适用限制见desktop-scroll-audit.md。
+
+IAB同一09:15:51暂停会话CSS HMR，document833/833、scrollY0，order-panel203/497内部可滚；terminal-trade-scroll-after.json及terminal-kline-trade-after-902.png为实际修复后证据，不以绿色case替代当前真实窗口。当前服务127.0.0.1:3000已由lsof确认node监听，最终图表/交易截图已保存，已收起看盘交易栏，切回分时与600101自选列表，并reset临时viewport、markDeliverable保留原tab2；自然窗口仍902×833，html833/833、scrollY0，未推进暂停局。恢复截图terminal-restored-final-current-window.png。
+
+本批全新gpt-6.1-sol high独立review正在核对最后diff与19项；用户要求停旧审查并重新新建，desktop_scroll_final_review_sol_high已中断，新desktop_scroll_restarted_review_sol_high使用gpt-6.1-sol high、独立记录desktop-scroll-restarted-independent-review.md。其最终记录与stage/commit/push验证完成前，不宣称整体goal结束。历史失败与已修复证据全部保留；五个旧children-prop告警为仓库既有限制，不是本批新增UI缺陷。
+
+## 本轮最终独立门禁与收尾边界
+
+全新desktop_scroll_restarted_review_sol_high（gpt-6.1-sol high）自行核对完整diff、19项owner、最终67回归、原始几何/截图及财务反事实证据，产品/测试/契约门禁通过，无待修复finding；正式结论见desktop-scroll-restarted-independent-review.md，不使用已中断审查结论替代。当前UI具体边界已关闭，IAB/服务恢复已实测。最后commit/push在本工作记录之后执行并以HEAD与origin一致核对，不在写入记录时虚构Git结果。五个既有lint告警、当前live CPU缺样本、原生打包及实体触屏未实测仍按证据限制保留。

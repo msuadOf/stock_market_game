@@ -152,6 +152,8 @@
 
 - 玩家操作反馈：protocol.effects 只把 account 0 的 IntentRejected 映射到玩家“委托被拒”notice，沿用 GameSession 的既有玩家身份（packages/engine/src/session.rs）和 docs/architecture.md 对业务拒绝与 StepFatal 的区分；NPC 普通拒单完整保留在 events/facts、游标和重试校验中。SettlementError 保留原显式错误通知，不以账户过滤系统故障。所有宿主与两端复用同一效果投影。
 
+- 隐藏辅助文本：公共 index.css 的 .sr-only 使用明确 top/left 锚点与原一像素裁切，保留 label 关联及描述，不把长内容的隐藏文本投射到 document 滚动范围。桌面看盘栏及完整交易页只滚动既有内部面板；手机底页的条件单名称、编辑、草稿保持与关闭仍正常可用，不以 document overflow:hidden 遮掩几何错误。
+
 - 文件读取屏障：文件读档与错误恢复先完成用户选择，再等待已提交的日终写入，随后读取内容；取消不进入屏障，不使当前写入失效。写入失败（包括 AbortError）明确报错，不冒充取消或回退旧档。新局沿用旧写入失效后等待退出的既有契约。
 
 - 用户2026-10-05最新指定：分时线（不是K线）的昨收0%轴永远位于价格绘图区正中。桌面详情、手机详情与行情列表分时预览使用 symmetricIntradayScale 的对称价域，按已出现的最大绝对偏离展开；中心参考轴及涨跌幅标签保持50%，K线坐标不变。桌面纳入有成交的权威当日OHLC极值，零成交占位不扩大价域。对称边界是坐标刻度，不冒称真实高低成交价格。
