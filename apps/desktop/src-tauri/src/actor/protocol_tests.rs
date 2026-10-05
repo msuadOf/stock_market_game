@@ -1,5 +1,112 @@
 use super::*;
+
+#[tokio::test]
+async fn civil_batch_preparation_defers_ingress_calendar_until_success() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-01").unwrap();
+    setup.npcs.inst_count = 0;
+    setup.ticks_per_day = 2;
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    let source = game.shared_ingress();
+    let intent = engine::Intent::Cancel {
+        code: engine::StockCode("600101".into()),
+        id: engine::OrderId(1),
+    };
+    assert!(source
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    let before = (game.tick(), game.seq(), game.business_state_hash().unwrap());
+    let result: Result<(), SessionError> = game.with_publication_transaction(|candidate| {
+        let updates = SessionActor::<tauri::test::MockRuntime>::prepare_civil_updates(
+            candidate,
+            &PausePreferences::default(),
+        )?;
+        assert_eq!(updates.len(), 1);
+        assert_eq!(candidate.civil_date().to_iso(), "2030-01-02");
+        assert!(source
+            .enqueue_player_intent(AccountId(0), intent.clone())
+            .is_err());
+        Err(SessionError::InvalidSave("后续批次准备失败".into()))
+    });
+    assert!(
+        matches!(result, Err(SessionError::InvalidSave(message)) if message == "后续批次准备失败")
+    );
+    assert_eq!(game.civil_date().to_iso(), "2030-01-01");
+    assert_eq!(
+        (game.tick(), game.seq(), game.business_state_hash().unwrap()),
+        before
+    );
+    assert!(source
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    assert!(game.save().is_err());
+
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        true,
+        PausePreferences::default(),
+        "calendar-publication",
+        "calendar-timeline",
+    );
+    harness.subscribe_engine_events();
+    harness.actor.run_cycle(1);
+    assert_eq!(harness.actor.game.civil_date().to_iso(), "2030-01-02");
+    assert_eq!(harness.actor.game.tick(), 0);
+    assert!(harness.actor.pacing.is_running());
+    let receiver = harness.events_rx.as_mut().unwrap();
+    let payload: serde_json::Value =
+        serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
+    let update: EngineUpdate = serde_json::from_value(payload["update"].clone()).unwrap();
+    assert!(matches!(update, EngineUpdate::CivilUpdate(_)));
+    assert!(receiver.try_recv().is_err());
+    source.enqueue_player_intent(AccountId(0), intent).unwrap();
+    assert_eq!(harness.actor.game.game().save().unwrap().pending_player.len(), 1);
+}
+
 use engine::session::protocol::ReplayGuard;
+
+#[tokio::test]
+async fn correction_rejection_pauses_without_closing_commands_and_allows_cancel_retry() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut game = ProtocolSession::new(setup, 7181).unwrap();
+    let input: engine::CompanyReportCorrection = serde_json::from_value(serde_json::json!({"operation_id":"desktop-correction-1","company":"不存在的经营公司","supersedes":1,"reason":"待日终验证的更正","entries":[{"source":900000001,"date":"2030-01-05","kind":"CashRevenue","cash_flow":"Operating","lines":[{"account":"1002","side":"Debit","amount":"10"},{"account":"6001","side":"Credit","amount":"10"}]}]})).unwrap();
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, input.clone())
+        .unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "correction",
+        "correction-timeline",
+    );
+    harness.subscribe_failures();
+    harness.actor.tick_and_emit().await;
+    let failure: serde_json::Value =
+        serde_json::from_str(&harness.failures_rx.as_mut().unwrap().try_recv().unwrap()).unwrap();
+    assert_eq!(failure["code"], "REPORT_CORRECTION_REJECTED");
+    assert_eq!(failure["recoverable"], true);
+    assert!(!harness.cmd_tx.is_closed());
+    assert!(!harness.actor.pacing.is_running());
+    assert_eq!(harness.actor.game.civil_date().to_iso(), "2030-01-05");
+    assert_eq!(
+        serde_json::to_value(harness.actor.game.report_corrections().unwrap().pending).unwrap(),
+        serde_json::json!([input])
+    );
+    let (reply, response) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::CancelReportCorrection {
+            generation: 1,
+            operation_id: "desktop-correction-1".into(),
+            reply,
+        })
+        .await;
+    assert_eq!(response.await.unwrap().unwrap().generation, "1");
+    harness.actor.tick_and_emit().await;
+    assert_eq!(harness.actor.game.civil_date().to_iso(), "2030-01-07");
+}
 
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {
@@ -71,7 +178,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
         price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
         qty: 100,
     };
-    let restored = harness.actor.restore(1, Box::new(slot)).unwrap();
+    let restored = harness.actor.restore(1, Box::new(slot), None).unwrap();
     assert_eq!(restored.generation, "2");
     assert!(previous
         .enqueue_player_intent(AccountId(0), intent.clone())
@@ -126,7 +233,7 @@ async fn baseline_and_restore_include_authoritative_civil_date() {
         }
     }
     let slot = actor.game.save().unwrap();
-    let restored = serde_json::to_value(actor.restore(1, Box::new(slot)).unwrap()).unwrap();
+    let restored = serde_json::to_value(actor.restore(1, Box::new(slot), None).unwrap()).unwrap();
     assert_eq!(restored["civil_date"], "2030-01-02");
     assert_eq!(restored["generation"], "2");
 }

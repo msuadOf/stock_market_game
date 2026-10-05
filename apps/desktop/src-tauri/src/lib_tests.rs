@@ -1,3 +1,6 @@
+#[cfg(test)]
+include!("../../../../packages/engine/test-support/simple_company.rs");
+
 use super::{command_builder, parse_generation, SpeedRequest};
 use engine::{
     FloatAllocation, GameConfig, HotParams, InstParams, Money, NpcDecisionDiagnostics, NpcSetup,
@@ -16,8 +19,7 @@ use tauri::{
 
 fn diagnostic_setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_owned()),
             exchange: StockExchange::Shanghai,
@@ -56,6 +58,7 @@ fn diagnostic_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
@@ -84,6 +87,115 @@ fn invoke_json(
 }
 
 #[tokio::test]
+async fn archive_metadata_ipc_rejects_stale_generation_and_replaced_session_owner() {
+    let app = command_builder(mock_builder()).build(mock_context(noop_assets())).unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+    let mut setup = diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut game = engine::session::protocol::ProtocolSession::new(setup.clone(), 7).unwrap();
+    let update = game.end_civil_day_update().unwrap();
+    let candidate = native_store::DayEndCandidate::capture(&game, &engine::session::protocol::SaveCandidateKey { seq: update.seq_to, settled_date: update.boundary.settled_date }).unwrap();
+    let database = tauri::Manager::state::<super::DesktopState>(&app).manager.database();
+    native_store::ArchiveWriter::activate(database.clone(), "current").unwrap().save_day_end(&candidate).unwrap();
+    let create = || invoke_json(&webview, "create_session", json!({"setup":setup,"seed":"7","resumeArchive":false})).unwrap()["sessionId"].clone();
+    let old_session = create();
+    for command in ["archive_rename", "archive_copy"] {
+        for generation in ["0", "01", "18446744073709551616"] {
+            assert!(invoke_json(&webview, command, json!({"sessionId":old_session,"generation":generation,"slotId":"current","name":"过期修改"})).is_err(), "{command} 必须校验当前 generation");
+        }
+    }
+    let current_session = create();
+    for command in ["archive_rename", "archive_copy"] {
+        assert!(invoke_json(&webview, command, json!({"sessionId":old_session,"generation":"1","slotId":"current","name":"旧 owner 修改"})).is_err());
+    }
+    assert_eq!(database.list().unwrap().len(), 1);
+    assert_eq!(database.list().unwrap()[0].name, "current");
+    invoke_json(&webview, "archive_rename", json!({"sessionId":current_session,"generation":"1","slotId":"current","name":"有效名称"})).unwrap();
+    let copied = invoke_json(&webview, "archive_copy", json!({"sessionId":current_session,"generation":"1","slotId":"current","name":"有效副本"})).unwrap();
+    assert_eq!(copied["name"], "有效副本");
+    assert_eq!(database.list().unwrap().len(), 2);
+    invoke_json(&webview, "stop_session", json!({"sessionId":old_session})).unwrap();
+    invoke_json(&webview, "stop_session", json!({"sessionId":current_session})).unwrap();
+}
+
+#[tokio::test]
+async fn report_correction_ipc_requires_generation_and_supports_pending_cancel() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let mut setup = diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({"setup":setup,"seed":"7","resumeArchive":false}),
+    )
+    .unwrap()["sessionId"].clone();
+    let initial = invoke_json(
+        &webview,
+        "query_report_corrections",
+        json!({"sessionId":session_id,"generation":"1"}),
+    )
+    .unwrap();
+    assert_eq!(
+        initial,
+        json!({"generation":"1","value":{"pending":[],"completed":{}}})
+    );
+    let input = json!({"operation_id":"desktop-correction-1","company":"600101","supersedes":1,"reason":"待日终验证的更正","entries":[{"source":900000001,"date":"2030-01-05","kind":"CashRevenue","cash_flow":"Operating","lines":[{"account":"1002","side":"Debit","amount":"10.00"},{"account":"6001","side":"Credit","amount":"10.00"}]}]});
+    for generation in ["0", "01", "18446744073709551616"] {
+        assert!(invoke_json(
+            &webview,
+            "submit_report_correction",
+            json!({"sessionId":session_id,"generation":generation,"request":input})
+        )
+        .is_err());
+    }
+    assert_eq!(
+        invoke_json(
+            &webview,
+            "submit_report_correction",
+            json!({"sessionId":session_id,"generation":"1","request":input})
+        )
+        .unwrap(),
+        json!({"generation":"1","value":null})
+    );
+    assert_eq!(
+        invoke_json(
+            &webview,
+            "query_report_corrections",
+            json!({"sessionId":session_id,"generation":"1"})
+        )
+        .unwrap()["value"]["pending"],
+        json!([input])
+    );
+    invoke_json(
+        &webview,
+        "cancel_report_correction",
+        json!({"sessionId":session_id,"generation":"1","operationId":"desktop-correction-1"}),
+    )
+    .unwrap();
+    assert_eq!(
+        invoke_json(
+            &webview,
+            "query_report_corrections",
+            json!({"sessionId":session_id,"generation":"1"})
+        )
+        .unwrap(),
+        initial
+    );
+    assert!(invoke_json(
+        &webview,
+        "cancel_report_correction",
+        json!({"sessionId":session_id,"generation":"1","operationId":"desktop-correction-1"})
+    )
+    .is_err());
+    invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
+}
+
+#[tokio::test]
 async fn enqueue_ipc_requires_current_canonical_generation() {
     let app = command_builder(mock_builder())
         .build(mock_context(noop_assets()))
@@ -99,9 +211,9 @@ async fn enqueue_ipc_requires_current_canonical_generation() {
     let session_id = invoke_json(
         &webview,
         "create_session",
-        json!({ "setup": setup, "seed": "7" }),
+        json!({ "setup": setup, "seed": "7", "resumeArchive": false }),
     )
-    .unwrap();
+    .unwrap()["sessionId"].clone();
     invoke_json(
         &webview,
         "restore_session",
@@ -150,9 +262,9 @@ async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
     let session_id = invoke_json(
         &webview,
         "create_session",
-        json!({ "setup": setup, "seed": "7" }),
+        json!({ "setup": setup, "seed": "7", "resumeArchive": false }),
     )
-    .unwrap();
+    .unwrap()["sessionId"].clone();
     invoke_json(
         &webview,
         "restore_session",
@@ -230,8 +342,10 @@ async fn host_parity_ipc_advances_one_closed_civil_day_through_the_actor() {
     let session_id = invoke_json(
         &webview,
         "create_session",
-        json!({ "setup": diagnostic_setup(), "seed": "7" }),
+        json!({ "setup": diagnostic_setup(), "seed": "7", "resumeArchive": false }),
     )
+    .unwrap()
+    .get("sessionId")
     .unwrap()
     .as_str()
     .unwrap()
@@ -262,8 +376,10 @@ async fn host_parity_ipc_steps_a_normal_market_day_before_civil_settlement() {
     let session_id = invoke_json(
         &webview,
         "create_session",
-        json!({ "setup": setup, "seed": "7" }),
+        json!({ "setup": setup, "seed": "7", "resumeArchive": false }),
     )
+    .unwrap()
+    .get("sessionId")
     .unwrap()
     .as_str()
     .unwrap()
@@ -300,8 +416,10 @@ async fn diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_r
     let session_id = invoke_json(
         &webview,
         "create_session",
-        json!({ "setup": diagnostic_setup(), "seed": "7" }),
+        json!({ "setup": diagnostic_setup(), "seed": "7", "resumeArchive": false }),
     )
+    .unwrap()
+    .get("sessionId")
     .unwrap()
     .as_str()
     .unwrap()

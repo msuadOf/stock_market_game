@@ -124,6 +124,17 @@ impl From<StepFatal> for HostFailure {
 }
 
 impl HostFailure {
+    pub(super) fn archive(error: &str) -> Self {
+        Self {
+            code: "DAY_END_ARCHIVE_FAILED",
+            message: format!("日终已成功完成，但 SQLite 保存失败，上一份有效日终档仍保留：{error}"),
+            r#where: "desktop.actor.save_day_end".into(),
+            cause: None,
+            context: FailureContext::new("saveDayEnd"),
+            recoverable: true,
+            recovery_actions: vec!["检查 SQLite 文件权限与磁盘空间后恢复推进，在下一日终重试保存", "复制存档错误详情反馈"],
+        }
+    }
     pub(super) fn step(error: StepFatal) -> Self {
         let StepFatal::InvariantViolation { ref location, .. } = error;
         Self {
@@ -142,6 +153,18 @@ impl HostFailure {
 
     pub(super) fn civil(error: SessionError) -> Self {
         match error {
+            SessionError::ReportCorrection(_) => Self {
+                code: "REPORT_CORRECTION_REJECTED",
+                message: error.to_string(),
+                r#where: "desktop.actor.end_civil_day".into(),
+                cause: failure_cause(&error),
+                context: FailureContext::new("endCivilDay"),
+                recoverable: true,
+                recovery_actions: vec![
+                    "查询并取消错误的待处理更正后重试日结",
+                    "复制更正操作身份与错误详情反馈",
+                ],
+            },
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
@@ -169,15 +192,27 @@ struct EngineFailurePayload<'a> {
 }
 
 impl<R: Runtime> SessionActor<R> {
+    pub(super) fn persist_day_end(&mut self, update: &engine::session::protocol::CivilUpdate) {
+        let Some(writer) = &self.archive else { return; };
+        let key = engine::session::protocol::SaveCandidateKey { seq: update.seq_to, settled_date: update.boundary.settled_date };
+        let saved = native_store::DayEndCandidate::capture(&self.game, &key)
+            .map_err(|error| error.to_string())
+            .and_then(|slot| writer.save_day_end(&slot).map_err(|error| error.to_string()));
+        if let Err(error) = saved {
+            self.stop_after_host_failure(HostFailure::archive(&error));
+        }
+    }
     pub(super) fn stop_after_step_failure(&mut self, error: StepFatal) {
         self.stop_after_host_failure(HostFailure::step(error));
     }
 
     pub(super) fn stop_after_host_failure(&mut self, mut failure: HostFailure) {
-        if let Err(error) = self.game.shared_ingress().close() {
-            failure
-                .message
-                .push_str(&format!("；关闭 ingress 失败：{error}"));
+        if !failure.recoverable {
+            if let Err(error) = self.game.shared_ingress().close() {
+                failure
+                    .message
+                    .push_str(&format!("；关闭 ingress 失败：{error}"));
+            }
         }
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
@@ -196,6 +231,8 @@ impl<R: Runtime> SessionActor<R> {
                 self.session_id, failure.code, failure.message
             );
         }
-        self.cmd_rx.close();
+        if !failure.recoverable {
+            self.cmd_rx.close();
+        }
     }
 }

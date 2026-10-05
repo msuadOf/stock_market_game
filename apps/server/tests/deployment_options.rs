@@ -25,6 +25,24 @@ fn default_mode_matches_compiled_capability() {
 }
 
 #[test]
+fn database_path_is_explicit_physical_and_rejects_duplicate_or_memory_target() {
+    let options = parse(&["--database", "custom/market.sqlite"], Err(std::env::VarError::NotPresent)).unwrap();
+    assert_eq!(options.database, Path::new("custom/market.sqlite"));
+    for arguments in [vec!["--database", ":memory:"], vec!["--database", "a.sqlite", "--database", "b.sqlite"], vec!["--database"]] {
+        assert!(parse(&arguments, Err(std::env::VarError::NotPresent)).is_err());
+    }
+}
+
+#[test]
+fn explicit_new_market_or_archive_slot_are_recovery_choices_not_fallbacks() {
+    assert!(parse(&["--new-market"], Err(std::env::VarError::NotPresent)).is_ok());
+    assert!(parse(&["--archive-slot", "manual-weekend"], Err(std::env::VarError::NotPresent)).is_ok());
+    for arguments in [vec!["--new-market", "--archive-slot", "manual"], vec!["--archive-slot"], vec!["--new-market", "--new-market"]] {
+        assert!(parse(&arguments, Err(std::env::VarError::NotPresent)).is_err());
+    }
+}
+
+#[test]
 fn cli_bind_overrides_environment_even_when_environment_is_invalid() {
     for environment in [
         Ok("192.0.2.10:4000".to_owned()),

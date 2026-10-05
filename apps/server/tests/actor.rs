@@ -8,6 +8,8 @@
 //! - intent 入队后被 actor 接受（Ok）；
 //! - 未知 session_id 查询返回 None（不静默）。
 
+include!("../../../packages/engine/test-support/simple_company.rs");
+
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
@@ -16,6 +18,43 @@ use engine::{AccountId, NpcDecisionDiagnostics, Side, Snapshot, TradingPhase};
 use server::actor::PublicBaselineSnapshot;
 use server::SessionManager;
 use std::collections::BTreeMap;
+
+#[tokio::test]
+async fn shared_market_members_receive_scoped_accounts_and_actor_enforces_control() {
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let manager = SessionManager::default();
+    let session = manager.new_session(setup, 8).unwrap();
+    let handles = manager.lookup(&session).unwrap();
+    let creator = engine::session::OpaqueSubjectId::new("creator".into()).unwrap();
+    let visitor = engine::session::OpaqueSubjectId::new("visitor".into()).unwrap();
+    handles.bind_creator(creator.clone()).await.unwrap();
+    let member = handles.join_member(visitor.clone(), false).await.unwrap();
+    assert_ne!(member.account_id, AccountId(0));
+    assert_eq!(handles.join_member(visitor.clone(), true).await.unwrap(), member);
+    let own = handles.snapshot_for(visitor.clone()).await.unwrap();
+    assert_eq!(own.accounts.keys().copied().collect::<Vec<_>>(), vec![member.account_id]);
+    assert!(handles.set_running_for(1, visitor.clone(), true).await.is_err());
+    assert!(handles.set_speed_for(1, visitor.clone(), 2.0).await.is_err());
+    assert!(handles.set_admission_cash_for(1, visitor.clone(), Money::ZERO).await.is_err());
+    handles.set_admission_cash_for(1, creator.clone(), Money::from_cents(1200)).await.unwrap();
+    assert_eq!(handles.snapshot_for(visitor.clone()).await.unwrap().accounts[&member.account_id].cash, member.admission_funding.external_cash);
+    handles.enqueue_for(1, visitor.clone(), Intent::PlaceLimit { code: StockCode("600101".into()), side: Side::Buy, price: engine::LimitPrice::Fixed(Money::from_cents(1000)), qty: 100 }).await.unwrap();
+    handles.set_running_for(1, creator, true).await.unwrap();
+    let mut updates = handles.subscribe_events();
+    let update = tokio::time::timeout(std::time::Duration::from_secs(2), updates.recv()).await.unwrap().unwrap().for_account(member.account_id);
+    let engine::session::protocol::EngineUpdate::TickBatch(batch) = update.update.unwrap() else { panic!("交易日应发布TickBatch") };
+    batch.validate().unwrap();
+    let delta = batch.runtime_delta.unwrap();
+    assert!(delta.accounts.keys().all(|id| *id == member.account_id));
+    assert!(delta.working_orders.upserts.iter().all(|order| order.owner == member.account_id));
+    assert_eq!(handles.working_orders_for(1, visitor.clone()).await.unwrap().1.as_array().unwrap().len(), 1);
+    assert!(handles.confirmations_for(1, visitor, None).await.unwrap().1.is_empty());
+    manager.remove(&session).unwrap().shutdown().await.unwrap();
+}
 
 fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
     match update.update.as_ref().expect("healthy protocol update") {
@@ -37,8 +76,7 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -77,6 +115,7 @@ fn sample_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),

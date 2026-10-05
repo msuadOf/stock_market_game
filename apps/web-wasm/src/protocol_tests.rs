@@ -3,6 +3,90 @@ mod fixture;
 
 use super::*;
 
+fn report_correction_input(company: &str) -> engine::CompanyReportCorrection {
+    serde_json::from_value(serde_json::json!({"operation_id":"wasm-correction-1","company":company,"supersedes":1,"reason":"待日终验证的更正","entries":[{"source":900000001,"date":"2030-01-05","kind":"CashRevenue","cash_flow":"Operating","lines":[{"account":"1002","side":"Debit","amount":"10"},{"account":"6001","side":"Credit","amount":"10"}]}]})).unwrap()
+}
+
+#[test]
+fn correction_registry_controls_are_bound_to_owner_handle_and_pending_is_not_a_save() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());
+    let mut completed = ProtocolSession::new(setup.clone(), 7181).unwrap();
+    completed.end_civil_day_update().unwrap();
+    let slot = completed.save().unwrap();
+    let mut registry = SessionRegistry::default();
+    let token = registry.create(setup, 7181).unwrap();
+    let input = report_correction_input("不存在的经营公司");
+    registry
+        .submit_report_correction(token, input.clone())
+        .unwrap();
+    registry
+        .submit_report_correction(token, input.clone())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(registry.query_report_corrections(token).unwrap().pending).unwrap(),
+        serde_json::json!([input])
+    );
+    assert!(registry
+        .with_session(token, |session| session.game().save())
+        .unwrap()
+        .is_err());
+    registry
+        .cancel_report_correction(token, "wasm-correction-1")
+        .unwrap();
+    assert!(registry
+        .query_report_corrections(token)
+        .unwrap()
+        .pending
+        .is_empty());
+    assert!(registry
+        .cancel_report_correction(token, "wasm-correction-1")
+        .is_err());
+    registry.remove(token).unwrap();
+    let restored = registry.restore(&slot).unwrap();
+    assert_ne!(restored, token);
+    assert!(registry.submit_report_correction(token, input).is_err());
+    assert!(registry
+        .cancel_report_correction(token, "wasm-correction-1")
+        .is_err());
+    assert!(registry.query_report_corrections(token).is_err());
+    assert!(registry
+        .query_report_corrections(restored)
+        .unwrap()
+        .pending
+        .is_empty());
+    registry.remove(restored).unwrap();
+}
+
+#[test]
+fn correction_day_end_rejection_is_typed_recoverable_and_can_be_cancelled() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());
+    let mut registry = SessionRegistry::default();
+    let token = registry.create(setup, 7181).unwrap();
+    let input = report_correction_input("不存在的经营公司");
+    registry
+        .submit_report_correction(token, input.clone())
+        .unwrap();
+    let error = registry.step_update(token).unwrap_err();
+    let StepUpdateError::Recoverable(failure) = error else {
+        panic!("更正业务拒绝必须是可恢复结构化错误")
+    };
+    assert_eq!(failure.code, "REPORT_CORRECTION_REJECTED");
+    assert!(failure.recoverable);
+    assert_eq!(failure.context.tick, Some(0));
+    assert_eq!(
+        serde_json::to_value(registry.query_report_corrections(token).unwrap().pending).unwrap(),
+        serde_json::json!([input])
+    );
+    registry
+        .cancel_report_correction(token, "wasm-correction-1")
+        .unwrap();
+    let EngineUpdate::CivilUpdate(civil) = registry.step_update(token).unwrap() else {
+        panic!("取消后必须可继续日结")
+    };
+    assert_eq!(civil.civil_date, "2030-01-06");
+    registry.remove(token).unwrap();
+}
+
 fn ingress_cancel(id: u64) -> Intent {
     Intent::Cancel {
         code: engine::StockCode("600101".into()),
@@ -48,17 +132,15 @@ fn removed_registry_token_closes_existing_capability_without_allocating_receipts
     let token = registry.create(setup.clone(), 72).unwrap();
     let producer = ingress_operation(|services| Ok(services[&token].clone())).unwrap();
     producer.enqueue_player_intent(AccountId(0), ingress_cancel(21)).unwrap();
-    let checkpoint = registry.with_session(token, |session| session.checkpoint()).unwrap().unwrap();
-    let mut observer = ProtocolSession::new(setup.clone(), 73).unwrap();
-    observer.rollback(checkpoint);
-    let before = observer.game().save().unwrap();
+    let before = producer.receipt_cursors().unwrap();
+    let before_inputs = producer.recorded_player_inputs().unwrap();
     registry.remove(token).unwrap();
     assert!(registry.with_session(token, |_| ()).is_err());
     assert!(ingress_operation(|services| Ok(services.contains_key(&token))).is_ok_and(|present| !present));
     assert!(producer.enqueue_player_intent(AccountId(0), ingress_cancel(22)).is_err());
-    let after = observer.game().save().unwrap();
-    assert_eq!(serde_json::to_value(&before.pending_player).unwrap(), serde_json::to_value(&after.pending_player).unwrap());
-    assert_eq!(serde_json::to_value(&before.ingress_receipt_cursors).unwrap(), serde_json::to_value(&after.ingress_receipt_cursors).unwrap());
+    let after = producer.receipt_cursors().unwrap();
+    assert_eq!(serde_json::to_value(&before).unwrap(), serde_json::to_value(&after).unwrap());
+    assert_eq!(serde_json::to_value(&before_inputs).unwrap(), serde_json::to_value(producer.recorded_player_inputs().unwrap()).unwrap());
     let replacement = registry.create(setup, 74).unwrap();
     assert!(replacement > token);
     assert!(!ingress_operation(|services| Ok(services.contains_key(&token))).unwrap());

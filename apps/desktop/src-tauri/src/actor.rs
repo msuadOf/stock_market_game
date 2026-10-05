@@ -12,7 +12,6 @@
 //!
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
-#[cfg(test)]
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -22,10 +21,11 @@ use engine::session::protocol::CivilUpdate;
 use engine::session::protocol::{EngineUpdate, PausePreferences, ProtocolSession, TickFrame};
 use engine::{
     calendar::CivilDate,
-    company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
+    company::{PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportQuery, PublicReportSummary},
     session::HistoricalStockData, AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode,
 };
 use serde::Serialize;
+use native_store::{ArchiveWriter, NativeDatabase};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{mpsc, oneshot};
 
@@ -35,6 +35,8 @@ mod failure;
 mod fatal_tests;
 #[cfg(test)]
 mod protocol_tests;
+#[cfg(test)]
+mod archive_tests;
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数。
 /// 与前端 BASE_INTERVAL_MS(1000) 对齐：1x 时一个 tick = 游戏世界 1 秒。
@@ -67,6 +69,15 @@ pub struct RestoreResult {
     pub civil_date: CivilDate,
     pub timeline_id: String,
     pub generation: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCreation {
+    pub session_id: String,
+    pub setup: SessionSetup,
+    pub seed: String,
+    pub resumed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -238,6 +249,23 @@ impl DesktopPacing {
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    ArchiveMetadata {
+        generation: u64,
+        slot_id: String,
+        name: String,
+        copy: bool,
+        reply: oneshot::Sender<Result<Option<native_store::ArchiveMetadata>, SessionError>>,
+    },
+    DeleteArchive {
+        generation: u64,
+        slot_id: String,
+        reply: oneshot::Sender<Result<(), SessionError>>,
+    },
+    SelectArchive {
+        generation: u64,
+        slot_id: String,
+        reply: oneshot::Sender<Result<bool, SessionError>>,
+    },
     /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=engine 拒绝。
     Enqueue {
         player_id: AccountId,
@@ -261,6 +289,28 @@ pub enum SessionCommand {
             Result<GenerationResponse<engine::session::InitialAllocation>, SessionError>,
         >,
     },
+    PersonalTradeConfirmations {
+        generation: u64,
+        before_receipt: Option<u64>,
+        reply: oneshot::Sender<
+            Result<GenerationResponse<Vec<engine::session::PersonalTradeConfirmation>>, SessionError>,
+        >,
+    },
+    PersonalTradeHistory {
+        generation: u64,
+        query: engine::session::PersonalTradeHistoryRequest,
+        reply: oneshot::Sender<Result<GenerationResponse<engine::session::PersonalTradeHistoryPage>, SessionError>>,
+    },
+    MarketHistory {
+        generation: u64,
+        query: engine::session::MarketHistoryRequest,
+        reply: oneshot::Sender<Result<GenerationResponse<engine::session::MarketHistoryPage>, SessionError>>,
+    },
+    CurrentMinuteHistory {
+        generation: u64,
+        query: engine::session::CurrentMinuteHistoryRequest,
+        reply: oneshot::Sender<Result<GenerationResponse<engine::session::CurrentMinuteHistoryResponse>, SessionError>>,
+    },
     QueryBaseline {
         generation: u64,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
@@ -275,6 +325,25 @@ pub enum SessionCommand {
         generation: u64,
         query: PublicReportQuery,
         reply: oneshot::Sender<Result<GenerationResponse<PublicReportPage>, SessionError>>,
+    },
+    PublicReportAvailability {
+        generation: u64,
+        query: PublicReportAvailabilityQuery,
+        reply: oneshot::Sender<Result<GenerationResponse<PublicReportAvailability>, SessionError>>,
+    },
+    SubmitReportCorrection {
+        generation: u64,
+        request: engine::CompanyReportCorrection,
+        reply: oneshot::Sender<Result<GenerationResponse<()>, SessionError>>,
+    },
+    CancelReportCorrection {
+        generation: u64,
+        operation_id: String,
+        reply: oneshot::Sender<Result<GenerationResponse<()>, SessionError>>,
+    },
+    QueryReportCorrections {
+        generation: u64,
+        reply: oneshot::Sender<Result<GenerationResponse<engine::ReportCorrectionStatus>, SessionError>>,
     },
     PublicReportById {
         generation: u64,
@@ -301,6 +370,7 @@ pub enum SessionCommand {
     /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
     Restore {
         generation: u64,
+        archive_slot_id: Option<String>,
         slot: Box<SaveSlot>,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
     },
@@ -347,6 +417,21 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
+    pub async fn mutate_archive_metadata(&self, generation: u64, slot_id: String, name: String, copy: bool) -> Result<Option<native_store::ArchiveMetadata>, SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::ArchiveMetadata { generation, slot_id, name, copy, reply }).map_err(|_| SendCommandError::ActorGone)?;
+        response.await.map_err(|_| SendCommandError::ActorGone)?.map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+    pub async fn delete_archive(&self, generation: u64, slot_id: String) -> Result<(), SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::DeleteArchive { generation, slot_id, reply }).map_err(|_| SendCommandError::ActorGone)?;
+        response.await.map_err(|_| SendCommandError::ActorGone)?.map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+    pub async fn select_archive(&self, generation: u64, slot_id: String) -> Result<bool, SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::SelectArchive { generation, slot_id, reply }).map_err(|_| SendCommandError::ActorGone)?;
+        response.await.map_err(|_| SendCommandError::ActorGone)?.map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
     /// 便捷：入队玩家意图（固定 `AccountId(0)`），立即登记到共享 ingress。
     pub async fn enqueue(&self, generation: u64, intent: Intent) -> Result<(), SendCommandError> {
         self.enqueue_as(generation, AccountId(0), intent).await
@@ -436,6 +521,44 @@ impl SessionHandles {
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
+    pub async fn personal_trade_confirmations(
+        &self,
+        generation: u64,
+        before_receipt: Option<u64>,
+    ) -> Result<GenerationResponse<Vec<engine::session::PersonalTradeConfirmation>>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PersonalTradeConfirmations { generation, before_receipt, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn personal_trade_history(
+        &self,
+        generation: u64,
+        query: engine::session::PersonalTradeHistoryRequest,
+    ) -> Result<GenerationResponse<engine::session::PersonalTradeHistoryPage>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::PersonalTradeHistory { generation, query, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn market_history(&self, generation: u64, query: engine::session::MarketHistoryRequest) -> Result<GenerationResponse<engine::session::MarketHistoryPage>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::MarketHistory { generation, query, reply: tx }).map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?.map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn current_minute_history(&self, generation: u64, query: engine::session::CurrentMinuteHistoryRequest) -> Result<GenerationResponse<engine::session::CurrentMinuteHistoryResponse>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::CurrentMinuteHistory { generation, query, reply: tx }).map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?.map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
     pub async fn query_baseline(&self, generation: u64) -> Result<RestoreResult, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
@@ -488,6 +611,70 @@ impl SessionHandles {
             })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn public_report_availability(
+        &self,
+        generation: u64,
+        query: PublicReportAvailabilityQuery,
+    ) -> Result<GenerationResponse<PublicReportAvailability>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(SessionCommand::PublicReportAvailability { generation, query, reply: tx })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn submit_report_correction(
+        &self,
+        generation: u64,
+        request: engine::CompanyReportCorrection,
+    ) -> Result<GenerationResponse<()>, SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SubmitReportCorrection {
+                generation,
+                request,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        response
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn cancel_report_correction(
+        &self,
+        generation: u64,
+        operation_id: String,
+    ) -> Result<GenerationResponse<()>, SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::CancelReportCorrection {
+                generation,
+                operation_id,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        response
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn query_report_corrections(
+        &self,
+        generation: u64,
+    ) -> Result<GenerationResponse<engine::ReportCorrectionStatus>, SendCommandError> {
+        let (reply, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::QueryReportCorrections { generation, reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        response
+            .await
             .map_err(|_| SendCommandError::ActorGone)?
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
@@ -561,10 +748,20 @@ impl SessionHandles {
         generation: u64,
         slot: SaveSlot,
     ) -> Result<RestoreResult, SendCommandError> {
+        self.restore_archive(generation, slot, None).await
+    }
+
+    pub async fn restore_archive(
+        &self,
+        generation: u64,
+        slot: SaveSlot,
+        archive_slot_id: Option<String>,
+    ) -> Result<RestoreResult, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Restore {
                 generation,
+                archive_slot_id,
                 slot: Box::new(slot),
                 reply: tx,
             })
@@ -660,6 +857,8 @@ pub enum SendCommandError {
 /// 这里用 `tokio::sync::Mutex<HashMap>` 替代——写少（仅 create），读多但无热路径竞争，足够。
 #[derive(Clone)]
 pub struct SessionManager {
+    database: NativeDatabase,
+    startup_archive: Arc<std::sync::Mutex<Option<Result<Option<(String, Arc<SaveSlot>)>, String>>>>,
     sessions: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<SessionHandles>>>>,
     base_ms: u64,
 }
@@ -667,10 +866,20 @@ pub struct SessionManager {
 impl SessionManager {
     /// 默认基准（`BASE_TICK_MS`）。
     pub fn default_base() -> Self {
+        Self::with_database(NativeDatabase::open_in_memory().expect("测试 SQLite 初始化失败"))
+    }
+
+    pub fn with_database(database: NativeDatabase) -> Self {
         Self {
+            database,
+            startup_archive: Arc::new(std::sync::Mutex::new(None)),
             sessions: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             base_ms: BASE_TICK_MS,
         }
+    }
+
+    pub fn database(&self) -> NativeDatabase {
+        self.database.clone()
     }
 
     /// 创建新 session：构造 `GameSession` → 建 mpsc → spawn actor task → 注册。
@@ -683,7 +892,36 @@ impl SessionManager {
         seed: u64,
         app: AppHandle<R>,
     ) -> Result<String, SessionError> {
-        let game = ProtocolSession::new(setup, seed)?;
+        self.new_session_with_archive(setup, seed, app, false).await.map(|creation| creation.session_id)
+    }
+
+    pub async fn new_session_with_archive<R: Runtime>(
+        &self,
+        setup: SessionSetup,
+        seed: u64,
+        app: AppHandle<R>,
+        resume_archive: bool,
+    ) -> Result<SessionCreation, SessionError> {
+        let archive = if resume_archive {
+            let mut startup = self.startup_archive.lock().map_err(|error| SessionError::InvalidSave(format!("启动存档缓存锁失效：{error}")))?;
+            if startup.is_none() {
+                *startup = Some((|| {
+                    match self.database.selection()? {
+                        native_store::ArchiveSelection::Selected(slot_id) => self.database.load(&slot_id)?.map(|slot| Some((slot_id.clone(), Arc::new(slot)))).ok_or_else(|| native_store::StoreError::Invalid(format!("已选启动槽 {slot_id} 不存在"))),
+                        native_store::ArchiveSelection::Uninitialized => Ok(None),
+                        native_store::ArchiveSelection::Cleared => Err(native_store::StoreError::Invalid("已选启动槽已删除；请选择其他日终档或明确创建新局".into())),
+                    }
+                })().map_err(|error| error.to_string()));
+            }
+            startup.as_ref().expect("启动存档缓存已经读取").clone().map_err(SessionError::InvalidSave)?
+        } else {
+            None
+        };
+        let (game, setup, seed, resumed, slot_id) = match archive {
+            Some((slot_id, slot)) => (ProtocolSession::restore(&slot)?, slot.setup.clone(), slot.seed, true, slot_id),
+            None => (ProtocolSession::new(setup.clone(), seed)?, setup, seed, false, "current".into()),
+        };
+        let writer = ArchiveWriter::activate(self.database.clone(), &slot_id).map_err(|error| SessionError::InvalidSave(error.to_string()))?;
         let session_id = uuid::Uuid::new_v4().to_string();
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -700,6 +938,7 @@ impl SessionManager {
             .insert(session_id.clone(), handles.clone());
 
         let actor = SessionActor {
+            archive: Some(writer),
             ingress,
             #[cfg(test)]
             injected_step_failure: None,
@@ -714,7 +953,7 @@ impl SessionManager {
             pause_preferences: PausePreferences::default(),
         };
         tokio::spawn(actor.run());
-        Ok(session_id)
+        Ok(SessionCreation { session_id, setup, seed: seed.to_string(), resumed })
     }
 
     /// 查询 session 句柄（克隆 `Arc<SessionHandles>`）。未知返回 `None`（不静默）。
@@ -736,6 +975,7 @@ impl Default for SessionManager {
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `app.emit`。
 struct SessionActor<R: Runtime> {
+    archive: Option<ArchiveWriter>,
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
     injected_step_failure: Option<(usize, engine::session::StepFatal)>,
@@ -773,6 +1013,7 @@ impl ActorHarness {
         let app = tauri::test::mock_app();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let actor = SessionActor {
+            archive: None,
             ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
             injected_step_failure: None,
             pacing: DesktopPacing {
@@ -831,15 +1072,18 @@ impl ActorHarness {
 }
 
 impl<R: Runtime> SessionActor<R> {
-    fn step_game(&mut self) -> Result<TickFrame, engine::session::StepFatal> {
+    fn step_game(
+        game: &mut ProtocolSession,
+        #[cfg(test)] injected_step_failure: &mut Option<(usize, engine::session::StepFatal)>,
+    ) -> Result<TickFrame, engine::session::StepFatal> {
         #[cfg(test)]
-        if let Some((remaining, error)) = &mut self.injected_step_failure {
+        if let Some((remaining, error)) = injected_step_failure {
             if *remaining == 0 {
                 return Err(error.clone());
             }
             *remaining -= 1;
         }
-        self.game.step_frame()
+        game.step_frame()
     }
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
@@ -907,48 +1151,49 @@ impl<R: Runtime> SessionActor<R> {
         if self.cmd_rx.is_closed() {
             return;
         }
-        let checkpoint = match self.game.checkpoint() {
-            Ok(checkpoint) => checkpoint,
+        let cmd_rx = &self.cmd_rx;
+        let pause_preferences = &self.pause_preferences;
+        #[cfg(test)]
+        let injected_step_failure = &mut self.injected_step_failure;
+        let prepared = self.game.with_publication_transaction(|game| {
+            let started = std::time::Instant::now();
+            let mut frames = Vec::new();
+            let mut steps = 0;
+            while steps < limit && {
+                #[cfg(test)]
+                let injecting = injected_step_failure.is_some();
+                #[cfg(not(test))]
+                let injecting = false;
+                injecting || started.elapsed() < FASTEST_BATCH_BUDGET
+            } {
+                if limit > 1 && !cmd_rx.is_empty() {
+                    break;
+                }
+                if game.civil_day_ready()? {
+                    break;
+                }
+                let frame = Self::step_game(
+                    game,
+                    #[cfg(test)]
+                    injected_step_failure,
+                )?;
+                frames.push(frame);
+                steps += 1;
+            }
+            let batch = if frames.is_empty() {
+                None
+            } else {
+                Some(game.tick_batch(frames)?)
+            };
+            let updates = Self::prepare_civil_updates(game, pause_preferences)?;
+            Ok((batch, updates))
+        });
+        match prepared {
+            Ok((batch, updates)) => self.publish_protocol_cycle(batch, updates),
             Err(error) => {
-                self.stop_after_step_failure(error);
+                self.rollback_cycle(error);
                 return;
             }
-        };
-        let started = std::time::Instant::now();
-        let mut frames = Vec::new();
-        let mut steps = 0;
-        while steps < limit && {
-            #[cfg(test)]
-            let injecting = self.injected_step_failure.is_some();
-            #[cfg(not(test))]
-            let injecting = false;
-            injecting || started.elapsed() < FASTEST_BATCH_BUDGET
-        } {
-            // Process a command received during tick n before starting tick n+1.
-            if limit > 1 && !self.cmd_rx.is_empty() {
-                break;
-            }
-            match self.game.civil_day_ready() {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(error) => {
-                    self.rollback_cycle(checkpoint, error);
-                    return;
-                }
-            }
-            let frame = match self.step_game() {
-                Ok(frame) => frame,
-                Err(error) => {
-                    self.rollback_cycle(checkpoint, error.into());
-                    return;
-                }
-            };
-            frames.push(frame);
-            steps += 1;
-        }
-        if let Err(error) = self.publish_protocol_cycle(frames) {
-            self.rollback_cycle(checkpoint, error);
-            return;
         }
         self.pacing.refresh_metrics(self.game.tick());
     }
@@ -957,33 +1202,26 @@ impl<R: Runtime> SessionActor<R> {
         self.run_cycle(FASTEST_BATCH_MAX_STEPS);
     }
 
-    fn rollback_cycle(
-        &mut self,
-        checkpoint: engine::session::protocol::ProtocolCheckpoint,
-        error: SessionError,
-    ) {
-        self.game.rollback(checkpoint);
+    fn rollback_cycle(&mut self, error: SessionError) {
         self.stop_after_host_failure(failure::HostFailure::civil(error));
     }
 
-    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), SessionError> {
-        let batch = if frames.is_empty() {
-            None
-        } else {
-            Some(self.game.tick_batch(frames)?)
-        };
-        let updates = self.prepare_civil_updates()?;
+    fn publish_protocol_cycle(
+        &mut self,
+        batch: Option<engine::session::protocol::TickBatch>,
+        updates: Vec<engine::session::protocol::CivilUpdate>,
+    ) {
         if let Some(batch) = batch {
             self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
         }
         for update in updates {
+            self.persist_day_end(&update);
             let pause = self.pause_preferences.pauses(&update);
             self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
             if pause {
                 self.pacing.pause_at_civil_boundary(self.game.tick());
             }
         }
-        Ok(())
     }
 
     fn emit_update(&mut self, update: EngineUpdate) {
@@ -1007,6 +1245,50 @@ impl<R: Runtime> SessionActor<R> {
             return;
         }
         match cmd {
+            SessionCommand::ArchiveMetadata { generation, slot_id, name, copy, reply } => {
+                let result = self.generation_response(generation, Ok(())).and_then(|_| {
+                    let writer = self.archive.as_ref().ok_or_else(|| SessionError::InvalidSave("Native 存档目标未初始化".into()))?;
+                    if copy {
+                        writer.copy_slot(&slot_id, &uuid::Uuid::new_v4().to_string(), &name).map(Some).map_err(|error| SessionError::InvalidSave(error.to_string()))
+                    } else {
+                        writer.rename_slot(&slot_id, &name).map(|()| None).map_err(|error| SessionError::InvalidSave(error.to_string()))
+                    }
+                });
+                let _ = reply.send(result);
+            }
+            SessionCommand::DeleteArchive { generation, slot_id, reply } => {
+                let result = self.generation_response(generation, Ok(())).and_then(|_| {
+                    let writer = self.archive.as_ref().ok_or_else(|| SessionError::InvalidSave("Native 存档目标未初始化".into()))?;
+                    let next = writer.delete_slot(&slot_id, &uuid::Uuid::new_v4().to_string()).map_err(|error| SessionError::InvalidSave(error.to_string()))?;
+                    self.archive = Some(next);
+                    Ok(())
+                });
+                let _ = reply.send(result);
+            }
+            SessionCommand::SelectArchive { generation, slot_id, reply } => {
+                let result = self.generation_response(generation, Ok(())).and_then(|_| {
+                    self.archive.as_ref().ok_or_else(|| SessionError::InvalidSave("Native 存档目标未初始化".into()))?.select(&slot_id).map(|()| true).map_err(|error| SessionError::InvalidSave(error.to_string()))
+                });
+                let _ = reply.send(result);
+            }
+            SessionCommand::SubmitReportCorrection { generation, request, reply } => {
+                let result = self.report_correction_response(generation, |game| {
+                    let epoch = game.report_correction_epoch();
+                    game.enqueue_report_correction(&epoch, request)
+                });
+                let _ = reply.send(result);
+            }
+            SessionCommand::CancelReportCorrection { generation, operation_id, reply } => {
+                let result = self.report_correction_response(generation, |game| {
+                    let epoch = game.report_correction_epoch();
+                    game.cancel_report_correction(&epoch, &operation_id)
+                });
+                let _ = reply.send(result);
+            }
+            SessionCommand::QueryReportCorrections { generation, reply } => {
+                let result = self.report_correction_response(generation, |game| game.report_corrections());
+                let _ = reply.send(result);
+            }
             SessionCommand::Enqueue {
                 player_id,
                 intent,
@@ -1053,6 +1335,44 @@ impl<R: Runtime> SessionActor<R> {
                 let result = self.generation_response(generation, self.game.initial_allocation());
                 let _ = reply.send(result);
             }
+            SessionCommand::PersonalTradeConfirmations { generation, before_receipt, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    let history = self.game.personal_trade_confirmations_page(AccountId(0), before_receipt);
+                    self.generation_response(generation, Ok(history))
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::PersonalTradeHistory { generation, query, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidTradeHistoryQuery(format!("过期generation {generation}，当前{}", self.generation)))
+                } else {
+                    self.generation_response(generation, self.game.query_personal_trade_history(AccountId(0), query))
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::MarketHistory { generation, query, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!("过期generation {generation}，当前{}", self.generation)))
+                } else {
+                    let page = self.game.query_market_history_for(AccountId(0), &query);
+                    self.generation_response(generation, page)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::CurrentMinuteHistory { generation, query, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!("过期generation {generation}，当前{}", self.generation)))
+                } else {
+                    let response = self.game.query_current_minute_history_for(AccountId(0), &query);
+                    self.generation_response(generation, response)
+                };
+                let _ = reply.send(result);
+            }
             SessionCommand::QueryBaseline { generation, reply } => {
                 let result = if generation != self.generation {
                     Err(SessionError::InvalidSave(format!(
@@ -1086,6 +1406,9 @@ impl<R: Runtime> SessionActor<R> {
                 let _ = reply.send(
                     self.generation_response(generation, self.game.query_public_reports(&query)),
                 );
+            }
+            SessionCommand::PublicReportAvailability { generation, query, reply } => {
+                let _ = reply.send(self.generation_response(generation, self.game.query_public_report_availability(&query)));
             }
             SessionCommand::PublicReportById {
                 generation,
@@ -1127,8 +1450,9 @@ impl<R: Runtime> SessionActor<R> {
             SessionCommand::Restore {
                 generation,
                 slot,
+                archive_slot_id,
                 reply,
-            } => match self.restore(generation, slot) {
+            } => match self.restore(generation, slot, archive_slot_id.as_deref()) {
                 Ok(restored) => {
                     let _ = reply.send(Ok(restored));
                 }
@@ -1143,6 +1467,7 @@ impl<R: Runtime> SessionActor<R> {
                     .map(|_| ())
                     .and_then(|()| self.game.end_civil_day_update());
                 if let Ok(report) = &result {
+                    self.persist_day_end(report);
                     self.emit_update(EngineUpdate::CivilUpdate(Box::new(report.clone())));
                     if self.pause_preferences.pauses(report) {
                         self.pacing.pause_at_civil_boundary(self.game.tick());
@@ -1228,10 +1553,21 @@ impl<R: Runtime> SessionActor<R> {
         })
     }
 
+    fn report_correction_response<T>(
+        &mut self,
+        generation: u64,
+        operation: impl FnOnce(&mut ProtocolSession) -> Result<T, SessionError>,
+    ) -> Result<GenerationResponse<T>, SessionError> {
+        self.generation_response(generation, Ok(()))?;
+        let result = operation(&mut self.game);
+        self.generation_response(generation, result)
+    }
+
     fn restore(
         &mut self,
         generation: u64,
         slot: Box<SaveSlot>,
+        archive_slot_id: Option<&str>,
     ) -> Result<RestoreResult, SessionError> {
         self.generation_response(generation, Ok(()))?;
         let restored = ProtocolSession::restore(&slot)?;
@@ -1240,7 +1576,7 @@ impl<R: Runtime> SessionActor<R> {
                 "session generation exhausted; create a new session".to_owned(),
             )
         })?;
-        {
+        let replace_ingress = || -> Result<(), native_store::StoreError> {
             let mut ingress = self.ingress.write().map_err(|error| {
                 SessionError::ResourceLimit(format!(
                     "session ingress lifecycle lock poisoned: {error}"
@@ -1248,8 +1584,14 @@ impl<R: Runtime> SessionActor<R> {
             })?;
             ingress.1.close()?;
             *ingress = (next_generation, restored.shared_ingress());
-        }
+            Ok(())
+        };
+        let archive = match &self.archive {
+            Some(writer) => Some(writer.renew_after(archive_slot_id, replace_ingress).map_err(|error| SessionError::InvalidSave(error.to_string()))?),
+            None => { replace_ingress().map_err(|error| SessionError::InvalidSave(error.to_string()))?; None }
+        };
         self.game = restored;
+        self.archive = archive;
         self.game.prepare_public_baseline();
         self.timeline_id = uuid::Uuid::new_v4().to_string();
         self.generation = next_generation;
@@ -1263,12 +1605,13 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     fn prepare_civil_updates(
-        &mut self,
+        game: &mut ProtocolSession,
+        pause_preferences: &PausePreferences,
     ) -> Result<Vec<engine::session::protocol::CivilUpdate>, SessionError> {
         let mut updates = Vec::new();
-        while self.game.civil_day_ready()? {
-            let update = self.game.end_civil_day_update()?;
-            let pause = self.pause_preferences.pauses(&update);
+        while game.civil_day_ready()? {
+            let update = game.end_civil_day_update()?;
+            let pause = pause_preferences.pauses(&update);
             updates.push(update);
             if pause {
                 break;
@@ -1347,6 +1690,7 @@ fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    include!("../../../../packages/engine/test-support/simple_company.rs");
     use super::{
         compact_fastest_events, diagnostic_generation_response, fixed_tick_interval,
         take_publish_batch, SessionManager, SpeedMeter,
@@ -1364,8 +1708,7 @@ mod tests {
 
     pub(super) fn diagnostic_setup() -> SessionSetup {
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(engine; ["600101"]),
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -1404,6 +1747,7 @@ mod tests {
             closing_auction_ticks: 0,
             history_len: 20,
             t1_enabled: true,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),

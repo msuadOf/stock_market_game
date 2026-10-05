@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 embed-resource = "3.0.9"
 
 [dev-dependencies]
+engine = { path = "../../../packages/engine", features = ["verification-harness"] }
 tauri = { version = "2", features = ["test"] }
 
 [dependencies]
@@ -29,6 +30,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 # engine 直连（actor-per-session：tokio task 独占 GameSession）。
 engine = { path = "../../../packages/engine" }
+native-store = { path = "../../../packages/native-store" }
 # tokio 驱动 actor step 循环与 mpsc/oneshot/broadcast。
 tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
 # 跨界序列化（setup/intent/snapshot/event 经 serde_json 与前端互通）。

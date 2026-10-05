@@ -9,7 +9,7 @@
 //!
 //! 纯前端单机：player 固定 AccountId(0)（enqueue 不带 player_id）。
 
-use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
+use engine::company::{PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportQuery, PublicReportSummary};
 use engine::session::protocol::{EngineUpdate, ProtocolSession, SaveCandidateKey};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
@@ -168,11 +168,45 @@ impl SessionRegistry {
             Ok(EngineUpdate::TickBatch(Box::new(batch)))
         })();
         result.map_err(|error| match error {
-            StepUpdateError::Fatal(failure) => {
-                StepUpdateError::Fatal(Box::new((*failure).at_session(session)))
-            }
+            StepUpdateError::Fatal(failure) => StepUpdateError::Fatal(Box::new((*failure).at_session(session))),
+            StepUpdateError::Recoverable(failure) => StepUpdateError::Recoverable(Box::new((*failure).at_session(session))),
             other => other,
         })
+    }
+
+    fn submit_report_correction(
+        &mut self,
+        handle: u32,
+        request: engine::CompanyReportCorrection,
+    ) -> Result<(), StepUpdateError> {
+        self.with_session(handle, |session| {
+            let epoch = session.report_correction_epoch();
+            session.enqueue_report_correction(&epoch, request)
+        })
+        .map_err(StepUpdateError::Operation)?
+        .map_err(session_error_to_step_update_error)
+    }
+
+    fn cancel_report_correction(
+        &mut self,
+        handle: u32,
+        operation_id: &str,
+    ) -> Result<(), StepUpdateError> {
+        self.with_session(handle, |session| {
+            let epoch = session.report_correction_epoch();
+            session.cancel_report_correction(&epoch, operation_id)
+        })
+        .map_err(StepUpdateError::Operation)?
+        .map_err(session_error_to_step_update_error)
+    }
+
+    fn query_report_corrections(
+        &mut self,
+        handle: u32,
+    ) -> Result<engine::ReportCorrectionStatus, StepUpdateError> {
+        self.with_session(handle, |session| session.report_corrections())
+            .map_err(StepUpdateError::Operation)?
+            .map_err(session_error_to_step_update_error)
     }
 }
 
@@ -322,6 +356,18 @@ impl HostFailure {
 
     fn civil(error: SessionError) -> Self {
         match error {
+            SessionError::ReportCorrection(_) => Self {
+                code: "REPORT_CORRECTION_REJECTED",
+                message: error.to_string(),
+                r#where: "web-wasm.end_civil_day_update".into(),
+                cause: failure_cause(&error),
+                context: FailureContext::new("endCivilDay"),
+                recoverable: true,
+                recovery_actions: vec![
+                    "查询并取消错误的待处理更正后重试日结",
+                    "复制更正操作身份与错误详情反馈",
+                ],
+            },
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
@@ -343,13 +389,14 @@ impl HostFailure {
 enum StepUpdateError {
     Operation(String),
     Fatal(Box<HostFailure>),
+    Recoverable(Box<HostFailure>),
 }
 
 impl std::fmt::Display for StepUpdateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Operation(message) => formatter.write_str(message),
-            Self::Fatal(failure) => formatter.write_str(&failure.message),
+            Self::Fatal(failure) | Self::Recoverable(failure) => formatter.write_str(&failure.message),
         }
     }
 }
@@ -357,7 +404,7 @@ impl std::fmt::Display for StepUpdateError {
 fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
     match error {
         StepUpdateError::Operation(message) => JsValue::from_str(&message),
-        StepUpdateError::Fatal(failure) => to_js(&*failure).unwrap_or_else(|serialize_error| {
+        StepUpdateError::Fatal(failure) | StepUpdateError::Recoverable(failure) => to_js(&*failure).unwrap_or_else(|serialize_error| {
             let serialize_error = serialize_error
                 .as_string()
                 .unwrap_or_else(|| format!("{serialize_error:?}"));
@@ -381,7 +428,11 @@ fn session_error_to_js(error: SessionError) -> JsValue {
 }
 
 fn civil_error_to_step_update_error(error: SessionError) -> StepUpdateError {
-    StepUpdateError::Fatal(Box::new(HostFailure::civil(error)))
+    if matches!(&error, SessionError::ReportCorrection(_)) {
+        StepUpdateError::Recoverable(Box::new(HostFailure::civil(error)))
+    } else {
+        StepUpdateError::Fatal(Box::new(HostFailure::civil(error)))
+    }
 }
 
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
@@ -452,12 +503,49 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let report = sess.end_civil_day_update().map_err(|error| {
-            step_update_error_to_js(StepUpdateError::Fatal(Box::new(
-                HostFailure::civil(error).at_session(sess),
-            )))
+            let failure = HostFailure::civil(error).at_session(sess);
+            let error = if failure.recoverable {
+                StepUpdateError::Recoverable(Box::new(failure))
+            } else {
+                StepUpdateError::Fatal(Box::new(failure))
+            };
+            step_update_error_to_js(error)
         })?;
         to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
+}
+
+#[wasm_bindgen]
+pub fn submit_report_correction(handle: u32, request: JsValue) -> Result<(), JsValue> {
+    let request: engine::CompanyReportCorrection = serde_wasm_bindgen::from_value(request)?;
+    REGISTRY
+        .with(|registry| {
+            registry
+                .borrow_mut()
+                .submit_report_correction(handle, request)
+        })
+        .map_err(step_update_error_to_js)
+}
+
+#[wasm_bindgen]
+pub fn cancel_report_correction(handle: u32, operation_id: String) -> Result<(), JsValue> {
+    REGISTRY
+        .with(|registry| {
+            registry
+                .borrow_mut()
+                .cancel_report_correction(handle, &operation_id)
+        })
+        .map_err(step_update_error_to_js)
+}
+
+#[wasm_bindgen]
+pub fn query_report_corrections(handle: u32) -> Result<JsValue, JsValue> {
+    let status = REGISTRY
+        .with(|registry| registry.borrow_mut().query_report_corrections(handle))
+        .map_err(step_update_error_to_js)?;
+    status
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 /// 查询当前自然日已公开的公司报告页。
@@ -479,6 +567,18 @@ pub fn public_report_by_id(handle: u32, id: String) -> Result<JsValue, JsValue> 
         let report: PublicReportSummary =
             sess.public_report_by_id(id).map_err(session_error_to_js)?;
         public_dto_to_js(&report)
+    })
+}
+
+/// 查询指定财报期间、类型与 scope 的公开可用性。
+#[wasm_bindgen]
+pub fn public_report_availability(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let query: PublicReportAvailabilityQuery = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |sess| {
+        let availability: PublicReportAvailability = sess
+            .query_public_report_availability(&query)
+            .map_err(session_error_to_js)?;
+        public_dto_to_js(&availability)
     })
 }
 
@@ -520,12 +620,98 @@ pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValu
 #[serde(rename_all = "camelCase")]
 struct HostCapabilities {
     npc_decision_diagnostics: bool,
+    indicator_capabilities: IndicatorCapabilities,
+    personal_trade_history: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndicatorCapabilities {
+    intraday_average: bool,
+    macd: bool,
+    price_kdj: bool,
+    candle_kdj: bool,
 }
 
 #[wasm_bindgen]
 pub fn host_capabilities() -> Result<JsValue, JsValue> {
     to_js(&HostCapabilities {
         npc_decision_diagnostics: cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+        indicator_capabilities: IndicatorCapabilities {
+            intraday_average: true,
+            macd: true,
+            price_kdj: true,
+            candle_kdj: true,
+        },
+        personal_trade_history: true,
+    })
+}
+
+#[wasm_bindgen]
+pub fn calculate_intraday_average(
+    turnover_cents: String,
+    trade_count: u64,
+    volume_shares: u64,
+) -> Result<JsValue, JsValue> {
+    let turnover_cents = engine::parse_turnover_cents(&turnover_cents)
+        .map_err(|error| JsValue::from_str(&format!("turnover_cents 无效：{error}")))?;
+    let stats = engine::DailyTradeStats { turnover_cents, trade_count };
+    let average = engine::calculate_intraday_average(Some(&stats), volume_shares)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    to_js(&average)
+}
+
+#[wasm_bindgen]
+pub fn calculate_intraday_average_curve(samples: JsValue) -> Result<JsValue, JsValue> {
+    let samples: Vec<engine::IntradayAverageInput> = serde_wasm_bindgen::from_value(samples)?;
+    if samples.len() > 600 {
+        return Err(JsValue::from_str("VWAP curve 样本数不能超过 600"));
+    }
+    let curve = engine::calculate_intraday_average_curve(&samples)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    to_js(&curve)
+}
+
+#[wasm_bindgen]
+pub fn personal_trade_confirmations(handle: u32, before_receipt: Option<String>) -> Result<JsValue, JsValue> {
+    let before_receipt = before_receipt.map(|value| {
+        if value.is_empty() || value.len() > 20 || !value.bytes().all(|byte| byte.is_ascii_digit()) || (value.len() > 1 && value.starts_with('0')) {
+            return Err(JsValue::from_str("交割单 before_receipt 必须是规范u64字符串"));
+        }
+        value.parse::<u64>().map_err(|error| JsValue::from_str(&error.to_string()))
+    }).transpose()?;
+    with_session(handle, |session| {
+        to_js(&session.personal_trade_confirmations_page(AccountId(0), before_receipt))
+    })
+}
+
+#[wasm_bindgen]
+pub fn personal_trade_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: engine::session::PersonalTradeHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let page = session.query_personal_trade_history(AccountId(0), request)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(&page)
+    })
+}
+
+#[wasm_bindgen]
+pub fn market_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: engine::session::MarketHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let page = session.query_market_history_for(AccountId(0), &request)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(&page)
+    })
+}
+
+#[wasm_bindgen]
+pub fn current_minute_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: engine::session::CurrentMinuteHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let response = session.query_current_minute_history_for(AccountId(0), &request)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(&response)
     })
 }
 
@@ -561,6 +747,74 @@ pub fn ingress_enqueue(token: u32, intent: JsValue) -> Result<(), JsValue> {
         })
     }).map_err(session_error_to_js)?;
     service.enqueue_player_intent(AccountId(0), intent).map_err(session_error_to_js)
+}
+
+#[cfg(feature = "verification-harness")]
+fn verification_ingress_source(token: u32) -> Result<engine::SharedSessionIngress, JsValue> {
+    ingress_operation(|registry| {
+        registry.get(&token).cloned().ok_or_else(|| {
+            SessionError::ResourceLimit(format!("WASM verification ingress token {token} 已关闭或不存在"))
+        })
+    })
+    .map_err(session_error_to_js)
+}
+
+#[cfg(feature = "verification-harness")]
+#[wasm_bindgen]
+pub fn verification_ingress_arm(
+    token: u32,
+    phase: String,
+    tick: u64,
+    account: Option<u64>,
+) -> Result<(), JsValue> {
+    verification_ingress_source(token)?
+        .verification_arm(&phase, tick, account.map(AccountId))
+        .map_err(session_error_to_js)
+}
+
+#[cfg(feature = "verification-harness")]
+#[wasm_bindgen]
+pub fn verification_ingress_snapshot(token: u32) -> Result<JsValue, JsValue> {
+    let snapshot = verification_ingress_source(token)?
+        .verification_snapshot()
+        .map_err(session_error_to_js)?;
+    to_js(&snapshot)
+}
+
+#[cfg(feature = "verification-harness")]
+#[wasm_bindgen]
+pub fn verification_ingress_release(token: u32) -> Result<(), JsValue> {
+    verification_ingress_source(token)?
+        .verification_release()
+        .map_err(session_error_to_js)
+}
+
+#[cfg(feature = "verification-harness")]
+#[wasm_bindgen]
+pub fn verification_resting_orders(
+    handle: u32,
+    account: u64,
+    code: String,
+) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let save = session
+            .game()
+            .save()
+            .map_err(|fatal| session_error_to_js(SessionError::from(fatal)))?;
+        let owner = AccountId(account);
+        let stock = engine::StockCode(code);
+        if !save.snapshot.accounts.contains_key(&owner) {
+            return Err(JsValue::from_str(&format!("verification account {account} 不存在")));
+        }
+        if !save.snapshot.markets.contains_key(&stock) {
+            return Err(JsValue::from_str(&format!("verification stock {} 不存在", stock.0)));
+        }
+        let orders = save.resting_orders.get(&stock).ok_or_else(|| {
+            JsValue::from_str(&format!("verification stock {} 缺少真实订单簿投影", stock.0))
+        })?;
+        let owned = orders.iter().filter(|order| order.owner == owner).cloned().collect::<Vec<_>>();
+        to_js(&owned)
+    })
 }
 
 /// 销毁会话（释放内存）。

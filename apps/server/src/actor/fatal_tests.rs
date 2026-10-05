@@ -1,5 +1,488 @@
 use super::*;
 
+struct ScopedIngressGate(engine::SharedSessionIngress);
+
+impl Drop for ScopedIngressGate {
+    fn drop(&mut self) {
+        self.0
+            .verification_release()
+            .expect("验证退出必须释放真实NPC gate");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn authenticated_http_scoped_ingress_registers_while_real_actor_npc_is_busy() {
+    use tower::ServiceExt;
+
+    let manager = SessionManager::with_base_ms(1);
+    let identities = crate::identity::IdentityService::new(manager.database());
+    let creator = identities.guest().unwrap();
+    let trader = identities.guest().unwrap();
+    let subject = OpaqueSubjectId::new(trader.subject.subject_id.clone()).unwrap();
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.strategy_params.retail.chase_prob = 0.0;
+    setup.strategy_params.inst.order_size = 100;
+    setup.strategy_params.hot.lookback = 2;
+    setup.strategy_params.hot.order_size = 100;
+    setup.stocks[0].code = engine::StockCode("600888".into());
+    setup.stocks[0].float_shares = 0;
+    setup.ticks_per_day = 4;
+    setup.history_len = 10;
+    let mut prepared = ProtocolSession::new(setup.clone(), 1).unwrap();
+    prepared
+        .bind_market_creator(OpaqueSubjectId::new(creator.subject.subject_id).unwrap())
+        .unwrap();
+    let account = prepared
+        .join_market(subject.clone(), false)
+        .unwrap()
+        .account_id;
+    assert_ne!(account, AccountId(0));
+    let mut checkpoint = prepared.game().save().unwrap();
+    let attention = checkpoint.npc_attention.get_mut(&AccountId(1)).unwrap();
+    attention.next_attention_candidate_tick = 1;
+    attention.rng_state = 3;
+    let prepared = ProtocolSession::restore_verification_checkpoint(&checkpoint).unwrap();
+    let source = prepared.shared_ingress();
+    source
+        .verification_arm("npc_decision", 1, Some(AccountId(1)))
+        .unwrap();
+    let _gate = ScopedIngressGate(source.clone());
+    manager.active_count.fetch_add(1, Ordering::AcqRel);
+    let session_id = manager
+        .register_game(prepared, setup, 1, "current", false, None)
+        .unwrap();
+    let handles = manager.lookup(&session_id).unwrap();
+    handles.set_running(true).await.unwrap();
+    let gate_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !source.verification_snapshot().unwrap().entered {
+        assert!(
+            std::time::Instant::now() < gate_deadline,
+            "真实Actor production NPC worker必须进入gate"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let intent = Intent::PlaceLimit {
+        code: engine::StockCode("600888".into()),
+        side: engine::Side::Buy,
+        price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
+        qty: 100,
+    };
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/intent")
+        .header("authorization", format!("Bearer {}", trader.token))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::json!({ "session_id": session_id, "generation": "1", "intent": intent })
+                .to_string(),
+        ))
+        .unwrap();
+    let application = crate::app_router_with_manager(manager.clone());
+    let (request_reply, request_result) = std::sync::mpsc::channel();
+    let request_worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_millis(250), application.oneshot(request)).await
+        });
+        request_reply.send(result).unwrap();
+    });
+    let response = request_result
+        .recv_timeout(Duration::from_secs(1))
+        .expect("独立HTTP runtime必须在短deadline内返回")
+        .expect("认证交易请求不得等待busy Actor消费命令")
+        .unwrap();
+    request_worker.join().unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let trace = source.verification_snapshot().unwrap();
+    assert!(trace.entered && !trace.released);
+    assert_eq!(trace.players.len(), 1);
+    assert_eq!(trace.players[0].owner, account);
+    assert!(trace.npc_receipts.is_empty());
+    source.verification_release().unwrap();
+    handles.set_running(false).await.unwrap();
+    let trace = source.verification_snapshot().unwrap();
+    assert!(trace
+        .npc_receipts
+        .iter()
+        .any(|receipt| receipt.receipt.owner == AccountId(1)));
+    assert!(trace
+        .npc_receipts
+        .iter()
+        .all(|receipt| trace.players[0].stock_ordinal < receipt.receipt.stock_ordinal));
+    assert_eq!(
+        source.receipt_cursors().unwrap().next_account_ordinal[&account],
+        1
+    );
+    assert!(handles
+        .enqueue_for(0, subject.clone(), intent.clone())
+        .await
+        .is_err());
+    assert!(handles
+        .enqueue_for(
+            1,
+            OpaqueSubjectId::new("not-admitted".into()).unwrap(),
+            intent.clone()
+        )
+        .await
+        .is_err());
+    source.close().unwrap();
+    assert!(handles.enqueue_for(1, subject, intent).await.is_err());
+    manager
+        .remove(&session_id)
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scoped_subject_cache_switches_with_generation_and_closes_retired_source() {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let old_subject = OpaqueSubjectId::new("old-trader".into()).unwrap();
+    let new_subject = OpaqueSubjectId::new("new-trader".into()).unwrap();
+    let mut game = ProtocolSession::new(setup.clone(), 1).unwrap();
+    game.bind_market_creator(old_subject.clone()).unwrap();
+    let old_source = game.shared_ingress();
+    let ingress = Arc::new(RwLock::new((
+        1,
+        old_source.clone(),
+        game.trading_subject_accounts(),
+    )));
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let handles = SessionHandles {
+        cmd_tx,
+        ingress: Arc::clone(&ingress),
+        event_tx: event_tx.clone(),
+        ticks_per_day: setup.ticks_per_day,
+        auction_ticks: setup.auction_ticks,
+        closing_auction_ticks: setup.closing_auction_ticks,
+        session_token: "trusted-test".into(),
+        startup_setup: setup.clone(),
+        startup_seed: 1,
+        startup_resumed: false,
+    };
+    let actor = SessionActor {
+        controllers: std::collections::BTreeSet::from([old_subject.clone()]),
+        archive: None,
+        ingress: Arc::clone(&ingress),
+        injected_step_failure: None,
+        pacing: ServerPacing::new(1000, game.tick()),
+        game,
+        cmd_rx,
+        event_tx,
+        session_id: "scoped-cache-race".into(),
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 0,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+    let mut replacement = ProtocolSession::new(setup, 2).unwrap();
+    replacement
+        .bind_market_creator(new_subject.clone())
+        .unwrap();
+    let new_source = replacement.shared_ingress();
+    let intent = Intent::PlaceLimit {
+        code: engine::StockCode("600101".into()),
+        side: engine::Side::Buy,
+        price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
+        qty: 100,
+    };
+    let prior_generation = ingress.read().unwrap();
+    let (started, receive_started) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut actor = actor;
+        started.send(()).unwrap();
+        actor.replace_timeline(replacement, None).unwrap();
+        actor
+    });
+    receive_started
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(prior_generation.0, 1);
+    let account = prior_generation.2[&old_subject];
+    prior_generation
+        .1
+        .enqueue_player_intent(account, intent.clone())
+        .unwrap();
+    drop(prior_generation);
+    let actor = worker.join().unwrap();
+    assert_eq!(actor.timeline_generation, 2);
+    assert!(actor.require_market_control(&old_subject).is_ok());
+    assert_eq!(
+        old_source.receipt_cursors().unwrap().next_account_ordinal[&account],
+        1
+    );
+    assert!(handles
+        .enqueue_for(1, old_subject.clone(), intent.clone())
+        .await
+        .is_err());
+    assert!(handles
+        .enqueue_for(2, old_subject, intent.clone())
+        .await
+        .is_err());
+    assert!(new_source.recorded_player_inputs().unwrap().is_empty());
+    assert!(old_source
+        .enqueue_player_intent(account, intent.clone())
+        .is_err());
+    handles.enqueue_for(2, new_subject, intent).await.unwrap();
+    assert_eq!(
+        new_source.receipt_cursors().unwrap().next_account_ordinal[&AccountId(0)],
+        1
+    );
+}
+
+#[tokio::test]
+async fn loading_economic_members_keeps_current_control_without_granting_archive_members() {
+    let current_subject = OpaqueSubjectId::new("current-controller".into()).unwrap();
+    let archived_subject = OpaqueSubjectId::new("archive-member".into()).unwrap();
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut archived = ProtocolSession::new(setup.clone(), 9).unwrap();
+    archived
+        .bind_market_creator(archived_subject.clone())
+        .unwrap();
+    archived.end_civil_day_update().unwrap();
+    let saved = archived.save().unwrap();
+    assert!(
+        !serde_json::to_value(&saved).unwrap()["market_memberships"]["members"]["archive-member"]
+            .as_object()
+            .unwrap()
+            .contains_key("capabilities")
+    );
+    let mut game = ProtocolSession::new(setup.clone(), 8).unwrap();
+    game.bind_market_creator(current_subject.clone()).unwrap();
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let mut actor = SessionActor {
+        controllers: std::collections::BTreeSet::from([current_subject.clone()]),
+        archive: None,
+        ingress: Arc::new(RwLock::new((
+            1,
+            game.shared_ingress(),
+            game.trading_subject_accounts(),
+        ))),
+        injected_step_failure: None,
+        pacing: ServerPacing::new(1000, game.tick()),
+        game,
+        cmd_rx,
+        event_tx,
+        session_id: "control-independent".into(),
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 0,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+    let (reply, receive) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::Restore {
+            archive_slot_id: None,
+            subject: Some(current_subject.clone()),
+            generation: Some(1),
+            slot: Box::new(saved),
+            reply,
+        })
+        .await;
+    assert!(receive.await.unwrap().unwrap().accounts.is_empty());
+    assert!(actor.require_market_control(&current_subject).is_ok());
+    assert!(actor.require_market_control(&archived_subject).is_err());
+    let MemberResponse::Context(context) = actor
+        .handle_member_request(current_subject.clone(), MemberRequest::Context)
+        .unwrap()
+    else {
+        panic!("应返回当前市场上下文")
+    };
+    assert!(context.can_control && context.needs_rejoin);
+    assert!(context.member.is_none());
+    assert_eq!(context.seed, "9");
+    assert!(actor
+        .handle_member_request(current_subject.clone(), MemberRequest::Snapshot)
+        .is_err());
+    actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::SetRunning {
+                generation: 2,
+                running: false,
+            },
+        )
+        .unwrap();
+    actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::AdmissionCash {
+                generation: 2,
+                cash: engine::Money::from_cents(12345),
+            },
+        )
+        .unwrap();
+    assert!(actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::Join {
+                generation: Some(1),
+                confirmed_rejoin: true
+            }
+        )
+        .is_err());
+    assert!(actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::Join {
+                generation: Some(2),
+                confirmed_rejoin: false
+            }
+        )
+        .is_err());
+    let MemberResponse::Membership(member) = actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::Join {
+                generation: Some(2),
+                confirmed_rejoin: true,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("应返回重新加入的成员")
+    };
+    assert_eq!(
+        actor.game.account(member.account_id).unwrap().cash(),
+        engine::Money::from_cents(12345)
+    );
+    assert!(actor
+        .game
+        .account(member.account_id)
+        .unwrap()
+        .positions()
+        .is_empty());
+    assert_eq!(
+        actor
+            .game
+            .join_market(current_subject.clone(), true)
+            .unwrap(),
+        member
+    );
+    assert!(actor
+        .handle_member_request(
+            archived_subject,
+            MemberRequest::Reset {
+                generation: 2,
+                setup: Box::new(setup.clone()),
+                seed: 10
+            }
+        )
+        .is_err());
+    actor
+        .handle_member_request(
+            current_subject.clone(),
+            MemberRequest::Reset {
+                generation: 2,
+                setup: Box::new(setup),
+                seed: 10,
+            },
+        )
+        .unwrap();
+    assert_eq!(actor.timeline_generation, 3);
+    assert!(actor.require_market_control(&current_subject).is_ok());
+}
+
+#[test]
+fn civil_batch_preparation_defers_ingress_calendar_until_success() {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-01").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.ticks_per_day = 2;
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    let source = game.shared_ingress();
+    let intent = engine::Intent::Cancel {
+        code: engine::StockCode("600101".into()),
+        id: engine::OrderId(1),
+    };
+    assert!(source
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    let before = (game.tick(), game.seq(), game.business_state_hash().unwrap());
+    let result: Result<(), SessionError> = game.with_publication_transaction(|candidate| {
+        let updates = SessionActor::prepare_civil_updates(candidate, &PausePreferences::default())?;
+        assert_eq!(updates.len(), 1);
+        assert_eq!(candidate.civil_date().to_iso(), "2030-01-02");
+        assert!(source
+            .enqueue_player_intent(AccountId(0), intent.clone())
+            .is_err());
+        Err(SessionError::InvalidSave("后续批次准备失败".into()))
+    });
+    assert!(
+        matches!(result, Err(SessionError::InvalidSave(message)) if message == "后续批次准备失败")
+    );
+    assert_eq!(game.civil_date().to_iso(), "2030-01-01");
+    assert_eq!(
+        (game.tick(), game.seq(), game.business_state_hash().unwrap()),
+        before
+    );
+    assert!(source
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    assert!(game.save().is_err());
+
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let mut actor = SessionActor {
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
+        ingress: Arc::new(RwLock::new((
+            1,
+            source.clone(),
+            game.trading_subject_accounts(),
+        ))),
+        injected_step_failure: None,
+        pacing: ServerPacing {
+            speed_meter: SpeedMeter::new(game.tick()),
+            tick_interval: Duration::from_millis(1),
+            base_ms: 1,
+            running: true,
+            fastest: true,
+            requested_speed: RequestedSpeed::Fastest,
+        },
+        game,
+        cmd_rx,
+        event_tx,
+        session_id: "calendar-publication".into(),
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 4,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+    actor.run_protocol_batch(1);
+    assert_eq!(actor.game.civil_date().to_iso(), "2030-01-02");
+    assert_eq!(actor.game.tick(), 0);
+    assert_eq!(actor.public_revision, 5);
+    assert!(actor.fatal_failure.is_none());
+    assert!(matches!(
+        receiver.try_recv().unwrap().update,
+        Some(ProtocolUpdate::CivilUpdate(_))
+    ));
+    assert!(receiver.try_recv().is_err());
+    source.enqueue_player_intent(AccountId(0), intent).unwrap();
+    assert_eq!(actor.game.game().save().unwrap().pending_player.len(), 1);
+}
+
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {
     let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
@@ -10,13 +493,20 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let handles = SessionHandles {
-        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        ingress: Arc::new(RwLock::new((
+            1,
+            game.shared_ingress(),
+            game.trading_subject_accounts(),
+        ))),
         cmd_tx,
         event_tx,
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
         session_token: "shared-ingress".into(),
+        startup_setup: setup.clone(),
+        startup_seed: 7,
+        startup_resumed: false,
     };
     tokio::time::timeout(
         Duration::from_millis(100),
@@ -184,7 +674,13 @@ async fn capture(successful_steps: usize) {
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
-        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
+        ingress: Arc::new(RwLock::new((
+            1,
+            game.shared_ingress(),
+            game.trading_subject_accounts(),
+        ))),
         injected_step_failure: Some((successful_steps, fatal.clone())),
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -287,6 +783,9 @@ async fn capture(successful_steps: usize) {
     let (reply, response) = oneshot::channel();
     actor
         .handle_command(SessionCommand::Restore {
+            archive_slot_id: None,
+            subject: None,
+            generation: None,
             slot: Box::new(slot_before),
             reply,
         })
@@ -453,7 +952,13 @@ async fn authority_reads_reject_stale_generations() {
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
-        ingress: Arc::new(RwLock::new((7, game.shared_ingress()))),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
+        ingress: Arc::new(RwLock::new((
+            7,
+            game.shared_ingress(),
+            game.trading_subject_accounts(),
+        ))),
         #[cfg(test)]
         injected_step_failure: None,
         pacing: ServerPacing {
@@ -518,20 +1023,29 @@ async fn authority_reads_reject_stale_generations() {
 async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     use futures_util::FutureExt;
 
-    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-01").unwrap());
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let game = ProtocolSession::new(setup.clone(), 42).unwrap();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let handles = SessionHandles {
-        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        ingress: Arc::new(RwLock::new((
+            1,
+            game.shared_ingress(),
+            game.trading_subject_accounts(),
+        ))),
         cmd_tx,
         event_tx: event_tx.clone(),
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
         session_token: "command-burst".into(),
+        startup_setup: setup.clone(),
+        startup_seed: 42,
+        startup_resumed: false,
     };
     let mut actor = SessionActor {
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         ingress: Arc::clone(&handles.ingress),
         injected_step_failure: None,
         pacing: ServerPacing {

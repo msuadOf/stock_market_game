@@ -12,6 +12,9 @@ use server::{app_router_with_manager, SessionManager};
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::http::Request as WsRequest;
 
+#[path = "identity_fixture.rs"]
+mod identity_fixture;
+
 /// 复用 api_contract 的合法 setup JSON（这里独立构造一份，避免跨测试文件依赖）。
 fn sample_setup_json() -> serde_json::Value {
     serde_json::json!({
@@ -41,6 +44,10 @@ fn sample_setup_json() -> serde_json::Value {
         "auction_ticks": 0,
         "closing_auction_ticks": 0,
         "history_len": 5,
+        "start_date": "2030-01-02",
+        "report_frequency": "Quarterly",
+        "company_operations": null,
+        "groups": [],
         "t1_enabled": true,
         "float_allocation": { "between_kinds": "Random", "within_kind": "Random" },
         "simulation_policy_id": engine::SIMULATION_POLICY_ID
@@ -71,26 +78,32 @@ impl ServerFixture {
         }
     }
 
-    fn session(&self, seed: u64) -> (String, std::sync::Arc<server::SessionHandles>) {
+    async fn session(&self, seed: u64) -> (String, std::sync::Arc<server::SessionHandles>, String, String) {
         let setup = serde_json::from_value(sample_setup_json()).expect("WS fixture setup 应合法");
-        self.session_with_setup(setup, seed)
+        self.session_with_setup(setup, seed).await
     }
 
-    fn session_with_setup(
+    async fn session_with_setup(
         &self,
         setup: engine::SessionSetup,
         seed: u64,
-    ) -> (String, std::sync::Arc<server::SessionHandles>) {
-        let id = self
-            .manager
-            .new_session(setup, seed)
+    ) -> (String, std::sync::Arc<server::SessionHandles>, String, String) {
+        let (subject, token) = identity_fixture::guest(&self.manager);
+        let (id, created) = self.manager.new_shared_session(setup, seed, subject)
             .expect("WS fixture actor 应启动");
+        assert!(created, "fresh WS fixture should create market");
         self.session_ids
             .lock()
             .expect("WS fixture session 清单不应 poison")
             .push(id.clone());
         let handles = self.manager.lookup(&id).expect("WS fixture actor 应已注册");
-        (id, handles)
+        let identity = server::identity::IdentityService::new(self.manager.database())
+            .authenticate(&token)
+            .expect("WS fixture credential should authenticate");
+        let subject = engine::session::OpaqueSubjectId::new(identity.subject_id)
+            .expect("WS fixture subject should be valid");
+        let generation = identity_fixture::generation(&handles, subject).await;
+        (id, handles, token, generation)
     }
 
     fn ws_url(&self) -> String {
@@ -151,8 +164,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
     // base_ms=20ms 让事件快速到达。
     ServerFixture::run(20, |fixture| async move {
         let base_url = &fixture.base_url;
-        let (id, handles) = fixture.session(42);
-        let token = handles.session_token.clone();
+        let (id, handles, token, _generation) = fixture.session(42).await;
         handles.set_running(true).await.unwrap();
 
         let ws_url = fixture.ws_url();
@@ -260,8 +272,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
 async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
     ServerFixture::run(20, |fixture| async move {
         let base_url = &fixture.base_url;
-        let (id, handles) = fixture.session(43);
-        let token = handles.session_token.clone();
+        let (id, handles, token, _generation) = fixture.session(43).await;
         handles.set_running(true).await.unwrap();
         let ws_url = fixture.ws_url();
         let req = WsRequest::builder()
@@ -306,8 +317,7 @@ async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
 async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
     ServerFixture::run(1_000, |fixture| async move {
     let base_url = &fixture.base_url;
-    let (id, handles) = fixture.session(44);
-    let token = handles.session_token.clone();
+    let (id, handles, token, generation) = fixture.session(44).await;
     let ws_url = fixture.ws_url();
     let req = WsRequest::builder()
         .method("GET")
@@ -336,7 +346,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 6,
-                "generation": "1",
+                "generation": generation,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
             }
         }).to_string(),
@@ -352,7 +362,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 6,
-                "generation": "1",
+                "generation": generation,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
             }
         }).to_string(),
@@ -368,14 +378,14 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 7,
-                "generation": "1",
+                "generation": generation,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();
     let queued = ws.next().await.unwrap().unwrap().into_text().unwrap();
     let queued: serde_json::Value = serde_json::from_str(&queued).unwrap();
-    assert_eq!(queued["CommandQueued"]["request_id"], 7);
+    assert_eq!(queued["CommandQueued"]["request_id"], 7, "gateway response: {queued}");
     }).await;
 }
 
@@ -406,8 +416,7 @@ async fn ws_rejects_unknown_session() {
 async fn ws_rejects_missing_or_query_string_credentials() {
     ServerFixture::run(1_000, |fixture| async move {
         let base_url = &fixture.base_url;
-        let (id, handles) = fixture.session(46);
-        let token = handles.session_token.clone();
+        let (id, handles, token, _generation) = fixture.session(46).await;
         let ws_url = fixture.ws_url();
 
         for request in [
@@ -444,9 +453,8 @@ async fn ws_rejects_missing_or_query_string_credentials() {
 #[tokio::test]
 async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
     ServerFixture::run(1_000, |fixture| async move {
-        let (id, handles) = fixture.session(47);
-        let encoded: String = handles
-            .session_token
+        let (id, handles, token, _generation) = fixture.session(47).await;
+        let encoded: String = token
             .bytes()
             .map(|byte| format!("{byte:02x}"))
             .collect();
@@ -487,11 +495,11 @@ async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
 #[tokio::test]
 async fn ws_closes_when_client_does_not_answer_ping_before_deadline() {
     ServerFixture::run(1_000, |fixture| async move {
-        let (id, handles) = fixture.session(48);
+        let (id, handles, token, _generation) = fixture.session(48).await;
         let request = WsRequest::builder()
             .method("GET")
             .uri(format!("{}/ws?session_id={id}", fixture.ws_url()))
-            .header("authorization", format!("Bearer {}", handles.session_token))
+            .header("authorization", format!("Bearer {token}"))
             .header("Host", "127.0.0.1")
             .header("Upgrade", "websocket")
             .header("Connection", "upgrade")
@@ -557,8 +565,7 @@ async fn publisher_modes_report_actual_speed() {
         let mode = mode.to_owned();
         ServerFixture::run(1_000, |fixture| async move {
             let base_url = &fixture.base_url;
-            let (id, handles) = fixture.session(100);
-            let token = handles.session_token.clone();
+            let (id, handles, token, _generation) = fixture.session(100).await;
             handles.set_speed(f64::INFINITY).await.unwrap();
             handles.set_running(true).await.unwrap();
             let ws_url = fixture.ws_url();
@@ -611,8 +618,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
             serde_json::from_value(sample_setup_json()).expect("sample setup must deserialize");
         // Settle Saturday into Sunday without scheduling next-opening NPC requests.
         setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
-        let (id, handles) = fixture.session_with_setup(setup.clone(), 45);
-        let token = handles.session_token.clone();
+        let (id, handles, token, generation) = fixture.session_with_setup(setup.clone(), 45).await;
         let before = handles
             .public_baseline()
             .await
@@ -664,7 +670,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
         assert_eq!(resync["ResyncRequired"]["reason"], "timeline_changed");
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
-            serde_json::json!({ "SubmitIntent": { "request_id": 9, "generation": "1",
+            serde_json::json!({ "SubmitIntent": { "request_id": 9, "generation": generation,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
                     "price": { "Fixed": "1000" }, "qty": 100 } } } })
             .to_string(),
@@ -735,7 +741,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
 #[tokio::test]
 async fn server_fixture_shutdown_stops_listener_and_removes_sessions() {
     let fixture = ServerFixture::start(1_000).await;
-    let (id, handles) = fixture.session(101);
+    let (id, handles, _token, _generation) = fixture.session(101).await;
     let manager = fixture.manager.clone();
     let address = fixture.base_url.trim_start_matches("http://").to_owned();
     assert!(manager.lookup(&id).is_some());
@@ -754,7 +760,7 @@ async fn server_fixture_cleans_resources_after_assertion_panic() {
     let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
     let test_resources = captured.clone();
     let result = tokio::spawn(ServerFixture::run(1_000, |fixture| async move {
-        let (id, handles) = fixture.session(102);
+        let (id, handles, _token, _generation) = fixture.session(102).await;
         let address = fixture.base_url.trim_start_matches("http://").to_owned();
         *test_resources.lock().unwrap() = Some((fixture.manager.clone(), id, handles, address));
         panic!("fixture 断言路径");

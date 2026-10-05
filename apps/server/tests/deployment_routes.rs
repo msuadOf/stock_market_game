@@ -154,6 +154,43 @@ async fn combined_keeps_health_auth_and_ws_handlers_on_same_origin() {
 }
 
 #[tokio::test]
+async fn combined_exposes_identity_routes_and_protects_identity_lookup() {
+    let fixture = WebFixture::new();
+    let guest = fixture
+        .router(Services::All)
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/auth/guest")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(guest.status(), StatusCode::CREATED);
+    let guest_body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(guest.into_body(), 4096).await.unwrap(),
+    )
+    .unwrap();
+    assert!(guest_body["token"].as_str().is_some());
+    assert!(guest_body["subject"]["subject_id"].as_str().is_some());
+
+    let me = fixture
+        .router(Services::All)
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/auth/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn unknown_api_ws_and_missing_assets_never_return_index() {
     let fixture = WebFixture::new();
     std::fs::create_dir(fixture.directory.join("api")).unwrap();

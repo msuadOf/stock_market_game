@@ -114,10 +114,11 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert_eq!(actor.game.business_state_hash().unwrap(), business);
     assert!(notices_rx.try_recv().is_err());
     assert!(events_rx.try_recv().is_err());
+    let mut verification = actor.game.fork_for_verification().unwrap();
     for _ in tick..30 {
-        actor.game.step_frame().unwrap();
+        verification.step_frame().unwrap();
     }
-    let civil = actor.game.end_civil_day_update().unwrap();
+    let civil = verification.end_civil_day_update().unwrap();
     assert_eq!(civil.refresh.intraday.len(), 30);
     assert_eq!(
         serde_json::to_value(&civil.refresh.intraday[0]).unwrap(),

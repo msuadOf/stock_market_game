@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "packages/engine",
     "packages/engine-gpu",
+    "packages/native-store",
     "apps/web-wasm",
     "apps/server",
     "apps/desktop/src-tauri",
@@ -21,10 +22,10 @@ serde_json = "1"
 thiserror = "2"
 rayon = "1"
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [profile.release]
-# Keep release builds parallelizable. Fat LTO with one codegen unit turns the
-# final engine compile into a minutes-long single-core job, which violates the
-# repository's bounded multi-core validation policy.
+# 保持 release 编译可并行；fat LTO 配合单个 codegen unit 会让 engine 最终编译
+# 长时间只占单核，不符合仓库的多核验证与执行期限要求。
 lto = "thin"
 codegen-units = 16
