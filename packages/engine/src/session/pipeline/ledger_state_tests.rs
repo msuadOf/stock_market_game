@@ -8,6 +8,80 @@ use super::{
 use crate::{GameConfig, Money};
 
 #[test]
+fn unchanged_tick_rebase_keeps_live_rows_shared_without_discarding_audit() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    let mut candidate = authority.clone();
+    candidate.rebase_private_for_tick_commit().unwrap();
+    assert!(
+        std::ptr::eq(
+            authority.get(envelope.key()).unwrap(),
+            candidate.get(envelope.key()).unwrap()
+        ),
+        "未变化的跨 tick 行不能在 rebase 中重复复制"
+    );
+    assert_eq!(candidate.get(envelope.key()).unwrap(), &envelope);
+    candidate.validate_complete_evidence().unwrap();
+}
+
+#[test]
+fn ledger_clone_shares_live_rows_until_mutation_and_keeps_authority_isolated() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    let mut candidate = authority.clone();
+    assert!(
+        std::ptr::eq(
+            authority.get(envelope.key()).unwrap(),
+            candidate.get(envelope.key()).unwrap()
+        ),
+        "未修改的 live ledger 必须共享不可变行"
+    );
+    candidate.envelopes.remove(envelope.key());
+    assert_eq!(authority.get(envelope.key()).unwrap(), &envelope);
+    assert!(candidate.get(envelope.key()).is_err());
+}
+
+#[test]
+fn evidence_validation_reuses_immutable_ledger_and_rechecks_mutated_maps() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    authority.validate_complete_evidence().unwrap();
+    let candidate = authority.clone();
+    candidate.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        1,
+        "相同 ledger 不应重复全量审计"
+    );
+    let corruptions: [fn(&mut EnvelopeLedger); 4] = [
+        |ledger| {
+            ledger.envelopes.remove(&key());
+        },
+        |ledger| {
+            ledger.audits.remove(&key());
+        },
+        |ledger| {
+            ledger.conservation.remove(&key());
+        },
+        |ledger| {
+            let value = ledger.envelopes.get(&key()).unwrap().clone();
+            ledger.terminal_envelopes.insert(key(), value);
+        },
+    ];
+    for corrupt in corruptions {
+        let mut changed = authority.clone();
+        corrupt(&mut changed);
+        assert!(
+            changed.validate_complete_evidence().is_err(),
+            "mutation 后不得复用旧成功审计"
+        );
+        authority.validate_complete_evidence().unwrap();
+    }
+    assert_eq!(authority.get(envelope.key()).unwrap(), &envelope);
+}
+
+#[test]
 fn hydration_installs_empty_or_validates_exact_without_cursor_change() {
     let envelope = existing(key(), Money::from_cents(100));
     let mut ledger = EnvelopeLedger::new(7, []).unwrap();
@@ -161,6 +235,13 @@ fn next_tick_rebase_preserves_cumulative_fee_audit_and_receipt_cursor() {
     assert_eq!(ledger.next_receipt_index(), 42);
 
     let authoritative = ledger.clone();
+    // 无新成交的下一 tick 使用 fastpath，仍需保留名义费用、实收及历史欠费。
+    ledger.rebase_private_for_tick_commit().unwrap();
+    assert!(std::ptr::eq(
+        authoritative.get(&key).unwrap(),
+        ledger.get(&key).unwrap()
+    ));
+    assert_eq!(ledger.get(&key).unwrap().audit(), audit_after_first);
     let projected_without_fee_history = Envelope::tick_start_existing(
         key.clone(),
         Money::ZERO,

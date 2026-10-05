@@ -122,6 +122,8 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
     };
 
     let mut preview = authority.clone_for_tick_shadow().unwrap();
+    // 直接测试 ReadyIngress 时仍要建立通常由 plan_tick 准备的 NPC 队列。
+    super::npc_tick_preparation::queue_npc_for_next_tick(&mut preview).unwrap();
     let mut ingress = ReadyIngress::capture_sources(&mut preview)
         .unwrap()
         .capture_roots(&preview, Some(roots(request.clone())))

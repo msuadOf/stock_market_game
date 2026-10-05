@@ -63,3 +63,15 @@
 - TypeScript build、WASM release编译及WASM threading检查通过；未跑完整回归。
 - 真实Chromium同16 CPU和默认setup，100 tick warmup后466提交帧/16.943s=27.504x，无fatal。和21.7x旧样本相比窗口不同且同时包含资源缓存，不能把全部差异归于调度器。
 - 同一修正后的host probe，默认3000 tick：1 worker=75.06x、4 worker=92.06x、16 worker=76.89x、32 worker=66.64x。更多worker当前反而降低吞吐；后续应减少小任务调度与反复全量ledger工作，不能仅增加线程数。
+
+## 第三批 ledger 与 CPU 采样
+
+- 四组 ledger map 改为 SharedRows/Arc COW；成功的完整 evidence 校验按四组 map 的 Weak allocation identity 缓存。任何 DerefMut 均经过 Arc::make_mut，Weak-only 情况也失效且不额外深 clone；clone、hash、serialization 和业务 equality 不携带缓存。
+- 完全无新资源变化的 TickStart rebase 保留共享行；全部实际 mutation 仍走原来的完整 checked rebase。原累计名义/实收费用与欠费不能清空。
+- ledger共享、重复审计、unchanged rebase 三个新测试均先行为失败；随后20项ledger state、3项conservation、19项receipt aggregation通过。Weak identity/序列化2项、candidate commit4项、envelope projection5项通过。不存在的ledger_tests case suite实际执行0项，不列为通过证据。
+- continuous transaction首次18通过1失败。独立HEAD44ed1f07源快照重编后，该同名case仍以缺失next-tick NPC queue失败（exit101）。fixture直接clone后调用ReadyIngress，漏了通常plan_tick准备的queue；本批仅补fixture准备，不删改断言。
+- 独立Luna high审查见ledger-review.md。补充非零名义/实收费用的无变化rebase共享断言，后续编译与复核仍需收尾。
+- 用户追加CPU使用率方向：新cpu-probe.py每秒记录进程/proc/stat、各thread、CPU affinity与分配核的系统利用率。进程级CPU包含已退出短生命consumer thread；thread样本只用于分布，不冒充精确总占用。
+- 第三批16 worker、CPU0–15，3000 tick=88.402x，平均进程250.20% CPU，即16核预算15.64%；主调用线程约55%，多数worker7–24%。4 worker=112.942x，平均140.98% CPU，即4核预算35.24%。机器上其他任务的系统核占用独立记录，不能归为引擎用量。
+- Browser第三批约28.34x，仍未达到目标；WASM release与threading check通过。
+- fixture修复后，continuous transaction19项、ledger state20项、ledger rows2项、hash契约14项均通过；各独立命令<10秒。第三批第二次独立复核已放行补充diff，不冒称reviewer运行了测试。

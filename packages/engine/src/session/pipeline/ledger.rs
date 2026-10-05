@@ -1,8 +1,15 @@
+use super::ledger_rows::SharedRows;
 use super::{
     ledger_candidate, ledger_conservation, ledger_validation, Envelope, EnvelopeAudit, EnvelopeKey,
     EnvelopeOrigin, FeeComponents, ReceiptDelta, ReceiptLocalKey, ResVec, StepFatal,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex, Weak};
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static EVIDENCE_VALIDATION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReceiptKind {
@@ -51,15 +58,37 @@ impl ConservationState {
     };
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct EnvelopeLedger {
-    pub(super) envelopes: BTreeMap<EnvelopeKey, Envelope>,
-    pub(super) terminal_envelopes: BTreeMap<EnvelopeKey, Envelope>,
-    pub(super) audits: BTreeMap<EnvelopeKey, EnvelopeAudit>,
-    pub(super) conservation: BTreeMap<EnvelopeKey, ConservationState>,
+    pub(super) envelopes: SharedRows<BTreeMap<EnvelopeKey, Envelope>>,
+    pub(super) terminal_envelopes: SharedRows<BTreeMap<EnvelopeKey, Envelope>>,
+    pub(super) audits: SharedRows<BTreeMap<EnvelopeKey, EnvelopeAudit>>,
+    pub(super) conservation: SharedRows<BTreeMap<EnvelopeKey, ConservationState>>,
     pub(super) seen_local_keys: BTreeSet<ReceiptLocalKey>,
     pub(super) next_receipt_index: u64,
+    #[serde(skip)]
+    evidence_cache: Arc<Mutex<Option<EvidenceCache>>>,
 }
+
+#[derive(Debug)]
+struct EvidenceCache {
+    envelopes: Weak<BTreeMap<EnvelopeKey, Envelope>>,
+    terminal: Weak<BTreeMap<EnvelopeKey, Envelope>>,
+    audits: Weak<BTreeMap<EnvelopeKey, EnvelopeAudit>>,
+    conservation: Weak<BTreeMap<EnvelopeKey, ConservationState>>,
+}
+
+impl PartialEq for EnvelopeLedger {
+    fn eq(&self, other: &Self) -> bool {
+        self.envelopes == other.envelopes
+            && self.terminal_envelopes == other.terminal_envelopes
+            && self.audits == other.audits
+            && self.conservation == other.conservation
+            && self.seen_local_keys == other.seen_local_keys
+            && self.next_receipt_index == other.next_receipt_index
+    }
+}
+impl Eq for EnvelopeLedger {}
 
 /// JSON-safe canonical projection used by the session business hash.
 #[derive(serde::Serialize)]
@@ -100,12 +129,13 @@ impl EnvelopeLedger {
             conservation.insert(key, ConservationState::EMPTY);
         }
         Ok(Self {
-            envelopes: values,
-            terminal_envelopes: BTreeMap::new(),
-            audits,
-            conservation,
+            envelopes: values.into(),
+            terminal_envelopes: SharedRows::default(),
+            audits: audits.into(),
+            conservation: conservation.into(),
             seen_local_keys: BTreeSet::new(),
             next_receipt_index,
+            evidence_cache: Arc::default(),
         })
     }
 
@@ -317,6 +347,23 @@ impl EnvelopeLedger {
     pub(super) fn rebase_private_for_tick_commit(&mut self) -> Result<(), StepFatal> {
         validate_ledger_evidence(self)?;
 
+        // 校验已证明 basis = live + spent + released；TickStart 且 basis = live
+        // 的行没有本 tick 的消费事实，累积费用也已被审计。无变化时保留共享行。
+        if self.terminal_envelopes.is_empty()
+            && self.envelopes.values().all(|envelope| {
+                envelope.origin() == EnvelopeOrigin::TickStart
+                    && envelope.pending_price().is_none()
+                    && envelope.basis() == envelope.live()
+            })
+            && self
+                .conservation
+                .values()
+                .all(|state| *state == ConservationState::EMPTY)
+        {
+            self.seen_local_keys.clear();
+            return Ok(());
+        }
+
         let mut envelopes = BTreeMap::new();
         for (key, envelope) in std::mem::take(&mut self.envelopes) {
             if envelope.pending_price().is_some() {
@@ -347,7 +394,7 @@ impl EnvelopeLedger {
                 false
             }
         });
-        self.envelopes = envelopes;
+        self.envelopes = envelopes.into();
         self.terminal_envelopes.clear();
         self.seen_local_keys.clear();
         Ok(())
@@ -411,6 +458,32 @@ impl EnvelopeLedger {
 }
 
 fn validate_ledger_evidence(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
+    // 缓存覆盖下方完整校验的全部输入。Weak 保留 allocation identity，避免 ABA，
+    // 且 Arc::make_mut 会在 mutation 时使该 identity 失效。
+    let mut cache = ledger.evidence_cache.lock().map_err(|error| {
+        ledger_validation::invariant(&format!("ledger 审计缓存锁失败：{error}"))
+    })?;
+    if cache.as_ref().is_some_and(|cached| {
+        ledger.envelopes.matches(&cached.envelopes)
+            && ledger.terminal_envelopes.matches(&cached.terminal)
+            && ledger.audits.matches(&cached.audits)
+            && ledger.conservation.matches(&cached.conservation)
+    }) {
+        return Ok(());
+    }
+    validate_ledger_evidence_uncached(ledger)?;
+    *cache = Some(EvidenceCache {
+        envelopes: ledger.envelopes.identity(),
+        terminal: ledger.terminal_envelopes.identity(),
+        audits: ledger.audits.identity(),
+        conservation: ledger.conservation.identity(),
+    });
+    Ok(())
+}
+
+fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
+    #[cfg(test)]
+    EVIDENCE_VALIDATION_COUNT.with(|count| count.set(count.get() + 1));
     ledger_conservation::validate(ledger)?;
     if ledger
         .envelopes
