@@ -280,3 +280,13 @@ IAB真实320×844两行height44、width309、y277/321，截图game-settings-touc
 E2E确认exit1并结束后独立production480ms/release WASM验证成功，未并写dist。变更source/desktop及pure测试lint、strict premium audit0finding、git diff--check通过；mobile-component-render.test.ts保留两条原有children-prop警告，未冒称全局lint全绿。IAB320实际连接16,50→16,9.615、连续circle为0且scrollWidth320；恢复原902×833时连接16,50→16,0、竞价首点0,50、scrollWidth902。保存intraday-default-094849-desktop.jpg、intraday-session-join-mobile-320.jpg、intraday-session-join-desktop-current.jpg。恢复1x，保持09:48:49暂停、原tab2与服务。只针对该默认局/时刻核对，不声称全天所有行情或手机scale已经统一。
 
 整个终端目标继续：财务gold因果、DEV不可用诊断入口、手机320实际成交量省略、信息tab能力范围和文件读取pending边界仍需处理。
+
+## 2026-10-05 手机报价完整数值与列间重叠批次
+
+原默认NPC局09:48:49、320px的当日成交量2893手在全局CSS下b.clientWidth19、scrollWidth31，视觉被省略。新mobile-quote-layout.spec.ts使用实际MobileStockDetail SSR及原CSS隔离报价几何，明确不是WASM成交fixture；320/390均验证289300股→2893手、999999股→9999.99手、0股→0手，所有补充字段值不裁切/不越所属格及页面无横向溢出。有效red的hiddenWidth实际320为9、390为7；早期口述13/7已纠正，真实IAB和隔离fixture字体差异不混为同一值。
+
+测试准备的错误路径创建、React ambient DOM类型及SSR入口CJS加载失败不是产品red，保留diagnostic日志；首次tsc短deadline超时且监督器ps枚举超时，随后确认没有残余tsc进程，最终构建实际类型检查通过。使用普通runtime动态import React render依赖、原Vite SSR加载实际组件；未改全库类型配置或新增依赖。两条CSS将补充字段标签和值上下排、去数值ellipsis，首轮7/7相关浏览器23.5秒通过。
+
+实际截图继续发现涨跌文本+1.12　+10.00%右边91.26，而高低开列起79.36；页面无横向滚动并不意味着列内不重叠。先加Range实测文本边界与所属列检查，有效red320越界9.25、390越界7.078；再仅改报价三列24/26/50→31/23/46，保留87px高、原字号及全部字段。最终7/7相关浏览器8.5秒，workers3/RAYON10/共享外部300000ms、新两case10000ms，未降低原断言。独立review完整diff及增量通过无finding，见mobile-quote-layout-independent-review.md。
+
+IAB真实320全局CSS最终四值clientWidth=scrollWidth=63，2893手全文可见，涨跌textRight91.26<priceLeft99.59，scrollWidth320；保存mobile-quote-layout-320-current.jpg。CSS HMR保持第1日09:48:49已暂停，未提交玩家订单/修改偏好；恢复902×833与1x。相关E2E结束后独立production304ms/release WASM成功，新E2E lint、strict premium audit0finding、git diff--check通过。纯CSS增量不重复上一批837完整Web与58浏览器；上一批57/58、唯一旧财务gold失败仍开放。本批只解决报价完整可见与列重叠，不把其等同整个终端目标完成。

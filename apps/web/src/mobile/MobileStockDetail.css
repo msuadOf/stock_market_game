@@ -69,8 +69,8 @@
 .msd-day-prices span { display: grid; grid-template-columns: 1.1em 1fr; align-items: baseline; gap: 9px; color: #606060; font-size: clamp(14px, 4.1cqw, 18px); font-weight: 700; }
 .msd-day-prices b { font-weight: 500; }
 .msd-stock-stats { display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 9px 8px; min-width: 0; }
-.msd-stock-stats span { display: flex; min-width: 0; gap: 5px; color: #666; font-size: clamp(10px, 3.05cqw, 13px); white-space: nowrap; }
-.msd-stock-stats b { overflow: hidden; color: #333; font-weight: 500; text-overflow: ellipsis; }
+.msd-stock-stats span { display: grid; min-width: 0; gap: 2px; color: #666; font-size: clamp(10px, 3.05cqw, 13px); white-space: nowrap; }
+.msd-stock-stats b { color: #333; font-weight: 500; }
 
 .msd-period-tabs,
 .msd-info-tabs { display: flex; min-height: 51px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--msd-border); scrollbar-width: thin; }
@@ -203,7 +203,7 @@
 .msd-header strong { font-size:clamp(13.5px,3.7cqw,15px); font-weight:700; }
 .msd-header small { margin-top:clamp(2px,.77cqw,3px); font-size:clamp(9.5px,2.65cqw,11px); font-weight:500; }.msd-header small span { padding:0 2px; background:#d89143; }
 .msd-header .msd-bot { grid-column:5; align-self:center; font-size:clamp(18px,5.13cqw,21px); }.msd-header .mobile-speed-select-wrap { grid-column:6; align-self:center; }.msd-header .mobile-speed-select-wrap select { width:clamp(52px,14.36cqw,58px); }
-.msd-quote { min-height:87px; height:87px; grid-template-columns:24% 26% 50%; padding:9px 10px 7px; }
+.msd-quote { min-height:87px; height:87px; grid-template-columns:31% 23% 46%; padding:9px 10px 7px; }
 .msd-last strong { font-size:clamp(27px,8.2cqw,36px); }.msd-last span { margin-top:7px; font-size:clamp(11px,3.33cqw,15px); }
 .msd-day-prices { gap:5px; }.msd-day-prices span { gap:5px; font-size:clamp(11px,3.33cqw,15px); }
 .msd-stock-stats { gap:5px 6px; }.msd-stock-stats span { font-size:clamp(9px,2.82cqw,12px); }
