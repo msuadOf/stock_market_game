@@ -93,6 +93,7 @@ test("09:20–09:25 的集合竞价委托不可撤销且继续冻结", async ({ 
   await expect(order).toContainText("资金已冻结");
 
   await advanceToTick(page, 3);
+  await expect(page.locator(".day-tag time")).toHaveText("09:20:00");
   await order.getByRole("button", { name: "撤单" }).click();
   await advanceToTick(page, 4);
 
@@ -115,6 +116,8 @@ test("连续竞价展示活动委托冻结，并明确拒绝资金不足的买�
   await advanceToTick(page, 10);
 
   const order = playerOrder(page);
+  await expect(page.locator(".app-error")).toHaveCount(0);
+  await expect(page.locator(".day-tag time")).toHaveText("09:43:10");
   await expect(order).toContainText("资金已冻结");
   await expect(availableCash(page)).not.toHaveText(cashBefore);
 
@@ -165,6 +168,7 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
   await expect(page.locator(".player-order-item")).toHaveCount(0);
   await expect(page.locator(".player-orders-empty")).toBeVisible();
   await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", String(savedTick));
+  await expect(page.locator(".day-tag time")).toHaveText("09:15:00");
 
   await advanceToTick(page, savedTick + 1);
   await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", String(savedTick + 1));

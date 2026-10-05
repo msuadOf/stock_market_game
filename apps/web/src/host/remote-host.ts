@@ -48,6 +48,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const reports = new ReportQueryContext();
   const commands = new RemoteCommandRegistry();
   let callback: ((update: HostUpdate) => void | boolean) | null = null;
+  let pendingRestore: { readonly generation: string | null; readonly notify: () => void; awaitingAuthority: boolean } | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let disposed = false;
   let delivery: DeliveryMode = "push";
@@ -136,6 +137,10 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         connectionTimer = null;
         reconnectAttempts = 0;
         publisher.installBaseline(parsed.update, () => reports.invalidate());
+        if (pendingRestore !== null) {
+          if (pendingRestore.generation !== null && parsed.update.generation !== pendingRestore.generation) pendingRestore.notify();
+          if (pendingRestore.awaitingAuthority) pendingRestore = null;
+        }
         if (!deliver(parsed.update)) return;
         baselineDelivered = callback !== null;
         publisher.resolveBaselineWaiter();
@@ -270,6 +275,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (disposed) return;
       const disposeFatalCallback = fatalCallback;
       disposed = true;
+      pendingRestore = null;
       clearTransportTimers();
       publisher.invalidateConnection();
       interrupt("远程会话已销毁");
@@ -373,13 +379,30 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       const result = await requestJson(`${baseUrl}/api/indicators`, remotePost({ session_id: created.id, ...normalized }, token));
       return normalizeIndicatorResults(result, normalized);
     },
-    async load(slot: unknown) {
+    async load(slot: unknown, onRestored?: () => void) {
       if (disposed) throw new Error("远程会话已经销毁，不能读档");
-      await requestJson(`${baseUrl}/api/load`, remotePost({ session_id: created.id, slot }, token));
-      if (disposed) throw new Error("远程会话已销毁，读档响应已失效");
-      reports.invalidate();
-      if (publisher.currentSocket() === null) await connectRestoredBaseline();
-      else await requestResync();
+      if (pendingRestore !== null) throw new Error("上一项远程读档尚未确认，请先刷新权威基线");
+      let notified = false;
+      const restore = { generation: publisher.baselineForRead()?.generation ?? null, awaitingAuthority: false, notify() {
+        if (notified || disposed) return;
+        notified = true;
+        onRestored?.();
+      } };
+      pendingRestore = restore;
+      try {
+        await requestJson(`${baseUrl}/api/load`, remotePost({ session_id: created.id, slot }, token));
+        if (disposed) throw new Error("远程会话已销毁，读档响应已失效");
+        restore.notify();
+        reports.invalidate();
+        if (publisher.currentSocket() === null) await connectRestoredBaseline();
+        else await requestResync();
+      } catch (error) {
+        // HTTP 失败不等于恢复未提交；由随后权威 baseline 确认新/旧 generation。
+        restore.awaitingAuthority = true;
+        throw error;
+      } finally {
+        if (pendingRestore === restore && !restore.awaitingAuthority) pendingRestore = null;
+      }
     },
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       const queryEpoch = reports.captureEpoch();

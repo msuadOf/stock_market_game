@@ -9,6 +9,7 @@ import { parseEngineUpdate, parseProtocolSnapshot } from "../host/protocol/parse
 import { canonicalJson } from "../host/protocol/canonical.ts";
 import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
+import type { TradingTiming } from "../components/trading-timeline.ts";
 
 let vite: ViteDevServer;
 let probe: typeof import("./market-chart-runtime.test-support.tsx");
@@ -46,11 +47,14 @@ function update(active: unknown, tick = 1, cursor = 0): Extract<HostUpdate, { ty
 }
 
 function render(updates: readonly Extract<HostUpdate, { type: "protocol" }>[], options: {
+  timing?: TradingTiming;
   baseline?: Extract<HostUpdate, { type: "baseline" }>;
   afterUpdates?: NonNullable<Parameters<typeof probe.MarketChartRuntimeProbe>[0]["afterUpdates"]>;
 } = {}) {
   const observed: Partial<Record<"baseline" | "updated", ChartRuntimeObservation>> = {};
   renderToStaticMarkup(createElement(probe.MarketChartRuntimeProbe, {
+    // 此套协议 fixture 从 tick 1 发 Continuous；显式配置无开盘/收盘窗口的短局。
+    timing: options.timing ?? { ticks_per_day: 14400, auction_ticks: 0, closing_auction_ticks: 0 },
     baseline: options.baseline ?? baseline(), updates, afterUpdates: options.afterUpdates,
     observe: (stage, value) => { observed[stage] = value; },
   }));

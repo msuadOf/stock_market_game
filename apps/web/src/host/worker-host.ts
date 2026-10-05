@@ -389,12 +389,13 @@ export function createWorkerHost(
           cachedBaseline = baseline;
           deliverLiveBaseline(baseline);
         },
-        async load(slot) {
+        async load(slot, onRestored) {
           const parsedSlot = parseSaveSlot(slot);
           const requestedGeneration = currentGeneration;
           const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration);
           if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           currentGeneration = restored.nextGeneration;
+          onRestored?.();
           const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
           baselineEpoch += 1;
           cachedBaseline = baseline;

@@ -43,6 +43,7 @@ export interface SessionHostLifecyclePorts {
   isDocumentHidden(): boolean;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
   setActiveSetup(setup: SessionSetup): void;
+  configureMarketTiming(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
   setDeliveryModes(modes: readonly DeliveryMode[]): void;
@@ -59,7 +60,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, startupTarget, sessionSetup, speed, pauseAfterClose,
-    pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, setStartDateDraft,
+    pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, configureMarketTiming, setStartDateDraft,
     setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
     isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
@@ -116,6 +117,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       if (initialSlot !== null) await host.load(initialSlot);
       if (cancelled) return;
       setActiveSetup(setup);
+      configureMarketTiming(setup);
       setStartDateDraft(setup.start_date);
       setPriceCageEnabledDraft(setup.config.price_cage_enabled);
       hostRef.current = host;

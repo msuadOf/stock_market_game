@@ -6,6 +6,7 @@ import type { NormalizedEngineUpdate, ProtocolEffect, ProtocolReduction, Protoco
 import type { AuctionPoint } from "../mobile/market-model.ts";
 import { appendTrades, applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 import type { Snapshot } from "../types/engine.ts";
+import { TradingTimeline, DEFAULT_TRADING_TIMELINE, type TradingTiming } from "../components/trading-timeline.ts";
 
 interface Options {
   readonly autoOrderManagerRef: MutableRefObject<AutoOrderManager | null>;
@@ -15,9 +16,18 @@ interface Options {
 export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Options) {
   const [chartCode, setChartCode] = useState("600101");
   const [projection] = useState(() => new MarketChartProjection());
+  const [timeline, setTimeline] = useState(DEFAULT_TRADING_TIMELINE);
   const [chartData, setChartData] = useState<readonly PricePoint[]>([]);
   const [auctionChartData, setAuctionChartData] = useState<readonly AuctionPoint[]>([]);
   const [dailyChartData, setDailyChartData] = useState<readonly KlinePoint[]>([]);
+
+  const configureMarketTiming = useCallback((timing: TradingTiming) => {
+    const next = new TradingTimeline(timing);
+    projection.configureTiming(next);
+    setTimeline(next);
+    setChartData([]);
+    setAuctionChartData([]);
+  }, [projection]);
 
   const getPriceHistory = useCallback(() => projection.history(), [projection]);
   const getActiveDailyCandles = useCallback(() => projection.activeCandles(), [projection]);
@@ -101,6 +111,8 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
   const refreshDailyChart = useCallback(() => setDailyChartData(projection.candlesFor(chartCode)), [chartCode, projection]);
 
   return {
+    timeline,
+    configureMarketTiming,
     chartCode,
     getPriceHistory,
     chartData,

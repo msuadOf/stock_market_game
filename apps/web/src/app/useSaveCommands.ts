@@ -33,6 +33,7 @@ export interface SaveCommandPorts {
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
   resetMarketHistory(snapshot: Snapshot): void;
+  configureMarketTiming(setup: SessionSetup): void;
   refreshPlayerOrders(): Promise<void>;
   clearPlayerOrders(): void;
   setNotice(notice: string): void;
@@ -54,7 +55,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
     speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft,
-    loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, refreshPlayerOrders,
+    loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
     setPriceCageEnabledDraft, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
@@ -113,21 +114,29 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
+      let restored = false;
+      const installRestoredSetup = () => {
+        if (restored || !isCurrent()) return;
+        configureMarketTiming(slot.setup);
+        setActiveSetup(slot.setup);
+        setStartDateDraft(slot.setup.start_date);
+        setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+        restored = true;
+      };
       try {
-        await host.load(slot);
+        await host.load(slot, installRestoredSetup);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
       if (!isCurrent()) return;
+      // 成功返回也是恢复确认；幂等安装避免重复改写图表或 setup。
+      installRestoredSetup();
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       clearPlayerOrders();
-      setActiveSetup(slot.setup);
-      setStartDateDraft(slot.setup.start_date);
-      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -179,21 +188,29 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
+      let restored = false;
+      const installRestoredSetup = () => {
+        if (restored || !isCurrent()) return;
+        configureMarketTiming(slot.setup);
+        setActiveSetup(slot.setup);
+        setStartDateDraft(slot.setup.start_date);
+        setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+        restored = true;
+      };
       try {
-        await host.load(slot);
+        await host.load(slot, installRestoredSetup);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
       if (!isCurrent()) return;
+      // 成功返回也是恢复确认；幂等安装避免重复改写图表或 setup。
+      installRestoredSetup();
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       clearPlayerOrders();
-      setActiveSetup(slot.setup);
-      setStartDateDraft(slot.setup.start_date);
-      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());

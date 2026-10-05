@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import type { MarketSnap, TradeEvent } from "../types/engine.ts";
 import { colorClass, formatSharesAsLots, yuan } from "../utils/format.ts";
 import { compareMoney } from "../utils/money.ts";
-import { formatTradeTime } from "../mobile/market-model.ts";
+import { useTradingTimeline } from "./TradingTimelineContext.tsx";
 import "./market-quote.css";
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
 
 /** 两端共用证券筛选、时间、精确价格和手数；缓存不冒充完整逐笔历史。 */
 export function MarketTradeTape({ code, market, trades }: Props) {
+  const timeline = useTradingTimeline();
   const [expanded, setExpanded] = useState(false);
   const id = useId();
   const selected = trades.filter(trade => trade.code === code);
@@ -25,7 +26,7 @@ export function MarketTradeTape({ code, market, trades }: Props) {
         <tbody>{rows.length === 0
           ? <tr><td colSpan={3} className="market-tape-empty">暂无该股票的成交缓存</td></tr>
           : rows.map(trade => <tr key={trade.seq} data-trade-seq={trade.seq}>
-            <td data-time-missing={trade.tick === undefined || undefined}>{formatTradeTime(trade.tick)}</td>
+            <td data-time-missing={trade.tick === undefined || undefined}>{timeline.tradeTime(trade.tick)}</td>
             <td className={colorClass(compareMoney(trade.price, market.last_close))}>{yuan(trade.price)}</td>
             <td>{formatSharesAsLots(trade.qty)}</td>
           </tr>)}</tbody>

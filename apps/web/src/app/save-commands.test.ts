@@ -11,9 +11,8 @@ import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 function deferred<Value>() { let resolve!: (value: Value) => void; const promise = new Promise<Value>((done) => { resolve = done; }); return { promise, resolve }; }
-function fixture() {
+function fixture(archive = commandDayEndArchiveFixture()) {
   const calls: string[] = [], notices: string[] = [];
-  const archive = commandDayEndArchiveFixture();
   const host = commandHostFixture({ load: async () => { calls.push("load"); }, refreshBaseline: async () => { calls.push("baseline"); },
     day: () => 3 });
   let setup: SessionSetup | null = null;
@@ -26,6 +25,7 @@ function fixture() {
     activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false,
     loadFromFile: async () => archive, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
     getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
+    configureMarketTiming: () => { calls.push("timing"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
     setSessionSetup: (value) => { assert.equal(typeof value, "object"); setup = typeof value === "function" ? value(DEFAULT_SETUP) : value; calls.push("session-setup"); },
@@ -60,7 +60,7 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
       assert.equal(f.ports.playerOrderRefreshGateRef.current.isCurrent(refresh), false); f.calls.push("load");
     };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "history", "orders-clear", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
   }
@@ -111,7 +111,7 @@ test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同�
     f.calls.length = 0;
     f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "history", "orders-clear", "orders-refresh"]);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/);
   }
 });
@@ -143,5 +143,21 @@ test("读档失败后的 baseline 同步期间更换宿主，晚到的同步错�
     assert.equal(f.ports.hostRef.current, replacementHost);
     assert.equal(f.ports.sessionReplacementGateRef.current.isCurrent(replacementGeneration!), true);
     assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
+  }
+});
+
+
+test("读档提交后恢复运行失败仍安装新时间配置，提交前失败保持旧配置", { timeout: 10000 }, async () => {
+  for (const kind of ["load", "loadFile"] as const) {
+    const f = fixture({ ...commandDayEndArchiveFixture(), setup: { ...DEFAULT_SETUP, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 } });
+    let installed: SessionSetup | null = null;
+    f.ports.configureMarketTiming = setup => { installed = setup; f.calls.push("timing"); };
+    f.host.load = async (_slot, onRestored) => { onRestored?.(); throw new Error("提交后的恢复运行失败"); };
+    await createSaveCommands(f.ports)[kind]();
+    assert.equal(installed, f.archive.setup);
+    assert.equal(f.calls.includes("active-setup"), true);
+    assert.equal(f.calls.filter(call => call === "timing").length, 1);
+    assert.equal(f.calls.includes("baseline"), true);
+    assert.match(f.notices.at(-1)!, /读档失败.*提交后的恢复运行失败/);
   }
 });

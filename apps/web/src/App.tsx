@@ -193,7 +193,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     showDetailInfo,
     openDetail,
   } = useMobileUiController(orientation, chartCode);
-  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator } = useMarketRuntimeActions();
+  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator, configureMarketTiming } = useMarketRuntimeActions();
   const acceptReductionRef = useRef(acceptReduction);
   acceptReductionRef.current = acceptReduction;
   const installBaselineRef = useRef(installBaseline);
@@ -334,7 +334,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
-    setIndicatorCalculator, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState,
+    setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setDeliveryModes, setDeliveryModeState,
     setNotice, setReady, setError, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
     disconnectProtocol() {
       companyCoordinatorRef.current?.dispose();
@@ -382,7 +382,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
     activeSetup, startDateDraft, priceCageEnabledDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
-    resetMarketHistory, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
+    resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
     setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,

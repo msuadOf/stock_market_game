@@ -294,3 +294,17 @@ test("Tauri dispose 后晚到 load 拒绝且不安装 restore baseline", async (
     assert.throws(() => host.snapshot(), /基线尚未就绪/);
   }, (command) => command === "restore_session" ? new Promise((resolve) => { finishRestore = resolve; }) : undefined);
 });
+
+
+test("Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知", { timeout: 10000 }, async () => {
+  let restored = false, refuseResume = false;
+  await withTauriHost(async (host, calls) => {
+    await host.start(update => { if (update.generation === "2") assert.equal(restored, true); });
+    calls.length = 0;
+    refuseResume = true;
+    await assert.rejects(host.load({}, () => { restored = true; calls.push("restored-setup"); }), /恢复运行失败/);
+    assert.equal(restored, true);
+    assert.deepEqual(calls, ["pause_session", "restore_session", "restored-setup", "resume_session"]);
+    assert.equal(host.tick(), 2);
+  }, command => command === "resume_session" && refuseResume ? Promise.reject(new Error("恢复运行失败")) : undefined);
+});

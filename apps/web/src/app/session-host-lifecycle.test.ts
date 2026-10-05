@@ -33,7 +33,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
     isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; } }),
-    setActiveSetup: () => { calls.push("setup"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
+    setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
     setError: (value) => { calls.push(String(value)); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
   };
@@ -42,7 +42,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
 
 test("SessionHostLifecycle 先校验环境和读取，再创建/注册/启动；后台补暂停", async () => {
   const f = fixture(); await f.runtime.start();
-  assert.deepEqual(f.calls, ["environment", "read", "create", "setup", "register", "connect", "speed", "preferences", "start", "stop", "running:true", "ready"]);
+  assert.deepEqual(f.calls, ["environment", "read", "create", "setup", "timing", "register", "connect", "speed", "preferences", "start", "stop", "running:true", "ready"]);
   assert.equal(f.ports.hostRef.current, f.host);
   let reads = 0; await f.source.read(async () => { reads++; return null; }); assert.equal(reads, 0);
 });
@@ -100,13 +100,16 @@ test("StrictMode cleanup 后创建完成的宿主只 dispose，不向 Shell 写�
   assert.equal(f.ports.hostRef.current, null); assert.equal(f.calls.includes("start"), false); assert.equal(f.calls.includes("ready"), false);
   assert.equal(f.calls.filter((value) => value === "dispose").length, 1);
 });
-test("启动档 setup/seed 优先于默认配置，load 完成后才能接线和 start", async () => {
-  const archive = { ...commandDayEndArchiveFixture(), setup: { ...DEFAULT_SETUP, start_date: "2031-02-03" }, seed: "9007199254740993" };
+test("启动档 setup/seed 优先于默认配置，load 完成后安装时间配置才接线和 start", async () => {
+  const archive = { ...commandDayEndArchiveFixture(), setup: { ...DEFAULT_SETUP, start_date: "2031-02-03", ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 }, seed: "9007199254740993" };
   let seenSeed: bigint | null = null;
   const f = fixture(); f.source.select(archive);
   f.ports.createHost = async (setup, seed) => { assert.equal(setup, archive.setup); seenSeed = seed; return f.host; };
+  f.ports.configureMarketTiming = (setup) => { assert.equal(setup, archive.setup); f.calls.push("timing"); };
   const runtime = createSessionHostLifecycle(f.ports); await runtime.start();
   assert.equal(seenSeed, 9007199254740993n); assert.ok(f.calls.indexOf("load") < f.calls.indexOf("connect"));
+  assert.ok(f.calls.indexOf("load") < f.calls.indexOf("timing"));
+  assert.ok(f.calls.indexOf("timing") < f.calls.indexOf("connect"));
 });
 test("初始化失败释放已创建资源并显式报告当前宿主错误", async () => {
   const f = fixture(); f.host.setPausePreferences = async () => { throw new Error("偏好 IPC 失败"); };

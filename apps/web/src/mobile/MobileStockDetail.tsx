@@ -7,6 +7,7 @@ import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
 import { FiveLevelBook } from "../components/FiveLevelBook.tsx";
+import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { MarketTradeTape } from "../components/MarketTradeTape.tsx";
 import { marketQuoteFacts } from "../components/market-quote-facts.ts";
 import type { MarketSnap, TradeEvent } from "../types/engine";
@@ -60,7 +61,8 @@ function tone(diff: number): "rise" | "fall" | "flat" {
 
 
 function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
-  const projection = MobileIntradayProjection.fromInputs({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
+  const timeline = useTradingTimeline();
+  const projection = MobileIntradayProjection.fromInputs({ timeline, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
   const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();

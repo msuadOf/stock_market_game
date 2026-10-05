@@ -15,13 +15,14 @@ import { STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defa
 import type { SessionSetup } from "../types/engine.ts";
 import { MobileGameClock } from "../mobile/MobileGameClock.tsx";
 import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
-import { marketCodesForView, priceChangePercent, MobileIntradayProjection, formatGameClock } from "../mobile/market-model.ts";
+import { marketCodesForView, priceChangePercent, MobileIntradayProjection } from "../mobile/market-model.ts";
 import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state.ts";
 import { store, type RootState } from "../store/store.ts";
 import { selectCompany } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
+import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
 import { portfolioInputEqual, selectPortfolioInput } from "./portfolio-selector.ts";
 import { valueHeldPosition } from "./position-valuation.ts";
@@ -72,9 +73,10 @@ export function ConnectedMobileGameClock() {
 }
 
 export function DesktopDayTag() {
+  const timeline = useTradingTimeline();
   const day = useSelector((state: RootState) => state.snapshot.snapshot?.day ?? 0);
   const tick = useSelector((state: RootState) => state.snapshot.snapshot?.tick ?? 0);
-  return <span className="day-tag">第 {day + 1} 日 <time>{formatGameClock(tick)}</time></span>;
+  return <span className="day-tag" title={timeline.displayNote ?? undefined}>第 {day + 1} 日 <time>{timeline.clock(tick)}</time>{timeline.customized && <small>（时间简化）</small>}</span>;
 }
 
 export function DesktopAssets() {
@@ -127,6 +129,7 @@ interface ChartPanelProps {
 }
 export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade, browser }: ChartPanelProps) {
   const panelId = useId();
+  const timeline = useTradingTimeline();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const chartCode = useMarketRuntimeSelection();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
@@ -141,7 +144,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
   return <>
     <div className="chart-toolbar"><ChartPeriodTabs period={chartPeriod} onChange={setChartPeriod} panelId={panelId} variant="terminal" /></div>
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><WatchlistToggle browser={browser} code={chartCode} /><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
-    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel code={chartCode} key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
+    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel code={chartCode} key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
   </>;
 }

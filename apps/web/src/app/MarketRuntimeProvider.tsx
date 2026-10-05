@@ -15,10 +15,12 @@ import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
+import { TradingTimelineContext } from "../components/TradingTimelineContext.tsx";
 
 type Runtime = ReturnType<typeof useMarketChartRuntime>;
 
 interface MarketRuntimeActions {
+  configureMarketTiming: Runtime["configureMarketTiming"];
   getPriceHistory: Runtime["getPriceHistory"];
   getActiveDailyCandles: Runtime["getActiveDailyCandles"];
   acceptReduction: Runtime["acceptReduction"];
@@ -58,6 +60,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     return () => setCalculatorRegistration((current) => current?.token === token ? null : current);
   }, []);
   const actions = useMemo<MarketRuntimeActions>(() => ({
+    configureMarketTiming: runtime.configureMarketTiming,
     getPriceHistory: runtime.getPriceHistory,
     getActiveDailyCandles: runtime.getActiveDailyCandles,
     acceptReduction: runtime.acceptReduction,
@@ -67,6 +70,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     refreshDailyChart: runtime.refreshDailyChart,
     setIndicatorCalculator,
   }), [
+    runtime.configureMarketTiming,
     runtime.acceptReduction,
     runtime.getActiveDailyCandles,
     runtime.installBaseline,
@@ -86,7 +90,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
   return (
     <ActionsContext.Provider value={actions}>
       <SelectionContext.Provider value={runtime.chartCode}>
-        <DataContext.Provider value={data}>{children}</DataContext.Provider>
+        <TradingTimelineContext.Provider value={runtime.timeline}><DataContext.Provider value={data}>{children}</DataContext.Provider></TradingTimelineContext.Provider>
       </SelectionContext.Provider>
     </ActionsContext.Provider>
   );

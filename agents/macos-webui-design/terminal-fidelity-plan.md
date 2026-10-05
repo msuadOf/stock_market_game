@@ -104,3 +104,16 @@ TDD：深色文字实际rgb237/243/251，预期34/34/34；跨屏MA5误恢复true
 真实窗口实看902×833深色及320×844手机：MA5关闭/MACD/48槽offset12往返保留，手机chart clientWidth/scrollWidth均309；最终恢复实际视口、浅色、全部MA/KDJ/72最新窗口，选择002156，暂停第1日09:15:55。store源文件热更新触发回启动页，重新启动本地宿主后检查，不声称保留此前局日内行情。未提交模拟交易。日终存档未处理请求错误仍明确显示。截图shared-chart-dark-desktop.jpg、shared-chart-mobile-320.jpg、shared-chart-current-window.jpg。
 
 完整目标仍在途：公司资料/游戏剩余层级和阅读保持、全回归四失败与真实日终错误、行情排序共用状态。后续还须对照参考细查 K 线价格/时间/量能坐标读数、焦点路径及盘口/下单尺寸，不把本批共用状态完成当作全部终端细节完成。
+
+
+## 2026-10-05 实际会话时间投影与恢复确认批次
+
+完整回归中的连续竞价委托/日终验收失败实际先触发 UI_RENDER_FAILED：默认900 tick开盘投影用于30/9/3短局，得到-15分钟。新增行为红日志记录实际[-15,200]与期望0/223/239槽，时钟红为09:15:03而非09:20:00。TradingTimeline读取实际SessionSetup，生命周期在connectProtocol前安装；两端分时、游戏时钟与逐笔共用低频Context。默认秒级/6秒竞价槽/60秒分钟槽保持，跨日按真实长度清空量基线。自定义长度局明确时间简化及缺阶段；开盘时钟沿用engine observation_civil_instant整段900秒比例，非三整除、0窗口及极短窗口不另造民用时间。图表覆盖区间起点与成交端点的区别在trading-rules说明，没有插值伪造成交。
+
+独立复核定位恢复提交后resume失败仍用旧Timeline，增加EngineHost.load可选onRestored提交回调：WASM/Tauri/Remote确认后，在baseline交付前幂等安装新setup。Remote新generation baseline可能早于HTTP成功响应，红[false,true]→绿[true,true]；HTTP先丢失但服务端已恢复，红[false]→绿[true]，保留pendingRestore直到权威新/旧generation确认，旧确认不改配置并允许重试，dispose释放回调。未改变原始tick、交易阶段、撮合、价格/股/手单位或存档格式。全部有效finding修复后再次独立复核通过，见trading-timeline-independent-review.md；reviewer最终41项短测通过。
+
+最终168项相关短测全通过1.575秒，case/进程树10000ms，concurrency=3；28项WASM浏览器专项全通过23.3秒，workers=3，共享300000ms外部deadline，含真实委托冻结、拒绝资金不足、日终委托失效、保存/刷新/读取资金持仓及继续运行、横竖屏、鼠标/触屏、菜单和暗色。该浏览器批次早于最终Remote乱序修复，不能据此称真实远程E2E已验证；Remote新增路径由短fixture验证。中途浏览器启动因新测试直接修改readonly setup而tsc失败，保留trading-timeline-final-e2e.log；fixture改为不可变参数后重跑通过，未改断言。最终production及release WASM验证通过，RAYON_NUM_THREADS=10；所有改动TS/TSX和新文件lint通过，strict audit无finding，git diff --check通过。本批未重复全量Web短测及完整公司资料E2E，原生成manifest缺失和报告日期两项仍未解决。
+
+真实IAB恢复默认902×833并检查320×844：游戏时钟均09:16:03，320px document.scrollWidth=320；日K/MA/KDJ两端共用，未提交模拟委托。源文件HMR触发启动页后重新启动，不能称维持了旧局；最后暂停第1日09:16:03的600101日K，视口902×833。trading-timeline-current-window.png和trading-timeline-mobile-320.png为实看截图。真实预览仍明确显示“日终存档不能包含未处理的日内请求”，此前还观察到快速槽quota错误；短局存档测试通过不代表默认NPC局这些问题已关闭。
+
+整个终端目标仍在途：K线价格/时间/量能坐标读数缺口在本次截图仍可见，需下一批重点补；真实默认局日终错误、公司报告确定性E2E、剩余游戏/公司二三级阅读层级、行情排序状态及全量生成artifact问题继续保留。不将本批时间一致性修复当作全部界面完成。

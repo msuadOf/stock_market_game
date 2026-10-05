@@ -291,7 +291,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const baseline = timeline.replaceRefreshedBaseline(restored, queryGeneration);
       await deliverInstalledBaseline(baseline, "refresh");
     },
-    async load(slot) {
+    async load(slot, onRestored) {
       const id = requireSession();
       const wasRunning = running;
       const requestedGeneration = timeline.captureGeneration();
@@ -302,6 +302,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       }
       const restored = parseRestore(await invoke<unknown>("restore_session", { sessionId: id, generation: requestedGeneration, slot }));
       assertResponseCurrent(requestedGeneration, "load");
+      onRestored?.();
       const baseline = timeline.replaceRestoredBaseline(restored);
       await deliverInstalledBaseline(baseline, "restore");
       if (wasRunning) {

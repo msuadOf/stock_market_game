@@ -5,6 +5,7 @@ import type { EngineEvent, PriceLevel } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
 import { formatSharesAsLots } from "../utils/format.ts";
+import { TradingTimeline, DEFAULT_TRADING_TIMELINE, type TradingTiming } from "../components/trading-timeline.ts";
 
 export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
@@ -598,41 +599,17 @@ export function formatTradingMinute(minute: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-/** 将引擎的权威世界 tick 换算为 A 股交易时钟；每 tick 为一秒并跳过午间休市。 */
-export function formatGameClock(tick: number): string {
-  if (!Number.isSafeInteger(tick) || tick < 0) {
-    throw new RangeError(`游戏 tick 必须是非负安全整数，收到 ${String(tick)}`);
-  }
-  const secondOfDay = tick % TOTAL_TICKS_PER_DAY;
-  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
-  const secondsFromMidnight = secondOfDay < CALL_AUCTION_TICKS
-    ? 9 * 3_600 + 15 * 60 + secondOfDay
-    : continuousSecond < 7_200
-      ? 9 * 3_600 + 30 * 60 + continuousSecond
-      : 13 * 3_600 + continuousSecond - 7_200;
-  const hours = Math.floor(secondsFromMidnight / 3_600);
-  const minutes = Math.floor((secondsFromMidnight % 3_600) / 60);
-  const seconds = secondsFromMidnight % 60;
-  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+/** 默认局每 tick 一秒；自定义 SessionSetup 沿用 engine civil 时间映射并跳过午休。 */
+export function formatGameClock(tick: number, timing?: TradingTiming): string {
+  return (timing === undefined ? DEFAULT_TRADING_TIMELINE : new TradingTimeline(timing)).clock(tick);
 }
 
-export function formatTradeTime(tick: number | undefined): string {
-  if (tick === undefined) return "成交时间缺失";
-  if (!Number.isSafeInteger(tick) || tick <= 0) {
-    throw new RangeError(`成交 tick 必须是正安全整数，收到 ${String(tick)}`);
-  }
-  const secondOfDay = (tick - 1) % TOTAL_TICKS_PER_DAY + 1;
-  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
-  const secondsFromMidnight = secondOfDay <= CALL_AUCTION_TICKS
-    ? 9 * 3_600 + 15 * 60 + secondOfDay
-    : continuousSecond <= 7_200
-      ? 9 * 3_600 + 30 * 60 + continuousSecond
-      : 13 * 3_600 + continuousSecond - 7_200;
-  return [Math.floor(secondsFromMidnight / 3_600), Math.floor(secondsFromMidnight % 3_600 / 60), secondsFromMidnight % 60]
-    .map((value) => String(value).padStart(2, "0")).join(":");
+export function formatTradeTime(tick: number | undefined, timing?: TradingTiming): string {
+  return (timing === undefined ? DEFAULT_TRADING_TIMELINE : new TradingTimeline(timing)).tradeTime(tick);
 }
 
 export interface MobileIntradayInputs {
+  timeline?: TradingTimeline;
   market: Pick<MarketSnap, "last_close">;
   minutePoints: readonly PricePoint[];
   auctionPoints: readonly AuctionPoint[];
@@ -683,7 +660,7 @@ export class MobileIntradayProjection {
         ? `${inputs.gameDay}:auction:${latestAuctionPoint.time}:${latestAuctionPoint.value}:${latestAuctionPoint.volume ?? 0}`
         : `${inputs.gameDay}:empty`;
     this.tradeTime = formatTradingMinute(Math.max(0, inputs.elapsedMinutes - 1));
-    this.clockTime = formatGameClock(inputs.gameTick).slice(0, 5);
+    this.clockTime = (inputs.timeline === undefined ? DEFAULT_TRADING_TIMELINE : inputs.timeline).clock(inputs.gameTick).slice(0, 5);
   }
 
   priceY(value: number): number {
