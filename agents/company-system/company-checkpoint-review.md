@@ -18,7 +18,7 @@
 
 ## 完整文件清单
 
-以下包含本次检查范围内 HEAD->worktree 的全部已跟踪修改及新增未跟踪文件（按 `git diff --name-only HEAD -- packages/engine/src/company` 和 `git ls-files --others --exclude-standard packages/engine/src/company` 取得）：
+以下是本次检查时 HEAD->worktree 范围的历史文件清单（按当时 `git diff --name-only HEAD -- packages/engine/src/company` 和 `git ls-files --others --exclude-standard packages/engine/src/company` 取得）；其中旧 `company/economy/system_sim/` 路径仅记录该次检查时的位置，持久设计文档现已迁至 `company/simulation/`：
 
 ```text
 packages/engine/src/company/api.rs

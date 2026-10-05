@@ -2,7 +2,7 @@
 
 ## 范围与结论
 
-依据用户在 2026-10-06 指向并随后更新的 `q14-financial-model-design.md`，连续读完最新文件 666 行，复核 `docs/decisions/0035-company-system-simple-fundamentals.md` 全文。先前已连续读过关联 `company/economy/system_sim/README.md` 和 `DESIGN.md` 820 行，以及工程原则、ADR-0016、0024、0025、0029、开放问题、架构与下列实际接线。本次没有修改用户蓝图、移动源码、运行 Cargo、访问网络或执行回归。
+依据用户在 2026-10-06 指向并随后更新的 `q14-financial-model-design.md`，连续读完当时版本 666 行，复核 `docs/decisions/0035-company-system-simple-fundamentals.md` 全文。先前连续读过两份当时位于 `packages/engine/src/company/economy/system_sim/` 的设计文档（共 820 行；即现 `packages/engine/src/company/simulation/README.md` 与 `DESIGN.md`），以及工程原则、ADR-0016、0024、0025、0029、开放问题、架构与下列实际接线。该历史记录描述的是当时位置；本次文档迁移未移动源码、运行 Cargo、访问网络或执行回归。
 
 最新设计覆盖此前“simple 不提供现金/完整报表/股本能力”的方案：两个模式必须提供相同上层功能与财务语义，simple 简化内部过程，不简化共同结果。旧评审提出的“无账簿初始化”“以缺少现金能力拒绝 simple 分红”和“新增 partial-report 载荷”不再是实施建议；旧文件与审查历史只能用于追溯，不应作为当前实现门禁。
 

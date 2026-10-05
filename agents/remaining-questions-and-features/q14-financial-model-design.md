@@ -84,7 +84,7 @@ packages/engine/src/company/
 
 父层只保存选中实现的内部枚举，不建立含全部可选业务字段的万能对象。`simple/` 与 `simulation/` 不互相调用；模式实现私有，上层通过共同入口查询。公共契约包含相同功能、结果结构与业务语义，不暴露内部账簿写接口。
 
-当前持久设计文件仍位于 [README.md](../../packages/engine/src/company/economy/system_sim/README.md) 与 [DESIGN.md](../../packages/engine/src/company/economy/system_sim/DESIGN.md)。本轮先修正文档，保留阅读路径；实施目录迁移时再统一移动文件、修正引用并删除旧入口，不建立兼容别名。后文提到 `company/simulation/` 均指目标位置。
+持久设计入口现为 [README.md](../../packages/engine/src/company/simulation/README.md) 与 [DESIGN.md](../../packages/engine/src/company/simulation/DESIGN.md)。此前文件位于 `packages/engine/src/company/economy/system_sim/`；本次只迁移这两份文档并更新现行引用，没有移动仿真运行时代码，也没有注册 runtime `simulation`。后文提到 `company/simulation/` 均指该设计入口及目标实现位置。
 
 ### 2. 状态怎么存
 

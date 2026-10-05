@@ -1,6 +1,6 @@
 # simulation 设计：经营事实、事件与会计结果
 
-本文规定仿真模块的目标结构与算法接线方式。目录目前仅有文档，类型名与模块划分属于拟议实现；本文件不证明功能已经完成。统一接口及简单模式见[完整设计蓝图](../../../../../../agents/remaining-questions-and-features/q14-financial-model-design.md)，本文件专注 `simulation`。
+本文规定仿真模块的目标结构与算法接线方式。目录目前仅有设计文档，类型名与模块划分属于拟议实现；本文件不证明功能已经完成。统一接口及简单模式见[完整设计蓝图](../../../../../agents/remaining-questions-and-features/q14-financial-model-design.md)，本文件专注 `simulation`。
 
 没有财务或编程基础时，可以先读第 1 节的概念，再读第 5～7 节的公式，最后按第 10.12 节把一家公司的一个月从头算到尾。第 2、8、11 节主要解释代码如何实现这些规则。
 
@@ -90,7 +90,7 @@ $$
 
 ## 2. 代码封装与状态归属
 
-目标父层是 `company/`，以 `CompanySystem` 统一基本面查询、能力、披露及保存恢复入口，内部选择 `simple/` 或 `simulation/`。`environment` 只是环境模块，不代表整个公司系统。本文暂留在现有 `company/economy/system_sim/` 路径；目录迁移与代码接线另行实施，不能把目标布局当作当前代码状态。
+目标父层是 `company/`，以 `CompanySystem` 统一基本面查询、能力、披露及保存恢复入口，内部选择 `simple/` 或 `simulation/`。`environment` 只是环境模块，不代表整个公司系统。本文已位于目标文档入口 `company/simulation/`；运行时代码迁移与接线另行实施，不能把目标布局当作当前代码状态。
 
 `simple/` 按可配置的月、季度、半年或年度结算周期调整营收和开支，再推算利润及完整财务结果；ROE 由共同指标层按适用 A 股口径计算，不作为生成参数。默认采用持续一段自然时间的趋势加小幅随机波动，营收和开支分别配置年化趋势。在趋势不变的期间，换算公式为：
 
@@ -402,7 +402,7 @@ $$
 | 公用事业 | 可用装机、运行、资源及调度约束、上网电量、售电 | 功率乘时间才是电量，按对应合同价格结算 |
 | 多业务与一体化 | 单元业务、内部供货、外部收支、合并抵销 | 内部交易不重复创造集团利润，一体化不保证低风险 |
 
-行业特有的认证、监管或会计规则须明确支持情况。未实现部分不能由通用默认值冒充。全部参考公司与因子逐项映射见[完整设计蓝图](../../../../../../agents/remaining-questions-and-features/q14-financial-model-design.md)，本目录不再维护另一份会漂移的样本清单。
+行业特有的认证、监管或会计规则须明确支持情况。未实现部分不能由通用默认值冒充。全部参考公司与因子逐项映射见[完整设计蓝图](../../../../../agents/remaining-questions-and-features/q14-financial-model-design.md)，本目录不再维护另一份会漂移的样本清单。
 
 ## 7. 有限现金客户与结算
 
@@ -806,11 +806,11 @@ $$
 
 当前相关入口包括：
 
-- [company/operations.rs](../../operations.rs)：自然日经营编排与行业处理器入口。
-- [company/scheduler.rs](../../scheduler.rs)：到期业务队列。
-- [company/customer_finance.rs](../../customer_finance.rs)：客户现金与债务领域。
-- [accounting/mod.rs](../../../accounting/mod.rs)：共享会计能力。
-- [session/company_operations.rs](../../../session/company_operations.rs)：CivilClock 与日结接线。
+- [company/operations.rs](../operations.rs)：自然日经营编排与行业处理器入口。
+- [company/scheduler.rs](../scheduler.rs)：到期业务队列。
+- [company/customer_finance.rs](../customer_finance.rs)：客户现金与债务领域。
+- [accounting/mod.rs](../../accounting/mod.rs)：共享会计能力。
+- [session/company_operations.rs](../../session/company_operations.rs)：CivilClock 与日结接线。
 
 当前 `company/mod.rs` 中的 `Company` 强制持有 `Books`、`CounterpartyLedger`、`ContractBook` 和预算，`CompanyConfig` 初始化也要求这些对象；`CompanySpec` 还组合了身份、会计类型与集团关系。因此迁移不只是把 `economy` 改名，需要拆出共同身份与模式专属实体，让简单模式能够独立创建和恢复。
 
