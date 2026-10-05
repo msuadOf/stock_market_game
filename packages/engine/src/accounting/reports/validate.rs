@@ -63,10 +63,13 @@ pub(crate) fn prior_year_facts(
     let mut end = false;
     for entry in books.journal().entries() {
         let p = entry.period();
-        if p.year() == prior_year {
+        if p.year() == prior_year
+            || (entry.kind == crate::accounting::BusinessKind::OpeningBalance
+                && p.year() < prior_year)
+        {
             flows = true;
         }
-        if p.year() < prior_year || (p.year() == prior_year && p.month() == 12) {
+        if p.year() <= prior_year {
             end = true;
         }
         if flows && end {
@@ -210,5 +213,156 @@ impl ReportSet {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod prior_year_coverage_tests {
+    use super::*;
+    use crate::accounting::consolidation::MemberId;
+    use crate::accounting::reports::{
+        generate_report_set, IndustryPresentation, ReportKind, ReportRequest, ReportSource,
+        ReportVersion, VersionKind,
+    };
+    use crate::accounting::{
+        AccountingPeriod, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, JournalLine,
+        LedgerAccountId, PostingSide,
+    };
+    use crate::calendar::CivilDate;
+    use std::collections::BTreeMap;
+
+    fn books(opened_on: &str) -> Books {
+        let mut books = Books::new(crate::company::industrial::industrial_account_chart());
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(1),
+                date: CivilDate::from_iso(opened_on).unwrap(),
+                kind: BusinessKind::OpeningBalance,
+                cash_flow: CashFlowClass::Financing,
+                lines: vec![
+                    JournalLine {
+                        account: LedgerAccountId("1002".into()),
+                        side: PostingSide::Debit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                    JournalLine {
+                        account: LedgerAccountId("4001".into()),
+                        side: PostingSide::Credit,
+                        amount: AccountingAmount::from_cents(10000),
+                    },
+                ],
+            }])
+            .unwrap();
+        books
+    }
+
+    fn add_late_expense(books: &mut Books) -> BTreeMap<BusinessEventId, AccountingPeriod> {
+        let source = BusinessEventId::new(2);
+        books
+            .post_batch(vec![JournalEntry {
+                source,
+                date: CivilDate::from_iso("2031-05-01").unwrap(),
+                kind: BusinessKind::CashExpense,
+                cash_flow: CashFlowClass::Operating,
+                lines: vec![
+                    JournalLine {
+                        account: LedgerAccountId("6602".into()),
+                        side: PostingSide::Debit,
+                        amount: AccountingAmount::from_cents(400),
+                    },
+                    JournalLine {
+                        account: LedgerAccountId("1002".into()),
+                        side: PostingSide::Credit,
+                        amount: AccountingAmount::from_cents(400),
+                    },
+                ],
+            }])
+            .unwrap();
+        BTreeMap::from([(source, AccountingPeriod::from_ymd(2030, 12).unwrap())])
+    }
+
+    #[test]
+    fn january_opening_without_december_entries_still_has_real_prior_year_end_balance() {
+        let mut books = books("2030-01-15");
+        let member = MemberId("PARTIAL-FIRST-YEAR".into());
+        let mut closing = crate::accounting::closing::ClosingEngine::new();
+        let (_, handle) = closing
+            .close_year(&mut books, &member, IndustryPresentation::Industrial, 2031)
+            .unwrap();
+        let report = closing
+            .version(
+                &ScopeId::Standalone(member),
+                handle.period,
+                ReportKind::Annual,
+                handle.sequence,
+            )
+            .unwrap();
+        assert!(matches!(
+            report.balance_sheet.prior_year_end,
+            Comparative::Available(_)
+        ));
+        let facts = prior_year_facts(&books, handle.period);
+        assert_eq!(facts, (true, true));
+    }
+
+    #[test]
+    fn earlier_real_opening_keeps_empty_year_coverage_when_late_expense_restates_amounts() {
+        let mut books = books("2029-12-31");
+        let adjustments = add_late_expense(&mut books);
+        let period = AccountingPeriod::from_ymd(2031, 12).unwrap();
+        let report = generate_report_set(ReportRequest {
+            period,
+            kind: ReportKind::Annual,
+            source: ReportSource::Standalone {
+                id: MemberId("REAL-CONTINUOUS-BOOKS".into()),
+                books: &books,
+                industry: IndustryPresentation::Industrial,
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &adjustments,
+        })
+        .unwrap();
+        let (flows, end) = prior_year_facts(&books, period);
+        assert_eq!((flows, end), (true, true));
+        verify_comparative_honesty(&report, flows, end).unwrap();
+        assert!(matches!(
+            report.income.prior_year,
+            Comparative::Available(_)
+        ));
+        assert_eq!(
+            books
+                .journal()
+                .posted_date(BusinessEventId::new(2))
+                .unwrap(),
+            CivilDate::from_iso("2031-05-01").unwrap()
+        );
+        assert_eq!(
+            books.ledger().cash_total().unwrap(),
+            AccountingAmount::from_cents(9600)
+        );
+    }
+
+    #[test]
+    fn mapping_current_year_entries_to_prior_year_cannot_manufacture_history_coverage() {
+        let mut books = books("2031-01-15");
+        let adjustments = add_late_expense(&mut books);
+        assert_eq!(
+            adjustments[&BusinessEventId::new(2)],
+            AccountingPeriod::from_ymd(2030, 12).unwrap()
+        );
+        let period = AccountingPeriod::from_ymd(2031, 12).unwrap();
+        assert_eq!(prior_year_facts(&books, period), (false, false));
+        assert!(books
+            .journal()
+            .entries()
+            .all(|entry| entry.date.year() == 2031));
+        assert_eq!(
+            books.ledger().cash_total().unwrap(),
+            AccountingAmount::from_cents(9600)
+        );
     }
 }
