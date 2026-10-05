@@ -10,7 +10,7 @@
 
 旧 `repay_due` 由调用方指定一个收款端点，而债务本身没有债权人；跨公司共享客户时可能把甲公司的债付给乙公司。绑定债权人是已经确认的真实来源／去向要求，不涉及新的经济参数。
 
-后续债务登记须显式传入 `creditor`，区分 `Company(CompanyId)` 与具名 `External`，不与 `Customer(CounterpartyId)` 混用；债务付款与核销后回收必须取该债务自己的 `creditor`，不能由调用方改写。全客户债务统一按原到期日及登记序消耗同一有限现金，逐项付款结果保留债权人。不保留旧 API 兼容包装。
+债务登记现已显式传入 `creditor`，区分 `Company(CompanyId)` 与具名 `External`，不与 `Customer(CounterpartyId)` 混用；债务付款与核销后回收只取该债务自己的 `creditor`，不能由调用方改写。全客户债务统一按原到期日及登记序消耗同一有限现金，逐项付款结果保留债权人，不保留旧API兼容包装。本模块21项短测与独立复核证据见 `q14-creditor-binding.md`；生产公司现金另一侧仍未接线。
 
 ## 生产接线依赖
 
@@ -29,4 +29,4 @@
 
 第二轮非作者复核确认原三项已闭合，另发现单次 `RepayDue` 多笔付款金额未checked合计，可接受总额超 `AccountingAmount` 值域的矛盾回执。新增独立篡改case没有编入host35，不把旧二进制缺case当绿。随后主任务统一构建51.62秒，由实际 `engine-de08d335cdbb058d` 执行该case，取得业务断言真红（`.tmp/checklist-wave4/customer-cash-r4-red.log`），再补单批总额checked校验。host36统一构建48.87秒，实际 `engine-fd39ddbb13be65af` 的16项case全部编入；整批及每case均10000ms进程树监督，8进程并行、Rayon 4，16/16通过，case各0.00秒，整批约0.25秒，日志 `.tmp/checklist-wave4/q14-host36/`。
 
-第三轮非作者完整增量源审确认四项已根修，限定源码PASS；最终绿色证据与记录再由其签核，见 `q14-finite-ledger-restore-review.md`。恢复批只补本独立账簿，不宣称上面债权人绑定、生产收付接线或经济经营模型完成。
+第三轮非作者完整增量源审确认四项已根修，最终亲读上述16项绿色证据签核PASS，见 `q14-finite-ledger-restore-review.md`。恢复批只补本独立账簿；债权人绑定随后另批完成本模块验证，不宣称生产收付接线或经济经营模型完成。

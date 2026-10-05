@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::accounting::AccountingAmount;
 use crate::calendar::CivilDate;
 use crate::company::counterparty::CounterpartyId;
+use crate::company::CompanyId;
 use thiserror::Error;
 
 mod restore;
@@ -21,7 +22,33 @@ pub struct CustomerFinanceEventId(pub String);
 )]
 pub enum CashEndpoint {
     Customer(CounterpartyId),
+    Company(CompanyId),
     External(String),
+}
+
+/// 债权人与客户余额使用独立身份；模拟内公司不能冒充模拟边界外端点。
+#[derive(
+    Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+)]
+pub enum DebtCreditor {
+    Company(CompanyId),
+    External(String),
+}
+
+impl DebtCreditor {
+    pub fn cash_endpoint(&self) -> CashEndpoint {
+        match self {
+            Self::Company(company) => CashEndpoint::Company(company.clone()),
+            Self::External(name) => CashEndpoint::External(name.clone()),
+        }
+    }
+
+    fn validate(&self) -> Result<(), CustomerFinanceError> {
+        match self {
+            Self::Company(company) => validate_id(&company.0, "creditor company"),
+            Self::External(name) => validate_id(name, "external creditor"),
+        }
+    }
 }
 
 /// 客户现金流事实；金额恒正，资金方向由来源和去向明确表达。
@@ -71,6 +98,7 @@ impl WriteOffEvidence {
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
 pub struct CustomerDebt {
     id: DebtId,
+    creditor: DebtCreditor,
     opened_on: CivilDate,
     due_on: CivilDate,
     principal: AccountingAmount,
@@ -83,6 +111,9 @@ pub struct CustomerDebt {
 impl CustomerDebt {
     pub fn id(&self) -> &DebtId {
         &self.id
+    }
+    pub fn creditor(&self) -> &DebtCreditor {
+        &self.creditor
     }
     pub fn opened_on(&self) -> CivilDate {
         self.opened_on
@@ -120,6 +151,7 @@ impl CustomerDebt {
 #[serde(deny_unknown_fields)]
 pub struct DebtPayment {
     pub debt: DebtId,
+    pub creditor: DebtCreditor,
     pub amount: AccountingAmount,
     pub original_due_on: CivilDate,
     #[serde(deserialize_with = "restore::required_optional_date")]
@@ -165,7 +197,6 @@ enum FinanceCommand {
     },
     RepayDue {
         customer: CounterpartyId,
-        destination: CashEndpoint,
         date: CivilDate,
     },
     WriteOff {
@@ -178,7 +209,6 @@ enum FinanceCommand {
     Recover {
         customer: CounterpartyId,
         debt: DebtId,
-        destination: CashEndpoint,
         amount: AccountingAmount,
         date: CivilDate,
     },
@@ -259,8 +289,10 @@ impl CustomerFinanceBook {
         opened_on: CivilDate,
         due_on: CivilDate,
         principal: AccountingAmount,
+        creditor: DebtCreditor,
     ) -> Result<(), CustomerFinanceError> {
         validate_id(&id.0, "debt")?;
+        creditor.validate()?;
         let state =
             self.customers
                 .get(customer)
@@ -289,6 +321,7 @@ impl CustomerFinanceBook {
                 id.clone(),
                 CustomerDebt {
                     id,
+                    creditor,
                     opened_on,
                     due_on,
                     principal,
@@ -347,17 +380,15 @@ impl CustomerFinanceBook {
         Ok(())
     }
 
-    /// 按原到期日、再按登记序号偿付；只使用客户现有现金，允许部分支付。
+    /// 按原到期日、再按登记序号向各债权人偿付；共享客户现有现金，允许部分支付。
     pub fn repay_due(
         &mut self,
         customer: &CounterpartyId,
-        destination: CashEndpoint,
         date: CivilDate,
         event: CustomerFinanceEventId,
     ) -> Result<Vec<DebtPayment>, CustomerFinanceError> {
         let command = FinanceCommand::RepayDue {
             customer: customer.clone(),
-            destination: destination.clone(),
             date,
         };
         if let Some(result) = self.replay(&event, &command)? {
@@ -372,12 +403,6 @@ impl CustomerFinanceBook {
                 .ok_or_else(|| CustomerFinanceError::UnknownCustomer {
                     customer: customer.clone(),
                 })?;
-        validate_endpoint_pair(
-            &self.customers,
-            &CashEndpoint::Customer(customer.clone()),
-            &destination,
-        )?;
-        validate_payment_destination(&destination)?;
         let mut due: Vec<_> = state
             .debts
             .values()
@@ -391,6 +416,7 @@ impl CustomerFinanceBook {
             if available.is_zero() {
                 break;
             }
+            debt.creditor.validate()?;
             let amount = if available < debt.ordinary_balance() {
                 available
             } else {
@@ -400,6 +426,7 @@ impl CustomerFinanceBook {
             paid_balances.push((debt.id.clone(), debt.paid.add(amount)?));
             payments.push(DebtPayment {
                 debt: debt.id.clone(),
+                creditor: debt.creditor.clone(),
                 amount,
                 original_due_on: debt.due_on,
                 overdue_since: (date > debt.due_on).then_some(debt.due_on),
@@ -411,11 +438,7 @@ impl CustomerFinanceBook {
                 .try_fold(AccountingAmount::ZERO, |sum, payment| {
                     sum.add(payment.amount)
                 })?;
-            let updates = self.cash_updates(
-                &CashEndpoint::Customer(customer.clone()),
-                &destination,
-                total,
-            )?;
+            let cash_after = state.cash.sub(total)?;
             for (debt_id, paid) in paid_balances {
                 let debt = self
                     .customers
@@ -431,11 +454,14 @@ impl CustomerFinanceBook {
                     event: event.clone(),
                     date,
                     source: CashEndpoint::Customer(customer.clone()),
-                    destination: destination.clone(),
+                    destination: payment.creditor.cash_endpoint(),
                     amount: payment.amount,
                 });
             }
-            self.apply_cash_updates(updates);
+            self.customers
+                .get_mut(customer)
+                .expect("customer validated")
+                .cash = cash_after;
         }
         self.events.insert(
             event,
@@ -517,12 +543,11 @@ impl CustomerFinanceBook {
         Ok(result)
     }
 
-    /// 以独立收款事件收回核销部分；金额不能超过尚未回收的核销余额。
+    /// 向债务绑定债权人支付核销后回收；金额不能超过尚未回收的核销余额。
     pub fn recover_written_off(
         &mut self,
         customer: &CounterpartyId,
         debt_id: &DebtId,
-        destination: CashEndpoint,
         amount: AccountingAmount,
         date: CivilDate,
         event: CustomerFinanceEventId,
@@ -530,7 +555,6 @@ impl CustomerFinanceBook {
         let command = FinanceCommand::Recover {
             customer: customer.clone(),
             debt: debt_id.clone(),
-            destination: destination.clone(),
             amount,
             date,
         };
@@ -570,13 +594,14 @@ impl CustomerFinanceBook {
                 recoverable: debt.written_off_recoverable(),
             });
         }
+        debt.creditor.validate()?;
+        let destination = debt.creditor.cash_endpoint();
         validate_endpoints(
             &self.customers,
             &CashEndpoint::Customer(customer.clone()),
             &destination,
             amount,
         )?;
-        validate_payment_destination(&destination)?;
         let updates = self.cash_updates(
             &CashEndpoint::Customer(customer.clone()),
             &destination,
@@ -760,6 +785,7 @@ fn validate_endpoint_pair(
                 });
             }
             CashEndpoint::External(id) => validate_id(id, "external endpoint")?,
+            CashEndpoint::Company(id) => validate_id(&id.0, "company endpoint")?,
             CashEndpoint::Customer(_) => {}
         }
     }
@@ -767,13 +793,6 @@ fn validate_endpoint_pair(
         && !matches!(destination, CashEndpoint::Customer(_))
     {
         return Err(CustomerFinanceError::NoCustomerEndpoint);
-    }
-    Ok(())
-}
-
-fn validate_payment_destination(destination: &CashEndpoint) -> Result<(), CustomerFinanceError> {
-    if !matches!(destination, CashEndpoint::External(_)) {
-        return Err(CustomerFinanceError::PaymentDestinationMustBeExternal);
     }
     Ok(())
 }
@@ -874,8 +893,6 @@ pub enum CustomerFinanceError {
     NoCustomerEndpoint,
     #[error("cash transfer source and destination are identical")]
     SelfTransfer,
-    #[error("customer debt payment destination must be an external company endpoint")]
-    PaymentDestinationMustBeExternal,
     #[error("event {event:?} was already used with a different payload")]
     EventPayloadConflict { event: CustomerFinanceEventId },
     #[error("event result does not match requested operation {operation}")]
@@ -919,6 +936,243 @@ mod tests {
         AccountingAmount::from_cents(cents)
     }
 
+    fn creditor() -> DebtCreditor {
+        DebtCreditor::External("company-1".to_string())
+    }
+
+    #[test]
+    fn shared_customer_cash_pays_each_bound_company_in_original_due_order() {
+        let customer = id("shared-customer");
+        let first_creditor = DebtCreditor::Company(CompanyId("first-company".to_string()));
+        let second_creditor = DebtCreditor::Company(CompanyId("second-company".to_string()));
+        let third_creditor = DebtCreditor::Company(CompanyId("third-company".to_string()));
+        let mut book = CustomerFinanceBook::new();
+        book.register_customer(customer.clone(), amount(150))
+            .expect("客户只有一份有限现金");
+        for (debt, due, creditor) in [
+            ("later", "2030-01-03", first_creditor.clone()),
+            ("earlier-first", "2030-01-02", second_creditor.clone()),
+            ("earlier-second", "2030-01-02", third_creditor.clone()),
+        ] {
+            book.register_debt(
+                &customer,
+                DebtId(debt.to_string()),
+                date("2030-01-01"),
+                date(due),
+                amount(100),
+                creditor,
+            )
+            .expect("债务绑定自己的债权人");
+        }
+        let event = CustomerFinanceEventId("payment".to_string());
+        let payments = book
+            .repay_due(&customer, date("2030-01-04"), event.clone())
+            .expect("全客户债务统一偿付");
+        assert_eq!(
+            payments
+                .iter()
+                .map(|payment| (
+                    payment.debt.clone(),
+                    payment.creditor.clone(),
+                    payment.amount
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    DebtId("earlier-first".to_string()),
+                    second_creditor.clone(),
+                    amount(100)
+                ),
+                (
+                    DebtId("earlier-second".to_string()),
+                    third_creditor.clone(),
+                    amount(50)
+                ),
+            ]
+        );
+        assert_eq!(
+            book.cash_flows()
+                .iter()
+                .map(|flow| (flow.destination.clone(), flow.amount))
+                .collect::<Vec<_>>(),
+            vec![
+                (second_creditor.cash_endpoint(), amount(100)),
+                (third_creditor.cash_endpoint(), amount(50))
+            ],
+            "每笔现金必须付给该债务的债权人而不是调用方选的同一公司"
+        );
+        let state = book.customer(&customer).expect("客户");
+        assert_eq!(state.cash(), amount(0));
+        assert_eq!(
+            state
+                .debt(&DebtId("later".to_string()))
+                .expect("后到期债")
+                .ordinary_balance(),
+            amount(100)
+        );
+        assert_eq!(
+            state
+                .debt(&DebtId("earlier-second".to_string()))
+                .expect("部分偿付债")
+                .overdue_since(date("2030-01-04")),
+            Some(date("2030-01-02"))
+        );
+        let mut restored: CustomerFinanceBook =
+            serde_json::from_str(&serde_json::to_string(&book).expect("真实账簿"))
+                .expect("严格恢复");
+        assert_eq!(
+            restored
+                .repay_due(&customer, date("2030-01-04"), event)
+                .expect("恢复后相同偿付幂等"),
+            payments
+        );
+        assert_eq!(restored, book);
+    }
+
+    #[test]
+    fn written_off_recovery_pays_bound_creditor_without_changing_ordinary_balance() {
+        let customer = id("customer-a");
+        let creditor = DebtCreditor::Company(CompanyId("creditor-company".to_string()));
+        let mut book = CustomerFinanceBook::new();
+        book.register_customer(customer.clone(), amount(100))
+            .expect("客户独立现金");
+        let debt = DebtId("receivable".to_string());
+        book.register_debt(
+            &customer,
+            debt.clone(),
+            date("2030-01-01"),
+            date("2030-01-02"),
+            amount(100),
+            creditor.clone(),
+        )
+        .expect("绑定债权人");
+        book.write_off(
+            &customer,
+            &debt,
+            amount(40),
+            date("2030-01-03"),
+            WriteOffEvidence::new("部分明确无合理回收预期".to_string()).expect("依据"),
+            CustomerFinanceEventId("write-off".to_string()),
+        )
+        .expect("部分核销");
+        let event = CustomerFinanceEventId("recovery".to_string());
+        book.recover_written_off(
+            &customer,
+            &debt,
+            amount(25),
+            date("2030-01-04"),
+            event.clone(),
+        )
+        .expect("核销后真实回收");
+        assert_eq!(
+            book.cash_flows()[0].destination,
+            creditor.cash_endpoint(),
+            "核销回收不能转付其他公司"
+        );
+        assert_eq!(
+            book.customer(&customer)
+                .expect("客户")
+                .debt(&debt)
+                .expect("债务")
+                .ordinary_balance(),
+            amount(60)
+        );
+        assert_eq!(
+            book.customer(&customer)
+                .expect("客户")
+                .debt(&debt)
+                .expect("债务")
+                .written_off_recoverable(),
+            amount(15)
+        );
+        let mut restored: CustomerFinanceBook =
+            serde_json::from_str(&serde_json::to_string(&book).expect("真实账簿"))
+                .expect("严格恢复");
+        restored
+            .recover_written_off(&customer, &debt, amount(25), date("2030-01-04"), event)
+            .expect("恢复后真实回收幂等");
+        assert_eq!(restored, book);
+    }
+
+    #[test]
+    fn restoration_rejects_redirecting_a_bound_debt_payment() {
+        let (mut book, customer) = debt_book(100);
+        let event = CustomerFinanceEventId("payment".to_string());
+        book.repay_due(&customer, date("2030-01-02"), event.clone())
+            .expect("真实付款");
+        let original = book.clone();
+        let destination = CashEndpoint::External("wrong-creditor".to_string());
+        book.cash_flows[0].destination = destination.clone();
+        assert!(book.validate().is_err(), "流水改收款人不能改变债权人");
+        let mut forged = serde_json::to_value(original).expect("合法账簿");
+        forged["events"]["payment"]["command"]["RepayDue"]["destination"] =
+            serde_json::to_value(destination).expect("端点");
+        let failure = serde_json::from_value::<CustomerFinanceBook>(forged)
+            .expect_err("命令不接受可重定向的收款人字段");
+        assert!(failure.to_string().contains("unknown field `destination`"));
+    }
+
+    #[test]
+    fn debt_creditor_is_required_and_cannot_use_customer_namespace() {
+        assert!(serde_json::from_str::<DebtCreditor>("{\"Customer\":\"customer-a\"}").is_err());
+        let (book, _) = debt_book(100);
+        let mut missing = serde_json::to_value(book).expect("真实账簿");
+        missing["customers"]["customer-a"]["debts"]["debt-a"]
+            .as_object_mut()
+            .expect("债务对象")
+            .remove("creditor");
+        assert!(serde_json::from_value::<CustomerFinanceBook>(missing).is_err());
+        let mut book = CustomerFinanceBook::new();
+        let customer = id("customer-a");
+        book.register_customer(customer.clone(), amount(100))
+            .expect("客户");
+        for invalid in [
+            DebtCreditor::Company(CompanyId(" ".to_string())),
+            DebtCreditor::External("".to_string()),
+        ] {
+            let before = book.clone();
+            assert!(book
+                .register_debt(
+                    &customer,
+                    DebtId("invalid".to_string()),
+                    date("2030-01-01"),
+                    date("2030-01-02"),
+                    amount(100),
+                    invalid
+                )
+                .is_err());
+            assert_eq!(book, before);
+        }
+        book.register_debt(
+            &customer,
+            DebtId("same-text-different-namespace".to_string()),
+            date("2030-01-01"),
+            date("2030-01-02"),
+            amount(100),
+            DebtCreditor::Company(CompanyId(customer.0.clone())),
+        )
+        .expect("客户id与公司id不混同");
+    }
+
+    #[test]
+    fn recovery_restore_rejects_redirected_flow_and_destination_command_field() {
+        let original = recovered_book();
+        original.validate().expect("合法核销回收事实");
+        let mut redirected = original.clone();
+        redirected.cash_flows[0].destination =
+            CashEndpoint::Company(CompanyId("other-company".to_string()));
+        assert!(
+            redirected.validate().is_err(),
+            "回收流水收款人必须匹配债务债权人"
+        );
+        let mut forged = serde_json::to_value(original).expect("合法账簿");
+        forged["events"]["recovery"]["command"]["Recover"]["destination"] =
+            serde_json::json!({"External": "wrong-creditor"});
+        let failure = serde_json::from_value::<CustomerFinanceBook>(forged)
+            .expect_err("核销回收命令不允许新增收款人参数");
+        assert!(failure.to_string().contains("unknown field `destination`"));
+    }
+
     fn debt_book(cash: i128) -> (CustomerFinanceBook, CounterpartyId) {
         let customer = id("customer-a");
         let mut book = CustomerFinanceBook::new();
@@ -930,6 +1184,7 @@ mod tests {
             date("2030-01-01"),
             date("2030-01-02"),
             amount(100),
+            creditor(),
         )
         .expect("登记债务");
         (book, customer)
@@ -940,7 +1195,6 @@ mod tests {
         let (mut book, customer) = debt_book(100);
         book.repay_due(
             &customer,
-            CashEndpoint::External("company-1".to_string()),
             date("2030-01-02"),
             CustomerFinanceEventId("paid".to_string()),
         )
@@ -952,7 +1206,6 @@ mod tests {
         restored
             .repay_due(
                 &customer,
-                CashEndpoint::External("company-1".to_string()),
                 date("2030-01-02"),
                 CustomerFinanceEventId("paid".to_string()),
             )
@@ -965,7 +1218,6 @@ mod tests {
         let (mut book, customer) = debt_book(100);
         book.repay_due(
             &customer,
-            CashEndpoint::External("company-1".to_string()),
             date("2030-01-02"),
             CustomerFinanceEventId("paid".to_string()),
         )
@@ -1047,7 +1299,6 @@ mod tests {
         book.recover_written_off(
             &customer,
             &DebtId("debt-a".to_string()),
-            CashEndpoint::External("company-1".to_string()),
             amount(25),
             date("2030-01-04"),
             CustomerFinanceEventId("recovery".to_string()),
@@ -1099,16 +1350,12 @@ mod tests {
             date("2030-01-01"),
             date("2030-01-03"),
             amount(100),
+            creditor(),
         )
         .expect("第二笔债务");
         let event = CustomerFinanceEventId("payment".to_string());
-        book.repay_due(
-            &customer,
-            CashEndpoint::External("company-1".to_string()),
-            date("2030-01-04"),
-            event.clone(),
-        )
-        .expect("按合同优先支付");
+        book.repay_due(&customer, date("2030-01-04"), event.clone())
+            .expect("按合同优先支付");
         let debts = &mut book.customers.get_mut(&customer).expect("客户").debts;
         debts
             .get_mut(&DebtId("debt-a".to_string()))
@@ -1145,7 +1392,6 @@ mod tests {
         book.recover_written_off(
             &customer,
             &DebtId("debt-a".to_string()),
-            CashEndpoint::External("company-1".to_string()),
             amount(25),
             date("2030-01-02"),
             CustomerFinanceEventId("a-recovery".to_string()),
@@ -1153,7 +1399,6 @@ mod tests {
         .expect("同日后回收");
         book.repay_due(
             &customer,
-            CashEndpoint::External("company-1".to_string()),
             date("2030-01-02"),
             CustomerFinanceEventId("m-payment".to_string()),
         )
@@ -1164,6 +1409,7 @@ mod tests {
             date("2030-01-02"),
             date("2030-01-02"),
             amount(100),
+            creditor(),
         )
         .expect("同日付款之后登记新债");
         let restored: CustomerFinanceBook =
@@ -1209,7 +1455,6 @@ mod tests {
         assert!(matches!(
             book.repay_due(
                 &customer,
-                CashEndpoint::External("company-1".to_string()),
                 date("2030-01-03"),
                 CustomerFinanceEventId("payment".to_string())
             ),
@@ -1232,7 +1477,6 @@ mod tests {
             book.recover_written_off(
                 &customer,
                 &DebtId("debt-a".to_string()),
-                CashEndpoint::External("company-1".to_string()),
                 amount(1),
                 date("2030-01-03"),
                 CustomerFinanceEventId("recovery".to_string())
@@ -1246,7 +1490,8 @@ mod tests {
                 DebtId("new".to_string()),
                 date("2030-01-03"),
                 date("2030-01-04"),
-                amount(1)
+                amount(1),
+                creditor(),
             ),
             Err(CustomerFinanceError::SequenceOverflow)
         ));
@@ -1266,17 +1511,13 @@ mod tests {
                 date("2030-01-01"),
                 date("2030-01-02"),
                 AccountingAmount::MAX,
+                creditor(),
             )
             .expect("登记真实债务");
         }
         let event = CustomerFinanceEventId("payment".to_string());
         let payments = book
-            .repay_due(
-                &customer,
-                CashEndpoint::External("company-1".to_string()),
-                date("2030-01-02"),
-                event.clone(),
-            )
+            .repay_due(&customer, date("2030-01-02"), event.clone())
             .expect("最多偿付有限MAX现金");
         assert_eq!(payments.len(), 1);
         book.customers
@@ -1377,6 +1618,7 @@ mod tests {
                 date("2030-01-01"),
                 date(due),
                 amount(100),
+                creditor(),
             )
             .expect("登记债务");
         }
@@ -1384,7 +1626,6 @@ mod tests {
         let payments = book
             .repay_due(
                 &customer,
-                CashEndpoint::External("company-1".to_string()),
                 date("2030-01-02"),
                 CustomerFinanceEventId("pay-1".to_string()),
             )
@@ -1410,27 +1651,16 @@ mod tests {
     fn retry_is_idempotent_but_reused_event_with_different_payload_is_rejected() {
         let (mut book, customer) = debt_book(100);
         let event = CustomerFinanceEventId("payment-1".to_string());
-        let recipient = CashEndpoint::External("company-1".to_string());
         let first = book
-            .repay_due(
-                &customer,
-                recipient.clone(),
-                date("2030-01-02"),
-                event.clone(),
-            )
+            .repay_due(&customer, date("2030-01-02"), event.clone())
             .expect("付款");
         let retry = book
-            .repay_due(&customer, recipient, date("2030-01-02"), event.clone())
+            .repay_due(&customer, date("2030-01-02"), event.clone())
             .expect("幂等重试");
         assert_eq!(retry, first);
         assert_eq!(book.cash_flows().len(), 1);
 
-        let changed = book.repay_due(
-            &customer,
-            CashEndpoint::External("company-2".to_string()),
-            date("2030-01-02"),
-            event,
-        );
+        let changed = book.repay_due(&customer, date("2030-01-03"), event);
         assert!(matches!(
             changed,
             Err(CustomerFinanceError::EventPayloadConflict { .. })
@@ -1442,15 +1672,9 @@ mod tests {
     #[test]
     fn empty_due_payment_retry_cannot_create_cash_or_repay_later() {
         let (mut book, customer) = debt_book(0);
-        let recipient = CashEndpoint::External("company-1".to_string());
         let event = CustomerFinanceEventId("no-cash-at-maturity".to_string());
         assert!(book
-            .repay_due(
-                &customer,
-                recipient.clone(),
-                date("2030-01-02"),
-                event.clone()
-            )
+            .repay_due(&customer, date("2030-01-02"), event.clone())
             .expect("无现金到期评估")
             .is_empty());
         assert!(book.cash_flows().is_empty());
@@ -1464,7 +1688,7 @@ mod tests {
         )
         .expect("显式经营现金流入");
         assert!(book
-            .repay_due(&customer, recipient.clone(), date("2030-01-02"), event)
+            .repay_due(&customer, date("2030-01-02"), event)
             .expect("相同到期事件重试返回既有结果")
             .is_empty());
         assert_eq!(book.customer(&customer).expect("客户").cash(), amount(100));
@@ -1472,7 +1696,6 @@ mod tests {
         assert_eq!(
             book.repay_due(
                 &customer,
-                recipient,
                 date("2030-01-03"),
                 CustomerFinanceEventId("later-payment-attempt".to_string()),
             )
@@ -1487,7 +1710,6 @@ mod tests {
         let (mut book, customer) = debt_book(100);
         book.repay_due(
             &customer,
-            CashEndpoint::External("company-1".to_string()),
             date("2030-01-03"),
             CustomerFinanceEventId("later-payment".to_string()),
         )
@@ -1519,6 +1741,7 @@ mod tests {
             date("2030-02-01"),
             date("2030-02-10"),
             amount(25),
+            creditor(),
         )
         .expect("较晚开立");
         let before = book.clone();
@@ -1528,6 +1751,7 @@ mod tests {
             date("2030-01-01"),
             date("2030-01-10"),
             amount(25),
+            creditor(),
         );
         assert!(matches!(
             out_of_order,
@@ -1576,7 +1800,6 @@ mod tests {
         book.recover_written_off(
             &customer,
             &DebtId("debt-a".to_string()),
-            CashEndpoint::External("company-1".to_string()),
             amount(25),
             date("2030-01-04"),
             recovery_event.clone(),
@@ -1585,7 +1808,6 @@ mod tests {
         book.recover_written_off(
             &customer,
             &DebtId("debt-a".to_string()),
-            CashEndpoint::External("company-1".to_string()),
             amount(25),
             date("2030-01-04"),
             recovery_event,
@@ -1603,7 +1825,6 @@ mod tests {
 
         book.repay_due(
             &customer,
-            CashEndpoint::External("company-1".to_string()),
             date("2030-01-05"),
             CustomerFinanceEventId("ordinary-repayment".to_string()),
         )
@@ -1624,7 +1845,6 @@ mod tests {
         let excessive = book.recover_written_off(
             &customer,
             &DebtId("debt-a".to_string()),
-            CashEndpoint::External("company-1".to_string()),
             amount(16),
             date("2030-01-05"),
             CustomerFinanceEventId("recovery-2".to_string()),

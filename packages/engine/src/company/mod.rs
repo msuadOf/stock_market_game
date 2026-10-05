@@ -38,7 +38,7 @@ pub use counterparty::{
 };
 pub use customer_finance::{
     CashEndpoint, CustomerCashFlow, CustomerDebt, CustomerFinanceBook, CustomerFinanceError,
-    CustomerFinanceEventId, CustomerFinanceState, DebtId, DebtPayment, DebtWriteOff,
+    CustomerFinanceEventId, CustomerFinanceState, DebtCreditor, DebtId, DebtPayment, DebtWriteOff,
     WriteOffEvidence,
 };
 pub use defaults::default_companies;

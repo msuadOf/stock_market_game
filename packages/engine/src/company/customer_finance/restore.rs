@@ -32,6 +32,7 @@ struct CustomerFacts {
 #[serde(deny_unknown_fields)]
 struct DebtFacts {
     id: DebtId,
+    creditor: DebtCreditor,
     opened_on: CivilDate,
     due_on: CivilDate,
     principal: AccountingAmount,
@@ -57,6 +58,7 @@ impl<'de> Deserialize<'de> for CustomerFinanceBook {
                                 id,
                                 CustomerDebt {
                                     id: debt.id,
+                                    creditor: debt.creditor,
                                     opened_on: debt.opened_on,
                                     due_on: debt.due_on,
                                     principal: debt.principal,
@@ -102,6 +104,7 @@ impl CustomerFinanceBook {
             }
             for (debt_id, debt) in &customer.debts {
                 validate_id(&debt_id.0, "debt")?;
+                debt.creditor.validate()?;
                 if debt_id != &debt.id
                     || !debt.principal.is_positive()
                     || debt.paid.is_negative()
@@ -173,19 +176,9 @@ impl CustomerFinanceBook {
                     *date
                 }
                 (
-                    FinanceCommand::RepayDue {
-                        customer,
-                        destination,
-                        date,
-                    },
+                    FinanceCommand::RepayDue { customer, date },
                     FinanceResult::Payments(payments),
                 ) => {
-                    validate_endpoint_pair(
-                        &self.customers,
-                        &CashEndpoint::Customer(customer.clone()),
-                        destination,
-                    )?;
-                    validate_payment_destination(destination)?;
                     let state = self.customers.get(customer).ok_or_else(|| {
                         CustomerFinanceError::UnknownCustomer {
                             customer: customer.clone(),
@@ -214,6 +207,7 @@ impl CustomerFinanceBook {
                         let (debt, ordinary) = eligible[index];
                         if !payment.amount.is_positive()
                             || payment.debt != debt.id
+                            || payment.creditor != debt.creditor
                             || payment.amount > ordinary
                             || (index + 1 < payments.len() && payment.amount != ordinary)
                             || payment.original_due_on != debt.due_on
@@ -236,7 +230,7 @@ impl CustomerFinanceBook {
                             event_id,
                             *date,
                             CashEndpoint::Customer(customer.clone()),
-                            destination.clone(),
+                            debt.creditor.cash_endpoint(),
                             payment.amount,
                         ));
                     }
@@ -284,7 +278,6 @@ impl CustomerFinanceBook {
                     FinanceCommand::Recover {
                         customer,
                         debt: debt_id,
-                        destination,
                         amount,
                         date,
                     },
@@ -304,10 +297,9 @@ impl CustomerFinanceBook {
                     validate_endpoints(
                         &self.customers,
                         &CashEndpoint::Customer(customer.clone()),
-                        destination,
+                        &debt.creditor.cash_endpoint(),
                         *amount,
                     )?;
-                    validate_payment_destination(destination)?;
                     let totals = debt_totals
                         .entry((customer.clone(), debt_id.clone()))
                         .or_insert((
@@ -320,7 +312,7 @@ impl CustomerFinanceBook {
                         event_id,
                         *date,
                         CashEndpoint::Customer(customer.clone()),
-                        destination.clone(),
+                        debt.creditor.cash_endpoint(),
                         *amount,
                     ));
                     *date
