@@ -46,10 +46,11 @@ test("daily archives reject live resource envelopes and order expiry timers", ()
 test("daily archives cannot contain unprocessed player or NPC requests", () => {
   const slot = archive();
   const intent = { PlaceLimit: { code: "600101", side: "Buy" as const, price: { Fixed: "1120" }, qty: 100 } };
-  assert.throws(() => validate({ ...slot, pending_player: [[0, intent]] }), /日内请求/);
+  const receipt = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" };
+  assert.throws(() => validate({ ...slot, pending_player: [receipt] }), /日内请求/);
   const batch = slot.pending_npc;
   assert.ok(batch);
-  assert.throws(() => validate({ ...slot, pending_npc: { ...batch, intents: [[1, intent]] } }), /日内请求/);
+  assert.throws(() => validate({ ...slot, pending_npc: { ...batch, intents: [{ ...receipt, owner: 1 }] } }), /日内请求/);
 });
 
 test("daily archives cannot resume an unfinished intraday parent order", () => {

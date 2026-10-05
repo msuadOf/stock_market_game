@@ -17,8 +17,7 @@ enum ResourceLane {
 /// 股票 gate 独立登记实际并发受理顺序。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum AccountReceipt {
-    PreviousCommit(u64),
-    BetweenTicks(u64),
+    Received(u64),
     ReadyThisTick(u64),
 }
 
@@ -33,18 +32,17 @@ impl AccountReceipts {
         &mut self,
         candidate: &IntentCandidate,
     ) -> Result<AccountReceipt, StepFatal> {
-        match candidate.key() {
-            super::IntentCandidateKey::Npc {
-                account,
-                npc_local_index,
-            } => {
-                if *account != candidate.owner() {
-                    return Err(invariant("NPC receipt belongs to another account"));
-                }
-                Ok(AccountReceipt::PreviousCommit(*npc_local_index))
+        if let super::IntentCandidateKey::Npc { account, .. } = candidate.key() {
+            if *account != candidate.owner() {
+                return Err(invariant("NPC receipt belongs to another account"));
             }
-            super::IntentCandidateKey::Player { player_queue_index } => {
-                Ok(AccountReceipt::BetweenTicks(*player_queue_index))
+        }
+        if let Some((account_ordinal, _)) = candidate.ingress_order() {
+            return Ok(AccountReceipt::Received(account_ordinal));
+        }
+        match candidate.key() {
+            super::IntentCandidateKey::Npc { .. } | super::IntentCandidateKey::Player { .. } => {
+                Err(invariant("queued candidate is missing its receive ordinal"))
             }
             super::IntentCandidateKey::PlanChain { .. } => {
                 let next = self.next_plan.entry(candidate.owner()).or_default();
@@ -96,7 +94,7 @@ impl ReadyAdmissionPlan {
         has_dependencies: bool,
     ) -> Result<(Self, bool), StepFatal> {
         let mut resource_groups = HashMap::<ResourceLane, Vec<(usize, AccountReceipt)>>::new();
-        let mut stock_counts = BTreeMap::<StockCode, usize>::new();
+        let mut stock_receipts = BTreeMap::<StockCode, Vec<(usize, Option<u64>)>>::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let receipt = receipts.observe(candidate)?;
             let owner = candidate.owner();
@@ -123,10 +121,13 @@ impl ReadyAdmissionPlan {
                 // 撤单只面向目标订单；后续计划由股票簿产生的 typed 结果唤醒。
                 Intent::Cancel { .. } => {}
             }
-            *stock_counts.entry(stock.clone()).or_default() += 1;
+            stock_receipts
+                .entry(stock.clone())
+                .or_default()
+                .push((index, candidate.ingress_order().map(|(_, ordinal)| ordinal)));
         }
         let has_conflicts = has_dependencies
-            || stock_counts.values().any(|count| *count >= 2)
+            || stock_receipts.values().any(|receipts| receipts.len() >= 2)
             || resource_groups.values().any(|entries| entries.len() >= 2);
         let mut plan = Self {
             successors: if has_conflicts {
@@ -149,11 +150,38 @@ impl ReadyAdmissionPlan {
         if has_dependencies {
             plan.add_quote_dependencies()?;
         }
-        plan.stock_gates = stock_counts
-            .into_iter()
-            .filter_map(|(stock, count)| (count > 1).then(|| (stock, Mutex::new(Vec::new()))))
-            .collect();
+        for (stock, mut receipts) in stock_receipts {
+            if receipts.len() < 2 {
+                continue;
+            }
+            if receipts.iter().all(|(_, ordinal)| ordinal.is_some()) {
+                receipts.sort_unstable_by_key(|(_, ordinal)| *ordinal);
+                for pair in receipts.windows(2) {
+                    let (Some(before), Some(after)) = (pair[0].1, pair[1].1) else {
+                        return Err(invariant("stock receive ordinal disappeared"));
+                    };
+                    if before == after {
+                        return Err(invariant("conflicting requests share a stock receipt"));
+                    }
+                    plan.add_edge(pair[0].0, pair[1].0)?;
+                }
+            } else if receipts.iter().all(|(_, ordinal)| ordinal.is_none()) {
+                plan.stock_gates.insert(stock, Mutex::new(Vec::new()));
+            } else {
+                return Err(invariant(
+                    "ready stock batch mixes received and unstamped requests",
+                ));
+            }
+        }
         Ok((plan, true))
+    }
+
+    fn add_edge(&mut self, before: usize, after: usize) -> Result<(), StepFatal> {
+        self.successors[before].push(after);
+        self.incoming[after] = self.incoming[after]
+            .checked_add(1)
+            .ok_or_else(|| invariant("local admission edge count overflow"))?;
+        Ok(())
     }
 
     fn build_resource_edges(
@@ -398,6 +426,7 @@ mod tests {
             AccountId(account),
             intent,
         )
+        .with_ingress_order(index, index)
     }
 
     #[test]
@@ -420,6 +449,7 @@ mod tests {
                     qty: 100,
                 },
             )
+            .with_ingress_order(3, 3)
             .with_predecessors(vec![first, second]),
             quote_request(4, 1, "600002", false),
             quote_request(5, 2, "600001", false),
@@ -513,6 +543,7 @@ mod tests {
                         qty: 100,
                     },
                 )
+                .with_ingress_order(index as u64, index as u64)
             })
             .collect();
         for _ in 0..16 {
@@ -541,7 +572,8 @@ mod tests {
                     code: stock.clone(),
                     id: OrderId(7),
                 },
-            ),
+            )
+            .with_ingress_order(0, 0),
             IntentCandidate::new(
                 IntentCandidateKey::npc(AccountId(1), 1),
                 AccountId(1),
@@ -551,7 +583,8 @@ mod tests {
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
-            ),
+            )
+            .with_ingress_order(1, 1),
             IntentCandidate::new(
                 IntentCandidateKey::npc(AccountId(1), 2),
                 AccountId(1),
@@ -561,7 +594,8 @@ mod tests {
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
-            ),
+            )
+            .with_ingress_order(2, 2),
             IntentCandidate::new(
                 IntentCandidateKey::player(0),
                 AccountId(2),
@@ -571,7 +605,8 @@ mod tests {
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
-            ),
+            )
+            .with_ingress_order(0, 3),
         ];
         for _ in 0..16 {
             let admitted = admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
@@ -619,6 +654,7 @@ mod tests {
                     qty: 100,
                 },
             )
+            .with_ingress_order(index, index)
         };
         let (plan, conflicts) = ReadyAdmissionPlan::prepare(
             vec![buy, sell(1), quote_request(2, 1, "600003", false), sell(3)],
@@ -679,7 +715,7 @@ mod tests {
     #[test]
     fn mixed_request_phases_keep_cash_receipts_when_layout_is_reversed() {
         let owner = AccountId(1);
-        let make = |key, stock: &str| {
+        let make = |key, stock: &str, account_ordinal, stock_ordinal| {
             IntentCandidate::new(
                 key,
                 owner,
@@ -690,11 +726,12 @@ mod tests {
                     qty: 100,
                 },
             )
+            .with_ingress_order(account_ordinal, stock_ordinal)
         };
         let candidates = vec![
-            make(IntentCandidateKey::plan_chain(7), "600003"),
-            make(IntentCandidateKey::player(5), "600002"),
-            make(IntentCandidateKey::npc(owner, 9), "600001"),
+            make(IntentCandidateKey::plan_chain(7), "600003", 2, 2),
+            make(IntentCandidateKey::player(5), "600002", 1, 1),
+            make(IntentCandidateKey::npc(owner, 9), "600001", 0, 0),
         ];
         let admitted = admit_ready_batch(candidates, &mut AccountReceipts::default()).unwrap();
         assert_eq!(
@@ -708,6 +745,32 @@ mod tests {
                 &IntentCandidateKey::plan_chain(7),
             ]
         );
+    }
+
+    #[test]
+    fn queued_candidates_require_real_receipts_and_validate_npc_ownership() {
+        let missing = IntentCandidate::new(
+            IntentCandidateKey::player(0),
+            AccountId(0),
+            quote_request(0, 0, "600001", false).intent().clone(),
+        );
+        let missing_error =
+            admit_ready_batch(vec![missing], &mut AccountReceipts::default()).unwrap_err();
+        assert!(missing_error
+            .to_string()
+            .contains("missing its receive ordinal"));
+
+        let wrong_owner = IntentCandidate::new(
+            IntentCandidateKey::npc(AccountId(1), 0),
+            AccountId(2),
+            quote_request(0, 2, "600001", false).intent().clone(),
+        )
+        .with_ingress_order(0, 0);
+        let owner_error =
+            admit_ready_batch(vec![wrong_owner], &mut AccountReceipts::default()).unwrap_err();
+        assert!(owner_error
+            .to_string()
+            .contains("NPC receipt belongs to another account"));
     }
 
     #[test]

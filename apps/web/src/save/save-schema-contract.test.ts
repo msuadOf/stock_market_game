@@ -178,26 +178,41 @@ test("pending player and NPC limit intents preserve fixed, highest and lowest pr
   ]
   const save = {
     ...currentSaveFixture(),
-    pending_player: intents.map((intent) => [0, intent]),
-    pending_npc: { observed_tick: 0, observed_accounts: [1], intents: intents.map((intent) => [1, intent]), dependencies: [] },
+    pending_player: intents.map((intent, index) => ({ owner: 0, intent, account_ordinal: String(index), stock_ordinal: String(index) })),
+    pending_npc: { observed_tick: 0, observed_accounts: [1], intents: intents.map((intent, index) => ({ owner: 1, intent, account_ordinal: String(index), stock_ordinal: String(index) })), dependencies: [] },
   }
   assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, save.pending_npc)
 })
 
+test("receipt cursors and pending ordinals preserve lossless u64 decimal strings", () => {
+  const current = currentSaveFixture()
+  const { ingress_receipt_cursors: _removed, ...missing } = current
+  assert.throws(() => parseSaveSlot(missing), /ingress_receipt_cursors.*必填/)
+  const item = { owner: 0, intent: { Cancel: { code: "600888", id: 1 } }, account_ordinal: "18446744073709551615", stock_ordinal: "18446744073709551615" }
+  assert.deepEqual(parseSaveSlot({ ...current, pending_player: [item] }).pending_player, [item])
+  for (const ordinal of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "01", "+1", "-1", "18446744073709551616"]) {
+    assert.throws(() => parseSaveSlot({ ...current, pending_player: [{ ...item, account_ordinal: ordinal }] }), /pending_player\[0\]\.account_ordinal/)
+  }
+  for (const cursors of [null, {}, { next_account_ordinal: { "01": "0" }, next_stock_ordinal: {} }, { next_account_ordinal: { "1": "01" }, next_stock_ordinal: {} }, { next_account_ordinal: { "1": "+1" }, next_stock_ordinal: {} }, { next_account_ordinal: {}, next_stock_ordinal: { "600101": 0 } }]) {
+    assert.throws(() => parseSaveSlot({ ...current, ingress_receipt_cursors: cursors }), /ingress_receipt_cursors/)
+  }
+})
+
 test("pending limit intents reject legacy numeric and malformed symbolic prices", () => {
   for (const price of [1000, { Fixed: 1000 }, { Fixed: "1.5" }, { Fixed: "01" }, { Fixed: "-0" }, { Fixed: "1000", Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price, qty: 100 } }
-    const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
+    const queued = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }
+    const save = { ...currentSaveFixture(), pending_player: [queued] }
     assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
-    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [[1, intent]], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
+    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [{ owner: 1, intent, account_ordinal: "0", stock_ordinal: "0" }], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
   }
 })
 
 test("pending fixed price preserves integer amounts for later engine rejection", () => {
   for (const value of ["0", "-1"]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: value }, qty: 100 } }
-    const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
+    const save = { ...currentSaveFixture(), pending_player: [{ owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }] }
     assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   }
 })
@@ -207,11 +222,11 @@ function pendingNpcReplacementBatch() {
     observed_tick: 0,
     observed_accounts: [1],
     intents: [
-      [1, { Cancel: { code: "600888", id: 42 } }],
-      [1, { Cancel: { code: "600888", id: 43 } }],
-      [1, { Cancel: { code: "600888", id: 44 } }],
-      [1, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
-      [1, { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }],
+      { owner: 1, intent: { Cancel: { code: "600888", id: 42 } }, account_ordinal: "0", stock_ordinal: "0" },
+      { owner: 1, intent: { Cancel: { code: "600888", id: 43 } }, account_ordinal: "1", stock_ordinal: "1" },
+      { owner: 1, intent: { Cancel: { code: "600888", id: 44 } }, account_ordinal: "2", stock_ordinal: "2" },
+      { owner: 1, intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+      { owner: 1, intent: { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }, account_ordinal: "4", stock_ordinal: "4" },
     ],
     dependencies: [[0, 3], [1, 3], [1, 4]],
   }
@@ -247,8 +262,8 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
     )
   }
   for (const replacement of [
-    [2, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
-    [1, { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }],
+    { owner: 2, intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+    { owner: 1, intent: { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
   ]) {
     const intents = structuredClone(batch.intents)
     intents[3] = replacement

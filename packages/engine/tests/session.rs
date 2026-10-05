@@ -913,14 +913,18 @@ fn current_save_rejects_non_player_pending_intents() {
         .unwrap()
         .save()
         .expect("healthy save");
-    npc_pending.pending_player.push((
-        AccountId(1),
-        Intent::PlaceMarket {
-            code: StockCode("600101".to_string()),
-            side: Side::Buy,
-            qty: 100,
-        },
-    ));
+    npc_pending
+        .pending_player
+        .push(engine::ReceiptBearingIntent {
+            owner: AccountId(1),
+            intent: Intent::PlaceMarket {
+                code: StockCode("600101".to_string()),
+                side: Side::Buy,
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        });
     assert!(matches!(
         GameSession::restore(&npc_pending),
         Err(engine::SessionError::InvalidSave(message)) if message.contains("player account")

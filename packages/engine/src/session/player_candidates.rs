@@ -1,7 +1,8 @@
 use super::*;
+use crate::session::ReceiptBearingIntent;
 
 pub(in crate::session) struct PlayerCandidateBatch {
-    pub(in crate::session) intents: Vec<(AccountId, Intent)>,
+    pub(in crate::session) intents: Vec<ReceiptBearingIntent>,
 }
 
 impl GameSession {

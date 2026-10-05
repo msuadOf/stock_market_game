@@ -93,6 +93,7 @@ export function currentSaveFixture(): JsonObject {
     npc_order_lifecycles: [],
     pending_player: [],
     pending_npc: { observed_tick: 0, observed_accounts: [], intents: [], dependencies: [] },
+    ingress_receipt_cursors: { next_account_ordinal: {}, next_stock_ordinal: {} },
     next_order_id: 1,
     civil_clock: {
       current_date: "2030-01-01",

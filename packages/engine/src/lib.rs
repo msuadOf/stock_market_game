@@ -63,13 +63,14 @@ pub mod verification_evidence;
 pub mod session;
 pub use session::{
     decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
-    DailyTradeStats, Event, FloatAllocation, GameSession, MarketSnap, NpcAttentionState, NpcSetup,
-    ParentOrderPlan, PendingPlanEvent, PositionSnap, RejectionReason, SaveDecodeLimits,
-    SaveParentOrderPlan, SaveSlot, SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank,
-    SavedLiveEnvelope, SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition,
-    SavedRetailReceiptIdentity, SavedRuntimeState, SecurityCategory, SessionError, SessionSetup,
-    Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase, WithinKindDistribution,
-    MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
+    DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
+    NpcAttentionState, NpcSetup, ParentOrderPlan, PendingNpcBatch, PendingPlanEvent, PositionSnap,
+    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveParentOrderPlan, SaveSlot,
+    SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
+    SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
+    SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64,
+    StockExchange, StockSpec, TradingPhase, WithinKindDistribution, MAX_SAVE_DECODE_BYTES,
+    SIMULATION_POLICY_ID,
 };
 
 pub mod diagnostics;

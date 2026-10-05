@@ -133,14 +133,13 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
             .unwrap()
             .fixture_set_cash(Money::from_cents(1_000_000));
     }
-    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
-        dependencies: Vec::new(),
-        observed_tick: session.state.tick,
-        observed_accounts: vec![first, second],
-        intents: [first, second]
-            .into_iter()
-            .map(|account| {
-                (
+    let intents = [first, second]
+        .into_iter()
+        .map(|account| {
+            session
+                .state
+                .ingress_receipt_cursors
+                .receive(
                     account,
                     Intent::PlaceLimit {
                         code: code.clone(),
@@ -149,8 +148,14 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
                         qty: 200,
                     },
                 )
-            })
-            .collect(),
+                .unwrap()
+        })
+        .collect();
+    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: session.state.tick,
+        observed_accounts: vec![first, second],
+        intents,
     });
     session
         .enqueue_player_intent(
@@ -239,15 +244,17 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         session.step().unwrap();
         let queued = session.state.pending_npc.as_ref().unwrap();
         assert_eq!(queued.observed_tick, session.tick());
-        let [(
+        let [crate::session::ReceiptBearingIntent {
             owner,
-            Intent::PlaceLimit {
-                code,
-                side: Side::Buy,
-                price: crate::LimitPrice::Highest,
-                qty,
-            },
-        )] = queued.intents.as_slice()
+            intent:
+                Intent::PlaceLimit {
+                    code,
+                    side: Side::Buy,
+                    price: crate::LimitPrice::Highest,
+                    qty,
+                },
+            ..
+        }] = queued.intents.as_slice()
         else {
             panic!("expected one queued Highest buy, got {:?}", queued.intents);
         };

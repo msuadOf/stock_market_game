@@ -178,15 +178,20 @@ fn quote_expiry_retail_cancellation_diagnostic_survives_commit() {
 #[test]
 fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
     let (mut game, code, account, expired_order_id) = expiring_retail_order();
-    game.state.pending_player.push((
-        account,
-        crate::Intent::PlaceLimit {
-            code: code.clone(),
-            side: crate::Side::Buy,
-            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
-            qty: 100,
-        },
-    ));
+    let received = game
+        .state
+        .ingress_receipt_cursors
+        .receive(
+            account,
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: crate::Side::Buy,
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    game.state.pending_player.push(received);
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     drop(plan);

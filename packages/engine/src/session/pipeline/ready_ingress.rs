@@ -55,6 +55,7 @@ impl ReadyIngress {
         self.chain.block_unfinished_routes(&self.initial);
         let mut ready = std::mem::take(&mut self.initial);
         ready.extend(self.chain.ready_batch_without_waiting_for_roots(session)?);
+        stamp_ready_receipts(session, &mut ready)?;
         Ok(ready)
     }
 
@@ -105,6 +106,7 @@ pub(super) fn validate_available_ready(
     let mut outcomes = Vec::new();
     loop {
         if !ready.is_empty() {
+            stamp_ready_receipts(session, &mut ready)?;
             let admitted = admit_ready_batch(ready, receipts)?;
             chain.block_unfinished_routes(&admitted);
             all_candidates.extend(admitted.iter().cloned());
@@ -117,6 +119,27 @@ pub(super) fn validate_available_ready(
             return Ok(outcomes);
         }
     }
+}
+
+fn stamp_ready_receipts(
+    session: &mut GameSession,
+    candidates: &mut [IntentCandidate],
+) -> Result<(), StepFatal> {
+    for candidate in candidates {
+        if candidate.ingress_order().is_some() {
+            continue;
+        }
+        if !matches!(candidate.key(), super::IntentCandidateKey::PlanChain { .. }) {
+            return Err(invariant("queued candidate is missing its receive ordinal"));
+        }
+        let received = session
+            .state
+            .ingress_receipt_cursors
+            .receive(candidate.owner(), candidate.intent().clone())
+            .map_err(|error| invariant(&error.to_string()))?;
+        candidate.set_ingress_order(received.account_ordinal, received.stock_ordinal);
+    }
+    Ok(())
 }
 
 fn invariant(description: &str) -> StepFatal {

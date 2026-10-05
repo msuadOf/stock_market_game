@@ -1,4 +1,7 @@
-use super::npc_decisions::{npc_rng_seed, run_npc_decisions, NpcDecisionSourceError};
+use super::npc_decisions::{
+    npc_rng_seed, run_npc_decisions, stream_npc_decisions, stream_npc_decisions_with,
+    NpcDecisionSourceError,
+};
 use super::{DecisionAccountInput, DecisionSnapshot, IntentCandidateKey};
 use crate::behavior::BehaviorMarketObservation;
 use crate::observation::{
@@ -7,9 +10,142 @@ use crate::observation::{
 use crate::strategy::{
     MarketView, MomentumStrategy, SelfView, StockView, StrategyState, ZiNoiseStrategy,
 };
-use crate::{AccountId, AccountKind, Money, SplitMix64, StockCode, TradingPhase};
+use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockCode, TradingPhase};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+#[test]
+fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_failure() {
+    let snapshot = snapshot(vec![AccountId(1), AccountId(2)]);
+    let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let authority_receipts = crate::session::IngressReceiptCursors::default();
+    let candidate_receipts = Arc::new(std::sync::Mutex::new(authority_receipts.clone()));
+    assert!(rayon::current_num_threads() >= 2);
+    let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    let release_receiver = std::sync::Mutex::new(release_receiver);
+    let result = stream_npc_decisions_with(
+        snapshot,
+        &crate::GameConfig::proposed_defaults(),
+        |account| {
+            if account == AccountId(1) {
+                release_receiver
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("fast account must be consumed before slow worker is released");
+            }
+        },
+        |completed| {
+            received.lock().unwrap().push(completed.account);
+            candidate_receipts
+                .lock()
+                .unwrap()
+                .receive(
+                    completed.account,
+                    Intent::PlaceLimit {
+                        code: StockCode("600000".to_owned()),
+                        side: crate::Side::Buy,
+                        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                        qty: 100,
+                    },
+                )
+                .unwrap();
+            if completed.account == AccountId(2) {
+                release_sender.send(()).unwrap();
+                Err("injected consumer failure")
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert_eq!(*received.lock().unwrap(), vec![AccountId(2), AccountId(1)]);
+    assert!(matches!(
+        result,
+        Err(super::npc_decisions::NpcDecisionStreamError::Consumer(
+            "injected consumer failure"
+        ))
+    ));
+    assert!(authority_receipts.next_account_ordinal.is_empty());
+    assert!(authority_receipts.next_stock_ordinal.is_empty());
+    assert_eq!(
+        candidate_receipts.lock().unwrap().next_account_ordinal[&AccountId(1)],
+        1
+    );
+    assert_eq!(
+        candidate_receipts.lock().unwrap().next_account_ordinal[&AccountId(2)],
+        1
+    );
+}
+
+#[test]
+fn npc_completion_channel_does_not_deadlock_with_one_rayon_worker() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    let result = pool.install(|| {
+        stream_npc_decisions(
+            snapshot(vec![AccountId(1), AccountId(2)]),
+            &crate::GameConfig::proposed_defaults(),
+            |_| Ok::<_, ()>(()),
+        )
+    });
+    assert!(result.is_ok());
+}
+
+#[test]
+fn concurrent_sessions_can_queue_npcs_from_every_worker_in_a_two_worker_pool() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap();
+    let (done_sender, done_receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = pool.install(|| {
+            [51_u64, 52]
+                .into_par_iter()
+                .map(|seed| {
+                    let mut session = crate::GameSession::new(
+                        crate::session::npc_working_quote_tests::retail_quote_setup(),
+                        seed,
+                    )
+                    .unwrap();
+                    let account = AccountId(1);
+                    super::npc_state_projection_tests::use_buy_imbalance_analysis(
+                        &mut session,
+                        account,
+                    );
+                    let tick = session.state.tick;
+                    session.state.pending_npc = None;
+                    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+                    attention.next_attention_candidate_tick = tick;
+                    attention.rng_state = 3;
+                    let mut quiet_probe = attention.clone();
+                    assert!(quiet_probe.evaluate_candidate_with_signal(
+                        crate::AccountKind::Retail,
+                        0.0,
+                        tick,
+                    ));
+                    session.state.attention_scheduler.enqueue(tick, account);
+                    super::npc_tick_preparation::queue_npc_for_next_tick(&mut session).unwrap();
+                    session
+                        .state
+                        .pending_npc
+                        .as_ref()
+                        .unwrap()
+                        .observed_accounts
+                        .clone()
+                })
+                .collect::<Vec<_>>()
+        });
+        let _ = done_sender.send(result);
+    });
+    let results = done_receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("two worker-held sessions must both complete their NPC queue");
+    assert_eq!(results, vec![vec![AccountId(1)], vec![AccountId(1)]]);
+}
 
 fn account_input() -> DecisionAccountInput {
     DecisionAccountInput::new(

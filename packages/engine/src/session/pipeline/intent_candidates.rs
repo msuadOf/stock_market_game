@@ -169,6 +169,7 @@ pub struct IntentCandidate {
     owner: AccountId,
     intent: Intent,
     predecessors: Vec<IntentCandidateKey>,
+    ingress_order: Option<(u64, u64)>,
 }
 
 impl IntentCandidate {
@@ -178,7 +179,21 @@ impl IntentCandidate {
             owner,
             intent,
             predecessors: Vec::new(),
+            ingress_order: None,
         }
+    }
+
+    pub(super) fn with_ingress_order(mut self, account_ordinal: u64, stock_ordinal: u64) -> Self {
+        self.ingress_order = Some((account_ordinal, stock_ordinal));
+        self
+    }
+
+    pub(super) const fn ingress_order(&self) -> Option<(u64, u64)> {
+        self.ingress_order
+    }
+
+    pub(super) fn set_ingress_order(&mut self, account_ordinal: u64, stock_ordinal: u64) {
+        self.ingress_order = Some((account_ordinal, stock_ordinal));
     }
 
     pub fn with_predecessors(mut self, predecessors: Vec<IntentCandidateKey>) -> Self {
@@ -208,6 +223,7 @@ impl PartialEq for IntentCandidate {
         self.key == other.key
             && self.owner == other.owner
             && self.predecessors == other.predecessors
+            && self.ingress_order == other.ingress_order
             && match (&self.intent, &other.intent) {
                 (
                     Intent::PlaceLimit {

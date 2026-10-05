@@ -45,15 +45,20 @@ fn fixture(auction: bool) -> GameSession {
         (AccountId(1), Side::Sell, 100),
     ] {
         for code in codes.iter().rev() {
-            game.state.pending_player.push((
-                account,
-                Intent::PlaceLimit {
-                    code: code.clone(),
-                    side,
-                    price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
-                    qty,
-                },
-            ));
+            let received = game
+                .state
+                .ingress_receipt_cursors
+                .receive(
+                    account,
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side,
+                        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                        qty,
+                    },
+                )
+                .unwrap();
+            game.state.pending_player.push(received);
         }
     }
     game

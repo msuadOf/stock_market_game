@@ -329,13 +329,24 @@ fn registry_restore_failure_preserves_existing_session_and_civil_barrier() {
     let restored = registry.restore(&slot).unwrap();
     let count = registry.sessions.len();
     let mut invalid = slot.clone();
-    invalid.pending_player.push((
-        AccountId(0),
-        Intent::Cancel {
-            code: engine::StockCode("600101".into()),
+    let code = engine::StockCode("600101".into());
+    invalid
+        .ingress_receipt_cursors
+        .next_account_ordinal
+        .insert(AccountId(0), 1);
+    invalid
+        .ingress_receipt_cursors
+        .next_stock_ordinal
+        .insert(code.clone(), 1);
+    invalid.pending_player.push(engine::ReceiptBearingIntent {
+        owner: AccountId(0),
+        intent: Intent::Cancel {
+            code,
             id: engine::OrderId(1),
         },
-    ));
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    });
     assert!(registry.restore(&invalid).is_err());
     assert_eq!(registry.sessions.len(), count);
     assert_eq!(

@@ -50,6 +50,7 @@ impl GameSession {
             auction_orders: _,
             pending_player: _,
             pending_npc: _,
+            ingress_receipt_cursors: _,
             npc_attention: _,
             retail_experience: _,
             parent_orders: _,
@@ -113,6 +114,7 @@ impl GameSession {
         hash.field(&self.state.auction_orders)?;
         hash.field(&self.state.pending_player)?;
         hash.field(&self.state.pending_npc)?;
+        hash.field(&self.state.ingress_receipt_cursors)?;
         hash.field(&self.state.npc_attention)?;
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;

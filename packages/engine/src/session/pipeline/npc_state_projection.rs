@@ -159,13 +159,43 @@ pub(in crate::session) fn project_npc_state(
         return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }
 
-    project_npc_state_in_place(shadow, captured, source)
+    project_npc_state_in_place(shadow, captured, source, false)
+}
+
+/// 将一个已完成的 NPC 账户结果投影到可丢弃 tick shadow。
+/// 调用方拥有账户完成 channel；任一账户投影失败都必须丢弃整个 candidate。
+pub(in crate::session) fn project_npc_account(
+    shadow: &mut GameSession,
+    captured: &CapturedDecisionSnapshot,
+    source: &mut NpcDecisionSourceOutput,
+) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
+    let snapshot = &captured.snapshot;
+    if shadow.state.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
+        return Err(NpcDecisionProjectionError::ClockMismatch {
+            shadow_tick: shadow.state.tick,
+            shadow_phase: shadow.phase(),
+            snapshot_tick: snapshot.tick(),
+            snapshot_phase: snapshot.phase(),
+        });
+    }
+    if source.accounts().len() != 1
+        || source.account_outputs().len() != 1
+        || source.accounts()[0] != source.account_outputs()[0].account()
+        || snapshot
+            .due_npc_ids()
+            .binary_search(&source.accounts()[0])
+            .is_err()
+    {
+        return Err(NpcDecisionProjectionError::AccountOrderMismatch);
+    }
+    project_npc_state_in_place(shadow, captured, source, true)
 }
 
 fn project_npc_state_in_place(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,
     source: &mut NpcDecisionSourceOutput,
+    project_single_account: bool,
 ) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
     let snapshot = &captured.snapshot;
     let phase = snapshot.phase();
@@ -282,26 +312,45 @@ fn project_npc_state_in_place(
     if source_intents.next().is_some() {
         return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }
-    let review_ids = retail_reviews
-        .iter()
-        .map(|(account, _)| *account)
-        .collect::<Vec<_>>();
-    let reviews = retail_reviews
-        .into_iter()
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let accounts = &shadow.state.accounts;
-    shadow.state.retail_experience.mutate_existing_parallel(
-        &review_ids,
-        NpcDecisionProjectionError::MissingRetailExperience,
-        |account, experience| {
-            for code in &reviews[&account] {
+    if project_single_account {
+        for (account, reviewed) in retail_reviews {
+            let held: BTreeSet<_> = shadow.state.accounts[&account]
+                .positions()
+                .keys()
+                .cloned()
+                .collect();
+            let experience = shadow
+                .state
+                .retail_experience
+                .get_mut(&account)
+                .ok_or(NpcDecisionProjectionError::MissingRetailExperience(account))?;
+            for code in &reviewed {
                 experience.observe_stock(code, market_minute);
             }
-            let held: BTreeSet<_> = accounts[&account].positions().keys().cloned().collect();
             experience.prune_watchlist(&held);
-            Ok(())
-        },
-    )?;
+        }
+    } else {
+        let review_ids = retail_reviews
+            .iter()
+            .map(|(account, _)| *account)
+            .collect::<Vec<_>>();
+        let reviews = retail_reviews
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let accounts = &shadow.state.accounts;
+        shadow.state.retail_experience.mutate_existing_parallel(
+            &review_ids,
+            NpcDecisionProjectionError::MissingRetailExperience,
+            |account, experience| {
+                for code in &reviews[&account] {
+                    experience.observe_stock(code, market_minute);
+                }
+                let held: BTreeSet<_> = accounts[&account].positions().keys().cloned().collect();
+                experience.prune_watchlist(&held);
+                Ok(())
+            },
+        )?;
+    }
     Ok(NpcDecisionProjectionOutput {
         #[cfg(test)]
         accepted_due_npc_ids: source.accounts().to_vec(),

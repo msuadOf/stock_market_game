@@ -3,22 +3,31 @@
 //! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
 
 #[cfg(test)]
+use super::npc_decisions::run_npc_decisions;
+#[cfg(test)]
+use super::npc_state_projection::project_npc_state;
+#[cfg(test)]
 use super::DecisionSnapshot;
 use super::{
     candidate_composition::CandidateCompositionError,
     decision_snapshot_capture::{
         capture_decision_snapshot, CapturedDecisionSnapshot, DecisionSnapshotCaptureError,
     },
-    npc_decisions::{run_npc_decisions, NpcDecisionSourceError, NpcDecisionSourceOutput},
+    npc_decisions::{
+        stream_npc_decisions, NpcDecisionSourceError, NpcDecisionSourceOutput,
+        NpcDecisionStreamError,
+    },
     npc_state_projection::{
-        project_npc_state, NpcDecisionProjectionError, NpcDecisionProjectionOutput,
+        project_npc_account, NpcDecisionProjectionError, NpcDecisionProjectionOutput,
         NpcReconciliationDecision,
     },
     IntentCandidate, IntentCandidateBatch, IntentCandidateError, IntentCandidateKey, StepFatal,
 };
+#[cfg(test)]
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::session::PendingNpcBatch;
 use crate::{AccountId, GameSession, Intent, StockCode};
+#[cfg(test)]
 use rayon::join;
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -71,6 +80,7 @@ pub(super) fn prepare_npc_decisions(
     })
 }
 
+#[cfg(test)]
 fn prepare_npc_projection(
     prospective: &mut GameSession,
     roots_override: Option<PlanChainOperationBatch>,
@@ -130,16 +140,44 @@ pub(in crate::session) fn queue_npc_for_next_tick(
         });
         return Ok(());
     }
-    let (captured, source, projection, _) =
-        prepare_npc_projection(session, Some(PlanChainOperationBatch::empty()))
-            .map_err(|error| invariant(&error.to_string()))?;
-    let projected = projected_ordered_intents(&source, &projection)
-        .map_err(|error| invariant(&error.to_string()))?;
+    let captured =
+        capture_decision_snapshot(session).map_err(|error| invariant(&error.to_string()))?;
+    let config = session.state.setup.config.clone();
+    let mut intents = Vec::new();
+    let mut dependencies = Vec::new();
+    let stream_error = stream_npc_decisions(captured.snapshot.clone(), &config, |mut result| {
+        let projection = project_npc_account(session, &captured, &mut result.output)
+            .map_err(|error| error.to_string())?;
+        let projected = projected_ordered_intents(&result.output, &projection)
+            .map_err(|error| error.to_string())?;
+        let offset = intents.len();
+        for (owner, intent) in projected.intents {
+            intents.push(
+                session
+                    .state.ingress_receipt_cursors.receive(owner, intent)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        dependencies.extend(
+            projected
+                .dependencies
+                .into_iter()
+                .map(|(before, after)| (offset + before, offset + after)),
+        );
+        Ok::<_, String>(())
+    });
+    if let Err(error) = stream_error {
+        let description = match error {
+            NpcDecisionStreamError::Decision(error) => error.to_string(),
+            NpcDecisionStreamError::Consumer(error) => error,
+        };
+        return Err(invariant(&description));
+    }
     session.state.pending_npc = Some(PendingNpcBatch {
         observed_tick: session.state.tick,
         observed_accounts: captured.snapshot.due_npc_ids().to_vec(),
-        intents: projected.intents,
-        dependencies: projected.dependencies,
+        intents,
+        dependencies,
     });
     Ok(())
 }
@@ -162,13 +200,17 @@ pub(super) fn take_ready_npc_batch(
         .map_err(|error| invariant(&error))?;
     let mut local = BTreeMap::<AccountId, u64>::new();
     let mut candidates = Vec::with_capacity(ready.intents.len());
-    for (account, intent) in ready.intents {
+    for received in ready.intents {
+        let account = received.owner;
         let index = local.entry(account).or_default();
-        candidates.push(IntentCandidate::new(
-            IntentCandidateKey::npc(account, *index),
-            account,
-            intent,
-        ));
+        candidates.push(
+            IntentCandidate::new(
+                IntentCandidateKey::npc(account, *index),
+                account,
+                received.intent,
+            )
+            .with_ingress_order(received.account_ordinal, received.stock_ordinal),
+        );
         *index = index
             .checked_add(1)
             .ok_or_else(|| invariant("queued NPC local sequence overflow"))?;

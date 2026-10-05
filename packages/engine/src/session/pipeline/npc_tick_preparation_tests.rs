@@ -82,27 +82,38 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
+    let received =
+        |owner, intent, account_ordinal, stock_ordinal| crate::session::ReceiptBearingIntent {
+            owner,
+            intent,
+            account_ordinal,
+            stock_ordinal,
+        };
     let mut queued = crate::session::PendingNpcBatch {
         observed_tick: 0,
         observed_accounts: vec![AccountId(1), AccountId(2)],
         intents: vec![
-            (
+            received(
                 AccountId(1),
                 Intent::Cancel {
                     code: a.clone(),
                     id: crate::OrderId(1),
                 },
+                0,
+                0,
             ),
-            (
+            received(
                 AccountId(1),
                 Intent::Cancel {
                     code: b.clone(),
                     id: crate::OrderId(2),
                 },
+                1,
+                0,
             ),
-            (AccountId(1), place(a.clone())),
-            (AccountId(2), place(a)),
-            (AccountId(1), place(b)),
+            received(AccountId(1), place(a.clone()), 2, 1),
+            received(AccountId(2), place(a), 0, 2),
+            received(AccountId(1), place(b), 3, 1),
         ],
         dependencies: vec![(0, 2), (1, 4)],
     };
@@ -133,26 +144,36 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
     let (mut session, npc) = due_retail(41, 100);
     let code = session.state.setup.stocks[0].code.clone();
     let mut save = session.save().unwrap();
+    save.ingress_receipt_cursors
+        .next_account_ordinal
+        .insert(npc, 2);
+    save.ingress_receipt_cursors
+        .next_stock_ordinal
+        .insert(code.clone(), 2);
     save.pending_npc = Some(crate::session::PendingNpcBatch {
         observed_tick: session.state.tick,
         observed_accounts: vec![npc],
         intents: vec![
-            (
-                npc,
-                Intent::Cancel {
+            crate::session::ReceiptBearingIntent {
+                owner: npc,
+                intent: Intent::Cancel {
                     code: code.clone(),
                     id: crate::OrderId(9),
                 },
-            ),
-            (
-                npc,
-                Intent::PlaceLimit {
-                    code,
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+            crate::session::ReceiptBearingIntent {
+                owner: npc,
+                intent: Intent::PlaceLimit {
+                    code: code.clone(),
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
                 },
-            ),
+                account_ordinal: 1,
+                stock_ordinal: 1,
+            },
         ],
         dependencies: vec![(0, 1)],
     });
@@ -172,6 +193,51 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
 }
 
 #[test]
+fn restore_rejects_npc_dependency_that_reverses_stock_receipt_order() {
+    let (mut session, npc) = due_retail(42, 100);
+    let code = session.state.setup.stocks[0].code.clone();
+    let cancel = session
+        .state
+        .ingress_receipt_cursors
+        .receive(
+            npc,
+            Intent::Cancel {
+                code: code.clone(),
+                id: crate::OrderId(9),
+            },
+        )
+        .unwrap();
+    let replacement = session
+        .state
+        .ingress_receipt_cursors
+        .receive(
+            npc,
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
+        observed_tick: session.state.tick,
+        observed_accounts: vec![npc],
+        intents: vec![cancel, replacement],
+        dependencies: vec![(0, 1)],
+    });
+    let mut save = session.save().unwrap();
+    save.pending_npc.as_mut().unwrap().intents[0].stock_ordinal = 1;
+    save.pending_npc.as_mut().unwrap().intents[1].stock_ordinal = 0;
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(crate::SessionError::InvalidSave(message))
+            if message.contains("precedence contains a cycle")
+    ));
+}
+
+#[test]
 fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
     let (mut authority, npc) = due_retail(8, 100);
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut authority, npc);
@@ -182,6 +248,38 @@ fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
     assert_eq!(prepared.snapshot.due_npc_ids(), &[npc]);
     assert_eq!(prepared.projection.accepted_due_npc_ids(), &[npc]);
     assert!(!prepared.candidates.candidates().is_empty());
+}
+
+#[test]
+fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
+    let (mut session, npc) = due_retail(8, 100);
+    super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
+    let code = session.state.setup.stocks[0].code.clone();
+    session
+        .state
+        .ingress_receipt_cursors
+        .next_stock_ordinal
+        .insert(code, u64::MAX);
+    let before = session.business_state_hash().unwrap();
+    let tick_before = session.state.tick;
+    let pending_before = serde_json::to_value(&session.state.pending_npc).unwrap();
+
+    let error = session
+        .step()
+        .expect_err("NPC receipt overflow must fail the tick");
+
+    assert!(format!("{error:?}").contains("ingress ordinal overflow"));
+    assert_eq!(session.business_state_hash().unwrap(), before);
+    assert_eq!(session.state.tick, tick_before);
+    assert_eq!(
+        serde_json::to_value(&session.state.pending_npc).unwrap(),
+        pending_before
+    );
+    assert_eq!(
+        session.state.ingress_receipt_cursors.next_stock_ordinal
+            [&session.state.setup.stocks[0].code],
+        u64::MAX
+    );
 }
 
 #[test]
@@ -199,10 +297,10 @@ fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
     session.state.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let pending = session.state.pending_npc.as_ref().unwrap();
-    assert!(pending.intents.iter().any(|(account, intent)| {
-        *account == npc
+    assert!(pending.intents.iter().any(|received| {
+        received.owner == npc
             && matches!(
-                intent,
+                &received.intent,
                 Intent::PlaceLimit {
                     side: Side::Buy,
                     ..
@@ -459,10 +557,20 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .iter()
         .map(|candidate| (candidate.owner(), candidate.intent().clone()))
         .collect::<Vec<_>>();
+    let queued = &queued_session.state.pending_npc.as_ref().unwrap().intents;
     assert_eq!(
-        serde_json::to_value(&queued_session.state.pending_npc.as_ref().unwrap().intents).unwrap(),
+        serde_json::to_value(
+            queued
+                .iter()
+                .map(|received| (received.owner, &received.intent))
+                .collect::<Vec<_>>()
+        )
+        .unwrap(),
         serde_json::to_value(expected).unwrap()
     );
+    assert!(queued.iter().enumerate().all(|(index, received)| {
+        received.account_ordinal == index as u64 && received.stock_ordinal == index as u64
+    }));
     let encoded = serde_json::to_value(queued_session.save().unwrap()).unwrap();
     assert_eq!(
         encoded["pending_npc"]["dependencies"],

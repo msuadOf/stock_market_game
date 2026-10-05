@@ -647,7 +647,12 @@ mod rollback_tests {
         let mut candidate = saved.clone();
         candidate
             .pending_player
-            .push((crate::AccountId(0), intent.clone()));
+            .push(crate::session::ReceiptBearingIntent {
+                owner: crate::AccountId(0),
+                intent: intent.clone(),
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            });
         assert!(matches!(
             ProtocolSession::restore(&candidate),
             Err(SessionError::InvalidSave(_))
@@ -657,7 +662,12 @@ mod rollback_tests {
         candidate.pending_npc = Some(crate::session::PendingNpcBatch {
             observed_tick: candidate.snapshot.tick,
             observed_accounts: Vec::new(),
-            intents: vec![(crate::AccountId(0), intent)],
+            intents: vec![crate::session::ReceiptBearingIntent {
+                owner: crate::AccountId(0),
+                intent,
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
             dependencies: Vec::new(),
         });
         assert!(matches!(

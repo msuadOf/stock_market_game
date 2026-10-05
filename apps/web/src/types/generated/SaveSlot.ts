@@ -3,7 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { AuctionOrderSnap } from "./AuctionOrderSnap";
 import type { CivilClockSave } from "./CivilClockSave";
 import type { FilledOrderSnap } from "./FilledOrderSnap";
-import type { Intent } from "./Intent";
+import type { IngressReceiptCursors } from "./IngressReceiptCursors";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
@@ -14,6 +14,7 @@ import type { PersonalHistoryReadLedger } from "./PersonalHistoryReadLedger";
 import type { PersonalPriceMemory } from "./PersonalPriceMemory";
 import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
+import type { ReceiptBearingIntent } from "./ReceiptBearingIntent";
 import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SaveParentOrderPlan } from "./SaveParentOrderPlan";
 import type { SaveSnapshot } from "./SaveSnapshot";
@@ -87,11 +88,12 @@ export type SaveSlot = {
   /**
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */
-  pending_player: Array<[AccountId, Intent]>;
+  pending_player: Array<ReceiptBearingIntent>;
   /**
    * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
    */
   pending_npc: PendingNpcBatch | null;
+  ingress_receipt_cursors: IngressReceiptCursors;
   /**
    * 保持订单 id/到达序继续单调递增。
    */

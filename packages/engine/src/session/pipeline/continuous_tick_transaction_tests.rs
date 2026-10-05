@@ -98,17 +98,22 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let code = request.allocation.code.clone();
     let plan_id = request.plan_id;
-    authority.state.pending_player.push((
-        AccountId(0),
-        Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Buy,
-            // Both arrival orders stay inside the price cage. This case checks
-            // shared admission, not the effect of moving the best bid.
-            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
-            qty: 100,
-        },
-    ));
+    let received = authority
+        .state
+        .ingress_receipt_cursors
+        .receive(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                // Both arrival orders stay inside the price cage. This case checks
+                // shared admission, not the effect of moving the best bid.
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    authority.state.pending_player.push(received);
     authority.state.attention_scheduler.clear();
     let roots = |request| {
         let mut roots = PlanChainOperationBatch::empty();
@@ -192,17 +197,22 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
         panic!("fixture must have one accepted working order");
     };
     let old_id = *old_id;
-    authority.state.pending_npc = Some(PendingNpcBatch {
-        dependencies: Vec::new(),
-        observed_tick: authority.state.tick,
-        observed_accounts: Vec::new(),
-        intents: vec![(
+    let received = authority
+        .state
+        .ingress_receipt_cursors
+        .receive(
             owner,
             Intent::Cancel {
                 code: code.clone(),
                 id: old_id,
             },
-        )],
+        )
+        .unwrap();
+    authority.state.pending_npc = Some(PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: authority.state.tick,
+        observed_accounts: Vec::new(),
+        intents: vec![received],
     });
     authority
         .state

@@ -912,7 +912,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     if save
         .pending_player
         .iter()
-        .any(|(account, _)| *account != AccountId(0))
+        .any(|received| received.owner != AccountId(0))
     {
         return Err(SessionError::InvalidSave(
             "pending player intent must belong to the player account".to_string(),
@@ -940,7 +940,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             }) || queued
                 .intents
                 .iter()
-                .any(|(account, _)| !observed.contains(account))
+                .any(|received| !observed.contains(&received.owner))
             {
                 return Err(SessionError::InvalidSave(
                     "pending NPC request has no observed NPC account".to_string(),
@@ -953,6 +953,64 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             ))
         }
     }
+    let mut seen_account_receipts = BTreeSet::new();
+    let mut seen_stock_receipts = BTreeSet::new();
+    for received in save.pending_player.iter().chain(
+        save.pending_npc
+            .iter()
+            .flat_map(|queued| queued.intents.iter()),
+    ) {
+        let next_account = save
+            .ingress_receipt_cursors
+            .next_account_ordinal
+            .get(&received.owner)
+            .ok_or_else(|| {
+                SessionError::InvalidSave(format!(
+                    "pending intent for account {:?} has no receipt cursor",
+                    received.owner
+                ))
+            })?;
+        if received.account_ordinal >= *next_account
+            || !seen_account_receipts.insert((received.owner, received.account_ordinal))
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "pending intent for account {:?} has an invalid or duplicate receipt ordinal",
+                received.owner
+            )));
+        }
+        let next_stock = save
+            .ingress_receipt_cursors
+            .next_stock_ordinal
+            .get(match &received.intent {
+                Intent::PlaceLimit { code, .. }
+                | Intent::PlaceMarket { code, .. }
+                | Intent::Cancel { code, .. } => code,
+            })
+            .ok_or_else(|| {
+                SessionError::InvalidSave(format!(
+                    "pending intent for stock {:?} has no receipt cursor",
+                    match &received.intent {
+                        Intent::PlaceLimit { code, .. }
+                        | Intent::PlaceMarket { code, .. }
+                        | Intent::Cancel { code, .. } => code,
+                    }
+                ))
+            })?;
+        let stock_code = match &received.intent {
+            Intent::PlaceLimit { code, .. }
+            | Intent::PlaceMarket { code, .. }
+            | Intent::Cancel { code, .. } => code,
+        };
+        if received.stock_ordinal >= *next_stock
+            || !seen_stock_receipts.insert((stock_code.clone(), received.stock_ordinal))
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "pending intent for stock {} has an invalid or duplicate receipt ordinal",
+                stock_code.0
+            )));
+        }
+    }
+    validate_pending_receipt_order(save)?;
     let active_candle_markets: BTreeSet<StockCode> =
         save.snapshot.active_daily_candles.keys().cloned().collect();
     let active_candle_set_is_valid =
@@ -1034,6 +1092,104 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
 }
 
 /// 公司域权威状态校验：经营编排集合/推进时点、镜像与时钟到期一致性。
+fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
+    #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+    enum ResourceLane {
+        Cash(AccountId),
+        Shares(AccountId, StockCode),
+    }
+
+    let mut intents = save.pending_player.clone();
+    let npc_len = save
+        .pending_npc
+        .as_ref()
+        .map_or(0, |queued| queued.intents.len());
+    if let Some(queued) = &save.pending_npc {
+        intents.extend(queued.intents.iter().cloned());
+    }
+    let player_len = intents.len() - npc_len;
+    let mut edges = vec![BTreeSet::new(); intents.len()];
+    let mut resource_lanes = BTreeMap::<ResourceLane, Vec<(usize, u64)>>::new();
+    let mut stock_lanes = BTreeMap::<StockCode, Vec<(usize, u64)>>::new();
+    for (index, received) in intents.iter().enumerate() {
+        let code = match &received.intent {
+            Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
+                let lane = match side {
+                    Side::Buy => ResourceLane::Cash(received.owner),
+                    Side::Sell => ResourceLane::Shares(received.owner, code.clone()),
+                };
+                resource_lanes
+                    .entry(lane)
+                    .or_default()
+                    .push((index, received.account_ordinal));
+                code.clone()
+            }
+            Intent::Cancel { code, .. } => code.clone(),
+        };
+        stock_lanes
+            .entry(code)
+            .or_default()
+            .push((index, received.stock_ordinal));
+    }
+    for lane in resource_lanes.values_mut() {
+        lane.sort_unstable_by_key(|(_, ordinal)| *ordinal);
+        for pair in lane.windows(2) {
+            edges[pair[0].0].insert(pair[1].0);
+        }
+    }
+    for lane in stock_lanes.values_mut() {
+        lane.sort_unstable_by_key(|(_, ordinal)| *ordinal);
+        for pair in lane.windows(2) {
+            edges[pair[0].0].insert(pair[1].0);
+        }
+    }
+    if let Some(queued) = &save.pending_npc {
+        for &(before, after) in &queued.dependencies {
+            if before >= npc_len || after >= npc_len {
+                return Err(SessionError::InvalidSave(
+                    "pending NPC dependency index is outside the queued batch".to_string(),
+                ));
+            }
+            edges[player_len + before].insert(player_len + after);
+        }
+    }
+    let mut incoming = vec![0_usize; intents.len()];
+    for successors in &edges {
+        for &successor in successors {
+            incoming[successor] = incoming[successor].checked_add(1).ok_or_else(|| {
+                SessionError::InvalidSave(
+                    "pending ingress receipt precedence edge count overflow".to_string(),
+                )
+            })?;
+        }
+    }
+    let mut ready = incoming
+        .iter()
+        .enumerate()
+        .filter_map(|(index, count)| (*count == 0).then_some(index))
+        .collect::<Vec<_>>();
+    let mut visited = 0_usize;
+    while let Some(index) = ready.pop() {
+        visited += 1;
+        for &successor in &edges[index] {
+            incoming[successor] = incoming[successor].checked_sub(1).ok_or_else(|| {
+                SessionError::InvalidSave(
+                    "pending ingress receipt precedence count underflow".to_string(),
+                )
+            })?;
+            if incoming[successor] == 0 {
+                ready.push(successor);
+            }
+        }
+    }
+    if visited != intents.len() {
+        return Err(SessionError::InvalidSave(
+            "pending ingress receipt precedence contains a cycle".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     save.closing_registry
         .validate_consolidated_parent_income()

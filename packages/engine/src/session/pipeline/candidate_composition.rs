@@ -46,14 +46,17 @@ fn compose_initial_candidates(
     player: PlayerCandidateBatch,
 ) -> Result<IntentCandidateBatch, IntentCandidateError> {
     candidates.reserve(player.intents.len());
-    for (index, (owner, intent)) in player.intents.into_iter().enumerate() {
+    for (index, received) in player.intents.into_iter().enumerate() {
         let index =
             u64::try_from(index).map_err(|_| IntentCandidateError::InvalidSourceSequence)?;
-        candidates.push(IntentCandidate::new(
-            IntentCandidateKey::player(index),
-            owner,
-            intent,
-        ));
+        candidates.push(
+            IntentCandidate::new(
+                IntentCandidateKey::player(index),
+                received.owner,
+                received.intent,
+            )
+            .with_ingress_order(received.account_ordinal, received.stock_ordinal),
+        );
     }
     IntentCandidateBatch::new(candidates)
 }

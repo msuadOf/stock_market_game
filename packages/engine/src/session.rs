@@ -457,9 +457,10 @@ pub struct SaveSlot {
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
-    pub pending_player: Vec<(AccountId, Intent)>,
+    pub pending_player: Vec<ReceiptBearingIntent>,
     /// 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
     pub pending_npc: Option<PendingNpcBatch>,
+    pub ingress_receipt_cursors: IngressReceiptCursors,
     /// 保持订单 id/到达序继续单调递增。
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
@@ -593,6 +594,35 @@ pub(crate) mod u64_decimal {
     }
 }
 
+mod canonical_u64_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes
+            .first()
+            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
+        if !canonical {
+            return Err(serde::de::Error::custom(
+                "u64 must use canonical decimal notation",
+            ));
+        }
+        value.parse::<u64>().map_err(serde::de::Error::custom)
+    }
+}
+
 mod book_sequence_map {
     use super::{u64_decimal, StockCode};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -600,6 +630,66 @@ mod book_sequence_map {
 
     #[derive(Serialize, Deserialize)]
     struct Cursor(#[serde(with = "u64_decimal")] u64);
+
+    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value
+            .iter()
+            .map(|(code, cursor)| (code, Cursor(*cursor)))
+            .collect::<BTreeMap<_, _>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(code, cursor)| (code, cursor.0))
+            .collect())
+    }
+}
+
+mod account_ordinal_map {
+    use super::{canonical_u64_decimal, AccountId};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Cursor(#[serde(with = "canonical_u64_decimal")] u64);
+
+    pub fn serialize<S>(value: &BTreeMap<AccountId, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value
+            .iter()
+            .map(|(id, cursor)| (id, Cursor(*cursor)))
+            .collect::<BTreeMap<_, _>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<AccountId, u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(BTreeMap::<AccountId, Cursor>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(id, cursor)| (id, cursor.0))
+            .collect())
+    }
+}
+
+mod stock_ordinal_map {
+    use super::{canonical_u64_decimal, StockCode};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Cursor(#[serde(with = "canonical_u64_decimal")] u64);
 
     pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -688,9 +778,63 @@ pub struct PendingNpcBatch {
     #[ts(type = "number")]
     pub observed_tick: u64,
     pub observed_accounts: Vec<AccountId>,
-    pub intents: Vec<(AccountId, Intent)>,
+    pub intents: Vec<ReceiptBearingIntent>,
     /// Reconciliation cancellation -> replacement admission, by intent position.
     pub dependencies: Vec<(usize, usize)>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptBearingIntent {
+    pub owner: AccountId,
+    pub intent: Intent,
+    #[serde(with = "canonical_u64_decimal")]
+    #[ts(type = "string")]
+    pub account_ordinal: u64,
+    #[serde(with = "canonical_u64_decimal")]
+    #[ts(type = "string")]
+    pub stock_ordinal: u64,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct IngressReceiptCursors {
+    #[serde(with = "account_ordinal_map")]
+    #[ts(type = "Record<string, string>")]
+    pub next_account_ordinal: BTreeMap<AccountId, u64>,
+    #[serde(with = "stock_ordinal_map")]
+    #[ts(type = "Record<string, string>")]
+    pub next_stock_ordinal: BTreeMap<StockCode, u64>,
+}
+
+impl IngressReceiptCursors {
+    pub(super) fn receive(
+        &mut self,
+        owner: AccountId,
+        intent: Intent,
+    ) -> Result<ReceiptBearingIntent, SessionError> {
+        let code = match &intent {
+            Intent::PlaceLimit { code, .. }
+            | Intent::PlaceMarket { code, .. }
+            | Intent::Cancel { code, .. } => code.clone(),
+        };
+        let account_ordinal = self.next_account_ordinal.get(&owner).copied().unwrap_or(0);
+        let account_next = account_ordinal.checked_add(1).ok_or_else(|| {
+            SessionError::ResourceLimit(format!("account {owner:?} ingress ordinal overflow"))
+        })?;
+        let stock_ordinal = self.next_stock_ordinal.get(&code).copied().unwrap_or(0);
+        let stock_next = stock_ordinal.checked_add(1).ok_or_else(|| {
+            SessionError::ResourceLimit(format!("stock {code:?} ingress ordinal overflow"))
+        })?;
+        self.next_account_ordinal.insert(owner, account_next);
+        self.next_stock_ordinal.insert(code, stock_next);
+        Ok(ReceiptBearingIntent {
+            owner,
+            intent,
+            account_ordinal,
+            stock_ordinal,
+        })
+    }
 }
 
 impl PendingNpcBatch {
@@ -706,21 +850,21 @@ impl PendingNpcBatch {
             if !seen.insert((before, after)) {
                 return Err(format!("{prefix} is duplicated"));
             }
-            let (before_owner, before_intent) = &self.intents[before];
-            let (after_owner, after_intent) = &self.intents[after];
+            let before = &self.intents[before];
+            let after = &self.intents[after];
             let Intent::Cancel {
                 code: before_code, ..
-            } = before_intent
+            } = &before.intent
             else {
                 return Err(format!("{prefix} predecessor is not a cancellation"));
             };
-            let after_code = match after_intent {
+            let after_code = match &after.intent {
                 Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. } => code,
                 Intent::Cancel { .. } => {
                     return Err(format!("{prefix} successor is not a placement"));
                 }
             };
-            if before_owner != after_owner || before_code != after_code {
+            if before.owner != after.owner || before_code != after_code {
                 return Err(format!(
                     "{prefix} must belong to the same account and stock"
                 ));
@@ -1252,8 +1396,9 @@ struct CommittableSessionState {
     market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
     candle_book: SessionCandleBook,
     auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
-    pending_player: Vec<(AccountId, Intent)>,
+    pending_player: Vec<ReceiptBearingIntent>,
     pending_npc: Option<PendingNpcBatch>,
+    ingress_receipt_cursors: IngressReceiptCursors,
     npc_attention: AccountPagedMap<NpcAttentionState>,
     retail_experience: AccountPagedMap<RetailExperienceState>,
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
@@ -1548,6 +1693,7 @@ impl GameSession {
                 auction_orders: BTreeMap::new(),
                 pending_player: Vec::new(),
                 pending_npc: None,
+                ingress_receipt_cursors: IngressReceiptCursors::default(),
                 npc_attention: AccountPagedMap::default(),
                 retail_experience: AccountPagedMap::default(),
                 parent_orders: BTreeMap::new(),
@@ -2693,7 +2839,11 @@ impl GameSession {
         if account.kind() != AccountKind::Player {
             return Err(SessionError::NotPlayer(player_id));
         }
-        self.state.pending_player.push((player_id, intent));
+        let received = self
+            .state
+            .ingress_receipt_cursors
+            .receive(player_id, intent)?;
+        self.state.pending_player.push(received);
         Ok(())
     }
 
@@ -2817,6 +2967,7 @@ impl GameSession {
             npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             pending_player: self.state.pending_player.clone(),
             pending_npc: self.state.pending_npc.clone(),
+            ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
             next_order_id: self.state.next_order_id,
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
@@ -3088,6 +3239,7 @@ impl GameSession {
         sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.state.pending_player = save.pending_player.clone();
         sess.state.pending_npc = save.pending_npc.clone();
+        sess.state.ingress_receipt_cursors = save.ingress_receipt_cursors.clone();
         // new() prepares its own first NPC batch; the saved batch replaces it, so its
         // diagnostic samples must not leak into the restored session.
         sess.state.last_retail_decisions.clear();
@@ -4266,6 +4418,7 @@ impl CommittableSessionState {
             auction_orders,
             pending_player,
             pending_npc,
+            ingress_receipt_cursors,
             npc_attention,
             retail_experience,
             parent_orders,
@@ -4317,6 +4470,7 @@ impl CommittableSessionState {
             auction_orders: auction_orders.clone(),
             pending_player: pending_player.clone(),
             pending_npc: pending_npc.clone(),
+            ingress_receipt_cursors: ingress_receipt_cursors.clone(),
             npc_attention: npc_attention.clone(),
             retail_experience: retail_experience.clone(),
             parent_orders: parent_orders.clone(),
@@ -4364,6 +4518,7 @@ impl CommittableSessionState {
             auction_orders,
             pending_player,
             pending_npc,
+            ingress_receipt_cursors,
             npc_attention,
             retail_experience,
             parent_orders,
@@ -4408,6 +4563,7 @@ impl CommittableSessionState {
         self.auction_orders = auction_orders;
         self.pending_player = pending_player;
         self.pending_npc = pending_npc;
+        self.ingress_receipt_cursors = ingress_receipt_cursors;
         self.npc_attention.replace_and_drop_parallel(npc_attention);
         self.retail_experience
             .replace_and_drop_parallel(retail_experience);
