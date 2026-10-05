@@ -249,6 +249,16 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         decision_resources: None,
     };
     shadow.state.execute(|game| {
+        if game
+            .state
+            .tick
+            .is_multiple_of(game.state.setup.ticks_per_day)
+            && game.state.pending_npc.is_none()
+        {
+            // 日界处基于已经提交的版本准备，必须早于 ExpiryShadow；
+            // 整个准备过程属于可丢弃 shadow，失败不能消耗权威随机流或注意力。
+            queue_npc_for_next_tick(game)?;
+        }
         game.state.last_retail_decisions.clear();
         game.state.last_retail_order_events.clear();
         Ok(())

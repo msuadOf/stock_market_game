@@ -961,6 +961,227 @@ mod rollback_tests {
         );
     }
 
+    fn active_retail_day_end_setup(start_date: &str) -> SessionSetup {
+        let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+        setup.start_date = crate::CivilDate::from_iso(start_date).unwrap();
+        setup.ticks_per_day = 12;
+        setup.npcs.retail_count = 1;
+        setup.npcs.inst_count = 0;
+        setup.npcs.retail_cash_median = crate::Money::from_cents(10_000_000);
+        setup.strategy_params.retail.arrival_rate = 1.0;
+        setup.strategy_params.retail.chase_prob = 0.5;
+        setup
+    }
+
+    fn assert_day_end_npc_continuation(mut live: ProtocolSession) {
+        let tick = live.state.game.tick();
+        let npc = crate::AccountId(1);
+        let profile = live.state.game.state.accounts[&npc]
+            .strategy()
+            .unwrap()
+            .profile();
+        let analysis = crate::strategy::AnalysisProfile::new(
+            crate::strategy::AnalysisWeights::new(0, 0, 10_000, 0, 0).unwrap(),
+            None,
+        )
+        .unwrap();
+        *live
+            .state
+            .game
+            .state
+            .belief_participants
+            .get_mut(&npc)
+            .unwrap()
+            .belief_mut() = crate::strategy::BeliefBook::new(
+            npc,
+            profile,
+            analysis,
+            &mut crate::session::SplitMix64::new(99),
+        );
+        let attention = live
+            .state
+            .game
+            .state
+            .npc_attention
+            .get_mut(&crate::AccountId(1))
+            .unwrap();
+        // 第一个 tick 接收真实玩家买单，下一 commit 的 NPC 观察可得到确定的买盘信号。
+        attention.next_attention_candidate_tick = tick + 1;
+        attention.rng_state = 3;
+        let mut probe = attention.clone();
+        assert!(probe.evaluate_candidate_with_signal(crate::AccountKind::Retail, 0.0, tick + 1));
+        live.state.game.state.attention_scheduler.clear();
+        live.state
+            .game
+            .state
+            .attention_scheduler
+            .enqueue(tick + 1, crate::AccountId(1));
+        live.end_civil_day_update().unwrap();
+        let slot = live.save().unwrap();
+        assert!(
+            slot.pending_npc.is_none(),
+            "日终候选不能提前准备下一交易日的 NPC 批次"
+        );
+        let mut restored = ProtocolSession::restore(&slot).unwrap();
+        let frozen = serde_json::to_value(&slot).unwrap();
+        let before_failed_tick = serde_json::to_value(restored.state.game.save().unwrap()).unwrap();
+        restored.malformed_frame = true;
+        assert!(restored.step_frame().is_err());
+        assert_eq!(
+            serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
+            before_failed_tick,
+            "首个 tick 失败时不能消耗 NPC 随机流或注意力状态"
+        );
+        assert_eq!(
+            serde_json::to_value(restored.save().unwrap()).unwrap(),
+            frozen
+        );
+        let code = slot.setup.stocks[0].code.clone();
+        let buy = crate::Intent::PlaceLimit {
+            code,
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+            qty: 100,
+        };
+        live.enqueue_player_intent(crate::AccountId(0), buy.clone())
+            .unwrap();
+        restored
+            .enqueue_player_intent(crate::AccountId(0), buy)
+            .unwrap();
+        let mut observed_npc_request = false;
+        let mut diagnostics = Vec::new();
+        for _ in 0..3 {
+            let continued = live.step_frame().unwrap();
+            let resumed = restored.step_frame().unwrap();
+            diagnostics.push(format!(
+                "events={:?}; decisions={:?}; pending={:?}",
+                continued.events,
+                live.state.game.state.last_retail_decisions,
+                live.state.game.state.pending_npc
+            ));
+            assert_eq!(continued.events, resumed.events);
+            observed_npc_request |= continued.events.iter().any(|event| {
+                matches!(
+                    event,
+                    crate::Event::OrderAccepted {
+                        account: crate::AccountId(1),
+                        ..
+                    } | crate::Event::IntentRejected {
+                        account: crate::AccountId(1),
+                        ..
+                    }
+                )
+            });
+            assert_eq!(
+                serde_json::to_value(live.state.game.save().unwrap()).unwrap(),
+                serde_json::to_value(restored.state.game.save().unwrap()).unwrap()
+            );
+        }
+        assert!(
+            observed_npc_request,
+            "恢复后的首批 tick 必须实际执行 NPC 请求：{diagnostics:?}"
+        );
+        assert_eq!(serde_json::to_value(live.save().unwrap()).unwrap(), frozen);
+    }
+
+    #[test]
+    fn due_day_boundary_npc_preparation_rolls_back_and_restores_exactly() {
+        let npc = crate::AccountId(1);
+        let mut setup = active_retail_day_end_setup("2030-01-01");
+        // 只推进一个 tick；较细时间粒度保证真实 attention 下一次观察不会恰好落在首个 commit。
+        setup.ticks_per_day = 1_000;
+        let mut live = ProtocolSession::new(setup, 8).unwrap();
+        let attention = live.state.game.state.npc_attention.get_mut(&npc).unwrap();
+        attention.next_attention_candidate_tick = 0;
+        attention.rng_state = 3;
+        live.state.game.state.attention_scheduler.clear();
+        live.state.game.state.attention_scheduler.enqueue(0, npc);
+        live.end_civil_day_update().unwrap();
+        let slot = live.save().unwrap();
+        let mut restored = ProtocolSession::restore(&slot).unwrap();
+        let before = serde_json::to_value(restored.state.game.save().unwrap()).unwrap();
+
+        // 显式探针证明这个 fixture 会实际观察，不是 no-due 空批次捷径。
+        let mut expected = live.state.game.clone_for_tick_shadow().unwrap();
+        crate::session::pipeline::queue_npc_for_next_tick(&mut expected).unwrap();
+        assert_eq!(
+            expected
+                .state
+                .pending_npc
+                .as_ref()
+                .unwrap()
+                .observed_accounts,
+            vec![npc]
+        );
+        assert_ne!(
+            expected.state.npc_attention[&npc],
+            live.state.game.state.npc_attention[&npc]
+        );
+        assert!(
+            expected.state.npc_attention[&npc].next_attention_candidate_tick > 1,
+            "fixture 的下一次观察必须晚于首个 commit，以隔离日界准备路径"
+        );
+        assert_eq!(
+            serde_json::to_value(live.state.game.save().unwrap()).unwrap(),
+            before,
+            "准备探针不能改变权威 Session"
+        );
+
+        restored.malformed_frame = true;
+        assert!(restored.step_frame().is_err());
+        assert_eq!(
+            serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
+            before,
+            "首 tick 后续失败必须回滚实际 NPC 观察及随机流"
+        );
+        let continued = live.step_frame().unwrap();
+        let resumed = restored.step_frame().unwrap();
+        assert_eq!(continued.events, resumed.events);
+        assert_eq!(
+            live.state.game.state.npc_attention[&npc], expected.state.npc_attention[&npc],
+            "首 tick 必须在日界版本实际准备 NPC，而不是延后到首个 commit"
+        );
+        assert_eq!(
+            serde_json::to_value(live.state.game.save().unwrap()).unwrap(),
+            serde_json::to_value(restored.state.game.save().unwrap()).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(live.save().unwrap()).unwrap(),
+            serde_json::to_value(slot).unwrap()
+        );
+    }
+
+    #[test]
+    fn closed_day_archive_defers_active_npc_requests_and_restores_exactly() {
+        let live = ProtocolSession::new(active_retail_day_end_setup("2030-01-01"), 8).unwrap();
+        assert_day_end_npc_continuation(live);
+    }
+
+    #[test]
+    fn trading_day_archive_defers_active_npc_requests_and_restores_exactly() {
+        let mut live = ProtocolSession::new(active_retail_day_end_setup("2030-01-02"), 8).unwrap();
+        for _ in 0..11 {
+            live.step_frame().unwrap();
+        }
+        let attention = live
+            .state
+            .game
+            .state
+            .npc_attention
+            .get_mut(&crate::AccountId(1))
+            .unwrap();
+        attention.next_attention_candidate_tick = 12;
+        attention.rng_state = 3;
+        live.state.game.state.attention_scheduler.clear();
+        live.state
+            .game
+            .state
+            .attention_scheduler
+            .enqueue(12, crate::AccountId(1));
+        live.step_frame().unwrap();
+        assert_day_end_npc_continuation(live);
+    }
+
     #[test]
     fn checkpoint_shares_completed_intraday_frames_until_new_work() {
         let mut setup = crate::session::protocol::civil::publication_tests::setup();

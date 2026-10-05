@@ -24,8 +24,9 @@ import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
-import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { StartupScreen } from "./app/StartupScreen.tsx";
+import type { DesktopView } from "./app/DesktopTerminal.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
 import type { SessionSetup } from "./types/engine";
 import {
@@ -46,8 +47,11 @@ import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
 import { useSaveCommands } from "./app/useSaveCommands.ts";
 import { useTradingCommands } from "./app/useTradingCommands.ts";
 import { useSpeedMetricsPolling } from "./app/useSpeedMetricsPolling.ts";
+import { useSecurityBrowser } from "./app/useSecurityBrowser.ts";
+import type { MobilePrimaryTab } from "./mobile/mobile-ui-state";
 import { usePausePreferences } from "./app/usePausePreferences.ts";
 import "./App.css";
+import "./app/desktop-terminal.css";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
@@ -58,7 +62,7 @@ import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
 import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
 import { InitialSaveSource, SessionReplacementGate } from "./save/session-replacement.ts";
-import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
+import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
@@ -73,6 +77,7 @@ import {
   ConnectedChartPanel,
   ConnectedCompanyPanel,
   ConnectedMarketPanel,
+  ConnectedTerminalStockList,
   ConnectedMobileDetail,
   ConnectedMobileGameClock,
   DesktopAssets,
@@ -102,7 +107,7 @@ const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
 };
-let browserSaveRepository: CompressedLocalStorageSaveRepository | null = null;
+let browserSaveRepository: CompressedIndexedDbSaveRepository | null = null;
 
 declare global {
   interface Window {
@@ -114,9 +119,11 @@ declare global {
   }
 }
 
-function getBrowserSaveRepository(): CompressedLocalStorageSaveRepository {
+function getBrowserSaveRepository(): CompressedIndexedDbSaveRepository {
   if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
-  browserSaveRepository ??= new CompressedLocalStorageSaveRepository(window.localStorage);
+  browserSaveRepository ??= new CompressedIndexedDbSaveRepository(window.indexedDB, {
+    getItem: (key) => window.localStorage.getItem(key),
+  });
   return browserSaveRepository;
 }
 
@@ -179,6 +186,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     store.dispatch(setRunning(false));
     setError(failure);
   };
+  const chartCode = useMarketRuntimeSelection();
   const {
     mobileUi,
     dispatchMobileUi,
@@ -186,14 +194,13 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     tradeSheetOpen,
     mobileDetail,
     tradeSheetRef,
-    switchMobileTab,
+    switchMobileTab: switchPrimaryTab,
     openTradeSheet,
     closeTradeSheet,
     showDetailInfo,
     openDetail,
-  } = useMobileUiController(orientation);
-  const chartCode = useMarketRuntimeSelection();
-  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator } = useMarketRuntimeActions();
+  } = useMobileUiController(orientation, chartCode);
+  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator, configureMarketTiming } = useMarketRuntimeActions();
   const acceptReductionRef = useRef(acceptReduction);
   acceptReductionRef.current = acceptReduction;
   const installBaselineRef = useRef(installBaseline);
@@ -212,14 +219,43 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     onSpeed: (value) => { store.dispatch(setSpeed(value)); setSpeedMetrics(null); setSpeedMetricsError(null); },
     onError: setError,
   }));
-  const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
+  const [desktopView, setDesktopView] = useState<DesktopView>("quotes");
+  const [desktopTradingOpen, setDesktopTradingOpen] = useState(false);
+  const [desktopTradeSide, setDesktopTradeSide] = useState<"Buy" | "Sell">("Buy");
+  const desktopTradeTriggerRef = useRef<HTMLElement | null>(null);
+  const changeDesktopTradingOpen = (open: boolean) => {
+    if (open && document.activeElement instanceof HTMLElement && !document.activeElement.closest("#section-order")) desktopTradeTriggerRef.current = document.activeElement;
+    setDesktopTradingOpen(open);
+    const trigger = desktopTradeTriggerRef.current;
+    if (!open && trigger?.isConnected && trigger.getClientRects().length > 0) trigger.focus();
+  };
+  const openDesktopTrade = (side: "Buy" | "Sell" = "Buy") => {
+    if (tradeCode !== chartCode || priceText.length === 0) {
+      setTradeCode(chartCode);
+      const market = store.getState().snapshot.snapshot?.markets[chartCode];
+      if (market) setPriceText(yuan(market.last_price));
+    }
+    setDesktopTradeSide(side);
+    changeDesktopTradingOpen(true);
+  };
+  useEffect(() => {
+    if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>('input[placeholder="委托价"]')?.focus();
+  }, [desktopTradingOpen, desktopTradeSide, orientation, tradeSheetRef]);
+  const securityBrowser = useSecurityBrowser(setNotice);
+  function switchMobileTab(tab: MobilePrimaryTab) {
+    if (tab === "market" || tab === "watchlist") securityBrowser.setView(tab === "market" ? "all" : "watchlist");
+    switchPrimaryTab(tab);
+  }
+  const chartPeriod = mobileUi.chartPeriod;
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
   function selectStock(code: string) {
     selectChart(code);
-    setTradeCode(code);
-    const market = store.getState().snapshot.snapshot?.markets[code];
-    if (market) setPriceText(yuan(market.last_price));
+    if (tradeCode !== code || priceText.length === 0) {
+      setTradeCode(code);
+      const market = store.getState().snapshot.snapshot?.markets[code];
+      if (market) setPriceText(yuan(market.last_price));
+    }
     if (orientation === "portrait") openDetail(code);
   }
 
@@ -305,7 +341,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
-    setIndicatorCalculator, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
+    setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
     setNotice, setReady, setError, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
     disconnectProtocol() {
       companyCoordinatorRef.current?.dispose();
@@ -316,7 +352,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     onAutoTriggered: (id) => { store.dispatch(markTriggered(id)); },
   });
 
-  const pausePreferences = usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen, tradingE2EMode: TRADING_E2E_MODE,
+  const pausePreferences = usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen,
     apply(preferences) {
       store.dispatch(setPauseAfterClose(preferences.pause_after_close));
       store.dispatch(setPauseBeforeOpen(preferences.pause_before_open));
@@ -353,7 +389,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
     activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
-    resetMarketHistory, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
+    resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
     setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,
@@ -378,7 +414,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   }, [setNotice]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
-    if (TRADING_E2E_MODE) return;
     void companyCoordinatorRef.current?.query({ companyId, cursor });
   }, []);
 
@@ -448,7 +483,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <div className="mobile-brand-bar">
           <button type="button" aria-label="打开我的与存档" onClick={() => switchMobileTab("user")}><span aria-hidden="true">☰</span></button>
           <ConnectedMobileGameClock />
-          <strong>{mobilePrimaryTitle(mobileTab)}</strong>
+          <strong>{mobilePrimaryTitle(mobileTab, securityBrowser.view)}</strong>
           <span className="mobile-head-tools">
             <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
             <MobileSpeedSelect
@@ -459,8 +494,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             />
           </span>
         </div>
-        <div className="brand">股票模拟行情终端</div>
-        <DesktopAssets />
+        <div className="brand"><span className="desktop-brand-mark" aria-hidden="true">行情</span>股票模拟<span className="desktop-brand-caption">交易终端</span></div>
         <div className="controls">
           <span className="label">速度</span>
           <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
@@ -483,48 +517,31 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
             {measuredSpeedText}
           </output>
-          <DeliveryModeControl mode={deliveryMode} modes={deliveryModes} labels={DELIVERY_MODE_LABELS} onChange={handleDeliveryModeChange} />
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
-          <div className="new-game-control">
-            <StartDateInput compact value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
-            <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
-            <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
-            <InitialAllocationSummary allocation={initialAllocation} />
-            <Button onClick={handleNewGame}>新游戏</Button>
-          </div>
           <DesktopDayTag />
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
           </span>
-          <fieldset className="pause-preferences" aria-label="自然日暂停偏好" disabled={pausePreferences.pending}>
-            <label><input type="checkbox" checked={pauseAfterClose} onChange={(event) => void pausePreferences.changePreferences({ pause_after_close: event.currentTarget.checked, pause_before_open: pauseBeforeOpen })} />收盘后暂停复盘</label>
-            <label><input type="checkbox" checked={pauseBeforeOpen} onChange={(event) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: event.currentTarget.checked })} />开盘前暂停查看资讯</label>
-          </fieldset>
           <Button className="theme-toggle" minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
-          <div className="save-group" role="group" aria-label="存档读档">
-            <Button minimal onClick={handleSave} title="快存到 LocalStorage">💾 存档</Button>
-            <Button minimal onClick={handleSaveFile} title="另存为文件">📁 存为文件</Button>
-            <Button minimal onClick={handleLoadFile} title="从文件读档">📂 读文件</Button>
-            <Button minimal onClick={handleLoad} title="从 LocalStorage 快读">📂 读档</Button>
-          </div>
+          <Button minimal onClick={() => setDesktopView("settings")}>游戏与存档</Button>
         </div>
       </header>
 
-      <WorkspaceGrid orientation={orientation} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
+      <WorkspaceGrid orientation={orientation} desktopView={desktopView} securityView={securityBrowser.view} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList browser={securityBrowser} onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market" tabIndex={-1} aria-label="行情列表">
           <h3 className="panel-title">行情</h3>
-          <ConnectedMarketPanel onSelect={selectStock} />
+          <ConnectedMarketPanel browser={securityBrowser} onSelect={selectStock} onOpen={(code) => { selectStock(code); setDesktopView("stock"); }} />
         </Card>
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} setKlineDays={setKlineDays} />
+          <ConnectedChartPanel browser={securityBrowser} chartPeriod={chartPeriod} setChartPeriod={(period) => dispatchMobileUi({ type: "select-period", period })} klineDays={klineDays} onTrade={openDesktopTrade} />
         </Card>
 
         <Card className="panel company-panel-shell" id="section-company">
           <h3 className="panel-title">公司信息</h3>
-          <ConnectedCompanyPanel initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
+          <ConnectedCompanyPanel stockContext={orientation === "landscape"} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -532,6 +549,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           ref={tradeSheetRef}
           className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`}
           id="section-order"
+          data-trade-side={orientation === "landscape" ? desktopTradeSide : undefined}
           role={orientation === "portrait" && tradeSheetOpen ? "dialog" : undefined}
           aria-modal={orientation === "portrait" && tradeSheetOpen ? true : undefined}
           aria-hidden={orientation === "portrait" && !tradeSheetOpen ? true : undefined}
@@ -539,8 +557,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           aria-label={orientation === "portrait" ? "交易面板" : undefined}
         >
           <h3 className="panel-title">委托下单</h3>
+          <div className="order-entry">
           <label className="field"><span>股票</span>
-            <HTMLSelect value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
+            <HTMLSelect aria-label="股票" value={tradeCode} aria-invalid={Boolean(fieldErrors.code)} aria-describedby={fieldErrors.code ? "trade-code-error" : undefined} onChange={(e) => { const code = e.target.value; setTradeCode(code); selectChart(code); const m = store.getState().snapshot.snapshot?.markets[code]; if (m) setPriceText(yuan(m.last_price)); }}
               options={activeSetup.stocks.map((stock) => ({ label: STOCK_NAMES[stock.code] ? `${stock.code} ${STOCK_NAMES[stock.code]}` : stock.code, value: stock.code }))} />
             {fieldErrors.code && <span id="trade-code-error" className="field-error" role="alert">{fieldErrors.code}</span>}
           </label>
@@ -556,8 +575,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} aria-invalid={Boolean(fieldErrors.quantity)} aria-describedby={fieldErrors.quantity ? "trade-quantity-error" : undefined} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" />{fieldErrors.quantity && <span id="trade-quantity-error" className="field-error" role="alert">{fieldErrors.quantity}</span>}</label>
           <TradeMarketControls activeSetup={activeSetup} tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
-            <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
-            <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
+            <Button intent="danger" onClick={() => { setDesktopTradeSide("Buy"); void submit("Buy"); }}>买入</Button>
+            <Button intent="success" onClick={() => { setDesktopTradeSide("Sell"); void submit("Sell"); }}>卖出</Button>
+          </div>
+
           </div>
 
           <section className="player-orders" aria-labelledby="player-orders-title">
@@ -622,7 +643,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         {/* 持仓 */}
         <Card className="panel pos-panel" id="section-positions">
           <h3 className="panel-title">持仓</h3>
-          <PositionsPanel onOpenMarket={() => switchMobileTab("market")} />
+          <PositionsPanel onOpenMarket={() => orientation === "landscape" ? setDesktopView("quotes") : switchMobileTab("market")} />
         </Card>
 
         {/* 分时成交 */}
@@ -644,8 +665,13 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen })} onPauseBeforeOpenChange={(value) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value })} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </WorkspaceGrid>
+      {orientation === "landscape" && <footer className="desktop-account-bar" aria-label="模拟账户摘要">
+        <span className="desktop-account-label">模拟账户</span>
+        <DesktopAssets />
+        <span className="desktop-account-note">行情量：手 · 委托量：股</span>
+      </footer>}
 
-      {DevNpcInspector !== null && <section>
+      {DevNpcInspector !== null && hostRef.current?.capabilities.npcDecisionDiagnostics === true && <section>
         <Button disabled={hostRef.current?.capabilities.npcDecisionDiagnostics !== true}
           title="仅当当前后端以诊断 feature 的 debug 构建明确启用时可用"
           onClick={() => setShowNpcInspector((shown) => !shown)}>当前局 NPC 诊断</Button>
@@ -658,7 +684,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {orientation === "portrait" && (
         <>
         <MobileDetailLayer ui={mobileUi}>
-            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
         </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (

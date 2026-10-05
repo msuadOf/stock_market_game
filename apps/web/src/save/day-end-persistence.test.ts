@@ -119,3 +119,20 @@ test("failed restore reinstalls the authoritative generation without reviving ol
   assert.equal(oldWrites, 0);
   assert.equal(newWrites, 1);
 });
+
+test("读档屏障只等待调用前的队列，不被后来产生的日终无限延长", async () => {
+  const queue = new persistence.DayEndPersistence();
+  queue.install("a");
+  let releaseFirst!: () => void;
+  let releaseSecond!: () => void;
+  const firstCommit = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const secondCommit = new Promise<void>(resolve => { releaseSecond = resolve; });
+  const first = queue.completed("a", Promise.resolve({ day: 1 }), async () => { await firstCommit; });
+  const reading = queue.beforeRead();
+  const second = queue.completed("a", Promise.resolve({ day: 2 }), async () => { await secondCommit; });
+  releaseFirst();
+  await reading;
+  await first;
+  releaseSecond();
+  await second;
+});

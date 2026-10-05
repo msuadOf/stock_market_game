@@ -1,3 +1,4 @@
+import { compareSecurityRows, SECURITY_SORT_FIELDS, mobileSecuritySort, sortSecurityCodes, cycleChangeSort } from "../app/security-sort-model.ts";
 import { compareMoney, centsToYuanText, moneyToChartNumber } from "../utils/money.ts";
 /**
  * AG Grid 行情表（替代简单 HTML 表格）。
@@ -5,28 +6,33 @@ import { compareMoney, centsToYuanText, moneyToChartNumber } from "../utils/mone
  * 点击行 → 选股（回调）。
  */
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef, CellClassParams, GridReadyEvent, IRowNode, CellKeyDownEvent, FullWidthCellKeyDownEvent } from "ag-grid-community";
-import { CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, ModuleRegistry, RowStyleModule } from "ag-grid-community";
+import type { GridApi, ColDef, CellClassParams, GridReadyEvent, IRowNode, CellKeyDownEvent, FullWidthCellKeyDownEvent, SortChangedEvent } from "ag-grid-community";
+import { RowApiModule, ColumnApiModule, CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, LocaleModule, ModuleRegistry, RowStyleModule } from "ag-grid-community";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cents, MarketSnap } from "../types/engine";
 import type { PricePoint } from "./PriceChart";
 import { STOCK_LIST } from "../config/defaults";
-import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
-import { marketCodesForView, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
+import { marketCodesForView, sparklineGeometry } from "../mobile/market-model";
 import { MarketGridRowSynchronizer } from "./market-grid-row-synchronizer.ts";
 import { buildMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
+import { SecurityListControls } from "./SecurityListControls.tsx";
+import type { SecurityBrowser } from "../app/useSecurityBrowser.ts";
+import { filterSecurityCodes, securityListEmptyMessage } from "../app/security-browser-model.ts";
+import { STOCK_NAMES } from "../config/defaults";
 import { MARKET_GRID_LOCALE, selectMarketByKeyboard } from "./market-grid-accessibility.ts";
 
-ModuleRegistry.registerModules([ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule]);
+ModuleRegistry.registerModules([RowApiModule, ColumnApiModule, ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule, LocaleModule]);
 
 if (import.meta.env.DEV) {
   enableDevValidations();
 }
 
 interface Props {
+  browser: SecurityBrowser;
   markets: Readonly<Record<string, MarketSnap>>;
   selectedCode: string | null;
   onSelect: (code: string) => void;
+  onOpen?: (code: string) => void;
   heldCodes: ReadonlySet<string>;
   priceHistoryByCode: Readonly<Record<string, readonly PricePoint[]>>;
 }
@@ -35,16 +41,25 @@ function yuan(cents: Cents): number {
   return moneyToChartNumber(cents) / 100;
 }
 
-export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
-  const [mobileTab, setMobileTab] = useState<MobileMarketView>("watchlist");
-  const [sortDescending, setSortDescending] = useState(false);
+function SecurityListEmptyOverlay({ message }: { readonly message: string }) {
+  return <span className="security-list-empty">{message}</span>;
+}
+
+export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes, priceHistoryByCode, browser }: Props) {
+  const { sortRules, setSortRules } = browser;
   const builtRowsRef = useRef<RowData[]>([]);
-  const allRowData = useMemo<RowData[]>(() => {
+  const gridApiRef = useRef<GridApi<RowData> | null>(null);
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
+  const allMarketRowData = useMemo<RowData[]>(() => {
     const codes = marketCodesForView(Object.keys(markets), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes);
     const rows = buildMarketRows(markets, codes, builtRowsRef.current);
     builtRowsRef.current = rows;
     return rows;
   }, [heldCodes, markets]);
+  const visibleCodes = useMemo(() => filterSecurityCodes({ codes: allMarketRowData.map(row => row.code), names: STOCK_NAMES, favorites: browser.favorites, heldCodes, query: browser.query, view: browser.view }), [allMarketRowData, browser.favorites, browser.query, browser.view, heldCodes]);
+  const allRowData = useMemo(() => { const available = new Set(visibleCodes); return allMarketRowData.filter(row => available.has(row.code)); }, [allMarketRowData, visibleCodes]);
+  const emptyMessage = securityListEmptyMessage(browser.view, browser.query, browser.ready);
+  const noRowsOverlayParams = useMemo(() => ({ message: emptyMessage }), [emptyMessage]);
   const initialRowsRef = useRef(allRowData);
   const [rowSynchronizer] = useState(() => new MarketGridRowSynchronizer(initialRowsRef.current));
   rowSynchronizer.recordLatest(allRowData);
@@ -54,24 +69,35 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
     rowSynchronizer.updateLatest(allRowData);
   }, [allRowData, rowSynchronizer]);
 
+  const applySortRules = useCallback((api: GridApi<RowData>) => {
+    api.applyColumnState({ state: sortRules.map((rule, index) => ({ colId: rule.field, sort: rule.direction, sortIndex: index })), defaultState: { sort: null } });
+  }, [sortRules]);
+  useEffect(() => { if (gridApiRef.current !== null) applySortRules(gridApiRef.current); }, [applySortRules]);
+  const onSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
+    if (event.source !== "uiColumnSorted") return;
+    const sorted = event.api.getColumnState().filter(column => column.sort !== null && column.sort !== undefined)
+      .sort((left, right) => (left.sortIndex ?? 0) - (right.sortIndex ?? 0));
+    setSortRules(sorted.map(column => {
+      const field = SECURITY_SORT_FIELDS.find(value => value === column.colId);
+      if (field === undefined || (column.sort !== "asc" && column.sort !== "desc")) throw new RangeError("行情表返回了不支持的证券排序");
+      return { field, direction: column.sort };
+    }));
+  }, [setSortRules]);
+
   const onGridReady = useCallback((event: GridReadyEvent<RowData>) => {
+    gridApiRef.current = event.api;
     rowSynchronizer.attach(event.api, initialRowsRef.current);
-  }, [rowSynchronizer]);
-  const onGridPreDestroyed = useCallback(() => rowSynchronizer.dispose(), [rowSynchronizer]);
+    applySortRules(event.api);
+  }, [rowSynchronizer, applySortRules]);
+  const onGridPreDestroyed = useCallback(() => { gridApiRef.current = null; rowSynchronizer.dispose(); }, [rowSynchronizer]);
   const getRowId = useCallback((params: { data: RowData }) => params.data.code, []);
 
+  const mobileSort = mobileSecuritySort(sortRules);
+  const mobileDirection = mobileSort[0]?.direction;
   const mobileRowData = useMemo(() => {
-    const rows = mobileTab === "holdings" ? allRowData.filter((row) => heldCodes.has(row.code)) : allRowData;
-    return sortDescending ? [...rows].sort((a, b) => b.changePct - a.changePct) : rows;
-  }, [allRowData, heldCodes, mobileTab, sortDescending]);
-
-  const marketIndex = useMemo(() => {
-    if (allRowData.length === 0) return { value: 0, change: 0 };
-    return {
-      value: allRowData.reduce((sum, stock) => sum + yuan(stock.lastPrice), 0) / allRowData.length * 100,
-      change: allRowData.reduce((sum, stock) => sum + stock.changePct, 0) / allRowData.length,
-    };
-  }, [allRowData]);
+    const rows = new Map(allRowData.map(row => [row.code, row]));
+    return sortSecurityCodes(allRowData.map(row => row.code), markets, mobileSecuritySort(sortRules)).map(code => rows.get(code)!);
+  }, [allRowData, markets, sortRules]);
 
   const colorClass = useCallback((diff: number) => {
     if (diff > 0) return "cell-up";
@@ -80,11 +106,13 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
   }, []);
 
   const columnDefs = useMemo<ColDef<RowData>[]>(
-    () => [
+    () => {
+      const columns: ColDef<RowData>[] = [
       {
         headerName: "代码",
         field: "code",
-        width: 80,
+        width: 110,
+        minWidth: 110,
         cellClass: "grid-mono",
         pinned: "left",
       },
@@ -99,14 +127,12 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
         width: 80,
         type: "numericColumn",
         valueFormatter: (p) => centsToYuanText(p.value as Cents),
-        comparator: compareMoney,
         cellClass: (p: CellClassParams<RowData>) =>
           p.data ? colorClass(compareMoney(p.data._rawLastPrice, p.data._rawLastClose)) : "",
       },
       {
         headerName: "涨跌额",
         field: "changeAbs",
-        comparator: compareMoney,
         width: 80,
         type: "numericColumn",
         valueFormatter: (p) => {
@@ -128,12 +154,31 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
         cellClass: (p: CellClassParams<RowData>) =>
           p.data ? colorClass(p.data.changePct) : "",
       },
-    ],
-    [colorClass],
-  );
+      {
+        headerName: "昨收", colId: "lastClose", minWidth: 85, type: "numericColumn",
+        valueGetter: (p) => p.data?._rawLastClose,
+        valueFormatter: (p) => p.value === undefined ? "—" : centsToYuanText(p.value as Cents),
+      },
+      ...([ ["best_bid", "买一"], ["best_ask", "卖一"] ] as const).map(([field, headerName]): ColDef<RowData> => ({
+        headerName, colId: field, minWidth: 85, type: "numericColumn",
+        valueGetter: (p) => p.data?._source[field],
+        valueFormatter: (p) => p.value == null ? "—" : centsToYuanText(p.value as Cents),
+      })),
+    ];
+    return columns.map(column => {
+    const field = SECURITY_SORT_FIELDS.find(value => value === (column.colId ?? column.field));
+    if (field === undefined) throw new RangeError("行情表列缺少共用排序字段");
+    return { ...column, comparator: (_a: unknown, _b: unknown, left: IRowNode<RowData>, right: IRowNode<RowData>) => {
+      if (left.data === undefined || right.data === undefined) throw new RangeError("证券排序行缺少行情");
+      return compareSecurityRows(left.data, right.data, field);
+    } };
+    });
+  }, [colorClass]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
+      flex: 1,
+      minWidth: 80,
       resizable: true,
       sortable: true,
     }),
@@ -149,8 +194,13 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
 
   const onCellKeyDown = useCallback((event: CellKeyDownEvent<RowData> | FullWidthCellKeyDownEvent<RowData>) => {
     const keyboardEvent = event.event;
+    if (keyboardEvent instanceof KeyboardEvent && keyboardEvent.key === "Enter" && event.data && onOpen) {
+      keyboardEvent.preventDefault();
+      onOpen(event.data.code);
+      return;
+    }
     if (keyboardEvent instanceof KeyboardEvent && selectMarketByKeyboard(keyboardEvent.key, event.data?.code, onSelect)) keyboardEvent.preventDefault();
-  }, [onSelect]);
+  }, [onSelect, onOpen]);
 
   const getRowClass = useCallback(
     (params: { data: RowData | undefined }) => {
@@ -162,17 +212,33 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
 
   return (
     <>
-      <div className="ag-theme-alpine market-grid-container" role="region" aria-label="股票行情" aria-describedby="market-grid-keyboard-help" style={{ width: "100%", height: "100%", minHeight: 180 }}>
-        <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，按 Enter 或空格选择当前股票。</p>
+      <SecurityListControls browser={browser} codes={visibleCodes} onOpen={code => {
+        if (gridContainerRef.current?.getClientRects().length === 0) {
+          const first = mobileRowData[0];
+          if (first) (onOpen ?? onSelect)(first.code);
+          return;
+        }
+        const api = gridApiRef.current;
+        if (api === null) { (onOpen ?? onSelect)(code); return; }
+        api.flushAsyncTransactions();
+        const first = api.getDisplayedRowAtIndex(0);
+        if (first?.data) (onOpen ?? onSelect)(first.data.code);
+      }} />
+      <div ref={gridContainerRef} className="ag-theme-alpine market-grid-container" role="region" aria-label="股票行情" aria-describedby="market-grid-keyboard-help" style={{ width: "100%", height: "100%", minHeight: 180 }}>
+        <p className="sr-only" id="market-grid-keyboard-help">用方向键浏览行情，空格预览当前股票，Enter 进入个股。</p>
         <AgGridReact<RowData>
           theme="legacy"
+          noRowsOverlayComponent={SecurityListEmptyOverlay}
+          noRowsOverlayComponentParams={noRowsOverlayParams}
           rowData={initialRowsRef.current}
           getRowId={getRowId}
           onGridReady={onGridReady}
+          onSortChanged={onSortChanged}
           onGridPreDestroyed={onGridPreDestroyed}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}
+          onRowDoubleClicked={(event) => { if (event.data && onOpen) onOpen(event.data.code); }}
           onCellKeyDown={onCellKeyDown}
           localeText={MARKET_GRID_LOCALE}
           getRowClass={getRowClass}
@@ -182,24 +248,12 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
         />
       </div>
       <div className="mobile-market-dashboard">
-        <section className="mobile-index-strip" aria-label="市场指数与快捷入口">
-          <div className={`mobile-index-quote ${marketIndex.change > 0 ? "up" : marketIndex.change < 0 ? "down" : "flat"}`}><strong>{marketIndex.value.toFixed(2)} <small>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}</small></strong><span>模拟指数　<b>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}%</b>⌄</span></div>
-          {[["⌁", "资金"], ["▤", "资讯"], ["▣", "资产"], ["⌁", "分析"]].map(([icon, label]) => <button type="button" key={label} title={`${label}尚未开放`} disabled><i>{icon}</i><span>{label}</span></button>)}
-        </section>
-        <nav className="mobile-market-tabs" aria-label="行情分类">
-          {MOBILE_LAYOUT.watchlistTabs.map((label, index) => {
-            const tab: MobileMarketView = index === 0 ? "watchlist" : "holdings";
-            return (
-            <button key={tab} type="button" aria-current={mobileTab === tab ? "page" : undefined} className={mobileTab === tab ? "active" : ""} onClick={() => setMobileTab(tab)}>{label}</button>
-          );})}
-          <span className="mobile-market-tabs-spacer" aria-hidden="true" /><button type="button" aria-label="更多分类（尚未开放）" title="更多分类尚未开放" disabled>☰</button>
-        </nav>
         <div className="mobile-market-toolbar" aria-label="行情列表工具栏">
-          <span>✎　　☷</span><b>▦ 多股同列</b>
-          <button type="button" aria-pressed={sortDescending} onClick={() => setSortDescending((value) => !value)}>涨幅　{sortDescending ? "↓" : "↕"}</button>
+          <span>名称 / 代码</span>
+          <button type="button" aria-pressed={mobileDirection !== undefined} onClick={() => setSortRules(cycleChangeSort(sortRules))}>涨幅　{mobileDirection === "desc" ? "↓" : mobileDirection === "asc" ? "↑" : "↕"}</button>
         </div>
       <div className="mobile-market-list" aria-label="股票行情列表">
-        {mobileTab === "holdings" && mobileRowData.length === 0 && <p className="mobile-market-empty">暂无持仓</p>}
+        {mobileRowData.length === 0 && <p className="security-list-empty">{emptyMessage}</p>}
         {mobileRowData.map((stock) => {
           const trend = stock.changePct > 0 ? "up" : stock.changePct < 0 ? "down" : "flat";
           const geometry = sparklineGeometry(priceHistoryByCode[stock.code] ?? [], yuan(stock._rawLastClose), 64, 48);
@@ -209,6 +263,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
               key={stock.code}
               type="button"
               className={`mobile-market-row ${selectedCode === stock.code ? "selected" : ""}`}
+              aria-current={selectedCode === stock.code ? "true" : undefined}
               onClick={() => onSelect(stock.code)}
             >
               <span className="mobile-market-name">
@@ -228,7 +283,7 @@ export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHi
               </svg>
               <span className={`mobile-market-price ${trend}`}>
                 <strong>{stock.changePct >= 0 ? "+" : ""}{stock.changePct.toFixed(2)}%</strong>
-                <small>{centsToYuanText(stock.lastPrice)}{compareMoney(stock.lastPrice, "1000") < 0 ? "0" : ""}</small>
+                <small>{centsToYuanText(stock.lastPrice)}</small>
               </span>
             </button>
           );

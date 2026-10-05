@@ -4,7 +4,8 @@
   "locale": "zh-CN",
   "canonicalMap": "UX-CONTRACT.md",
   "ownership": {
-    "Select/Listbox": "native"
+    "Select/Listbox": "native",
+    "Date": "native"
   },
   "requiredCapabilities": ["Scrollbar", "Form", "Toast"],
   "requiredCommands": ["unit", "lint", "build", "e2e"],

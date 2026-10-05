@@ -1,0 +1,11 @@
+.bp6-overlay:has(.chart-display-popover) { position: fixed; inset: 0; z-index: var(--z-popover); pointer-events: none; }
+.bp6-overlay:has(.chart-display-popover) .bp6-overlay-content { pointer-events: auto; }
+.chart-display-popover { position: relative; border: 1px solid var(--border); border-radius: 3px; box-shadow: var(--shadow-panel); }
+.chart-display-popover .bp6-popover-arrow { display: none; }
+.chart-display-menu { width: 200px; max-width: calc(100vw - 24px); max-height: min(50vh, 280px); overflow: auto; padding: 4px; color: var(--text); background: var(--card-bg); font: 13px var(--font); }
+.chart-display-menu button { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 34px; border: 0; border-radius: 2px; padding: 6px 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.chart-display-menu button:hover, .chart-display-menu button:focus-visible { background: var(--surface-hover); }
+.chart-display-menu button:focus-visible, .msd-kline-meta .chart-display-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.chart-display-menu .chart-display-back { border-bottom: 1px solid var(--border); margin-bottom: 3px; color: var(--muted); }
+.msd-kline-meta .chart-display-trigger { padding: 3px 5px; color: #333; background: #eef1f4; border: 1px solid #d9dfe5; border-radius: 2px; }
+.kline-period-note { flex: none; padding: 2px 8px; color: #666; font-size: 11px; line-height: 16px; }

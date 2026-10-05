@@ -340,6 +340,16 @@ test("涨跌幅始终以前一交易日收盘价为分母", () => {
   assert.equal(priceChangePercent("1000", "0"), 0);
 });
 
+test("行情列表分时预览的0%轴也始终居中，单边行情不推移参考轴", () => {
+  for (const values of [[10, 11, 10.5], [10, 9, 9.5], [11, 12], [9, 8], [10, 10]]) {
+    const points = values.map((value, time) => ({ time, value }));
+    const original = structuredClone(points);
+    assert.equal(sparklineGeometry(points, 10, 64, 48).axisY, 24);
+    assert.equal(sparklineGeometry(points, 10, 64, 32).axisY, 16);
+    assert.deepEqual(points, original);
+  }
+});
+
 test("迷你走势图只由真实价格历史生成", () => {
   const points: PricePoint[] = [
     { time: 1, value: 10 },
@@ -352,9 +362,9 @@ test("迷你走势图只由真实价格历史生成", () => {
     { time: 2, value: 11 },
     { time: 3, value: 10.5 },
   ], 10, 64, 48), {
-    linePoints: "0.27,43.35 0.54,4.65 0.8,24",
-    areaPoints: "0.27,43.35 0.27,43.35 0.54,4.65 0.8,24 0.8,43.35",
-    axisY: 43.35,
+    linePoints: "0.27,24 0.54,2.57 0.8,13.29",
+    areaPoints: "0.27,24 0.27,24 0.54,2.57 0.8,13.29 0.8,24",
+    axisY: 24,
   });
   assert.equal(sparklinePoints(points.slice(0, 1), 64, 48), "");
   assert.deepEqual(sparklineGeometry(points.slice(0, 1), 10, 64, 48), {
@@ -373,8 +383,8 @@ test("迷你走势图只由真实价格历史生成", () => {
     { time: 180, value: 11 },
     { time: 239, value: 10.5 },
   ], 10, 64, 48);
-  assert.equal(early.linePoints, "0,43.35 0.27,4.65 0.54,24");
-  assert.equal(afternoon.linePoints, "32.13,43.35 48.2,4.65 64,24");
+  assert.equal(early.linePoints, "0,24 0.27,2.57 0.54,13.29");
+  assert.equal(afternoon.linePoints, "32.13,24 48.2,2.57 64,13.29");
   assert.notDeepEqual(afternoon, early, "缩略图使用固定分钟槽位，不得按现有点数重新缩放横轴");
   assert.throws(
     () => sparklineGeometry([{ time: 240, value: 10 }, { time: 241, value: 11 }], 10, 64, 48),

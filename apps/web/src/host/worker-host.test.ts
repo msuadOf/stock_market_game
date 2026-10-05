@@ -150,7 +150,7 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
     try {
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = BaselineRejectingWorker.current;
-      worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       let accept = true;
       const failures: unknown[] = [];
@@ -160,14 +160,14 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
       accept = false;
       const pendingQuery = host.civilDate!().then(() => null, (error: unknown) => error);
       if (operation === "baseline") {
-        worker.emit({ type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
+        worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot: protocolSnapshot(1, 1) });
       } else {
         const pending = operation === "load" ? host.load(currentSaveFixture()) : host.refreshBaseline();
         const rejected = assert.rejects(pending, /消费者拒绝.*baseline/);
         const requestId = worker.sent.at(-1)!.requestId;
         worker.emit(operation === "load"
-          ? { type: "restored", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
-          : { type: "refreshed", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
+          ? { type: "restored", civilDate: "2030-01-01", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
+          : { type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
         await rejected;
       }
       assert.equal(worker.terminations, 1);
@@ -188,7 +188,7 @@ test("审计G53：Worker恢复必须推进generation，不能接受相同或更�
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+    worker.emit({ type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
       snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     if (nextGeneration <= 2) await assert.rejects(pending, /generation.*2.*[12]|[12].*generation.*2/);
     else assert.equal((await pending).nextGeneration, 3);
@@ -201,7 +201,7 @@ test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串",
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ type: "restored", requestId: 1, generation: 2, nextGeneration,
+    worker.emit({ type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
       snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     await assert.rejects(pending, /正安全整数/);
     assert.equal(requests.pendingCount(), 0);
@@ -223,11 +223,11 @@ test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = DisposedRefreshWorker.current;
-    worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const pending = host.refreshBaseline();
     const rejected = assert.rejects(pending, /已过期会话 generation/);
-    worker.emit({ type: "refreshed", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
+    worker.emit({ type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
     await host.dispose();
     await rejected;
     assert.throws(() => host!.snapshot(), /快照尚未就绪/);
@@ -254,13 +254,13 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const worker = SaveWorker.current;
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
-    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };
     const pending = host.save(candidate);
     const request = worker.sent.at(-1)!;
     assert.deepEqual(request, { type: "save", requestId: 1, generation: 1, candidate });
-    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { old: true } });
     await assert.rejects(pending, /generation/);
     host.dispose();
@@ -323,7 +323,7 @@ test("Given a restore response from the old request generation, when read, then 
   const worker = new FakeWorker();
   const pending = restoreWorkerSlot(new WorkerRequestScope(worker), { valid: "already-parsed" }, 2, 1);
   worker.emit({
-    type: "restored",
+    type: "restored", civilDate: "2030-01-01",
     requestId: 2,
     generation: 1,
     nextGeneration: 2,
@@ -340,8 +340,8 @@ test("Given a refresh request, when the worker reads its live session, then it r
   const worker = new FakeWorker();
   const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   const pending = refreshWorkerBaseline(new WorkerRequestScope(worker), 12, 4);
-  worker.emit({ type: "refreshed", requestId: 12, generation: 4, snapshot: restoredSnapshot });
-  assert.deepEqual(await pending, parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"));
+  worker.emit({ type: "refreshed", civilDate: "2030-01-01", requestId: 12, generation: 4, snapshot: restoredSnapshot });
+  assert.deepEqual(await pending, { snapshot: parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"), civilDate: "2030-01-01" });
   assert.deepEqual(worker.sent, [{ type: "refreshBaseline", requestId: 12, generation: 4 }]);
 });
 
@@ -416,19 +416,19 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = BaselineWorker.current;
-    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
     const starting = host.start((update) => { updates.push(update); });
     worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
     await starting;
     const refresh = host.refreshBaseline();
-    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
+    worker.emit({ type: "refreshed", civilDate: "2030-01-01", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
     await refresh;
 
     const orders = host.playerWorkingOrders();
     const requestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId, generation: 1, orders: [] });
     assert.deepEqual(await orders, []);
     assert.equal(updates.length, 2, "duplicate baseline must not be delivered again");
@@ -436,7 +436,7 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
     const stale = host.playerWorkingOrders();
     const rejected = assert.rejects(stale, /已过期会话 generation/);
     const staleRequestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId: staleRequestId, generation: 1, orders: [] });
     await rejected;
   } finally {
@@ -463,7 +463,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ControlledWorker.current;
     const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
     let applied = false;
@@ -479,7 +479,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     assert.deepEqual(worker.sent.at(-1), { type: "uiFrame", generation: 1, deliveryId: 3 });
     const speedChange = assert.rejects(host.setSpeed(10), /已过期 generation/);
     const requestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "speedSet", generation: 1, requestId });
     await speedChange;
     const acceptedCount = updates.length;
@@ -515,7 +515,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
   try {
     const oldCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const oldWorker = IsolatedWorker.current;
-    oldWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    oldWorker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     oldHost = await oldCreating;
     const rejectingStart = oldHost.start(() => false);
     const unexpectedStart = oldWorker.sent.find((message) => message.type === "start");
@@ -524,7 +524,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
     assert.equal(oldWorker.sent.filter((message) => message.type === "start" || message.type === "uiFrame").length, 0);
     const newCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 2n);
     const newWorker = IsolatedWorker.current;
-    newWorker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(9, 4) });
+    newWorker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(9, 4) });
     newHost = await newCreating;
     const newUpdates: unknown[] = [];
     let newStarted = false;
@@ -572,7 +572,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = PendingWorker.current;
       const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-      worker.emit({ type: "baseline", generation: 1, snapshot });
+      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
       const host = await creating;
       const date = host.civilDate!();
       const preferences = host.setPausePreferences({ pause_after_close: true, pause_before_open: false });
@@ -612,7 +612,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = RejectingWorker.current;
-    worker.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     let applications = 0;
     const failures: unknown[] = [];

@@ -6,6 +6,7 @@ import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
 import { formatSharesAsLots } from "../utils/format.ts";
 export { aggregateCandles } from "./calendar-candles.ts";
+import { TradingTimeline, DEFAULT_TRADING_TIMELINE, type TradingTiming } from "../components/trading-timeline.ts";
 
 export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
@@ -319,8 +320,7 @@ export interface SparklineGeometry {
 }
 
 /**
- * 以昨收为真实 0% 轴生成自适应坐标域。
- * 坐标域包含昨收和全部价格，并在上下各留 12% 呼吸空间；因此单边行情的零轴会靠近边缘而非强制居中。
+ * 以昨收为居中的0%轴，复用详情图的对称价域并保留12%留白。
  */
 export function sparklineGeometry(points: readonly PricePoint[], baseline: number, width = 64, height = 48): SparklineGeometry {
   if (!Number.isFinite(baseline)) throw new RangeError("迷你走势图基准价必须是有限数值");
@@ -342,12 +342,10 @@ export function sparklineGeometry(points: readonly PricePoint[], baseline: numbe
     return { linePoints, areaPoints: `${firstX},${axisY} ${linePoints} ${lastX},${axisY}`, axisY };
   }
 
-  const padding = rawRange * 0.12;
-  const min = rawMin - padding;
-  const max = rawMax + padding;
+  const { bottom: min, top: max } = symmetricIntradayScale(values, baseline, 0.12);
   const range = max - min;
   const y = (value: number) => Number((((max - value) / range) * height).toFixed(2));
-  const axisY = y(baseline);
+  const axisY = height / 2;
   const pointCoordinates = points.map((point) => ({ x: sparklineSlotX(point.time, width), y: y(point.value) }));
   const linePoints = pointCoordinates.map(({ x, y: pointY }) => `${x},${pointY}`).join(" ");
   const firstX = pointCoordinates[0].x;
@@ -594,41 +592,17 @@ export function formatTradingMinute(minute: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-/** 将引擎的权威世界 tick 换算为 A 股交易时钟；每 tick 为一秒并跳过午间休市。 */
-export function formatGameClock(tick: number): string {
-  if (!Number.isSafeInteger(tick) || tick < 0) {
-    throw new RangeError(`游戏 tick 必须是非负安全整数，收到 ${String(tick)}`);
-  }
-  const secondOfDay = tick % TOTAL_TICKS_PER_DAY;
-  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
-  const secondsFromMidnight = secondOfDay < CALL_AUCTION_TICKS
-    ? 9 * 3_600 + 15 * 60 + secondOfDay
-    : continuousSecond < 7_200
-      ? 9 * 3_600 + 30 * 60 + continuousSecond
-      : 13 * 3_600 + continuousSecond - 7_200;
-  const hours = Math.floor(secondsFromMidnight / 3_600);
-  const minutes = Math.floor((secondsFromMidnight % 3_600) / 60);
-  const seconds = secondsFromMidnight % 60;
-  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+/** 默认局每 tick 一秒；自定义 SessionSetup 沿用 engine civil 时间映射并跳过午休。 */
+export function formatGameClock(tick: number, timing?: TradingTiming): string {
+  return (timing === undefined ? DEFAULT_TRADING_TIMELINE : new TradingTimeline(timing)).clock(tick);
 }
 
-export function formatTradeTime(tick: number | undefined): string {
-  if (tick === undefined) return "成交时间缺失";
-  if (!Number.isSafeInteger(tick) || tick <= 0) {
-    throw new RangeError(`成交 tick 必须是正安全整数，收到 ${String(tick)}`);
-  }
-  const secondOfDay = (tick - 1) % TOTAL_TICKS_PER_DAY + 1;
-  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
-  const secondsFromMidnight = secondOfDay <= CALL_AUCTION_TICKS
-    ? 9 * 3_600 + 15 * 60 + secondOfDay
-    : continuousSecond <= 7_200
-      ? 9 * 3_600 + 30 * 60 + continuousSecond
-      : 13 * 3_600 + continuousSecond - 7_200;
-  return [Math.floor(secondsFromMidnight / 3_600), Math.floor(secondsFromMidnight % 3_600 / 60), secondsFromMidnight % 60]
-    .map((value) => String(value).padStart(2, "0")).join(":");
+export function formatTradeTime(tick: number | undefined, timing?: TradingTiming): string {
+  return (timing === undefined ? DEFAULT_TRADING_TIMELINE : new TradingTimeline(timing)).tradeTime(tick);
 }
 
 export interface MobileIntradayInputs {
+  timeline?: TradingTimeline;
   market: Pick<MarketSnap, "last_close">;
   minutePoints: readonly PricePoint[];
   auctionPoints: readonly AuctionPoint[];
@@ -689,7 +663,7 @@ export class MobileIntradayProjection {
         ? `${inputs.gameDay}:auction:${latestAuctionPoint.time}:${latestAuctionPoint.value}:${latestAuctionPoint.volume ?? 0}`
         : `${inputs.gameDay}:empty`;
     this.tradeTime = formatTradingMinute(Math.max(0, inputs.elapsedMinutes - 1));
-    this.clockTime = formatGameClock(inputs.gameTick).slice(0, 5);
+    this.clockTime = (inputs.timeline === undefined ? DEFAULT_TRADING_TIMELINE : inputs.timeline).clock(inputs.gameTick).slice(0, 5);
   }
 
   priceY(value: number): number {
@@ -743,6 +717,9 @@ export class MobileKlineProjection {
   readonly kdj: { readonly k: readonly number[]; readonly d: readonly number[]; readonly j: readonly number[] } | null;
   readonly volumes: readonly number[];
   readonly latestSignature: string;
+  readonly priceScale: Readonly<{ min: number; max: number }>;
+  readonly indicatorScale: Readonly<{ min: number; max: number }>;
+  readonly volumeMax: number;
   private readonly priceMax: number;
   private readonly priceRange: number;
   private readonly indicatorMin: number;
@@ -750,27 +727,34 @@ export class MobileKlineProjection {
   private readonly maxVolume: number;
   private readonly averages: ReadonlyMap<number, readonly number[]>;
 
-  static fromInputs(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState): MobileKlineProjection {
-    return new MobileKlineProjection(allCandles, viewport, result);
+  static fromInputs(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState, overlayPrices: readonly number[] = []): MobileKlineProjection {
+    return new MobileKlineProjection(allCandles, viewport, result, overlayPrices);
   }
 
-  private constructor(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState) {
+  private constructor(allCandles: readonly KlinePoint[], viewport: KlineViewport, result: IndicatorResultState, overlayPrices: readonly number[]) {
     this.allCandles = allCandles;
     this.visibleWindow = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
     const { start, end } = this.visibleWindow;
     this.visibleCandles = allCandles.slice(start, end);
-    const values = this.visibleCandles.flatMap(candle => [candle.high, candle.low]);
-    this.priceMax = values.length === 0 ? 0 : Math.max(...values);
+    const values = [...this.visibleCandles.flatMap(candle => [candle.high, candle.low]), ...overlayPrices];
+    const priceMax = values.length === 0 ? 0 : Math.max(...values);
     const priceMin = values.length === 0 ? 0 : Math.min(...values);
-    this.priceRange = Math.max(.01, this.priceMax - priceMin);
+    // 近似绘图留白大于浮点间隔，极窄域不放大 MA 累加误差；真实 Cents 不变。
+    const flatPadding = Math.max(.01, priceMax * Number.EPSILON * 4);
+    const midpoint = priceMin + (priceMax - priceMin) / 2;
+    this.priceScale = priceMax - priceMin < flatPadding ? { min: Math.max(0, midpoint - flatPadding), max: midpoint + flatPadding } : { min: priceMin, max: priceMax };
+    this.priceMax = this.priceScale.max;
+    this.priceRange = this.priceScale.max - this.priceScale.min;
     this.averages = new Map([5, 10, 20].map(days => [days, allCandles.map((_, index) => allCandles.slice(Math.max(0, index - days + 1), index + 1).reduce((sum, candle) => sum + candle.close, 0) / Math.min(days, index + 1)).slice(start, end)]));
     const completeKdj = result.kind === "ready" ? result.value.candleKdj : null;
     this.kdj = completeKdj === null ? null : { k: completeKdj.k.slice(start, end), d: completeKdj.d.slice(start, end), j: completeKdj.j.slice(start, end) };
     this.indicatorMin = this.kdj === null ? 0 : Math.min(0, ...this.kdj.j);
     const indicatorMax = this.kdj === null ? 100 : Math.max(100, ...this.kdj.j);
+    this.indicatorScale = { min: this.indicatorMin, max: indicatorMax };
     this.indicatorRange = Math.max(1, indicatorMax - this.indicatorMin);
     this.volumes = this.visibleCandles.map(candle => candle.volume ?? 0);
-    this.maxVolume = Math.max(1, ...this.volumes);
+    this.volumeMax = Math.max(0, ...this.volumes);
+    this.maxVolume = Math.max(1, this.volumeMax);
     const latest = allCandles.at(-1);
     this.latestSignature = latest ? `${latest.time}:${latest.open}:${latest.high}:${latest.low}:${latest.close}:${latest.volume ?? 0}` : "empty";
   }

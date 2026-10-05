@@ -5,7 +5,7 @@ import * as React from "react";
 import { createServer } from "vite";
 import type { MobileUiAction, MobileUiState } from "../mobile/mobile-ui-state.ts";
 
-function mobileUiFixture(hook: (orientation: "portrait" | "landscape") => { openDetail: (code: string) => void; dispatchMobileUi: (action: MobileUiAction) => void }) {
+function mobileUiFixture(hook: (orientation: "portrait" | "landscape", chartCode: string) => { openDetail: (code: string) => void; dispatchMobileUi: (action: MobileUiAction) => void }) {
   type Effect = () => void | (() => void);
   const internals = (React as unknown as { __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: { ReactCurrentDispatcher: { current: unknown } } }).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
   const refs: { current: unknown }[] = [];
@@ -36,11 +36,11 @@ function mobileUiFixture(hook: (orientation: "portrait" | "landscape") => { open
     },
   };
   return {
-    render() {
+    render(chartCode = "600101", orientation: "portrait" | "landscape" = "portrait") {
       const previous = internals.ReactCurrentDispatcher.current;
       cursor = 0;
       internals.ReactCurrentDispatcher.current = dispatcher;
-      try { return hook("portrait"); } finally { internals.ReactCurrentDispatcher.current = previous; }
+      try { return hook(orientation, chartCode); } finally { internals.ReactCurrentDispatcher.current = previous; }
     },
     commit() {
       for (const [index, effect] of pending) {
@@ -76,12 +76,12 @@ test("Q04：移动详情页标题使用股票名，首页和启动页使用应�
   const controller = readFileSync(new URL("./useMobileUiController.ts", import.meta.url), "utf8");
   const html = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
   const detail = readFileSync(new URL("../mobile/MobileStockDetail.tsx", import.meta.url), "utf8");
-  assert.match(controller, /document\.title\s*=\s*mobileDetail\s*\?\s*`\$\{STOCK_NAMES\[mobileUi\.detailCode \?\? ""\] \?\? mobileUi\.detailCode\} — 股票模拟游戏`\s*:\s*"股票模拟游戏"/);
+  assert.match(controller, /document\.title\s*=\s*mobileDetail && orientation === "portrait"\s*\?\s*`\$\{STOCK_NAMES\[chartCode\] \?\? chartCode\} — 股票模拟游戏`\s*:\s*"股票模拟游戏"/);
   assert.match(html, /<title>股票模拟游戏<\/title>/);
   assert.match(detail, /className="msd-security-title"><strong>\{props\.name\}<\/strong>/);
 });
 
-test("Q04：标题 effect 随打开详情、切换股票和返回更新", { timeout: 10000 }, async () => {
+test("Q04：标题 effect 随打开详情、切换股票、横竖屏和返回更新", { timeout: 10000 }, async () => {
   const vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const previousElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
@@ -97,8 +97,17 @@ test("Q04：标题 effect 随打开详情、切换股票和返回更新", { time
     controller = fixture.render();
     fixture.commit();
     assert.equal(globalThis.document.title, "稳健实业 — 股票模拟游戏");
+    controller = fixture.render("002156");
+    fixture.commit();
+    assert.equal(globalThis.document.title, "芯片科技 — 股票模拟游戏");
+    fixture.render("002156", "landscape");
+    fixture.commit();
+    assert.equal(globalThis.document.title, "股票模拟游戏");
+    controller = fixture.render("002156", "portrait");
+    fixture.commit();
+    assert.equal(globalThis.document.title, "芯片科技 — 股票模拟游戏");
     controller.openDetail("002156");
-    controller = fixture.render();
+    controller = fixture.render("002156");
     fixture.commit();
     assert.equal(globalThis.document.title, "芯片科技 — 股票模拟游戏");
     controller.dispatchMobileUi({ type: "back" });

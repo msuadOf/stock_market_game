@@ -10,7 +10,10 @@ function assertNever(value: never): never {
 
 function effectsFromEvent(event: Event, tick: number): readonly ProtocolEffect[] {
   if ("IntentRejected" in event) {
-    return [{ kind: "notice", message: `委托被拒：${event.IntentRejected.code} - ${rejectionMessage(event.IntentRejected.reason)}` }];
+    const reason = rejectionMessage(event.IntentRejected.reason);
+    // account 0 是现有玩家账户；NPC 业务拒单保留为事实，不冒充玩家操作反馈。
+    if (event.IntentRejected.account !== 0) return [];
+    return [{ kind: "notice", message: `委托被拒：${event.IntentRejected.code} - ${reason}` }];
   }
   if ("SettlementError" in event) {
     return [{ kind: "notice", message: `结算错误：${event.SettlementError.code} - ${event.SettlementError.reason}` }];

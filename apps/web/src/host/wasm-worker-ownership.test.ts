@@ -46,6 +46,7 @@ async function createFixture(
     ingress_token: (current: number) => current,
     initThreadPool: async (threads: number) => { calls.push(`threads:${threads}`); },
     create_session: () => { calls.push(`create:${handle}`); return handle; },
+    civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
     snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot") throw new Error("snapshot failed"); return { handle: current }; },
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop") throw new Error("drop failed"); },
@@ -103,7 +104,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
     assert.deepEqual(f.posted.slice(1), [
       { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } },
-      { type: "baseline", generation: 1, snapshot: { handle: 7 } },
+      { type: "baseline", generation: 1, snapshot: { handle: 7 }, civilDate: "2030-01-02" },
     ]);
     f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 1 });
@@ -119,8 +120,8 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.equal((f.posted[0] as Message).token, 9);
     assert.equal(f.posted[0].generation, 2);
     assert.deepEqual(f.posted.slice(1), [
-      { type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: { handle: 9 } },
-      { type: "baseline", generation: 2, snapshot: { handle: 9 } },
+      { type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: { handle: 9 }, civilDate: "2031-02-03" },
+      { type: "baseline", generation: 2, snapshot: { handle: 9 }, civilDate: "2031-02-03" },
     ]);
     await Promise.resolve();
     assert.equal(f.timers.size, 1);
@@ -167,7 +168,7 @@ test("Worker restore snapshot 失败仍以 microtask 恢复原会话，prepare �
     assert.equal(f.timers.size, 1);
     f.fail(null);
     f.send({ type: "refreshBaseline", generation: 2, requestId: 12 });
-    assert.deepEqual(f.posted.at(-1), { type: "refreshed", generation: 2, requestId: 12, snapshot: { handle: 9 } });
+    assert.deepEqual(f.posted.at(-1), { type: "refreshed", generation: 2, requestId: 12, snapshot: { handle: 9 }, civilDate: "2031-02-03" });
     f.send({ type: "drop" });
     assert.equal(f.timers.size, 0);
   });

@@ -31,10 +31,11 @@ export interface SaveCommandPorts {
   startDateDraft: string;
   priceCageEnabledDraft: boolean;
   floatAllocationDraft: FloatAllocation;
-  loadFromFile(): Promise<StrictSaveEnvelope | null>;
+  loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
   resetMarketHistory(snapshot: Snapshot): void;
+  configureMarketTiming(setup: SessionSetup): void;
   refreshPlayerOrders(): Promise<void>;
   clearPlayerOrders(): void;
   setNotice(notice: string): void;
@@ -58,7 +59,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
     speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft,
-    loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, refreshPlayerOrders,
+    loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
     setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
@@ -68,7 +69,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     const recoveryGeneration = sessionReplacementGateRef.current.begin();
     if (recoveryGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
     try {
-      const slot = await loadFromFile();
+      const slot = await loadFromFile(() => dayEndPersistenceRef.current.beforeRead());
       if (!sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) return;
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);
@@ -104,6 +105,9 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     saveSelectionGenerationRef.current += 1;
     const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
+      setNotice("正在读取日终快速存档，等待已提交的写入完成…");
+      await dayEndPersistenceRef.current.beforeRead();
+      if (!isCurrent()) return;
       const slot = await getBrowserSaveRepository().load();
       if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }
@@ -117,23 +121,31 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
+      let restored = false;
+      const installRestoredSetup = () => {
+        if (restored || !isCurrent()) return;
+        configureMarketTiming(slot.setup);
+        setActiveSetup(slot.setup);
+        setStartDateDraft(slot.setup.start_date);
+        setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+        setFloatAllocationDraft(slot.setup.float_allocation);
+        setInitialAllocation(null);
+        restored = true;
+      };
       try {
-        await host.load(slot);
+        await host.load(slot, installRestoredSetup);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
       if (!isCurrent()) return;
+      // 成功返回也是恢复确认；幂等安装避免重复改写图表或 setup。
+      installRestoredSetup();
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       clearPlayerOrders();
-      setActiveSetup(slot.setup);
-      setStartDateDraft(slot.setup.start_date);
-      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
-      setFloatAllocationDraft(slot.setup.float_allocation);
-      setInitialAllocation(null);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -148,7 +160,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     }
   }
 
-  // 另存为文件（浏览器 File System Access API / 降级下载；Tauri 原生对话框）
+  // 选择可复用日终文件目标；不在选择时写档，也不以下载冒充文件覆盖。
   async function handleSaveFile() {
     const host = hostRef.current;
     if (host === null) return;
@@ -172,7 +184,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     saveSelectionGenerationRef.current += 1;
     const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
-      const slot = await loadFromFile();
+      const slot = await loadFromFile(() => dayEndPersistenceRef.current.beforeRead());
       if (!isCurrent()) return;
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);
@@ -185,23 +197,31 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
+      let restored = false;
+      const installRestoredSetup = () => {
+        if (restored || !isCurrent()) return;
+        configureMarketTiming(slot.setup);
+        setActiveSetup(slot.setup);
+        setStartDateDraft(slot.setup.start_date);
+        setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
+        setFloatAllocationDraft(slot.setup.float_allocation);
+        setInitialAllocation(null);
+        restored = true;
+      };
       try {
-        await host.load(slot);
+        await host.load(slot, installRestoredSetup);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
       if (!isCurrent()) return;
+      // 成功返回也是恢复确认；幂等安装避免重复改写图表或 setup。
+      installRestoredSetup();
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       clearPlayerOrders();
-      setActiveSetup(slot.setup);
-      setStartDateDraft(slot.setup.start_date);
-      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
-      setFloatAllocationDraft(slot.setup.float_allocation);
-      setInitialAllocation(null);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());

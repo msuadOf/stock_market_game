@@ -17,7 +17,7 @@ async function withInitializationIpc(run: (calls: { command: string; args: Recor
     if (response !== undefined) return response;
     if (command === "plugin:event|listen") return (args as { handler: number }).handler;
     if (command === "create_session") return "owned-session";
-    if (command === "engine_baseline") return { snapshot: initialSnapshot, generation: "1", timeline_id: "owned-timeline" };
+    if (command === "engine_baseline") return { snapshot: initialSnapshot, generation: "1", timeline_id: "owned-timeline", civil_date: "2030-01-01" };
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
     return null;
   });
@@ -85,7 +85,7 @@ test("Tauri 初始化失败保留原错误且汇总全部清理错误，某一�
 test("Tauri 非法创建响应不取得 handle 归属，非法 baseline 或 capability 响应回收已取得会话", { timeout: 10000 }, async () => {
   for (const [failedCommand, response, expectedStops] of [
     ["create_session", { session_id: "untrusted-session" }, 0],
-    ["engine_baseline", { snapshot: null, generation: "1", timeline_id: "owned-timeline" }, 1],
+    ["engine_baseline", { snapshot: null, generation: "1", timeline_id: "owned-timeline", civil_date: "2030-01-01" }, 1],
     ["host_capabilities", { npcDecisionDiagnostics: "invalid" }, 1],
   ] as const) {
     await withInitializationIpc(async (calls) => {

@@ -1,10 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalJson } from "./protocol/canonical.ts";
+import { canonicalJson, eventStableKey, factIdentity } from "./protocol/canonical.ts";
+import type { Event } from "../types/generated/Event.ts";
 import { effectsFromFacts } from "./protocol/effects.ts";
 import { reduceEngineUpdate } from "./protocol/reduce.ts";
 import { parseEngineUpdate } from "./protocol/parse.ts";
 import { baseState, snapshot, timeseries, tickBatch } from "./protocol-test-fixtures.ts";
+
+test("NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结算错误继续保留", { timeout: 10000 }, () => {
+  for (const account of [1, 7, 60_003]) {
+    const events: readonly Event[] = [
+      { IntentRejected: { seq: 1, account, code: "600000", reason: "AuctionOrderEntryClosed" } },
+      { IntentRejected: { seq: 2, account: 0, code: "600000", reason: "InsufficientCash" } },
+      { SettlementError: { seq: 3, account, code: "600000", reason: "测试结算故障" } },
+      { Trade: { seq: 4, code: "600000", price: "1000", qty: 100, maker: account, taker: 0 } },
+    ];
+    const facts = events.map((event, index) => ({
+      key: eventStableKey(event, index), event, canonical_payload: canonicalJson(event),
+    }));
+    const update = tickBatch([{ tick: 1, events, facts, timeseries_payload: timeseries(1), seq_from: 0, seq_to: 4 }], snapshot(1, 4));
+    const reduction = reduceEngineUpdate(baseState(), "generation-1", update);
+    const notices = reduction.effects.filter(effect => effect.kind === "notice").map(effect => effect.message).sort();
+    assert.deepEqual(notices, ["委托被拒：600000 - 资金不足", "结算错误：600000 - 测试结算故障"].sort());
+    assert.equal(reduction.update.kind, "tick-batch");
+    if (reduction.update.kind !== "tick-batch") throw new Error("测试期望 TickBatch");
+    assert.deepEqual(reduction.update.frames[0]?.events, events);
+    assert.deepEqual(reduction.state.intraday[0]?.facts, facts.toSorted((left, right) => factIdentity(left).localeCompare(factIdentity(right))));
+    assert.deepEqual(reduction.state.cursor, { generation: "generation-1", tick: 1, seq: 4 });
+    assert.equal(reduction.effects.filter(effect => effect.kind === "trade").length, 1);
+    assert.equal(reduction.effects.filter(effect => effect.kind === "automatic-order").length, 1);
+    assert.deepEqual(reduceEngineUpdate(reduction.state, "generation-1", update).effects, []);
+  }
+});
 
 test("Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped", () => {
   const trade = { Trade: { seq: 1, code: "600000", price: "1000", qty: 100, maker: 0, taker: 1 } };

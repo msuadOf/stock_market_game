@@ -1,5 +1,6 @@
 import { createBaselineUpdate, type HostUpdate } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { parseIsoDate } from "./protocol/wire-values.ts";
 
 type Baseline = Extract<HostUpdate, { type: "baseline" }>;
 
@@ -7,6 +8,7 @@ export type TauriBaselineResponse = {
   readonly snapshot: unknown;
   readonly timeline_id: string;
   readonly generation: string;
+  readonly civil_date: unknown;
 };
 
 type QueryCursor = { readonly generation: string; readonly baselineEpoch: number };
@@ -64,7 +66,7 @@ export class TauriTimelineState {
   installInitialBaseline(response: TauriBaselineResponse): Baseline {
     if (response.generation !== this.generation) throw new Error("Tauri 初始基线 generation 与新会话不匹配");
     this.timelineId = response.timeline_id;
-    return this.installSnapshot(response.snapshot, "Tauri engine_baseline.snapshot");
+    return this.installSnapshot(response.snapshot, response.civil_date, "Tauri engine_baseline");
   }
 
   replaceRefreshedBaseline(response: TauriBaselineResponse, queryGeneration: string): Baseline {
@@ -72,7 +74,7 @@ export class TauriTimelineState {
     if (response.generation !== queryGeneration) throw new Error(message);
     this.assertGeneration(queryGeneration, message);
     this.timelineId = response.timeline_id;
-    return this.installSnapshot(response.snapshot, "Tauri engine_baseline.snapshot");
+    return this.installSnapshot(response.snapshot, response.civil_date, "Tauri engine_baseline");
   }
 
   replaceRestoredBaseline(response: TauriBaselineResponse): Baseline {
@@ -80,7 +82,7 @@ export class TauriTimelineState {
     // 保留 generation/timeline 先写、snapshot 后解析的既有部分更新边界。
     this.generation = response.generation;
     this.timelineId = response.timeline_id;
-    return this.installSnapshot(response.snapshot, "Tauri restore snapshot");
+    return this.installSnapshot(response.snapshot, response.civil_date, "Tauri restore snapshot");
   }
 
   clearForDispose(): void {
@@ -88,8 +90,10 @@ export class TauriTimelineState {
     this.cachedBaseline = null;
   }
 
-  private installSnapshot(snapshot: unknown, where: string): Baseline {
-    this.cachedBaseline = createBaselineUpdate(this.generation, parseProtocolSnapshot(snapshot, where));
+  private installSnapshot(snapshot: unknown, civilDate: unknown, where: string): Baseline {
+    this.cachedBaseline = createBaselineUpdate(this.generation, parseProtocolSnapshot(snapshot, `${where}.snapshot`), {
+      civilDate: parseIsoDate(civilDate, `${where}.civil_date`), revision: null,
+    });
     this.baselineEpoch += 1;
     return this.cachedBaseline;
   }

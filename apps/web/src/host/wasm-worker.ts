@@ -100,6 +100,7 @@ function postBaseline(): void {
     type: "baseline",
     generation: slot.readGeneration(),
     snapshot: wasm.snapshot(session),
+    civilDate: wasm.civil_date(session),
   });
 }
 
@@ -250,6 +251,7 @@ ctx.addEventListener("message", (event) => {
             requestId: message.requestId,
             generation: requestedGeneration,
             snapshot: wasm.snapshot(session),
+            civilDate: wasm.civil_date(session),
           });
           return;
         }
@@ -262,14 +264,17 @@ ctx.addEventListener("message", (event) => {
             restart: () => { queueMicrotask(() => loop.start()); },
           });
           postIngressBridge();
+          const [session, wasm] = slot.requireHandle();
+          const civilDate = wasm.civil_date(session);
           ctx.postMessage({
             type: "restored",
             requestId: message.requestId,
             generation: requestedGeneration,
             nextGeneration: slot.readGeneration(),
             snapshot: restoredSnapshot,
+            civilDate,
           });
-          ctx.postMessage({ type: "baseline", generation: slot.readGeneration(), snapshot: restoredSnapshot });
+          ctx.postMessage({ type: "baseline", generation: slot.readGeneration(), snapshot: restoredSnapshot, civilDate });
           return;
         }
         case "civilDate": {

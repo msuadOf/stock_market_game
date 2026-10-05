@@ -67,7 +67,8 @@ export interface EngineHost {
   queryStockHistory(code: StockCode): Promise<HistoricalStockData>;
   initialAllocation(): Promise<InitialAllocation>;
   calculateIndicators(input: IndicatorInput): Promise<IndicatorResults>;
-  load(slot: unknown): Promise<void>;
+  /** 恢复提交后、发布新基线或恢复运行前通知；后续失败不撤销已提交的恢复。 */
+  load(slot: unknown, onRestored?: () => void): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;
   publicReportById?(id: string): Promise<PublicReportSummary>;
   npcDecisionTrace?(account: number): Promise<readonly NpcDecisionTraceRecord[]>;

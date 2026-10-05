@@ -5,6 +5,7 @@ import type { HostUpdate } from "../host/host-update.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
 import type { EngineHost } from "../host/engine-host.ts";
+import type { TradingTiming } from "../components/trading-timeline.ts";
 
 export type ChartRuntimeObservation = {
   readonly daily: readonly KlinePoint[];
@@ -15,7 +16,8 @@ export type ChartRuntimeObservation = {
   readonly code: string;
 };
 
-export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdates, hostRef, setNotice }: {
+export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdates, hostRef, setNotice, timing }: {
+  readonly timing: TradingTiming;
   readonly baseline: Extract<HostUpdate, { type: "baseline" }>;
   readonly updates: readonly Extract<HostUpdate, { type: "protocol" }>[];
   readonly observe: (stage: "baseline" | "updated", observation: ChartRuntimeObservation) => void;
@@ -37,6 +39,7 @@ export function MarketChartRuntimeProbe({ baseline, updates, observe, afterUpdat
   }
   if (stage.current === 0) {
     stage.current = 1;
+    runtime.configureMarketTiming(timing);
     coordinator.current.accept(baseline);
   } else if (stage.current === 1) {
     stage.current = 2;

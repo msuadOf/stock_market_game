@@ -9,10 +9,14 @@
   --msd-border: #e7e7e7;
   --msd-muted: #767676;
   --msd-focus: #126fd1;
+  --msd-data-text: #222;
+}
+
+.mobile-stock-detail {
   min-height: 100%;
   padding-bottom: 18px;
   background: #f5f5f5;
-  color: #222;
+  color: var(--msd-data-text);
   container-type: inline-size;
   font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
   font-size: clamp(11px, 3.2cqw, 14px);
@@ -26,6 +30,12 @@
 .mobile-stock-detail .fall { color: var(--msd-fall-text); }
 .mobile-stock-detail .flat { color: var(--msd-muted); }
 .mobile-stock-detail button:focus-visible { outline: 2px solid #126fd1; outline-offset: -2px; }
+
+/* 共用浅色数据面拥有自己的文字和涨跌色，不继承桌面暗色外壳。 */
+.msd-kline, .msd-order-book { color: var(--msd-data-text); }
+.msd-order-book .rise { color: var(--msd-rise); }
+.msd-order-book .fall { color: var(--msd-fall); }
+.msd-order-book .flat { color: var(--msd-muted); }
 
 .msd-header {
   position: sticky;
@@ -61,8 +71,8 @@
 .msd-day-prices span { display: grid; grid-template-columns: 1.1em 1fr; align-items: baseline; gap: 9px; color: #606060; font-size: clamp(14px, 4.1cqw, 18px); font-weight: 700; }
 .msd-day-prices b { font-weight: 500; }
 .msd-stock-stats { display: grid; grid-template-columns: 1fr 1fr; align-content: center; gap: 9px 8px; min-width: 0; }
-.msd-stock-stats span { display: flex; min-width: 0; gap: 5px; color: #666; font-size: clamp(10px, 3.05cqw, 13px); white-space: nowrap; }
-.msd-stock-stats b { overflow: hidden; color: #333; font-weight: 500; text-overflow: ellipsis; }
+.msd-stock-stats span { display: grid; min-width: 0; gap: 2px; color: #666; font-size: clamp(10px, 3.05cqw, 13px); white-space: nowrap; }
+.msd-stock-stats b { color: #333; font-weight: 500; }
 
 .msd-period-tabs,
 .msd-info-tabs { display: flex; min-height: 51px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--msd-border); scrollbar-width: thin; }
@@ -84,9 +94,10 @@
 .msd-price-plot svg { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; }
 .msd-price-line,
 .msd-average-line,
-.msd-auction-line { fill: none; vector-effect: non-scaling-stroke; }
+.msd-auction-line,
+.msd-session-join { fill: none; vector-effect: non-scaling-stroke; }
 .msd-price-line { stroke: #292929; stroke-width: 1.15; }
-.msd-auction-line { stroke: #292929; stroke-width: 1.15; }
+.msd-auction-line, .msd-session-join { stroke: #292929; stroke-width: 1.15; }
 .msd-auction-dot { fill: #292929; vector-effect: non-scaling-stroke; }
 .msd-average-line { stroke: var(--msd-gold); stroke-width: 1; }
 .msd-auction-band { fill: rgb(245 247 250 / 72%); }
@@ -128,12 +139,7 @@
 .msd-minute-bars .msd-volume-guide { stroke: #ededed; stroke-width: 1px; }
 .msd-minute-volume-mark { transform: translateX(-.25px); }
 
-.msd-ticks { min-width: 0; height: 148px; padding: 4px 6px; overflow: hidden; border-top: 1px solid #ddd; border-left: 1px solid #ddd; background: #fff; }
-.msd-ticks-head { margin-bottom: 3px; text-align: center; font-size: clamp(11px, 3.5cqw, 15px); font-weight: 700; }
-.msd-ticks p { color: var(--msd-muted); text-align: center; }
-.msd-tick-row { display: grid; grid-template-columns: 1fr 1fr .55fr; gap: 3px; line-height: 1.75; font-size: clamp(8px, 2.55cqw, 11px); white-space: nowrap; }
-.msd-tick-row b { text-align: right; }
-.msd-tick-row span:last-child { text-align: right; }
+.msd-ticks { min-width: 0; height: 148px; padding: 4px 6px; overflow: auto; border-top: 1px solid #ddd; border-left: 1px solid #ddd; background: #fff; }
 
 .msd-kline { min-height: 482px; padding: 8px 6px; background: #fff; }
 .msd-kline-meta { display: flex; gap: 13px; min-height: 32px; align-items: center; font-size: clamp(11px, 3.3cqw, 14px); }
@@ -161,8 +167,6 @@
 .msd-fund-bar i { position: absolute; right: 21%; left: 21%; display: block; background: currentColor; }
 .msd-fund-bar b { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); font-size: clamp(8px, 2.5cqw, 11px); }
 .msd-fund-bar span { position: absolute; bottom: -25px; left: 50%; transform: translateX(-50%); font-size: clamp(9px, 2.7cqw, 12px); font-weight: 700; white-space: nowrap; }
-.msd-placeholder { min-height: 240px; padding: 28px 18px; background: #fff; }
-.msd-placeholder b { font-size: 19px; }.msd-placeholder p { color: var(--msd-muted); line-height: 1.7; }
 
 @media (max-width: 350px) {
   .msd-market-composite { grid-template-columns: minmax(0, 66%) minmax(0, 34%); }
@@ -199,7 +203,7 @@
 .msd-header strong { font-size:clamp(13.5px,3.7cqw,15px); font-weight:700; }
 .msd-header small { margin-top:clamp(2px,.77cqw,3px); font-size:clamp(9.5px,2.65cqw,11px); font-weight:500; }.msd-header small span { padding:0 2px; background:#d89143; }
 .msd-header .msd-bot { grid-column:5; align-self:center; font-size:clamp(18px,5.13cqw,21px); }.msd-header .mobile-speed-select-wrap { grid-column:6; align-self:center; }.msd-header .mobile-speed-select-wrap select { width:clamp(52px,14.36cqw,58px); }
-.msd-quote { min-height:87px; height:87px; grid-template-columns:24% 26% 50%; padding:9px 10px 7px; }
+.msd-quote { min-height:87px; height:87px; grid-template-columns:31% 23% 46%; padding:9px 10px 7px; }
 .msd-last strong { font-size:clamp(27px,8.2cqw,36px); }.msd-last span { margin-top:7px; font-size:clamp(11px,3.33cqw,15px); }
 .msd-day-prices { gap:5px; }.msd-day-prices span { gap:5px; font-size:clamp(11px,3.33cqw,15px); }
 .msd-stock-stats { gap:5px 6px; }.msd-stock-stats span { font-size:clamp(9px,2.82cqw,12px); }
@@ -214,11 +218,58 @@
 .msd-chart-empty { display:grid; place-content:center; gap:8px; color:var(--msd-muted); text-align:center; }.msd-chart-empty b { color:#333; font-size:16px; }.msd-chart-empty p { margin:0; }
 .msd-kline-meta { height:48px; padding:3px 8px; display:flex; align-content:center; flex-wrap:wrap; gap:3px 9px; font-size:12px; }
 .msd-kline-meta button { border:0; background:#eee; padding:3px 5px; }.msd-kline-meta span:nth-of-type(1){color:#222}.msd-kline-meta span:nth-of-type(2){color:#d59a00}.msd-kline-meta span:nth-of-type(3){color:#dc5571}
-.msd-candle-chart { display:block; width:100%; height:190px; background:repeating-linear-gradient(0deg,transparent 0 46px,#eee 47px),repeating-linear-gradient(90deg,transparent 0 64px,#eee 65px); border:1px solid #eee; }
+.msd-candle-chart { display:block; width:100%; height:190px; background:transparent; }
 .msd-candle-chart g line { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-candle-chart g rect { stroke:currentColor; stroke-width:1; }.msd-candle-chart g.rise rect { fill:none; }.msd-candle-chart g.fall rect { fill:currentColor; }.msd-candle-chart g.rise { color:var(--msd-rise); }.msd-candle-chart g.fall { color:var(--msd-fall); }
 .msd-candle-chart polyline,.msd-kdj polyline { fill:none; vector-effect:non-scaling-stroke; stroke-width:1; }.msd-candle-chart .ma5 { stroke:#222; }.msd-candle-chart .ma10 { stroke:#d8a100; }.msd-candle-chart .ma20 { stroke:#e15977; }
 .msd-candle-chart .msd-marker rect { fill:#f7c96b; stroke:none; opacity:.85; }.msd-candle-chart .msd-marker text { fill:#b87800; font-size:10px; font-weight:700; text-anchor:middle; }
 .msd-chart-tools { position:absolute; top:205px; left:12px; right:12px; display:flex; justify-content:space-around; }.msd-chart-tools button { display:grid; place-items:center; flex:0 0 27px; width:27px; height:27px; aspect-ratio:1; padding:0; border:0; border-radius:50%; background:rgba(235,235,235,.88); color:#555; font-size:20px; line-height:1; }.msd-chart-tools button:not(:disabled) { cursor:pointer; }.msd-chart-tools button:disabled { opacity:.42; }.msd-chart-tools button:focus-visible { outline:2px solid var(--msd-focus); outline-offset:2px; }
 .msd-volume-title,.msd-kdj-title { height:23px; padding:3px 8px; border-top:1px solid #eee; font-size:12px; font-weight:700; }.msd-volume-title span { color:#e35137; }
-.msd-k-volume { display:block; width:100%; height:75px; border-bottom:1px solid #eee; }.msd-k-volume rect { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-k-volume rect.rise { fill:none; color:var(--msd-rise); }.msd-k-volume rect.fall { fill:currentColor; color:var(--msd-fall); }
-.msd-kdj-title span { color:#e56b38; }.msd-kdj-title em { color:#c73771; font-style:normal; }.msd-kdj { width:100%; height:72px; background:repeating-linear-gradient(0deg,transparent 0 34px,#eee 35px); }.msd-kdj polyline { stroke:#222; }.msd-kdj .orange { stroke:#e56b38; }.msd-kdj .pink { stroke:#c73771; }
+.msd-k-volume { display:block; width:100%; height:75px; }.msd-k-volume rect { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-k-volume rect.rise { fill:none; color:var(--msd-rise); }.msd-k-volume rect.fall { fill:currentColor; color:var(--msd-fall); }
+.msd-kdj-title span { color:#e56b38; }.msd-kdj-title em { color:#c73771; font-style:normal; }.msd-kdj { width:100%; height:72px; background:transparent; }.msd-kdj polyline { stroke:#222; }.msd-kdj .orange { stroke:#e56b38; }.msd-kdj .pink { stroke:#c73771; }
+
+/* 两端共用的图例与缩放工具采用正常文档流，数值换行不覆盖蜡烛。 */
+.msd-kline { height: auto; min-height: 465px; display: flex; flex-direction: column; }
+.msd-kline-meta { height: auto; min-height: 32px; flex-wrap: wrap; gap: 3px 8px; }
+.msd-kline-meta button { padding: 3px 0; font: inherit; white-space: nowrap; }
+.msd-chart-tools { position: static; min-height: 30px; flex: none; }
+
+/* SVG 非等比拉伸时，图形宽高变化，轮廓保持屏幕像素宽度。 */
+.msd-candle-chart rect, .msd-candle-chart line, .msd-k-volume rect, .msd-kdj line,
+.msd-price-plot polyline, .msd-minute-bars line, .msd-minute-bars rect { vector-effect: non-scaling-stroke; }
+.kline-details { position:absolute; top:40px; left:10px; z-index:5; width:180px; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--text); box-shadow:0 2px 8px #0002; font-size:12px; }
+.kline-details-head { display:flex; align-items:center; justify-content:space-between; }
+.kline-details-head button { border:0; background:transparent; color:inherit; font-size:20px; cursor:pointer; }
+.kline-details dl { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; margin:4px 0 0; }
+.kline-detail-row { display:contents; }
+.kline-details dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+
+.kline-details { pointer-events: none; }
+.kline-details button { pointer-events: auto; }
+
+/* 坐标文字保持屏幕字号，价、量、指标的画布共同占用中间列。 */
+.msd-kline { --kline-axis-width: 54px; }
+.kline-coordinate-plot { display: grid; grid-template-columns: minmax(0, 1fr) var(--kline-axis-width); flex: none; min-width: 0; color: #555; }
+.kline-price-plot { height: 190px; }
+.kline-volume-plot { height: 75px; }
+.kline-indicator-plot { height: 72px; }
+.kline-coordinate-mirror { display: none; }
+.kline-coordinate-axis { position: relative; min-width: 0; font-size: 11px; line-height: 12px; font-variant-numeric: tabular-nums; container-type: size; container-name: kline-axis; }
+.kline-coordinate-axis > span { position: absolute; left: 4px; right: 2px; white-space: nowrap; transform: translateY(-50%); }
+.kline-coordinate-axis > span[data-edge="bottom"] { transform: translateY(-100%); }
+.kline-coordinate-axis > span[data-edge="top"] { transform: none; }
+.kline-plot-canvas { position: relative; min-width: 0; min-height: 0; }
+.kline-plot-canvas > svg { position: relative; z-index: 1; width: 100%; height: 100%; display: block; }
+.kline-coordinate-grid { position: absolute; inset: 0; pointer-events: none; }
+.kline-grid-horizontal { position: absolute; left: 0; right: 0; border-top: 1px solid #e8ebee; }
+.kline-grid-vertical { position: absolute; top: 0; bottom: 0; border-left: 1px solid #eef0f2; }
+.kline-time-row { flex: none; height: 21px; padding-right: var(--kline-axis-width); }
+.kline-time-axis { position: relative; height: 100%; color: #555; font-size: 11px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.kline-time-axis > span { position: absolute; white-space: nowrap; }
+.kline-time-axis .kline-selected-time { z-index: 2; background: #222; color: #fff; padding: 0 3px; }
+@media (orientation: portrait) { .kline-time-secondary { display: none; } }
+@container kline-axis (height < 100px) { .kline-price-plot .kline-coordinate-axis > span:nth-child(even) { display: none; } }
+@container kline-axis (height < 44px) { .kline-coordinate-axis > span:not([data-edge]):not(:only-child) { display: none; } }
+
+.kline-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; flex: none; min-height: 32px; }
+.kline-footer .msd-chart-tools { flex: 1; min-width: 180px; }
+.shared-indicator-controls { display: flex; flex: none; }

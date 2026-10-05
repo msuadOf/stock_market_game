@@ -7,6 +7,11 @@ interface KeyValueStorage {
   setItem(key: string, value: string): void;
 }
 
+export interface AsyncSaveStorage {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string, isCurrent: () => boolean): boolean | Promise<boolean>;
+}
+
 export interface SaveCompressionCodec {
   encode(text: string): Promise<string>
   decode(text: string): Promise<string>
@@ -56,12 +61,12 @@ export const gzipSaveCodec: SaveCompressionCodec = {
   },
 }
 
-export class CompressedLocalStorageSaveRepository {
-  private readonly storage: KeyValueStorage
+export class CompressedSaveRepository {
+  private readonly storage: AsyncSaveStorage
   private readonly key: string
   private readonly codec: SaveCompressionCodec
 
-  constructor(storage: KeyValueStorage, key = "stock-game-save", codec = gzipSaveCodec) {
+  constructor(storage: AsyncSaveStorage, key = "stock-game-save", codec = gzipSaveCodec) {
     this.storage = storage
     this.key = key
     this.codec = codec
@@ -71,8 +76,7 @@ export class CompressedLocalStorageSaveRepository {
     try {
       const compressed = await this.codec.encode(JSON.stringify(parseSaveSlot(slot)))
       if (!isCurrent()) return false;
-      this.storage.setItem(this.key, `gzip:${compressed}`)
-      return true;
+      return await this.storage.setItem(this.key, `gzip:${compressed}`, isCurrent)
     } catch (error) {
       throw new Error(`写入浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }
@@ -81,7 +85,7 @@ export class CompressedLocalStorageSaveRepository {
   async load(): Promise<StrictSaveEnvelope | null> {
     let raw: string | null
     try {
-      raw = this.storage.getItem(this.key)
+      raw = await this.storage.getItem(this.key)
     } catch (error) {
       throw new Error(`读取浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }
@@ -94,5 +98,18 @@ export class CompressedLocalStorageSaveRepository {
       throw new Error(`解压浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }
     return parseSaveJson(json)
+  }
+}
+
+export class CompressedLocalStorageSaveRepository extends CompressedSaveRepository {
+  constructor(storage: KeyValueStorage, key = "stock-game-save", codec = gzipSaveCodec) {
+    super({
+      getItem: (name) => storage.getItem(name),
+      setItem: (name, value, isCurrent) => {
+        if (!isCurrent()) return false;
+        storage.setItem(name, value);
+        return true;
+      },
+    }, key, codec);
   }
 }

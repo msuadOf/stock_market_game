@@ -30,6 +30,7 @@ const props = {
 
 test("启动页使用原生可访问表单，显示未连接与非热迁移语义", () => {
   const html = renderToStaticMarkup(createElement(screen.StartupScreen, props));
+  assert.match(html, /<form[^>]*novalidate/);
   assert.match(html, /<main[^>]*aria-labelledby="startup-title"/);
   assert.match(html, /<fieldset><legend>引擎运行位置<\/legend>/);
   assert.match(html, /<input(?=[^>]*type="radio")(?=[^>]*value="local")(?=[^>]*checked)[^>]*>/);

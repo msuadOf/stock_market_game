@@ -33,6 +33,9 @@
   相同。`HostUpdate` 只包含 `baseline` 与带 seq 覆盖区间的 `delta`；`postMessage`、Tauri IPC、
   REST/WebSocket 只是适配层传输细节，不得渗透为 UI 条件分支。宿主专属能力通过
   `HostCapabilities` 显式暴露，详见 [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md)。
+  初始化、读档和显式刷新交付的 `baseline` 必须携带当前权威 `civilDate`；本地 Worker 与
+  Tauri actor 在同一次会话读取中生成 snapshot 与日期。日期缺失或无效时显式报错，
+  UI 不得根据交易日序或新局起始日期补造读档后的自然日。
 
 ## 2. 分层与依赖方向（**无环依赖**）
 
@@ -60,7 +63,7 @@
 
 | 模式 | engine 运行在 | 存储 | 联机 |
 |------|--------------|------|------|
-| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | LocalStorage / JSON 文件 | 无 |
+| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | IndexedDB 日终快速槽 / JSON 文件 | 无 |
 | **Stage 2 单机+后端** | 服务端（Rust engine actor） | 服务端会话 / JSON 存档 | 可选 |
 | **Stage 2 权威后端** | 服务端 | 服务端数据库 | 是（权威状态在后端） |
 | **Stage 3 桌面** | Tauri 进程（同份 engine） | 本地文件 / 复用后端 | 可选 |
@@ -90,7 +93,10 @@ Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime
   [ADR-0031](decisions/0031-money-decimal-cents-wire.md)，不接受数字金额或建立兼容路径。
 - 持久化通过**单一数据访问层**（[`principles.md`](principles.md) 原则 4）进行：
   - 接口定义在适配层（`loadState` / `saveState`）。
-  - 实现可替换：LocalStorage（前端）/ 文件或 DB（后端 / 桌面）。
+  - 实现可替换：IndexedDB 日终快速槽（前端）/ 文件或 DB（后端 / 桌面）。
+  - 前端沿用同一 gzip 与严格 schema；新库没有快速槽时，只读已有 LocalStorage 同格式档，
+    不在启动时复制写盘。新日终候选以 IndexedDB 事务替换快速槽，失败保留上一有效档；
+    数据库坏档或打开失败仍显式报错，不回退旧槽掩盖问题。
 - 每次读取都做 **schema 校验**（[`error-handling.md`](error-handling.md) §5），脏数据 → 显式报错而非静默吞。
 
 ## 5. 目标目录结构（monorepo）

@@ -145,8 +145,10 @@ mod day_end_tests {
             crate::session::npc_working_quote_tests::retail_quote_setup(),
             2,
         ).unwrap();
+        super::queue_npc_for_next_tick(&mut session).unwrap();
         let before = serde_json::to_value(session.save().unwrap()).unwrap();
-        assert!(super::queue_empty_npc_at_day_end(&mut session).is_err());
+        assert!(matches!(super::queue_empty_npc_at_day_end(&mut session),
+            Err(super::StepFatal::InvariantViolation {description,..}) if description.contains("unconsumed batch")));
         assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
     }
 
@@ -180,7 +182,8 @@ mod day_end_tests {
 }
 
 /// 在完整 tick candidate 的 CommitTick 之前调用。
-/// 决策基于即将提交的状态，其订单进入下一市场 tick。
+/// 日内决策基于即将提交的状态，其订单进入下一市场 tick；
+/// 日界首个 tick 则在 ExpiryShadow 前的隔离 shadow 上基于已提交日结版本准备。
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {

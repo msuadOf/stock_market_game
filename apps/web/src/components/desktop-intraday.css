@@ -1,0 +1,36 @@
+/* 所有 plot 共用两侧刻度留白，避免价格与量能错位。 */
+.desktop-intraday { --axis-gutter: 48px; display: flex; flex-direction: column; flex: 1; min-height: 270px; min-width: 0; color: var(--text); font-size: 10px; font-variant-numeric: tabular-nums; }
+.intraday-caption { display: flex; justify-content: space-between; gap: 8px; padding: 10px 10px 4px; color: var(--muted); }
+.intraday-price-area { position: relative; flex: 1; min-height: 150px; padding: 0 var(--axis-gutter); }
+.intraday-price-plot { display: block; width: 100%; height: 100%; position: absolute; left: var(--axis-gutter); width: calc(100% - 2 * var(--axis-gutter)); }
+.intraday-price-label, .intraday-percent-label { position: absolute; transform: translateY(-50%); z-index: 1; }
+.intraday-price-label { left: 6px; }
+.intraday-percent-label { right: 4px; }
+.intraday-gridline { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.intraday-baseline { stroke: var(--muted); stroke-dasharray: 4 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.intraday-auction-zone { fill: var(--surface-subtle); }
+.intraday-price-line, .intraday-auction-line, .intraday-session-join, .intraday-indicator-line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.intraday-price-line, .intraday-auction-line, .intraday-session-join { stroke: var(--text); }
+.intraday-price-point, .intraday-auction-point { fill: var(--text); }
+.intraday-empty { position: absolute; top: 25%; left: 22%; right: 15%; text-align: center; line-height: 2; color: var(--muted); }
+.intraday-empty small { font-size: 10px; }
+.intraday-time-axis { position: relative; height: 27px; flex: none; margin: 0 var(--axis-gutter); border-top: 1px solid var(--border); }
+.intraday-time-axis span { position: absolute; top: 5px; white-space: nowrap; transform: translateX(-50%); }
+.intraday-time-axis span:first-child { transform: none; }
+.intraday-time-axis span:last-child { transform: translateX(-100%); }
+.intraday-secondary { height: 115px; flex: none; border-top: 1px solid var(--border); }
+.intraday-volume-caption { display: flex; justify-content: space-between; padding: 5px 8px; gap: 8px; color: var(--muted); font-size: 9px; }
+.intraday-secondary-area { height: 84px; margin: 0 var(--axis-gutter); }
+.intraday-volume-plot { display: block; width: 100%; height: 100%; }
+.intraday-volume-mark { stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.price-chart [hidden] { display: none !important; }
+.desktop-terminal[data-view="quotes"] .intraday-time-axis span:nth-child(2), .desktop-terminal[data-view="quotes"] .intraday-time-axis span:nth-child(3), .desktop-terminal[data-view="quotes"] .intraday-time-axis span:nth-child(5) { display: none; }
+.desktop-terminal[data-view="quotes"] .intraday-volume-caption { flex-direction: column; gap: 0; }
+.desktop-terminal[data-view="quotes"] .intraday-secondary-area { height: 70px; }
+
+/* 极值贴边时让刻度文字留在图内，SVG 线帽不被边缘裁切。 */
+.intraday-price-plot { overflow: visible; }
+.intraday-price-label[style="top: 0%;"], .intraday-percent-label[style="top: 0%;"] { transform: none; }
+.intraday-price-label[style="top: 100%;"], .intraday-percent-label[style="top: 100%;"] { transform: translateY(-100%); }
+
+.intraday-caption { flex-wrap: wrap; }

@@ -33,8 +33,8 @@ export function createPausePreferencesLifecycle(ports: Ports) {
         ports.onReady();
       } catch (preferenceError) { report(preferenceError); }
     },
-    synchronize(host: Pick<EngineHost, "setPausePreferences"> | null, preferences: PausePreferences, source: StorageSource, skip: boolean, isCurrent: () => boolean = () => true): Promise<void> {
-      if (skip || host === null) return Promise.resolve();
+    synchronize(host: Pick<EngineHost, "setPausePreferences"> | null, preferences: PausePreferences, source: StorageSource, isCurrent: () => boolean = () => true): Promise<void> {
+      if (host === null) return Promise.resolve();
       const synchronization = pending.then(async () => {
         if (!isCurrent()) return;
         await host.setPausePreferences(preferences);
@@ -55,7 +55,6 @@ interface Options extends Ports {
   hostRef: MutableRefObject<EngineHost | null>;
   pauseAfterClose: boolean;
   pauseBeforeOpen: boolean;
-  tradingE2EMode: boolean;
 }
 
 export function usePausePreferences(options: Options) {
@@ -71,7 +70,7 @@ export function usePausePreferences(options: Options) {
     setPendingCount((count) => count + 1);
     try {
       await lifecycleRef.current!.synchronize(host, preferences,
-        () => typeof window === "undefined" ? null : window.sessionStorage, options.tradingE2EMode, () => host === options.hostRef.current);
+        () => typeof window === "undefined" ? null : window.sessionStorage, () => host === options.hostRef.current);
     } finally { setPendingCount((count) => count - 1); }
   }
   return { pending: pendingCount > 0, changePreferences };

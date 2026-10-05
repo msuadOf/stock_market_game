@@ -50,7 +50,7 @@ interface Options {
 export function useSpeedMetricsPolling(options: Options): void {
   const { ready, speed, running, pollingGeneration } = options;
   useEffect(() => {
-    const polling = createSpeedMetricsPolling({ ...options, host: options.hostRef.current, schedule: setTimeout, cancel: clearTimeout });
+    const polling = createSpeedMetricsPolling({ ...options, host: options.hostRef.current, schedule: (callback, delay) => window.setTimeout(callback, delay), cancel: timer => window.clearTimeout(timer) });
     polling.start();
     return () => polling.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps

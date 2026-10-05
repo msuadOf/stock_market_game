@@ -15,8 +15,8 @@ test("Tauri save pins generation for keyed and latest candidates and rejects a l
   mockIPC((command, args) => {
     if (command === "create_session") return "session-1";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
-    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1" };
-    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "timeline-2" };
+    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
+    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
     if (command === "save_session") {
       requests.push(args as Record<string, unknown>);
       return new Promise((resolve) => { completeSave = resolve; });
@@ -56,8 +56,8 @@ async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHo
     if (response !== undefined) return response;
     if (command === "create_session") return "session-1";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: true };
-    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1" };
-    if (command === "restore_session") return { snapshot: { ...snapshot, tick: 2 }, generation: "2", timeline_id: "timeline-2" };
+    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
+    if (command === "restore_session") return { snapshot: { ...snapshot, tick: 2 }, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
     return null;
   }, { shouldMockEvents: true });
   let host: Awaited<ReturnType<typeof createTauriHost>> | undefined;
@@ -164,7 +164,7 @@ test("Tauri restore snapshot 解析失败保留先写 generation/timeline 与旧
     assert.equal(host.tick(), 0);
     await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-2", update: {} });
     assert.equal((updates.at(-1) as { generation: string }).generation, "2");
-  }, (command) => command === "restore_session" ? { snapshot: null, generation: "2", timeline_id: "timeline-2" } : undefined);
+  }, (command) => command === "restore_session" ? { snapshot: null, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" } : undefined);
 });
 
 test("Tauri baseline callback 抛错保留已安装状态，并阻止 restore 后 resume", async () => {
@@ -213,7 +213,7 @@ test("Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线", asy
     const date = host.civilDate!();
     const saved = assert.rejects(host.save(), /已过期会话 generation/);
     host.dispose();
-    finishRefresh({ snapshot: { ...snapshot, tick: 3 }, generation: "1", timeline_id: "late" });
+    finishRefresh({ snapshot: { ...snapshot, tick: 3 }, generation: "1", timeline_id: "late", civil_date: "2030-01-01" });
     finishDate({ value: "2030-01-02" });
     finishSave({ saved: true });
     await Promise.all([refresh, saved]);
@@ -228,11 +228,11 @@ test("Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线", asy
 
 test("Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration", async () => {
   await assert.rejects(withTauriHost(async () => { assert.fail("初始化不应成功"); }, (command) => command === "engine_baseline"
-    ? { snapshot, generation: "2", timeline_id: "wrong" } : undefined), /初始基线 generation 与新会话不匹配/);
+    ? { snapshot, generation: "2", timeline_id: "wrong", civil_date: "2030-01-01" } : undefined), /初始基线 generation 与新会话不匹配/);
   await withTauriHost(async (host) => {
     await assert.rejects(host.load({}), /没有递增 generation/);
     assert.equal(host.tick(), 0);
-  }, (command) => command === "restore_session" ? { snapshot, generation: "9007199254740993", timeline_id: "wrong" } : undefined);
+  }, (command) => command === "restore_session" ? { snapshot, generation: "9007199254740993", timeline_id: "wrong", civil_date: "2030-01-01" } : undefined);
 });
 
 test("Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline", { timeout: 10000 }, async () => {
@@ -329,9 +329,23 @@ test("Tauri dispose 后晚到 load 拒绝且不安装 restore baseline", async (
   await withTauriHost(async (host) => {
     const loading = assert.rejects(host.load({}), /已销毁会话/);
     host.dispose();
-    finishRestore({ snapshot: { ...snapshot, tick: 5 }, generation: "2", timeline_id: "late-load" });
+    finishRestore({ snapshot: { ...snapshot, tick: 5 }, generation: "2", timeline_id: "late-load", civil_date: "2030-01-01" });
     await loading;
     assert.throws(() => host.tick(), /基线尚未就绪/);
     assert.throws(() => host.snapshot(), /基线尚未就绪/);
   }, (command) => command === "restore_session" ? new Promise((resolve) => { finishRestore = resolve; }) : undefined);
+});
+
+
+test("Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知", { timeout: 10000 }, async () => {
+  let restored = false, refuseResume = false;
+  await withTauriHost(async (host, calls) => {
+    await host.start(update => { if (update.generation === "2") assert.equal(restored, true); });
+    calls.length = 0;
+    refuseResume = true;
+    await assert.rejects(host.load({}, () => { restored = true; calls.push("restored-setup"); }), /恢复运行失败/);
+    assert.equal(restored, true);
+    assert.deepEqual(calls, ["pause_session", "restore_session", "restored-setup", "resume_session"]);
+    assert.equal(host.tick(), 2);
+  }, command => command === "resume_session" && refuseResume ? Promise.reject(new Error("恢复运行失败")) : undefined);
 });

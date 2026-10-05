@@ -13,6 +13,7 @@ import type { MarketSnap } from "../types/generated/MarketSnap.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
 import { companyReducer } from "./company-slice.ts";
+import { chartSettingsReducer } from "./chart-settings-slice.ts";
 import type { PlayerWorkingOrder } from "../host/player-working-orders.ts";
 import type { RuntimeDelta } from "../types/generated/RuntimeDelta.ts";
 import { applyRuntimeDelta, retainUnchangedEntries } from "../host/protocol/runtime-delta.ts";
@@ -238,6 +239,7 @@ export const store = configureStore({
     selectedStock: selectedStockReducer,
     autoOrders: autoOrdersSlice.reducer,
     company: companyReducer,
+    chartSettings: chartSettingsReducer,
   },
 });
 

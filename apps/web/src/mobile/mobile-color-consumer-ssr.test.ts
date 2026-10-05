@@ -15,6 +15,7 @@ let MobileStockDetail: typeof DetailComponent;
 let MarketGrid: typeof import("../components/MarketGrid.tsx").MarketGrid;
 let PositionsPanel: typeof import("../app/LocalRefreshViews.tsx").PositionsPanel;
 let MarketRuntimeProvider: typeof import("../app/MarketRuntimeProvider.tsx").MarketRuntimeProvider;
+let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
 
 before(async () => {
   vite = await createServer({
@@ -27,6 +28,7 @@ before(async () => {
   ({ MarketGrid } = await vite.ssrLoadModule("/src/components/MarketGrid.tsx") as typeof import("../components/MarketGrid.tsx"));
   ({ PositionsPanel } = await vite.ssrLoadModule("/src/app/LocalRefreshViews.tsx") as typeof import("../app/LocalRefreshViews.tsx"));
   ({ MarketRuntimeProvider } = await vite.ssrLoadModule("/src/app/MarketRuntimeProvider.tsx") as typeof import("../app/MarketRuntimeProvider.tsx"));
+  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx") as typeof import("../test-support/ChartSettingsFixture.tsx"));
 });
 
 after(async () => {
@@ -110,9 +112,10 @@ test("MobileStockDetail SSR 输出被对比度测试覆盖的真实行情消费�
     onNext() {},
     companyContent: null,
   };
-  const html = renderToStaticMarkup(createElement(MobileStockDetail, props));
+  const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MobileStockDetail, props)));
   const portfolioHtml = renderPortfolio();
   const marketGridHtml = renderToStaticMarkup(createElement(MarketGrid, {
+    browser: { favorites: [], ready: true, error: null, view: "all", query: "", sortRules: [], setSortRules() {}, setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} },
     markets: {
       "600101": market,
       "600102": { ...market, last_price: "990", best_bid: "989", best_ask: "991", bids: [["989", 100]], asks: [["991", 100]] },

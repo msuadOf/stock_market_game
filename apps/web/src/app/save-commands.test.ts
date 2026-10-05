@@ -11,9 +11,8 @@ import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 function deferred<Value>() { let resolve!: (value: Value) => void; const promise = new Promise<Value>((done) => { resolve = done; }); return { promise, resolve }; }
-function fixture() {
+function fixture(archive = commandDayEndArchiveFixture()) {
   const calls: string[] = [], notices: string[] = [];
-  const archive = commandDayEndArchiveFixture();
   const host = commandHostFixture({ load: async () => { calls.push("load"); }, refreshBaseline: async () => { calls.push("baseline"); },
     day: () => 3 });
   let setup: SessionSetup | null = null;
@@ -24,8 +23,9 @@ function fixture() {
     speedMetricsLoadInProgressRef: { current: false }, speedMetricsRequestGateRef: { current: new SpeedMetricsRequestGate() },
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
     activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation,
-    loadFromFile: async () => archive, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
+    loadFromFile: async beforeRead => { await beforeRead?.(); return archive; }, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
     getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
+    configureMarketTiming: () => { calls.push("timing"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
     setSessionSetup: (value) => { assert.equal(typeof value, "object"); setup = typeof value === "function" ? value(DEFAULT_SETUP) : value; calls.push("session-setup"); },
@@ -35,6 +35,87 @@ function fixture() {
   };
   return { calls, notices, archive, host, ports, commands: createSaveCommands(ports), setup: () => setup };
 }
+
+test("快速槽读档等待点击前的日终写入，首次档案不会误报无存档", { timeout: 10000 }, async () => {
+  for (const previous of [null, commandDayEndArchiveFixture()]) {
+    const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+    let saved = previous;
+    let reads = 0;
+    f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return saved; } });
+    const queue = f.ports.dayEndPersistenceRef.current;
+    queue.install("current");
+    const writing = queue.completed("current", Promise.resolve(f.archive), async (_slot, current) => {
+      entered.resolve();
+      await commit.promise;
+      assert.equal(current(), true, "读取快速槽前不能取消已经提交的当日日终写入");
+      saved = f.archive;
+    });
+    await entered.promise;
+    let loaded: StrictSaveEnvelope | null = null;
+    f.host.load = async slot => { loaded = slot as StrictSaveEnvelope; };
+    const loading = createSaveCommands(f.ports).load();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(reads, 0);
+    assert.equal(loaded, null);
+    assert.match(f.notices[0], /正在读取.*等待.*写入/);
+    commit.resolve();
+    await Promise.all([writing, loading]);
+    assert.equal(reads, 1);
+    assert.equal(loaded, f.archive);
+    assert.match(f.notices.at(-1)!, /已读档/);
+  }
+});
+
+test("读档等待的写入失败不会载入旧快速槽，错误明确展示且允许重试", { timeout: 10000 }, async () => {
+  const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+  let reads = 0;
+  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
+  const queue = f.ports.dayEndPersistenceRef.current;
+  queue.install("current");
+  const writing = queue.completed("current", Promise.resolve(f.archive), async () => {
+    entered.resolve();
+    await commit.promise;
+    throw new Error("磁盘写入失败");
+  });
+  const rejected = assert.rejects(writing, /磁盘写入失败/);
+  await entered.promise;
+  const commands = createSaveCommands(f.ports);
+  const loading = commands.load();
+  await Promise.resolve();
+  commit.resolve();
+  await Promise.all([rejected, loading]);
+  assert.equal(reads, 0);
+  assert.equal(f.calls.includes("load"), false);
+  assert.match(f.notices.at(-1)!, /读档失败.*磁盘写入失败/);
+  await commands.load();
+  assert.equal(reads, 1, "显式重试可以读取上次有效档案");
+  assert.match(f.notices.at(-1)!, /已读档/);
+});
+
+test("等待写档时拒绝重复读档，替换宿主后旧操作不读取或取消新局队列", { timeout: 10000 }, async () => {
+  const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+  let reads = 0;
+  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
+  const queue = f.ports.dayEndPersistenceRef.current;
+  queue.install("old");
+  const writing = queue.completed("old", Promise.resolve(f.archive), async () => { entered.resolve(); await commit.promise; });
+  await entered.promise;
+  const commands = createSaveCommands(f.ports);
+  const loading = commands.load();
+  await commands.load();
+  assert.match(f.notices.at(-1)!, /上一项读档.*尚未结束/);
+  f.ports.hostRef.current = commandHostFixture();
+  f.ports.sessionReplacementGateRef.current.invalidate();
+  queue.install("new");
+  const noticesBeforeReplacement = [...f.notices];
+  commit.resolve();
+  await Promise.all([writing, loading]);
+  assert.equal(reads, 0);
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.notices, noticesBeforeReplacement);
+  assert.equal(await queue.completed("new", Promise.resolve(f.archive), async () => {}), true);
+});
 
 test("保存仅提示日终政策；文件入口仅授权目标，不生成或写入日内存档", async () => {
   const f = fixture(); await f.commands.noticeSavePolicy(); await f.commands.selectFile();
@@ -60,7 +141,7 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
       assert.equal(f.ports.playerOrderRefreshGateRef.current.isCurrent(refresh), false); f.calls.push("load");
     };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "allocation-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "history", "orders-clear", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
   }
@@ -80,10 +161,12 @@ test("load 失败先同步权威基线；同步失败升级 fatal；旧宿主响
   assert.equal(f.calls.includes("baseline"), true); assert.match(f.notices.at(-1)!, /读档失败.*恢复失败/);
   f.host.refreshBaseline = async () => { throw new Error("同步失败"); }; await f.commands.loadFile();
   assert.ok(f.calls.some((value) => /fatal:文件读档后权威基线同步失败.*同步失败/.test(value)));
-  const g = fixture(), pending = deferred<StrictSaveEnvelope | null>();
-  g.ports.getBrowserSaveRepository = () => ({ load: () => pending.promise });
-  const loading = createSaveCommands(g.ports).load(); g.ports.hostRef.current = null; pending.resolve(g.archive); await loading;
-  assert.deepEqual(g.calls, []); assert.deepEqual(g.notices, []);
+  const g = fixture(), pending = deferred<StrictSaveEnvelope | null>(), entered = deferred<void>();
+  g.ports.getBrowserSaveRepository = () => ({ load: () => { entered.resolve(); return pending.promise; } });
+  const loading = createSaveCommands(g.ports).load();
+  await entered.promise;
+  g.ports.hostRef.current = null; pending.resolve(g.archive); await loading;
+  assert.deepEqual(g.calls, []); assert.equal(g.notices.length, 1); assert.match(g.notices[0], /^正在读取/);
 });
 test("恢复入口等待旧日终写入屏障，选择首次读档源并请求重建；不调用当前 host.load", async () => {
   const f = fixture(), committed = deferred<void>(), entered = deferred<void>();
@@ -95,6 +178,29 @@ test("恢复入口等待旧日终写入屏障，选择首次读档源并请求�
   assert.deepEqual(f.calls, ["orders-clear", "error:null", "ready:false", "session-setup"]);
   assert.deepEqual(f.setup(), f.archive.setup); assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => null), f.archive);
 });
+
+test("文件读档与错误恢复传入提交屏障，读取前不取消当前日终写入", { timeout: 10000 }, async () => {
+  for (const kind of ["loadFile", "recoverFromFile"] as const) {
+    const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+    const queue = f.ports.dayEndPersistenceRef.current; queue.install("current");
+    let reads = 0;
+    const writing = queue.completed("current", Promise.resolve(f.archive), async (_slot, current) => {
+      entered.resolve(); await commit.promise;
+      assert.equal(current(), true);
+    });
+    await entered.promise;
+    f.ports.loadFromFile = async beforeRead => {
+      assert.equal(typeof beforeRead, "function");
+      await beforeRead!(); reads++; return f.archive;
+    };
+    const loading = createSaveCommands(f.ports)[kind]();
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(reads, 0); assert.deepEqual(f.calls, []);
+    commit.resolve(); await Promise.all([writing, loading]);
+    assert.equal(reads, 1);
+    assert.equal(f.calls.some(call => call === (kind === "loadFile" ? "load" : "session-setup")), true);
+  }
+});
 test("新局日期错误不进入替换；合法新局只请求重建并保留价格笼子草稿", async () => {
   const f = fixture(); f.ports.startDateDraft = "不存在日期"; await createSaveCommands(f.ports).newGame();
   assert.match(f.calls[0], /date-error:/); assert.equal(f.setup(), null); assert.equal(f.ports.saveSelectionGenerationRef.current, 0);
@@ -103,6 +209,27 @@ test("新局日期错误不进入替换；合法新局只请求重建并保留�
   assert.equal(f.setup()?.start_date, "2031-02-03"); assert.equal(f.setup()?.config.price_cage_enabled, false);
   assert.deepEqual(f.setup()?.float_allocation, f.ports.floatAllocationDraft);
   let reads = 0; assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { reads++; return f.archive; }), null); assert.equal(reads, 0);
+});
+
+test("新局使旧日终写入失效，并等待写入退出后才请求重建", { timeout: 10000 }, async () => {
+  const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+  const queue = f.ports.dayEndPersistenceRef.current; queue.install("old");
+  let written = false;
+  const writing = queue.completed("old", Promise.resolve(f.archive), async (_slot, current) => {
+    entered.resolve(); await commit.promise;
+    if (!current()) return false;
+    written = true;
+  });
+  await entered.promise;
+  const replacing = f.commands.newGame();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(f.setup(), null);
+  assert.deepEqual(f.calls, ["date-error:null"]);
+  commit.resolve();
+  assert.equal(await writing, false); await replacing;
+  assert.equal(written, false);
+  assert.equal(f.setup()?.start_date, "2031-02-03");
+  assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => f.archive), null);
 });
 
 test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同一入口可以重新读档", async () => {
@@ -122,7 +249,7 @@ test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同�
     f.calls.length = 0;
     f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "history", "orders-clear", "active-setup", "date-draft", "cage-draft", "allocation-draft", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "history", "orders-clear", "orders-refresh"]);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/);
   }
 });
@@ -141,6 +268,7 @@ test("读档失败后的 baseline 同步期间更换宿主，晚到的同步错�
 
     const loading = f.commands[kind]();
     await entered.promise;
+    const noticesBeforeReplacement = [...f.notices];
     const replacementHost = commandHostFixture();
     f.ports.hostRef.current = replacementHost;
     f.ports.sessionReplacementGateRef.current.invalidate();
@@ -150,9 +278,25 @@ test("读档失败后的 baseline 同步期间更换宿主，晚到的同步错�
     await loading;
 
     assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "poll:2", "baseline-pending"]);
-    assert.deepEqual(f.notices, []);
+    assert.deepEqual(f.notices, noticesBeforeReplacement);
     assert.equal(f.ports.hostRef.current, replacementHost);
     assert.equal(f.ports.sessionReplacementGateRef.current.isCurrent(replacementGeneration!), true);
     assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
+  }
+});
+
+
+test("读档提交后恢复运行失败仍安装新时间配置，提交前失败保持旧配置", { timeout: 10000 }, async () => {
+  for (const kind of ["load", "loadFile"] as const) {
+    const f = fixture({ ...commandDayEndArchiveFixture(), setup: { ...DEFAULT_SETUP, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 } });
+    let installed: SessionSetup | null = null;
+    f.ports.configureMarketTiming = setup => { installed = setup; f.calls.push("timing"); };
+    f.host.load = async (_slot, onRestored) => { onRestored?.(); throw new Error("提交后的恢复运行失败"); };
+    await createSaveCommands(f.ports)[kind]();
+    assert.equal(installed, f.archive.setup);
+    assert.equal(f.calls.includes("active-setup"), true);
+    assert.equal(f.calls.filter(call => call === "timing").length, 1);
+    assert.equal(f.calls.includes("baseline"), true);
+    assert.match(f.notices.at(-1)!, /读档失败.*提交后的恢复运行失败/);
   }
 });

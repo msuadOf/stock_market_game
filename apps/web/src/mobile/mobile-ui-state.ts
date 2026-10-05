@@ -1,6 +1,9 @@
+import { SECURITY_LIST_VIEW_LABELS, type SecurityListView } from "../app/security-browser-model.ts";
+
 export type MobilePrimaryTab = "market" | "watchlist" | "positions" | "trades" | "user";
-export type MobileChartPeriod = "分时" | "日K" | "周K" | "月K" | "五日";
-export type MobileInfoTab = "看点" | "资讯" | "财务" | "盘口" | "资金" | "社区" | "简况";
+export type MobileChartPeriod = "分时" | "日K" | "周K" | "月K";
+export const MOBILE_INFO_TABS = ["财务", "盘口", "资金"] as const;
+export type MobileInfoTab = typeof MOBILE_INFO_TABS[number];
 
 export const MOBILE_SPEED_OPTIONS = [1, 1.5, 2, 3, 6, 30, 60, 180, 360, 720, Infinity] as const;
 
@@ -29,10 +32,10 @@ export const MOBILE_PRIMARY_NAV = [
   ["user", "我的"],
 ] as const satisfies readonly (readonly [MobilePrimaryTab, string])[];
 
-export function mobilePrimaryTitle(tab: MobilePrimaryTab): string {
+export function mobilePrimaryTitle(tab: MobilePrimaryTab, view: SecurityListView): string {
   switch (tab) {
-    case "market": return "模拟自选";
-    case "watchlist": return "自选";
+    case "market":
+    case "watchlist": return view === "all" ? "模拟行情" : SECURITY_LIST_VIEW_LABELS[view];
     case "trades": return "交易";
     case "positions": return "持仓";
     case "user": return "我的";
@@ -67,7 +70,7 @@ export type MobileUiAction =
 export function reduceMobileUi(state: MobileUiState, action: MobileUiAction): MobileUiState {
   switch (action.type) {
     case "switch-primary":
-      return { ...initialMobileUiState, primaryTab: action.tab };
+      return { ...initialMobileUiState, primaryTab: action.tab, chartPeriod: state.chartPeriod };
     case "open-detail":
       return { ...state, detailCode: action.code, tradeSheetOpen: false };
     case "select-period":

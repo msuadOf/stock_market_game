@@ -1,6 +1,6 @@
 import { moneyToChartNumber } from "../utils/money.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
-import { CALL_AUCTION_TICKS, TICKS_PER_TRADING_MINUTE, TOTAL_TICKS_PER_DAY } from "../config/defaults.ts";
+import { TradingTimeline, type TradingTiming } from "../components/trading-timeline.ts";
 import type { NormalizedTickFrame, ProtocolState } from "../host/protocol/index.ts";
 import { candlesFromSnapshot, toChartCandle } from "../mobile/kline-sync.ts";
 import { mergeMinutePoints, type AuctionPoint } from "../mobile/market-model.ts";
@@ -10,6 +10,7 @@ const EMPTY_HISTORY: readonly never[] = Object.freeze([]);
 
 /** 可重建的行情展示投影；协议、Redux 与存档的 authority 均留在原层。 */
 export class MarketChartProjection {
+  private timeline: TradingTimeline;
   private pricesByCode: Record<string, readonly PricePoint[]> = {};
   private auctionsByCode: Record<string, readonly AuctionPoint[]> = {};
   private continuousVolumes: Record<string, number> = {};
@@ -18,9 +19,16 @@ export class MarketChartProjection {
   private selectedCandlesByCode: Record<string, readonly KlinePoint[]> = {};
   private day: number | null = null;
 
+  constructor(timing?: TradingTiming) { this.timeline = new TradingTimeline(timing); }
+
+  configureTiming(timeline: TradingTimeline): void {
+    this.timeline = timeline;
+    this.rebuildHistory([]);
+  }
+
   upsertFrames(frames: readonly NormalizedTickFrame[]): void {
     for (const frame of frames) {
-      const day = Math.floor((frame.tick - 1) / TOTAL_TICKS_PER_DAY);
+      const day = this.timeline.eventDay(frame.tick);
       if (this.day !== day) {
         this.pricesByCode = {};
         this.auctionsByCode = {};
@@ -33,7 +41,7 @@ export class MarketChartProjection {
           if (point.kind === "Completion") this.continuousVolumes[code] = point.matched_volume;
           const history = this.auctionsByCode[code] ?? EMPTY_HISTORY;
           const value = point.indicative_price === null ? null : moneyToChartNumber(point.indicative_price) / 100;
-          const time = Math.floor(((point.tick - 1) % TOTAL_TICKS_PER_DAY) / (TICKS_PER_TRADING_MINUTE / 10));
+          const time = this.timeline.auctionSlot(point.tick, point.kind === "Completion");
           const previous = history.findLast((sample) => sample.time < time && sample.value !== null);
           const projected = Object.freeze({
             time,
@@ -47,7 +55,7 @@ export class MarketChartProjection {
       }
       for (const [code, point] of Object.entries(frame.continuousPoints)) {
         const history = this.pricesByCode[code] ?? EMPTY_HISTORY;
-        const time = Math.floor(((point.tick - 1) % TOTAL_TICKS_PER_DAY - CALL_AUCTION_TICKS) / TICKS_PER_TRADING_MINUTE);
+        const time = this.timeline.minuteSlot(point.tick);
         const previous = history.at(-1);
         const auctionPrice = this.auctionsByCode[code]?.findLast((sample) => sample.value !== null)?.value;
         const previousMinute = previous?.time === time ? history.at(-2) : previous;

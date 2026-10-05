@@ -2,6 +2,8 @@ import { diffMarketRows, type MarketGridRow, type MarketRowTransaction } from ".
 
 export interface MarketGridTransactionTarget {
   applyTransactionAsync(transaction: MarketRowTransaction): void;
+  flushAsyncTransactions(): void;
+  setGridOption(key: "rowData", rows: MarketGridRow[]): void;
 }
 
 export class MarketGridRowSynchronizer {
@@ -37,6 +39,14 @@ export class MarketGridRowSynchronizer {
 
   private submitLatest(): void {
     if (this.api === null) return;
+    if (this.submittedRows.length !== this.latestRows.length || this.submittedRows.some((row, index) => row.code !== this.latestRows[index].code)) {
+      // 成员变化时恢复完整顺序；先完成旧事务，避免旧报价在替换后回写。
+      // 稳定 row ID 保留已有行，AG Grid 继续使用用户主动列排序。
+      this.api.flushAsyncTransactions();
+      this.api.setGridOption("rowData", [...this.latestRows]);
+      this.submittedRows = this.latestRows;
+      return;
+    }
     const transaction = diffMarketRows(this.submittedRows, this.latestRows);
     if (transaction.add.length > 0 || transaction.update.length > 0 || transaction.remove.length > 0) {
       this.api.applyTransactionAsync(transaction);

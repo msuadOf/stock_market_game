@@ -6,7 +6,7 @@ import type { SessionSetup, Intent } from "../types/engine.ts";
 const options = { timeout: 10000, concurrency: true };
 const baseline = JSON.stringify({ Baseline: { timeline_generation: 1, snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 
-async function fixture() {
+async function fixture(loadResponse?: () => Promise<Response>) {
   const sockets: WebSocket[] = [];
   const sent: string[][] = [];
   const requests: { url: string; init: RequestInit | undefined }[] = [];
@@ -14,6 +14,7 @@ async function fixture() {
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     requests.push({ url, init });
+    if (url.endsWith("/api/load") && loadResponse !== undefined) return loadResponse();
     if (url.endsWith("/api/new")) return Response.json({ session_id: "s", session_token: "owner-token" });
     if (url.includes("host-capabilities")) return Response.json({ npcDecisionDiagnostics: false });
     if (url.includes("/api/speed?")) return Response.json({ requested: { mode: "fixed", multiplier: 1 }, running: false, actual_multiplier: 0, sample_duration_ms: 0, sample_ticks: 0 });
@@ -177,4 +178,60 @@ test("启动拒绝读档缓存 baseline 时返回失败且不请求 running true
   await assert.rejects(context.host.start(() => false), /应用层拒绝.*启动未确认/);
   assert.equal(context.requests.some(({ url }) => url.endsWith("/api/running")), false);
   await context.host.dispose();
+});
+
+test("远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付", options, async () => {
+  let acknowledge!: (response: Response) => void;
+  const response = new Promise<Response>(resolve => { acknowledge = resolve; });
+  const context = await fixture(() => response);
+  let restored = false;
+  const observations: boolean[] = [];
+  await context.host.start(update => { if (update.generation === "2") observations.push(restored); });
+  context.receive(0, baseline);
+  const loaded = context.host.load({}, () => { restored = true; });
+  const newBaseline = baseline.replace('"timeline_generation":1', '"timeline_generation":2');
+  context.receive(0, newBaseline);
+  acknowledge(new Response(null));
+  await new Promise(resolve => setImmediate(resolve));
+  context.receive(0, newBaseline);
+  try {
+    await loaded;
+    assert.deepEqual(observations, [true, true]);
+  } finally { await context.host.dispose(); }
+});
+
+test("远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置", options, async () => {
+  let rejectResponse!: (error: Error) => void;
+  const response = new Promise<Response>((_resolve, reject) => { rejectResponse = reject; });
+  const context = await fixture(() => response);
+  let restored = false;
+  const observations: boolean[] = [];
+  await context.host.start(update => { if (update.generation === "2") observations.push(restored); });
+  context.receive(0, baseline);
+  const rejected = assert.rejects(context.host.load({}, () => { restored = true; }), /响应丢失/);
+  rejectResponse(new Error("响应丢失"));
+  await rejected;
+  assert.equal(restored, false);
+  const refreshing = context.host.refreshBaseline();
+  context.receive(0, baseline.replace('"timeline_generation":1', '"timeline_generation":2'));
+  try {
+    await refreshing;
+    assert.deepEqual(observations, [true]);
+  } finally { await context.host.dispose(); }
+});
+
+test("远程读档失败后旧generation确认不改变配置并允许重试", options, async () => {
+  const context = await fixture(async () => { throw new Error("请求未受理"); });
+  let restores = 0;
+  await context.host.start(() => {});
+  context.receive(0, baseline);
+  await assert.rejects(context.host.load({}, () => { restores++; }), /请求未受理/);
+  await assert.rejects(context.host.load({}), /先刷新权威基线/);
+  const refreshing = context.host.refreshBaseline();
+  context.receive(0, baseline);
+  try {
+    await refreshing;
+    assert.equal(restores, 0);
+    await assert.rejects(context.host.load({}), /请求未受理/);
+  } finally { await context.host.dispose(); }
 });

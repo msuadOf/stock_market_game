@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createElement } from "react";
+let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { KlinePoint } from "../components/PriceChart.tsx";
@@ -19,6 +20,7 @@ before(async () => {
     server: { middlewareMode: true, ws: false },
     optimizeDeps: { noDiscovery: true },
   });
+  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
   ({ MobileStockDetail } = await vite.ssrLoadModule("/src/mobile/MobileStockDetail.tsx") as typeof import("./MobileStockDetail.tsx"));
   ({ MobileDetailLayer } = await vite.ssrLoadModule("/src/mobile/MobileDetailLayer.tsx") as typeof import("./MobileDetailLayer.tsx"));
 });
@@ -62,7 +64,7 @@ const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, mak
 type DetailProps = Parameters<typeof DetailComponent>[0];
 
 function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘口" | "资金", overrides: Partial<DetailProps> = {}): string {
-  return renderToStaticMarkup(createElement(MobileStockDetail, {
+  return renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MobileStockDetail, {
     code: "600101",
     name: "测试股份",
     market,
@@ -92,8 +94,26 @@ function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘
     onNext() {},
     companyContent: null,
     ...overrides,
-  }));
+  })));
 }
+
+test("手机信息菜单只提供已接入的财务、盘口和资金，不展示参考软件占位入口", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "资金");
+  const list = html.match(/class="msd-info-tabs"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(list);
+  assert.deepEqual([...list.matchAll(/role="tab"[\s\S]*?>(.*?)<\/button>/g)].map((item) => item[1]), ["财务", "盘口", "资金"]);
+  assert.doesNotMatch(html, /info-(看点|资讯|社区|简况)|msd-placeholder/);
+});
+
+test("手机分时09:30连接已存在的两个阶段端点，不额外生成粗点", { timeout: 10000 }, () => {
+  const overrides = { auctionPoints: [{ time: 99, value: 11, volume: 100, buy: true }], minutePoints: [{ time: 0, value: 12, volume: 200 }], elapsedMinutes: 1 };
+  const html = renderDetail("分时", "盘口", overrides);
+  assert.match(html, /class="msd-session-join" points="16,[\d.]+ 16,[\d.]+"/);
+  assert.equal((html.match(/class="msd-auction-dot"/g) || []).length, 1);
+  for (const missing of [{ ...overrides, auctionPoints: [] }, { ...overrides, minutePoints: [] }, { ...overrides, minutePoints: [{ time: 1, value: 12 }] }, { ...overrides, minutePoints: [{ time: 0, value: 11 }] }]) {
+    assert.doesNotMatch(renderDetail("分时", "盘口", missing), /class="msd-session-join"/);
+  }
+});
 
 test("移动详情将权威股数接入盘口、逐笔和两种图表的手数显示", () => {
   const intraday = renderDetail("分时", "盘口");
@@ -103,7 +123,7 @@ test("移动详情将权威股数接入盘口、逐笔和两种图表的手数�
   assert.match(intraday, /style="--depth:50%"/);
   assert.match(intraday, /当日成交量 <b>2\.5手<\/b>/);
   assert.match(intraday, /分时量（手）[\s\S]*?量:2\.5手/);
-  assert.match(intraday, /aria-label="逐笔成交"[\s\S]*?>1<\/span>/);
+  assert.match(intraday, /aria-label="600101 最近逐笔成交，数量单位为手"[\s\S]*?<tr data-trade-seq="1"><td data-time-missing="true">成交时间缺失<\/td><td class="flat">10\.00<\/td><td>1<\/td><\/tr>/);
 
   const daily = renderDetail("日K", "盘口");
   assert.match(daily, /成交量（手）[\s\S]*?量:2\.5手/);
@@ -172,12 +192,20 @@ test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变
   assert.match(html, /class="msd-minute-volume-mark fall"[^>]*width="0\.5"[^>]*fill="var\(--msd-fall\)"[^>]*stroke="none"/);
 });
 
-test("审计G47：实际SVG不跨null连接，有效单点仍绘制", () => {
-  const html = renderDetail("分时", "盘口", { auctionPoints: [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null })) });
-  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 3);
-  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 2);
-  const lines = [...html.matchAll(/class="msd-auction-line" points="([^"]+)"/g)];
-  assert.deepEqual(lines.map(line => line[1].split(" ").length), [1, 2, 1]);
+test("竞价实际SVG将null显示在0%参考轴，有效更新绘粗点且原始数据不变", () => {
+  const auctionPoints = [11, null, 12, 13, null, 14].map((value, time) => ({ time, value, volume: time * 100, buy: value !== null }));
+  const html = renderDetail("分时", "盘口", { auctionPoints, minutePoints: [] });
+  assert.equal((html.match(/class="msd-auction-line"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="msd-auction-dot"/g) ?? []).length, 4);
+  const line = html.match(/class="msd-auction-line" points="([^"]+)"/);
+  assert.ok(line);
+  const coordinates = line[1].split(" ");
+  assert.equal(coordinates.length, 6);
+  assert.equal(Number(coordinates[1].split(",")[1]), 50);
+  assert.equal(Number(coordinates[4].split(",")[1]), 50);
+  assert.equal(auctionPoints[1].value, null);
+  assert.equal(auctionPoints[4].value, null);
+  assert.equal((html.match(/class="msd-minute-volume-mark /g) ?? []).length, 6);
 });
 
 test("K 线 projection 经真实组件保持实体、影线和成交量共享固定槽位", () => {
@@ -193,4 +221,42 @@ test("K 线 projection 经真实组件保持实体、影线和成交量共享固
   assert.ok(Math.abs(Number(lower[3]) - 174) < 1e-10);
   assert.ok(Math.abs(Number(lower[4]) - 174) < 1e-10);
   assert.match(html, /class="msd-k-volume"[^>]*>[\s\S]*?y="9"/);
+});
+
+test("移动端连续竞价有成交也保持普通折线", () => {
+  const html = renderDetail("分时", "盘口", { auctionPoints: [], minutePoints: [{ time: 0, value: 10, volume: 100 }, { time: 1, value: 11, volume: 200 }] });
+  assert.ok(html.includes('class="msd-price-line"'));
+  assert.ok(!html.includes('class="msd-auction-dot"'));
+  assert.ok(!html.includes('本分钟有成交'));
+});
+
+test("零成交日的开高低显示未形成，不把昨收占位当作成交价格", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "资金", { activeDailyCandle: { ...candle, volume: 0, tradeStats: undefined } });
+  assert.match(html, /高 <b class="flat">--<\/b>/);
+  assert.match(html, /低 <b class="flat">--<\/b>/);
+  assert.match(html, /开 <b class="flat">--<\/b>/);
+  assert.match(html, /成交额<\/span><b>0元<\/b>/);
+});
+
+test("个股成交明细筛选证券并使用精确价格、小数手和权威成交时间", { timeout: 10000 }, () => {
+  const html = renderDetail("分时", "盘口", { trades: [
+    { ...trade, code: "002156", seq: 10, tick: 902, price: "9999" },
+    { ...trade, seq: 9, tick: 901, price: "1001", qty: 250 },
+  ] });
+  assert.doesNotMatch(html, /99\.99/);
+  assert.match(html, /data-trade-seq="9"/);
+  assert.match(html, /09:30:01/);
+  assert.match(html, /10\.01/);
+  assert.match(html, />2\.5<\/td>/);
+  assert.match(html, /最近成交缓存/);
+});
+
+test("明细先筛选股票再截取七笔，展开入口显示当前股票缓存数量", { timeout: 10000 }, () => {
+  const ownTrades = Array.from({ length: 9 }, (_, index) => ({ ...trade, seq: 20 - index, tick: 920 - index }));
+  const html = renderDetail("分时", "盘口", { trades: [{ ...trade, seq: 30, code: "002156" }, ...ownTrades] });
+  const rows = [...html.matchAll(/data-trade-seq="(\d+)"/g)].map(match => Number(match[1]));
+  assert.deepEqual(rows, [20, 19, 18, 17, 16, 15, 14]);
+  assert.match(html, /aria-label="显示缓存明细（9笔）"[^>]*aria-expanded="false"/);
+  assert.match(html, /aria-label="价格（元）"/);
+  assert.match(html, /aria-label="量（手）"/);
 });

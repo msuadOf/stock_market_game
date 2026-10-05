@@ -8,8 +8,8 @@ import {
   type MobilePrimaryTab,
 } from "../mobile/mobile-ui-state";
 
-/** Owns mobile navigation, layer focus management, and page-title synchronization. */
-export function useMobileUiController(orientation: "portrait" | "landscape") {
+/** 统一管理移动导航、层级焦点与当前证券的页面标题。 */
+export function useMobileUiController(orientation: "portrait" | "landscape", chartCode: string) {
   const [mobileUi, dispatchMobileUi] = useReducer(reduceMobileUi, initialMobileUiState);
   const mobileTab = mobileUi.primaryTab;
   const tradeSheetOpen = mobileUi.tradeSheetOpen;
@@ -24,10 +24,10 @@ export function useMobileUiController(orientation: "portrait" | "landscape") {
   }, [mobileDetail, orientation]);
 
   useEffect(() => {
-    document.title = mobileDetail
-      ? `${STOCK_NAMES[mobileUi.detailCode ?? ""] ?? mobileUi.detailCode} — 股票模拟游戏`
+    document.title = mobileDetail && orientation === "portrait"
+      ? `${STOCK_NAMES[chartCode] ?? chartCode} — 股票模拟游戏`
       : "股票模拟游戏";
-  }, [mobileDetail, mobileUi.detailCode]);
+  }, [mobileDetail, chartCode, orientation]);
 
   useEffect(() => {
     if (!tradeSheetOpen || orientation !== "portrait") return;

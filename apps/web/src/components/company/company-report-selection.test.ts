@@ -3,7 +3,7 @@ import { after, before, test } from "node:test";
 import * as React from "react";
 import { createServer, type ViteDevServer } from "vite";
 import { memoryHook } from "../../app/hook-test-runtime.ts";
-import { companyReducer, installCompanyBaseline, recordCompanyPage, recordCompanyQueryFailure, startCompanyQuery } from "../../store/company-slice.ts";
+import { companyReducer, installCompanyBaseline, recordCompanyPage, recordCompanyQueryFailure, startCompanyQuery, updateCompanyReading } from "../../store/company-slice.ts";
 import { publicReportGold } from "./public-report-fixture.ts";
 
 let vite: ViteDevServer;
@@ -29,6 +29,14 @@ function selectionView(initialState: ReturnType<typeof fixture>["ready"]) {
   const internals = (React as unknown as { __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: { ReactCurrentDispatcher: { current: Dispatcher } } }).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
   const effects: (() => void)[] = [];
   const previousDependencies: (readonly unknown[])[] = [];
+  let currentState = initialState;
+  let currentCompanyId = "C-600101";
+  function propsFor(companyId: string): Props {
+    const generation = currentState.generation;
+    return { companyId, companyState: currentState, initialCivilDate: "2030-04-02", onCompanyChange: () => undefined, onQuery: () => undefined, onAdvanceCivilDay: async () => undefined, onReadingChange: (changes) => {
+      currentState = companyReducer(currentState, updateCompanyReading({ generation, companyId, changes }));
+    } };
+  }
   // 仅模拟组件 state 与提交后的 effect；真实 DOM 和浏览器交互仍由 E2E 验证。
   const hook = memoryHook<Props, ReturnType<typeof views.CompanyPanel>>((props) => {
     let index = 0;
@@ -41,10 +49,10 @@ function selectionView(initialState: ReturnType<typeof fixture>["ready"]) {
       },
     };
     return views.CompanyPanel(props);
-  }, { companyId: "C-600101", companyState: initialState, initialCivilDate: "2030-04-02", onCompanyChange: () => undefined, onQuery: () => undefined, onAdvanceCivilDay: async () => undefined });
-  function render(companyState = initialState, companyId = "C-600101") {
-    const props: Props = { companyId, companyState, initialCivilDate: "2030-04-02", onCompanyChange: () => undefined, onQuery: () => undefined, onAdvanceCivilDay: async () => undefined };
-    const result = hook.render(props);
+  }, propsFor(currentCompanyId));
+  function render(companyId = currentCompanyId) {
+    currentCompanyId = companyId;
+    const result = hook.render(propsFor(companyId));
     for (const effect of effects.splice(0)) effect();
     return result;
   }
@@ -61,26 +69,31 @@ function selectionView(initialState: ReturnType<typeof fixture>["ready"]) {
   assert.ok(first);
   first.props.onSelect("8");
   assert.equal(disclosure(render())?.props.selectedReportId, "8");
-  return { render, selected: (state = initialState, companyId = "C-600101") => disclosure(render(state, companyId))?.props.selectedReportId };
+  return {
+    apply: (action: Parameters<typeof companyReducer>[1]) => { currentState = companyReducer(currentState, action); render(); },
+    selected: (companyId = currentCompanyId) => disclosure(render(companyId))?.props.selectedReportId,
+  };
 }
 
 test("公开报告刷新经过 loading 或 error 后保留仍可见的用户选择", () => {
-  const { query, ready } = fixture();
+  const { query, reports, ready } = fixture();
   for (const transition of [
     startCompanyQuery(query),
     recordCompanyQueryFailure({ ...query, message: "报告刷新失败" }),
   ]) {
     const view = selectionView(ready);
-    view.render(companyReducer(ready, transition));
-    assert.equal(view.selected(ready), "8");
+    view.apply(transition);
+    view.apply(recordCompanyPage({ ...query, reports, nextCursor: null }));
+    assert.equal(view.selected(), "8");
   }
 });
 
 test("公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告", () => {
-  const { query, ready } = fixture();
+  const { query, reports, ready } = fixture();
   const view = selectionView(ready);
-  view.render(companyReducer(ready, recordCompanyPage({ ...query, reports: [], nextCursor: null })));
-  assert.equal(view.selected(ready), "7");
+  view.apply(recordCompanyPage({ ...query, reports: [], nextCursor: null }));
+  view.apply(recordCompanyPage({ ...query, reports, nextCursor: null }));
+  assert.equal(view.selected(), "7");
 });
 
 test("切换公司时旧选择失效后使用新公司的可见报告", () => {
@@ -88,7 +101,8 @@ test("切换公司时旧选择失效后使用新公司的可见报告", () => {
   const view = selectionView(ready);
   const nextReport = { ...publicReportGold(), company_id: "C-002156", id: "9" };
   nextReport.financials.scope = { Standalone: { entity_id: "C-002156" } };
-  const next = companyReducer(ready, recordCompanyPage({ generation: 1, companyId: "C-002156", cursor: null, reports: [nextReport], nextCursor: null }));
-  assert.equal(view.selected(next, "C-002156"), "9");
-  assert.equal(view.selected(next, "C-002156"), "9");
+  view.apply(recordCompanyPage({ generation: 1, companyId: "C-002156", cursor: null, reports: [nextReport], nextCursor: null }));
+  assert.equal(view.selected("C-002156"), "9");
+  assert.equal(view.selected("C-002156"), "9");
+  assert.equal(view.selected("C-600101"), "8");
 });

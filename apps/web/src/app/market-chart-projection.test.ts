@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
 import { MarketChartProjection } from "./market-chart-projection.ts";
 import { baseState } from "../host/protocol-test-fixtures.ts";
 import type { NormalizedTickFrame } from "../host/protocol/index.ts";
@@ -32,6 +33,14 @@ function quoteWithDailyStats(
     } },
   };
 }
+
+test("短交易日按 SessionSetup 投影阶段、收盘与跨日量基线，不借用默认 tick 长度", { timeout: 10000 }, () => {
+  const owner = new MarketChartProjection({ ...DEFAULT_SETUP, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 });
+  owner.upsertFrames([quote(10, 100), quote(27, 180), quote(30, 200)]);
+  assert.deepEqual(owner.pricePointsFor("600000").map(point => [point.time, point.volume]), [[0, 100], [223, 80], [239, 20]]);
+  owner.upsertFrames([quote(40, 5)]);
+  assert.deepEqual(owner.pricePointsFor("600000"), [{ time: 0, value: 12, volume: 5, buy: true }]);
+});
 
 test("分时跨批次累计量基线、分钟替换与输入不变", { timeout: 10000 }, () => {
   const frames = [quote(901, 100), quote(961, 160), quote(962, 170)];

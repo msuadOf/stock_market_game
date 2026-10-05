@@ -64,6 +64,7 @@ pub struct SpeedMetrics {
 #[derive(Debug, Clone, Serialize)]
 pub struct RestoreResult {
     pub snapshot: Snapshot,
+    pub civil_date: CivilDate,
     pub timeline_id: String,
     pub generation: String,
 }
@@ -1062,6 +1063,7 @@ impl<R: Runtime> SessionActor<R> {
                     self.game.prepare_public_baseline();
                     Ok(RestoreResult {
                         snapshot: self.game.snapshot(),
+                        civil_date: self.game.civil_date(),
                         timeline_id: self.timeline_id.clone(),
                         generation: self.generation.to_string(),
                     })
@@ -1254,6 +1256,7 @@ impl<R: Runtime> SessionActor<R> {
         self.pacing.reset_after_restore(self.game.tick());
         Ok(RestoreResult {
             snapshot: self.game.snapshot(),
+            civil_date: self.game.civil_date(),
             timeline_id: self.timeline_id.clone(),
             generation: self.generation.to_string(),
         })

@@ -9,6 +9,7 @@ import { toChartCandle } from "../mobile/kline-sync.ts";
 import { mergeStockHistoryCandles, StockHistoryRequestGate } from "./market-history-runtime.ts";
 import { appendTrades, applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 import type { Snapshot } from "../types/engine.ts";
+import { TradingTimeline, DEFAULT_TRADING_TIMELINE, type TradingTiming } from "../components/trading-timeline.ts";
 
 interface Options {
   readonly autoOrderManagerRef: MutableRefObject<AutoOrderManager | null>;
@@ -19,12 +20,21 @@ interface Options {
 export function useMarketChartRuntime({ autoOrderManagerRef, setNotice, hostRef }: Options) {
   const [chartCode, setChartCode] = useState("600101");
   const [projection] = useState(() => new MarketChartProjection());
+  const [timeline, setTimeline] = useState(DEFAULT_TRADING_TIMELINE);
   const [chartData, setChartData] = useState<readonly PricePoint[]>([]);
   const [auctionChartData, setAuctionChartData] = useState<readonly AuctionPoint[]>([]);
   const [dailyChartData, setDailyChartData] = useState<readonly KlinePoint[]>([]);
   const chartCodeRef = useRef(chartCode);
   const historyRequestRef = useRef(new StockHistoryRequestGate());
   chartCodeRef.current = chartCode;
+
+  const configureMarketTiming = useCallback((timing: TradingTiming) => {
+    const next = new TradingTimeline(timing);
+    projection.configureTiming(next);
+    setTimeline(next);
+    setChartData([]);
+    setAuctionChartData([]);
+  }, [projection]);
 
   const getPriceHistory = useCallback(() => projection.history(), [projection]);
   const getActiveDailyCandles = useCallback(() => projection.activeCandles(), [projection]);
@@ -130,6 +140,8 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice, hostRef 
   }, [hostRef, projection, setNotice]);
 
   return {
+    timeline,
+    configureMarketTiming,
     chartCode,
     getPriceHistory,
     chartData,

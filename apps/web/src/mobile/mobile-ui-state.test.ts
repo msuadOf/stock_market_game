@@ -17,11 +17,11 @@ test("审计G45：详情返回保留行情或自选原列表身份", () => {
 test("详情页的图表周期与信息标签互不重置", () => {
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600460" });
   const daily = reduceMobileUi(detail, { type: "select-period", period: "日K" });
-  const news = reduceMobileUi(daily, { type: "select-info", tab: "资讯" });
+  const financial = reduceMobileUi(daily, { type: "select-info", tab: "财务" });
 
-  assert.equal(news.detailCode, "600460");
-  assert.equal(news.chartPeriod, "日K");
-  assert.equal(news.infoTab, "资讯");
+  assert.equal(financial.detailCode, "600460");
+  assert.equal(financial.chartPeriod, "日K");
+  assert.equal(financial.infoTab, "财务");
 });
 
 test("交易底页关闭后回到原详情状态，切主导航则清空临时层", () => {
@@ -51,15 +51,35 @@ test("返回键先关闭交易底页，再退出详情页", () => {
   assert.equal(afterSecondBack.detailCode, null);
 });
 
+test("共用周期选择不随主导航切换丢失", { timeout: 10000 }, () => {
+  const monthly = reduceMobileUi(initialMobileUiState, { type: "select-period", period: "月K" });
+  const user = reduceMobileUi(monthly, { type: "switch-primary", tab: "user" });
+  assert.equal(user.chartPeriod, "月K");
+  assert.equal(user.detailCode, null);
+});
+
 test("主导航页面拥有稳定标题，持仓和我的能从详情直接进入", () => {
-  assert.equal(mobilePrimaryTitle("market"), "模拟自选");
-  assert.equal(mobilePrimaryTitle("positions"), "持仓");
-  assert.equal(mobilePrimaryTitle("user"), "我的");
+  assert.equal(mobilePrimaryTitle("market", "all"), "模拟行情");
+  assert.equal(mobilePrimaryTitle("positions", "all"), "持仓");
+  assert.equal(mobilePrimaryTitle("user", "all"), "我的");
 
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600101" });
   const user = reduceMobileUi(detail, { type: "switch-primary", tab: "user" });
   assert.equal(user.primaryTab, "user");
   assert.equal(user.detailCode, null);
+});
+
+test("行情与自选入口的顶栏读取实际股票范围，其他主页面保留自身标题", { timeout: 10000 }, () => {
+  for (const tab of ["market", "watchlist"] as const) {
+    assert.equal(mobilePrimaryTitle(tab, "all"), "模拟行情");
+    assert.equal(mobilePrimaryTitle(tab, "watchlist"), "自选");
+    assert.equal(mobilePrimaryTitle(tab, "holdings"), "持仓");
+  }
+  for (const view of ["all", "watchlist", "holdings"] as const) {
+    assert.equal(mobilePrimaryTitle("positions", view), "持仓");
+    assert.equal(mobilePrimaryTitle("trades", view), "交易");
+    assert.equal(mobilePrimaryTitle("user", view), "我的");
+  }
 });
 
 test("移动端顶栏提供完整的常用倍速", () => {
