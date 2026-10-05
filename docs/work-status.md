@@ -169,6 +169,15 @@ Engine Clippy 修复限于个人观察输入分组、执行进度的大变体间
 [ADR-0024](decisions/0024-shrinking-investor-cash-pool.md) 核销，不再等待外部资金流方案。
 本次只同步文档，不新增补钱、返费或流动性保障，不改变公司经营和股东结算边界。
 
+2026-10-06 公司系统决策及实施状态：用户接受共同 `CompanySystem` 和 `SimpleFundamentals`，要求
+simple 与后续 `CompanySimulation` 提供相同财务查询、披露及股本行为功能。simple 按上一结算账面值
+和百分比规则生成营收/费用及派生财务结果；公司报表 cash 仅作展示，不追踪真实公司资金流向或作为
+分红预算。分红按可分配利润/方案等条件进入真实持股人账户，不因展示 cash 不足拒绝；配股/增发受本人
+真实 cash 限制，回购必须真实成交，账户/股份结算幂等。共同入口与 simple 的汇总财务、查询、披露、
+新局和严格存档已接通；股本行为的实际投资者结算仍待接线，不能把基础模块当作完整支持。完整 simulation
+经营 dispatch 已授权另开分支；见 [ADR-0035](decisions/0035-company-system-simple-fundamentals.md)
+和 [Q14 实施清单](../agents/company-system/implementation-checklist.md)。
+
 2026-10-01 全文盘点见 [功能代码缺口清单](implementation-gaps.md)：134 份文档按每批
 1–3 份、最多 20 个并发 subagent 全文阅读后，由总控搜索并核对原文/生产调用点。
 该清单区分缺实现/缺接线、待新决定、明确不做与验收债务，不把历史复选框当作当前事实。
@@ -390,7 +399,7 @@ K7 新 manifest 使用 `not_applicable_synthetic_history_only`，旧密封证据
 | 公网认证、数据库、TLS 与运维 | 身份/权限模型、数据库与迁移策略、部署环境、证书与运营配额决策；不能把固定挂单条数当业务规则 |
 | 桌面签名与更新 | 目标平台、签名证书、更新分发与密钥管理；不生成伪签名或擅自发布 |
 | 多存档槽、云同步 | 需要产品/领域 ADR，不是当前占位承诺 |
-| 股东资金流 | 当前明确不执行分红、增发、回购或清算，不作为待实现承诺；Q12 已按 ADR-0024 核销，未来扩展另需决定 |
+| 股东资金流 | Q12 的投资者现金池允许收缩，不补投资者外部现金；另依 ADR-0035 实施共同股本能力。simple 分红按可分配利润/方案等条件结算到真实持股人，不受展示 cash 余额限制；认购受本人现金约束，回购需真实成交。清算不在授权范围；CompanySimulation 经营现金/结算留后续分支 |
 
 完整质量待办见 [testing.md](testing.md)，部署阶段见 [roadmap.md](roadmap.md)，
 游戏简化与不支持范围见 [trading-rules.md](trading-rules.md)。

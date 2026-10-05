@@ -43,6 +43,27 @@ Native 使用独立适配层的共用 SQLite repository，Server 与 Desktop 复
 部署成品不要求另外安装数据库服务；不使用 WAL，也不设置可自动迁移旧数据库的版本链。
 浏览器适配器使用 IndexedDB 原生 API，在同一存档语义下完成异步事务与生命周期隔离。
 
+### Native 独占 writer 与平台锁
+
+同一物理 SQLite 文件只允许一个 Native writer owner；同 owner 的 Arc clone 共享连接与事务。
+独占锁必须绑定真实文件 inode／Windows 文件身份而不是单纯路径字符串，第二连接、第二进程和
+hard link／symbolic link 别名均须显式拒绝；最后一个 owner clone 析构才释放锁。
+先用不截断文件的 OpenOptions 打开并取锁，再运行 SQLite bootstrap，不对锁句柄写数据库内容。
+
+Unix 平台采用标准库 `File::try_lock` 的非阻塞 `flock`。Windows 不能直接锁整份 SQLite 文件：
+Rust 1.96.1 标准库 Windows 实现使用 `LockFileEx` 锁定从 offset 0 起的整文件范围，而 Windows
+byte-range lock 可阻止 SQLite 另一 HANDLE 的正常读写。Windows 适配层因此使用
+`windows-sys 0.61.2` 的 `LockFileEx`，在 offset `i64::MAX - 1` 锁定一个 byte，配合
+`LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`；不写该 byte、不增长文件、失败不 fallback。
+该 offset 远离 SQLite 标准 `PENDING_BYTE`／`RESERVED_BYTE`／`SHARED_FIRST` 锁区（1 GiB 附近），
+也高于 SQLite 最大数据库范围（约 281 TB，最多 `2^32 - 2` pages，每 page 最多 65536 bytes）。
+同文件不同 HANDLE 仍竞争这一个应用专用 byte，HANDLE 关闭时由系统释放锁。
+
+以上依据是本机固定 Rust 1.96.1 的标准库平台源码及 `libsqlite3-sys 0.35.0` bundled SQLite
+amalgamation；属于宿主文件并发控制，不改变任何 A 股制度或经济存档格式。
+`windows-sys` 仅用于 Native 适配层目标依赖，不进入 Engine。源码复核和 Linux 短测不能替代
+Windows／macOS 实际运行验收；未运行的平台必须明确记录为未验收。
+
 登录身份与市场档案仍按 ADR-0030 分离：用户名＋密码及匿名主体不等于持仓，重复登录
 不发放资金。账号凭据的持久化不能借机落盘日内市场状态；密码只保存安全哈希，不保存明文。
 当前市场控制授权也独立于日级经济账户存档，加载其他档不得撤销当前控制主体的权限或

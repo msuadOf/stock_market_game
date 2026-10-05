@@ -63,10 +63,10 @@
 
 | 模式 | engine 运行在 | 存储 | 联机 |
 |------|--------------|------|------|
-| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | IndexedDB 日终快速槽 / JSON 文件 | 无 |
-| **Stage 2 单机+后端** | 服务端（Rust engine actor） | 服务端会话 / JSON 存档 | 可选 |
+| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | IndexedDB 自动日终档 / 明确 JSON 文件操作 | 无 |
+| **Stage 2 单机+后端** | 服务端（Rust engine actor） | Server 文件系统 SQLite 自动日终档 | 可选 |
 | **Stage 2 权威后端** | 服务端 | 服务端数据库 | 是（权威状态在后端） |
-| **Stage 3 桌面** | Tauri 进程（同份 engine） | 本地文件 / 复用后端 | 可选 |
+| **Stage 3 桌面** | Tauri 进程（同份 engine） | appData SQLite 自动日终档 / 远程 Server SQLite | 可选 |
 
 > 关键设计：**存储与联机是"适配层"的可替换实现**。换后端 = 换一个适配器，不动核心。
 > 这要求核心层对存储/网络只依赖**接口**，不依赖具体实现（依赖倒置）。
@@ -93,10 +93,10 @@ Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime
   [ADR-0031](decisions/0031-money-decimal-cents-wire.md)，不接受数字金额或建立兼容路径。
 - 持久化通过**单一数据访问层**（[`principles.md`](principles.md) 原则 4）进行：
   - 接口定义在适配层（`loadState` / `saveState`）。
-  - 实现可替换：IndexedDB 日终快速槽（前端）/ 文件或 DB（后端 / 桌面）。
-  - 前端沿用同一 gzip 与严格 schema；新库没有快速槽时，只读已有 LocalStorage 同格式档，
-    不在启动时复制写盘。新日终候选以 IndexedDB 事务替换快速槽，失败保留上一有效档；
-    数据库坏档或打开失败仍显式报错，不回退旧槽掩盖问题。
+  - 当前介质：浏览器本地使用 IndexedDB；Server 和 Desktop 使用 `packages/native-store`
+    共用 bundled SQLite。远程客户端不重复写浏览器存档，不要求部署数据库服务，不使用 WAL。
+  - 日终档、独立身份／控制授权和启动槽选择元数据分别建模。显式成功读档后更新启动槽选择；
+    选择元数据写入失败不谎称内存市场已回滚。读取列表不重建市场，删除已选槽不暗选其他档。
 - 每次读取都做 **schema 校验**（[`error-handling.md`](error-handling.md) §5），脏数据 → 显式报错而非静默吞。
 
 ## 5. 目标目录结构（monorepo）
@@ -112,6 +112,7 @@ stock_market_game/
 │   └── desktop/             # Tauri 桌面壳 (复用 web + engine crate)
 ├── packages/
 │   ├── engine/              # 游戏核心逻辑 (Rust crate, 纯逻辑；不含宿主绑定)
+│   ├── native-store/        # Server / Desktop 共用 SQLite 日终档与独立身份元数据适配层
 │   └── engine-gpu/          # GPU 能力探测/实验管线；权威计算仍为 CPU
 ├── docs/                    # 你在这里的子树
 ├── .github/                 # CI / 协作模板
