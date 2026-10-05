@@ -31,7 +31,7 @@ pub(super) fn extract_interim_growth(
     }
     if !matches!(
         report.reports.kind,
-        ReportKind::Quarter | ReportKind::HalfYear
+        ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
     ) {
         return Err(ValuationUnavailable::UnsupportedReportKind {
             kind: report.reports.kind,
@@ -41,10 +41,20 @@ pub(super) fn extract_interim_growth(
         return Err(ValuationUnavailable::FutureDatedMaterial { report: report.id });
     }
     let income = &report.reports.income;
-    let revenue = income
-        .cumulative
-        .line_amount(IncomeLine::OperatingRevenue)
-        .unwrap_or(AccountingAmount::ZERO);
+    // PublicLibrary 已勾稽附注与累计列；省略合法零行不等于缺历史或允许缺失非零行。
+    let revenue = report
+        .reports
+        .notes
+        .items
+        .iter()
+        .filter(|item| item.target == NoteTarget::Income(IncomeLine::OperatingRevenue))
+        .try_fold(AccountingAmount::ZERO, |total, item| {
+            total
+                .sub(item.movement)
+                .map_err(|_| ValuationUnavailable::Overflow {
+                    step: "report-window operating revenue from public notes".into(),
+                })
+        })?;
     let prior = match &income.prior_year {
         Comparative::Available(columns) => PriorRevenue::Comparative(
             columns
