@@ -4,12 +4,13 @@ use super::{
 };
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// 买卖盘口与身份索引的共同 owner；价格时间键是唯一成交优先级。
 #[derive(Clone, Debug, Default)]
 pub(super) struct BookState {
-    bids: BTreeMap<(Reverse<Money>, u64), Order>,
-    asks: BTreeMap<(Money, u64), Order>,
+    bids: Arc<BTreeMap<(Reverse<Money>, u64), Order>>,
+    asks: Arc<BTreeMap<(Money, u64), Order>>,
     live_by_id: RestingOrderIndex,
     filled_orders: FilledOrders,
 }
@@ -60,7 +61,7 @@ impl BookState {
                         reason: "bid price-time key already exists".to_owned(),
                     });
                 }
-                self.bids.insert(key, order);
+                Arc::make_mut(&mut self.bids).insert(key, order);
                 RestingKey::Bid(key.0, key.1)
             }
             Side::Sell => {
@@ -70,7 +71,7 @@ impl BookState {
                         reason: "ask price-time key already exists".to_owned(),
                     });
                 }
-                self.asks.insert(key, order);
+                Arc::make_mut(&mut self.asks).insert(key, order);
                 RestingKey::Ask(key.0, key.1)
             }
         };
@@ -81,8 +82,8 @@ impl BookState {
     pub(super) fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
         if let Some(key) = self.live_by_id.remove(id) {
             let order = match key {
-                RestingKey::Bid(price, seq) => self.bids.remove(&(price, seq)),
-                RestingKey::Ask(price, seq) => self.asks.remove(&(price, seq)),
+                RestingKey::Bid(price, seq) => Arc::make_mut(&mut self.bids).remove(&(price, seq)),
+                RestingKey::Ask(price, seq) => Arc::make_mut(&mut self.asks).remove(&(price, seq)),
             };
             return order.ok_or_else(|| OrderError::ProjectionMismatch {
                 reason: format!("live order index points at an absent order: {id:?}"),
@@ -124,12 +125,12 @@ impl BookState {
         match side {
             Side::Buy => {
                 if maker.qty == fill_qty {
-                    self.asks.pop_first();
+                    Arc::make_mut(&mut self.asks).pop_first();
                     self.live_by_id.remove(maker.id);
                     self.filled_orders.insert(maker.id, maker.owner)?;
                 } else {
                     let key = (maker.price, maker.seq);
-                    if let Some(m) = self.asks.get_mut(&key) {
+                    if let Some(m) = Arc::make_mut(&mut self.asks).get_mut(&key) {
                         m.qty -= fill_qty;
                         m.filled_qty = m.filled_qty_after(fill_qty)?;
                         m.filled_value = maker_filled_value_after;
@@ -138,12 +139,12 @@ impl BookState {
             }
             Side::Sell => {
                 if maker.qty == fill_qty {
-                    self.bids.pop_first();
+                    Arc::make_mut(&mut self.bids).pop_first();
                     self.live_by_id.remove(maker.id);
                     self.filled_orders.insert(maker.id, maker.owner)?;
                 } else {
                     let key = (Reverse(maker.price), maker.seq);
-                    if let Some(m) = self.bids.get_mut(&key) {
+                    if let Some(m) = Arc::make_mut(&mut self.bids).get_mut(&key) {
                         m.qty -= fill_qty;
                         m.filled_qty = m.filled_qty_after(fill_qty)?;
                         m.filled_value = maker_filled_value_after;
@@ -163,8 +164,8 @@ impl BookState {
     }
 
     pub(super) fn clear_resting(&mut self) {
-        self.bids.clear();
-        self.asks.clear();
+        self.bids = Arc::default();
+        self.asks = Arc::default();
         self.live_by_id.clear();
     }
 
@@ -203,6 +204,66 @@ impl BookState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn book_clone_shares_rows_and_detaches_only_the_changed_side() {
+        let maker = Order {
+            id: OrderId(1),
+            owner: AccountId(1),
+            side: Side::Sell,
+            price: Money::from_cents(101),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            seq: 1,
+        };
+        let bid = Order {
+            id: OrderId(2),
+            owner: AccountId(2),
+            side: Side::Buy,
+            price: Money::from_cents(100),
+            seq: 2,
+            ..maker.clone()
+        };
+        let mut authority = BookState::default();
+        authority.insert_resting(maker.clone()).unwrap();
+        authority.insert_resting(bid.clone()).unwrap();
+        let mut candidate = authority.clone();
+        assert!(
+            std::ptr::eq(
+                authority.resting_order_by_id(maker.id).unwrap(),
+                candidate.resting_order_by_id(maker.id).unwrap()
+            ),
+            "clone 不应复制不可变 ask 行"
+        );
+        assert!(
+            std::ptr::eq(
+                authority.resting_order_by_id(bid.id).unwrap(),
+                candidate.resting_order_by_id(bid.id).unwrap()
+            ),
+            "clone 不应复制不可变 bid 行"
+        );
+        candidate.cancel(bid.id).unwrap();
+        assert!(
+            std::ptr::eq(
+                authority.resting_order_by_id(maker.id).unwrap(),
+                candidate.resting_order_by_id(maker.id).unwrap()
+            ),
+            "bid 撤单不应复制 ask 行"
+        );
+        assert_eq!(authority.resting_order_by_id(bid.id).unwrap(), &bid);
+        assert!(candidate.resting_order_by_id(bid.id).is_none());
+        candidate
+            .apply_maker_fill(Side::Buy, &maker, 50, Money::from_cents(5050))
+            .unwrap();
+        assert_eq!(authority.resting_order_by_id(maker.id).unwrap(), &maker);
+        let after = candidate.resting_order_by_id(maker.id).unwrap();
+        assert_eq!(
+            (after.qty, after.filled_qty, after.seq),
+            (50, 50, maker.seq)
+        );
+    }
 
     #[test]
     fn partial_maker_qty_write_precedes_progress_overflow_on_both_sides() {

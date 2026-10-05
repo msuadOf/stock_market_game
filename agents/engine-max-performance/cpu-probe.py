@@ -1,5 +1,6 @@
 """记录 benchmark 进程各线程 CPU 时间；不把服务器其他任务的占用算进引擎。"""
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +10,9 @@ import time
 topic = Path(__file__).resolve().parent
 label, threads, cpus = sys.argv[1:4]
 root = topic.parents[1]
-command = ["taskset", "-c", cpus, str(root / ".tmp/perf-target/release/examples/max_speed_probe"),
+binary = Path(sys.argv[4]) if len(sys.argv) > 4 else root / ".tmp/perf-target/release/examples/max_speed_probe"
+binary_sha256 = hashlib.sha256(binary.read_bytes()).hexdigest()
+command = ["taskset", "-c", cpus, str(binary),
            str(topic / "default-setup.json"), "3000", threads]
 clock_ticks = os.sysconf("SC_CLK_TCK")
 allocated_cpus = []
@@ -90,5 +93,5 @@ with (topic / f"{label}.json").open("w") as output, (topic / f"{label}.err").ope
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=1)
-        (topic / f"{label}-cpu.json").write_text(json.dumps({"command": command, "threads": int(threads),
+        (topic / f"{label}-cpu.json").write_text(json.dumps({"command": command, "binary_sha256": binary_sha256, "threads": int(threads),
                "cpu_affinity": cpus, "samples": samples}, indent=2))

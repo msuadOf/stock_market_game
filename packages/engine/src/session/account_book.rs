@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const PAGE_SHIFT: u32 = 5;
 const GROUP_SHIFT: u32 = 4;
+#[cfg(test)]
+thread_local! {
+    static STRATEGY_PRESENCE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 type PageGroup = BTreeMap<u64, Arc<AccountPage>>;
 
 #[derive(Clone, Default)]
@@ -24,6 +28,7 @@ pub(super) struct AccountBook {
 struct AccountPage {
     accounts: BTreeMap<AccountId, Account>,
     validated: OnceLock<Result<(), StrategyStateError>>,
+    missing_npc_strategy: OnceLock<bool>,
     resource_validation: Mutex<Option<ResourceValidationCache>>,
 }
 
@@ -38,6 +43,7 @@ impl Clone for AccountPage {
         Self {
             accounts: self.accounts.clone(),
             validated: OnceLock::new(),
+            missing_npc_strategy: OnceLock::new(),
             resource_validation: Mutex::new(None),
         }
     }
@@ -59,11 +65,26 @@ impl AccountPage {
 
     fn invalidate(&mut self) {
         self.validated = OnceLock::new();
+        self.missing_npc_strategy = OnceLock::new();
         self.resource_validation = Mutex::new(None);
     }
 }
 
 impl AccountBook {
+    pub(super) fn has_missing_npc_strategy(&self) -> bool {
+        self.groups
+            .values()
+            .flat_map(|group| group.values())
+            .any(|page| {
+                *page.missing_npc_strategy.get_or_init(|| {
+                    page.accounts.values().any(|account| {
+                        #[cfg(test)]
+                        STRATEGY_PRESENCE_SCANS.with(|count| count.set(count.get() + 1));
+                        account.kind() != crate::AccountKind::Player && account.strategy().is_none()
+                    })
+                })
+            })
+    }
     /// 在相同账户页、价格及预留事实下校验资源。
     pub(super) fn validate_resources(
         &self,
@@ -270,6 +291,43 @@ mod tests {
     use super::*;
     use crate::strategy::{MomentumStrategy, StrategyState};
     use crate::{AccountKind, Money, StockCode};
+
+    #[test]
+    fn strategy_presence_reuses_unchanged_pages_and_rechecks_mutation() {
+        let mut accounts = AccountBook::default();
+        for id in [0, 32] {
+            accounts.insert(
+                AccountId(id),
+                Account::new(AccountId(id), AccountKind::Player, Money::ZERO),
+            );
+        }
+        STRATEGY_PRESENCE_SCANS.with(|count| count.set(0));
+        assert!(!accounts.has_missing_npc_strategy());
+        let mut candidate = accounts.clone_for_shadow().unwrap();
+        assert!(!candidate.has_missing_npc_strategy());
+        assert_eq!(
+            STRATEGY_PRESENCE_SCANS.with(|count| count.get()),
+            2,
+            "共享页不应重复全账户检查"
+        );
+        candidate
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_kind(AccountKind::Retail);
+        assert!(candidate.has_missing_npc_strategy());
+        assert_eq!(STRATEGY_PRESENCE_SCANS.with(|count| count.get()), 3);
+        assert!(!accounts.has_missing_npc_strategy());
+        candidate
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_kind(AccountKind::Player);
+        assert!(!candidate.has_missing_npc_strategy());
+        assert_eq!(
+            STRATEGY_PRESENCE_SCANS.with(|count| count.get()),
+            4,
+            "恢复策略合法性后只重验变化页"
+        );
+    }
 
     #[test]
     fn resource_validation_reuses_immutable_pages_and_invalidates_every_input() {

@@ -57,9 +57,7 @@ impl GameSession {
                 return Err(self.poison_failed_step(fatal));
             }
         }
-        if self.state.accounts.values().any(|account| {
-            account.kind() != crate::AccountKind::Player && account.strategy().is_none()
-        }) {
+        if self.state.accounts.has_missing_npc_strategy() {
             let fatal = StepFatal::InvariantViolation {
                 description: "non-player account has no authoritative strategy".to_owned(),
                 location: "GameSession::step".to_owned(),

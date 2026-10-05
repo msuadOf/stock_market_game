@@ -3,22 +3,24 @@ import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
 const require = createRequire(new URL('../../apps/web/package.json', import.meta.url));
 const { chromium } = require('@playwright/test');
+const threads = process.argv[3] === undefined ? 16 : Number(process.argv[3]);
+if (!Number.isSafeInteger(threads) || threads < 1) throw new Error('threads 必须是正整数');
 const browser = await chromium.launch({ executablePath: '/home/baiyifan/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome', headless: true, args: ['--no-sandbox', '--disable-background-timer-throttling'] });
 const page = await browser.newPage({viewport:{width:1440,height:1000}});
 const errors = [];
 page.on('pageerror', error => errors.push(String(error)));
 page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-await page.addInitScript(() => Object.defineProperty(navigator, 'hardwareConcurrency', {get:()=>16}));
+await page.addInitScript(threads => Object.defineProperty(navigator, 'hardwareConcurrency', {get:()=>threads}), threads);
 try {
   await page.goto('http://127.0.0.1:5187');
   await page.waitForSelector('#startup-title');
   await page.locator('input[name="startup-mode"][value="local"]').check();
   await page.locator('button[type="submit"]').click();
   await page.waitForSelector('.app-root', {timeout:60000});
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async threads => {
     const { createWorkerHost } = await import('/src/host/worker-host.ts');
     const { DEFAULT_SETUP } = await import('/src/config/defaults.ts');
-    const host = await createWorkerHost(DEFAULT_SETUP, 42n, {threadCount:16});
+    const host = await createWorkerHost(DEFAULT_SETUP, 42n, {threadCount:threads});
     const errors = [];
     let committedTicks = 0;
     await host.setSpeed(Infinity);
@@ -37,8 +39,8 @@ try {
     const wall_ms = performance.now()-start;
     await host.stop();
     await host.dispose();
-    return {metrics,beforeTick,afterTick,wall_ms,speed_x:(afterTick-beforeTick)*1000/wall_ms,errors,isolated:crossOriginIsolated};
-  });
+    return {threads,metrics,beforeTick,afterTick,wall_ms,speed_x:(afterTick-beforeTick)*1000/wall_ms,errors,isolated:crossOriginIsolated};
+  }, threads);
   await writeFile(new URL(`./${process.argv[2] ?? 'baseline-browser'}.json`, import.meta.url), JSON.stringify({result,errors},null,2));
   console.log(JSON.stringify({result,errors}));
 } catch (error) {

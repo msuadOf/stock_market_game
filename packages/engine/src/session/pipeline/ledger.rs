@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[cfg(test)]
 thread_local! {
     pub(super) static EVIDENCE_VALIDATION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static LEDGER_CONSTRUCTION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +118,8 @@ impl EnvelopeLedger {
         next_receipt_index: u64,
         envelopes: impl IntoIterator<Item = Envelope>,
     ) -> Result<Self, StepFatal> {
+        #[cfg(test)]
+        LEDGER_CONSTRUCTION_COUNT.with(|count| count.set(count.get() + 1));
         let mut values = BTreeMap::new();
         let mut audits = BTreeMap::new();
         let mut conservation = BTreeMap::new();
@@ -422,21 +425,34 @@ impl EnvelopeLedger {
         &mut self,
         projected: impl IntoIterator<Item = Envelope>,
     ) -> Result<(), StepFatal> {
-        let candidate = Self::new(self.next_receipt_index, projected)?;
-        if candidate
-            .envelopes
-            .keys()
-            .any(|key| self.terminal_envelopes.contains_key(key))
+        let mut projected: Vec<_> = projected.into_iter().collect();
+        projected.sort_unstable_by(|left, right| left.key().cmp(right.key()));
+        if projected
+            .windows(2)
+            .any(|pair| pair[0].key() == pair[1].key())
+        {
+            return Err(ledger_validation::invariant("duplicate envelope"));
+        }
+        if projected
+            .iter()
+            .any(|envelope| self.terminal_envelopes.contains_key(envelope.key()))
         {
             return Err(ledger_validation::invariant(
                 "live projection overlaps terminal envelope evidence",
             ));
         }
         if self.envelopes.is_empty() {
+            let candidate = Self::new(self.next_receipt_index, projected)?;
             self.envelopes = candidate.envelopes;
             self.audits = candidate.audits;
             self.conservation = candidate.conservation;
-        } else if self.envelopes != candidate.envelopes {
+        } else if projected.len() != self.envelopes.len()
+            || self.envelopes.iter().zip(projected.iter()).any(
+                |((key, authoritative), projected)| {
+                    key != projected.key() || authoritative != projected
+                },
+            )
+        {
             return Err(ledger_validation::invariant(
                 "live envelope projection disagrees with ledger",
             ));
@@ -513,27 +529,50 @@ fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), Step
             "ledger evidence rows do not match envelope rows",
         ));
     }
-    for (key, envelope) in ledger
+    if expected_rows < 512 {
+        for (key, envelope) in ledger
+            .envelopes
+            .iter()
+            .chain(ledger.terminal_envelopes.iter())
+        {
+            validate_ledger_evidence_row(ledger, key, envelope)?;
+        }
+        return Ok(());
+    }
+    let rows: Vec<_> = ledger
         .envelopes
         .iter()
         .chain(ledger.terminal_envelopes.iter())
-    {
-        envelope.validate()?;
-        if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
-            return Err(ledger_validation::invariant(
-                "live and terminal envelope rows overlap",
-            ));
-        }
-        if ledger.audits.get(key).copied() != Some(envelope.audit()) {
-            return Err(ledger_validation::invariant(
-                "envelope audit row disagrees with envelope",
-            ));
-        }
-        if !ledger.conservation.contains_key(key) {
-            return Err(ledger_validation::invariant(
-                "envelope has no conservation row",
-            ));
-        }
+        .map(|(key, envelope)| (key, envelope))
+        .collect();
+    for row in ledger_conservation::map_rows(&rows, |(key, envelope)| {
+        validate_ledger_evidence_row(ledger, key, envelope)
+    }) {
+        row?;
+    }
+    Ok(())
+}
+
+fn validate_ledger_evidence_row(
+    ledger: &EnvelopeLedger,
+    key: &EnvelopeKey,
+    envelope: &Envelope,
+) -> Result<(), StepFatal> {
+    envelope.validate()?;
+    if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
+        return Err(ledger_validation::invariant(
+            "live and terminal envelope rows overlap",
+        ));
+    }
+    if ledger.audits.get(key).copied() != Some(envelope.audit()) {
+        return Err(ledger_validation::invariant(
+            "envelope audit row disagrees with envelope",
+        ));
+    }
+    if !ledger.conservation.contains_key(key) {
+        return Err(ledger_validation::invariant(
+            "envelope has no conservation row",
+        ));
     }
     Ok(())
 }

@@ -8,6 +8,139 @@ use super::{
 use crate::{GameConfig, Money};
 
 #[test]
+fn hydration_rejects_same_length_field_key_and_terminal_mismatches_atomically() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let field = existing(key(), Money::from_cents(101));
+    let changed_audit = Envelope::tick_start_existing(
+        key(),
+        Money::from_cents(100),
+        0,
+        EnvelopeAudit {
+            limit: Money::from_cents(2),
+            ..first.audit()
+        },
+    );
+    for projected in [
+        vec![field, second.clone()],
+        vec![changed_audit, second.clone()],
+        vec![first.clone(), extra()],
+    ] {
+        let mut candidate = authority.clone();
+        assert!(candidate.hydrate_or_validate(projected).is_err());
+        assert_eq!(candidate, authority);
+    }
+    let mut empty = EnvelopeLedger::new(7, []).unwrap();
+    let before = empty.clone();
+    assert!(empty
+        .hydrate_or_validate([first.clone(), first.clone()])
+        .is_err());
+    assert_eq!(empty, before);
+    for mut candidate in [empty, authority] {
+        candidate
+            .terminal_envelopes
+            .insert(first.key().clone(), first.clone());
+        let before = candidate.clone();
+        assert!(
+            matches!(candidate.hydrate_or_validate([first.clone(), second.clone()]),
+            Err(super::StepFatal::InvariantViolation { description, .. })
+                if description == "live projection overlaps terminal envelope evidence")
+        );
+        assert_eq!(candidate, before);
+    }
+}
+
+#[test]
+fn full_evidence_parallel_threshold_and_mixed_terminal_rows_preserve_first_error() {
+    for count in [511_u64, 512, 513] {
+        let values = (0..count).map(|index| {
+            Envelope::tick_start_existing(
+                EnvelopeKey {
+                    account: crate::AccountId(index),
+                    stock: crate::StockCode("600000".to_owned()),
+                    order: crate::OrderId(index),
+                    side: crate::Side::Buy,
+                },
+                Money::from_cents(1),
+                0,
+                audit(),
+            )
+        });
+        let mut ledger = EnvelopeLedger::new(7, values).unwrap();
+        // 用真实 release transition 建立 terminal 行，保留累积守恒证据。
+        let terminal_key = ledger.envelopes.keys().next_back().unwrap().clone();
+        let mut release =
+            expiry_release(terminal_key.clone(), ResVec::new(Money::from_cents(1), 0));
+        ledger.apply(std::slice::from_mut(&mut release)).unwrap();
+        ledger
+            .remove_terminal(std::slice::from_ref(&terminal_key))
+            .unwrap();
+        assert_eq!(ledger.terminal_count(), 1);
+        ledger.validate_complete_evidence().unwrap();
+        let early = ledger.iter().next().unwrap().0.clone();
+        let later = ledger.iter().nth(400).unwrap().0.clone();
+        ledger.audits.get_mut(&early).unwrap().limit = Money::from_cents(2);
+        // 后续行制造不同的 overlap 错误，证据 map 的数量仍与行数对应。
+        // 应先报告更早行的 audit mismatch，而不是按 worker 完成顺序选错。
+        ledger.terminal_envelopes.insert(
+            later.clone(),
+            Envelope::tick_start_existing(later, Money::ZERO, 0, audit()),
+        );
+        let extra_key = EnvelopeKey {
+            account: crate::AccountId(count + 1),
+            stock: crate::StockCode("600000".to_owned()),
+            order: crate::OrderId(count + 1),
+            side: crate::Side::Buy,
+        };
+        ledger.audits.insert(extra_key.clone(), audit());
+        ledger
+            .conservation
+            .insert(extra_key, super::ledger::ConservationState::EMPTY);
+        let before = ledger.clone();
+        for threads in [1, 4] {
+            let error = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| ledger.validate_complete_evidence())
+                .unwrap_err();
+            assert!(
+                matches!(error, super::StepFatal::InvariantViolation { description, .. }
+                if description == "envelope audit row disagrees with envelope")
+            );
+            assert_eq!(ledger, before);
+        }
+    }
+}
+
+#[test]
+fn nonempty_hydration_checks_projection_without_constructing_a_replacement_ledger() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let mut authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let before = authority.clone();
+    super::ledger::LEDGER_CONSTRUCTION_COUNT.with(|count| count.set(0));
+    authority
+        .hydrate_or_validate([second.clone(), first.clone()])
+        .unwrap();
+    assert_eq!(authority, before);
+    assert_eq!(
+        super::ledger::LEDGER_CONSTRUCTION_COUNT.with(|count| count.get()),
+        0,
+        "只验证已有 ledger，不应重新构造全部证据行"
+    );
+    assert!(authority
+        .hydrate_or_validate([first.clone(), second.clone(), first.clone()])
+        .is_err());
+    assert_eq!(authority, before);
+    assert!(authority.hydrate_or_validate([first]).is_err());
+    assert_eq!(authority, before);
+}
+
+#[test]
 fn unchanged_tick_rebase_keeps_live_rows_shared_without_discarding_audit() {
     let envelope = existing(key(), Money::from_cents(100));
     let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();

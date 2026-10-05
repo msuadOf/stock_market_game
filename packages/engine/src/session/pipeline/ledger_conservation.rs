@@ -1,8 +1,20 @@
 use super::{
+    Envelope, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt, JournalRank, ResVec, StepFatal,
     conservation::{ConservationBasis, ConservationRow},
     ledger::ConservationState,
-    Envelope, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt, JournalRank, ResVec, StepFatal,
 };
+use rayon::prelude::*;
+
+const PARALLEL_ROW_THRESHOLD: usize = 512;
+const ROW_CHUNK_SIZE: usize = 64;
+
+#[derive(Clone, Copy)]
+struct RowTotals {
+    basis: ConservationBasis,
+    sealed_spent: ResVec,
+    sealed_released: ResVec,
+    commit_live: ResVec,
+}
 
 pub(super) fn record(
     ledger: &mut EnvelopeLedger,
@@ -22,31 +34,100 @@ pub(super) fn record(
 }
 
 pub(super) fn validate(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
+    validate_with_observer(ledger, || {})
+}
+
+pub(super) fn validate_with_observer(
+    ledger: &EnvelopeLedger,
+    observe_row: impl Fn() + Sync,
+) -> Result<(), StepFatal> {
     let mut totals = [ResVec::ZERO; 5];
-    for (key, envelope) in ledger
+    if ledger.envelopes.len() < PARALLEL_ROW_THRESHOLD
+        && ledger.terminal_envelopes.len() < PARALLEL_ROW_THRESHOLD - ledger.envelopes.len()
+    {
+        for (key, envelope) in ledger
+            .envelopes
+            .iter()
+            .chain(ledger.terminal_envelopes.iter())
+        {
+            observe_row();
+            let state = ledger
+                .conservation
+                .get(key)
+                .ok_or_else(|| super::ledger_validation::invariant("missing conservation row"))?;
+            let row = row(envelope, state)?;
+            row.validate_with_preseal(state.expiry_released)?;
+            accumulate(&mut totals, row)?;
+        }
+        return validate_aggregate(totals);
+    }
+
+    let rows: Vec<_> = ledger
         .envelopes
         .iter()
         .chain(ledger.terminal_envelopes.iter())
-    {
+        .map(|(key, envelope)| (key, envelope))
+        .collect();
+    let validated = map_rows(&rows, |(key, envelope)| {
+        observe_row();
         let state = ledger
             .conservation
             .get(key)
             .ok_or_else(|| super::ledger_validation::invariant("missing conservation row"))?;
         let row = row(envelope, state)?;
         row.validate_with_preseal(state.expiry_released)?;
-        match row.basis {
-            ConservationBasis::TickStart(start, released, _) => {
-                totals[0] = totals[0].checked_add(start)?;
-                totals[1] = totals[1].checked_add(released)?;
-            }
-            ConservationBasis::CreatedAtValidation(created) => {
-                totals[0] = totals[0].checked_add(created)?
-            }
-        }
-        totals[2] = totals[2].checked_add(row.sealed_spent)?;
-        totals[3] = totals[3].checked_add(row.sealed_released)?;
-        totals[4] = totals[4].checked_add(row.commit_live)?;
+        Ok(RowTotals {
+            basis: row.basis,
+            sealed_spent: row.sealed_spent,
+            sealed_released: row.sealed_released,
+            commit_live: row.commit_live,
+        })
+    });
+
+    for row in validated {
+        let row = row?;
+        accumulate_totals(
+            &mut totals,
+            RowTotals {
+                basis: row.basis,
+                sealed_spent: row.sealed_spent,
+                sealed_released: row.sealed_released,
+                commit_live: row.commit_live,
+            },
+        )?;
     }
+    validate_aggregate(totals)
+}
+
+fn accumulate(totals: &mut [ResVec; 5], row: ConservationRow) -> Result<(), StepFatal> {
+    accumulate_totals(
+        totals,
+        RowTotals {
+            basis: row.basis,
+            sealed_spent: row.sealed_spent,
+            sealed_released: row.sealed_released,
+            commit_live: row.commit_live,
+        },
+    )
+}
+
+fn accumulate_totals(totals: &mut [ResVec; 5], row: RowTotals) -> Result<(), StepFatal> {
+    match row.basis {
+        ConservationBasis::TickStart(start, released, _) => {
+            totals[0] = totals[0].checked_add(start)?;
+            totals[1] = totals[1].checked_add(released)?;
+        }
+        ConservationBasis::CreatedAtValidation(created) => {
+            totals[0] = totals[0].checked_add(created)?
+        }
+    }
+    totals[2] = totals[2].checked_add(row.sealed_spent)?;
+    totals[3] = totals[3].checked_add(row.sealed_released)?;
+    totals[4] = totals[4].checked_add(row.commit_live)?;
+    Ok(())
+}
+
+fn validate_aggregate(totals: [ResVec; 5]) -> Result<(), StepFatal> {
     if totals[0]
         != totals[1]
             .checked_add(totals[2])?
@@ -58,6 +139,25 @@ pub(super) fn validate(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
         ));
     }
     Ok(())
+}
+
+pub(super) fn map_rows<T, R>(
+    rows: &[T],
+    validate_row: impl Fn(&T) -> Result<R, StepFatal> + Sync,
+) -> Vec<Result<R, StepFatal>>
+where
+    T: Sync,
+    R: Send,
+{
+    if rows.len() < PARALLEL_ROW_THRESHOLD {
+        return rows.iter().map(validate_row).collect();
+    }
+
+    let chunks = rows
+        .par_chunks(ROW_CHUNK_SIZE)
+        .map(|chunk| chunk.iter().map(&validate_row).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    chunks.into_iter().flatten().collect()
 }
 
 fn row(envelope: &Envelope, state: &ConservationState) -> Result<ConservationRow, StepFatal> {
