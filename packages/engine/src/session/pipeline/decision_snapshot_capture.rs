@@ -77,6 +77,12 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
     UrgencyPolicy(#[from] crate::plans::UrgencyError),
     #[error("DecisionShadow 散户个人分析失败: {0}")]
     RetailAnalysis(#[source] crate::session::StepFatal),
+    #[error("DecisionShadow 股票 {code:?} 的交易日历失败：{source}")]
+    StockCalendar {
+        code: StockCode,
+        #[source]
+        source: crate::SessionError,
+    },
 }
 
 /// 在 shadow 上推进到期 attention 与决策前散户观察，
@@ -98,7 +104,11 @@ fn capture_decision_snapshot_in_place(
     validate_market_view_inputs(shadow)?;
     let market = shadow.build_market_view();
 
-    let (due_npc_ids, popped) = shadow.pop_due_npc_ids(tick);
+    let (due_npc_ids, popped) = if shadow.civil_clock().phase() == crate::session::CivilPhase::ClosedDay {
+        (Vec::new(), Vec::new())
+    } else {
+        shadow.pop_due_npc_ids(tick)
+    };
     let attention_signal = super::super::attention::market_attention_signal(&market);
     if let Some(account) = popped
         .iter()
@@ -376,7 +386,13 @@ impl CapturedExperienceObservation {
         };
         let mut risk_positions = BTreeMap::new();
         for (code, price, qty, cost_price) in positions {
-            if !experience.feedback.stocks.contains_key(&code) {
+            let is_trading = session.stock_day_status(&code).map_err(|source| {
+                DecisionSnapshotCaptureError::StockCalendar {
+                    code: code.clone(),
+                    source,
+                }
+            })? == crate::calendar::DayStatus::Trading;
+            if is_trading && !experience.feedback.stocks.contains_key(&code) {
                 experience
                     .initialize_holding_dated(
                         &code,
@@ -389,9 +405,14 @@ impl CapturedExperienceObservation {
                         source,
                     })?;
             }
-            experience
-                .observe_position_dated(&code, price, moment)
-                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
+            if is_trading {
+                experience
+                    .observe_position_dated(&code, price, moment)
+                    .map_err(|source| DecisionSnapshotCaptureError::Experience {
+                        account,
+                        source,
+                    })?;
+            }
             if entry.kind() == AccountKind::Retail {
                 risk_positions.insert(
                     code.clone(),
@@ -593,6 +614,12 @@ fn build_behavior_market_checked(
     })?;
     let returns = price_paths
         .iter()
+        .filter(|(code, _)| {
+            session
+                .stock_day_status(code)
+                .expect("observed stock must have a valid calendar")
+                == crate::calendar::DayStatus::Trading
+        })
         .map(|(code, path)| (code.clone(), path.thirty_minute.return_ratio))
         .collect();
     let thirty_minute_market =

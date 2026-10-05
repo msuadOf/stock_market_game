@@ -1,3 +1,5 @@
+include!("../../test-support/simple_company.rs");
+
 use crate::{
     cli::{Config, MergeDimension, Mode},
     digest::digest_hex,
@@ -519,8 +521,7 @@ fn identities(rows: &[CollectorRow]) -> Vec<String> {
 
 fn frozen_setup() -> Result<SessionSetup, String> {
     let setup = SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "000812"]),
         stocks: vec![
             stock(
                 "600101",
@@ -563,6 +564,7 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len: 24,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02").map_err(|error| error.to_string())?,
         simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),

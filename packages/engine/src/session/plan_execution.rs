@@ -149,7 +149,9 @@ impl GameSession {
                 code: plan.code().clone(),
             });
         }
-        let session_day = u64::from(self.state.day);
+        let session_day = self
+            .stock_trading_day(plan.code())
+            .expect("validated plan stock trading day is valid");
         if request.trading_day != session_day {
             return Err(PlanExecutionError::TradingDayMismatch {
                 plan_id: plan.plan_id(),

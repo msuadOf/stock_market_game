@@ -15,6 +15,7 @@ fn public_json(reports: ReportSet, chart_version: u32) -> serde_json::Value {
     let published = PublishedReport {
         id: PublicationId::new(7),
         company: CompanyId("C-PUBLIC-GOLD".to_string()),
+        source: engine::information::PublicationSource::SimulationAccounting,
         policy: AccountingPolicyRef { chart_version },
         approved_at: CivilInstant::from_hms(fixture::d("2031-03-20"), 8, 0, 0).expect("approval"),
         published_at: CivilInstant::from_hms(fixture::d("2031-03-20"), 18, 0, 0)

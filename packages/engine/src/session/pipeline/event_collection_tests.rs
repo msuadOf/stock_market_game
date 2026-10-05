@@ -1,4 +1,16 @@
 use super::event_collection::{collect_events, OwnedEventFact};
+
+#[test]
+fn internal_execution_rejects_outer_public_projection_events() {
+    for event in [
+        crate::Event::PublicTrade { seq: 1, code: crate::StockCode("600888".into()), price: crate::Money::from_cents(1000), qty: 100 },
+        crate::Event::PrivateEventOmitted { seq: 2 },
+    ] {
+        let key = super::EventStableKey::for_event(&event, event.seq());
+        let error = collect_events(vec![OwnedEventFact { key, event }], 0).unwrap_err();
+        assert!(matches!(error, crate::session::StepFatal::InvariantViolation { description, .. } if description.contains("内部执行不能生产外壳公开匿名化事件")));
+    }
+}
 use super::*;
 use crate::{AccountId, Event, Money, OrderId, Side, StockCode, TradingPhase};
 

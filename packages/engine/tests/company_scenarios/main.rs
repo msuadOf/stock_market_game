@@ -3,12 +3,15 @@
 //! 本套件使用会话的公共测试接口；断言中的每笔成交均由 orderbook 产生，
 //! 不虚构 `Trade`、candle、fill 或流动性。
 
+include!("../../test-support/simple_company.rs");
+
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
     StockSpec,
 };
+use engine::WithinKindDistribution;
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 use serde::Deserialize;
 
@@ -60,8 +63,7 @@ fn stock(
 
 pub(crate) fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
@@ -97,6 +99,7 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 1,
         history_len: 10,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
@@ -109,6 +112,7 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
 pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     let mut focused = setup(start_date);
     focused.stocks.retain(|stock| stock.code.0 == "600101");
+    focused.company_system = simple_company_fixture!(engine; codes = focused.stocks.iter().map(|stock| stock.code.0.as_str()));
     focused.npcs = NpcSetup {
         retail_count: 0,
         inst_count: 2,
@@ -132,6 +136,7 @@ pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
 fn representative_setup(start_date: &str) -> SessionSetup {
     let mut representative = setup(start_date);
     representative.stocks.retain(|stock| stock.code.0 == "600101");
+    representative.company_system = simple_company_fixture!(engine; codes = representative.stocks.iter().map(|stock| stock.code.0.as_str()));
     representative
 }
 

@@ -2,24 +2,23 @@ use crate::company::{ActiveShock, CompanyId, ShockKind};
 use crate::session::{CompanyDisclosureKind, Event, GameSession};
 
 #[test]
-fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
+fn confirmed_low_level_announcement_consumer_exposes_only_public_index_after_reconnect() {
     let session = GameSession::new(setup(), 41).unwrap();
-    let mut save = session.save().unwrap();
+    let save = session.save().unwrap();
     let company = CompanyId("C-600101".into());
     let date = save.civil_clock.current_date;
-    save.company_operations
-        .apply_company_shock(
-            &company,
-            ActiveShock {
+    let (library, confirmed, fact_report) = crate::session::company_assembly::financial_fixture_tests::confirmed_announcement_fixture(
+            &session, ActiveShock {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1000,
                 starts_on: date,
                 expires_on: date.next().unwrap(),
             },
-        )
-        .unwrap();
+        );
     let mut session = GameSession::restore(&save).unwrap();
     let mut with_acquisition = GameSession::restore(&save).unwrap();
+    session.state.library = std::sync::Arc::new(library.clone());
+    with_acquisition.state.library = std::sync::Arc::new(library);
     let public_id = *with_acquisition
         .state
         .library
@@ -48,8 +47,8 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
         .get_mut(&owner)
         .unwrap()
         .information_mut() = private;
-    let update = session.end_civil_day_update(&[]).unwrap();
-    let acquired_update = with_acquisition.end_civil_day_update(&[]).unwrap();
+    let update = update_with_confirmed_announcement(&mut session, confirmed.clone(), fact_report.clone());
+    let acquired_update = update_with_confirmed_announcement(&mut with_acquisition, confirmed, fact_report);
     assert_eq!(
         update.refresh.public_publication_ids,
         acquired_update.refresh.public_publication_ids
@@ -93,11 +92,25 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     }
 }
 
+fn update_with_confirmed_announcement(
+    session: &mut GameSession,
+    confirmed: crate::session::DayEndDisclosures,
+    mut fact_report: crate::session::CivilDayEndReport,
+) -> super::CivilUpdate {
+    let mut update = session.end_civil_day_update(&[]).unwrap();
+    session.record_company_disclosure_events(&mut fact_report, confirmed).unwrap();
+    update.events.extend(fact_report.events);
+    update.facts = super::attach_facts(&update.events).unwrap();
+    update.seq_to = session.seq();
+    update.refresh.snapshot = session.snapshot();
+    update.validate().unwrap();
+    update
+}
+
 pub(super) fn setup() -> crate::SessionSetup {
     use crate::*;
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(crate; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".into()),
             exchange: StockExchange::Shanghai,
@@ -136,6 +149,7 @@ pub(super) fn setup() -> crate::SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: crate::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.into(),

@@ -58,8 +58,7 @@ impl WeekendScenario {
                     .prev()
                     .expect("as_of before history"),
             ),
-            friday,
-        )
+            friday, engine::information::ReportFrequency::Quarterly)
         .expect("prehistory assembles");
         let session =
             GameSession::new(civil_setup(friday), OPS_SEED).expect("compact session valid");
@@ -92,6 +91,7 @@ impl WeekendScenario {
         let out = self
             .dispatch
             .run_day_end(DayEndDisclosureCtx {
+                report_frequency: engine::information::ReportFrequency::Quarterly,
                 groups: &[],
                 report: &report,
                 ops: &self.seeded.ops,
@@ -323,6 +323,7 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
     let again = scenario
         .dispatch
         .run_day_end(DayEndDisclosureCtx {
+                report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &saturday_report,
             ops: &scenario.seeded.ops,

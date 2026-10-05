@@ -293,6 +293,9 @@ fn retail_position_decision_to_intents(
             code.0
         );
     };
+    if !stock.is_trading {
+        return Vec::new();
+    }
     if decision.executable_delta_shares > 0 {
         let desired = u32::try_from(decision.executable_delta_shares)
             .unwrap_or(u32::MAX)

@@ -1,6 +1,8 @@
 #![cfg(feature = "simulation-diagnostics")]
 
 #[cfg(test)]
+include!("../test-support/simple_company.rs");
+
 use engine::{AccountId, GameSession};
 use engine::{
     FloatAllocation, GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams,
@@ -9,8 +11,7 @@ use engine::{
 
 pub fn setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_owned()),
             exchange: StockExchange::Shanghai,
@@ -49,6 +50,7 @@ pub fn setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),

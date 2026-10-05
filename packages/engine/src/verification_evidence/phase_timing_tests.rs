@@ -15,8 +15,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
 
     crate::GameSession::new(
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["600888"]),
             stocks: vec![StockSpec {
                 code: StockCode("600888".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -55,6 +54,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),

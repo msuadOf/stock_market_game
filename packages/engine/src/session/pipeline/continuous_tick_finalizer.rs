@@ -122,6 +122,9 @@ pub(super) fn finalize_continuous_tick(
         while prices.len() > session.state.setup.history_len {
             prices.pop_front();
         }
+        let day_start = session.stock_trading_day(code)
+            .map_err(|error| finalize_error(invariant(&error.to_string())))?
+            * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
         let minutes = session
             .state
             .market_minute_closes
@@ -134,7 +137,6 @@ pub(super) fn finalize_continuous_tick(
                 "continuous minute history is ahead of tick",
             )));
         }
-        let day_start = u64::from(session.state.day) * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
         for minute in recorded..boundary.completed_minutes {
             minutes.push(MarketMinuteClose {
                 absolute_trading_minute: day_start + u64::from(minute),
@@ -354,15 +356,32 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
             .values()
             .flat_map(|plans| plans.values())
             .filter(|parent| parent.filled_qty() < parent.target_qty())
-            .filter_map(|parent| parent.linked_plan_id())
+            .filter_map(|parent| {
+                parent
+                    .linked_plan_id()
+                    .map(|plan_id| (plan_id, parent.code().clone()))
+            })
             .collect::<Vec<_>>();
-        self.candidate
-            .state
-            .pending_plan_events
-            .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-                plan_id,
-                trading_day: u64::from(self.candidate.state.day),
-            }));
+        for (plan_id, code) in ended {
+            if self
+                .candidate
+                .stock_day_status(&code)
+                .map_err(|error| invariant(&error.to_string()))?
+                == crate::calendar::DayStatus::Trading
+            {
+                let trading_day = self
+                    .candidate
+                    .stock_trading_day(&code)
+                    .map_err(|error| invariant(&error.to_string()))?;
+                self.candidate
+                    .state
+                    .pending_plan_events
+                    .push(PendingPlanEvent::DayEnded {
+                        plan_id,
+                        trading_day,
+                    });
+            }
+        }
 
         Ok(self.facts)
     }
@@ -376,10 +395,10 @@ fn checked_update_candle(
     qty: u64,
 ) -> Result<(), StepFatal> {
     if qty > 0 {
-        let gross = u64::try_from(price.cents())
+        let gross = u128::try_from(price.cents())
             .ok()
             .filter(|cents| *cents > 0)
-            .and_then(|cents| cents.checked_mul(qty))
+            .and_then(|cents| cents.checked_mul(u128::from(qty)))
             .ok_or_else(|| {
                 invariant("continuous candle trade turnover overflow or invalid price")
             })?;

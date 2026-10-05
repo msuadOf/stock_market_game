@@ -1,3 +1,5 @@
+include!("../test-support/simple_company.rs");
+
 use engine::{
     CivilDate, Event, FloatAllocation, GameConfig, GameSession, HotParams, InstParams, Money,
     NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec,
@@ -6,8 +8,7 @@ use engine::{
 
 fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>> {
     Ok(SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600001"]),
         stocks: vec![StockSpec {
             code: StockCode("600001".to_owned()),
             exchange: StockExchange::Shanghai,
@@ -46,6 +47,7 @@ fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>>
         closing_auction_ticks: 2,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),

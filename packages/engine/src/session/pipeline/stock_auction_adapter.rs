@@ -33,6 +33,13 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
 
     let mut inputs = Vec::with_capacity(session.state.markets.len());
     for (code, market) in &session.state.markets {
+        if matches!(session.stock_day_status(code).map_err(|error| invariant(&error.to_string()))?, crate::DayStatus::Closed(_)) {
+            if market.resting_order_count() != 0
+                || session.state.auction_orders.get(code).is_some_and(|orders| !orders.is_empty()) {
+                return Err(invariant("休市证券不能保留活动委托"));
+            }
+            continue;
+        }
         let spec = specs
             .get(code)
             .ok_or_else(|| invariant("market has no canonical stock specification"))?;

@@ -41,7 +41,12 @@ impl GameSession {
                     other => {
                         let failure = other.failure()?;
                         if !plans.plan(plan_id)?.is_terminal() {
-                            Self::observe_plan(plans, plan_id, u64::from(self.state.day));
+                            Self::observe_plan(
+                                plans,
+                                plan_id,
+                                self.stock_trading_day(observed.code())
+                                    .expect("observed plan stock trading day is valid"),
+                            );
                         }
                         failure
                     }
@@ -156,7 +161,9 @@ impl GameSession {
                 plan_id,
                 PlanEvent::ChildOrderCanceled {
                     order_id,
-                    trading_day: u64::from(self.state.day),
+                    trading_day: self
+                        .stock_trading_day(current.code())
+                        .expect("canceled plan stock trading day is valid"),
                 },
             )?;
         }

@@ -8,15 +8,13 @@ mod saved_runtime_tests;
 
 #[cfg(test)]
 #[test]
-fn direct_save_slot_rejects_missing_consolidated_parent_income() {
-    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let mut save = session.save().unwrap();
-    assert!(GameSession::restore(&save).is_ok());
-    save.closing_registry =
-        crate::accounting::closing::ClosingEngine::missing_parent_income_test_fixture();
+fn consolidated_closing_state_rejects_missing_parent_income() {
+    let (_, prehistory) = super::company_assembly::financial_fixture_tests::hash_financial_fixture();
+    assert!(prehistory.closing.validate_consolidated_parent_income().is_ok());
+    let invalid = crate::accounting::closing::ClosingEngine::missing_parent_income_test_fixture();
     assert!(
-        matches!(GameSession::restore(&save), Err(SessionError::InvalidSave(message))
-        if message.contains("closing registry") && message.contains("income.net_income_to_parent"))
+        matches!(invalid.validate_consolidated_parent_income(), Err(error @ crate::accounting::reports::ReportError::MissingParentIncome { .. })
+        if error.to_string().contains("income.net_income_to_parent"))
     );
 }
 
@@ -85,7 +83,7 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
     let save = session.save().unwrap();
     let account = *save.belief_books.keys().next().unwrap();
     let code = &save.setup.stocks[0].code;
-    let company = save.company_operations.companies.keys().next().unwrap();
+    let company = save.company_system.issuers().iter().next().unwrap().0;
     for confidence in [0, 10_000, 10_001, 65_535] {
         let mut encoded = serde_json::to_value(&save).unwrap();
         encoded["belief_books"][account.0.to_string()]["entries"][&code.0] = serde_json::json!({
@@ -183,12 +181,12 @@ fn save_validation_context_preserves_phase_boundaries_and_shared_domain_facts() 
                 .collect(),
             1,
             current_market_minute,
-        );
+        ).unwrap();
         assert_eq!(context.current_market_minute, market_minute);
         assert_eq!(context.stock_codes.len(), save.setup.stocks.len());
         assert_eq!(
             context.issuer_ids.len(),
-            save.company_operations.companies.len()
+            save.company_system.issuers().iter().count()
         );
         assert_eq!(context.config.lot_size, 100);
         validate_personal_states(&context).unwrap();
@@ -218,6 +216,13 @@ pub use saved_runtime::{
     SavedRuntimeState, SIMULATION_POLICY_ID,
 };
 
+fn saved_stock_days(save: &SaveSlot, code: &StockCode) -> Result<u64, SessionError> {
+    save.snapshot.daily_candles.get(code)
+        .and_then(|candles| candles.len().checked_sub(360))
+        .and_then(|count| u64::try_from(count).ok())
+        .ok_or_else(|| SessionError::InvalidSave(format!("证券 {} 缺少完整交易日历史", code.0)))
+}
+
 /// 单次 SaveSlot 校验的只读事实：派生值在原门禁位置完成后才组合。
 /// 不绑定恢复后的 GameSession，也不推断或修补可编辑存档事实。
 struct SaveValidationContext<'a> {
@@ -230,6 +235,7 @@ struct SaveValidationContext<'a> {
     issuer_ids: BTreeSet<&'a crate::company::CompanyId>,
     npc_count: u64,
     current_market_minute: u64,
+    civil_clock: CivilClock,
 }
 
 impl<'a> SaveValidationContext<'a> {
@@ -241,18 +247,64 @@ impl<'a> SaveValidationContext<'a> {
         stock_codes: BTreeSet<StockCode>,
         npc_count: u64,
         current_market_minute: u64,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, SessionError> {
+        let civil_clock = CivilClock::from_parts_for_exchanges(
+            save.setup.start_date, &save.civil_clock,
+            save.setup.stocks.iter().map(|stock| session_calendar_exchange(stock.exchange)),
+        )?;
+        Ok(Self {
             save,
             config: &save.setup.config,
             saved_day,
             day_tick,
             phase,
             stock_codes,
-            issuer_ids: save.company_operations.companies.keys().collect(),
+            issuer_ids: save.company_system.issuers().iter().map(|(id, _)| id).collect(),
             npc_count,
             current_market_minute,
+            civil_clock,
+        })
+    }
+
+    fn stock_day(&self, code: &StockCode) -> Result<u64, SessionError> {
+        saved_stock_days(self.save, code)
+    }
+
+    fn stock_is_open(&self, code: &StockCode) -> Result<bool, SessionError> {
+        let stock = self.save.setup.stocks.iter().find(|stock| &stock.code == code)
+            .ok_or_else(|| SessionError::InvalidSave(format!("日历事实指向未知证券 {}", code.0)))?;
+        Ok(self.civil_clock.exchange_day_status(session_calendar_exchange(stock.exchange), self.save.civil_clock.current_date)? == crate::DayStatus::Trading)
+    }
+
+    fn stock_minute(&self, code: &StockCode) -> Result<u64, SessionError> {
+        let day_start = self.stock_day(code)?.checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+            .ok_or_else(|| SessionError::InvalidSave("证券分钟偏移溢出".into()))?;
+        let completed = if self.stock_is_open(code)? {
+            let continuous_ticks = self.save.setup.ticks_per_day
+                - self.save.setup.auction_ticks
+                - self.save.setup.closing_auction_ticks;
+            let continuous_day_tick = self.day_tick
+                .saturating_sub(self.save.setup.auction_ticks)
+                .min(continuous_ticks);
+            u64::from(completed_market_minute_count(continuous_day_tick, continuous_ticks)
+                .map_err(|error| SessionError::InvalidSave(error.to_string()))?)
+        } else { 0 };
+        day_start.checked_add(completed).ok_or_else(|| SessionError::InvalidSave("证券分钟偏移溢出".into()))
+    }
+
+    fn completed_live_dates(&self, exchange: StockExchange) -> Result<Vec<crate::CivilDate>, SessionError> {
+        let includes_current = self.day_tick == 0
+            && self.saved_day == u64::from(self.civil_clock.completed_trading_sessions_expected()?)
+            && self.civil_clock.phase() == CivilPhase::IntradayTrading;
+        let mut dates = Vec::new();
+        let mut date = self.save.setup.start_date;
+        while date < self.save.civil_clock.current_date || (includes_current && date == self.save.civil_clock.current_date) {
+            if self.civil_clock.exchange_day_status(session_calendar_exchange(exchange), date)? == crate::DayStatus::Trading {
+                dates.push(date);
+            }
+            date = date.next().map_err(crate::calendar::CalendarError::from)?;
         }
+        Ok(dates)
     }
 
     /// 仅在 schema/setup 守卫通过后调用，维持交易日范围错误先于集合校验。
@@ -351,19 +403,25 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "price-history market set does not exactly match setup".to_string(),
         ));
     }
+    let stock_calendar = crate::calendar::TradingCalendar::from_policy(
+        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())?,
+    )?;
     for (code, prices) in &save.price_history {
+        let stock = save.setup.stocks.iter().find(|stock| &stock.code == code)
+            .expect("已核对证券代码集合");
+        let is_open = stock_calendar.is_trading_day(session_calendar_exchange(stock.exchange), save.civil_clock.current_date)?;
         let continuous_ticks_per_day = save
             .setup
             .ticks_per_day
             .saturating_sub(save.setup.auction_ticks)
             .saturating_sub(save.setup.closing_auction_ticks);
-        let completed_continuous_ticks = saved_day
+        let completed_continuous_ticks = saved_stock_days(save, code)?
             .checked_mul(continuous_ticks_per_day)
             .and_then(|ticks| {
                 ticks.checked_add(
-                    (save.snapshot.tick % save.setup.ticks_per_day)
+                    if is_open { (save.snapshot.tick % save.setup.ticks_per_day)
                         .saturating_sub(save.setup.auction_ticks)
-                        .min(continuous_ticks_per_day),
+                        .min(continuous_ticks_per_day) } else { 0 },
                 )
             })
             .ok_or_else(|| {
@@ -405,14 +463,14 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         crate::completed_market_minute_count(completed_continuous_ticks, continuous_ticks_per_day)
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
     );
-    let expected_minute_keys = (0..completed_minutes)
-        .map(|minute_in_day| {
-            day_start
-                .checked_add(minute_in_day)
-                .ok_or_else(|| SessionError::InvalidSave("market-minute key overflow".to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     for (code, minutes) in &save.market_minute_closes {
+        let stock = save.setup.stocks.iter().find(|stock| &stock.code == code)
+            .expect("已核对证券代码集合");
+        let is_open = stock_calendar.is_trading_day(session_calendar_exchange(stock.exchange), save.civil_clock.current_date)?;
+        let stock_start = saved_stock_days(save, code)?.checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+            .ok_or_else(|| SessionError::InvalidSave("证券分钟偏移溢出".into()))?;
+        let expected_minute_keys = (0..if is_open { completed_minutes } else { 0 })
+            .map(|minute| stock_start + minute).collect::<Vec<_>>();
         let actual_keys: Vec<u64> = minutes
             .iter()
             .map(|sample| sample.absolute_trading_minute)
@@ -448,24 +506,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
         + u64::from(save.setup.npcs.hot_count);
-    let expected_account_count = usize::try_from(npc_count)
-        .ok()
-        .and_then(|count| count.checked_add(1))
-        .ok_or_else(|| {
-            SessionError::InvalidSave("account count exceeds platform limits".to_string())
-        })?;
-    if save.snapshot.accounts.len() != expected_account_count
-        || save
-            .snapshot
-            .accounts
-            .keys()
-            .enumerate()
-            .any(|(index, id)| id.0 != index as u64)
-    {
-        return Err(SessionError::InvalidSave(
-            "snapshot account set does not exactly match setup".to_string(),
-        ));
-    }
+    save.market_memberships.validate(save)?;
 
     let expected_attention_accounts: BTreeSet<AccountId> = (1..=npc_count).map(AccountId).collect();
     let actual_attention_accounts: BTreeSet<AccountId> =
@@ -518,8 +559,15 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         expected_markets,
         npc_count,
         current_market_minute,
-    );
+    )?;
     let expected_markets = &context.stock_codes;
+    let expected_through_current = u64::from(context.civil_clock.completed_trading_sessions_expected()?);
+    let expected_before_current = expected_through_current - u64::from(context.civil_clock.phase() == CivilPhase::IntradayTrading);
+    if context.saved_day != expected_before_current
+        && !(context.day_tick == 0 && context.saved_day == expected_through_current)
+        || (context.day_tick > 0 && context.civil_clock.phase() == CivilPhase::ClosedDay) {
+        return Err(SessionError::InvalidSave("市场tick与共享自然日的实际开市会话数不一致".into()));
+    }
     let day_end_market_minute = day_start
         .checked_add(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .ok_or_else(|| {
@@ -594,7 +642,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 || plan.target_qty % context.config.lot_size != 0
                 || plan.child_qty % context.config.lot_size != 0
                 || plan.limit_price.cents() <= 0
-                || plan.expires_market_minute <= context.current_market_minute
+                || plan.expires_market_minute <= context.stock_minute(code)?
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} violates execution-plan invariants",
@@ -828,7 +876,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
 
     for (id, account) in &save.snapshot.accounts {
         for (code, position) in &account.positions {
-            if (!save.setup.t1_enabled || context.phase == TradingPhase::CallAuction)
+            if (!save.setup.t1_enabled || (context.phase == TradingPhase::CallAuction && context.stock_is_open(code)?))
                 && position.t1_locked != 0
             {
                 return Err(SessionError::InvalidSave(format!(
@@ -856,38 +904,19 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        let expected_candles = usize::try_from(context.saved_day)
-            .ok()
-            .and_then(|completed_days| completed_days.checked_add(360))
-            .ok_or_else(|| {
-                SessionError::InvalidSave("daily-candle history length overflows".to_string())
-            })?;
-        if candles.len() != expected_candles {
-            return Err(SessionError::InvalidSave(format!(
-                "daily candles for {} have length {}; expected {}",
-                code.0,
-                candles.len(),
-                expected_candles,
-            )));
-        }
         let stock = save
             .setup
             .stocks
             .iter()
             .find(|stock| &stock.code == code)
             .expect("daily candle market is validated against setup");
-        let exchange = session_calendar_exchange(stock.exchange);
         let mut expected_dates =
             candles::preset_candle_dates(&candle_calendar, save.setup.start_date, stock.exchange)?;
-        let mut live_date = save.setup.start_date;
-        if !candle_calendar.is_trading_day(exchange, live_date)? {
-            live_date = candle_calendar.next_trading_day(exchange, live_date)?;
-        }
-        for completed in 0..context.saved_day {
-            if completed > 0 {
-                live_date = candle_calendar.next_trading_day(exchange, live_date)?;
-            }
-            expected_dates.push(live_date);
+        expected_dates.extend(context.completed_live_dates(stock.exchange)?);
+        if candles.len() != expected_dates.len() {
+            return Err(SessionError::InvalidSave(format!(
+                "daily candles for {} have length {}; expected {}", code.0, candles.len(), expected_dates.len(),
+            )));
         }
         let mut previous_time = None;
         for (index, candle) in candles.iter().enumerate() {
@@ -912,7 +941,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     if save
         .pending_player
         .iter()
-        .any(|received| received.owner != AccountId(0))
+        .any(|received| !save.market_memberships.members.values().any(|member| member.account_id == received.owner))
     {
         return Err(SessionError::InvalidSave(
             "pending player intent must belong to the player account".to_string(),
@@ -1018,7 +1047,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         if context.day_tick == 0 || context.day_tick < auction_entry_ticks {
             active_candle_markets.is_empty()
         } else {
-            active_candle_markets == *expected_markets
+            let open = expected_markets.iter().filter_map(|code| match context.stock_is_open(code) {
+                Ok(true) => Some(Ok(code.clone())), Ok(false) => None, Err(error) => Some(Err(error)),
+            }).collect::<Result<BTreeSet<_>, _>>()?;
+            active_candle_markets == open
         };
     if !active_candle_set_is_valid {
         return Err(SessionError::InvalidSave(
@@ -1054,7 +1086,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     }
 
     validate_company_domain(save)?;
-    validate_disclosure_cursors(save)?;
+    validate_disclosure_cursors(&context)?;
     validate_personal_states(&context)?;
     validate_plan_contract(&context)?;
     Ok(())
@@ -1192,178 +1224,79 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
 }
 
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
-    save.closing_registry
-        .validate_consolidated_parent_income()
-        .map_err(|error| {
-            SessionError::InvalidSave(format!(
-                "saved closing registry is missing consolidated parent income: {error}"
-            ))
-        })?;
-    for date in save.company_operations.payment_failures.keys() {
-        if *date < save.civil_clock.policy.init_only_min_start
-            || *date > save.civil_clock.policy.runtime_max_end
-        {
-            return Err(SessionError::InvalidSave(format!(
-                "payment failure date {date} is outside the calendar policy"
-            )));
+    save.company_system.validate_restored().map_err(|error| SessionError::InvalidSave(format!("公司系统状态非法：{error}")))?;
+    if save.company_system.config() != save.setup.company_system {
+        return Err(SessionError::InvalidSave("公司系统配置与新局选定配置不一致".into()));
+    }
+    let specs = super::company_assembly::issuer_specs(&save.setup)
+        .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
+    let issuers = crate::company::identity::IssuerRegistry::new(specs)
+        .map_err(|error| SessionError::InvalidSave(format!("发行人身份非法：{error}")))?;
+    if save.company_system.issuers() != &issuers {
+        return Err(SessionError::InvalidSave("公司系统发行人身份与股票配置不一致".into()));
+    }
+    save.company_system.issuers().validate_issuer_mapping(&save.setup.stocks.iter().map(|stock| (stock.code.clone(), stock.total_shares)).collect::<Vec<_>>())
+        .map_err(|error| SessionError::InvalidSave(format!("发行人映射非法：{error}")))?;
+    let expected = save.civil_clock.current_date.prev().map_err(|error| SessionError::InvalidSave(error.to_string()))?;
+    if save.company_system.advanced_through() != expected {
+        return Err(SessionError::InvalidSave("公司系统推进日期与自然日时钟不一致".into()));
+    }
+    super::company_corrections::validate_completed(&save.report_correction_operations, &save.company_system, &save.public_library, save.civil_clock.current_date)?;
+    let library = save.public_library.save();
+    for report in &library.reports {
+        if report.source != crate::information::PublicationSource::SimpleGenerated {
+            return Err(SessionError::InvalidSave("公开报告来源与当前 Simple 公司系统不一致".into()));
+        }
+        if save.company_system.issuers().get(&report.company).is_none() {
+            return Err(SessionError::InvalidSave("公开报告引用未知发行人".into()));
         }
     }
-    save.company_operations
-        .validate_payment_history()
-        .map_err(|error| {
-            SessionError::InvalidSave(format!("saved payment history is inconsistent: {error}"))
-        })?;
-    if save.groups != save.setup.groups {
-        return Err(SessionError::InvalidSave(
-            "saved groups differ from setup".to_string(),
-        ));
-    }
-    super::company_groups::validate_groups(&save.groups, &save.company_operations).map_err(
-        |error| SessionError::InvalidSave(format!("saved company groups invalid: {error}")),
-    )?;
-    // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
-    let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
-    for (id, company) in &save.company_operations.companies {
-        if company
-            .economy()
-            .active()
-            .iter()
-            .any(|shock| !shock.kind.applies_to(company.spec().kind))
-        {
-            return Err(SessionError::InvalidSave(format!(
-                "saved company {id:?} has an industry-inapplicable active shock"
-            )));
-        }
-        if let Some(real_estate) = company.books().as_real_estate() {
-            for (contract, loan) in real_estate.loans() {
-                if loan.maturity_date() < save.civil_clock.policy.init_only_min_start
-                    || loan.maturity_date() > save.civil_clock.policy.runtime_max_end
-                {
-                    return Err(SessionError::InvalidSave(format!(
-                        "saved company {id:?} project loan {contract:?} maturity is outside the calendar policy"
-                    )));
-                }
-            }
-        }
-        if let Some(insurance) = company.books().as_insurance() {
-            insurance.validate_restore().map_err(|error| {
-                SessionError::InvalidSave(format!(
-                    "saved company {id:?} has an invalid Insurance state: {error}"
-                ))
-            })?;
-        }
-        if let Some(industrial) = company.books().as_industrial() {
-            industrial
-                .validate_trade_counterparty_events()
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "saved company {id:?} has invalid Industrial trade counterparties: {error}"
-                    ))
-                })?;
-            industrial
-                .validate_inventory_source_events()
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "saved company {id:?} has invalid Industrial inventory sources: {error}"
-                    ))
-                })?;
-            industrial.validate_credit_state().map_err(|error| {
-                SessionError::InvalidSave(format!(
-                    "saved company {id:?} has an invalid Industrial credit state: {error}"
-                ))
-            })?;
-        }
-        if let Some(bank) = company.books().as_bank() {
-            bank.ecl_policy().validate().map_err(|error| {
-                SessionError::InvalidSave(format!(
-                    "saved company {id:?} has an invalid Bank ECL policy: {error}"
-                ))
-            })?;
-        }
-        let Some(listed) = company.spec().listed_stock.as_ref() else {
-            continue;
-        };
-        let Some(stock) = save.setup.stocks.iter().find(|s| &s.code == listed) else {
-            return Err(SessionError::InvalidSave(format!(
-                "saved company {id:?} maps to unknown stock {listed:?}"
-            )));
-        };
-        if company.spec().issued_shares != stock.total_shares || !mapped.insert(listed) {
-            return Err(SessionError::InvalidSave(format!(
-                "saved company {id:?} share count or mapping conflicts with setup stock {listed:?}"
-            )));
+    for announcement in &library.announcements {
+        if save.company_system.issuers().get(&announcement.company).is_none() {
+            return Err(SessionError::InvalidSave("公开公告引用未知发行人".into()));
         }
     }
-    if mapped.len() != save.setup.stocks.len() {
-        return Err(SessionError::InvalidSave(
-            "saved company set does not exactly cover the setup stocks".to_string(),
-        ));
-    }
-    // 经营推进时点与时钟一致：存档时点 next_expected 恒等于当前自然日。
-    if save.company_operations.next_expected_date() != save.civil_clock.current_date {
-        return Err(SessionError::InvalidSave(format!(
-            "company operations expect {} but the civil clock is at {}",
-            save.company_operations.next_expected_date(),
-            save.civil_clock.current_date
-        )));
-    }
-    // 镜像集合与调度待办精确相等（sync 收编 + prune 收缩的生产不变量）。
-    if !save.ops_wiring.mirror_is_exact(&save.company_operations) {
-        return Err(SessionError::InvalidSave(
-            "scheduler mirror does not exactly match the pending due set".to_string(),
-        ));
-    }
-    // 时钟到期队列按 (日期,种类) 多重集包含调度待办：经营注册的每条 due 都
-    // 能在时钟队列中配到一条不重复的到期项（丢失/错日 = 派发失步的篡改档）。
-    // 两边 id 是不同空间（调度器 u64 自增 vs 时钟注册序 u32），无法逐 id 连接；
-    // 时钟是通用注册表（register_due 面向第三方，测试自注册 dues 合法共存），
-    // 因此只做包含校验，不要求全量相等。重复注册防线是上面的镜像精确校验。
-    let mut clock_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> = BTreeMap::new();
-    for due in &save.civil_clock.pending_due {
-        *clock_counts.entry((due.due_date, due.kind)).or_default() += 1_usize;
-    }
-    for due in save.company_operations.scheduler().pending() {
-        if due.due_date < save.civil_clock.current_date {
-            return Err(SessionError::InvalidSave(format!(
-                "scheduler pending {due:?} precedes the current civil date"
-            )));
-        }
-        let kind = super::company_operations::due_kind_of(&due.action);
-        let remaining = clock_counts
-            .get_mut(&(due.due_date, kind))
-            .filter(|count| **count > 0);
-        match remaining {
-            Some(count) => *count -= 1,
-            None => {
-                return Err(SessionError::InvalidSave(format!(
-                    "civil-clock due queue is missing the operations due {:?} on {}",
-                    due.id, due.due_date
-                )));
-            }
-        }
-    }
-    // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
-    crate::information::PublicLibrary::from_parts(save.public_library.save()).map_err(|error| {
-        SessionError::InvalidSave(format!("saved public library is inconsistent: {error}"))
-    })?;
+    crate::information::PublicLibrary::from_parts(library)
+        .map_err(|error| SessionError::InvalidSave(format!("公开材料非法：{error}")))?;
     Ok(())
 }
 
 /// 披露派发游标自洽：恰好一次语义在存档时点的投影。
-fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
+fn validate_disclosure_cursors(context: &SaveValidationContext) -> Result<(), SessionError> {
+    let save = context.save;
     let current = save.civil_clock.current_date;
+    let monthly = matches!(save.setup.report_frequency, crate::information::ReportFrequency::Monthly { .. });
+    let closing = context.day_tick == 0
+        && context.civil_clock.phase() == CivilPhase::IntradayTrading
+        && context.saved_day == u64::from(context.civil_clock.completed_trading_sessions_expected()?);
+    let has_intraday_dispatch = monthly && (context.day_tick > 0 || closing);
+    let intraday_instant = if closing {
+        CivilInstant::new(current, 15 * 3600).map_err(|error| SessionError::InvalidSave(error.to_string()))?
+    } else {
+        super::observation_clock::observation_instant_at(current, context.day_tick, &save.setup)
+    };
     match (
         save.civil_clock.settled_through,
         save.disclosures.announced_through(),
     ) {
-        (None, None) => {}
+        (None, None) => {
+            if has_intraday_dispatch {
+                if save.disclosures.published_through() != Some(intraday_instant) {
+                    return Err(SessionError::InvalidSave("disclosure cursor does not match the committed intraday instant".into()));
+                }
+            } else if save.disclosures.published_through().is_some_and(|through| through.date() >= current) {
+                return Err(SessionError::InvalidSave("disclosure cursor precedes the first dispatch but points into the current or future day".into()));
+            }
+        }
         (Some(settled), Some(announced)) if settled == announced => {
             // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
-            let phase = crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0)
+            let second = if monthly { 86399 } else { 18 * 3600 };
+            let phase = crate::calendar::CivilInstant::new(settled, second)
                 .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
-            if save.disclosures.published_through() != Some(phase) {
+            let expected = if has_intraday_dispatch { intraday_instant } else { phase };
+            if save.disclosures.published_through() != Some(expected) {
                 return Err(SessionError::InvalidSave(format!(
-                    "disclosure cursor {:?} does not match the 18:00 phase of settled {settled}",
+                    "disclosure cursor {:?} does not match the configured daily dispatch endpoint of settled {settled}",
                     save.disclosures.published_through()
                 )));
             }
@@ -1518,7 +1451,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
                 || entry.observed_high.cents() <= 0
                 || entry.observed_low.cents() <= 0
                 || entry.first_observed_minute > entry.last_observed_minute
-                || entry.last_observed_minute > entry.last_touched_minute
+                || entry.last_observed_minute > context.stock_minute(code)?
                 || entry.last_touched_minute > current_market_minute
                 || entry.observed_low > entry.observed_high
                 || entry.first_observed_price < entry.observed_low
@@ -1732,6 +1665,9 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
                 )));
             }
             let entry = book.entry(code).expect("entry_stocks keys always resolve");
+            if entry.anchor_trading_day > context.stock_day(code)? {
+                return Err(SessionError::InvalidSave(format!("account {id:?} belief entry {code:?} has a future stock trading-day anchor")));
+            }
             if entry.confidence_bp > 10_000 {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} belief entry {code:?} confidence {} exceeds 10000 bp",
@@ -1764,7 +1700,6 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
 /// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
 fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), SessionError> {
     let save = context.save;
-    let saved_day = context.saved_day;
     let stock_codes = &context.stock_codes;
     let npc_count = context.npc_count;
     for plan_id in save.plans.plan_ids() {
@@ -1783,6 +1718,10 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                 "plan {plan_id:?} targets unknown stock {:?}",
                 plan.code()
             )));
+        }
+        if plan.created_trading_day() > context.stock_day(plan.code())?
+            || plan.last_event_trading_day() > context.stock_day(plan.code())? {
+            return Err(SessionError::InvalidSave(format!("plan {plan_id:?} is stamped after its stock trading day")));
         }
         if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
             if target == 0 || plan.filled_qty() > target {
@@ -1836,14 +1775,14 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                         "pending plan event carries order id {order_id:?} outside the saved range"
                     )));
                 }
-                if trading_day > saved_day {
+                if trading_day > context.stock_day(plan.code())? {
                     return Err(SessionError::InvalidSave(
                         "pending plan event is stamped after the saved trading day".to_string(),
                     ));
                 }
             }
             PendingPlanEvent::DayEnded { trading_day, .. } => {
-                if trading_day > saved_day {
+                if trading_day > context.stock_day(plan.code())? {
                     return Err(SessionError::InvalidSave(
                         "pending plan day-end is stamped after the saved trading day".to_string(),
                     ));
@@ -1905,6 +1844,13 @@ pub(super) fn validate_saved_order_state(
     session: &GameSession,
     save: &SaveSlot,
 ) -> Result<(), SessionError> {
+    for stock in &save.setup.stocks {
+        if matches!(session.stock_day_status(&stock.code)?, crate::DayStatus::Closed(_))
+            && (save.resting_orders.get(&stock.code).is_some_and(|orders| !orders.is_empty())
+                || save.auction_orders.get(&stock.code).is_some_and(|orders| !orders.is_empty())) {
+            return Err(SessionError::InvalidSave(format!("休市证券 {} 不能包含活动委托", stock.code.0)));
+        }
+    }
     if !matches!(
         session.phase(),
         TradingPhase::CallAuction | TradingPhase::ClosingAuction

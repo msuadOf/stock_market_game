@@ -4,6 +4,20 @@ use engine::accounting::reports::ReportKind;
 use engine::accounting::AccountingPeriod;
 use engine::session::CivilPhase;
 
+fn annual_close_version_count(save: &engine::session::SaveSlot) -> usize {
+    let company_id = engine::company::CompanyId("C-600101".into());
+    let scope = ScopeId::Standalone(MemberId(company_id.0.clone()));
+    let period = AccountingPeriod::from_ymd(2030, 12).unwrap();
+    let system = serde_json::to_value(&save.company_system).expect("CompanySystem serializes");
+    let finance_value = &system["implementation"]["state"]["companies"]["C-600101"]["finance"];
+    let finance: engine::company::simple::SimpleFinanceState =
+        serde_json::from_value(finance_value.clone()).expect("保存された Simple 财务状态可恢复");
+    finance
+        .closing()
+        .versions(&scope, period, ReportKind::Annual)
+        .len()
+}
+
 #[test]
 fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free() {
     // Given: an actual Friday GameSession with seeded accounting, published history, and NPCs.
@@ -29,7 +43,7 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
         .end_civil_day()
         .expect("Saturday operations and disclosure settle");
 
-    // Then: operations/disclosures advance on the closed day without a market tick or unread belief mutation.
+    // Then: 公司基本面与披露在闭市日推进，且不产生市场 tick 或未读信念变化。
     let after_closed = session.save().expect("healthy save");
     assert_eq!(before_closed.snapshot.tick, after_closed.snapshot.tick);
     assert_eq!(
@@ -42,15 +56,15 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
         serde_json::to_vec(&after_closed.belief_books).unwrap()
     );
     assert!(
-        after_closed.company_operations.next_expected_date() > friday.settled_date,
-        "closed civil operations must advance the accounting scheduler"
+        after_closed.company_system.advanced_through() > friday.settled_date,
+        "闭市自然日必须推进 CompanySystem 的基本面事实"
     );
 }
 
 #[test]
 #[ignore = "long validation: same authoritative session must span year close through scheduled annual disclosure"]
-fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
-    // Given: one year-end session with the full company operations and disclosure state.
+fn year_boundary_keeps_company_system_and_disclosure_state_authoritative() {
+    // Given: 年末 GameSession 持有完整的公司基本面系统与披露状态。
     let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
     controlled.plans = Default::default();
@@ -61,42 +75,28 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     }
     let mut year_end = GameSession::restore(&controlled).unwrap();
 
-    // When: the trading session and accounting/disclosure day end run through GameSession.
+    // When: 年末交易阶段和自然日结算通过 GameSession 执行。
     run_focused_trading_day(&mut year_end);
-    let scope = ScopeId::Standalone(MemberId("C-600101".into()));
-    let annual_period = AccountingPeriod::from_ymd(2030, 12).unwrap();
-    let closing_before = year_end
-        .save()
-        .expect("healthy save")
-        .closing_registry
-        .versions(&scope, annual_period, ReportKind::Annual)
-        .len();
+    let before_close = year_end.save().expect("healthy save");
+    let annual_versions_before = annual_close_version_count(&before_close);
     let report = year_end
         .end_civil_day()
         .expect("year-end civil day settles");
 
-    // Then: the year advances without discarding company operations or disclosure progress.
+    // Then: 年份推进时保留 CompanySystem 基本面与披露进度。
     assert_eq!(
         year_end.civil_date(),
         engine::CivilDate::from_iso("2031-01-01").unwrap()
     );
-    assert!(
-        !year_end
-            .save()
-            .expect("healthy save")
-            .company_operations
-            .scheduler()
-            .pending()
-            .is_empty(),
-        "year-end must retain future operating obligations"
-    );
     let after_close = year_end.save().expect("healthy save");
     assert!(
-        after_close
-            .closing_registry
-            .versions(&scope, annual_period, ReportKind::Annual)
-            .len()
-            > closing_before
+        annual_close_version_count(&after_close) > annual_versions_before,
+        "年末结算必须在真实 SimpleFinanceState 的 ClosingEngine 中增加年度报告版本"
+    );
+    assert_eq!(
+        after_close.company_system.advanced_through(),
+        report.settled_date,
+        "年末结算后 CompanySystem 保存事实应推进至结算日"
     );
     let annual_published = |game: &GameSession| {
         game.query_public_reports(&engine::company::PublicReportQuery {
@@ -147,9 +147,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         annual.id.value(),
         annual.reports.period,
         annual.published_at.date(),
-        save.closing_registry
-            .versions(&scope, annual_period, ReportKind::Annual)
-            .len()
+        annual_close_version_count(&save)
     );
 }
 

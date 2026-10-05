@@ -181,7 +181,7 @@ mod participant_owner_tests {
         personal.watchlist.record_attention(&code, 1, 1).unwrap();
         personal
             .price_memory
-            .observe_price(&code, Money::from_cents(1011), 1)
+            .observe_price(&code, Money::from_cents(1011), 1, 1)
             .unwrap();
         personal
             .belief
@@ -302,7 +302,7 @@ mod duplicate_install_state_tests {
         personal.watchlist.record_attention(&code, 1, 1).unwrap();
         personal
             .price_memory
-            .observe_price(&code, crate::Money::from_cents(1033), 1)
+            .observe_price(&code, crate::Money::from_cents(1033), 1, 1)
             .unwrap();
         personal
             .belief

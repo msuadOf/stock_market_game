@@ -14,7 +14,7 @@ use super::{
     candidate_composition::CandidateCompositionError,
     decision_snapshot_capture::{capture_decision_snapshot, DecisionSnapshotCaptureError},
     npc_decisions::{
-        stream_npc_decisions, NpcDecisionSourceError, NpcDecisionSourceOutput,
+        stream_npc_decisions_with, NpcDecisionSourceError, NpcDecisionSourceOutput,
         NpcDecisionStreamError,
     },
     npc_state_projection::{
@@ -211,27 +211,51 @@ pub(in crate::session) fn queue_npc_for_next_tick(
     let config = session.state.setup.config.clone();
     let mut intents = Vec::new();
     let mut dependencies = Vec::new();
-    let stream_error = stream_npc_decisions(captured.snapshot.clone(), &config, |mut result| {
-        let projection = project_npc_account(session, &captured, &mut result.output)
-            .map_err(|error| error.to_string())?;
-        let projected = projected_ordered_intents(&result.output, &projection)
-            .map_err(|error| error.to_string())?;
-        let offset = intents.len();
-        for (owner, intent) in projected.intents {
-            intents.push(
-                session
+    #[cfg(feature = "verification-harness")]
+    let verification_source = session
+        .ingress
+        .as_ref()
+        .map(|binding| binding.source.clone());
+    #[cfg(feature = "verification-harness")]
+    let observed_tick = session.state.tick;
+    let stream_error = stream_npc_decisions_with(
+        captured.snapshot.clone(),
+        &config,
+        |_account| {
+            #[cfg(feature = "verification-harness")]
+            if let Some(source) = &verification_source {
+                source
+                    .verification_wait_npc(observed_tick, _account)
+                    .expect("verification NPC gate 等待失败");
+            }
+        },
+        |mut result| {
+            let projection = project_npc_account(session, &captured, &mut result.output)
+                .map_err(|error| error.to_string())?;
+            let projected = projected_ordered_intents(&result.output, &projection)
+                .map_err(|error| error.to_string())?;
+            let offset = intents.len();
+            for (owner, intent) in projected.intents {
+                let received = session
                     .receive_private_intent(owner, intent)
-                    .map_err(|error| error.to_string())?,
+                    .map_err(|error| error.to_string())?;
+                #[cfg(feature = "verification-harness")]
+                if let Some(source) = &verification_source {
+                    source
+                        .verification_record_npc(observed_tick, &received)
+                        .map_err(|error| error.to_string())?;
+                }
+                intents.push(received);
+            }
+            dependencies.extend(
+                projected
+                    .dependencies
+                    .into_iter()
+                    .map(|(before, after)| (offset + before, offset + after)),
             );
-        }
-        dependencies.extend(
-            projected
-                .dependencies
-                .into_iter()
-                .map(|(before, after)| (offset + before, offset + after)),
-        );
-        Ok::<_, String>(())
-    });
+            Ok::<_, String>(())
+        },
+    );
     if let Err(error) = stream_error {
         let description = match error {
             NpcDecisionStreamError::Decision(error) => error.to_string(),

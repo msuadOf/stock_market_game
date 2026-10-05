@@ -59,6 +59,9 @@ pub(super) fn collect_events(
 }
 
 fn validate_mapping(fact: &OwnedEventFact) -> Result<(), StepFatal> {
+    if matches!(fact.event, Event::PublicTrade { .. } | Event::PrivateEventOmitted { .. }) {
+        return Err(invariant("内部执行不能生产外壳公开匿名化事件"));
+    }
     let expected = EventStableKey::for_event(&fact.event, fact.key.local_event_index());
     if expected != fact.key {
         return Err(invariant(
@@ -80,6 +83,8 @@ fn validate_unique_keys(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
 fn set_seq(event: &mut Event, sequence: u64) {
     match event {
         Event::Trade { seq, .. }
+        | Event::PublicTrade { seq, .. }
+        | Event::PrivateEventOmitted { seq, .. }
         | Event::AuctionTick { seq, .. }
         | Event::AuctionCompleted { seq, .. }
         | Event::PriceTick { seq, .. }

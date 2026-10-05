@@ -29,6 +29,7 @@ impl GameSession {
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
     pub fn business_state_hash(&self) -> Result<StateHash, StepFatal> {
         let Self {
+            report_correction_epoch: _,
             ingress: _,
             state,
             poison: _,
@@ -39,6 +40,10 @@ impl GameSession {
                 post_shadow_failure: _,
         } = self;
         let super::CommittableSessionState {
+            retained_market_history: _,
+            memberships: _,
+            pending_report_corrections: _,
+            report_correction_operations: _,
             setup: _,
             rng: _,
             seed: _,
@@ -64,18 +69,15 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
                 causal: _,
             attention_scheduler: _,
-            company_registry: _,
-            operations: _,
-            closing: _,
+            company_system: _,
             library: _,
-            ops_wiring: _,
             disclosures: _,
-            groups: _,
             plans: _,
             urgency_policy: _,
             belief_participants: _,
             envelope_ledger: _,
             retail_projection_seen: _,
+            personal_trade_confirmations: _,
             next_receipt_base: _,
             next_order_id: _,
             tick: _,
@@ -84,7 +86,14 @@ impl GameSession {
             civil_clock: _,
         } = state;
         let mut hash = StateHash(0xcbf29ce484222325);
+        if !self.state.pending_report_corrections.is_empty() {
+            hash.field(&self.state.pending_report_corrections)?;
+        }
+        if !self.state.report_correction_operations.is_empty() {
+            hash.field(&self.state.report_correction_operations)?;
+        }
         hash.field(&self.state.setup)?;
+        hash.field(&self.state.memberships)?;
         hash.field(&self.state.seed)?;
         hash.field(&self.state.rng.state)?;
         for (id, account) in &self.state.accounts {
@@ -110,6 +119,7 @@ impl GameSession {
         }
         hash.field(&self.state.price_history)?;
         hash.field(&self.state.market_minute_closes)?;
+        hash.field(&self.state.retained_market_history)?;
         hash.field(&self.state.candle_book.histories())?;
         hash.field(&self.state.candle_book.active())?;
         hash.field(&self.state.auction_orders)?;
@@ -119,31 +129,22 @@ impl GameSession {
         hash.field(&self.state.npc_attention)?;
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
+        hash.field(&self.state.personal_trade_confirmations)?;
         hash.field(&self.state.parent_orders)?;
         hash.field(&self.state.pending_plan_events)?;
         hash.field(&self.state.npc_order_lifecycles)?;
         let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
         queue.sort_unstable();
         hash.field(&queue)?;
-        hash.field(self.state.company_registry.as_ref())?;
-        let operations = self.state.operations.hash_projection().map_err(|error| {
+        let system = self.state.company_system.hash_projection().map_err(|error| {
             StepFatal::InvariantViolation {
                 description: error.to_string(),
-                location: "state_hash.company_operations".to_owned(),
+                location: "state_hash.company_system".to_owned(),
             }
         })?;
-        hash.field(&operations)?;
-        let closing = self.state.closing.hash_projection().map_err(|error| {
-            StepFatal::InvariantViolation {
-                description: error.to_string(),
-                location: "state_hash.closing".to_owned(),
-            }
-        })?;
-        hash.field(&closing)?;
+        hash.field(&system)?;
         hash.field(&self.state.library.hash_projection())?;
-        hash.field(&self.state.ops_wiring)?;
         hash.field(&self.state.disclosures)?;
-        hash.field(&self.state.groups)?;
         hash.field(&self.state.plans)?;
         hash.field(&self.state.urgency_policy)?;
         hash.field(

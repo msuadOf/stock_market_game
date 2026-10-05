@@ -1,9 +1,12 @@
 #[path = "../tests/diagnostic_parity.rs"]
 mod fixture;
 
+include!("../test-support/simple_company.rs");
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut setup = fixture::setup();
     setup.stocks[0].code = engine::StockCode("000812".to_owned());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
     setup.stocks[0].initial_price = engine::Money::from_cents(285);
     setup.stocks[0].total_shares = 1_000_000;

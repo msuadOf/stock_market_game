@@ -54,7 +54,11 @@ pub(crate) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
 pub enum EntityTag {
     Session,
     Stock(StockCode),
-    Account(AccountId),
+    Account(
+        #[serde(with = "crate::session::memberships::account_id_decimal")]
+        #[ts(type = "string")]
+        AccountId,
+    ),
 }
 
 impl EntityTag {
@@ -128,9 +132,10 @@ pub struct EventStableKey {
 impl EventStableKey {
     pub fn for_event(event: &Event, local_event_index: u64) -> Self {
         let (phase_rank, entity, source) = match event {
-            Event::Trade { code, .. } => {
+            Event::Trade { code, .. } | Event::PublicTrade { code, .. } => {
                 (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed)
             }
+            Event::PrivateEventOmitted { .. } => (4, EntityTag::Session, EventSourceIndex::Sealed),
             Event::AuctionTick { code, .. }
             | Event::AuctionCompleted { code, .. }
             | Event::PriceTick { code, .. } => (

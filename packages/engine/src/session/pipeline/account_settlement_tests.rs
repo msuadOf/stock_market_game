@@ -634,6 +634,7 @@ fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement
             stock
         })
         .collect();
+    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let game = crate::GameSession::new(setup, 42).unwrap();
     let mut save = game.save().unwrap();
     save.retail_experience = experience.to_map();

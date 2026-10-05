@@ -82,6 +82,7 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
     PublishedReport {
         id: PublicationId::new(901),
         company: CompanyId(COMPANY.to_string()),
+        source: engine::information::PublicationSource::SimulationAccounting,
         policy: AccountingPolicyRef { chart_version: 2 },
         approved_at: CivilInstant::from_hms(d(spec.published_on), 8, 0, 0).expect("approval"),
         published_at,

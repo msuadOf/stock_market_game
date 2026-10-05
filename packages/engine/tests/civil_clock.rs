@@ -9,6 +9,8 @@
 //! 正月初三）连续 4 个休市自然日，前一个交易日为周五 02-01，下一个交易日为
 //! 周三 02-06。
 
+include!("../test-support/simple_company.rs");
+
 use engine::account::StockCode;
 use engine::calendar::{CivilDate, CivilInstant, ClosedReason, DayStatus, HolidayKind};
 use engine::money::Money;
@@ -37,8 +39,7 @@ fn date(iso: &str) -> CivilDate {
 
 fn civil_setup(start: &str) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -77,6 +78,7 @@ fn civil_setup(start: &str) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: date(start),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -162,6 +164,7 @@ fn assert_fired_once_each(reports: &[CivilDayEndReport], registered: &[DueBusine
 fn closed_days_accrue_without_trading() {
     let mut setup = civil_setup(PRE_HOLIDAY_FRIDAY);
     setup.stocks[0].code = StockCode("000812".to_string());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = StockExchange::Shenzhen;
     setup.stocks[0].initial_price = Money::from_cents(600);
     setup.stocks[0].total_shares = 1_052_631_579;

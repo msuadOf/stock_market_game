@@ -181,7 +181,7 @@ impl GameSession {
             .state
             .accounts
             .iter()
-            .filter(|(id, _)| include_npc_accounts || id.0 == 0)
+            .filter(|(_, account)| include_npc_accounts || account.kind() == AccountKind::Player)
             .map(|(id, a)| {
                 let (reserved_cash, reserved_sell_qty) = reservations.take_for(*id);
                 (
@@ -244,6 +244,7 @@ mod tests {
         let mut second = setup.stocks[0].clone();
         second.code = StockCode("600889".to_string());
         setup.stocks.push(second);
+        setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         let mut session = GameSession::new(setup, 42).unwrap();
         let first = session.state.setup.stocks[0].code.clone();
         let second = session.state.setup.stocks[1].code.clone();

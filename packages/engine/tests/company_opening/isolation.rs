@@ -6,6 +6,8 @@
 //! 触碰交易域任何账户状态」的资金边界。外部商业对手方承担全部开局资金流
 //! （股本注入/借款对端是公司域对手方，不是证券 NPC）。
 
+include!("../../test-support/simple_company.rs");
+
 use super::*;
 use engine::orderbook::AccountId;
 use engine::session::{GameSession, NpcSetup, SessionSetup};
@@ -17,8 +19,7 @@ use engine::{FloatAllocation, GameConfig, StrategyParams};
 fn trading_session() -> GameSession {
     let stocks = default_stock_specs();
     let setup = SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks,
         npcs: NpcSetup {
             retail_count: 64,
@@ -48,6 +49,7 @@ fn trading_session() -> GameSession {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: d("2030-01-01"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),

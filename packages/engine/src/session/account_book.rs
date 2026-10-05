@@ -136,6 +136,7 @@ impl AccountBook {
         self.get(id).is_some()
     }
 
+    #[cfg(test)]
     pub(super) fn unlock_t1_positions(&mut self) {
         let locked_accounts = self
             .iter()
@@ -151,6 +152,15 @@ impl AccountBook {
             self.get_mut(&id)
                 .expect("the locked account came from this account book")
                 .unlock_t1_positions();
+        }
+    }
+
+    pub(super) fn unlock_t1_for_stocks(&mut self, open: &std::collections::BTreeSet<crate::StockCode>) {
+        let locked = self.iter().filter_map(|(id, account)| {
+            account.positions().iter().any(|(code, position)| open.contains(code) && position.t1_locked() > 0).then_some(*id)
+        }).collect::<Vec<_>>();
+        for account in locked {
+            self.get_mut(&account).expect("已从当前账户簿取得锁定账户").unlock_t1_for_stocks(open);
         }
     }
 

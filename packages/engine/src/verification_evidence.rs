@@ -915,7 +915,8 @@ fn comparison_event_key(
 
 fn expected_event_identity(event: &Event) -> (u8, EntityTag, EventSourceIndex) {
     match event {
-        Event::Trade { code, .. } => (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed),
+        Event::Trade { code, .. } | Event::PublicTrade { code, .. } => (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed),
+        Event::PrivateEventOmitted { .. } => (4, EntityTag::Session, EventSourceIndex::Sealed),
         Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
         | Event::PriceTick { code, .. } => (
@@ -958,6 +959,8 @@ where
 fn event_variant(event: &Event) -> &'static str {
     match event {
         Event::Trade { .. } => "Trade",
+        Event::PublicTrade { .. } => "PublicTrade",
+        Event::PrivateEventOmitted { .. } => "PrivateEventOmitted",
         Event::AuctionTick { .. } => "AuctionTick",
         Event::AuctionCompleted { .. } => "AuctionCompleted",
         Event::PriceTick { .. } => "PriceTick",
@@ -974,6 +977,7 @@ fn event_variant(event: &Event) -> &'static str {
 fn event_entity(event: &Event) -> Result<String, EvidenceError> {
     match event {
         Event::Trade { code, .. }
+        | Event::PublicTrade { code, .. }
         | Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
         | Event::PriceTick { code, .. } => {
@@ -985,6 +989,7 @@ fn event_entity(event: &Event) -> Result<String, EvidenceError> {
         | Event::OrderCanceled { account, .. }
         | Event::OrderAccepted { account, .. } => Ok(format!("Account:{}", account.0)),
         Event::DayBoundary { .. }
+        | Event::PrivateEventOmitted { .. }
         | Event::CivilDateAdvanced { .. }
         | Event::CompanyDisclosurePublished { .. } => Ok("Session".to_owned()),
     }
@@ -994,6 +999,9 @@ fn project_event(event: &Event) -> Result<(&'static str, Value), EvidenceError> 
     let variant = event_variant(event);
     event_entity(event)?;
     let payload = match event {
+        Event::PublicTrade { .. } | Event::PrivateEventOmitted { .. } => {
+            return Err(EvidenceError::InvalidEventIdentity { detail: "内部收据证据不能以公开匿名化事件冒充真实账户执行事实" });
+        }
         Event::Trade {
             seq,
             code,
@@ -1393,6 +1401,7 @@ fn rejection_reason(reason: &crate::RejectionReason) -> &'static str {
         crate::RejectionReason::LimitExceeded => "LimitExceeded",
         crate::RejectionReason::PriceCageExceeded => "PriceCageExceeded",
         crate::RejectionReason::UnknownStock => "UnknownStock",
+        crate::RejectionReason::ExchangeClosed => "ExchangeClosed",
         crate::RejectionReason::AuctionLimitOrderRequired => "AuctionLimitOrderRequired",
         crate::RejectionReason::AuctionOrderNotCancelable => "AuctionOrderNotCancelable",
         crate::RejectionReason::AuctionOrderEntryClosed => "AuctionOrderEntryClosed",

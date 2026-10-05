@@ -1,5 +1,7 @@
 //! 压缩会话夹具（civil_clock 套件同款 120 tick/日）：周末发布/公告金样用。
 
+include!("../../test-support/simple_company.rs");
+
 use engine::calendar::CivilDate;
 use engine::money::Money;
 use engine::session::{
@@ -14,8 +16,7 @@ pub(crate) const TICKS_PER_DAY: u64 = 120;
 /// 压缩会话 setup（start 由调用方给）。
 pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -54,6 +55,7 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: start,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),

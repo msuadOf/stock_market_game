@@ -15,22 +15,19 @@ pub(super) fn decide_retail(
     rng: &mut dyn Rng,
     config: &GameConfig,
 ) -> Vec<Intent> {
-    if market.stocks.is_empty() {
+    let trading_stocks: Vec<_> = market
+        .stocks
+        .iter()
+        .filter(|(_, stock)| stock.is_trading)
+        .collect();
+    if trading_stocks.is_empty() {
         return Vec::new();
     }
     // 从全部股票中均匀随机选一只（注入 RNG，确定性）。BTreeMap 无随机访问 → 先按 key 取索引。
-    let n = market.stocks.len();
+    let n = trading_stocks.len();
     let idx = rng.next_range_u32(0, n as u32) as usize;
-    let (code, sv) = match market.stocks.keys().nth(idx) {
-        Some(c) => {
-            let v = market
-                .stocks
-                .get(c)
-                .expect("key 刚从同一 BTreeMap 取出，必存在（防御式：不可达则显式 panic）");
-            (c.clone(), v)
-        }
-        None => return Vec::new(),
-    };
+    let (selected_code, sv) = trading_stocks[idx];
+    let code = selected_code.clone();
     let change = market_minute_price_change(sv).unwrap_or(0.0);
     let volume_activity = 0.5
         + 0.5 * sv.relative_volume.clamp(0.0, 1.0)
@@ -91,9 +88,11 @@ pub(super) fn decide_retail(
             .stocks
             .keys()
             .filter(|candidate| {
-                own.positions
-                    .get(*candidate)
-                    .is_some_and(|position| position.sellable_qty > 0)
+                market.stocks[*candidate].is_trading
+                    && own
+                        .positions
+                        .get(*candidate)
+                        .is_some_and(|position| position.sellable_qty > 0)
             })
             .collect();
         if sellable_codes.is_empty() {
@@ -255,6 +254,7 @@ mod decision_context_tests {
 
     fn stock(last: i64, history: &[i64], imbalance: f64) -> StockView {
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),

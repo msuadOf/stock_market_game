@@ -71,6 +71,7 @@ use std::collections::BTreeSet;
 /// 单只股票的市场视图（多股 MarketView 的元素）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StockView {
+    pub is_trading: bool,
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     pub last_price: Money,

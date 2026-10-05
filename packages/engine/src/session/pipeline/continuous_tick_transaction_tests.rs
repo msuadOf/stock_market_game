@@ -410,7 +410,7 @@ fn live_buy_plan_case(
     // This fixture injects execution directly instead of opening the plan through
     // the lifecycle. Record that opening observation as the real lifecycle does,
     // so the next fill-only tick does not request an initial strategy review.
-    let issuer = authority.state.company_registry.issuer_of(&code).unwrap();
+    let issuer = authority.state.company_system.issuers().issuer_of(&code).unwrap();
     let acquired_count = authority.state.belief_participants[&AccountId(1)]
         .information()
         .records_for_company(issuer)

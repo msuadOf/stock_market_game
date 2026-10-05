@@ -13,11 +13,13 @@ use crate::calendar::CivilInstant;
 use crate::company::operations::CompanyOperations;
 use crate::company::CompanyId;
 use crate::information::{
-    AccountingPolicyRef, InformationError, PublicLibrary, PublicationId, PublicationOrigin,
-    PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
+    AccountingPolicyRef, InformationError, PublicLibrary, PublicationId,
+    PublicationRequest, ScheduledReportKind,
 };
 
+mod corrections;
 mod sales;
+pub(crate) use corrections::refresh_group_reports_after_correction;
 #[cfg(test)]
 mod tests;
 
@@ -175,6 +177,7 @@ fn request<'a>(
 pub(crate) fn validate_groups(
     groups: &[GroupStructure],
     ops: &CompanyOperations,
+    closing: Option<&ClosingEngine>,
 ) -> Result<(), InformationError> {
     let mut roots = BTreeSet::new();
     let mut included = BTreeSet::new();
@@ -191,7 +194,54 @@ pub(crate) fn validate_groups(
                 )));
             }
         }
-        consolidate(request).map_err(|error| invalid(error.to_string()))?;
+        if let Some(closing) = closing {
+            let maps = corrections::member_adjustments(group, ops, closing)?;
+            let ledgers = request
+                .members
+                .iter()
+                .map(|member| (member.spec.id.clone(), member.books.ledger()))
+                .collect();
+            let mut covered = BTreeMap::new();
+            for member in &request.members {
+                let map = maps.get(&member.spec.id).copied();
+                if let Some(map) = map {
+                    for (source, target) in map {
+                        let actual =
+                            member.books.journal().posted_date(*source).ok_or_else(|| {
+                                invalid(format!(
+                                    "集团成员 {} 重述来源 {source:?} 不存在",
+                                    member.spec.id
+                                ))
+                            })?;
+                        if *target
+                            >= AccountingPeriod::from_ymd(actual.year(), actual.month())
+                                .map_err(|error| invalid(error.to_string()))?
+                        {
+                            return Err(invalid(format!(
+                                "集团成员 {} 重述有效期必须早于实际期间",
+                                member.spec.id
+                            )));
+                        }
+                    }
+                }
+                covered.insert(
+                    member.spec.id.clone(),
+                    member
+                        .books
+                        .journal()
+                        .entries()
+                        .filter(|entry| !map.is_some_and(|map| map.contains_key(&entry.source)))
+                        .map(crate::accounting::JournalEntry::period)
+                        .collect(),
+                );
+            }
+            crate::accounting::consolidation::consolidate_with_projection(
+                request, &ledgers, &covered,
+            )
+            .map_err(|error| invalid(error.to_string()))?;
+        } else {
+            consolidate(request).map_err(|error| invalid(error.to_string()))?;
+        }
     }
     for company in ops.companies.values() {
         if company.spec().group_parent.is_some()
@@ -217,11 +267,13 @@ pub(crate) fn ensure_group_report(
     if !closing.versions(&scope, period, kind).is_empty() {
         return Ok(());
     }
+    let member_adjustments = corrections::member_adjustments(group, ops, closing)?;
     let set = generate_report_set(ReportRequest {
         period,
         kind,
-        source: ReportSource::Consolidated {
+        source: ReportSource::ConsolidatedRestated {
             request: request(group, ops, Some(period))?,
+            member_adjustments: &member_adjustments,
         },
         version: ReportVersion {
             sequence: 1,
@@ -259,23 +311,23 @@ pub(crate) fn seed_groups(
     groups: &[GroupStructure],
     prehistory: &mut crate::information::SeededPrehistory,
     start: crate::calendar::CivilDate,
+    report_frequency: crate::information::ReportFrequency,
 ) -> Result<(), InformationError> {
-    validate_groups(groups, &prehistory.ops)?;
+    validate_groups(groups, &prehistory.ops, None)?;
     let start_instant = CivilInstant::new(start, 0)?;
     let mut due = Vec::new();
     for group in groups {
-        let offset = crate::information::stable_company_offset(prehistory.ops.seed, &group.root);
         for fiscal_year in start.year() - 2..=start.year() {
-            for kind in ScheduledReportKind::ALL {
-                let instant = crate::information::scheduled_instant(kind, fiscal_year, offset)?;
+            for kind in report_frequency.scheduled_kinds() {
+                let instant = report_frequency.scheduled_instant(kind, fiscal_year, prehistory.ops.seed, &group.root)?;
                 if instant < start_instant {
-                    due.push((instant, group.root.clone(), fiscal_year, kind, offset));
+                    due.push((instant, group.root.clone(), fiscal_year, kind));
                 }
             }
         }
     }
     due.sort_by_key(|row| (row.0, row.1.clone(), row.2));
-    for (instant, root_id, fiscal_year, kind, offset) in due {
+    for (instant, root_id, fiscal_year, kind) in due {
         let group = groups
             .iter()
             .find(|group| group.root == root_id)
@@ -303,13 +355,9 @@ pub(crate) fn seed_groups(
                 policy: AccountingPolicyRef {
                     chart_version: root.books().books().ledger().chart().version(),
                 },
-                approved_at: CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?,
+                approved_at: report_frequency.approval_instant(kind, instant)?,
                 published_at: instant,
-                origin: PublicationOrigin::SeededPrehistory {
-                    fiscal_year,
-                    kind,
-                    offset_days: offset,
-                },
+                origin: report_frequency.publication_origin(kind, fiscal_year, prehistory.ops.seed, &group.root, true)?,
                 supersedes: None,
             },
         )?;
@@ -326,10 +374,37 @@ pub(crate) fn publish_group_scheduled(
     instant: CivilInstant,
     fiscal_year: i32,
     kind: ScheduledReportKind,
-    offset: u8,
+    report_frequency: crate::information::ReportFrequency,
 ) -> Result<PublicationId, InformationError> {
     let period = kind.landing_period(fiscal_year)?;
+    if kind.report_kind() == ReportKind::Monthly {
+        for member in std::iter::once(&group.root)
+            .chain(group.holdings.iter().map(|holding| &holding.company))
+        {
+            let company = ops
+                .company(member)
+                .ok_or_else(|| invalid(format!("unknown group member {}", member.0)))?;
+            if company.books().books().journal().period_status(period)
+                != crate::accounting::PeriodStatus::Closed
+            {
+                return Err(invalid(format!(
+                    "monthly group report requires closed member {} period {period:?}",
+                    member.0
+                )));
+            }
+        }
+    }
     ensure_group_report(group, ops, closing, period, kind.report_kind())?;
+    let sequence = closing
+        .versions(
+            &ScopeId::Consolidated(MemberId(group.root.0.clone())),
+            period,
+            kind.report_kind(),
+        )
+        .last()
+        .ok_or_else(|| invalid("集团报告未定稿".into()))?
+        .version
+        .sequence;
     let root = ops
         .company(&group.root)
         .ok_or_else(|| invalid(format!("unknown group root {}", group.root.0)))?;
@@ -340,17 +415,13 @@ pub(crate) fn publish_group_scheduled(
             scope: ScopeId::Consolidated(MemberId(group.root.0.clone())),
             period,
             kind: kind.report_kind(),
-            sequence: 1,
+            sequence,
             policy: AccountingPolicyRef {
                 chart_version: root.books().books().ledger().chart().version(),
             },
-            approved_at: CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?,
+            approved_at: report_frequency.approval_instant(kind, instant)?,
             published_at: instant,
-            origin: PublicationOrigin::ScheduledDisclosure {
-                fiscal_year,
-                kind,
-                offset_days: offset,
-            },
+            origin: report_frequency.publication_origin(kind, fiscal_year, ops.seed, &group.root, false)?,
             supersedes: None,
         },
     )

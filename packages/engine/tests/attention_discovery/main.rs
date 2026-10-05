@@ -25,6 +25,7 @@ fn code(suffix: &str) -> StockCode {
 
 fn view(last_cents: i64, minute_closes: &[i64], relative_volume: f64) -> StockView {
     StockView {
+        is_trading: true,
         best_bid: Some(Money::from_cents(last_cents - 1)),
         best_ask: Some(Money::from_cents(last_cents + 1)),
         last_price: Money::from_cents(last_cents),

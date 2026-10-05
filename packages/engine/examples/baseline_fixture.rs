@@ -10,6 +10,8 @@
 //!
 //! 副本漂移由 `scripts/simulation/baseline-run.mjs` 的对账校验与仓库测试共同看住。
 
+include!("../test-support/simple_company.rs");
+
 use std::{env, process};
 
 use engine::{
@@ -159,8 +161,7 @@ fn matrix_setup() -> SessionSetup {
         ),
     ];
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,
@@ -203,6 +204,7 @@ fn matrix_setup() -> SessionSetup {
         closing_auction_ticks: 180,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,
@@ -236,8 +238,7 @@ fn compressed_setup() -> SessionSetup {
         })
         .collect();
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,
@@ -269,6 +270,7 @@ fn compressed_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,

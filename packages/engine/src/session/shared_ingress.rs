@@ -1,14 +1,22 @@
 use super::{GameSession, IngressReceiptCursors, ReceiptBearingIntent, SessionError, StepFatal};
-use crate::{AccountId, AccountKind, Intent};
+use crate::calendar::{CalendarExchange, CivilDate, DayStatus, TradingCalendar};
+use crate::{AccountId, AccountKind, Intent, StockCode};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex, MutexGuard, Weak,
 };
 
+#[cfg(feature = "verification-harness")]
+mod verification;
+#[cfg(feature = "verification-harness")]
+pub use verification::IngressVerificationSnapshot;
+
 #[derive(Clone)]
 pub struct SharedSessionIngress {
     inner: Arc<Mutex<IngressState>>,
+    #[cfg(feature = "verification-harness")]
+    verification: Arc<verification::IngressVerification>,
 }
 
 struct IngressState {
@@ -18,6 +26,16 @@ struct IngressState {
     next_input: u64,
     inputs: VecDeque<(u64, ReceiptBearingIntent)>,
     readers: Vec<Weak<AtomicU64>>,
+    calendar: TradingCalendar,
+    stock_exchanges: BTreeMap<StockCode, CalendarExchange>,
+    exchanges: Vec<CalendarExchange>,
+    publication: CalendarPublication,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::session) struct CalendarPublication {
+    pub(in crate::session) date: CivilDate,
+    pub(in crate::session) epoch: u64,
 }
 
 pub(super) struct IngressBinding {
@@ -26,6 +44,129 @@ pub(super) struct IngressBinding {
 }
 
 impl SharedSessionIngress {
+    pub(super) fn register_player(&self, account: AccountId) -> Result<(), SessionError> {
+        let mut state = self.lock()?;
+        if state.closed || state.accounts.contains_key(&account) {
+            return Err(SessionError::InvalidSave("共享收件入口已关闭或新玩家账户身份已存在".into()));
+        }
+        state.accounts.insert(account, AccountKind::Player);
+        Ok(())
+    }
+    /// 只读内存收件游标，供宿主核对关闭入口后的零新增事实；不提供日内持久化。
+    pub fn receipt_cursors(&self) -> Result<IngressReceiptCursors, SessionError> {
+        Ok(self.lock()?.receipts.clone())
+    }
+
+    /// 当前仍保留在内存 journal 的收件事实；可能含 checkpoint 保留的已消费条目，不是 pending 队列。
+    pub fn recorded_player_inputs(&self) -> Result<Vec<ReceiptBearingIntent>, SessionError> {
+        Ok(self
+            .lock()?
+            .inputs
+            .iter()
+            .map(|(_, receipt)| receipt.clone())
+            .collect())
+    }
+    pub(in crate::session) fn calendar_publication(
+        &self,
+    ) -> Result<CalendarPublication, SessionError> {
+        Ok(self.lock()?.publication)
+    }
+
+    pub(in crate::session) fn same_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub(in crate::session) fn publish_calendar(
+        &self,
+        expected: CalendarPublication,
+        date: CivilDate,
+    ) -> Result<(), SessionError> {
+        let mut state = self.lock()?;
+        if state.closed {
+            return Err(SessionError::ResourceLimit(
+                "已关闭收件入口不能发布自然日".into(),
+            ));
+        }
+        if state.publication != expected || date < expected.date {
+            return Err(SessionError::InvalidSave(
+                "自然日发布边界已变化，不能回拨或覆盖已发布日期".into(),
+            ));
+        }
+        if date == expected.date {
+            return Ok(());
+        }
+        for exchange in &state.exchanges {
+            state.calendar.day_status(*exchange, date)?;
+        }
+        let epoch = expected
+            .epoch
+            .checked_add(1)
+            .ok_or_else(|| SessionError::ResourceLimit("自然日发布序号耗尽".into()))?;
+        state.publication = CalendarPublication { date, epoch };
+        Ok(())
+    }
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_arm(
+        &self,
+        phase: &str,
+        tick: u64,
+        account: Option<AccountId>,
+    ) -> Result<(), SessionError> {
+        let state = self.lock()?;
+        if state.closed {
+            return Err(SessionError::ResourceLimit(
+                "verification ingress generation 已关闭".to_owned(),
+            ));
+        }
+        match (phase, account) {
+            ("npc_decision", Some(account))
+                if state
+                    .accounts
+                    .get(&account)
+                    .is_some_and(|kind| *kind != AccountKind::Player) => {}
+            ("cutoff", None) => {}
+            _ => {
+                return Err(SessionError::ResourceLimit(
+                    "verification ingress phase/account 非法".to_owned(),
+                ))
+            }
+        }
+        let result = self.verification.arm(verification::VerificationPoint {
+            phase: phase.to_owned(),
+            tick,
+            account,
+        });
+        drop(state);
+        result
+    }
+
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_snapshot(&self) -> Result<IngressVerificationSnapshot, SessionError> {
+        self.verification.snapshot()
+    }
+
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_release(&self) -> Result<(), SessionError> {
+        self.verification.release()
+    }
+
+    #[cfg(feature = "verification-harness")]
+    pub(in crate::session) fn verification_wait_npc(
+        &self,
+        tick: u64,
+        account: AccountId,
+    ) -> Result<(), SessionError> {
+        self.verification.wait("npc_decision", tick, Some(account))
+    }
+
+    #[cfg(feature = "verification-harness")]
+    pub(in crate::session) fn verification_record_npc(
+        &self,
+        observed_tick: u64,
+        receipt: &ReceiptBearingIntent,
+    ) -> Result<(), SessionError> {
+        self.verification.npc(observed_tick, receipt)
+    }
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
         self.inner.lock().map_err(|error| {
             SessionError::ResourceLimit(format!("session ingress metadata lock poisoned: {error}"))
@@ -48,6 +189,24 @@ impl SharedSessionIngress {
             Some(AccountKind::Player) => {}
             Some(_) => return Err(SessionError::NotPlayer(account)),
         }
+        let code = match &intent {
+            Intent::PlaceLimit { code, .. }
+            | Intent::PlaceMarket { code, .. }
+            | Intent::Cancel { code, .. } => code,
+        };
+        if let Some(exchange) = state.stock_exchanges.get(code) {
+            if let DayStatus::Closed(reason) = state
+                .calendar
+                .day_status(*exchange, state.publication.date)?
+            {
+                return Err(crate::calendar::CalendarError::NotATradingDay {
+                    exchange: *exchange,
+                    date: state.publication.date,
+                    reason,
+                }
+                .into());
+            }
+        }
         let input = state.next_input;
         let next = input.checked_add(1).ok_or_else(|| {
             SessionError::ResourceLimit("session ingress input cursor overflow".to_owned())
@@ -55,11 +214,17 @@ impl SharedSessionIngress {
         let receipt = state.receipts.receive(account, intent)?;
         state.next_input = next;
         state.inputs.push_back((input, receipt));
+        #[cfg(feature = "verification-harness")]
+        self.verification
+            .player(&state.inputs.back().expect("正式收到的输入已登记").1)?;
         Ok(())
     }
 
     pub fn close(&self) -> Result<(), SessionError> {
-        self.lock()?.closed = true;
+        let mut state = self.lock()?;
+        state.closed = true;
+        #[cfg(feature = "verification-harness")]
+        self.verification.release()?;
         Ok(())
     }
 
@@ -125,6 +290,8 @@ impl GameSession {
         }
         let consumed = Arc::new(AtomicU64::new(0));
         let source = SharedSessionIngress {
+            #[cfg(feature = "verification-harness")]
+            verification: Arc::new(verification::IngressVerification::default()),
             inner: Arc::new(Mutex::new(IngressState {
                 closed: false,
                 accounts: self
@@ -137,6 +304,24 @@ impl GameSession {
                 next_input: 0,
                 inputs: VecDeque::new(),
                 readers: vec![Arc::downgrade(&consumed)],
+                calendar: self.state.civil_clock.calendar().clone(),
+                stock_exchanges: self
+                    .state
+                    .setup
+                    .stocks
+                    .iter()
+                    .map(|stock| {
+                        (
+                            stock.code.clone(),
+                            super::session_calendar_exchange(stock.exchange),
+                        )
+                    })
+                    .collect(),
+                publication: CalendarPublication {
+                    date: self.civil_date(),
+                    epoch: 0,
+                },
+                exchanges: self.state.civil_clock.exchanges().to_vec(),
             })),
         };
         self.ingress = Some(IngressBinding {
@@ -149,9 +334,21 @@ impl GameSession {
     pub(super) fn freeze_shared_ingress(&mut self) -> Result<(), StepFatal> {
         if let Some(binding) = &self.ingress {
             let (inputs, cursors, cutoff) = binding.snapshot().map_err(ingress_fatal)?;
+            #[cfg(feature = "verification-harness")]
+            binding
+                .source
+                .verification
+                .cutoff(self.state.tick, cutoff, &inputs)
+                .map_err(ingress_fatal)?;
             self.state.pending_player.extend(inputs);
             self.state.ingress_receipt_cursors = cursors;
             binding.consumed.store(cutoff, Ordering::Relaxed);
+            #[cfg(feature = "verification-harness")]
+            binding
+                .source
+                .verification
+                .wait("cutoff", self.state.tick, None)
+                .map_err(ingress_fatal)?;
         }
         Ok(())
     }
@@ -210,10 +407,12 @@ mod tests {
 
     fn game() -> GameSession {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         setup.npcs.inst_count = 0;
         let mut second = setup.stocks[0].clone();
         second.code = crate::StockCode("600889".to_owned());
         setup.stocks.push(second);
+        setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         GameSession::new(setup, 42).unwrap()
     }
 
@@ -514,5 +713,181 @@ mod tests {
         );
         let mut restored = GameSession::restore(&save).unwrap();
         assert_eq!(restored.step().unwrap().iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == AccountId(0))).count(), 2);
+    }
+
+    #[cfg(feature = "verification-harness")]
+    struct ReleaseGate(SharedSessionIngress);
+
+    #[cfg(feature = "verification-harness")]
+    impl Drop for ReleaseGate {
+        fn drop(&mut self) {
+            self.0
+                .verification_release()
+                .expect("验证退出必须释放 gate");
+        }
+    }
+
+    #[cfg(feature = "verification-harness")]
+    fn wait_for_gate(
+        source: &SharedSessionIngress,
+        finished: &std::sync::mpsc::Receiver<()>,
+    ) -> bool {
+        for _ in 0..1000 {
+            if source.verification_snapshot().unwrap().entered {
+                return true;
+            }
+            if finished.try_recv().is_ok() {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        false
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn verification_npc_gate_blocks_real_step_without_blocking_player_receipt() {
+        let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+        setup.ticks_per_day = 4;
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.strategy_params.retail.arrival_rate = 1.0;
+        let mut session = GameSession::new(setup, 1).unwrap();
+        let account = AccountId(1);
+        let attention = session.state.npc_attention.get_mut(&account).unwrap();
+        attention.next_attention_candidate_tick = 1;
+        attention.rng_state = 3;
+        session.state.attention_scheduler.enqueue(1, account);
+        let source = session.shared_ingress();
+        source
+            .verification_arm("npc_decision", 1, Some(account))
+            .unwrap();
+        let player_intent = buy(&session, 0);
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let _release = ReleaseGate(source.clone());
+            let worker = scope.spawn(|| {
+                let result = session.step();
+                finished_tx.send(()).unwrap();
+                result
+            });
+            let entered = wait_for_gate(&source, &finished_rx);
+            if !entered {
+                source.verification_release().unwrap();
+                worker
+                    .join()
+                    .unwrap()
+                    .expect("production step 必须成功，不能用其他 fatal 冒充缺失 gate 的红灯");
+                panic!("真实 production NPC worker 必须进入已配置的 gate");
+            }
+            source
+                .enqueue_player_intent(AccountId(0), player_intent)
+                .unwrap();
+            let trace = source.verification_snapshot().unwrap();
+            assert!(trace.entered && !trace.released);
+            assert_eq!(trace.players.len(), 1);
+            assert!(trace.npc_receipts.is_empty());
+            source.verification_release().unwrap();
+            worker.join().unwrap().unwrap();
+        });
+        let trace = source.verification_snapshot().unwrap();
+        assert!(trace
+            .npc_receipts
+            .iter()
+            .any(|receipt| receipt.receipt.owner == account));
+        for npc in &trace.npc_receipts {
+            assert!(trace.players[0].stock_ordinal < npc.receipt.stock_ordinal);
+        }
+        assert_eq!(session.save().unwrap().pending_player.len(), 1);
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn verification_cutoff_gate_exposes_real_frozen_prefix_and_defers_late_player() {
+        let mut session = game();
+        let source = session.shared_ingress();
+        source.verification_arm("cutoff", 0, None).unwrap();
+        source
+            .enqueue_player_intent(AccountId(0), buy(&session, 0))
+            .unwrap();
+        let mut late = buy(&session, 0);
+        if let Intent::PlaceLimit { qty, .. } = &mut late {
+            *qty = 200;
+        }
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let first = std::thread::scope(|scope| {
+            let _release = ReleaseGate(source.clone());
+            let worker = scope.spawn(|| {
+                let result = session.step();
+                finished_tx.send(()).unwrap();
+                result
+            });
+            if !wait_for_gate(&source, &finished_rx) {
+                source.verification_release().unwrap();
+                worker
+                    .join()
+                    .unwrap()
+                    .expect("production step 必须成功，不能用其他 fatal 冒充缺失 gate 的红灯");
+                panic!("production cutoff 已冻结后必须进入 gate");
+            }
+            source.enqueue_player_intent(AccountId(0), late).unwrap();
+            let trace = source.verification_snapshot().unwrap();
+            assert_eq!(trace.cutoffs.len(), 1);
+            assert_eq!(trace.cutoffs[0].receipts.len(), 1);
+            assert_eq!(
+                trace.cutoffs[0].receipts[0].account_ordinal,
+                trace.players[0].account_ordinal
+            );
+            assert!(
+                trace.players[1].account_ordinal > trace.cutoffs[0].receipts[0].account_ordinal
+            );
+            source.verification_release().unwrap();
+            worker.join().unwrap().unwrap()
+        });
+        let accepted = |events: &[crate::Event]| {
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    crate::Event::OrderAccepted {
+                        account,
+                        remaining_qty,
+                        ..
+                    } if *account == AccountId(0) => Some(*remaining_qty),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(accepted(&first), vec![100]);
+        assert_eq!(accepted(&session.step().unwrap()), vec![200]);
+        let trace = source.verification_snapshot().unwrap();
+        assert_eq!(trace.cutoffs.len(), 2);
+        assert_eq!(
+            trace.cutoffs[1].receipts[0].account_ordinal,
+            trace.players[1].account_ordinal
+        );
+        assert_eq!(session.save().unwrap().pending_player.len(), 0);
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn closing_source_releases_entered_gate_and_rejects_rearming() {
+        let mut session = game();
+        let source = session.shared_ingress();
+        source.verification_arm("cutoff", 0, None).unwrap();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let _release = ReleaseGate(source.clone());
+            let worker = scope.spawn(|| {
+                source.verification.wait("cutoff", 0, None).unwrap();
+                finished_tx.send(()).unwrap();
+            });
+            assert!(wait_for_gate(&source, &finished_rx));
+            source.close().unwrap();
+            finished_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("close 必须唤醒真实 entered waiter");
+            assert!(source.verification_snapshot().unwrap().released);
+            assert!(source.verification_arm("cutoff", 1, None).is_err());
+            worker.join().unwrap();
+        });
     }
 }

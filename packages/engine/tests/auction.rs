@@ -1,3 +1,5 @@
+include!("../test-support/simple_company.rs");
+
 use engine::{
     AccountId, AuctionOrderSnap, Event, FloatAllocation, GameConfig, GameSession, HotParams,
     InstParams, Intent, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, Side,
@@ -13,8 +15,7 @@ struct AuctionFixture {
 impl AuctionFixture {
     fn quiet(auction_ticks: u64, seed: u64) -> Self {
         let setup = SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(engine; ["600000"]),
             stocks: vec![StockSpec {
                 code: StockCode("600000".to_string()),
                 exchange: StockExchange::Shanghai,
@@ -53,6 +54,7 @@ impl AuctionFixture {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -75,8 +77,7 @@ impl AuctionFixture {
             float_shares: 1_000_000,
         };
         let setup = SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
             stocks: vec![
                 stock("600101", 1_120, SecurityCategory::MainBoard),
                 stock("002156", 2_735, SecurityCategory::MainBoard),
@@ -112,6 +113,7 @@ impl AuctionFixture {
             closing_auction_ticks: 0,
             history_len: 20,
             t1_enabled: true,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -127,12 +129,14 @@ impl AuctionFixture {
             }
             .to_string(),
         );
+        fixture.setup.company_system = simple_company_fixture!(engine; codes = fixture.setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         fixture.setup.stocks[0].exchange = exchange;
         fixture
     }
 
     fn retain_stock(&mut self, code: &StockCode) {
         self.setup.stocks.retain(|stock| &stock.code == code);
+        self.setup.company_system = simple_company_fixture!(engine; codes = self.setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         assert_eq!(self.setup.stocks.len(), 1, "fixture stock must exist");
     }
 
@@ -714,6 +718,7 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     idle_stock.code = idle_code.clone();
     idle_stock.exchange = StockExchange::Shenzhen;
     fixture.setup.stocks.push(idle_stock);
+    fixture.setup.company_system = simple_company_fixture!(engine; codes = fixture.setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let save = fixture.save_with_orders(
         vec![
             order(0, Side::Buy, 10_300, 500, 1),

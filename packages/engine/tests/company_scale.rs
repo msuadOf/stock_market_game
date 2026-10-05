@@ -1,3 +1,5 @@
+include!("../test-support/simple_company.rs");
+
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
@@ -46,8 +48,7 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 
 fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
@@ -83,6 +84,7 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::class_percentages(0.45, 0.53, 0.02, engine::WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -122,6 +124,7 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
     // 单股、两个 tick 足以生成真实计划，避免短引用校验重复构建五股历史。
     let mut setup = default_five_stock_setup(2, 2);
     setup.stocks.truncate(1);
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let mut session = GameSession::new(setup, SEED).expect("representative session constructs");
     settle_natural_days(&mut session, 1, 2);
     let save = session.save().expect("healthy save");

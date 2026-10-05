@@ -384,6 +384,7 @@ fn retail_snapshot() -> Arc<DecisionSnapshot> {
         stocks: [(
             code.clone(),
             StockView {
+                is_trading: true,
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1_001)),
                 last_price: Money::from_cents(1_000),
@@ -782,6 +783,7 @@ fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
                 (
                     StockCode(code.to_owned()),
                     StockView {
+                        is_trading: true,
                         best_bid: Some(Money::from_cents(1_049)),
                         best_ask: Some(Money::from_cents(1_051)),
                         last_price: Money::from_cents(1_050),

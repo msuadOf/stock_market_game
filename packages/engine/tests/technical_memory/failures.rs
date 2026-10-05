@@ -190,10 +190,12 @@ fn price_memory_rejects_time_going_backwards() {
     let mut memory = PersonalPriceMemory::default();
     let mut reads = engine::experience::PersonalHistoryReadLedger::default();
     let stock = code("600101");
-    memory.observe_price(&stock, price(1000), 100).unwrap();
+    memory.observe_price(&stock, price(1000), 100, 100).unwrap();
 
     assert_eq!(
-        memory.observe_price(&stock, price(900), 99).unwrap_err(),
+        memory
+            .observe_price(&stock, price(900), 99, 99)
+            .unwrap_err(),
         PriceMemoryError::TimeWentBackwards {
             attempted: 99,
             last: 100,
@@ -201,7 +203,7 @@ fn price_memory_rejects_time_going_backwards() {
     );
     assert_eq!(
         memory
-            .record_public_history_read(&stock, 50, &mut reads)
+            .record_public_history_read(&stock, 50, 50, &mut reads)
             .unwrap_err(),
         PriceMemoryError::TimeWentBackwards {
             attempted: 50,
@@ -214,9 +216,11 @@ fn price_memory_rejects_time_going_backwards() {
 fn price_memory_rejects_non_positive_price() {
     let mut memory = PersonalPriceMemory::default();
     let stock = code("600101");
-    memory.observe_price(&stock, price(1000), 100).unwrap();
+    memory.observe_price(&stock, price(1000), 100, 100).unwrap();
     assert_eq!(
-        memory.observe_price(&stock, Money::ZERO, 101).unwrap_err(),
+        memory
+            .observe_price(&stock, Money::ZERO, 101, 101)
+            .unwrap_err(),
         PriceMemoryError::NonPositiveMoney {
             field: "observed price",
             cents: 0,
@@ -231,7 +235,7 @@ fn price_memory_rejects_public_read_of_never_observed_stock() {
     let mut reads = engine::experience::PersonalHistoryReadLedger::default();
     assert_eq!(
         memory
-            .record_public_history_read(&code("600101"), 100, &mut reads)
+            .record_public_history_read(&code("600101"), 100, 100, &mut reads)
             .unwrap_err(),
         PriceMemoryError::UnobservedStock {
             code: "600101".into(),

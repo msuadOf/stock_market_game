@@ -12,6 +12,11 @@ use crate::company::{
     OperatingBudget,
 };
 
+#[path = "../company_corrections/group_tests.rs"]
+mod correction_cases;
+#[path = "correction_time_tests.rs"]
+mod correction_time_tests;
+
 fn date(iso: &str) -> crate::calendar::CivilDate {
     crate::calendar::CivilDate::from_iso(iso).unwrap()
 }
@@ -291,4 +296,81 @@ fn historical_group_balances_survive_real_trade_settlement_and_restore() {
         .unwrap_err()
         .to_string()
         .contains("missing item identity"));
+}
+
+#[test]
+fn custom_monthly_group_publication_requires_real_member_closing_and_keeps_scope() {
+    let mut ops = CompanyOperations::new(
+        CompanyOperationsConfig {
+            seed: 17,
+            shock_params: crate::company::events::ShockParams::current_default_parameters(),
+            companies: vec![company("root", None), company("sub", Some("root"))],
+        },
+        date("2030-05-01"),
+    )
+    .unwrap();
+    let group = GroupStructure {
+        root: CompanyId("root".into()),
+        holdings: vec![GroupHolding {
+            company: CompanyId("sub".into()),
+            parent_held_shares: 75,
+        }],
+    };
+    let frequency = crate::information::ReportFrequency::Monthly {
+        schedule: crate::information::MonthlyReportSchedule::Custom {
+            day: 2,
+            second_of_day: 35400,
+            delay: crate::information::MonthlyReportDelay::None,
+        },
+    };
+    let kind = ScheduledReportKind::Monthly { month: 4 };
+    let instant = frequency
+        .scheduled_instant(kind, 2030, ops.seed, &group.root)
+        .unwrap();
+    let mut closing = ClosingEngine::new();
+    let mut library = PublicLibrary::new();
+    let failed = publish_group_scheduled(
+        &group,
+        &ops,
+        &mut closing,
+        &mut library,
+        instant,
+        2030,
+        kind,
+        frequency,
+    )
+    .unwrap_err();
+    assert!(failed.to_string().contains("requires closed member"));
+    assert_eq!(library.report_count(), 0);
+    let period = AccountingPeriod::from_ymd(2030, 4).unwrap();
+    for company in ops.companies.values_mut() {
+        let member = MemberId(company.spec().id.0.clone());
+        closing
+            .close_month(
+                company.books_mut(),
+                &member,
+                crate::accounting::reports::IndustryPresentation::Industrial,
+                period,
+            )
+            .unwrap();
+    }
+    let id = publish_group_scheduled(
+        &group,
+        &ops,
+        &mut closing,
+        &mut library,
+        instant,
+        2030,
+        kind,
+        frequency,
+    )
+    .unwrap();
+    let published = library.report(id, instant).unwrap();
+    assert_eq!(published.reports.kind, ReportKind::Monthly);
+    assert_eq!(
+        published.reports.scope,
+        ScopeId::Consolidated(MemberId("root".into()))
+    );
+    assert_eq!(published.published_at, instant);
+    assert_eq!(published.approved_at, instant);
 }

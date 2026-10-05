@@ -10,12 +10,14 @@ pub const SIMULATION_POLICY_ID: &str = "a-share-simulation";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedRuntimeState {
+    pub active_minute_history: BTreeMap<StockCode, Vec<MinuteBar>>,
     /// poisoned session 不允许生成存档；显式标记让恢复校验能够识别篡改。
     pub poisoned: bool,
     #[serde(with = "super::super::u64_decimal")]
     pub next_receipt_base: u64,
     pub live_envelopes: Vec<SavedLiveEnvelope>,
     pub retail_projection_seen: Vec<SavedRetailReceiptIdentity>,
+    pub personal_trade_confirmations: BTreeMap<AccountId, Vec<PersonalTradeConfirmation>>,
     /// 完整生产策略状态是权威事实；profile 从 enum value 派生，不重复保存。
     pub strategy_states: BTreeMap<AccountId, crate::strategy::StrategyState>,
 }
@@ -160,10 +162,17 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
     let state = SavedRuntimeState {
+        active_minute_history: session.state.retained_market_history.saved_active(),
         poisoned: false,
         next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
         retail_projection_seen,
+        personal_trade_confirmations: session
+            .state
+            .personal_trade_confirmations
+            .iter()
+            .map(|(account, history)| (*account, history.iter().cloned().collect()))
+            .collect(),
         strategy_states,
     };
     validate_runtime_state(session, &state).map_err(session_error_as_invariant)?;
@@ -206,6 +215,8 @@ pub fn validate_runtime_state(
 
     let ledger = state.build_ledger(session)?;
     validate_live_envelopes_against_orders(session, state, &ledger)?;
+    validate_personal_trade_confirmations(session, state)?;
+    session.validate_active_minute_history(&state.active_minute_history)?;
 
     let identities = state
         .retail_projection_seen
@@ -304,6 +315,48 @@ pub fn validate_runtime_state(
     Ok(())
 }
 
+fn validate_personal_trade_confirmations(
+    session: &GameSession,
+    state: &SavedRuntimeState,
+) -> Result<(), SessionError> {
+    let mut all_receipt_ids = BTreeSet::new();
+    for (account, confirmations) in &state.personal_trade_confirmations {
+        if session.state.accounts.get(account).is_none() {
+            return Err(SessionError::InvalidSave(format!(
+                "personal trade confirmations refer to missing account {}",
+                account.0
+            )));
+        }
+        let mut previous_receipt_id = None;
+        for confirmation in confirmations {
+            if confirmation.receipt_id >= state.next_receipt_base
+                || previous_receipt_id.is_some_and(|previous| confirmation.receipt_id <= previous)
+                || !all_receipt_ids.insert(confirmation.receipt_id)
+                || confirmation.code.0.is_empty()
+                || !session.state.markets.contains_key(&confirmation.code)
+                || confirmation.civil_date < session.state.setup.start_date
+                || confirmation.civil_date > session.civil_date()
+                || confirmation.quantity_shares == 0
+                || confirmation.price.cents() <= 0
+                || confirmation.gross.cents() <= 0
+                || i128::from(confirmation.price.cents())
+                    * i128::from(confirmation.quantity_shares)
+                    != i128::from(confirmation.gross.cents())
+                || confirmation.actual_fees.commission.cents() < 0
+                || confirmation.actual_fees.stamp_tax.cents() < 0
+                || confirmation.actual_fees.transfer_fee.cents() < 0
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "personal trade confirmation for account {} is invalid",
+                    account.0
+                )));
+            }
+            previous_receipt_id = Some(confirmation.receipt_id);
+        }
+    }
+    Ok(())
+}
+
 fn validate_receipt_identity_domain(
     session: &GameSession,
     identity: &SavedRetailReceiptIdentity,
@@ -398,8 +451,20 @@ pub fn restore_runtime_state(
             .restore_strategy(Some(strategy));
     }
     session.state.accounts = accounts;
+    session.state.retained_market_history.restore_active(&state.active_minute_history);
     session.state.envelope_ledger = ledger;
     session.state.retail_projection_seen = seen;
+    session.state.personal_trade_confirmations = state
+        .personal_trade_confirmations
+        .iter()
+        .map(|(account, confirmations)| {
+            let mut history = crate::experience::AppendOnlyHistory::default();
+            for confirmation in confirmations {
+                history.push(confirmation.clone());
+            }
+            (*account, history)
+        })
+        .collect();
     session.state.next_receipt_base = state.next_receipt_base;
     Ok(())
 }

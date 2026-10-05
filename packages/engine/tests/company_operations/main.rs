@@ -18,6 +18,7 @@ mod fixtures;
 mod history_gold;
 mod industry_guards;
 mod industry_sessions;
+mod income_tax;
 mod maturities;
 mod payment_risks;
 mod period_end;

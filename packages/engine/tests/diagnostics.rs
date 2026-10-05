@@ -1,3 +1,5 @@
+include!("../test-support/simple_company.rs");
+
 use engine::{
     run_combined_diagnostics, run_price_volume_baseline, BaselineError, FloatAllocation,
     GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams, SecurityCategory,
@@ -7,8 +9,7 @@ use engine::{
 fn diagnostic_setup() -> SessionSetup {
     let code = StockCode("600101".to_string());
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: code.clone(),
             exchange: StockExchange::Shanghai,
@@ -47,6 +48,7 @@ fn diagnostic_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),

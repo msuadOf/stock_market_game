@@ -1,6 +1,8 @@
 #[path = "diagnostic_parity.rs"]
 mod fixture;
 
+include!("../test-support/simple_company.rs");
+
 use engine::diagnostics::causal::{CausalError, CausalFactKind, CausalReport, Termination};
 use engine::{AccountId, Event, GameSession, Intent, Money, Side, StockCode};
 
@@ -241,6 +243,7 @@ fn npc_execution_session_with_player_quantity(player_quantity: u32) -> GameSessi
     const TRADING_DAYS: u32 = 3;
     let mut setup = fixture::setup();
     setup.stocks[0].code = StockCode("000812".to_owned());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
     // 原 285 分场景只有自然买单；价格高于个人估值的场景提供真实 NPC 卖单。
     setup.stocks[0].initial_price = Money::from_cents(600);

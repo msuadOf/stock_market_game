@@ -35,11 +35,9 @@ fn due_retail(seed: u64, order_size: u32) -> (GameSession, AccountId) {
 
 #[test]
 fn missing_npc_batch_is_valid_only_at_a_day_boundary() {
-    let mut session = GameSession::new(
-        crate::session::npc_working_quote_tests::retail_quote_setup(),
-        42,
-    )
-    .unwrap();
+    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
     let boundary = session.save().unwrap();
     assert!(boundary.pending_npc.is_none());
     GameSession::restore(&boundary).unwrap();

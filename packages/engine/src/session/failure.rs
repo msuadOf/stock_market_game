@@ -51,6 +51,12 @@ impl GameSession {
         capture_commit_evidence: bool,
     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
         self.require_healthy()?;
+        if self.civil_clock().phase() == super::CivilPhase::ClosedDay {
+            return Err(self.poison_failed_step(StepFatal::InvariantViolation {
+                location: "GameSession::step".into(),
+                description: "全部交易所休市的自然日不能推进市场tick，请执行自然日日结".into(),
+            }));
+        }
         #[cfg(test)]
         if self.injected_failure.is_some() {
             if let Err(fatal) = self.run_pre_mutation_hook() {
@@ -89,6 +95,12 @@ impl GameSession {
     pub(in crate::session) fn save_committed_projection(&self) -> Result<SaveSlot, StepFatal> {
         self.require_healthy()?;
         let runtime_state = super::persistence::capture_runtime_state(self)?;
+        if !self.state.pending_report_corrections.is_empty() {
+            return Err(StepFatal::InvariantViolation {
+                description: "日内待处理报表更正不得写入日终存档".into(),
+                location: "GameSession::save_committed_projection".into(),
+            });
+        }
         Ok(self.save_projection(runtime_state))
     }
 

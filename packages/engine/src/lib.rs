@@ -16,12 +16,17 @@
 #[global_allocator]
 static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+#[cfg(test)]
+#[macro_use]
+#[path = "../test-support/simple_company.rs"]
+mod simple_company_test_fixture;
+
 pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
 
 pub mod intraday_average;
-pub use intraday_average::{calculate_intraday_average, IntradayAverage, IntradayAverageError};
+pub use intraday_average::{calculate_intraday_average, calculate_intraday_average_curve, parse_turnover_cents, IntradayAverage, IntradayAverageError, IntradayAverageInput};
 
 pub mod config;
 pub use config::{ConfigError, GameConfig};
@@ -62,7 +67,8 @@ pub mod verification_evidence;
 
 pub mod session;
 pub use session::{
-    SharedSessionIngress,
+    CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch, ReportCorrectionStatus,
+    PersonalTradeConfirmation, SharedSessionIngress,
     decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
     DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
     NpcAttentionState, NpcSetup, ParentOrderPlan, PendingNpcBatch, PendingPlanEvent, PositionSnap,

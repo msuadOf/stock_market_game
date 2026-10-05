@@ -29,15 +29,30 @@ pub(super) fn select_observed_stock(
     rng: &mut dyn Rng,
 ) -> Option<StockCode> {
     // 60% 优先查看持仓，40% 仍能从全市场发现股票；每个账户独立抽样。
-    if !own.positions.is_empty() && rng.next_f64() < 0.60 {
-        let index = rng.next_range_u32(0, own.positions.len() as u32) as usize;
-        return own.positions.keys().nth(index).cloned();
+    let held: Vec<_> = own
+        .positions
+        .keys()
+        .filter(|code| {
+            market
+                .stocks
+                .get(*code)
+                .is_some_and(|stock| stock.is_trading)
+        })
+        .collect();
+    if !held.is_empty() && rng.next_f64() < 0.60 {
+        let index = rng.next_range_u32(0, held.len() as u32) as usize;
+        return Some(held[index].clone());
     }
     if let Some(experience) = experience {
         let watched: Vec<_> = experience
             .stocks
             .keys()
-            .filter(|code| market.stocks.contains_key(*code))
+            .filter(|code| {
+                market
+                    .stocks
+                    .get(*code)
+                    .is_some_and(|stock| stock.is_trading)
+            })
             .cloned()
             .collect();
         if !watched.is_empty() && rng.next_f64() < 0.70 {
@@ -45,11 +60,17 @@ pub(super) fn select_observed_stock(
             return watched.get(index).cloned();
         }
     }
-    if market.stocks.is_empty() {
+    let trading: Vec<_> = market
+        .stocks
+        .iter()
+        .filter(|(_, stock)| stock.is_trading)
+        .map(|(code, _)| code)
+        .collect();
+    if trading.is_empty() {
         return None;
     }
-    let index = rng.next_range_u32(0, market.stocks.len() as u32) as usize;
-    market.stocks.keys().nth(index).cloned()
+    let index = rng.next_range_u32(0, trading.len() as u32) as usize;
+    Some(trading[index].clone())
 }
 
 /// 单次仓位目标推导的借用上下文；权威持仓、权益和行情仍由输入 owner 保存。
@@ -91,6 +112,12 @@ pub(crate) fn apply_personal_analysis(
     }
     let selected = assessments
         .iter()
+        .filter(|(code, _)| {
+            market
+                .stocks
+                .get(*code)
+                .is_some_and(|stock| stock.is_trading)
+        })
         .max_by(|(left_code, left), (right_code, right)| {
             let magnitude = |assessment: &crate::plans::CandidateAssessment| match assessment {
                 crate::plans::CandidateAssessment::Scored { score, .. } => {
@@ -350,6 +377,7 @@ mod position_context_tests {
             stocks: [(
                 code.clone(),
                 StockView {
+                    is_trading: true,
                     best_bid: None,
                     best_ask: None,
                     last_price: Money::from_cents(100),
@@ -422,6 +450,28 @@ mod position_context_tests {
         fn next_range_u32(&mut self, _lo: u32, _hi: u32) -> u32 {
             panic!("仓位信心转换不应抽取股票索引")
         }
+    }
+
+    #[test]
+    fn closed_holding_is_not_selected_for_behavior_observation() {
+        let (code, mut market, _) = inputs();
+        market.stocks.get_mut(&code).unwrap().is_trading = false;
+        let own = SelfView {
+            cash: Money::from_cents(100_000),
+            positions: BTreeMap::from([(
+                code,
+                crate::strategy::PositionView {
+                    qty: 100,
+                    sellable_qty: 100,
+                    cost_price: Some(Money::from_cents(100)),
+                },
+            )]),
+        };
+        let mut rng = CountingRng {
+            value: 0.0,
+            draws: 0,
+        };
+        assert_eq!(select_observed_stock(&market, &own, None, &mut rng), None);
     }
 
     #[test]

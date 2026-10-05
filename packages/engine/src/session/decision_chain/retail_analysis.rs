@@ -28,6 +28,7 @@ impl GameSession {
         let returns = observation
             .paths
             .iter()
+            .filter(|(stock, _)| observation.market.stocks[*stock].is_trading)
             .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
             .collect();
         let thirty_minute_market =
@@ -99,7 +100,6 @@ impl GameSession {
             &self.state.plans,
             discovered,
         );
-        let day = u64::from(self.state.day);
         let mut reports: BTreeMap<StockCode, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
@@ -108,11 +108,19 @@ impl GameSession {
             let stock = observation.market.stocks.get(code).ok_or_else(|| {
                 invariant(format!("retail {id:?} candidate {code:?} has no market"))
             })?;
-            personal
-                .price_memory
-                .observe_price(code, stock.last_price, minute)
-                .map_err(|error| invariant(error.to_string()))?;
-            let Some(company) = self.state.company_registry.issuer_of(code) else {
+            if stock.is_trading {
+                personal
+                    .price_memory
+                    .observe_price(
+                        code,
+                        stock.last_price,
+                        self.stock_market_minute(code)
+                            .map_err(|error| invariant(error.to_string()))?,
+                        minute,
+                    )
+                    .map_err(|error| invariant(error.to_string()))?;
+            }
+            let Some(company) = self.state.company_system.issuers().issuer_of(code) else {
                 continue;
             };
             if !checks_information {
@@ -172,23 +180,23 @@ impl GameSession {
         )
         .map_err(|error| invariant(error.to_string()))?;
         for code in &candidates {
-            let Some(company) = self.state.company_registry.issuer_of(code) else {
+            let Some(company) = self.state.company_system.issuers().issuer_of(code) else {
                 continue;
             };
-            let spec = self
-                .state
-                .operations
-                .company(company)
+            let stock_day = u64::from(
+                self.stock_trading_day(code)
+                    .map_err(|error| invariant(error.to_string()))?,
+            );
+            let spec = self.state.company_system.issuers().get(company)
                 .ok_or_else(|| {
-                    invariant(format!("retail issuer {company:?} has no operating books"))
-                })?
-                .spec();
+                    invariant(format!("retail issuer {company:?} has no registered identity"))
+                })?;
             let inputs = BeliefInputs {
                 ctx: &ctx,
                 company: company.clone(),
                 kind: spec.kind,
                 total_issued_shares: spec.issued_shares,
-                as_of_trading_day: day,
+                as_of_trading_day: stock_day,
             };
             if reports.contains_key(code) {
                 let report = crate::strategy::preferred_own_report(&ctx, &inputs.company)
@@ -227,7 +235,7 @@ impl GameSession {
                 }
             }
             if personal.belief.entry(code).is_some_and(|entry| {
-                day >= entry.anchor_trading_day + u64::from(entry.horizon_trading_days)
+                stock_day >= entry.anchor_trading_day + u64::from(entry.horizon_trading_days)
             }) {
                 personal
                     .belief
@@ -246,21 +254,41 @@ impl GameSession {
                 .record_information_check(observation.now)
                 .map_err(|error| invariant(error.to_string()))?;
         }
-        apply_personal_experience_feedback(&mut personal.belief, experience, day).map_err(
-            |error| {
-                invariant(format!(
-                    "retail {id:?} experience confidence failed: {error}"
-                ))
-            },
-        )?;
+        let stock_days = self
+            .state
+            .markets
+            .keys()
+            .map(|code| {
+                self.stock_trading_day(code)
+                    .map(|day| (code.clone(), u64::from(day)))
+                    .map_err(|error| invariant(error.to_string()))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        apply_personal_experience_feedback(&mut personal.belief, experience, |code| {
+            stock_days[code]
+        })
+        .map_err(|error| {
+            invariant(format!(
+                "retail {id:?} experience confidence failed: {error}"
+            ))
+        })?;
         let mut assessments = BTreeMap::new();
         for code in &candidates {
+            if !observation.market.stocks[code].is_trading {
+                continue;
+            }
             let signals = self
                 .retail_candidate_signals(id, code, personal, observation, thirty_minute_market)
                 .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
             personal
                 .price_memory
-                .record_public_history_read(code, minute, &mut personal.history_reads)
+                .record_public_history_read(
+                    code,
+                    self.stock_market_minute(code)
+                        .map_err(|error| invariant(error.to_string()))?,
+                    minute,
+                    &mut personal.history_reads,
+                )
                 .map_err(|error| invariant(error.to_string()))?;
             assessments.insert(
                 code.clone(),

@@ -238,6 +238,15 @@ impl Account {
         }
     }
 
+    pub(crate) fn unlock_t1_for_stocks(&mut self, open: &std::collections::BTreeSet<StockCode>) {
+        if !self.state.positions.iter().any(|(code, position)| open.contains(code) && position.t1_locked > 0) {
+            return;
+        }
+        for (code, position) in Arc::make_mut(&mut self.state).positions.iter_mut() {
+            if open.contains(code) { position.t1_locked = 0; }
+        }
+    }
+
     /// 可卖股数（持仓 − T+1 锁定）；无持仓返回 0。
     pub fn sellable_qty(&self, code: &StockCode) -> u32 {
         self.state

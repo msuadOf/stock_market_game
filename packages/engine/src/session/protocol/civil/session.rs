@@ -13,6 +13,7 @@ struct ProtocolState {
     day_end_save: Option<Arc<crate::SaveSlot>>,
     published_runtime: RefCell<Option<super::super::PublicRuntimeState>>,
     pending_save_candidates: RefCell<BTreeMap<u64, Arc<crate::SaveSlot>>>,
+    pending_disclosure_observers: Vec<(crate::CivilInstant, Vec<crate::session::civil_clock::DisclosureObserver>)>,
 }
 
 impl ProtocolState {
@@ -25,6 +26,7 @@ impl ProtocolState {
             day_end_save: self.day_end_save.clone(),
             published_runtime: RefCell::new(self.published_runtime.borrow().clone()),
             pending_save_candidates: RefCell::new(self.pending_save_candidates.borrow().clone()),
+            pending_disclosure_observers: self.pending_disclosure_observers.clone(),
         })
     }
 }
@@ -58,6 +60,7 @@ impl PublicationFactCursor {
 
 pub struct ProtocolSession {
     state: ProtocolState,
+    publication_scope: Option<Arc<()>>,
     #[cfg(test)]
     malformed_frame: bool,
     #[cfg(test)]
@@ -66,9 +69,46 @@ pub struct ProtocolSession {
 
 pub struct ProtocolCheckpoint {
     state: ProtocolState,
+    source: crate::SharedSessionIngress,
+    publication: crate::session::shared_ingress::CalendarPublication,
+    publication_scope: Option<Arc<()>>,
+}
+
+struct PublicationTransaction<'session> {
+    session: &'session mut ProtocolSession,
+    checkpoint: Option<ProtocolCheckpoint>,
+    scope: Arc<()>,
+}
+
+impl Drop for PublicationTransaction<'_> {
+    fn drop(&mut self) {
+        if let Some(checkpoint) = self.checkpoint.take() {
+            self.session.state = checkpoint.state;
+            self.session.publication_scope = None;
+        }
+    }
 }
 
 impl ProtocolSession {
+    pub fn query_current_minute_history_for(&mut self, account: crate::AccountId, request: &crate::session::CurrentMinuteHistoryRequest) -> Result<crate::session::CurrentMinuteHistoryResponse, SessionError> {
+        self.state.game.query_current_minute_history_for(account, request)
+    }
+    pub fn bind_market_creator(&mut self, subject: crate::session::OpaqueSubjectId) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
+        self.state.game.bind_market_creator(subject)
+    }
+
+    pub fn join_market(&mut self, subject: crate::session::OpaqueSubjectId, confirmed_rejoin: bool) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
+        self.state.game.join_market(subject, confirmed_rejoin)
+    }
+
+    pub fn set_admission_cash(&mut self, cash: crate::Money) -> Result<(), crate::session::MembershipError> {
+        self.state.game.set_admission_cash(cash)
+    }
+
+    pub fn query_market_history_for(&mut self, account: crate::AccountId, request: &crate::session::MarketHistoryRequest) -> Result<crate::session::MarketHistoryPage, SessionError> {
+        self.state.game.query_market_history_for(account, request)
+    }
+
     pub fn query_stock_history(
         &mut self,
         account: crate::AccountId,
@@ -81,11 +121,50 @@ impl ProtocolSession {
     pub fn checkpoint(&self) -> Result<ProtocolCheckpoint, StepFatal> {
         Ok(ProtocolCheckpoint {
             state: self.state.try_clone_for_checkpoint()?,
+            source: self.shared_ingress(),
+            publication: self.shared_ingress().calendar_publication().map_err(|error| StepFatal::InvariantViolation {
+                location: "ProtocolSession checkpoint".into(), description: error.to_string(),
+            })?,
+            publication_scope: self.publication_scope.clone(),
         })
     }
 
-    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) {
+    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) -> Result<(), SessionError> {
+        let source = self.shared_ingress();
+        if !source.same_source(&checkpoint.source)
+            || source.calendar_publication()? != checkpoint.publication
+            || !same_publication_scope(&self.publication_scope, &checkpoint.publication_scope) {
+            return Err(SessionError::InvalidSave("内存checkpoint的收件入口、已发布自然日或publication scope不匹配".into()));
+        }
         self.state = checkpoint.state;
+        Ok(())
+    }
+
+    pub fn with_publication_transaction<Value>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<Value, SessionError>,
+    ) -> Result<Value, SessionError> {
+        self.state.game.require_healthy()?;
+        if self.publication_scope.is_some() {
+            return Err(SessionError::InvalidSave("自然日发布事务不允许嵌套".into()));
+        }
+        let checkpoint = self.checkpoint()?;
+        let scope = Arc::new(());
+        self.publication_scope = Some(scope.clone());
+        let mut transaction = PublicationTransaction { session: self, checkpoint: Some(checkpoint), scope };
+        let result = operation(transaction.session)?;
+        transaction.session.state.game.require_healthy()?;
+        let checkpoint = transaction.checkpoint.as_ref().expect("发布事务持有原始checkpoint");
+        let source = transaction.session.shared_ingress();
+        if !source.same_source(&checkpoint.source)
+            || !transaction.session.publication_scope.as_ref().is_some_and(|scope| Arc::ptr_eq(scope, &transaction.scope)) {
+            return Err(SessionError::InvalidSave("自然日发布事务的收件入口发生变化".into()));
+        }
+        source.publish_calendar(checkpoint.publication, transaction.session.civil_date())?;
+        transaction.session.publication_scope = None;
+        transaction.checkpoint = None;
+        transaction.session.deliver_committed_disclosure_observers();
+        Ok(result)
     }
 
     #[cfg(feature = "verification-harness")]
@@ -96,6 +175,7 @@ impl ProtocolSession {
         state.game.shared_ingress();
         Ok(Self {
             state,
+            publication_scope: None,
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -148,6 +228,7 @@ impl ProtocolSession {
                 .values()
                 .any(|orders| !orders.is_empty())
             || !slot.runtime_state.live_envelopes.is_empty()
+            || !slot.runtime_state.active_minute_history.is_empty()
             || !slot.npc_order_lifecycles.is_empty()
             || slot.parent_orders.values().any(|plans| !plans.is_empty())
             || !slot.pending_player.is_empty()
@@ -184,7 +265,9 @@ impl ProtocolSession {
                 day_end_save,
                 published_runtime: RefCell::new(None),
                 pending_save_candidates: RefCell::new(BTreeMap::new()),
+                pending_disclosure_observers: Vec::new(),
             },
+            publication_scope: None,
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -194,6 +277,30 @@ impl ProtocolSession {
 
     pub fn game(&self) -> &GameSession {
         &self.state.game
+    }
+
+    pub fn report_correction_epoch(&self) -> crate::session::ReportCorrectionEpoch {
+        self.state.game.report_correction_epoch()
+    }
+
+    pub fn report_corrections(&self) -> Result<crate::session::ReportCorrectionStatus, SessionError> {
+        self.state.game.report_corrections()
+    }
+
+    pub fn enqueue_report_correction(
+        &mut self,
+        epoch: &crate::session::ReportCorrectionEpoch,
+        request: crate::session::CompanyReportCorrection,
+    ) -> Result<(), SessionError> {
+        self.state.game.enqueue_report_correction(epoch, request)
+    }
+
+    pub fn cancel_report_correction(
+        &mut self,
+        epoch: &crate::session::ReportCorrectionEpoch,
+        operation_id: &str,
+    ) -> Result<(), SessionError> {
+        self.state.game.cancel_report_correction(epoch, operation_id)
     }
 
     pub fn shared_ingress(&self) -> crate::SharedSessionIngress {
@@ -262,7 +369,9 @@ impl ProtocolSession {
         let frame = match result {
             Ok(frame) => frame,
             Err(error) => {
-                self.rollback(checkpoint);
+                self.rollback(checkpoint).map_err(|error| StepFatal::InvariantViolation {
+                    location: "ProtocolSession rollback".into(), description: error.to_string(),
+                })?;
                 return Err(error);
             }
         };
@@ -292,7 +401,9 @@ impl ProtocolSession {
         let (frame, evidence) = match result {
             Ok(committed) => committed,
             Err(error) => {
-                self.rollback(checkpoint);
+                self.rollback(checkpoint).map_err(|error| StepFatal::InvariantViolation {
+                    location: "ProtocolSession rollback".into(), description: error.to_string(),
+                })?;
                 return Err(error);
             }
         };
@@ -342,7 +453,7 @@ impl ProtocolSession {
         let (update, candidate) = match result {
             Ok(committed) => committed,
             Err(error) => {
-                self.rollback(checkpoint);
+                self.rollback(checkpoint)?;
                 return Err(error);
             }
         };
@@ -355,7 +466,25 @@ impl ProtocolSession {
             .insert(candidate.snapshot.seq, Arc::clone(&candidate));
         self.state.day_end_save = Some(candidate);
         *self.state.published_runtime.borrow_mut() = None;
+        self.state.pending_disclosure_observers.push((
+            crate::CivilInstant::from_hms(update.boundary.settled_date, 18, 0, 0)
+                .expect("已验证自然日的18:00有效"),
+            self.state.game.civil_clock().disclosure_observers().to_vec(),
+        ));
+        if self.publication_scope.is_none() {
+            if let Err(error) = self.shared_ingress().publish_calendar(checkpoint.publication, self.civil_date()) {
+                self.rollback(checkpoint)?;
+                return Err(error);
+            }
+            self.deliver_committed_disclosure_observers();
+        }
         Ok(update)
+    }
+
+    fn deliver_committed_disclosure_observers(&mut self) {
+        for (instant, observers) in std::mem::take(&mut self.state.pending_disclosure_observers) {
+            for observer in observers { observer(instant); }
+        }
     }
 
     pub fn tick_batch(&self, frames: Vec<TickFrame>) -> Result<TickBatch, StepFatal> {
@@ -396,6 +525,18 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
     }
 }
 
+fn same_publication_scope(left: &Option<Arc<()>>, right: &Option<Arc<()>>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+#[path = "personal_trade_tests.rs"]
+mod personal_trade_tests;
+
 #[cfg(test)]
 #[path = "day_end_npc_tests.rs"]
 mod day_end_npc_tests;
@@ -403,6 +544,157 @@ mod day_end_npc_tests;
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
+
+    fn calendar_session() -> ProtocolSession {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.ticks_per_day = 2;
+        ProtocolSession::new(setup, 95).unwrap()
+    }
+
+    fn calendar_buy() -> crate::Intent {
+        crate::Intent::PlaceLimit {
+            code: crate::StockCode("600101".into()), side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
+        }
+    }
+
+    static CALENDAR_OBSERVER_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn calendar_publication_observer(_: crate::CivilInstant) {
+        CALENDAR_OBSERVER_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn disclosure_observers_wait_for_successful_outer_publication() {
+        let mut session = calendar_session();
+        session.state.game.civil_clock_mut().add_disclosure_observer(calendar_publication_observer);
+        CALENDAR_OBSERVER_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        session.malformed_civil = true;
+        assert!(session.end_civil_day_update().is_err());
+        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let failed: Result<(), SessionError> = session.with_publication_transaction(|session| {
+            session.end_civil_day_update()?;
+            assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
+            Err(SessionError::InvalidSave("测试外层失败".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        session.with_publication_transaction(|session| { session.end_civil_day_update()?; Ok(()) }).unwrap();
+        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn ordinary_checkpoint_does_not_pin_calendar_and_cannot_rollback_published_day() {
+        let mut session = calendar_session();
+        let checkpoint = session.checkpoint().unwrap();
+        let source = session.shared_ingress();
+        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
+        session.end_civil_day_update().unwrap();
+        source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).unwrap();
+        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
+        assert!(matches!(session.rollback(checkpoint), Err(SessionError::InvalidSave(message)) if message.contains("已发布")));
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+    }
+
+    #[test]
+    fn failed_protocol_civil_publication_never_opens_next_day_intake() {
+        let mut session = calendar_session();
+        let source = session.shared_ingress();
+        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
+        session.malformed_civil = true;
+        assert!(session.end_civil_day_update().is_err());
+        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
+        assert_eq!(source.calendar_publication().unwrap().epoch, 0);
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+    }
+
+    #[test]
+    fn publication_transaction_exposes_only_complete_successful_civil_progress() {
+        let mut session = calendar_session();
+        let source = session.shared_ingress();
+        session.with_publication_transaction(|session| {
+            session.end_civil_day_update()?;
+            assert_eq!(session.civil_date().to_iso(), "2030-01-02");
+            assert_eq!(source.calendar_publication()?.date.to_iso(), "2030-01-01");
+            assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
+            assert!(session.with_publication_transaction(|_| Ok(())).is_err());
+            Ok(())
+        }).unwrap();
+        assert_eq!(source.calendar_publication().unwrap().date, session.civil_date());
+        source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).unwrap();
+    }
+
+    #[test]
+    fn publication_transaction_failure_and_drop_restore_without_future_intake() {
+        let mut session = calendar_session();
+        let source = session.shared_ingress();
+        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
+        let result: Result<(), SessionError> = session.with_publication_transaction(|session| {
+            session.end_civil_day_update()?;
+            Err(SessionError::InvalidSave("测试外层发布失败".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
+        let checkpoint = session.checkpoint().unwrap();
+        let scope = Arc::new(());
+        session.publication_scope = Some(scope.clone());
+        let transaction = PublicationTransaction { session: &mut session, checkpoint: Some(checkpoint), scope };
+        transaction.session.end_civil_day_update().unwrap();
+        drop(transaction);
+        assert!(session.publication_scope.is_none());
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
+    }
+
+    #[test]
+    fn escaped_checkpoint_cannot_resurrect_a_failed_publication_scope() {
+        let mut session = calendar_session();
+        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
+        let mut outside = None;
+        let mut next_batch = None;
+        let failed: Result<(), SessionError> = session.with_publication_transaction(|session| {
+            session.end_civil_day_update()?;
+            outside = Some(session.checkpoint()?);
+            next_batch = Some(session.checkpoint()?);
+            Err(SessionError::InvalidSave("测试旧scope失败".into()))
+        });
+        assert!(failed.is_err());
+        assert!(session.rollback(outside.take().unwrap()).is_err());
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+        session.with_publication_transaction(|session| {
+            assert!(session.rollback(next_batch.take().unwrap()).is_err());
+            assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+            Ok(())
+        }).unwrap();
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
+        assert_eq!(session.shared_ingress().calendar_publication().unwrap().epoch, 0);
+    }
+
+    #[test]
+    fn publication_rollback_preserves_inputs_received_under_old_open_day() {
+        let mut setup = calendar_session().game().state.setup.clone();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-04").unwrap();
+        let mut session = ProtocolSession::new(setup, 96).unwrap();
+        for _ in 0..2 { session.step_frame().unwrap(); }
+        let source = session.shared_ingress();
+        let before = session.business_state_hash().unwrap();
+        let result: Result<(), SessionError> = session.with_publication_transaction(|session| {
+            session.end_civil_day_update()?;
+            session.end_civil_day_update()?;
+            session.end_civil_day_update()?;
+            assert_eq!(session.civil_date().to_iso(), "2030-01-07");
+            source.enqueue_player_intent(crate::AccountId(0), calendar_buy())?;
+            Err(SessionError::InvalidSave("测试未发布整批失败".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(session.civil_date().to_iso(), "2030-01-04");
+        assert_eq!(source.calendar_publication().unwrap().date, session.civil_date());
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        assert_eq!(session.game().save().unwrap().pending_player.len(), 1);
+    }
 
     #[test]
     fn publication_cursor_appends_at_same_tick_and_resets_on_next_tick() {
@@ -470,7 +762,7 @@ mod rollback_tests {
                 .test_projection(),
             before
         );
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
         assert_eq!(
             session
                 .state
@@ -500,18 +792,15 @@ mod rollback_tests {
         let old = session.end_civil_day_update().unwrap();
         let before = session.state.pending_save_candidates.borrow().clone();
         let frozen = session.state.day_end_save.clone().unwrap();
-        let checkpoint = session.checkpoint().unwrap();
-        session.end_civil_day_update().unwrap();
-        session.end_civil_day_update().unwrap();
-        assert_eq!(
-            checkpoint.state.pending_save_candidates.borrow().len(),
-            before.len()
-        );
-        assert_eq!(
-            session.state.pending_save_candidates.borrow().len(),
-            before.len() + 2
-        );
-        session.rollback(checkpoint);
+        session.with_publication_transaction(|session| {
+            let checkpoint = session.checkpoint()?;
+            session.end_civil_day_update()?;
+            session.end_civil_day_update()?;
+            assert_eq!(checkpoint.state.pending_save_candidates.borrow().len(), before.len());
+            assert_eq!(session.state.pending_save_candidates.borrow().len(), before.len() + 2);
+            session.rollback(checkpoint)?;
+            Ok(())
+        }).unwrap();
         assert_eq!(
             session
                 .state
@@ -632,7 +921,7 @@ mod rollback_tests {
         });
         session.malformed_frame = true;
         assert!(session.step_frame().is_err());
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
         assert_eq!(session.business_state_hash().unwrap(), before);
         let npc_intent = intent();
         let mut failed_private = session.state.game.clone_for_tick_shadow().unwrap();
@@ -1230,7 +1519,7 @@ mod rollback_tests {
         let checkpoint = session.checkpoint().unwrap();
         session.state.game.state.last_retail_order_events.clear();
 
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
@@ -1252,14 +1541,16 @@ mod rollback_tests {
         let history = serde_json::to_value(&session.state.intraday).unwrap();
         let fact_tick = session.state.fact_cursor.tick;
         let facts = serde_json::to_value(&session.state.fact_cursor.facts).unwrap();
-        let checkpoint = session.checkpoint().unwrap();
-        let frame = session.step_frame().unwrap();
-        let closing = session.end_civil_day_update().unwrap();
-        let weekend = session.end_civil_day_update().unwrap();
-        assert!(session.state.intraday.is_empty());
-        assert_eq!(weekend.civil_date, "2030-01-06");
-
-        session.rollback(checkpoint);
+        let (frame, closing, weekend) = session.with_publication_transaction(|session| {
+            let checkpoint = session.checkpoint()?;
+            let frame = session.step_frame()?;
+            let closing = session.end_civil_day_update()?;
+            let weekend = session.end_civil_day_update()?;
+            assert!(session.state.intraday.is_empty());
+            assert_eq!(weekend.civil_date, "2030-01-06");
+            session.rollback(checkpoint)?;
+            Ok((frame, closing, weekend))
+        }).unwrap();
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
@@ -1287,7 +1578,8 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 53).unwrap();
         let fatal = StepFatal::InvariantViolation {
             location: "protocol checkpoint test".into(),
@@ -1306,7 +1598,8 @@ mod rollback_tests {
 
     #[test]
     fn committed_evidence_frame_is_the_same_public_runtime_step() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
         let mut observed = ProtocolSession::new(setup, 47).unwrap();
 
@@ -1330,7 +1623,8 @@ mod rollback_tests {
 
     #[test]
     fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 48).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1409,7 +1703,8 @@ mod rollback_tests {
 
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),

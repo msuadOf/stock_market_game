@@ -94,6 +94,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     let mut dispatch = DisclosureDispatch::new(Some(report.disclosure_instant));
     let outcome = dispatch
         .run_day_end(DayEndDisclosureCtx {
+                report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,
@@ -123,6 +124,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     assert_eq!(restored.save(), library.save());
     let repeated = dispatch
         .run_day_end(DayEndDisclosureCtx {
+                report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,

@@ -170,6 +170,7 @@ fn bank_company(as_of: CivilDate) -> OperatingCompanyConfig {
                 lgd_bp: 6_000,
             }],
         },
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec(BANK_ID, CompanyKind::Bank),

@@ -298,6 +298,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
     let mut second_spec = setup.stocks[0].clone();
     second_spec.code = second.clone();
     setup.stocks.push(second_spec);
+    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let mut game = GameSession::new(setup, 42).unwrap();
     game.state.attention_scheduler.clear();
     let mut events = Vec::new();

@@ -64,7 +64,11 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
         .record_acquisition(first, &save.public_library, first_report.id, observed)
         .unwrap();
     let context = NpcObservationContext::new(first, state, &save.public_library, &()).unwrap();
-    let spec = save.company_operations.company(&company).unwrap().spec();
+    let spec = save
+        .company_system
+        .issuers()
+        .get(&company)
+        .expect("会话保存的发行人规格存在");
     save.belief_books
         .get_mut(&first)
         .unwrap()

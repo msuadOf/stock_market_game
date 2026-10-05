@@ -11,6 +11,9 @@ pub(super) fn decide_hot(
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
+        if !sv.is_trading {
+            continue;
+        }
         let p = &sv.recent_market_minute_prices;
         if p.len() < 2 {
             continue;
@@ -64,6 +67,9 @@ pub(super) fn decide_hot_reversal(
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
+        if !sv.is_trading {
+            continue;
+        }
         let prices = &sv.recent_market_minute_prices;
         if prices.len() < 2 || sv.relative_volume < strategy.volume_confirmation {
             continue;

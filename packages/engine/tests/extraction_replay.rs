@@ -7,6 +7,8 @@
 //! 自检证明 seed 与事件顺序的扰动确实改变字节；真实成交、日界和股份守恒
 //! 断言防止无交易的退化场景冒充有效的随机回放。历史锚点沿革保留如下。
 
+include!("../test-support/simple_company.rs");
+
 use engine::account::StockCode;
 use engine::config::GameConfig;
 use engine::money::Money;
@@ -107,8 +109,7 @@ fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
     let second = StockCode("600889".to_string());
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600888", "600889"]),
         stocks: vec![
             StockSpec {
                 code: first.clone(),
@@ -159,6 +160,7 @@ fn replay_setup() -> SessionSetup {
         closing_auction_ticks: 6,
         history_len: 10,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         // 双时钟场景日期：2030-01-02（周三）起连续三个交易日
         // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。

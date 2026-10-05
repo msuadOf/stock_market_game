@@ -145,9 +145,59 @@ pub enum OrderError {
     serde::Deserialize,
     ts_rs::TS,
 )]
-#[ts(type = "number")]
+#[ts(type = "string")]
 #[serde(transparent)]
-pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
+pub struct AccountId(#[serde(with = "canonical_u64_decimal")] pub u64);
+
+pub(crate) mod canonical_u128_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn parse(value: &str) -> Result<u128, String> {
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes.first().is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        if bytes != b"0" && !(nonzero_prefix && bytes.iter().all(u8::is_ascii_digit)) {
+            return Err("成交额必须使用规范非负十进制分字符串".to_owned());
+        }
+        value.parse::<u128>().map_err(|error| format!("成交额超出 u128 范围：{error}"))
+    }
+
+    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+pub(crate) mod canonical_u64_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes
+            .first()
+            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
+        if !canonical {
+            return Err(serde::de::Error::custom(
+                "u64 must use canonical decimal notation",
+            ));
+        }
+        value.parse::<u64>().map_err(serde::de::Error::custom)
+    }
+}
 
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///

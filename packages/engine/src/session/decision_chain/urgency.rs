@@ -156,8 +156,10 @@ impl GameSession {
             risk_reduction_active,
             account_drawdown_bp,
             remaining_trading_days: u32::try_from(
-                plan.last_valid_trading_day()
-                    .saturating_sub(u64::from(self.state.day)),
+                plan.last_valid_trading_day().saturating_sub(
+                    self.stock_trading_day(plan.code())
+                        .expect("plan stock trading day is valid"),
+                ),
             )
             .expect("live plan remaining days fit its u32 horizon"),
             confidence_bp: plan.confidence_bp(),

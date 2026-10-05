@@ -3,6 +3,7 @@
 #[cfg(test)]
 use crate::session::StateHash;
 use crate::GameSession;
+use crate::Money;
 use std::collections::BTreeSet;
 
 use super::{
@@ -136,8 +137,8 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     capture_commit_evidence: bool,
 ) -> Result<PreparedTickPlanCommit<'authority>, StepFatal> {
     validate_receipt_keys(&plan.receipt_keys)?;
-    let events = plan.event_outbox;
-    let event_keys = plan.event_keys;
+    let mut events = plan.event_outbox;
+    let mut event_keys = plan.event_keys;
     validate_event_keys(&events, &event_keys, plan.expiry.releases.len())?;
     let mut candidate = plan.state.into_session()?;
     let memory_accounts: BTreeSet<_> = plan
@@ -155,6 +156,7 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
         &plan.applied_receipts,
         &plan.receipt_keys,
     )?;
+    record_personal_trade_confirmations(&mut candidate, &plan.applied_receipts)?;
     let evidence = if capture_commit_evidence {
         Some(TickCommitEvidence::capture(
             &candidate.state.envelope_ledger,
@@ -165,6 +167,25 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     } else {
         None
     };
+    let now = if candidate.state.day > authority.state.day {
+        crate::CivilInstant::new(candidate.civil_date(), 15 * 3600)
+            .map_err(|error| invariant(error.to_string()))?
+    } else {
+        candidate.observation_civil_instant()
+    };
+    let published = candidate
+        .publish_intraday_reports(now)
+        .map_err(|error| invariant(format!("日内月报公布失败：{error}")))?;
+    for event in published {
+        event_keys.push(super::EventStableKey::for_event(
+            &event,
+            events.len() as u64,
+        ));
+        events.push(event);
+    }
+    validate_event_keys(&events, &event_keys, plan.expiry.releases.len())?;
+    candidate.record_retained_trades(authority.observation_civil_instant(), authority.phase(), &events)
+        .map_err(|error| invariant(error.to_string()))?;
     #[cfg(test)]
     authority.run_post_shadow_hook()?;
     let prepared = prepare_candidate_commit(authority, candidate)?;
@@ -174,6 +195,65 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
         event_keys,
         evidence,
     })
+}
+
+fn record_personal_trade_confirmations(
+    candidate: &mut GameSession,
+    receipts: &[EnvelopeReceipt],
+) -> Result<(), StepFatal> {
+    let civil_date = candidate.civil_date();
+    for receipt in receipts {
+        if receipt.kind != super::ReceiptKind::Fill {
+            continue;
+        }
+        candidate
+            .state
+            .accounts
+            .get(&receipt.envelope.account)
+            .ok_or_else(|| invariant("Fill receipt account is missing".to_owned()))?;
+        let quantity_shares = receipt
+            .qty_before
+            .checked_sub(receipt.qty_after)
+            .filter(|quantity| *quantity > 0)
+            .ok_or_else(|| invariant("Fill receipt quantity did not decrease".to_owned()))?;
+        let gross = receipt
+            .value_after
+            .sub(receipt.value_before)
+            .map_err(|error| invariant(error.to_string()))?;
+        if gross.cents() <= 0 {
+            return Err(invariant("Fill receipt gross is not positive".to_owned()));
+        }
+        let quantity_cents = i64::from(quantity_shares);
+        if gross.cents() % quantity_cents != 0 {
+            return Err(invariant(
+                "Fill receipt gross is not an integral cent price times shares".to_owned(),
+            ));
+        }
+        let confirmations = candidate
+            .state
+            .personal_trade_confirmations
+            .entry(receipt.envelope.account)
+            .or_default();
+        if confirmations
+            .last()
+            .is_some_and(|confirmation| confirmation.receipt_id >= receipt.index)
+        {
+            return Err(invariant(
+                "personal trade confirmation receipt identity regressed".to_owned(),
+            ));
+        }
+        confirmations.push(crate::session::PersonalTradeConfirmation {
+            receipt_id: receipt.index,
+            civil_date,
+            code: receipt.envelope.stock.clone(),
+            side: receipt.envelope.side,
+            price: Money::from_cents(gross.cents() / quantity_cents),
+            quantity_shares,
+            gross,
+            actual_fees: receipt.charged,
+        });
+    }
+    Ok(())
 }
 
 fn validate_event_keys(

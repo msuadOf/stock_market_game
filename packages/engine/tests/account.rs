@@ -14,6 +14,7 @@ fn intent_and_marketview_construct() {
     stocks.insert(
         StockCode("600101".to_string()),
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1001)),
             last_price: Money::from_cents(1000),

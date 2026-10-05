@@ -36,6 +36,8 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum BaselineError {
+    #[error("seed {seed} 的内部诊断不能消费外壳公开匿名化事件")]
+    PublicProjectionInInternalDiagnostics { seed: u64 },
     #[error("量价基线至少需要一个 seed")]
     EmptySeeds,
     #[error("量价基线的交易日数必须大于 0")]
@@ -81,8 +83,8 @@ pub enum BaselineError {
     TurnoverMismatch {
         seed: u64,
         code: StockCode,
-        event_turnover_cents: u64,
-        daily_turnover_cents: u64,
+        event_turnover_cents: u128,
+        daily_turnover_cents: u128,
     },
     #[error("seed {seed} 的股票 {code:?} 第 {day} 日缺少权威成交统计")]
     MissingDailyTradeStats {
@@ -232,14 +234,14 @@ pub struct CombinedRunSource {
     pub trade_receipt_count: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub trade_receipt_shares: u64,
-    #[serde(serialize_with = "serialize_u64_decimal")]
-    pub trade_receipt_turnover_cents: u64,
+    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
+    pub trade_receipt_turnover_cents: u128,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub causal_execution_count: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub causal_execution_shares: u64,
-    #[serde(serialize_with = "serialize_u64_decimal")]
-    pub causal_execution_turnover_cents: u64,
+    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
+    pub causal_execution_turnover_cents: u128,
 }
 
 /// 单个 seed 的成交参与归因。仅使用权威 `Trade` 事件和公开策略档案，不读取 NPC 私有资产。
@@ -322,10 +324,10 @@ pub struct StockPriceVolumeReport {
     pub trade_event_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub total_daily_volume: u64,
-    #[serde(serialize_with = "serialize_u64_decimal")]
-    pub trade_event_turnover_cents: u64,
-    #[serde(serialize_with = "serialize_u64_decimal")]
-    pub total_daily_turnover_cents: u64,
+    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
+    pub trade_event_turnover_cents: u128,
+    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
+    pub total_daily_turnover_cents: u128,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub auction_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
@@ -388,7 +390,7 @@ struct StockSummaryInput {
     initial_price: Money,
     candles: Vec<DailyCandle>,
     trade_event_volume: u64,
-    trade_event_turnover_cents: u64,
+    trade_event_turnover_cents: u128,
     float_shares: u32,
     market_diagnostics: MarketDiagnosticsAccumulator,
     seed: u64,
@@ -451,7 +453,7 @@ pub fn run_combined_diagnostics(
         let (price_volume, session) =
             run_one_seed(setup, seed, trading_days, total_ticks, run_id.clone())?;
         let mut receipt_shares = 0_u64;
-        let mut receipt_turnover = 0_u64;
+        let mut receipt_turnover = 0_u128;
         for stock in price_volume.stocks.values() {
             receipt_shares = receipt_shares.checked_add(stock.trade_event_volume).ok_or(
                 BaselineError::CounterOverflow {
@@ -469,7 +471,7 @@ pub fn run_combined_diagnostics(
         let receipt_count = price_volume.trade_events;
         let mut execution_count = 0_u64;
         let mut execution_shares = 0_u64;
-        let mut execution_turnover = 0_u64;
+        let mut execution_turnover = 0_u128;
         for fact in session.causal_facts() {
             if let causal::CausalFactKind::Execution {
                 qty, price_cents, ..
@@ -488,9 +490,9 @@ pub fn run_combined_diagnostics(
                         counter: "combined causal execution shares",
                     },
                 )?;
-                let gross = u64::try_from(*price_cents)
+                let gross = u128::try_from(*price_cents)
                     .ok()
-                    .and_then(|price| price.checked_mul(u64::from(*qty)))
+                    .and_then(|price| price.checked_mul(u128::from(*qty)))
                     .ok_or(BaselineError::CounterOverflow {
                         seed,
                         counter: "combined causal execution turnover",
@@ -581,7 +583,7 @@ fn diagnostic_run_id(index: usize, seed: u64) -> String {
 struct StockRunDiagnostics {
     candles: Vec<DailyCandle>,
     trade_event_volume: u64,
-    trade_event_turnover: u64,
+    trade_event_turnover: u128,
     market: MarketDiagnosticsAccumulator,
 }
 
@@ -701,6 +703,9 @@ impl SeedDiagnostics {
         let mut traded_codes = BTreeSet::new();
         for event in events {
             match event {
+                Event::PublicTrade { .. } | Event::PrivateEventOmitted { .. } => {
+                    return Err(BaselineError::PublicProjectionInInternalDiagnostics { seed });
+                }
                 Event::Trade {
                     code,
                     price,
@@ -738,9 +743,9 @@ impl SeedDiagnostics {
                             seed,
                             code: code.clone(),
                         })?;
-                    let turnover = u64::try_from(price.cents())
+                    let turnover = u128::try_from(price.cents())
                         .ok()
-                        .and_then(|price_cents| price_cents.checked_mul(u64::from(qty)))
+                        .and_then(|price_cents| price_cents.checked_mul(u128::from(qty)))
                         .and_then(|fill_turnover| {
                             stock.trade_event_turnover.checked_add(fill_turnover)
                         })
@@ -1378,6 +1383,7 @@ fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
         RejectionReason::LimitExceeded => "limit_exceeded",
         RejectionReason::PriceCageExceeded => "price_cage_exceeded",
         RejectionReason::UnknownStock => "unknown_stock",
+        RejectionReason::ExchangeClosed => "exchange_closed",
         RejectionReason::AuctionLimitOrderRequired => "auction_limit_order_required",
         RejectionReason::AuctionOrderNotCancelable => "auction_order_not_cancelable",
         RejectionReason::AuctionOrderEntryClosed => "auction_order_entry_closed",
@@ -1405,7 +1411,7 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     let mut max_zero_volume_streak = 0_u32;
     let mut current_zero_volume_streak = 0_u32;
     let mut total_daily_volume = 0_u64;
-    let mut total_daily_turnover_cents = 0_u64;
+    let mut total_daily_turnover_cents = 0_u128;
     for (day_index, candle) in candles.iter().enumerate() {
         total_daily_volume = total_daily_volume
             .checked_add(candle.volume)
@@ -1875,7 +1881,7 @@ mod tests {
             close: Money::from_cents(close),
             volume,
             trade_stats: Some(DailyTradeStats {
-                turnover_cents: u64::try_from(open).unwrap() * volume,
+                turnover_cents: u128::try_from(open).unwrap() * u128::from(volume),
                 trade_count: u64::from(volume > 0),
             }),
         }
@@ -1969,8 +1975,7 @@ mod tests {
             SecurityCategory, StockExchange, StockSpec, StrategyParams,
         };
         let setup = crate::SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["600101"]),
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -2009,6 +2014,7 @@ mod tests {
             closing_auction_ticks: 0,
             history_len: 2,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
@@ -2126,6 +2132,18 @@ mod tests {
             (100, 100_000)
         );
         assert_eq!(stock.market.continuous_volume, 0);
+    }
+
+    #[test]
+    fn seed_projection_preserves_aggregate_turnover_above_u64() {
+        let (mut projection, setup) = seed_projection_fixture();
+        let code = setup.stocks[0].code.clone();
+        let events = (0..4).map(|seq| crate::Event::Trade { seq, code: code.clone(), price: Money::from_cents(5_000_000_000_000_000_000), qty: 1, maker: crate::AccountId(0), taker: crate::AccountId(0) }).collect();
+        projection.observe_committed_events(events, crate::TradingPhase::Continuous, 1, &setup).unwrap();
+        let stock = &projection.stocks[&code];
+        assert_eq!(stock.trade_event_turnover, 20_000_000_000_000_000_000);
+        assert_eq!(stock.trade_event_volume, 4);
+        assert_eq!(projection.trade_events, 4);
     }
 
     #[test]

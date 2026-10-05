@@ -103,7 +103,12 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
         .unwrap();
     participant
         .price_memory_mut()
-        .observe_price(&code, Money::from_cents(1_011), market_minute)
+        .observe_price(
+            &code,
+            Money::from_cents(1_011),
+            market_minute,
+            market_minute,
+        )
         .unwrap();
     *participant.information_mut() = crate::information::NpcInformationState::new(buyer);
     participant

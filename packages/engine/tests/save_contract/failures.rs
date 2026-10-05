@@ -77,7 +77,7 @@ macro_rules! missing_field_tests {
 
 missing_field_tests! {
     missing_runtime_state_field_is_rejected => "runtime_state",
-    missing_company_operations_is_rejected => "company_operations",
+    missing_company_system_is_rejected => "company_system",
     missing_closing_registry_is_rejected => "closing_registry",
     missing_public_library_is_rejected => "public_library",
     missing_ops_wiring_is_rejected => "ops_wiring",
@@ -89,6 +89,21 @@ missing_field_tests! {
     missing_price_memories_is_rejected => "price_memories",
     missing_pending_plan_events_is_rejected => "pending_plan_events",
     missing_civil_clock_is_rejected => "civil_clock",
+}
+
+#[test]
+fn missing_selected_company_system_configuration_is_rejected() {
+    let mut missing = seasoned_fixture().clone_save_value();
+    missing["setup"]
+        .as_object_mut()
+        .unwrap()
+        .remove("company_system")
+        .expect("selected company system config must exist in setup");
+    let error = expect_rejection(&missing);
+    assert!(
+        matches!(error, SessionError::InvalidSave(_)),
+        "missing selected company system must be rejected without a default mode: {error:?}"
+    );
 }
 
 #[test]

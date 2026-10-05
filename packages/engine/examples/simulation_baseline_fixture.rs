@@ -1,6 +1,8 @@
 //! 当前新会话的模拟验收 baseline fixture。每次运行创建会话，
 //! 推进 market 与 civil clocks，不接受存档路径。
 
+include!("../test-support/simple_company.rs");
+
 use std::{env, process};
 
 use engine::calendar::CalendarExchange;
@@ -217,8 +219,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         _ => return Err(format!("unknown scenario `{scenario}`")),
     };
     Ok(SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
         stocks: vec![
             stock(
                 "600101",
@@ -299,6 +300,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,

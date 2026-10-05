@@ -1191,6 +1191,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
 fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_stream() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].code = StockCode("000812".to_owned());
+    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = crate::StockExchange::Shenzhen;
     setup.stocks[0].initial_price = Money::from_cents(285);
     setup.stocks[0].category = crate::SecurityCategory::StMainBoard;

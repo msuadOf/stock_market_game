@@ -62,7 +62,11 @@ impl GameSession {
                 });
             }
         };
-        let day_end = (u64::from(self.state.day) + 1) * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
+        let day_end = (self
+            .stock_trading_day(plan.code())
+            .expect("plan stock trading day is valid")
+            + 1)
+            * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
         self.state
             .parent_orders
             .entry(plan.account())

@@ -64,6 +64,7 @@ fn market_and_observations() -> (MarketView, BehaviorMarketObservation) {
     let stocks = BTreeMap::from([(
         code,
         StockView {
+            is_trading: true,
             best_bid: Some(price(999)),
             best_ask: Some(price(1_001)),
             last_price: price(1_000),

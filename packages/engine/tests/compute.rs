@@ -11,6 +11,7 @@ fn view(last: i64) -> MarketView {
         stocks: BTreeMap::from([(
             StockCode("600101".to_string()),
             StockView {
+                is_trading: true,
                 best_bid: Some(Money::from_cents(last - 1)),
                 best_ask: Some(Money::from_cents(last + 1)),
                 last_price: Money::from_cents(last),

@@ -111,6 +111,7 @@ fn assert_same_window_growth(kind: ReportKind, month: u8, consolidated: bool) {
     let published = PublishedReport {
         id: PublicationId::new(2),
         company: CompanyId("company".into()),
+        source: crate::information::PublicationSource::SimulationAccounting,
         policy: AccountingPolicyRef { chart_version: 2 },
         approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
         published_at,

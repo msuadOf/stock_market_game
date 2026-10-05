@@ -155,7 +155,9 @@ impl GameSession {
                     .push(PendingPlanEvent::Accepted {
                         plan_id: plan.plan_id(),
                         order_id,
-                        trading_day: u64::from(self.state.day),
+                        trading_day: self
+                            .stock_trading_day(plan.code())
+                            .expect("adopted plan stock trading day is valid"),
                     });
                 self.synchronize_owned_plan_execution(plans)?;
                 let disposition = match replaced {

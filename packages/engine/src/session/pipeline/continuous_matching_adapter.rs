@@ -34,14 +34,27 @@ pub(super) fn prepare_incremental_continuous_inputs(
         .state
         .markets
         .par_iter()
-        .map(|(code, market)| (code.clone(), prepare_stock_input(session, code, market)))
+        .map(|(code, market)| {
+            let input = (|| {
+                let status = session.stock_day_status(code)
+                    .map_err(|error| invariant(&error.to_string()))?;
+                if matches!(status, crate::DayStatus::Closed(_)) {
+                    if market.resting_order_count() != 0 {
+                        return Err(invariant("休市证券不能保留活动委托"));
+                    }
+                    return Ok(None);
+                }
+                prepare_stock_input(session, code, market).map(Some)
+            })();
+            (code.clone(), input)
+        })
         .collect::<Vec<_>>();
     // Error selection and the returned layout are stable; neither ranks orders.
     prepared.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     let mut inputs = Vec::with_capacity(prepared.len());
     let mut matched = 0_usize;
     for (_, result) in prepared {
-        let (count, input) = result?;
+        let Some((count, input)) = result? else { continue; };
         matched = matched
             .checked_add(count)
             .ok_or_else(|| invariant("continuous live order count overflow"))?;

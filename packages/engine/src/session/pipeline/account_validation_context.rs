@@ -21,6 +21,13 @@ pub(super) fn build_account_validation_context(
     session: &GameSession,
 ) -> Result<AccountValidationContext, StepFatal> {
     let facts = collect_account_validation_context_facts(session)?;
+    let closed = session.state.setup.stocks.iter().filter_map(|stock| {
+        match session.stock_day_status(&stock.code) {
+            Ok(crate::DayStatus::Trading) => None,
+            Ok(crate::DayStatus::Closed(_)) => Some(Ok(stock.code.clone())),
+            Err(error) => Some(Err(invariant(&error.to_string()))),
+        }
+    }).collect::<Result<std::collections::BTreeSet<_>, StepFatal>>()?;
     AccountValidationContext::new(facts.stocks.into_iter().map(|(code, stock)| {
         (
             code,
@@ -30,7 +37,7 @@ pub(super) fn build_account_validation_context(
                 stock.market_sell_protective_price,
             ),
         )
-    }))
+    })).map(|context| context.with_closed_stocks(closed))
 }
 
 pub(super) fn collect_account_validation_context_facts(

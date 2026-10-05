@@ -786,8 +786,7 @@ fn event_comparison_tags_keep_phase_four_five_and_six_distinct() {
 fn civil_protocol_session() -> ProtocolSession {
     ProtocolSession::new(
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["600001"]),
             stocks: vec![StockSpec {
                 code: StockCode("600001".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -826,6 +825,7 @@ fn civil_protocol_session() -> ProtocolSession {
             closing_auction_ticks: 2,
             history_len: 20,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: CivilDate::from_iso("2030-01-05").unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
@@ -1191,7 +1191,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         close: Money::from_cents(i64::MAX),
         volume: u64::MAX,
         trade_stats: Some(DailyTradeStats {
-            turnover_cents: u64::MAX,
+            turnover_cents: u128::from(u64::MAX),
             trade_count: u64::MAX,
         }),
     };

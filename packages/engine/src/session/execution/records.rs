@@ -9,6 +9,9 @@ impl GameSession {
         code: &StockCode,
         fills: &[OrderFillSettlement],
     ) {
+        let trading_day = self
+            .stock_trading_day(code)
+            .expect("filled parent stock trading day is valid");
         let mut completed = Vec::new();
         for fill in fills {
             #[cfg(feature = "simulation-diagnostics")]
@@ -42,7 +45,7 @@ impl GameSession {
                     order_id: fill.order_id,
                     qty: fill.qty,
                     child_complete: transition.child_complete,
-                    trading_day: u64::from(self.state.day),
+                    trading_day,
                 }
             });
             if transition.completed_unlinked {
@@ -77,6 +80,9 @@ impl GameSession {
         order_id: OrderId,
         qty: u32,
     ) {
+        let trading_day = self
+            .stock_trading_day(code)
+            .expect("accepted parent stock trading day is valid");
         let Some(plan) = self
             .state
             .parent_orders
@@ -92,7 +98,7 @@ impl GameSession {
             crate::session::plan_execution::PendingPlanEvent::Accepted {
                 plan_id,
                 order_id,
-                trading_day: u64::from(self.state.day),
+                trading_day,
             }
         });
         if let Some(event) = pending_event {

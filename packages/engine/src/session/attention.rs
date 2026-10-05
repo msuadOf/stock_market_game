@@ -27,29 +27,33 @@ pub struct NpcAttentionState {
 }
 
 pub(super) fn market_attention_signal(market: &MarketView) -> f64 {
-    market.stocks.values().fold(0.0, |strongest, stock| {
-        let price_move = stock
-            .recent_prices
-            .first()
-            .filter(|price| price.cents() > 0)
-            .map_or(0.0, |first| {
-                ((stock.last_price.cents() - first.cents()).unsigned_abs() as f64
-                    / first.cents() as f64
-                    / 0.02)
-                    .min(3.0)
-            });
-        let volume = if stock.relative_volume.is_finite() {
-            (stock.relative_volume - 1.0).clamp(0.0, 3.0)
-        } else {
-            0.0
-        };
-        let imbalance = if stock.order_book_imbalance.is_finite() {
-            stock.order_book_imbalance.abs().min(1.0)
-        } else {
-            0.0
-        };
-        strongest.max(price_move.max(volume).max(imbalance))
-    })
+    market
+        .stocks
+        .values()
+        .filter(|stock| stock.is_trading)
+        .fold(0.0, |strongest, stock| {
+            let price_move = stock
+                .recent_prices
+                .first()
+                .filter(|price| price.cents() > 0)
+                .map_or(0.0, |first| {
+                    ((stock.last_price.cents() - first.cents()).unsigned_abs() as f64
+                        / first.cents() as f64
+                        / 0.02)
+                        .min(3.0)
+                });
+            let volume = if stock.relative_volume.is_finite() {
+                (stock.relative_volume - 1.0).clamp(0.0, 3.0)
+            } else {
+                0.0
+            };
+            let imbalance = if stock.order_book_imbalance.is_finite() {
+                stock.order_book_imbalance.abs().min(1.0)
+            } else {
+                0.0
+            };
+            strongest.max(price_move.max(volume).max(imbalance))
+        })
 }
 
 fn effective_observation_probability(kind: AccountKind, base_probability: f64, signal: f64) -> f64 {
@@ -196,7 +200,12 @@ fn select_discovery_stock(
 ) -> Option<StockCode> {
     let held_in_market: Vec<&StockCode> = held
         .iter()
-        .filter(|code| market.stocks.contains_key(*code))
+        .filter(|code| {
+            market
+                .stocks
+                .get(*code)
+                .is_some_and(|stock| stock.is_trading)
+        })
         .collect();
     if !held_in_market.is_empty() && rng.next_f64() < HELD_PRIORITY_PROBABILITY {
         let index = rng.next_range_u32(0, held_in_market.len() as u32) as usize;
@@ -205,15 +214,25 @@ fn select_discovery_stock(
     let watched_in_market: Vec<&StockCode> = watchlist
         .stocks
         .keys()
-        .filter(|code| market.stocks.contains_key(*code))
+        .filter(|code| {
+            market
+                .stocks
+                .get(*code)
+                .is_some_and(|stock| stock.is_trading)
+        })
         .collect();
     if !watched_in_market.is_empty() && rng.next_f64() < WATCHLIST_BIAS_PROBABILITY {
         return pick_weighted(market, &watched_in_market, announcement_exposed, rng);
     }
-    if market.stocks.is_empty() {
+    let all: Vec<&StockCode> = market
+        .stocks
+        .iter()
+        .filter(|(_, stock)| stock.is_trading)
+        .map(|(code, _)| code)
+        .collect();
+    if all.is_empty() {
         return None;
     }
-    let all: Vec<&StockCode> = market.stocks.keys().collect();
     pick_weighted(market, &all, announcement_exposed, rng)
 }
 
@@ -229,6 +248,7 @@ impl NpcAttentionState {
         market
             .stocks
             .iter()
+            .filter(|(_, view)| view.is_trading)
             .map(|(code, view)| {
                 (
                     code.clone(),
@@ -379,6 +399,7 @@ mod attention_tests {
             stocks: [(
                 StockCode("600888".to_string()),
                 StockView {
+                    is_trading: true,
                     best_bid: Some(Money::from_cents(last - 1)),
                     best_ask: Some(Money::from_cents(last + 1)),
                     last_price: Money::from_cents(last),
@@ -396,6 +417,29 @@ mod attention_tests {
             )]
             .into(),
         }
+    }
+
+    #[test]
+    fn closed_stock_has_no_attention_signal_or_discovery_candidate() {
+        let mut market = attention_view(940, 1_000, 2.5, -0.8);
+        market.stocks.values_mut().next().unwrap().is_trading = false;
+        assert_eq!(market_attention_signal(&market), 0.0);
+        assert!(NpcAttentionState::discovery_weights(&market, &BTreeSet::new()).is_empty());
+        let held = market.stocks.keys().cloned().collect();
+        let mut rng = SequenceRng {
+            values: vec![0.0],
+            index: 0,
+        };
+        assert_eq!(
+            select_discovery_stock(
+                &market,
+                &held,
+                &PersonalWatchlist::default(),
+                &BTreeSet::new(),
+                &mut rng
+            ),
+            None
+        );
     }
 
     #[test]

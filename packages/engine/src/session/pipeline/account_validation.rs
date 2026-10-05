@@ -52,6 +52,7 @@ impl StockValidation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountValidationContext {
     stocks: BTreeMap<StockCode, StockValidation>,
+    closed_stocks: BTreeSet<StockCode>,
 }
 
 impl AccountValidationContext {
@@ -64,7 +65,12 @@ impl AccountValidationContext {
                 return Err(invariant("AccountValidation 校验上下文中股票重复"));
             }
         }
-        Ok(Self { stocks: stock_map })
+        Ok(Self { stocks: stock_map, closed_stocks: BTreeSet::new() })
+    }
+
+    pub(super) fn with_closed_stocks(mut self, closed: BTreeSet<StockCode>) -> Self {
+        self.closed_stocks = closed;
+        self
     }
 
     fn stock(&self, code: &StockCode) -> Option<StockValidation> {
@@ -556,6 +562,17 @@ impl AccountValidationState {
             .checked_add(1)
             .ok_or_else(|| invariant("AccountValidation 已处理候选数量溢出"))?;
         let key = candidate.key().clone();
+        let code = match candidate.intent() {
+            Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. }
+                | Intent::Cancel { code, .. } => code,
+        };
+        if self.context.closed_stocks.contains(code) {
+            self.next_sealed_index = next_sealed_index;
+            self.processed_count = next_processed_count;
+            return Ok(PreparedValidationStep::Rejected {
+                key, sealed_index, reason: RejectionReason::ExchangeClosed,
+            });
+        }
         let prepared = match candidate.intent() {
             Intent::Cancel { code, id } => PreparedValidationStep::Cancel {
                 key,

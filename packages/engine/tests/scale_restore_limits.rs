@@ -6,14 +6,13 @@ use engine::session::{
 };
 use engine::{AccountId, Intent, Side};
 
-#[path = "company_operations/fixtures.rs"]
-#[allow(dead_code)] // This collection test only needs the industrial opening fixture.
-mod company_fixtures;
+#[macro_use]
+#[path = "../test-support/simple_company.rs"]
+mod simple_company_fixture;
 
 fn setup(retail_count: u32) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -52,6 +51,7 @@ fn setup(retail_count: u32) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -169,37 +169,65 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
     let mut save = session.save().expect("healthy save");
     let stock = &save.setup.stocks[0];
     let start = save.civil_clock.current_date;
-    let mut template = company_fixtures::industrial_a(start);
-    template.spec.listed_stock = Some(stock.code.clone());
-    template.spec.issued_shares = stock.total_shares;
-    // Only opening books are needed to exercise collection decoding. Generating two
-    // years of company history here would add unrelated work to this short test.
-    let companies = (0..COMPANY_COUNT)
-        .map(|index| {
-            let mut company = template.clone();
-            company.spec.id = engine::company::CompanyId(format!("collection-{index:03}"));
-            company
+    let stock_code = stock.code.clone();
+    let total_shares = stock.total_shares;
+    let companies: Vec<_> = (0..COMPANY_COUNT)
+        .map(|index| engine::company::CompanySpec {
+            id: engine::company::CompanyId(format!("collection-{index:03}")),
+            name: format!("独立规模测试公司{index}"),
+            industry: engine::company::IndustryId("industrial".into()),
+            kind: engine::company::CompanyKind::Industrial,
+            listed_stock: (index == 0).then(|| stock_code.clone()),
+            issued_shares: total_shares,
+            group_parent: None,
         })
         .collect();
-    save.company_operations = engine::company::CompanyOperations::new(
-        engine::company::CompanyOperationsConfig {
-            seed: 39,
-            shock_params: company_fixtures::quiet_params(),
-            companies,
-        },
+    let engine::company::config::CompanySystemConfig::Simple(mut config) = simple_company_fixture!(engine; codes = companies.iter().map(|company| company.id.0.clone()))
+    else {
+        panic!("规模测试必须使用明确的 Simple fixture");
+    };
+    config.prehistory_periods = 1;
+    for (parameters, company) in config.companies.iter_mut().zip(&companies) {
+        parameters.company = company.id.clone();
+    }
+    let config = engine::company::config::CompanySystemConfig::Simple(config);
+    let system = engine::company::CompanySystem::create(companies, config, start, 39)
+        .expect("独立 Simple 公司系统不因公司数量设置配额");
+    let encoded = serde_json::to_vec(&system).unwrap();
+    let restored: engine::company::CompanySystem =
+        serde_json::from_slice(&encoded).expect("257 家公司结构必须可解码");
+    assert_eq!(restored, system);
+    let mut conflicting = serde_json::to_value(&system).unwrap();
+    for issuer in conflicting["issuers"].as_object_mut().unwrap().values_mut() {
+        issuer["listed_stock"] = serde_json::to_value(&stock_code).unwrap();
+    }
+    let error = serde_json::from_value::<engine::company::CompanySystem>(conflicting).unwrap_err();
+    assert!(
+        error.to_string().contains("duplicate issuer stock"),
+        "{error}"
+    );
+    let mut mismatched = save
+        .company_system
+        .issuers()
+        .iter()
+        .map(|(_, issuer)| issuer.clone())
+        .collect::<Vec<_>>();
+    mismatched[0].issued_shares += 1;
+    save.company_system = engine::company::CompanySystem::create(
+        mismatched,
+        save.setup.company_system.clone(),
         start,
+        39,
     )
-    .expect("independent opening books construct");
+    .unwrap();
 
     let bytes = serde_json::to_vec(&save).expect("company collection serializes");
     let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default())
         .expect("company count alone must not prevent decoding");
-    // The collection is structurally decodable, but these companies deliberately
-    // share one listed stock. Removing the quota must preserve this actual error.
     assert!(matches!(
         GameSession::restore(&decoded),
         Err(SessionError::InvalidSave(message))
-            if message.contains("share count or mapping conflicts with setup stock")
+            if message == "公司系统发行人身份与股票配置不一致"
     ));
 }
 

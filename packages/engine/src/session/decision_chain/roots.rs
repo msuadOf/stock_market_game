@@ -5,22 +5,141 @@ use super::*;
 /// 同批 root 共享的只读事实；不包含市场簿、历史、个人状态 map 或委托游标。
 pub(in crate::session) struct RootReadContext {
     accounts: account_book::AccountBook,
-    company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
-    operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+    company_system: std::sync::Arc<crate::company::CompanySystem>,
     library: std::sync::Arc<crate::information::PublicLibrary>,
     pub(in crate::session) plans: PlanBook,
     civil_date: crate::CivilDate,
     market_minute: u64,
+    stock_market_minutes: BTreeMap<StockCode, u64>,
+    stock_trading_days: BTreeMap<StockCode, u64>,
     day: u32,
+}
+
+#[cfg(test)]
+mod monthly_tests {
+    use super::*;
+
+    #[test]
+    fn first_personal_observation_of_monthly_report_updates_same_scope_belief() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_ymd(2030, 1, 2).unwrap();
+        setup.report_frequency = crate::information::ReportFrequency::Monthly {
+            schedule: crate::information::MonthlyReportSchedule::Custom {
+                day: 2,
+                second_of_day: 37800,
+                delay: crate::information::MonthlyReportDelay::None,
+            },
+        };
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let account = AccountId(1);
+        let code = session.state.setup.stocks[0].code.clone();
+        let company = session
+            .state
+            .company_system.issuers()
+            .issuer_of(&code)
+            .unwrap()
+            .clone();
+        *session
+            .state
+            .belief_participants
+            .get_mut(&account)
+            .unwrap()
+            .watchlist_mut() = crate::experience::PersonalWatchlist::new();
+        let now = crate::CivilInstant::new(session.civil_date(), 37800).unwrap();
+        let events = session.publish_intraday_reports(now).unwrap();
+        let publication = events
+            .iter()
+            .find_map(|event| match event {
+                Event::CompanyDisclosurePublished {
+                    publication_id,
+                    published_at,
+                    ..
+                } if *published_at == now => Some(*publication_id),
+                _ => None,
+            })
+            .unwrap();
+        assert!(session.state.belief_participants[&account]
+            .information()
+            .observed_at_of(publication)
+            .is_none());
+        let context = RootReadContext::capture(&session).unwrap();
+        let first_publication = PublicationId::new(0);
+        assert_eq!(
+            context
+                .library
+                .report(first_publication, now)
+                .unwrap()
+                .reports
+                .kind,
+            crate::accounting::reports::ReportKind::Monthly
+        );
+        assert!(
+            matches!(context.library.announcement(first_publication, now),
+            Err(crate::information::InformationError::UnknownPublication { id }) if id == first_publication)
+        );
+        let market = session.build_market_view();
+        let mut personal = PlanPersonalState::take(&mut session, account);
+        let mut operations = PlanChainOperationBatch::empty();
+        InstitutionDecisionRoot::observe_personal(
+            &context,
+            account,
+            &mut personal,
+            &market,
+            &session.market_price_path_observations().unwrap(),
+            &session.build_chain_technical_observations().unwrap(),
+            now,
+            &BTreeSet::from([code.clone()]),
+            &context.plans,
+            &mut operations,
+        );
+        assert_eq!(personal.information.observed_at_of(publication), Some(now));
+        let entry = personal.belief.entry(&code).unwrap();
+        assert!(entry.used_report_ids.contains(&publication));
+        assert!(
+            matches!(entry.last_cause.as_ref().unwrap().cause, BeliefCause::NewMaterial { report } if report == publication)
+        );
+        assert!(personal
+            .information
+            .records_for_company(&company)
+            .iter()
+            .any(|record| record.id == publication));
+    }
 }
 
 impl RootReadContext {
     pub(in crate::session) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         let accounts = session.state.accounts.clone();
+        let invariant = |error: SessionError| StepFatal::InvariantViolation {
+            description: error.to_string(),
+            location: "decision_chain::roots::calendar".to_owned(),
+        };
+        let stock_market_minutes = session
+            .state
+            .markets
+            .keys()
+            .map(|code| {
+                session
+                    .stock_market_minute(code)
+                    .map(|minute| (code.clone(), minute))
+                    .map_err(&invariant)
+            })
+            .collect::<Result<_, _>>()?;
+        let stock_trading_days = session
+            .state
+            .markets
+            .keys()
+            .map(|code| {
+                session
+                    .stock_trading_day(code)
+                    .map(|day| (code.clone(), u64::from(day)))
+                    .map_err(&invariant)
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             accounts,
-            company_registry: session.state.company_registry.clone(),
-            operations: session.state.operations.clone(),
+            stock_market_minutes,
+            stock_trading_days,
+            company_system: session.state.company_system.clone(),
             library: session.state.library.clone(),
             plans: session.state.plans.clone(),
             civil_date: session.civil_date(),
@@ -77,6 +196,9 @@ impl RootReadContext {
             let Some(view) = market_view.stocks.get(code) else {
                 continue;
             };
+            if !view.is_trading {
+                continue;
+            }
             let signals = self
                 .build_candidate_signals(
                     id,
@@ -265,6 +387,9 @@ impl InstitutionDecisionRoot {
                 });
             }
             for code in &held {
+                if !market_view.stocks[code].is_trading {
+                    continue;
+                }
                 let price = market_view.stocks[code].last_price;
                 if !experience.feedback.stocks.contains_key(code) {
                     // 开局分配的仓位只建立观察参照，不伪造买入订单或历史成交。
@@ -328,6 +453,9 @@ impl InstitutionDecisionRoot {
         // 原持仓与信念条目消失后，活动计划仍须进入本人的候选集，保留复核与委托观察。
         let candidates = root_candidate_codes(id, &held, watchlist, plans, discovered);
         for code in &candidates {
+            if !market_view.stocks[code].is_trading {
+                continue;
+            }
             personal
                 .price_memory
                 .observe_price(
@@ -337,6 +465,7 @@ impl InstitutionDecisionRoot {
                         .get(code)
                         .unwrap_or_else(|| panic!("root candidate {code:?} has no market view"))
                         .last_price,
+                    context.stock_market_minutes[code],
                     market_minute,
                 )
                 .unwrap_or_else(|error| {
@@ -352,7 +481,7 @@ impl InstitutionDecisionRoot {
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         for code in &candidates {
-            let Some(company_id) = context.company_registry.issuer_of(code).cloned() else {
+            let Some(company_id) = context.company_system.issuers().issuer_of(code).cloned() else {
                 continue;
             };
             for publication_id in discovery_candidates(&context.library, &company_id, now) {
@@ -379,6 +508,7 @@ impl InstitutionDecisionRoot {
                         matches!(
                             report.reports.kind,
                             crate::accounting::reports::ReportKind::Annual
+                                | crate::accounting::reports::ReportKind::Monthly
                                 | crate::accounting::reports::ReportKind::Quarter
                                 | crate::accounting::reports::ReportKind::HalfYear
                         )
@@ -453,16 +583,12 @@ impl InstitutionDecisionRoot {
         let ctx =
             NpcObservationContext::new(id, &personal.information, &context.library, market_view)
                 .unwrap_or_else(|error| panic!("observation context failed for {id:?}: {error}"));
-        let as_of_trading_day = u64::from(context.day);
         let issuer_inputs: Vec<(StockCode, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
             .filter_map(|code| {
-                let company = context.company_registry.issuer_of(code).cloned()?;
-                let spec = context
-                    .operations
-                    .company(&company)
-                    .unwrap_or_else(|| panic!("issuer {company:?} must have operating books"))
-                    .spec();
+                let company = context.company_system.issuers().issuer_of(code).cloned()?;
+                let spec = context.company_system.issuers().get(&company)
+                    .unwrap_or_else(|| panic!("issuer {company:?} must have a registered identity"));
                 Some((
                     code.clone(),
                     BeliefInputs {
@@ -470,7 +596,7 @@ impl InstitutionDecisionRoot {
                         company,
                         kind: spec.kind,
                         total_issued_shares: spec.issued_shares,
-                        as_of_trading_day,
+                        as_of_trading_day: context.stock_trading_days[code],
                     },
                 ))
             })
@@ -533,7 +659,7 @@ impl InstitutionDecisionRoot {
                     continue;
                 };
                 let expiry = entry.anchor_trading_day + u64::from(entry.horizon_trading_days);
-                if as_of_trading_day >= expiry {
+                if inputs.as_of_trading_day >= expiry {
                     belief
                         .apply_cause(code, BeliefCause::HorizonExpired, inputs)
                         .unwrap_or_else(|error| {
@@ -544,7 +670,9 @@ impl InstitutionDecisionRoot {
         }
 
         // 先形成或更新本人信念，再按本次真实失败订单调整信心；新阅读不会吞掉受挫事件。
-        apply_institution_experience_feedback(&mut personal.belief, moment.trading_day);
+        apply_institution_experience_feedback(&mut personal.belief, |code| {
+            context.stock_trading_days[code]
+        });
 
         // 4–5. 混合分析与方向迟滞 聚合 + 计划生命周期。
         let assessments = context.assess_candidates(
@@ -556,9 +684,17 @@ impl InstitutionDecisionRoot {
             technical,
         );
         for code in &candidates {
+            if !market_view.stocks[code].is_trading {
+                continue;
+            }
             personal
                 .price_memory
-                .record_public_history_read(code, market_minute, &mut personal.history_reads)
+                .record_public_history_read(
+                    code,
+                    context.stock_market_minutes[code],
+                    market_minute,
+                    &mut personal.history_reads,
+                )
                 .unwrap_or_else(|error| {
                     panic!("institution history read failed for {id:?} {code:?}: {error}")
                 });

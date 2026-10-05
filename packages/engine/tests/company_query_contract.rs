@@ -11,7 +11,7 @@ use engine::information::assemble_seeded_prehistory;
 fn library_at_start() -> (engine::information::PublicLibrary, CivilInstant) {
     let start = CivilDate::from_iso("2000-01-01").expect("valid start date");
     let as_of = CivilInstant::new(start, 0).expect("valid start instant");
-    let seeded = assemble_seeded_prehistory(fixture::two_company_config(11, start), start)
+    let seeded = assemble_seeded_prehistory(fixture::two_company_config(11, start), start, engine::information::ReportFrequency::Quarterly)
         .expect("seeded public reports");
     (seeded.library, as_of)
 }

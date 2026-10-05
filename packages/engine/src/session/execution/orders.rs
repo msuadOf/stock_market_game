@@ -55,6 +55,14 @@ impl GameSession {
             .unwrap_or_default();
         let mut desired = passthrough;
         for code in existing_codes {
+            if self
+                .stock_day_status(&code)
+                .expect("parent stock calendar is valid")
+                != crate::calendar::DayStatus::Trading
+            {
+                continue;
+            }
+            let stock_minute = self.parent_stock_market_minute(&code, market_minute);
             // A mixed fixed and symbolic request may target the same stock. A symbolic
             // request supersedes the old parent, while the fixed request must still
             // reach the normal new-parent path below.
@@ -71,7 +79,7 @@ impl GameSession {
                     .get_mut(&account)
                     .and_then(|plans| plans.get_mut(&code))
                     .expect("parent-order code was collected from its owning map");
-                if plan.expires_market_minute <= market_minute || dynamic_codes.contains(&code) {
+                if plan.expires_market_minute <= stock_minute || dynamic_codes.contains(&code) {
                     remove = true;
                 } else if let Some((side, price, _target_qty)) = request {
                     if side != plan.side {
@@ -101,6 +109,14 @@ impl GameSession {
         }
 
         for (code, (side, price, target_qty)) in requested {
+            if self
+                .stock_day_status(&code)
+                .expect("requested parent stock calendar is valid")
+                != crate::calendar::DayStatus::Trading
+            {
+                continue;
+            }
+            let stock_minute = self.parent_stock_market_minute(&code, market_minute);
             // 不吞掉策略产生的非法数量；让权威预校验给出可见拒绝事件。
             if target_qty == 0 || !target_qty.is_multiple_of(lot_size) {
                 desired.push(Intent::PlaceLimit {
@@ -140,7 +156,7 @@ impl GameSession {
                         })
                         .map(|(_, order)| (OrderId(order.order_id), order.qty))
                 });
-            let expires_market_minute = market_minute
+            let expires_market_minute = stock_minute
                 .checked_add(PARENT_ORDER_HORIZON_MINUTES)
                 .expect("market minute plus fixed parent-order horizon fits u64");
             self.state.parent_orders.entry(account).or_default().insert(
@@ -189,6 +205,14 @@ impl GameSession {
         working: WorkingOrderSlices<'_>,
         desired: &mut Vec<Intent>,
     ) {
+        if self
+            .stock_day_status(code)
+            .expect("parent stock calendar is valid")
+            != crate::calendar::DayStatus::Trading
+        {
+            return;
+        }
+        let stock_minute = self.parent_stock_market_minute(code, market_minute);
         let plan = self
             .state
             .parent_orders
@@ -196,13 +220,25 @@ impl GameSession {
             .and_then(|plans| plans.get(code))
             .expect("parent-order execution requires an active plan");
         if let Some(intent) = plan.desired_child_intent(
-            market_minute,
+            stock_minute,
             self.phase(),
             self.state.setup.config.lot_size,
             working,
         ) {
             desired.push(intent);
         }
+    }
+
+    fn parent_stock_market_minute(&self, code: &StockCode, market_minute: u64) -> u64 {
+        let shared_day_start = u64::from(self.state.day) * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
+        let intraday_minute = market_minute
+            .checked_sub(shared_day_start)
+            .expect("parent observation minute must not precede the shared day");
+        self.stock_trading_day(code)
+            .expect("parent stock trading day is valid")
+            .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+            .and_then(|stock_day_start| stock_day_start.checked_add(intraday_minute))
+            .expect("parent stock observation minute must fit u64")
     }
 }
 

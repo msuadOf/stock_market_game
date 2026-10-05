@@ -1,6 +1,8 @@
 //! 发现面的负向路径：只变私有经营事实 ⇒ 候选与订单都不变；抽样绝不写
 //! 个人信息状态（新曝光不等于已读）。
 
+include!("../../../test-support/simple_company.rs");
+
 use std::collections::BTreeSet;
 
 use engine::experience::PersonalWatchlist;
@@ -20,8 +22,7 @@ use crate::{attention, code};
 
 fn discovery_setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101", "600102"]),
         stocks: vec![
             StockSpec {
                 code: code("600101"),
@@ -72,6 +73,7 @@ fn discovery_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),

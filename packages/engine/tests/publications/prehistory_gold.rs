@@ -38,7 +38,7 @@ fn earliest_start_prehistory_is_legal_and_restorable() {
         .trading_days_before(CalendarExchange::Sse, start, 360)
         .expect("360 trading days of preset candles are legal at the earliest start");
 
-    let seeded = assemble_seeded_prehistory(two_company_config(11, as_of), start)
+    let seeded = assemble_seeded_prehistory(two_company_config(11, as_of), start, engine::information::ReportFrequency::Quarterly)
         .expect("prehistory assembles at the earliest runtime start");
 
     // 已公开集合：工商 + 银行各 7 期（1998 Q1/H1/Q3/年报 + 1999 Q1/H1/Q3）。
@@ -165,9 +165,9 @@ fn same_seed_prehistory_ids_and_bytes_identical() {
         .expect("as_of before history");
 
     let first =
-        assemble_seeded_prehistory(two_company_config(11, as_of), start).expect("first assembly");
+        assemble_seeded_prehistory(two_company_config(11, as_of), start, engine::information::ReportFrequency::Quarterly).expect("first assembly");
     let second =
-        assemble_seeded_prehistory(two_company_config(11, as_of), start).expect("second assembly");
+        assemble_seeded_prehistory(two_company_config(11, as_of), start, engine::information::ReportFrequency::Quarterly).expect("second assembly");
 
     // 同 seed：PublicationId 序列 + 全库 serde 字节逐位一致。
     assert_eq!(
@@ -202,7 +202,7 @@ fn seeded_library_round_trips_through_serde() {
         .prev()
         .expect("as_of before history");
     let seeded =
-        assemble_seeded_prehistory(two_company_config(11, as_of), start).expect("assembly");
+        assemble_seeded_prehistory(two_company_config(11, as_of), start, engine::information::ReportFrequency::Quarterly).expect("assembly");
 
     // serde 往返：恢复边界全量校验后逐字节等价（可恢复性验收句）。
     let bytes = serde_json::to_string(&seeded.library).expect("library serializes");

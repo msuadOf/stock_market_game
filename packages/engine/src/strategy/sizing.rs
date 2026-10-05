@@ -80,6 +80,7 @@ mod tests {
                     (
                         StockCode(format!("600{index:03}")),
                         StockView {
+                            is_trading: true,
                             best_bid: Some(price),
                             best_ask: Some(price),
                             last_price: price,

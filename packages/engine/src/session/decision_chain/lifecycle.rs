@@ -12,7 +12,6 @@ pub(super) struct PlanLifecycleReview<'a> {
     equity: Money,
     belief: &'a BeliefBook,
     chain_params: crate::strategy::BeliefChainParams,
-    trading_day: u64,
     lot: u32,
 }
 
@@ -52,7 +51,6 @@ impl<'a> PlanLifecycleReview<'a> {
                 .map(|participant| participant.belief())
                 .unwrap_or_else(|| panic!("belief account {account:?} must have a belief book")),
             chain_params: session.chain_strategy_params(account),
-            trading_day: u64::from(session.state.day),
             lot: session.state.setup.config.lot_size,
         })
     }
@@ -118,7 +116,18 @@ impl<'a> PlanLifecycleReview<'a> {
         let id = self.account;
         let market_view = self.market;
         let plans = self.plans;
-        let trading_day = self.trading_day;
+        if self
+            .session
+            .stock_day_status(code)
+            .expect("candidate stock calendar is valid")
+            != crate::calendar::DayStatus::Trading
+        {
+            return actions;
+        }
+        let trading_day = self
+            .session
+            .stock_trading_day(code)
+            .expect("candidate stock trading day is valid");
         let lot = self.lot;
         let held_by_code = &self.held_by_code;
         let equity = self.equity;

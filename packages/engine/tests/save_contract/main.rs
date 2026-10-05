@@ -5,14 +5,19 @@
 //! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
+include!("../../test-support/simple_company.rs");
+
+#[path = "../company_operations/fixtures.rs"]
+mod company_operations_fixture;
+
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, SIMULATION_POLICY_ID,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, WithinKindDistribution,
+    SIMULATION_POLICY_ID,
 };
 
-mod bank_policy;
 mod failures;
 mod restore_guards;
 
@@ -41,8 +46,7 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 /// 增强这些断言。仍保留完整的公司账本、公开信息与个人决策状态。
 fn contract_setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![stock(
             "600101",
             1_120,
@@ -77,6 +81,7 @@ fn contract_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 10,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
@@ -320,15 +325,12 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     let phase = engine::CivilInstant::from_hms(settled, 18, 0, 0).unwrap();
     assert_eq!(save.disclosures.published_through(), Some(phase));
     assert_eq!(save.disclosures.announced_through(), Some(settled));
-    // 经营「存档后演化」状态在场：滚动利息类待办非空且不早于当前自然日。
-    let pending = save.company_operations.scheduler().pending();
-    assert!(
-        !pending.is_empty(),
-        "rolling operations dues must be pending"
+    // 存档保留当前选择的 Simple 公司系统事实及其推进日期。
+    assert_eq!(save.company_system.config(), save.setup.company_system);
+    assert_eq!(
+        save.company_system.advanced_through(),
+        save.civil_clock.current_date.prev().unwrap()
     );
-    assert!(pending
-        .iter()
-        .all(|due| due.due_date >= save.civil_clock.current_date));
     // 待应用事实队列的保留规则：只保留计划簿中仍存活的计划条目。
     for event in &save.pending_plan_events {
         let plan = save
@@ -340,9 +342,34 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
             "save boundary must drop events of terminal plans"
         );
     }
-    // 经营推进时点与自然日时钟一致。
-    assert_eq!(
-        save.company_operations.next_expected_date(),
-        save.civil_clock.current_date
-    );
+}
+
+#[test]
+fn operating_scheduler_state_roundtrips_in_its_own_company_operations_fixture() {
+    use engine::company::operations::CompanyOperations;
+
+    let start = engine::CivilDate::from_iso("2030-01-07").unwrap();
+    let mut operations = CompanyOperations::new(
+        company_operations_fixture::four_company_config(
+            SEED,
+            company_operations_fixture::quiet_params(),
+            start.prev().unwrap(),
+        ),
+        start,
+    )
+    .expect("independent operating fixture must assemble");
+    operations.advance_civil_day(start).expect("first day advances");
+    let next = start.next().unwrap();
+    operations.advance_civil_day(next).expect("second day advances");
+
+    let pending = operations.scheduler().pending();
+    assert!(!pending.is_empty(), "rolling operating dues must be scheduled");
+    assert!(pending.iter().all(|due| due.due_date >= next));
+    assert_eq!(operations.next_expected_date(), next.next().unwrap());
+
+    let serialized = serde_json::to_vec(&operations).expect("operations serialize");
+    let restored: CompanyOperations =
+        serde_json::from_slice(&serialized).expect("operations restore");
+    assert_eq!(restored.scheduler().pending(), pending);
+    assert_eq!(restored.next_expected_date(), operations.next_expected_date());
 }

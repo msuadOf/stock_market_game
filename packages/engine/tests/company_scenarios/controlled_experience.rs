@@ -5,6 +5,7 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     // Given: same-seed sessions with identical accounts and one validated three-failure history.
     let mut setup = setup("2030-01-07");
     setup.stocks.truncate(1);
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.npcs = NpcSetup {
         retail_count: 1,
         inst_count: 1,

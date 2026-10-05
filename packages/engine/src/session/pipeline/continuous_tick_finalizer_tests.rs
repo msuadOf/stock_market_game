@@ -7,6 +7,7 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
     setup.ticks_per_day = ticks_per_day;
     setup.closing_auction_ticks = closing_ticks;
     setup.history_len = 2;
+    setup.start_date = crate::CivilDate::from_ymd(2030, 1, 2).unwrap();
     GameSession::new(setup, 42).unwrap()
 }
 
@@ -258,6 +259,7 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     let mut third = setup.stocks[0].clone();
     third.code = crate::StockCode("600890".to_owned());
     setup.stocks.push(third);
+    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     for code in &codes[..2] {
@@ -483,7 +485,7 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
                 let mut candle = candidate.state.candle_book.active()[&code].clone();
                 match counter {
                     "volume" => candle.volume = u64::MAX,
-                    "turnover" => candle.trade_stats.as_mut().unwrap().turnover_cents = u64::MAX,
+                    "turnover" => candle.trade_stats.as_mut().unwrap().turnover_cents = u128::MAX,
                     "count" => candle.trade_stats.as_mut().unwrap().trade_count = u64::MAX,
                     _ => unreachable!(),
                 }

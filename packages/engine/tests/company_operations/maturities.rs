@@ -75,6 +75,32 @@ fn preexisting_bank_deposit_is_scheduled_and_redeemed_on_first_operating_day() {
 }
 
 #[test]
+fn year_end_retains_future_operating_obligations_in_scheduler() {
+    let date = d("2030-12-31");
+    let mut operations = CompanyOperations::new(
+        CompanyOperationsConfig {
+            seed: 1,
+            shock_params: quiet_params(),
+            companies: vec![bank_c(date.prev().unwrap())],
+        },
+        date,
+    )
+    .unwrap();
+
+    operations.advance_civil_day(date).unwrap();
+
+    assert!(
+        !operations.scheduler().pending().is_empty(),
+        "年末日结后必须保留未来经营义务"
+    );
+    assert!(operations
+        .scheduler()
+        .pending()
+        .iter()
+        .all(|due| due.due_date > date));
+}
+
+#[test]
 fn commercial_debt_maturity_pays_real_principal_and_accrued_interest() {
     let date = d("2030-06-30");
     let mut ops = CompanyOperations::new(
@@ -172,6 +198,7 @@ fn project_borrowing_maturity_has_real_operating_payment_caller() {
             suspension_min_days: 90,
         },
         max_projects: 2,
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     })
     .unwrap();
     let contract = engine::company::ContractId("PROJECT-DEBT".into());

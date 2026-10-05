@@ -92,6 +92,7 @@ pub(crate) fn base_config() -> BankConfig {
         ],
         counterparties: counterparties(),
         ecl_policy: fixture_ecl_policy(),
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     }
 }
 

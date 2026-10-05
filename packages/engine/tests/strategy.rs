@@ -44,6 +44,7 @@ fn one_stock_view(last: i64) -> MarketView {
     stocks.insert(
         StockCode("600101".to_string()),
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
@@ -69,6 +70,63 @@ fn view_and_intent_serde_roundtrip() {
     let j = serde_json::to_value(&mv).unwrap();
     let back: MarketView = serde_json::from_value(j).unwrap();
     assert_eq!(back.stocks.len(), 1);
+}
+
+#[test]
+fn closed_stock_is_not_traded_by_builtin_strategies() {
+    let mut market = one_stock_view(1000);
+    let stock = market.stocks.values_mut().next().unwrap();
+    stock.is_trading = false;
+    stock.recent_market_minute_prices = vec![Money::from_cents(900), Money::from_cents(1000)];
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let config = engine::GameConfig::proposed_defaults();
+    let mut retail = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
+    assert!(retail
+        .decide(&market, &own, &mut SeqRng::new_f64(0.0), &config)
+        .is_empty());
+    let mut hot = engine::strategy::MomentumStrategy::new(2, 0.01, 100).unwrap();
+    assert!(hot
+        .decide(&market, &own, &mut SeqRng::new_f64(0.0), &config)
+        .is_empty());
+    let institution = engine::strategy::StrategyData::inst(
+        engine::strategy::TargetPolicy::Fixed(Money::from_cents(1500)),
+        0.05,
+        100,
+    );
+    assert!(engine::decide_data(
+        &institution,
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &config
+    )
+    .is_empty());
+}
+
+#[test]
+fn retail_selects_open_stock_even_when_closed_stock_sorts_first() {
+    let mut market = one_stock_view(1000);
+    let mut open = market.stocks.values().next().unwrap().clone();
+    open.is_trading = true;
+    market.stocks.values_mut().next().unwrap().is_trading = false;
+    let open_code = StockCode("600999".to_owned());
+    market.stocks.insert(open_code.clone(), open);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let mut retail = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
+    let intents = retail.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
+    );
+    assert!(!intents.is_empty());
+    assert!(intents.iter().all(|intent| matches!(intent, engine::strategy::Intent::PlaceLimit { code, .. } if code == &open_code)));
 }
 
 use engine::orderbook::Side;
@@ -238,6 +296,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
     stocks.insert(
         held.clone(),
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
@@ -300,6 +359,7 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
         stocks.insert(
             StockCode("600101".to_string()),
             StockView {
+                is_trading: true,
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1050),
@@ -741,6 +801,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
     mv.stocks.insert(
         StockCode("600102".to_string()),
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
@@ -1295,6 +1356,7 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
     stocks.insert(
         StockCode(code.to_string()),
         StockView {
+            is_trading: true,
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
@@ -2189,6 +2251,7 @@ fn reexport_from_crate_root() {
         positions: std::collections::BTreeMap::new(),
     };
     let _stv = StockView {
+        is_trading: true,
         best_bid: None,
         best_ask: None,
         last_price: Money::from_cents(0),
@@ -2402,6 +2465,7 @@ fn retail_covers_all_stocks_not_just_first() {
         stocks.insert(
             StockCode(code.to_string()),
             StockView {
+                is_trading: true,
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1000),

@@ -69,6 +69,12 @@ pub(super) fn decide_retail_position_inner(
     let risk_candidate = own
         .positions
         .iter()
+        .filter(|(code, _)| {
+            market
+                .stocks
+                .get(*code)
+                .is_some_and(|stock| stock.is_trading)
+        })
         .filter_map(|(code, position)| {
             let risk = account_risk.positions.get(code).unwrap_or_else(|| {
                 panic!("account-risk observation is missing held stock {}", code.0)
@@ -225,6 +231,12 @@ pub(super) fn decide_retail_position_inner(
         let drawdown_candidate = own
             .positions
             .iter()
+            .filter(|(code, _)| {
+                market
+                    .stocks
+                    .get(*code)
+                    .is_some_and(|stock| stock.is_trading)
+            })
             .map(|(code, position)| {
                 let weight = account_risk
                     .positions
@@ -308,6 +320,12 @@ pub(super) fn decide_retail_position_inner(
         let break_even = own
             .positions
             .iter()
+            .filter(|(code, _)| {
+                market
+                    .stocks
+                    .get(*code)
+                    .is_some_and(|stock| stock.is_trading)
+            })
             .filter(|(_, position)| position.sellable_qty > 0)
             .filter_map(|(code, position)| {
                 let risk = &account_risk.positions[code];

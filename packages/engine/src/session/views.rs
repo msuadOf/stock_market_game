@@ -87,6 +87,10 @@ impl GameSession {
                 (
                     code.clone(),
                     StockView {
+                        is_trading: self
+                            .stock_day_status(code)
+                            .expect("market stock must have a valid calendar")
+                            == crate::calendar::DayStatus::Trading,
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
                         last_price: m.last_price(),
@@ -167,6 +171,11 @@ impl GameSession {
             .expect("validated authoritative histories must produce behavior observations");
         let thirty_minute_returns = price_paths
             .iter()
+            .filter(|(code, _)| {
+                self.stock_day_status(code)
+                    .expect("observed stock must have a valid calendar")
+                    == crate::calendar::DayStatus::Trading
+            })
             .map(|(code, path)| (code.clone(), path.thirty_minute.return_ratio))
             .collect();
         let thirty_minute_market = build_equal_weight_market_observation(&thirty_minute_returns)

@@ -172,7 +172,7 @@ impl GameSession {
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
                 for code in &codes {
-                    let Some(company) = self.state.company_registry.issuer_of(code) else {
+                    let Some(company) = self.state.company_system.issuers().issuer_of(code) else {
                         continue;
                     };
                     let mut new_reports = false;
@@ -226,18 +226,14 @@ impl GameSession {
                     let ctx =
                         NpcObservationContext::new(id, &information, &self.state.library, &market)
                             .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
-                    let spec = self
-                        .state
-                        .operations
-                        .company(company)
-                        .expect("发行人经营配置存在")
-                        .spec();
+                    let spec = self.state.company_system.issuers().get(company)
+                        .expect("发行人身份存在");
                     let inputs = BeliefInputs {
                         ctx: &ctx,
                         company: company.clone(),
                         kind: spec.kind,
                         total_issued_shares: spec.issued_shares,
-                        as_of_trading_day: u64::from(self.state.day),
+                        as_of_trading_day: self.stock_trading_day(code)?,
                     };
                     if new_reports {
                         let report = crate::strategy::preferred_own_report(&ctx, company)
@@ -353,7 +349,7 @@ mod tests {
             let code = session.state.setup.stocks[0].code.clone();
             let company = session
                 .state
-                .company_registry
+                .company_system.issuers()
                 .issuer_of(&code)
                 .unwrap()
                 .clone();
@@ -432,18 +428,17 @@ mod tests {
                 _ => unreachable!(),
             }
             let date = session.civil_date();
-            std::sync::Arc::make_mut(&mut session.state.operations)
-                .apply_company_shock(
-                    &company,
-                    crate::company::ActiveShock {
-                        kind: crate::company::ShockKind::ContractWon,
-                        amplitude_bp: 500,
-                        starts_on: date,
-                        expires_on: date.next().unwrap(),
-                    },
-                )
-                .unwrap();
-            let day_end = session.end_civil_day().unwrap();
+            let (library, confirmed, _) = crate::session::company_assembly::financial_fixture_tests::confirmed_announcement_fixture(
+                &session, crate::company::ActiveShock {
+                    kind: crate::company::ShockKind::ContractWon,
+                    amplitude_bp: 500,
+                    starts_on: date,
+                    expires_on: date.next().unwrap(),
+                },
+            );
+            session.state.library = std::sync::Arc::new(library);
+            let mut day_end = session.end_civil_day().unwrap();
+            session.record_company_disclosure_events(&mut day_end, confirmed).unwrap();
             let publication = day_end
                 .events
                 .iter()
@@ -739,7 +734,7 @@ mod tests {
         let code = session.state.setup.stocks[0].code.clone();
         let company = session
             .state
-            .company_registry
+            .company_system.issuers()
             .issuer_of(&code)
             .unwrap()
             .clone();
@@ -752,17 +747,15 @@ mod tests {
             .record_attention(&code, 0, 0)
             .unwrap();
         let date = session.civil_date();
-        std::sync::Arc::make_mut(&mut session.state.operations)
-            .apply_company_shock(
-                &company,
-                crate::company::ActiveShock {
-                    kind: crate::company::ShockKind::ContractWon,
-                    amplitude_bp: 500,
-                    starts_on: date,
-                    expires_on: date.next().unwrap(),
-                },
-            )
-            .unwrap();
+        let (library, confirmed, _) = crate::session::company_assembly::financial_fixture_tests::confirmed_announcement_fixture(
+            &session, crate::company::ActiveShock {
+                kind: crate::company::ShockKind::ContractWon,
+                amplitude_bp: 500,
+                starts_on: date,
+                expires_on: date.next().unwrap(),
+            },
+        );
+        session.state.library = std::sync::Arc::new(library);
         let cash = session.state.accounts[&id].cash();
         let next_order = session.state.next_order_id;
         assert_eq!(
@@ -771,7 +764,8 @@ mod tests {
                 .acquired_count(),
             0
         );
-        let day_end = session.end_civil_day().unwrap();
+        let mut day_end = session.end_civil_day().unwrap();
+        session.record_company_disclosure_events(&mut day_end, confirmed).unwrap();
         let information = session.state.belief_participants[&id].information();
         assert!(information.acquired_count() > 0);
         assert!(information
@@ -793,10 +787,20 @@ mod tests {
     #[test]
     fn information_revaluation_failure_rolls_back_entire_day_end() {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
-        setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
+        setup.start_date = crate::CivilDate::from_ymd(2032, 1, 31).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
+        assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
         let id = AccountId(1);
         let code = session.state.setup.stocks[0].code.clone();
+        let company = session.state.company_system.issuers().issuer_of(&code).unwrap().clone();
+        let settled = session.civil_date();
+        let period = crate::accounting::AccountingPeriod::of_date(settled);
+        let scope = crate::accounting::consolidation::ScopeId::Standalone(
+            crate::accounting::consolidation::MemberId(company.0.clone()),
+        );
+        let finance = session.state.company_system.finance(&company).unwrap();
+        assert!(!finance.books().journal().entries().any(|entry| entry.date == settled));
+        assert!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).is_empty());
         session
             .state
             .belief_participants
@@ -805,7 +809,8 @@ mod tests {
             .watchlist_mut()
             .record_attention(&code, 0, 0)
             .unwrap();
-        let mut public = session.state.library.save();
+        let original_library = session.state.library.clone();
+        let mut public = original_library.save();
         public
             .reports
             .retain(|report| report.reports.kind != crate::accounting::reports::ReportKind::Annual);
@@ -814,11 +819,33 @@ mod tests {
         let save = serde_json::to_value(session.save().unwrap()).unwrap();
         let error = session.end_civil_day().unwrap_err();
         assert!(
-            error.to_string().contains("no own-known annual material"),
+            matches!(&error, SessionError::InvalidSave(message)
+                if message.contains("公告重估失败") && message.contains("no own-known annual material")),
             "{error}"
         );
         assert_eq!(session.business_state_hash().unwrap(), before);
         assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), save);
+        session.state.library = original_library;
+        let completed = session.end_civil_day().unwrap();
+        assert_eq!(completed.settled_date, settled);
+        let finance = session.state.company_system.finance(&company).unwrap();
+        let summaries = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::SimplePeriodSummary).collect::<Vec<_>>();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].lines.iter().all(|line| line.amount.is_positive()));
+        let taxes = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::TaxAccrual).collect::<Vec<_>>();
+        assert_eq!(taxes.len(), 1);
+        assert!(taxes[0].lines.iter().all(|line| line.amount.is_positive()));
+        assert_eq!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).len(), 1);
+        let report = finance.report(period, crate::accounting::reports::ReportKind::Monthly).unwrap();
+        assert!(report.income.quarter.line_amount(crate::accounting::reports::IncomeLine::OperatingRevenue).unwrap().is_positive());
+        assert!(report.income.quarter.income_tax.is_positive());
+        let committed = session.business_state_hash().unwrap();
+        let mut repeated = session.state.company_system.export_state();
+        let repeated_before = serde_json::to_value(&repeated).unwrap();
+        assert!(matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::Invalid(message))
+            if message.contains("日期必须连续推进") && message.contains(&settled.to_iso())));
+        assert_eq!(serde_json::to_value(repeated).unwrap(), repeated_before);
+        assert_eq!(session.business_state_hash().unwrap(), committed);
     }
 
     #[test]
@@ -827,7 +854,7 @@ mod tests {
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         let id = AccountId(1);
         let code = session.state.setup.stocks[0].code.clone();
-        let company = session.state.company_registry.issuer_of(&code).unwrap();
+        let company = session.state.company_system.issuers().issuer_of(&code).unwrap();
         let now = session.observation_civil_instant();
         let older = session
             .state
@@ -846,7 +873,7 @@ mod tests {
         let market = session.build_market_view();
         let ctx =
             NpcObservationContext::new(id, &information, &session.state.library, &market).unwrap();
-        let spec = session.state.operations.company(company).unwrap().spec();
+        let spec = session.state.company_system.issuers().get(company).unwrap();
         let mut inputs = BeliefInputs {
             ctx: &ctx,
             company: company.clone(),

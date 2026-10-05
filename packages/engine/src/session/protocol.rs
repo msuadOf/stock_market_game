@@ -13,7 +13,7 @@ pub use player_orders::{PlayerWorkingOrder, SaveCandidateKey};
 mod replay;
 pub use civil::*;
 pub use commit::project_timeseries;
-pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
+pub use delta::{OwnerScopedRemovedOrder, PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub(crate) use facts::attach_facts_after;
 pub(super) use facts::attach_facts_with_keys;
 pub use facts::{attach_facts, EventFact};

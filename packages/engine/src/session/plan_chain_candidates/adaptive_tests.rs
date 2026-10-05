@@ -88,11 +88,21 @@ fn same_plan_cannot_yield_again_until_its_typed_result_arrives() {
 
 #[test]
 fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
-    let mut session = GameSession::new(
-        crate::session::npc_working_quote_tests::two_stock_quote_setup(),
-        47,
-    )
-    .unwrap();
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.ticks_per_day = 2;
+    let mut session = GameSession::new(setup, 47).unwrap();
+    session
+        .state
+        .npc_attention
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .next_attention_candidate_tick = 2;
+    session.state.attention_scheduler = [(2, AccountId(1))].into_iter().collect();
+    for _ in 0..2 {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
     let (_, template) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
     let first = StockCode("600888".to_owned());
@@ -120,7 +130,6 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
                 .unwrap(),
         );
     }
-    session.state.day = 1;
     let mut request = template;
     request.plan_id = ids[0];
     request.allocation.plan_id = ids[0];
@@ -379,6 +388,7 @@ fn stock_route_wrong_generation_does_not_consume_pending_route() {
 #[test]
 fn lifecycle_uses_fixed_account_resources_and_current_plan_after_outcome() {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
+    session.end_civil_day().unwrap();
     let account = AccountId(1);
     let code = request.allocation.code;
     let market = session.build_market_view();

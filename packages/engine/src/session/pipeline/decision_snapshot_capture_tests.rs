@@ -328,6 +328,32 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
 }
 
 #[test]
+fn closed_day_keeps_attention_and_experience_until_the_next_open_day() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-01").unwrap();
+    let mut shadow = GameSession::new(setup, 71).unwrap();
+    let account = AccountId(1);
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, 0);
+    let attention_before = shadow.state.npc_attention.clone();
+    let experience_before = shadow.state.retail_experience.clone();
+    let captured = capture_decision_snapshot(&mut shadow).unwrap();
+    assert!(captured.snapshot.due_npc_ids().is_empty());
+    assert!(captured.snapshot.behavior_market().is_none());
+    assert_eq!(shadow.state.npc_attention, attention_before);
+    assert_eq!(shadow.state.retail_experience, experience_before);
+    assert_eq!(shadow.tick(), 0);
+    shadow.end_civil_day().unwrap();
+    assert_eq!(
+        shadow.civil_date(),
+        crate::CivilDate::from_iso("2030-01-02").unwrap()
+    );
+    let reopened = capture_decision_snapshot(&mut shadow).unwrap();
+    assert_eq!(reopened.snapshot.due_npc_ids(), &[account]);
+    assert!(reopened.snapshot.behavior_market().is_some());
+    assert_ne!(shadow.state.npc_attention, attention_before);
+}
+
+#[test]
 fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations() {
     let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 17).unwrap();
     shadow.state.attention_scheduler.clear();
@@ -602,6 +628,65 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
         .all(|code| experience.stocks.contains_key(code)));
     assert_eq!(experience, &shadow.state.retail_experience[&account]);
     assert_eq!(source.session_state_hash().unwrap(), before);
+}
+
+#[test]
+fn capture_closed_holding_keeps_equity_without_recording_new_price_observation() {
+    let mut shadow =
+        crate::session::exchange_calendar_tests::mixed_session_with_institution(false, 1);
+    let account = AccountId(1);
+    let code = crate::StockCode("600101".to_owned());
+    let price = shadow.state.markets[&code].last_price();
+    shadow
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .grant_position(code.clone(), 100, price)
+        .unwrap();
+    let mut experience = crate::RetailExperienceState::without_equity_reference();
+    experience
+        .initialize_holding_dated(
+            &code,
+            Some(price),
+            price,
+            crate::experience::ExperienceMoment {
+                civil_date: crate::CivilDate::from_iso("2030-01-01").unwrap(),
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    let old_observation = experience.feedback.stocks[&code].last_own_observation;
+    shadow.state.retail_experience.insert(account, experience);
+    let tick = shadow.state.tick;
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+    let expected_equity = shadow.state.accounts[&account]
+        .cash()
+        .add(price.mul_shares(100).unwrap())
+        .unwrap();
+    let captured = capture_decision_snapshot(&mut shadow).unwrap();
+    let experience = captured
+        .snapshot
+        .account(account)
+        .unwrap()
+        .retail_experience()
+        .unwrap();
+    assert_eq!(
+        experience.feedback.stocks[&code].last_own_observation,
+        old_observation
+    );
+    assert_eq!(experience.peak_equity, Some(expected_equity));
+    assert_eq!(
+        captured
+            .snapshot
+            .account(account)
+            .unwrap()
+            .self_view()
+            .positions[&code]
+            .qty,
+        100
+    );
 }
 
 #[test]

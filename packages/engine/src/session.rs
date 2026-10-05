@@ -11,22 +11,40 @@ mod candles;
 #[cfg(feature = "simulation-diagnostics")]
 mod causal;
 mod civil_clock;
+mod exchange_calendar;
+#[cfg(test)]
+mod exchange_calendar_tests;
 mod company_assembly;
+#[cfg(test)]
+mod company_simple_session_tests;
 mod company_groups;
+mod company_corrections;
+pub use company_corrections::{CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch, ReportCorrectionStatus, ReportCorrectionError};
 mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
 mod disclosures;
+mod intraday_disclosures;
 mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
 mod history_reads;
+mod trade_confirmation_query;
+pub use trade_confirmation_query::{PersonalTradeHistoryRequest, PersonalTradeHistoryPage, TradeHistoryReceiptCursor};
+mod retained_history;
+mod live_minute_history;
+pub use live_minute_history::{CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse, CurrentMinuteHistoryPhase};
+pub use retained_history::{HistoryTradingPhase, MinuteBar, HistorySessionStatus, MinuteHistorySession, RetainedHistoryDay, MarketHistoryRequest, MarketHistoryAvailability, MarketHistoryEntry, MarketHistoryPage};
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
 mod initial_allocation;
 mod institutional_behavior;
 mod minimal_snapshot;
+mod memberships;
+pub use memberships::{AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId};
+#[cfg(test)]
+mod memberships_tests;
 mod observation_clock;
 mod persistence;
 pub mod pipeline;
@@ -53,6 +71,8 @@ mod envelope_projection_tests;
 mod failure_tests;
 #[cfg(test)]
 mod hash_contract_tests;
+#[cfg(test)]
+mod financial_hash_contract_tests;
 #[cfg(test)]
 mod plan_chain_candidates_tests;
 #[cfg(test)]
@@ -180,6 +200,8 @@ pub enum RejectionReason {
     PriceCageExceeded,
     /// 意图指向不存在的股票代码。
     UnknownStock,
+    /// 本证券所属交易所当前自然日休市。
+    ExchangeClosed,
     /// 集合竞价只接受限价委托，市价单无法确定保护价格。
     AuctionLimitOrderRequired,
     /// 当前处于集合竞价不可撤单时段（A 股 09:20 后）。
@@ -215,6 +237,19 @@ pub enum TradingPhase {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum Event {
+    PublicTrade {
+        #[serde(with = "crate::orderbook::js_safe_u64")]
+        #[ts(type = "number")]
+        seq: u64,
+        code: StockCode,
+        price: Money,
+        qty: u32,
+    },
+    PrivateEventOmitted {
+        #[serde(with = "crate::orderbook::js_safe_u64")]
+        #[ts(type = "number")]
+        seq: u64,
+    },
     /// 成交：code 来自路由（orderbook.Trade 无 code 字段），maker/taker 双方结算。
     Trade {
         #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -316,6 +351,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
+        #[serde(with = "memberships::account_id_decimal")]
+        #[ts(type = "string")]
         account: AccountId,
         code: StockCode,
         reason: RejectionReason,
@@ -325,6 +362,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
+        #[serde(with = "memberships::account_id_decimal")]
+        #[ts(type = "string")]
         account: AccountId,
         code: StockCode,
         reason: String,
@@ -335,6 +374,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
+        #[serde(with = "memberships::account_id_decimal")]
+        #[ts(type = "string")]
         account: AccountId,
         code: StockCode,
         id: OrderId,
@@ -345,6 +386,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
+        #[serde(with = "memberships::account_id_decimal")]
+        #[ts(type = "string")]
         account: AccountId,
         code: StockCode,
         id: OrderId,
@@ -359,6 +402,8 @@ impl Event {
     pub fn seq(&self) -> u64 {
         match self {
             Self::Trade { seq, .. }
+            | Self::PublicTrade { seq, .. }
+            | Self::PrivateEventOmitted { seq, .. }
             | Self::AuctionTick { seq, .. }
             | Self::AuctionCompleted { seq, .. }
             | Self::PriceTick { seq, .. }
@@ -404,27 +449,29 @@ pub struct DailyCandle {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, ts_rs::TS)]
 #[ts(export)]
 pub struct DailyTradeStats {
-    #[serde(with = "u64_decimal")]
+    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
     #[ts(type = "string")]
-    pub turnover_cents: u64,
+    pub turnover_cents: u128,
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub trade_count: u64,
 }
 
-/// 存档槽：保存权威市场、账户、集合竞价及连续竞价未成交委托。
-/// 前端分时采样属于派生 UI 数据，不进入权威存档；日 K 由 engine 持久化。
+/// 当前契约的状态槽。公共持久档仅接受完整日结；低层内存 checkpoint 另保留活动状态。
+/// 真实分钟量价、日 K 和交割事实永久保留；前端展示采样不冒充真实成交历史。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
+    pub retained_market_history: Vec<RetainedHistoryDay>,
+    pub market_memberships: MarketMembershipState,
+    #[ts(skip)]
+    pub report_correction_operations: BTreeMap<String, CompletedReportCorrection>,
     /// Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
     #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
     pub runtime_state: SavedRuntimeState,
     pub setup: SessionSetup,
-    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
-    pub groups: Vec<GroupStructure>,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub seed: u64,
@@ -471,19 +518,12 @@ pub struct SaveSlot {
     pub civil_clock: CivilClockSave,
     /// ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
     ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
-    /// 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
-    /// 余额在反序列化重放边界校验）。
-    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperations")]
-    pub company_operations: crate::company::operations::CompanyOperations,
-    /// 结账版本登记簿（不可变期间版本 + 重述底稿）。
-    #[ts(skip)]
-    pub closing_registry: crate::accounting::closing::ClosingEngine,
+    /// 新局选定的公司系统、财务事实与独立随机状态。
+    #[ts(type = "import(\"../../save/schema/company/system\").CompanySystem")]
+    pub company_system: crate::company::CompanySystem,
     /// 公开信息库（报告 + 公告；恢复走 from_parts 逐条重验）。
     #[ts(skip)]
     pub public_library: crate::information::PublicLibrary,
-    /// 经营 ↔ 时钟到期镜像（已镜像调度事件 id 集合）。
-    #[ts(skip)]
-    pub ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标（published_through / announced_through）。
     #[ts(skip)]
     pub disclosures: DisclosureDispatch,
@@ -596,34 +636,7 @@ pub(crate) mod u64_decimal {
     }
 }
 
-mod canonical_u64_decimal {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        let bytes = value.as_bytes();
-        let nonzero_prefix = bytes
-            .first()
-            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
-        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
-        if !canonical {
-            return Err(serde::de::Error::custom(
-                "u64 must use canonical decimal notation",
-            ));
-        }
-        value.parse::<u64>().map_err(serde::de::Error::custom)
-    }
-}
+use crate::orderbook::canonical_u64_decimal;
 
 mod book_sequence_map {
     use super::{u64_decimal, StockCode};
@@ -893,6 +906,10 @@ struct WorkingOrderSlices<'a> {
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
+    #[error("报表更正失败：{0}")]
+    ReportCorrection(#[source] ReportCorrectionError),
+    #[error("报表更正内部不变量失败：{0}")]
+    CorrectionInvariant(#[source] Box<crate::company::CompanyCorrectionError>),
     #[error(transparent)]
     Step(#[from] StepFatal),
     /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。
@@ -908,6 +925,10 @@ pub enum SessionError {
     UnknownHistoryAccount(AccountId),
     #[error("unknown stock for history request: {0:?}")]
     UnknownHistoryStock(StockCode),
+    #[error("intraday average could not be calculated: {0}")]
+    InvalidIntradayAverage(String),
+    #[error("本人交割历史查询无效：{0}")]
+    InvalidTradeHistoryQuery(String),
     #[error("history read could not be recorded: {0}")]
     InvalidHistoryRead(String),
     #[error("session resource limit exceeded: {0}")]
@@ -1152,17 +1173,12 @@ pub struct NpcSetup {
 
 /// session 初始化参数。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SessionSetup {
     pub stocks: Vec<StockSpec>,
-    #[serde(default)]
-    #[ts(optional)]
-    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperationsConfig | null")]
-    pub company_operations: Option<crate::company::operations::CompanyOperationsConfig>,
-    #[serde(default)]
-    #[ts(optional)]
-    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
-    pub groups: Vec<GroupStructure>,
+    #[ts(type = "import(\"../../save/schema/company/system\").CompanySystemConfig")]
+    pub company_system: crate::company::config::CompanySystemConfig,
     pub npcs: NpcSetup,
     pub config: GameConfig,
     pub strategy_params: StrategyParams,
@@ -1182,6 +1198,7 @@ pub struct SessionSetup {
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
     pub float_allocation: FloatAllocation,
+    pub report_frequency: crate::information::ReportFrequency,
     /// 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
     /// （1998–1999 仅供初始化前史查询）。休市起点保持原日，不挪到开市日。
     /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
@@ -1197,6 +1214,16 @@ impl SessionSetup {
     /// 校验所有启动期外部输入。serde 可绕过各子类型构造器，因此 session 创建和恢复
     /// 都必须从这里进入，验证成功后才构造权威状态。
     pub fn validate(&self) -> Result<(), SessionError> {
+        let issuers = crate::company::identity::IssuerRegistry::new(company_assembly::issuer_specs(self)?)
+            .map_err(|error| SessionError::InvalidSetup(format!("发行人身份非法：{error}")))?;
+        match &self.company_system {
+            crate::company::config::CompanySystemConfig::Simple(config) => config.validate_for_issuers(&issuers)
+                .map_err(|error| SessionError::InvalidSetup(format!("Simple 参数非法：{error}")))?,
+            crate::company::config::CompanySystemConfig::Simulation => return Err(SessionError::InvalidSetup("Simulation 将在独立分支实现，当前不能创建".into())),
+        }
+        if let crate::information::ReportFrequency::Monthly { schedule } = self.report_frequency {
+            schedule.validate().map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        }
         if self.stocks.is_empty() {
             return Err(SessionError::InvalidSetup(
                 "stocks must be non-empty".to_string(),
@@ -1377,6 +1404,7 @@ impl SessionSetup {
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
+    report_correction_epoch: std::sync::Arc<()>,
     ingress: Option<shared_ingress::IngressBinding>,
     poison: Option<StepFatal>,
     fresh_initial_allocation: bool,
@@ -1387,8 +1415,28 @@ pub struct GameSession {
     state: CommittableSessionState,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct PersonalTradeConfirmation {
+    #[serde(with = "canonical_u64_decimal")]
+    #[ts(type = "string")]
+    pub receipt_id: u64,
+    pub civil_date: CivilDate,
+    pub code: StockCode,
+    pub side: Side,
+    pub price: Money,
+    pub quantity_shares: u32,
+    pub gross: Money,
+    pub actual_fees: pipeline::FeeComponents,
+}
+
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
+    retained_market_history: retained_history::RetainedMarketHistory,
+    memberships: MarketMembershipState,
+    pending_report_corrections: Vec<CompanyReportCorrection>,
+    report_correction_operations: BTreeMap<String, CompletedReportCorrection>,
     setup: SessionSetup,
     rng: SplitMix64,
     seed: u64,
@@ -1417,17 +1465,9 @@ struct CommittableSessionState {
     causal: crate::diagnostics::causal::CausalCollector,
     attention_scheduler: NpcAttentionScheduler,
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
-    /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
-    company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
-    /// 自然日经营编排（自然日经营演化；前史已推进到开局日）。
-    operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
-    groups: Vec<GroupStructure>,
-    /// 结账版本登记簿（结账与报表）。
-    closing: std::sync::Arc<crate::accounting::closing::ClosingEngine>,
+    company_system: std::sync::Arc<crate::company::CompanySystem>,
     /// 公开信息库（公开信息；前史已播种）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
-    /// 经营 ↔ 时钟到期镜像。
-    ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标。
     disclosures: DisclosureDispatch,
     /// 跨日个人交易计划（个人计划生命周期；PlanBook 本身支持全账户）。
@@ -1439,6 +1479,8 @@ struct CommittableSessionState {
     envelope_ledger: pipeline::EnvelopeLedger,
     /// 已由原子 Settlement 账户/经历投影消费的回执；随 tick shadow 提交的权威去重事实。
     retail_projection_seen: pipeline::RetailProjectionSeen,
+    personal_trade_confirmations:
+        BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     /// 下一个全局回执索引；跨存档由 `SavedRuntimeState` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
     next_order_id: u64,
@@ -1584,6 +1626,7 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
+            report_correction_epoch: self.report_correction_epoch.clone(),
             ingress: self.ingress.as_ref().map(shared_ingress::IngressBinding::fork).transpose().map_err(shared_ingress::ingress_fatal)?,
             poison: None,
             fresh_initial_allocation: self.fresh_initial_allocation,
@@ -1649,33 +1692,21 @@ impl GameSession {
             crate::experience::PersonalHistoryReadLedger::default(),
         );
         let rng = SplitMix64::new(seed);
-        let civil_clock = CivilClock::new(
+        let civil_clock = CivilClock::new_for_stocks(
             setup.start_date,
-            session_calendar_exchange(setup.stocks[0].exchange),
+            setup.stocks.iter().map(|stock| (stock.code.clone(), session_calendar_exchange(stock.exchange))),
         )?;
         // 会话装配与执行接线 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
         let company_assembly::CompanyAssembly {
-            registry,
-            prehistory,
-        } = company_assembly::assemble_companies(&setup, seed, event_multiplier_bp)?;
-        let seeded_through = prehistory.last_published_instant();
-        let crate::information::SeededPrehistory {
-            ops,
-            closing,
+            system,
             library,
-            ..
-        } = prehistory;
-        company_groups::validate_groups(&setup.groups, &ops).map_err(|error| {
-            SessionError::InvalidSetup(format!("company groups invalid: {error}"))
-        })?;
+        } = company_assembly::assemble_companies(&setup, seed)?;
+        let seeded_through = library.latest_published_instant();
         let mut civil_clock = civil_clock;
-        let mut ops_wiring = CompanyOperationsClockWiring::new();
-        ops_wiring
-            .install(&mut civil_clock, &ops)
-            .map_err(SessionError::CompanyOperations)?;
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
+            report_correction_epoch: std::sync::Arc::new(()),
             ingress: None,
             poison: None,
             fresh_initial_allocation: true,
@@ -1684,9 +1715,11 @@ impl GameSession {
             #[cfg(test)]
             post_shadow_failure: None,
             state: CommittableSessionState {
+                memberships: MarketMembershipState::local_owner(setup.config.starting_cash),
+                pending_report_corrections: Vec::new(),
+                report_correction_operations: BTreeMap::new(),
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
-                groups: setup.groups.clone(),
                 setup,
                 rng,
                 seed,
@@ -1696,6 +1729,7 @@ impl GameSession {
                 price_history,
                 market_minute_closes,
                 candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
+                retained_market_history: retained_history::RetainedMarketHistory::default(),
                 auction_orders: BTreeMap::new(),
                 pending_player: Vec::new(),
                 pending_npc: None,
@@ -1711,11 +1745,8 @@ impl GameSession {
                 npc_decision_traces:
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
-                company_registry: std::sync::Arc::new(registry),
-                operations: std::sync::Arc::new(ops),
-                closing: std::sync::Arc::new(closing),
+                company_system: std::sync::Arc::new(system),
                 library: std::sync::Arc::new(library),
-                ops_wiring,
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
                 urgency_policy: crate::plans::UrgencyPolicy::default(),
@@ -1723,6 +1754,7 @@ impl GameSession {
                 envelope_ledger: pipeline::EnvelopeLedger::new(0, [])
                     .expect("an empty envelope ledger is valid"),
                 retail_projection_seen: pipeline::RetailProjectionSeen::default(),
+                personal_trade_confirmations: BTreeMap::new(),
                 next_receipt_base: 0,
                 next_order_id: 1,
                 tick: 0,
@@ -2332,17 +2364,66 @@ impl GameSession {
         self.state.civil_clock.current_date()
     }
 
+    pub fn personal_trade_confirmations(
+        &self,
+        account: AccountId,
+    ) -> Vec<PersonalTradeConfirmation> {
+        self.state
+            .personal_trade_confirmations
+            .get(&account)
+            .map(|history| history.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn personal_trade_confirmations_page(
+        &self,
+        account: AccountId,
+        before_receipt: Option<u64>,
+    ) -> Vec<PersonalTradeConfirmation> {
+        self.state.personal_trade_confirmations.get(&account)
+            .map(|history| history.iter_rev()
+                .filter(|confirmation| before_receipt.is_none_or(|cursor| confirmation.receipt_id < cursor))
+                .take(100).cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn query_intraday_average(
+        &self,
+        code: &StockCode,
+    ) -> Result<Option<crate::IntradayAverage>, SessionError> {
+        if !self.state.markets.contains_key(code) {
+            return Err(SessionError::UnknownHistoryStock(code.clone()));
+        }
+        let candle = self.state.candle_book.active().get(code);
+        crate::calculate_intraday_average(
+            candle.and_then(|value| value.trade_stats.as_ref()),
+            candle.map_or(0, |value| value.volume),
+        )
+        .map_err(|error| SessionError::InvalidIntradayAverage(error.to_string()))
+    }
+
     /// Returns one host-safe page of reports visible at the current civil instant.
     pub fn query_public_reports(
         &self,
         query: &crate::company::PublicReportQuery,
     ) -> Result<crate::company::PublicReportPage, SessionError> {
-        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
-            .map_err(crate::calendar::CalendarError::from)?;
+        let as_of = self.observation_civil_instant();
         self.state
             .library
             .query_public_reports(query, as_of)
             .map_err(|error| SessionError::Information(Box::new(error)))
+    }
+
+    pub fn query_public_report_availability(
+        &self,
+        query: &crate::company::PublicReportAvailabilityQuery,
+    ) -> Result<crate::company::PublicReportAvailability, SessionError> {
+        self.state.library.query_report_availability(
+            &self.state.company_system,
+            query,
+            self.state.setup.report_frequency,
+            self.observation_civil_instant(),
+        ).map_err(|error| SessionError::Information(Box::new(error)))
     }
 
     /// Returns one host-safe report visible at the current civil instant.
@@ -2350,8 +2431,7 @@ impl GameSession {
         &self,
         id: String,
     ) -> Result<crate::company::PublicReportSummary, SessionError> {
-        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
-            .map_err(crate::calendar::CalendarError::from)?;
+        let as_of = self.observation_civil_instant();
         self.state
             .library
             .public_report_by_id(id, as_of)
@@ -2369,19 +2449,26 @@ impl GameSession {
         &mut self.state.civil_clock
     }
 
-    /// 自然日日结（冻结日历与双时钟）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
+    /// 自然日日结（冻结日历与双时钟）：当日经营终局窗口 → 更正过账 →（月/年末封账）→ 18:00 披露 → 前进次日。
     ///
     /// 交易日必须先完成当日会话（`ticks_per_day` 个 step，`day` 已自增到位）；
     /// 休市日直接调用。先全量验证（会话同步 + 时钟规则）后原子应用，任何
     /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
     /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
     ///
-    /// 会话装配与执行接线（经营与信息披露顺序）：时钟日结（到期派发 + 18:00 相位）→ 经营终局
-    /// （`CompanyOperationsClockWiring::run_day_end` 推进当日经营并增量再同步）
-    /// → 月/年末封账（`close_accounting_periods`）→ 披露派发
-    /// （`DisclosureDispatch::run_day_end`，公告先于定期报告）。
+    /// 日终 candidate 依次推进 CivilClock、选中 CompanySystem、公开披露与个人获知。
+    /// 公司系统失败或公开材料校验失败时，候选状态整体回滚。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        self.end_civil_day_inner(true)
+    }
+
+    pub(in crate::session) fn end_civil_day_without_ingress_publication(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        self.end_civil_day_inner(false)
+    }
+
+    fn end_civil_day_inner(&mut self, publish: bool) -> Result<CivilDayEndReport, SessionError> {
         self.require_healthy()?;
+        let publication = self.ingress_calendar_publication()?;
         let expected_sessions = self
             .state
             .civil_clock
@@ -2398,8 +2485,19 @@ impl GameSession {
         let checkpoint = self.clone_for_tick_shadow().map_err(|error| {
             SessionError::InvalidSave(format!("cannot create civil day-end checkpoint: {error}"))
         })?;
-        match self.end_civil_day_after_session_check() {
-            Ok(report) => Ok(report),
+        let result = self.end_civil_day_after_session_check().and_then(|report| {
+            if publish { self.publish_ingress_calendar(publication)?; }
+            Ok(report)
+        });
+        match result {
+            Ok(report) => {
+                if publish {
+                    for observer in self.state.civil_clock.disclosure_observers() {
+                        observer(report.disclosure_instant);
+                    }
+                }
+                Ok(report)
+            }
             Err(error) => {
                 *self = checkpoint;
                 Err(error)
@@ -2412,36 +2510,55 @@ impl GameSession {
             .state
             .civil_clock
             .end_day(self.state.civil_clock.current_date())?;
-        self.state.ops_wiring.run_day_end(
-            &report,
-            &mut self.state.civil_clock,
-            std::sync::Arc::make_mut(&mut self.state.operations),
-        )?;
-        self.close_accounting_periods(report.settled_date)?;
-        let disclosures = self
+        let correction_publications = self.apply_report_corrections_at_day_end(&report)?;
+        std::sync::Arc::make_mut(&mut self.state.company_system)
+            .advance_day(report.settled_date)
+            .map_err(|error| SessionError::InvalidSave(format!("公司日终推进失败：{error}")))?;
+        let mut disclosures = self
             .state
             .disclosures
-            .run_day_end(DayEndDisclosureCtx {
+            .run_simple_day_end(disclosures::SimpleDayEndDisclosureCtx {
+                report_frequency: self.state.setup.report_frequency,
                 report: &report,
-                ops: &self.state.operations,
-                groups: &self.state.groups,
-                closing: std::sync::Arc::make_mut(&mut self.state.closing),
+                system: &self.state.company_system,
+                seed: self.state.seed,
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;
-        self.state
-            .ops_wiring
-            .prune_dispatched(&self.state.operations);
-        self.record_civil_day_events(&mut report, disclosures)?;
-        self.deliver_public_information(report.disclosure_instant)?;
-        self.prune_all_personal_memories();
-        for observer in self.state.civil_clock.disclosure_observers() {
-            observer(report.disclosure_instant);
+        disclosures.reports_published.extend(correction_publications);
+        let disclosure_limit = if matches!(self.state.setup.report_frequency, crate::information::ReportFrequency::Monthly { .. }) {
+            CivilInstant::new(report.settled_date, 86399).map_err(crate::calendar::CalendarError::from)?
+        } else { report.disclosure_instant };
+        let mut information_instants = std::collections::BTreeSet::from([report.disclosure_instant]);
+        for id in &disclosures.reports_published {
+            information_instants.insert(self.state.library.report(*id, disclosure_limit)
+                .map_err(|error| SessionError::Information(Box::new(error)))?.published_at);
         }
+        for instant in information_instants {
+            self.deliver_public_information(instant)?;
+        }
+        self.record_civil_day_events(&mut report, disclosures)?;
+        self.prune_all_personal_memories();
+        self.finish_retained_history(report.settled_date)?;
         Ok(report)
     }
 
     fn record_civil_day_events(
+        &mut self,
+        report: &mut CivilDayEndReport,
+        disclosures: DayEndDisclosures,
+    ) -> Result<(), SessionError> {
+        self.record_company_disclosure_events(report, disclosures)?;
+        report.events.push(Event::CivilDateAdvanced {
+            seq: self.next_seq(),
+            settled_date: report.settled_date,
+            next_date: report.next_date,
+            next_status: report.next_status.clone(),
+        });
+        Ok(())
+    }
+
+    fn record_company_disclosure_events(
         &mut self,
         report: &mut CivilDayEndReport,
         disclosures: DayEndDisclosures,
@@ -2462,10 +2579,11 @@ impl GameSession {
             });
         }
         for publication_id in disclosures.reports_published {
+            let limit = CivilInstant::new(report.settled_date, 86399).map_err(crate::calendar::CalendarError::from)?;
             let (company, published_at, report_revision) = self
                 .state
                 .library
-                .report(publication_id, report.disclosure_instant)
+                .report(publication_id, limit)
                 .map(|published| {
                     (
                         published.company.clone(),
@@ -2482,76 +2600,6 @@ impl GameSession {
                 kind: CompanyDisclosureKind::Report { report_revision },
             });
         }
-        report.events.push(Event::CivilDateAdvanced {
-            seq: self.next_seq(),
-            settled_date: report.settled_date,
-            next_date: report.next_date,
-            next_status: report.next_status.clone(),
-        });
-        Ok(())
-    }
-
-    /// 月/年末封账（经营与信息披露 日终顺序的第二步）：settled 是当月最后一天时对该月
-    /// 封月；12 月末走 `close_year`（其内部含 12 月封月 + 年报版本）。封账后
-    /// 该期间拒绝后续入账（底座守卫），晚于封账日的分录天然落在开放期间。
-    fn close_accounting_periods(
-        &mut self,
-        settled: crate::calendar::CivilDate,
-    ) -> Result<(), SessionError> {
-        let is_month_end = settled
-            .next()
-            .map(|next| next.month() != settled.month())
-            .unwrap_or(false);
-        if !is_month_end {
-            return Ok(());
-        }
-        let year_end = settled.month() == 12;
-        let period = crate::accounting::AccountingPeriod::from_ymd(settled.year(), settled.month())
-            .map_err(|error| {
-                SessionError::InvalidSetup(format!("closing period invalid: {error}"))
-            })?;
-        let targets: Vec<(
-            crate::company::CompanyId,
-            crate::accounting::consolidation::MemberId,
-            crate::accounting::reports::IndustryPresentation,
-        )> = self
-            .state
-            .operations
-            .companies
-            .iter()
-            .map(|(id, company)| {
-                (
-                    id.clone(),
-                    crate::accounting::consolidation::MemberId(id.0.clone()),
-                    crate::information::industry_presentation(company.spec().kind),
-                )
-            })
-            .collect();
-        for (company_id, member, industry) in targets {
-            let Some(company) =
-                std::sync::Arc::make_mut(&mut self.state.operations).company_mut(&company_id)
-            else {
-                continue;
-            };
-            let books = company.books_mut();
-            let result = if year_end {
-                std::sync::Arc::make_mut(&mut self.state.closing)
-                    .close_year(books, &member, industry, settled.year())
-                    .map(|_| ())
-            } else {
-                std::sync::Arc::make_mut(&mut self.state.closing)
-                    .close_month(books, &member, industry, period)
-                    .map(|_| ())
-            };
-            result.map_err(SessionError::Closing)?;
-        }
-        company_groups::record_group_periods(
-            &self.state.groups,
-            &self.state.operations,
-            std::sync::Arc::make_mut(&mut self.state.closing),
-            period,
-        )
-        .map_err(|error| SessionError::InvalidSetup(format!("group closing failed: {error}")))?;
         Ok(())
     }
 
@@ -2849,6 +2897,7 @@ impl GameSession {
         if account.kind() != AccountKind::Player {
             return Err(SessionError::NotPlayer(player_id));
         }
+        self.validate_player_calendar(&intent)?;
         let received = self
             .state
             .ingress_receipt_cursors
@@ -2918,6 +2967,9 @@ impl GameSession {
 
     fn save_projection(&self, runtime_state: SavedRuntimeState) -> SaveSlot {
         SaveSlot {
+            retained_market_history: self.state.retained_market_history.saved_days(),
+            market_memberships: self.state.memberships.clone(),
+            report_correction_operations: self.state.report_correction_operations.clone(),
             runtime_state,
             setup: self.state.setup.clone(),
             seed: self.state.seed,
@@ -2981,11 +3033,8 @@ impl GameSession {
             next_order_id: self.state.next_order_id,
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
-            company_operations: self.state.operations.as_ref().clone(),
-            groups: self.state.groups.clone(),
-            closing_registry: self.state.closing.as_ref().clone(),
+            company_system: self.state.company_system.export_state(),
             public_library: self.state.library.as_ref().clone(),
-            ops_wiring: self.state.ops_wiring.clone(),
             disclosures: self.state.disclosures.clone(),
             plans: self.state.plans.clone(),
             urgency_policy: self.state.urgency_policy,
@@ -3045,8 +3094,16 @@ impl GameSession {
             .validate()
             .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
         validate_save_slot(save)?;
+        retained_history::validate_saved_history(save)?;
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
+        sess.state.retained_market_history = retained_history::RetainedMarketHistory::restore_days(&save.retained_market_history);
         sess.fresh_initial_allocation = false;
+        sess.state.memberships = save.market_memberships.clone();
+        for member in save.market_memberships.members.values() {
+            if !sess.state.accounts.contains_key(&member.account_id) {
+                sess.state.accounts.insert(member.account_id, Account::new(member.account_id, AccountKind::Player, Money::ZERO));
+            }
+        }
 
         // 清空初始持仓分配 → 用快照精确覆盖
         for acc in sess.state.accounts.values_mut() {
@@ -3126,10 +3183,10 @@ impl GameSession {
             .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
         sess.state.seq = save.snapshot.seq;
         // 恢复自然日时钟；全量校验其自洽性，并使用随存档冻结的政策。
-        sess.state.civil_clock = CivilClock::from_parts(
+        sess.state.civil_clock = CivilClock::from_parts_for_stocks(
             save.setup.start_date,
             &save.civil_clock,
-            session_calendar_exchange(save.setup.stocks[0].exchange),
+            save.setup.stocks.iter().map(|stock| (stock.code.clone(), session_calendar_exchange(stock.exchange))),
         )?;
         validate_saved_order_state(&sess, save)?;
         sess.state.auction_orders = save.auction_orders.clone();
@@ -3256,22 +3313,11 @@ impl GameSession {
         // 权威状态连续性（完整存档）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
         // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
-        let expected_issuers: BTreeSet<&crate::company::CompanyId> =
-            sess.state.operations.companies.keys().collect();
-        let saved_issuers: BTreeSet<&crate::company::CompanyId> =
-            save.company_operations.companies.keys().collect();
-        if expected_issuers != saved_issuers {
+        if sess.state.company_system.issuers() != save.company_system.issuers() {
             return Err(SessionError::InvalidSave(
                 "saved company set does not exactly match the issuers rebuilt from setup"
                     .to_string(),
             ));
-        }
-        for (id, company) in &save.company_operations.companies {
-            if company.spec() != sess.state.operations.companies[id].spec() {
-                return Err(SessionError::InvalidSave(format!(
-                    "saved company {id:?} spec differs from setup"
-                )));
-            }
         }
         // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
         // 重建信念机构集合）：缺失任一账户的个人状态 = 不完整存档。
@@ -3285,11 +3331,9 @@ impl GameSession {
                  reconstructed belief accounts {expected_belief_accounts:?}"
             )));
         }
-        sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
-        sess.state.groups = save.groups.clone();
-        sess.state.closing = std::sync::Arc::new(save.closing_registry.clone());
+        sess.state.company_system = std::sync::Arc::new(save.company_system.export_state());
+        sess.state.report_correction_operations = save.report_correction_operations.clone();
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
-        sess.state.ops_wiring = save.ops_wiring.clone();
         sess.state.disclosures = save.disclosures.clone();
         sess.state.plans = save.plans.clone();
         sess.state.urgency_policy = save.urgency_policy;
@@ -3369,8 +3413,7 @@ mod candle_open_tests {
 
     fn gap_stock_setup() -> SessionSetup {
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["600999"]),
             stocks: vec![StockSpec {
                 code: StockCode("600999".to_string()),
                 exchange: StockExchange::Shanghai,
@@ -3409,6 +3452,7 @@ mod candle_open_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
@@ -3677,8 +3721,7 @@ mod npc_working_quote_tests {
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
         let code = StockCode("600888".to_string());
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["600888"]),
             stocks: vec![StockSpec {
                 code: code.clone(),
                 exchange: StockExchange::Shanghai,
@@ -3717,6 +3760,7 @@ mod npc_working_quote_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
@@ -3957,6 +4001,7 @@ mod npc_working_quote_tests {
         let mut spec = setup.stocks[0].clone();
         spec.code = second;
         setup.stocks.push(spec);
+        setup.company_system = simple_company_fixture!(crate; ["600888", "600889"]);
         setup
     }
 
@@ -4415,6 +4460,10 @@ mod npc_working_quote_tests {
 impl CommittableSessionState {
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {
+            retained_market_history,
+            memberships,
+            pending_report_corrections,
+            report_correction_operations,
             setup,
             rng,
             seed,
@@ -4440,18 +4489,15 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
-            company_registry,
-            operations,
-            groups,
-            closing,
+            company_system,
             library,
-            ops_wiring,
             disclosures,
             plans,
             urgency_policy,
             belief_participants,
             envelope_ledger,
             retail_projection_seen,
+            personal_trade_confirmations,
             next_receipt_base,
             next_order_id,
             tick,
@@ -4467,6 +4513,10 @@ impl CommittableSessionState {
                     location: "GameSession::clone_for_tick_shadow".to_owned(),
                 })?;
         Ok(Self {
+            retained_market_history: retained_market_history.clone(),
+            memberships: memberships.clone(),
+            pending_report_corrections: pending_report_corrections.clone(),
+            report_correction_operations: report_correction_operations.clone(),
             setup: setup.clone(),
             rng: rng.clone(),
             seed: *seed,
@@ -4492,18 +4542,15 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
-            company_registry: company_registry.clone(),
-            groups: groups.clone(),
-            operations: operations.clone(),
-            closing: closing.clone(),
+            company_system: company_system.clone(),
             library: library.clone(),
-            ops_wiring: ops_wiring.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
             urgency_policy: *urgency_policy,
             belief_participants: belief_participants.clone(),
             envelope_ledger: envelope_ledger.clone(),
             retail_projection_seen: retail_projection_seen.clone(),
+            personal_trade_confirmations: personal_trade_confirmations.clone(),
             next_receipt_base: *next_receipt_base,
             next_order_id: *next_order_id,
             tick: *tick,
@@ -4515,6 +4562,10 @@ impl CommittableSessionState {
 
     fn commit_from(&mut self, shadow: Self) {
         let Self {
+            retained_market_history,
+            memberships,
+            pending_report_corrections,
+            report_correction_operations,
             setup,
             rng,
             seed,
@@ -4540,17 +4591,14 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
-            company_registry,
-            operations,
-            groups,
-            closing,
+            company_system,
             library,
-            ops_wiring,
             disclosures,
             plans,
             belief_participants,
             envelope_ledger,
             retail_projection_seen,
+            personal_trade_confirmations,
             next_receipt_base,
             next_order_id,
             tick,
@@ -4559,6 +4607,10 @@ impl CommittableSessionState {
             civil_clock,
             urgency_policy,
         } = shadow;
+        self.retained_market_history = retained_market_history;
+        self.memberships = memberships;
+        self.pending_report_corrections = pending_report_corrections;
+        self.report_correction_operations = report_correction_operations;
         self.urgency_policy = urgency_policy;
         self.setup = setup;
         self.rng = rng;
@@ -4587,17 +4639,14 @@ impl CommittableSessionState {
             self.causal = causal;
         }
         self.attention_scheduler = attention_scheduler;
-        self.company_registry = company_registry;
-        self.operations = operations;
-        self.groups = groups;
-        self.closing = closing;
+        self.company_system = company_system;
         self.library = library;
-        self.ops_wiring = ops_wiring;
         self.disclosures = disclosures;
         self.plans = plans;
         self.belief_participants = belief_participants;
         self.envelope_ledger = envelope_ledger;
         self.retail_projection_seen = retail_projection_seen;
+        self.personal_trade_confirmations = personal_trade_confirmations;
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
         self.tick = tick;

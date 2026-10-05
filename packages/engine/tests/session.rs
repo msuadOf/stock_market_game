@@ -1,4 +1,6 @@
 //! engine session 模块集成测试（TDD 红绿循环）。
+include!("../test-support/simple_company.rs");
+
 use engine::session::SplitMix64;
 use engine::strategy::Rng;
 
@@ -45,8 +47,7 @@ use engine::LimitPrice;
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -85,6 +86,7 @@ fn sample_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -516,6 +518,7 @@ fn formal_session_setup_enforces_a_share_baseline_and_category_limits() {
 
     let mut setup = sample_setup();
     setup.stocks[0].code = StockCode("300101".to_string());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = StockExchange::Shenzhen;
     setup.stocks[0].category = SecurityCategory::ChiNext;
     assert!(matches!(
@@ -526,6 +529,7 @@ fn formal_session_setup_enforces_a_share_baseline_and_category_limits() {
     assert!(setup.validate().is_ok());
 
     setup.stocks[0].code = StockCode("000101".to_string());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].category = SecurityCategory::StMainBoard;
     assert!(matches!(
         setup.validate(),
@@ -537,6 +541,7 @@ fn formal_session_setup_enforces_a_share_baseline_and_category_limits() {
 fn chinext_enforces_limit_and_market_order_quantity_caps() {
     let mut setup = sample_setup();
     setup.stocks[0].code = StockCode("300101".to_string());
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.stocks[0].exchange = StockExchange::Shenzhen;
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -1367,6 +1372,7 @@ fn large_retail_account_setup(retail_count: u32) -> SessionSetup {
             stock
         })
         .collect();
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup
 }
 
@@ -1491,7 +1497,7 @@ fn assert_tick_accounting(
                 .expect("真实交易日日 K 必须有成交统计");
             assert_eq!(candle.volume, totals.0, "日 K 成交量必须来自实际成交");
             assert_eq!(
-                i128::from(stats.turnover_cents),
+                i128::try_from(stats.turnover_cents).expect("fixture turnover must fit in i128"),
                 totals.1,
                 "日 K 成交额必须来自实际成交"
             );
@@ -1605,6 +1611,7 @@ fn full_day_accounting_small_population_roundtrips_and_completes() {
     let mut setup = large_retail_account_setup(4);
     setup.ticks_per_day = 3;
     setup.stocks.truncate(2);
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     assert_large_population_roundtrip_and_complete_a_full_market_day(setup);
 }
 
@@ -1751,7 +1758,8 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
             let candle = final_save.snapshot.daily_candles[code].last().unwrap();
             assert_eq!(candle.volume, totals.0);
             assert_eq!(
-                i128::from(candle.trade_stats.as_ref().unwrap().turnover_cents),
+                i128::try_from(candle.trade_stats.as_ref().unwrap().turnover_cents)
+                    .expect("fixture turnover must fit in i128"),
                 totals.1
             );
             assert_eq!(candle.trade_stats.as_ref().unwrap().trade_count, totals.2);
@@ -2146,7 +2154,7 @@ fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
     candle.close = Money::from_cents(i64::MAX);
     candle.volume = 3;
     candle.trade_stats = Some(engine::DailyTradeStats {
-        turnover_cents: u64::MAX,
+        turnover_cents: u64::MAX.into(),
         trade_count: 1,
     });
 
@@ -2274,7 +2282,9 @@ fn price_ticks_carry_current_top_five_order_book_depth() {
 
 fn seq_of(e: &Event) -> u64 {
     match e {
-        Event::Trade { seq, .. }
+        Event::PublicTrade { seq, .. }
+        | Event::PrivateEventOmitted { seq }
+        | Event::Trade { seq, .. }
         | Event::AuctionTick { seq, .. }
         | Event::AuctionCompleted { seq, .. }
         | Event::PriceTick { seq, .. }
@@ -2290,6 +2300,13 @@ fn seq_of(e: &Event) -> u64 {
 fn events_summary(ev: &[Event]) -> Vec<String> {
     ev.iter()
         .map(|e| match e {
+            Event::PublicTrade {
+                seq,
+                code,
+                price,
+                qty,
+            } => format!("PT{seq}:{}:{}:{qty}", code.0, price.cents()),
+            Event::PrivateEventOmitted { seq } => format!("EO{seq}"),
             Event::Trade {
                 code, price, qty, ..
             } => format!("T{}:{}:{}", code.0, price.cents(), qty),
@@ -2605,6 +2622,7 @@ fn by_kind_distribution_gives_individual_retailers_sparse_portfolios() {
             stock
         })
         .collect();
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
 
     let session = GameSession::new(setup, 0x5CA1_E001).unwrap();
     let position_counts: Vec<usize> = (1..=100)
@@ -3060,6 +3078,7 @@ fn all_stocks_produce_trades_multistock() {
         mk("600610", 755, SecurityCategory::MainBoard),
         mk("000812", 285, SecurityCategory::StMainBoard),
     ];
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     // 最小真实持有人集合；策略决策关闭，流动性由下方明确的存档边界夹具提供。
     setup.npcs = NpcSetup {
         retail_count: 5,
@@ -5364,6 +5383,7 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
     second.code = second_code.clone();
     second.initial_price = Money::from_cents(50);
     setup.stocks.push(second);
+    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let config = setup.config.clone();
     let required = |price: Money| {
         let gross = price.mul_shares(100).unwrap();

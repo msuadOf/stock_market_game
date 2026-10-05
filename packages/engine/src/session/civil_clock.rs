@@ -193,7 +193,8 @@ pub enum CivilClockError {
 #[derive(Clone, Debug)]
 pub struct CivilClock {
     calendar: TradingCalendar,
-    exchange: CalendarExchange,
+    exchanges: Vec<CalendarExchange>,
+    stock_exchanges: std::sync::Arc<std::collections::BTreeMap<crate::StockCode, CalendarExchange>>,
     start_date: CivilDate,
     current_date: CivilDate,
     settled_through: Option<CivilDate>,
@@ -202,8 +203,7 @@ pub struct CivilClock {
     disclosure_observers: Vec<DisclosureObserver>,
 }
 
-/// 会话按固定参考交易所解析日历；当前默认政策下沪深使用同一休市节奏（游戏简化）。
-/// 以 setup 首只股票的上市所作为确定的会话日历参考所。
+/// 将证券所属交易所映射为交易日历的交易所身份。
 pub(super) fn session_calendar_exchange(first: StockExchange) -> CalendarExchange {
     match first {
         StockExchange::Shanghai => CalendarExchange::Sse,
@@ -220,11 +220,20 @@ impl CivilClock {
     /// 用当前默认政策构建，开局日期须在运行区间 2000-01-01..2099-12-31。
     /// 休市开局保持真实起点（phase = `ClosedDay`），不挪到开市日。
     pub fn new(start_date: CivilDate, exchange: CalendarExchange) -> Result<Self, CivilClockError> {
+        Self::new_for_exchanges(start_date, [exchange])
+    }
+
+    pub fn new_for_exchanges(
+        start_date: CivilDate,
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Self, CivilClockError> {
         let calendar = TradingCalendar::current_default_calendar()?;
         calendar.validate_runtime_start(start_date)?;
+        let exchanges = Self::canonical_exchanges(exchanges)?;
         Ok(Self {
             calendar,
-            exchange,
+            exchanges,
+            stock_exchanges: std::sync::Arc::new(std::collections::BTreeMap::new()),
             start_date,
             current_date: start_date,
             settled_through: None,
@@ -241,6 +250,15 @@ impl CivilClock {
         save: &CivilClockSave,
         exchange: CalendarExchange,
     ) -> Result<Self, CivilClockError> {
+        Self::from_parts_for_exchanges(start_date, save, [exchange])
+    }
+
+    pub fn from_parts_for_exchanges(
+        start_date: CivilDate,
+        save: &CivilClockSave,
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Self, CivilClockError> {
+        let exchanges = Self::canonical_exchanges(exchanges)?;
         let calendar = TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(
             save.policy.clone(),
         )?)?;
@@ -276,7 +294,7 @@ impl CivilClock {
             if !ids.insert(due.id) {
                 return Err(inconsistent(format!("duplicate due id {}", due.id.value())));
             }
-            calendar.day_status(exchange, due.due_date)?;
+            calendar.day_status(exchanges[0], due.due_date)?;
             if due.id.value() >= save.next_due_seq {
                 return Err(inconsistent(format!(
                     "due {due:?} id is not below next_due_seq {}",
@@ -293,7 +311,8 @@ impl CivilClock {
         pending.sort_by_key(|due| (due.due_date, due.id));
         Ok(Self {
             calendar,
-            exchange,
+            exchanges,
+            stock_exchanges: std::sync::Arc::new(std::collections::BTreeMap::new()),
             start_date,
             current_date: save.current_date,
             settled_through: save.settled_through,
@@ -319,11 +338,88 @@ impl CivilClock {
         &self.pending
     }
 
+    fn canonical_exchanges(
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Vec<CalendarExchange>, CivilClockError> {
+        let exchanges = exchanges.into_iter().collect::<std::collections::BTreeSet<_>>();
+        if exchanges.is_empty() {
+            return Err(CivilClockError::SaveInconsistent {
+                detail: "共享自然日时钟必须至少包含一个交易所".into(),
+            });
+        }
+        Ok(exchanges.into_iter().collect())
+    }
+
+    pub fn exchange_day_status(
+        &self,
+        exchange: CalendarExchange,
+        date: CivilDate,
+    ) -> Result<DayStatus, CalendarError> {
+        self.calendar.day_status(exchange, date)
+    }
+
+    fn index_stock_exchanges(
+        stocks: impl IntoIterator<Item = (crate::StockCode, CalendarExchange)>,
+    ) -> Result<std::collections::BTreeMap<crate::StockCode, CalendarExchange>, CivilClockError> {
+        let mut indexed = std::collections::BTreeMap::new();
+        for (code, exchange) in stocks {
+            if indexed.insert(code.clone(), exchange).is_some() {
+                return Err(CivilClockError::SaveInconsistent { detail: format!("证券日历重复代码 {}", code.0) });
+            }
+        }
+        Ok(indexed)
+    }
+
+    pub(crate) fn new_for_stocks(
+        start_date: CivilDate,
+        stocks: impl IntoIterator<Item = (crate::StockCode, CalendarExchange)>,
+    ) -> Result<Self, CivilClockError> {
+        let indexed = Self::index_stock_exchanges(stocks)?;
+        let mut clock = Self::new_for_exchanges(start_date, indexed.values().copied())?;
+        clock.stock_exchanges = std::sync::Arc::new(indexed);
+        Ok(clock)
+    }
+
+    pub(crate) fn from_parts_for_stocks(
+        start_date: CivilDate,
+        save: &CivilClockSave,
+        stocks: impl IntoIterator<Item = (crate::StockCode, CalendarExchange)>,
+    ) -> Result<Self, CivilClockError> {
+        let indexed = Self::index_stock_exchanges(stocks)?;
+        let mut clock = Self::from_parts_for_exchanges(start_date, save, indexed.values().copied())?;
+        clock.stock_exchanges = std::sync::Arc::new(indexed);
+        Ok(clock)
+    }
+
+    pub(crate) fn stock_exchange(&self, code: &crate::StockCode) -> Option<CalendarExchange> {
+        self.stock_exchanges.get(code).copied()
+    }
+
+    pub(crate) fn exchanges(&self) -> &[CalendarExchange] {
+        &self.exchanges
+    }
+
+    pub(crate) fn calendar(&self) -> &TradingCalendar {
+        &self.calendar
+    }
+
+    fn shared_day_status(&self, date: CivilDate) -> Result<DayStatus, CalendarError> {
+        let mut closed = None;
+        for exchange in &self.exchanges {
+            match self.calendar.day_status(*exchange, date)? {
+                DayStatus::Trading => return Ok(DayStatus::Trading),
+                status @ DayStatus::Closed(_) => {
+                    if closed.is_none() { closed = Some(status); }
+                }
+            }
+        }
+        Ok(closed.expect("自然日时钟的交易所集合已验证非空"))
+    }
+
     /// 当前稳定阶段（交易日盘中 / 休市日）。
     pub fn phase(&self) -> CivilPhase {
         let status = self
-            .calendar
-            .day_status(self.exchange, self.current_date)
+            .shared_day_status(self.current_date)
             .expect("clock dates stay within calendar applicability by construction");
         match status {
             DayStatus::Trading => CivilPhase::IntradayTrading,
@@ -345,7 +441,7 @@ impl CivilClock {
                 current: self.current_date,
             });
         }
-        self.calendar.day_status(self.exchange, due_date)?;
+        self.calendar.day_status(self.exchanges[0], due_date)?;
         let due = DueBusiness {
             id: DueBusinessId(self.next_due_seq),
             due_date,
@@ -376,7 +472,7 @@ impl CivilClock {
         let mut count = 0u32;
         let mut cursor = self.start_date;
         while cursor <= self.current_date {
-            if self.calendar.is_trading_day(self.exchange, cursor)? {
+            if self.shared_day_status(cursor)? == DayStatus::Trading {
                 count += 1;
             }
             cursor = cursor.next()?;
@@ -446,7 +542,7 @@ impl CivilClock {
             .extract_if(.., |due| due.due_date == settled_date)
             .collect();
         dispatched_due.sort_by_key(|due| due.id);
-        let next_status = self.calendar.day_status(self.exchange, next)?;
+        let next_status = self.shared_day_status(next)?;
         self.settled_through = Some(settled_date);
         self.current_date = next;
         Ok(CivilDayEndReport {

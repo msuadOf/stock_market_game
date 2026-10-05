@@ -9,9 +9,17 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct PlayerOrderDelta {
     pub reset: bool,
     pub upserts: Vec<PlayerWorkingOrder>,
-    #[serde(with = "safe_order_ids")]
-    #[ts(type = "Array<number>")]
-    pub removed: Vec<u64>,
+    pub removed: Vec<OwnerScopedRemovedOrder>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct OwnerScopedRemovedOrder {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    #[ts(type = "number")]
+    pub id: u64,
+    pub owner: AccountId,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -74,8 +82,8 @@ impl RuntimeDelta {
         if self.working_orders.reset && !self.working_orders.removed.is_empty() {
             return Err(ProtocolError::RuntimeDeltaMismatch);
         }
-        for id in &self.working_orders.removed {
-            if !ids.insert(*id) {
+        for order in &self.working_orders.removed {
+            if order.id > crate::orderbook::js_safe_u64::MAX || !ids.insert(order.id) {
                 return Err(ProtocolError::RuntimeDeltaMismatch);
             }
         }
@@ -84,9 +92,8 @@ impl RuntimeDelta {
 }
 
 fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), ProtocolError> {
-    for (id, account) in accounts {
-        if *id != AccountId(0)
-            || account.cash.cents() < 0
+    for account in accounts.values() {
+        if account.cash.cents() < 0
             || account.reserved_cash.cents() < 0
             || account.reserved_cash > account.cash
             || account.positions.values().any(|position| {
@@ -139,6 +146,7 @@ fn same_account(left: &AccountSnap, right: &AccountSnap) -> bool {
 
 fn same_order(left: &PlayerWorkingOrder, right: &PlayerWorkingOrder) -> bool {
     left.id == right.id
+        && left.owner == right.owner
         && left.code == right.code
         && left.side == right.side
         && left.price == right.price
@@ -163,7 +171,7 @@ impl GameSession {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
         let mut working_orders = BTreeMap::new();
-        for order in self.player_working_orders() {
+        for order in self.state.accounts.values().filter(|account| account.kind() == crate::AccountKind::Player).flat_map(|account| self.account_working_orders(account.id())) {
             validate_order(&order).map_err(fatal)?;
             if working_orders.insert(order.id, order).is_some() {
                 return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
@@ -222,9 +230,9 @@ impl GameSession {
         let removed = match previous {
             Some(before) => before
                 .working_orders
-                .keys()
-                .filter(|id| !current.working_orders.contains_key(*id))
-                .copied()
+                .iter()
+                .filter(|(id, _)| !current.working_orders.contains_key(*id))
+                .map(|(id, order)| OwnerScopedRemovedOrder { id: *id, owner: order.owner })
                 .collect(),
             None => Vec::new(),
         };
@@ -250,29 +258,49 @@ impl GameSession {
     }
 }
 
-mod safe_order_ids {
-    use serde::{Deserialize, Serialize};
+#[cfg(test)]
+mod multiplayer_validation_tests {
+    use super::*;
 
-    const MAX: u64 = 9_007_199_254_740_991;
-
-    pub fn serialize<S: serde::Serializer>(ids: &[u64], serializer: S) -> Result<S::Ok, S::Error> {
-        if ids.iter().any(|id| *id > MAX) {
-            return Err(serde::ser::Error::custom(
-                "removed order ID exceeds JavaScript safe range",
-            ));
-        }
-        ids.serialize(serializer)
+    #[test]
+    fn runtime_delta_accepts_nonzero_player_accounts_and_keeps_financial_guards() {
+        let valid = AccountSnap { cash: crate::Money::from_cents(100000), positions: BTreeMap::new(), reserved_cash: crate::Money::from_cents(1000), reserved_sell_qty: BTreeMap::new() };
+        let delta = RuntimeDelta {
+            seq_from: 0,
+            seq_to: 1,
+            tick: 1,
+            day: 0,
+            phase: TradingPhase::Continuous,
+            accounts: BTreeMap::from([(AccountId(0), valid.clone()), (AccountId(2), valid)]),
+            working_orders: PlayerOrderDelta { reset: true, upserts: Vec::new(), removed: Vec::new() },
+        };
+        delta.validate().unwrap();
+        let mut negative = delta.clone();
+        negative.accounts.get_mut(&AccountId(2)).unwrap().cash = crate::Money::from_cents(-1);
+        assert!(matches!(negative.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
+        let mut excessive = delta.clone();
+        excessive.accounts.get_mut(&AccountId(2)).unwrap().reserved_cash = crate::Money::from_cents(100001);
+        assert!(matches!(excessive.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
+        let mut missing_shares = delta;
+        missing_shares.accounts.get_mut(&AccountId(2)).unwrap().reserved_sell_qty.insert(crate::StockCode("600888".into()), 100);
+        assert!(matches!(missing_shares.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
     }
 
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<u64>, D::Error> {
-        let ids = Vec::<u64>::deserialize(deserializer)?;
-        if ids.iter().any(|id| *id > MAX) {
-            return Err(serde::de::Error::custom(
-                "removed order ID exceeds JavaScript safe range",
-            ));
+    #[test]
+    fn removed_order_identity_requires_strict_owner_string_and_safe_order_id() {
+        let removal = OwnerScopedRemovedOrder { id: crate::orderbook::js_safe_u64::MAX, owner: AccountId(u64::MAX) };
+        let encoded = serde_json::to_value(&removal).unwrap();
+        assert_eq!(encoded, serde_json::json!({ "id": 9007199254740991_u64, "owner": "18446744073709551615" }));
+        assert_eq!(serde_json::from_value::<OwnerScopedRemovedOrder>(encoded).unwrap().owner, removal.owner);
+        for invalid in [
+            serde_json::json!(1),
+            serde_json::json!({ "id": 1, "owner": 1 }),
+            serde_json::json!({ "id": 1, "owner": "01" }),
+            serde_json::json!({ "id": 1 }),
+            serde_json::json!({ "id": 9007199254740992_u64, "owner": "1" }),
+            serde_json::json!({ "id": 1, "owner": "1", "account": "2" }),
+        ] {
+            assert!(serde_json::from_value::<OwnerScopedRemovedOrder>(invalid).is_err());
         }
-        Ok(ids)
     }
 }

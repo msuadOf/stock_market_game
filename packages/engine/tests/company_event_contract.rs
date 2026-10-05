@@ -1,6 +1,11 @@
+include!("../test-support/simple_company.rs");
+
+#[path = "company_operations/fixtures.rs"]
+mod operations_fixture;
+
 use engine::account::StockCode;
 use engine::calendar::CivilDate;
-use engine::company::{ActiveShock, CompanyId, ShockKind};
+use engine::company::{ActiveShock, ShockKind};
 use engine::money::Money;
 use engine::session::{
     CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup,
@@ -13,8 +18,7 @@ const TICKS_PER_DAY: u64 = 12;
 
 fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
-        company_operations: None,
-        groups: Vec::new(),
+        company_system: simple_company_fixture!(engine; ["600101"]),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -53,6 +57,7 @@ fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso(start_date).expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
@@ -206,66 +211,63 @@ fn restored_closed_day_keeps_civil_event_sequence_identical() {
 
 #[test]
 fn announcement_event_follows_successful_immutable_library_insertion() {
-    // Given: a closed civil day whose company operating state contains an active public shock.
-    let session = GameSession::new(setup("2030-01-01"), 41).expect("fixture session is valid");
-    let mut save = session.save().expect("healthy save");
-    let company = CompanyId("C-600101".to_string());
-    let date = save.civil_clock.current_date;
-    save.company_operations
+    use engine::calendar::CalendarExchange;
+    use engine::company::operations::CompanyOperations;
+    use engine::session::{CivilClock, DayEndDisclosureCtx, DisclosureDispatch};
+
+    let date = engine::CivilDate::from_iso("2030-01-01").unwrap();
+    let prior = date.prev().unwrap();
+    let company = engine::company::CompanyId("C-IND-A".into());
+    let config = operations_fixture::four_company_config(
+        41,
+        operations_fixture::quiet_params(),
+        prior,
+    );
+    let mut operations = CompanyOperations::new(config, date).unwrap();
+    operations
         .apply_company_shock(
             &company,
             ActiveShock {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1_000,
                 starts_on: date,
-                expires_on: date.next().expect("fixture date has a next day"),
+                expires_on: date.next().unwrap(),
             },
         )
-        .expect("fixture shock must be accepted");
-    let mut session = GameSession::restore(&save).expect("modified authoritative state restores");
-
-    // When: the normal GameSession civil/disclosure path publishes the announcement.
-    let report = session.end_civil_day().expect("closed day settles");
-
-    // Then: the event points to a queryable immutable announcement and precedes date advancement.
-    let announcement_index = report
-        .events
-        .iter()
-        .position(|event| {
-            matches!(
-                event,
-                Event::CompanyDisclosurePublished {
-                    kind: CompanyDisclosureKind::Announcement,
-                    ..
-                }
-            )
-        })
-        .expect("successful announcement insertion must emit one publication event");
-    let Event::CompanyDisclosurePublished {
-        publication_id,
-        company: event_company,
-        published_at,
-        kind: CompanyDisclosureKind::Announcement,
-        ..
-    } = &report.events[announcement_index]
-    else {
-        panic!("expected announcement publication event");
-    };
-    let saved = session.save().expect("healthy save");
-    let announcement = saved
-        .public_library
-        .announcement(*publication_id, *published_at)
-        .expect("event publication id must resolve in the immutable public library");
-    assert_eq!(&announcement.company, event_company);
-    assert_eq!(announcement.published_at, *published_at);
-    assert!(saved
-        .public_library
-        .all_publication_ids()
+        .unwrap();
+    let before = serde_json::to_value(&operations).unwrap();
+    let mut restored: CompanyOperations = serde_json::from_value(before.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    assert!(restored
+        .company(&company)
         .unwrap()
-        .contains(publication_id));
-    assert!(report.events[announcement_index + 1..]
+        .economy()
+        .active()
         .iter()
-        .any(|event| matches!(event, Event::CivilDateAdvanced { .. })));
+        .any(|shock| shock.kind == ShockKind::ContractWon && shock.amplitude_bp == 1_000));
+    restored.advance_civil_day(date).unwrap();
+
+    let mut clock = CivilClock::new(date, CalendarExchange::Sse).unwrap();
+    let civil = clock.end_day(date).unwrap();
+    let mut closing = engine::accounting::closing::ClosingEngine::new();
+    let mut library = engine::information::PublicLibrary::new();
+    let mut dispatch = DisclosureDispatch::new(Some(civil.disclosure_instant));
+    let outcome = dispatch.run_day_end(DayEndDisclosureCtx {
+        report_frequency: engine::information::ReportFrequency::Quarterly,
+        groups: &[],
+        report: &civil,
+        ops: &restored,
+        closing: &mut closing,
+        library: &mut library,
+    }).unwrap();
+    assert_eq!(outcome.announcements_published.len(), 1);
+    let saved = library.save();
+    let announcement = saved.announcements.first().unwrap();
+    assert_eq!(announcement.company, company);
+    assert_eq!(announcement.occurred_on, date);
+    assert_eq!(announcement.published_at, civil.disclosure_instant);
+    let restored_library = engine::information::PublicLibrary::from_parts(saved).unwrap();
+    assert_eq!(restored_library.save(), library.save());
 }
 
 fn bytes_to_save(bytes: &[u8]) -> engine::session::SaveSlot {

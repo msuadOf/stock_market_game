@@ -191,7 +191,7 @@ impl GameSession {
             }
         }
         let seq_from = self.seq();
-        let report = self.end_civil_day()?;
+        let report = self.end_civil_day_without_ingress_publication()?;
         let mut kinds = Vec::new();
         if after_close {
             kinds.push(CivilUpdateKind::AfterClose);

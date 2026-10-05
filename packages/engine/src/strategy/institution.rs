@@ -16,6 +16,9 @@ pub(super) fn decide_inst(
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
+        if !sv.is_trading {
+            continue;
+        }
         let target = match target_cents(
             &strategy.target_policy,
             market.market_minute.saturating_add(1),

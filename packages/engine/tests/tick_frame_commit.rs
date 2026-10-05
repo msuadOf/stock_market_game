@@ -1,3 +1,5 @@
+include!("../test-support/simple_company.rs");
+
 use engine::{
     CivilDate, FloatAllocation, GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams,
     SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
@@ -12,8 +14,7 @@ fn session() -> ProtocolSession {
 fn session_on(date: &str) -> ProtocolSession {
     ProtocolSession::new(
         SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(engine; ["600001"]),
             stocks: vec![StockSpec {
                 code: StockCode("600001".into()),
                 exchange: StockExchange::Shanghai,
@@ -52,6 +53,7 @@ fn session_on(date: &str) -> ProtocolSession {
             closing_auction_ticks: 2,
             history_len: 20,
             t1_enabled: true,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: CivilDate::from_iso(date).unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),

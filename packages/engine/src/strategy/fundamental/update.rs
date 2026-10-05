@@ -164,7 +164,7 @@ impl BeliefBook {
                         if latest_annual.is_some_and(|(latest, _)| latest == report_id)
                             && matches!(
                                 preferred.reports.kind,
-                                ReportKind::Quarter | ReportKind::HalfYear
+                                ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
                             )
                         {
                             return self.apply_interim_material(
@@ -188,7 +188,7 @@ impl BeliefBook {
         }
         if matches!(
             report.reports.kind,
-            ReportKind::Quarter | ReportKind::HalfYear
+            ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
         ) {
             return self.apply_interim_material(stock, cause, report_id, inputs, direct);
         }
@@ -237,11 +237,14 @@ impl BeliefBook {
             );
         }
         let entry = self.entries.get(stock).ok_or(BeliefError::NoBeliefEntry)?;
-        if entry.used_report_ids.contains(&report_id) && !direct {
+        let material_already_used = entry.used_report_ids.contains(&report_id);
+        if material_already_used && entry.used_report_ids.first() == Some(&annual_id) && !direct {
             return Ok(());
         }
         let forecast = if direct {
             initial_forecast(observation, self.assumptions.growth_deviation_bp)
+        } else if material_already_used {
+            entry.forecast
         } else {
             revise_forecast(
                 &entry.forecast,
@@ -608,6 +611,7 @@ mod material_priority_tests {
         PublishedReport {
             id: PublicationId::new(if kind == ReportKind::Annual { 0 } else { 1000 }),
             company: CompanyId("company".into()),
+            source: crate::information::PublicationSource::SimulationAccounting,
             policy: AccountingPolicyRef { chart_version: 2 },
             approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
             published_at,

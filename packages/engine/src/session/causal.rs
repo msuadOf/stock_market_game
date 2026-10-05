@@ -83,7 +83,7 @@ impl GameSession {
             order,
             account,
             code: code.clone(),
-            company: self.state.company_registry.issuer_of(code).cloned(),
+            company: self.state.company_system.issuers().issuer_of(code).cloned(),
             plan,
             decision: self.state.causal.decision_for(account),
             side,

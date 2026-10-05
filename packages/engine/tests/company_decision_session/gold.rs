@@ -132,6 +132,7 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
         stocks: [(
             StockCode("600101".to_string()),
             StockView {
+                is_trading: true,
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1_001)),
                 last_price: Money::from_cents(1_000),

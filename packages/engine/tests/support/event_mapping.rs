@@ -9,6 +9,8 @@ use engine::{
 
 pub fn adr_mapping(event: &Event) -> (&'static str, u8, String, u8) {
     match event {
+        Event::PublicTrade { code, .. } => ("PublicTrade", 4, format!("Stock:{}", code.0), 0),
+        Event::PrivateEventOmitted { .. } => ("PrivateEventOmitted", 4, "Session".into(), 0),
         Event::Trade { code, .. } => ("Trade", 4, format!("Stock:{}", code.0), 0),
         Event::AuctionTick { code, .. } => ("AuctionTick", 4, format!("Stock:{}", code.0), 2),
         Event::AuctionCompleted { code, .. } => {
@@ -41,6 +43,13 @@ pub fn events() -> Vec<Event> {
     let date = CivilDate::from_iso("2030-01-02").unwrap();
     let price = Money::from_cents(1234);
     vec![
+        Event::PublicTrade {
+            seq: 12,
+            code: code.clone(),
+            price,
+            qty: 100,
+        },
+        Event::PrivateEventOmitted { seq: 13 },
         Event::Trade {
             seq: 1,
             code: code.clone(),

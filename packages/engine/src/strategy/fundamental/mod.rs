@@ -12,6 +12,8 @@ mod facts;
 mod forecast;
 #[cfg(test)]
 mod interim_window_tests;
+#[cfg(test)]
+mod monthly_baseline_tests;
 mod update;
 mod valuation;
 

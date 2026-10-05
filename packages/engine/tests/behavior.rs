@@ -93,6 +93,7 @@ impl BehaviorScenario {
                 (
                     code.clone(),
                     StockView {
+                        is_trading: true,
                         best_bid: Some(Money::from_cents(999)),
                         best_ask: Some(Money::from_cents(1_001)),
                         last_price: Money::from_cents(1_000),

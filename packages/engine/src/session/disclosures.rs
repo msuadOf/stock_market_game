@@ -15,9 +15,9 @@ use crate::company::operations::CompanyOperations;
 use crate::company::CompanyId;
 
 use crate::information::{
-    ensure_original_registered, industry_presentation, scheduled_instant, stable_company_offset,
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
-    PublicationId, PublicationOrigin, PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
+    ensure_original_registered, industry_presentation, AccountingPolicyRef, AnnouncedEvent,
+    AnnouncementRequest, InformationError, PublicLibrary, PublicationId, PublicationRequest,
+    ScheduledReportKind,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
 use thiserror::Error;
@@ -43,11 +43,28 @@ pub struct DayEndDisclosures {
 
 /// 日终披露上下文（参数组——closing.rs `StandaloneTarget` 先例）。
 pub struct DayEndDisclosureCtx<'a> {
+    pub report_frequency: crate::information::ReportFrequency,
     pub groups: &'a [super::company_groups::GroupStructure],
     pub report: &'a CivilDayEndReport,
     /// 已完成当日 finalize 的经营编排（只读）。
     pub ops: &'a CompanyOperations,
     pub closing: &'a mut ClosingEngine,
+    pub library: &'a mut PublicLibrary,
+}
+
+pub(super) struct SimpleDayEndDisclosureCtx<'a> {
+    pub report_frequency: crate::information::ReportFrequency,
+    pub report: &'a CivilDayEndReport,
+    pub system: &'a crate::company::CompanySystem,
+    pub seed: u64,
+    pub library: &'a mut PublicLibrary,
+}
+
+pub(super) struct SimpleScheduledDisclosureCtx<'a> {
+    pub report_frequency: crate::information::ReportFrequency,
+    pub through: CivilInstant,
+    pub system: &'a crate::company::CompanySystem,
+    pub seed: u64,
     pub library: &'a mut PublicLibrary,
 }
 
@@ -61,6 +78,31 @@ pub struct DisclosureDispatch {
 }
 
 impl DisclosureDispatch {
+    pub(super) fn run_simple_day_end(&mut self, ctx: SimpleDayEndDisclosureCtx<'_>) -> Result<DayEndDisclosures, DisclosureError> {
+        let through = if matches!(ctx.report_frequency, crate::information::ReportFrequency::Monthly { .. }) {
+            CivilInstant::new(ctx.report.settled_date, 86399)?
+        } else {
+            ctx.report.disclosure_instant
+        };
+        let reports_published = self.run_simple_scheduled(SimpleScheduledDisclosureCtx {
+            report_frequency: ctx.report_frequency,
+            through,
+            system: ctx.system,
+            seed: ctx.seed,
+            library: ctx.library,
+        })?;
+        self.announced_through = Some(ctx.report.settled_date);
+        Ok(DayEndDisclosures { announcements_published: Vec::new(), reports_published })
+    }
+
+    pub(super) fn run_simple_scheduled(&mut self, ctx: SimpleScheduledDisclosureCtx<'_>) -> Result<Vec<PublicationId>, DisclosureError> {
+        let publications = crate::information::publish_simple_scheduled(
+            ctx.system, ctx.report_frequency, ctx.seed, self.published_through,
+            ctx.through, ctx.library, false,
+        )?;
+        self.published_through = Some(ctx.through);
+        Ok(publications)
+    }
     /// 以前史播种的最后公布时点为游标初值（未播种 = `None`，首次派发
     /// 衔接补账窗口）。
     pub fn new(published_through: Option<CivilInstant>) -> Self {
@@ -94,7 +136,7 @@ impl DisclosureDispatch {
     ///    内的全部排期（公司 id × 种类确定序），经登记簿定稿后公布。
     pub fn run_day_end(
         &mut self,
-        mut ctx: DayEndDisclosureCtx<'_>,
+        ctx: DayEndDisclosureCtx<'_>,
     ) -> Result<DayEndDisclosures, DisclosureError> {
         let mut out = DayEndDisclosures::default();
         let settled = ctx.report.settled_date;
@@ -140,47 +182,80 @@ impl DisclosureDispatch {
             self.announced_through = Some(settled);
         }
 
-        // 2) 定期披露（窗口内的排期；公司 id 序 ⇒ PublicationId 确定）。
-        for (id, company) in &ctx.ops.companies {
-            let offset = stable_company_offset(ctx.ops.seed, id);
-            for fiscal_year in [settled.year() - 1, settled.year()] {
-                for kind in ScheduledReportKind::ALL {
-                    let instant = scheduled_instant(kind, fiscal_year, offset)?;
-                    if self
-                        .published_through
-                        .is_some_and(|through| instant <= through)
+        let through = if matches!(
+            ctx.report_frequency,
+            crate::information::ReportFrequency::Monthly { .. }
+        ) {
+            CivilInstant::new(settled, 86399)?
+        } else {
+            phase
+        };
+        out.reports_published = self.run_scheduled(ScheduledDisclosureCtx {
+            report_frequency: ctx.report_frequency,
+            groups: ctx.groups,
+            through,
+            ops: ctx.ops,
+            closing: ctx.closing,
+            library: ctx.library,
+        })?;
+
+        Ok(out)
+    }
+    pub(super) fn run_scheduled(
+        &mut self,
+        mut ctx: ScheduledDisclosureCtx<'_>,
+    ) -> Result<Vec<PublicationId>, DisclosureError> {
+        let mut due = Vec::new();
+        for id in ctx.ops.companies.keys() {
+            for year in [ctx.through.date().year() - 1, ctx.through.date().year()] {
+                for kind in ctx.report_frequency.scheduled_kinds() {
+                    let instant =
+                        ctx.report_frequency
+                            .scheduled_instant(kind, year, ctx.ops.seed, id)?;
+                    if instant <= ctx.through
+                        && self
+                            .published_through
+                            .is_none_or(|through| instant > through)
                     {
-                        continue;
-                    }
-                    if instant > phase {
-                        continue;
-                    }
-                    let publication =
-                        ctx.publish_scheduled(id, company, instant, fiscal_year, kind, offset)?;
-                    out.reports_published.push(publication);
-                    for group in ctx.groups.iter().filter(|group| group.root == *id) {
-                        let publication = super::company_groups::publish_group_scheduled(
-                            group,
-                            ctx.ops,
-                            ctx.closing,
-                            ctx.library,
-                            instant,
-                            fiscal_year,
-                            kind,
-                            offset,
-                        )?;
-                        out.reports_published.push(publication);
+                        due.push((instant, id.clone(), year, kind));
                     }
                 }
             }
         }
-        self.published_through = Some(phase);
-        Ok(out)
+        due.sort();
+        let mut publications = Vec::new();
+        for (instant, id, year, kind) in due {
+            let company = ctx.ops.company(&id).expect("排期来自现存公司");
+            publications.push(ctx.publish_scheduled(&id, company, instant, year, kind)?);
+            for group in ctx.groups.iter().filter(|group| group.root == id) {
+                publications.push(super::company_groups::publish_group_scheduled(
+                    group,
+                    ctx.ops,
+                    ctx.closing,
+                    ctx.library,
+                    instant,
+                    year,
+                    kind,
+                    ctx.report_frequency,
+                )?);
+            }
+        }
+        self.published_through = Some(ctx.through);
+        Ok(publications)
     }
 }
 
-impl DayEndDisclosureCtx<'_> {
-    /// 登记并公布一条排期披露（原始版本 sequence 1；已存在则复用）。
+pub(super) struct ScheduledDisclosureCtx<'a> {
+    pub report_frequency: crate::information::ReportFrequency,
+    pub groups: &'a [super::company_groups::GroupStructure],
+    pub through: CivilInstant,
+    pub ops: &'a CompanyOperations,
+    pub closing: &'a mut ClosingEngine,
+    pub library: &'a mut PublicLibrary,
+}
+
+impl ScheduledDisclosureCtx<'_> {
+    /// 登记并公布排期原始报告；更正后的私有原始版使用返回的实际 sequence。
     fn publish_scheduled(
         &mut self,
         company_id: &CompanyId,
@@ -188,13 +263,12 @@ impl DayEndDisclosureCtx<'_> {
         instant: CivilInstant,
         fiscal_year: i32,
         kind: ScheduledReportKind,
-        offset: u8,
     ) -> Result<PublicationId, DisclosureError> {
         let books = company.books().books();
         let industry = industry_presentation(company.spec().kind);
         let member = crate::accounting::consolidation::MemberId(company_id.0.clone());
         let period = kind.landing_period(fiscal_year)?;
-        ensure_original_registered(
+        let sequence = ensure_original_registered(
             self.closing,
             books,
             &member,
@@ -205,7 +279,7 @@ impl DayEndDisclosureCtx<'_> {
         let policy = AccountingPolicyRef {
             chart_version: books.ledger().chart().version(),
         };
-        let approval = CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?;
+        let approval = self.report_frequency.approval_instant(kind, instant)?;
         let publication = self.library.publish_closed(
             self.closing,
             PublicationRequest {
@@ -213,15 +287,17 @@ impl DayEndDisclosureCtx<'_> {
                 scope: crate::accounting::consolidation::ScopeId::Standalone(member),
                 period,
                 kind: kind.report_kind(),
-                sequence: 1,
+                sequence,
                 policy,
                 approved_at: approval,
                 published_at: instant,
-                origin: PublicationOrigin::ScheduledDisclosure {
-                    fiscal_year,
+                origin: self.report_frequency.publication_origin(
                     kind,
-                    offset_days: offset,
-                },
+                    fiscal_year,
+                    self.ops.seed,
+                    company_id,
+                    false,
+                )?,
                 supersedes: None,
             },
         )?;

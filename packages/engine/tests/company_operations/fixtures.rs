@@ -253,6 +253,7 @@ pub(crate) fn bank_c(as_of: CivilDate) -> OperatingCompanyConfig {
                 lgd_bp: 6_000,
             }],
         },
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec("C-BANK", "banking", CompanyKind::Bank),
@@ -291,6 +292,7 @@ pub(crate) fn insurance_c(as_of: CivilDate) -> OperatingCompanyConfig {
             cent_line("4001", PostingSide::Credit, 2_000_000),
         ],
         counterparties: vec![cp("EXT-POL", CounterpartyKind::Customer)],
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2_500, loss_carryforward_years: 5 },
         discount: DiscountAssumption {
             version: 1,
             rate_bp: 400,
@@ -336,6 +338,7 @@ pub(crate) fn real_estate_c(as_of: CivilDate) -> OperatingCompanyConfig {
             suspension_min_days: 90,
         },
         max_projects: 2,
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec("C-RE", "residential-development", CompanyKind::RealEstate),

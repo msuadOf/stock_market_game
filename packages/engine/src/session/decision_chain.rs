@@ -141,7 +141,7 @@ impl DecisionChainObservation {
         }
         let mut exposed = BTreeSet::new();
         for stock in &session.state.setup.stocks {
-            let Some(company) = session.state.company_registry.issuer_of(&stock.code) else {
+            let Some(company) = session.state.company_system.issuers().issuer_of(&stock.code) else {
                 continue;
             };
             let fresh = session
@@ -170,7 +170,10 @@ struct CandidateObservations<'a> {
     technical: Option<&'a TechnicalObservation>,
 }
 
-fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u64) {
+fn apply_institution_experience_feedback(
+    belief: &mut BeliefBook,
+    trading_day: impl Fn(&StockCode) -> u64,
+) {
     let experience = belief.experience().clone();
     apply_personal_experience_feedback(belief, &experience, trading_day)
         .unwrap_or_else(|error| panic!("institution experience confidence failed: {error}"));
@@ -179,7 +182,7 @@ fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u
 fn apply_personal_experience_feedback(
     belief: &mut BeliefBook,
     experience: &crate::RetailExperienceState,
-    trading_day: u64,
+    trading_day: impl Fn(&StockCode) -> u64,
 ) -> Result<(), crate::strategy::BeliefError> {
     let failures = experience
         .feedback
@@ -230,7 +233,7 @@ fn apply_personal_experience_feedback(
                 cause,
                 order,
                 if profitable { 500 } else { -1_000 },
-                trading_day,
+                trading_day(&code),
             )?;
         }
     }
@@ -405,8 +408,9 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                 .expect("lifecycle action must name a plan");
             let (price, acquired) = session.plan_review_facts(plan.account(), plan.code(), market);
             let resources = session.plan_review_resources(plan.account(), plan.code());
+            let trading_day = session.stock_trading_day(plan.code()).expect("reviewed plan stock trading day is valid");
             plans
-                .record_review(plan_id, u64::from(session.state.day), price, acquired)
+                .record_review(plan_id, trading_day, price, acquired)
                 .unwrap_or_else(|error| panic!("plan review failed for {plan_id:?}: {error}"));
             plans
                 .record_resource_review(plan_id, resources)
@@ -473,8 +477,9 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                 });
                 let (price, acquired) = session.plan_review_facts(account, &code, market);
                 let resources = session.plan_review_resources(account, &code);
+                let trading_day = session.stock_trading_day(&code).expect("new plan stock trading day is valid");
                 plans
-                    .record_review(plan_id, u64::from(session.state.day), price, acquired)
+                    .record_review(plan_id, trading_day, price, acquired)
                     .unwrap_or_else(|error| {
                         panic!("new plan review failed for {plan_id:?}: {error}")
                     });
@@ -506,7 +511,7 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                             plan_id,
                             PlanEvent::Paused {
                                 reason,
-                                trading_day: u64::from(session.state.day),
+                                trading_day,
                             },
                         )
                         .unwrap_or_else(|error| {
@@ -670,7 +675,7 @@ impl GameSession {
             .last_price;
         let acquired = self
             .state
-            .company_registry
+            .company_system.issuers()
             .issuer_of(code)
             .and_then(|company| {
                 self.state
@@ -708,7 +713,11 @@ impl GameSession {
                     .plans
                     .plan(id)
                     .expect("active index must resolve");
-                if u64::from(self.state.day) > plan.last_valid_trading_day() {
+                if self.stock_day_status(plan.code()).expect("active plan stock calendar is valid")
+                    != crate::DayStatus::Trading
+                    || self.stock_trading_day(plan.code()).expect("active plan stock trading day is valid")
+                        > plan.last_valid_trading_day()
+                {
                     return false;
                 }
                 let Some(market) = self.state.markets.get(plan.code()) else {
@@ -724,7 +733,7 @@ impl GameSession {
                 }
                 let known = self
                     .state
-                    .company_registry
+                    .company_system.issuers()
                     .issuer_of(plan.code())
                     .and_then(|company| {
                         self.state
@@ -1033,6 +1042,7 @@ impl GameSession {
                     .expect("collected plan ids must resolve")
                     .clone()
             })
+            .filter(|plan| self.stock_day_status(plan.code()).expect("plan stock calendar is valid") == crate::calendar::DayStatus::Trading)
             .collect();
         if active_plans.is_empty() {
             return None;
@@ -1698,6 +1708,7 @@ mod chain_restructure_tests {
                 stock
             })
             .collect();
+        setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
         let codes: Vec<_> = session.state.markets.keys().cloned().collect();
@@ -1706,7 +1717,7 @@ mod chain_restructure_tests {
             let participant = session.state.belief_participants.get_mut(&account).unwrap();
             participant
                 .price_memory_mut()
-                .observe_price(code, price, 0)
+                .observe_price(code, price, 0, 0)
                 .unwrap();
         }
         (session, codes)
@@ -1915,7 +1926,7 @@ mod chain_restructure_tests {
             .clone();
         let company = session
             .state
-            .company_registry
+            .company_system.issuers()
             .issuer_of(&faded)
             .unwrap()
             .clone();
@@ -1991,6 +2002,7 @@ mod chain_restructure_tests {
                 stock
             })
             .collect();
+        setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
         let discovered = session.state.markets.keys().next().unwrap().clone();
@@ -2024,7 +2036,7 @@ mod chain_restructure_tests {
             personal.watchlist.record_attention(code, 0, 0).unwrap();
             personal
                 .price_memory
-                .observe_price(code, stock.last_price, 0)
+                .observe_price(code, stock.last_price, 0, 0)
                 .unwrap();
         }
         let held: BTreeSet<_> = session.state.accounts[&account]
@@ -2394,7 +2406,7 @@ mod chain_restructure_tests {
                     trading_day: u64::from(session.state.day),
                 },
             });
-        apply_institution_experience_feedback(&mut belief, u64::from(session.state.day));
+        apply_institution_experience_feedback(&mut belief, |_| u64::from(session.state.day));
         let after = belief.entry(&code).unwrap();
         assert_eq!(
             after.confidence_bp,
@@ -2404,7 +2416,7 @@ mod chain_restructure_tests {
         assert_eq!(after.forecast, before.forecast);
         assert!(after.applied_experience_orders.contains(&999));
         let once = serde_json::to_vec(&belief).unwrap();
-        apply_institution_experience_feedback(&mut belief, u64::from(session.state.day));
+        apply_institution_experience_feedback(&mut belief, |_| u64::from(session.state.day));
         assert_eq!(serde_json::to_vec(&belief).unwrap(), once);
     }
 
@@ -2663,6 +2675,7 @@ mod chain_restructure_tests {
             let mut stock = setup.stocks[0].clone();
             stock.code = StockCode(code.to_owned());
             setup.stocks.push(stock);
+            setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         }
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
@@ -5095,8 +5108,7 @@ mod chain_restructure_tests {
 
     fn probe_session() -> GameSession {
         let setup = SessionSetup {
-            company_operations: None,
-            groups: Vec::new(),
+            company_system: simple_company_fixture!(crate; ["000812"]),
             stocks: vec![StockSpec {
                 code: StockCode("000812".to_string()),
                 exchange: StockExchange::Shenzhen,
@@ -5135,6 +5147,7 @@ mod chain_restructure_tests {
             closing_auction_ticks: 10,
             history_len: 5,
             t1_enabled: true,
+            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),

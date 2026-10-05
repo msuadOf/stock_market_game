@@ -136,7 +136,7 @@ impl SessionCandleBook {
         price: Money,
         added_volume: u64,
     ) {
-        let candle = self.active.entry(code.clone()).or_insert(DailyCandle {
+        let mut candle = self.active.get(code).cloned().unwrap_or(DailyCandle {
             time,
             open: price,
             high: price,
@@ -148,7 +148,7 @@ impl SessionCandleBook {
         // 开盘前 PriceTick 会用昨收建立零成交占位 K。集合竞价后的第一笔真实成交
         // 才是当日开盘价；此时必须丢弃占位 OHLC，否则跳空实体会错误连接到昨收。
         if candle.volume == 0 && added_volume > 0 {
-            *candle = DailyCandle {
+            candle = DailyCandle {
                 time,
                 open: price,
                 high: price,
@@ -157,6 +157,7 @@ impl SessionCandleBook {
                 volume: added_volume,
                 trade_stats: Some(DailyTradeStats::from_trade(price, added_volume)),
             };
+            self.active.insert(code.clone(), candle);
             return;
         }
         candle.high = candle.high.max(price);
@@ -175,6 +176,7 @@ impl SessionCandleBook {
         } else if candle.trade_stats.is_none() {
             candle.trade_stats = Some(DailyTradeStats::default());
         }
+        self.active.insert(code.clone(), candle);
     }
 
     pub(super) fn commit_active(&mut self) -> BTreeMap<StockCode, DailyCandle> {
@@ -298,19 +300,21 @@ impl DailyTradeStats {
     }
 
     fn record_trade(&mut self, price: Money, quantity: u64) {
-        let price_cents = u64::try_from(price.cents())
+        let price_cents = u128::try_from(price.cents())
             .expect("trade price must be positive before daily statistics are updated");
         let gross_cents = price_cents
-            .checked_mul(quantity)
+            .checked_mul(u128::from(quantity))
             .expect("daily trade turnover multiplication overflow: engine invariant violated");
-        self.turnover_cents = self
+        let turnover_cents = self
             .turnover_cents
             .checked_add(gross_cents)
             .expect("daily trade turnover overflow: engine invariant violated");
-        self.trade_count = self
+        let trade_count = self
             .trade_count
             .checked_add(1)
             .expect("daily trade count overflow: engine invariant violated");
+        self.turnover_cents = turnover_cents;
+        self.trade_count = trade_count;
     }
 }
 
@@ -385,6 +389,92 @@ mod candle_book_tests {
     use super::*;
 
     #[test]
+    fn four_legal_trades_preserve_turnover_above_u64() {
+        let code = StockCode("600000".into());
+        let mut book = SessionCandleBook::default();
+        for _ in 0..4 {
+            book.record_trade_or_mark(0, &code, Money::from_cents(5_000_000_000_000_000_000), 1);
+        }
+        let candle = &book.active()[&code];
+        assert_eq!(candle.volume, 4);
+        let stats = candle.trade_stats.as_ref().unwrap().clone();
+        assert_eq!(stats.trade_count, 4);
+        assert_eq!(stats.turnover_cents.to_string(), "20000000000000000000");
+        let closed = book.commit_active();
+        assert_eq!(closed[&code].trade_stats.as_ref().unwrap(), &stats);
+    }
+
+    #[test]
+    fn daily_turnover_wire_requires_canonical_decimal_strings() {
+        for invalid in [
+            "1",
+            "\"\"",
+            "\"00\"",
+            "\"01\"",
+            "\"+1\"",
+            "\"-1\"",
+            "\" 1\"",
+            "\"1.0\"",
+            "\"340282366920938463463374607431768211456\"",
+        ] {
+            let json = format!("{{\"turnover_cents\":{invalid},\"trade_count\":1}}");
+            assert!(
+                serde_json::from_str::<DailyTradeStats>(&json).is_err(),
+                "接受了非规范值 {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn turnover_and_count_overflow_leave_candle_unchanged() {
+        let code = StockCode("600000".into());
+        for stats in [
+            DailyTradeStats {
+                turnover_cents: u128::MAX,
+                trade_count: 1,
+            },
+            DailyTradeStats {
+                turnover_cents: 1000,
+                trade_count: u64::MAX,
+            },
+        ] {
+            let mut book = SessionCandleBook::default();
+            book.set_active(
+                code.clone(),
+                DailyCandle {
+                    time: 0,
+                    open: Money::from_cents(1000),
+                    high: Money::from_cents(1000),
+                    low: Money::from_cents(1000),
+                    close: Money::from_cents(1000),
+                    volume: 1,
+                    trade_stats: Some(stats),
+                },
+            );
+            let before = book.active().clone();
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || book.record_trade_or_mark(0, &code, Money::from_cents(1100), 1)
+            ))
+            .is_err());
+            assert_eq!(book.active(), &before);
+        }
+    }
+
+    #[test]
+    fn maximum_u128_turnover_roundtrips_as_string() {
+        let stats = DailyTradeStats {
+            turnover_cents: u128::MAX,
+            trade_count: 1,
+        };
+        let json = serde_json::to_value(&stats).unwrap();
+        assert_eq!(json["turnover_cents"], u128::MAX.to_string());
+        assert_eq!(
+            serde_json::from_value::<DailyTradeStats>(json).unwrap(),
+            stats
+        );
+    }
+
+    #[test]
     fn no_trade_day_is_archived_without_becoming_a_traded_sample() {
         let code = StockCode("600000".into());
         let mut book = SessionCandleBook::default();
@@ -432,7 +522,7 @@ mod candle_book_tests {
                 close: Money::from_cents(1_000),
                 volume: 100,
                 trade_stats: Some(DailyTradeStats {
-                    turnover_cents: u64::MAX,
+                    turnover_cents: u128::MAX,
                     trade_count: 1,
                 }),
             },

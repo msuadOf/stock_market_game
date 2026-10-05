@@ -1854,7 +1854,7 @@ impl AuctionLifecycleProjector {
                                 self.pending.push(PendingPlanEvent::Accepted {
                                     plan_id,
                                     order_id,
-                                    trading_day: u64::from(session.state.day),
+                                    trading_day: session.stock_trading_day(&code).map_err(|error| lifecycle_invariant(&error.to_string()))?,
                                 });
                             }
                         }
@@ -1969,7 +1969,7 @@ impl AuctionLifecycleProjector {
                         order_id: key.order,
                         qty,
                         child_complete: transition.child_complete,
-                        trading_day: u64::from(session.state.day),
+                        trading_day: session.stock_trading_day(&key.stock).map_err(|error| lifecycle_invariant(&error.to_string()))?,
                     });
                 }
             }
@@ -2045,13 +2045,16 @@ impl AuctionLifecycleProjector {
                 .values()
                 .flat_map(|plans| plans.values())
                 .filter(|parent| parent.filled_qty() < parent.target_qty())
-                .filter_map(|parent| parent.linked_plan_id())
+                .filter_map(|parent| parent.linked_plan_id().map(|plan_id| (plan_id, parent.code().clone())))
                 .collect::<Vec<_>>();
-            self.pending
-                .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-                    plan_id,
-                    trading_day: u64::from(session.state.day),
-                }));
+            for (plan_id, code) in ended {
+                if session.stock_day_status(&code).map_err(|error| lifecycle_invariant(&error.to_string()))? == crate::calendar::DayStatus::Trading {
+                    self.pending.push(PendingPlanEvent::DayEnded {
+                        plan_id,
+                        trading_day: session.stock_trading_day(&code).map_err(|error| lifecycle_invariant(&error.to_string()))?,
+                    });
+                }
+            }
         }
 
         session.state.parent_orders = self.parents;
@@ -2130,16 +2133,11 @@ fn rejection_lifecycle_facts(
 /// 一次交易日日终迁移；失败时由调用方丢弃 candidate，保留原先局部修改顺序。
 pub(in crate::session::pipeline) struct TradingDayEndTransition<'candidate> {
     candidate: &'candidate mut GameSession,
-    trading_day: u64,
 }
 
 impl<'candidate> TradingDayEndTransition<'candidate> {
     pub(in crate::session::pipeline) fn new(candidate: &'candidate mut GameSession) -> Self {
-        let trading_day = u64::from(candidate.state.day);
-        Self {
-            candidate,
-            trading_day,
-        }
+        Self { candidate }
     }
     pub(in crate::session::pipeline) fn apply(
         mut self,
@@ -2158,7 +2156,14 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
             )));
         }
         if session.state.setup.t1_enabled {
-            session.state.accounts.unlock_t1_positions();
+            let open = session.state.setup.stocks.iter().filter_map(|stock| {
+                match session.stock_day_status(&stock.code) {
+                    Ok(crate::DayStatus::Trading) => Some(Ok(stock.code.clone())),
+                    Ok(crate::DayStatus::Closed(_)) => None,
+                    Err(error) => Some(Err(AuctionDayEndError::Precondition(invariant(&error.to_string())))),
+                }
+            }).collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+            session.state.accounts.unlock_t1_for_stocks(&open);
         }
         self.sweep_owned_plans()
             .map_err(AuctionDayEndError::Lifecycle)?;
@@ -2187,7 +2192,6 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
         Ok(facts)
     }
     fn sweep_owned_plans(&mut self) -> Result<(), StepFatal> {
-        let trading_day = self.trading_day;
         let session = &mut *self.candidate;
         let mut plans = std::mem::take(&mut session.state.plans);
         session
@@ -2197,6 +2201,11 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
             })?;
         let plan_ids = plans.active_plan_ids();
         for plan_id in plan_ids {
+            let code = plans.plan(plan_id).map_err(|error| lifecycle_invariant(&error.to_string()))?.code();
+            if session.stock_day_status(code).map_err(|error| lifecycle_invariant(&error.to_string()))? != crate::calendar::DayStatus::Trading {
+                continue;
+            }
+            let trading_day = session.stock_trading_day(code).map_err(|error| lifecycle_invariant(&error.to_string()))?;
             plans
                 .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
                 .map_err(|error| {

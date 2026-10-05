@@ -131,6 +131,8 @@ pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> Tic
                 timeseries_payload.closed_daily_candles = closed_daily_candles.clone();
             }
             Event::Trade { .. }
+            | Event::PublicTrade { .. }
+            | Event::PrivateEventOmitted { .. }
             | Event::CivilDateAdvanced { .. }
             | Event::CompanyDisclosurePublished { .. }
             | Event::IntentRejected { .. }

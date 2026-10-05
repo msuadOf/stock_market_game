@@ -212,11 +212,11 @@ mod protection_tests {
             let minute = index as u64 + 1;
             list.record_attention(code, minute, minute).unwrap();
             memory
-                .observe_price(code, crate::Money::from_cents(100), minute)
+                .observe_price(code, crate::Money::from_cents(100), minute, minute)
                 .unwrap();
         }
         memory
-            .record_public_history_read(&codes[0], 11, &mut reads)
+            .record_public_history_read(&codes[0], 11, 11, &mut reads)
             .unwrap();
         list.prune(&BTreeSet::new());
         memory.prune(&BTreeSet::new());
