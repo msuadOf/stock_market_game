@@ -11,7 +11,7 @@
 | 同花顺信息层次、模拟器看盘下单布局 | desktop-terminal，右买卖展开底部非模态栏，委托组件唯一实例 | desktop-workspace的多尺寸、草稿、Escape、焦点用例 | 最新27项看盘栏一个超时保留，定向草稿/游戏管理通过不消除它 |
 | 二三级菜单、进入/返回、当前选择 | ChartDisplayMenu：显示→均线/副图→选项；公司报告/报表/附注，行情/个股/F10返回 | 先前完整54项对应通过，实际参考观察见terminal-fidelity-plan | 最新27项菜单/返回8项失败中包含相应路径，不以旧绿代替最新稳定性 |
 | 尽可能以手机版为准复用 | MarketKlinePanel/renderer/gestures/MA、盘口FiveLevelBook、CompanyPanel、UserPanel及命令共用 | shared-mobile-audit、shared-chart-state，两端运行用例 | 分时仅投影及竞价显示共用，桌面与紧凑手机renderer保持不同，不能称全部单renderer |
-| 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏 | 902/1020/1440/844横屏、320/390竖屏验收及IAB | 手机暂停checkbox触控间距实看待改；全局溢出有限fixture不能覆盖任意数据长度 |
+| 当前分辨率完整显示 | 弹性主/副图、坐标DOM文本、下单栏与侧栏；手机暂停选项独立44px整行 | 902/1020/1440/844横屏、320/390竖屏验收及IAB；暂停设置新6项通过，IAB两行44×309px | 手机暂停触控间距已关闭；继续按实际最长数据验证布局 |
 | 分时数据积累后核对 | MobileIntradayProjection与真实权威minute/auction/day candle，时间简化明确 | desktop-intraday、mobile-intraday-projection；先前默认局实看 | 需补最终默认NPC运行后截图，不能只用空局宣布全程正确 |
 | 分时上下界是当日已有最高/最低 | DesktopIntradayChart采样域纳入有成交权威OHLC，零成交占位不污染域 | desktop-intraday.test精确上下界/单价/重渲染 | 手机继续自己的紧凑scale；用户原要求的两端范围需对照确认，不猜测扩大 |
 | 集合竞价左侧不空、无单0轴、更新粗点，连续竞价无点 | auctionDisplayPoints无指示价映射昨收0%，updated标指示价/可匹配量更新；两端auction dots，连续仅polyline | 两端projection/SSR，desktop连续无circle断言 | 粗点为竞价指示更新，不冒充已成交；仍需最终默认局动态视觉证据 |
@@ -21,7 +21,7 @@
 | 触屏双指缩放、单指点按对齐 | 同一useKlineGestures处理pinch/tap，拖动阈值与合成click抑制 | desktop工作台触屏用例 | 真实实体触屏未实测，浏览器合成手势已验收 |
 | 首次无对齐线，点开、再点关；随后移动吸附，小窗详细信息 | MarketKlinePanel局部selectedTime/following，snap最近K，详情与竖线/坐标同步 | desktop详情吸附、kline-coordinates、切股/切屏关闭 | 页面不使用单独“模式”入口；最新27项详情用例通过但耗时贴近限制 |
 | SVG拉伸边框不变粗 | SVG renderer的non-scaling-stroke，坐标文字DOM | desktop轮廓拉伸、kline-coordinates | 自动几何/样式检查已做，任意系统缩放组合未全部验证 |
-| 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | 产品仍显示不可用NPC诊断入口，需按实际debug能力核对是否应隐藏 |
+| 排序/搜索/自选等真实可用，去无关工具 | useSecurityBrowser唯一owner，精确sort model，手机仅可见涨幅；无伪指数/禁用金融工具 | security-browser、security-sort、mobile-market-scope；IAB实际排序 | Vite开发页面仍显示不可用NPC诊断入口，需按实际debug能力过滤；正式production原本不显示 |
 | 公司资料层级和跨屏阅读保持 | CompanyPanel controlled readingByCompany，真实CompanyQueryCoordinator，baseline civil_date | company-information阅读/日期等7项相关路径通过 | 精确净利gold12928574075.43对actual12822166575.42因果仍未核清，不可改gold凑绿 |
 | 游戏设置和存读档细节 | UserPanel两端共用；日终候选/快速槽/重复文件目标；load beforeRead等待 | 833全量Web、quick-load-barrier真实WASM2项；新文案定向5项/IAB | 文件选择在pending写入期间的边界未本批扩展；首日缺DB的旧E2E helper检查会造空库，不应复用到该前提 |
 | 好后commit/push、关闭编译subagent | 编译agent已中断，仅必要独立review复核；日常提交沿现有feat/ui-design推送 | 前批c0ea9f1本地==origin；每批review记录 | 全部goal未完成，不将阶段提交当整体收尾 |
@@ -32,4 +32,5 @@
 - 日终文案首轮：27浏览器25通过2新fixture失败；修正只读DB检查后第二轮19通过8原路径失败，2.7分钟。
 - 文案最终仅受影响5项重跑5/5通过15.2秒、24项短测及production成功。没有完整56项全绿的证据。
 - 全库lint仍有5项原有children-prop警告；变更文件lint通过不能冒充全局通过。
-- 完成门禁仍开放：财务gold因果、浏览器时限/返回路径稳定性、默认局分时动态最终证据、手机实际触控热区和不可用诊断入口范围。
+- 手机暂停设置批：有效红两端20px、期望至少44px；6/6相关浏览器8.5秒、6/6宿主偏好短测107.82ms通过。IAB320×844两行44×309px；独立production359ms/release WASM成功。仅CSS两条，不改变确认pending与偏好命令。
+- 完成门禁仍开放：财务gold因果、浏览器时限/返回路径稳定性、默认局分时动态最终证据和开发页面不可用诊断入口范围。诊断入口源码明确受DEV限制，正式production原本就不显示，不能把开发截图错误推广到正式构建。

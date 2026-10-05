@@ -262,3 +262,11 @@ UserPanel 两端同一份DOM，将即时保存暗示改为日终存档说明/设
 IAB现场902×833与320×844核对常驻说明及四按钮，无横向溢出，手机document.scrollWidth/clientWidth均320。截图save-control-labels-current-window.jpg及save-control-labels-mobile-320.jpg保留。源码HMR重建宿主并恢复运行，最后重新暂停第1日09:15:34，不声称保留前批刚读档局；恢复原902×833与原tab2。未选文件、未提交模拟委托。手机两项暂停偏好的标签仍紧贴同一行，触控热区/换行需在后续独立批次确认，不混入本批文案修改。
 
 完整终端目标继续在途：财务gold因果差额、完整浏览器时限/返回路径稳定性及逐项需求复验仍保留。
+
+## 2026-10-05 手机暂停设置触控行批次
+
+实看320px两项暂停偏好挤在同一行，新几何测试有效红两端label高度20、期望>=44。首次red因filter的has locator包含外层region前缀未匹配，不算产品红证据；修正为label内相对checkbox后取得真实红。仅增加.layout-mobile .mobile-game-state直接label/input两条样式：每项独立整行至少44px、12px间隔、16pxcheckbox、文字可换行；不增加handler，不改宿主确认pending、sessionStorage、自然日或交易行为。桌面与嵌套刷新方式不受scoped CSS影响，DESIGN/UX同步。
+
+真实WASM新320/390两项及原移动暂停/倍率、两端存档说明共6/6通过8.5秒，workers3、RAYON_NUM_THREADS10、共享外部300000ms；新case10000ms，整行末端点击只改变对应选项、精确偏好JSON、两行不重叠及无横向溢出断言均通过。宿主暂停偏好短测实际6/6通过107.82ms，concurrency3、case/外部10000ms；调用参数里误带不存在host/pause-preferences.test.ts，Node未执行该文件，不冒称覆盖宿主全部测试。新E2E lint、strict premium audit0finding、git diff--check通过。浏览器退出后独立production359ms/release WASM成功，未并跑dist写入。独立复核完整diff通过，无有效finding，见game-settings-touch-independent-review.md。
+
+IAB真实320×844两行height44、width309、y277/321，截图game-settings-touch-mobile-320.jpg。CSS HMR前后仍第1日09:15:34已暂停，未操作用户偏好；原生label行尾切换由隔离E2E验证。本批不重复完整Web或56浏览器，不以6项通过关闭前批19/27失败。诊断入口核查表明原App仅DEV时加载，正式production本来不显示；此前“正式页面还有灰按钮”的口述不准确，当前IAB为Vite开发页面，其后端未启用诊断所以仍出现disabled，开发入口能力过滤下一批单独处理。
