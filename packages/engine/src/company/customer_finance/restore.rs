@@ -105,6 +105,7 @@ impl CustomerFinanceBook {
             for (debt_id, debt) in &customer.debts {
                 validate_id(&debt_id.0, "debt")?;
                 debt.creditor.validate()?;
+                debt_id.validate_creditor(&debt.creditor)?;
                 if debt_id != &debt.id
                     || !debt.principal.is_positive()
                     || debt.paid.is_negative()

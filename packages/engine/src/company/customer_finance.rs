@@ -8,7 +8,9 @@ use crate::company::counterparty::CounterpartyId;
 use crate::company::CompanyId;
 use thiserror::Error;
 
+mod claim_identity;
 mod restore;
+pub use claim_identity::{CompanyClaimIdentity, CompanyClaimSource};
 
 /// 客户侧财务事件身份；同一身份只能对应相同命令载荷。
 #[derive(
@@ -67,6 +69,30 @@ pub struct CustomerCashFlow {
     Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]
 pub struct DebtId(pub String);
+
+impl DebtId {
+    pub fn for_company_claim(claim: &CompanyClaimIdentity) -> Result<Self, CustomerFinanceError> {
+        Ok(Self(claim.encode()))
+    }
+
+    pub fn company_claim(&self) -> Result<Option<CompanyClaimIdentity>, CustomerFinanceError> {
+        CompanyClaimIdentity::decode(&self.0)
+    }
+
+    fn validate_creditor(&self, creditor: &DebtCreditor) -> Result<(), CustomerFinanceError> {
+        if let Some(claim) = self.company_claim()? {
+            if creditor != &DebtCreditor::Company(claim.company().clone()) {
+                return Err(CustomerFinanceError::InvalidClaimIdentity {
+                    detail: format!(
+                        "claim source company {:?} does not match debt creditor {creditor:?}",
+                        claim.company()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
 
 /// 核销决策调用方提供的事实依据；本模块不根据账龄或随机结果判定核销。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -245,6 +271,26 @@ impl CustomerFinanceBook {
         Self::default()
     }
 
+    pub fn register_company_claim(
+        &mut self,
+        customer: &CounterpartyId,
+        claim: &CompanyClaimIdentity,
+        opened_on: CivilDate,
+        due_on: CivilDate,
+        principal: AccountingAmount,
+    ) -> Result<DebtId, CustomerFinanceError> {
+        let debt = DebtId::for_company_claim(claim)?;
+        self.register_debt(
+            customer,
+            debt.clone(),
+            opened_on,
+            due_on,
+            principal,
+            DebtCreditor::Company(claim.company().clone()),
+        )?;
+        Ok(debt)
+    }
+
     /// 登记客户并显式给定其有限开局现金；不从欠款或概率推算现金。
     pub fn register_customer(
         &mut self,
@@ -293,6 +339,7 @@ impl CustomerFinanceBook {
     ) -> Result<(), CustomerFinanceError> {
         validate_id(&id.0, "debt")?;
         creditor.validate()?;
+        id.validate_creditor(&creditor)?;
         let state =
             self.customers
                 .get(customer)
@@ -842,6 +889,8 @@ impl TryFrom<FinanceResult> for () {
 /// 客户财务事实错误。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum CustomerFinanceError {
+    #[error("invalid company claim identity: {detail}")]
+    InvalidClaimIdentity { detail: String },
     #[error("invalid restored customer finance: {detail}")]
     InvalidRestore { detail: String },
     #[error("invalid empty {what} id")]

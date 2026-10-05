@@ -37,7 +37,8 @@ pub use counterparty::{
     FlowDirection,
 };
 pub use customer_finance::{
-    CashEndpoint, CustomerCashFlow, CustomerDebt, CustomerFinanceBook, CustomerFinanceError,
+    CashEndpoint, CompanyClaimIdentity, CompanyClaimSource, CustomerCashFlow, CustomerDebt,
+    CustomerFinanceBook, CustomerFinanceError,
     CustomerFinanceEventId, CustomerFinanceState, DebtCreditor, DebtId, DebtPayment, DebtWriteOff,
     WriteOffEvidence,
 };
