@@ -34,6 +34,7 @@ fn setup() -> SessionSetup {
         closing_auction_ticks: 1,
         history_len: 1,
         t1_enabled: true,
+        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::Random,
         start_date: CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.into(),

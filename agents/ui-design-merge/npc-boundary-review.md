@@ -28,3 +28,9 @@ Engine 8 项覆盖 main 的真实两日 archive、feature 的休市／交易日 
 当前 diff 继续保留 main 的实际完成 channel／receipt 顺序实现。Reviewer 另亲读 root 运行的 `npc-completion-channel-short.log`：`session::pipeline::npc_decisions_tests::` 实际 20/20 通过、0.20 秒，外部 10 秒、test threads 6／Rayon 4。其中包含 fast account 先完成及失败后 drain、玩家请求插入 fast／slow NPC 完成之间、单 Rayon worker 无死锁和双 worker 多会话准备，并保留本人风险、T+1、真实 arrival 与个人 analysis 边界。此为代表性并发短测，不等于穷尽调度轨迹。单账户 continuation 的完整状态相等不外推为多账户自由并发的未来字节确定性；三账户测试只要求已发生事实与合法 cursor，不人为保证每次观察必然下单。
 
 **结论：本次 NPC 日界合并范围 PASS。** 两项有效 finding 已修复，当前源码与上述代表性短测足以关闭本范围的语义、必要性和边界门禁。Reviewer 仅核对真实日志，未另启 Cargo、复杂回归或网络验证。此结论不代表整个 UI 合并、恢复先前未提交功能或全部 checklist 已完成；后续 stash 恢复改变相关源码时须按实际 diff 再次复核。
+
+当前 `cd595607` 后恢复的 WIP 已作增量静态核对：`new`、`plan_tick`、最后 tick 的 deferred `None` 三段未被覆盖，两日 archive 的严格 `None`／入队 cursor／attention／RNG 测试保持。新增个人 Fill 交割记录、月报 scheduled 公布与真实 Trade 分钟记录均位于隔离 candidate、最终提交之前；分钟标记使用 authority 的实际成交时段而不是 rollover 后的新日时钟。自然日日结完成更正、经营／封账／披露与历史归档后才捕获公共候选；日内 active history 被公共恢复拒绝，不靠清空档字段掩盖。
+
+Protocol 的新增 publication transaction 把共享 ingress 自然日发布及 disclosure observers 延迟到成功外层提交；失败和 Drop 恢复 checkpoint，旧 publication／scope 不允许回滚已发布日期。`publish_calendar` 在全部校验及 checked epoch 计算成功后才修改共享状态，没有失败后半发布。新增历史查询转发不会另行准备 NPC 或从持久档恢复活市场。main streaming 保留；`npc_tick_preparation` 新增的等待／记录 gate 只属于 `verification-harness`，非 verification 生产不增加 gate。
+
+这份增量核对未发现 deferred 日界被反覆盖或新增交易语义漂移，但不代替各功能完整复核。此前 11＋20 项绿色属于恢复 WIP 之前的 base binary，不能证明这些新增字段、交割、披露、历史与 publication transaction 已在当前 WIP 通过。当前增量运行门禁等待统一 fresh 构建及短测；不将原 base PASS 扩大为当前 WIP 全部完成。
