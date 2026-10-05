@@ -127,3 +127,15 @@ artifacts/market-ui-performance/
 
 # Agent 机器生成的 JSON 记录；其他中文 Markdown 审计文档仍纳入版本管理
 /agents/**/*.json
+
+# 本地 WebUI 观察截图、历史源码副本和失败诊断；保留已选定的交付截图。
+/agents/macos-webui-design/*.png
+/agents/macos-webui-design/*.jpg
+!/agents/macos-webui-design/quick-trading-desktop-current.jpg
+!/agents/macos-webui-design/quick-trading-mobile-320.jpg
+/agents/macos-webui-design/*.pid
+/agents/macos-webui-design/company-causal-probe/
+/agents/macos-webui-design/desktop-scroll-red-artifacts/
+/agents/macos-webui-design/mobile-market-scope-watchlist-failure/
+/agents/macos-webui-design/security-scope-title-axis-failure/
+/agents/macos-webui-design/security-sort-period-timeout-evidence/
