@@ -59,7 +59,7 @@ import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
 import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
 import { InitialSaveSource, SessionReplacementGate } from "./save/session-replacement.ts";
-import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
+import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
@@ -104,7 +104,7 @@ const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
 };
-let browserSaveRepository: CompressedLocalStorageSaveRepository | null = null;
+let browserSaveRepository: CompressedIndexedDbSaveRepository | null = null;
 
 declare global {
   interface Window {
@@ -116,9 +116,11 @@ declare global {
   }
 }
 
-function getBrowserSaveRepository(): CompressedLocalStorageSaveRepository {
+function getBrowserSaveRepository(): CompressedIndexedDbSaveRepository {
   if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
-  browserSaveRepository ??= new CompressedLocalStorageSaveRepository(window.localStorage);
+  browserSaveRepository ??= new CompressedIndexedDbSaveRepository(window.indexedDB, {
+    getItem: (key) => window.localStorage.getItem(key),
+  });
   return browserSaveRepository;
 }
 

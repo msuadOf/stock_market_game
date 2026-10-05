@@ -142,3 +142,15 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 最终116个相关 Rust case全部通过23.38秒，4进程并发，每case harness1+Rayon1，普通case及命令10000ms外部deadline，定向验收共享300000ms；独立4项通过1.07秒。预编译与release WASM构建jobs10，实际采样rustc先有254% CPU，WASM单crate前端阶段约97% CPU，其依赖阶段不冒称可并行；production构建与release WASM verified。git diff --check通过。没有重跑全工作区或完整浏览器矩阵。
 
 真实IAB重载并启动默认NPC局后，原pending错误消失，但实际出现LocalStorage quota错误。day-end-npc-before.png与day-end-npc-quota.png记录先后反馈。引擎档边界已闭环，默认局快速槽写入及刷新恢复尚未通过，下一独立Web批次继续处理容量；不宣称默认局保存全部成功或完整终端目标完成。
+
+### 默认 NPC 局的 IndexedDB 快速槽（2026-10-05）
+
+默认 20007 NPC 压缩档仍超过 LocalStorage 容量。快速槽改用 IndexedDB，沿用同一个 strict schema、gzip codec 和日终 writer；旧 LocalStorage 同格式槽只在 IndexedDB 缺槽时读取，不在启动复制写入，不以旧槽掩盖坏档或数据库失败。压缩、开库、put 后检查 generation，提交失效事务 abort 保留原档，成功等待 transaction.oncomplete。异常关闭清理对应连接缓存，后续正常重试可重新开库。App 延迟到旧槽确实需要读取时才访问 LocalStorage；无新依赖，无存档 schema 变化，无撮合或资金单位变化。
+
+实际 quota 浏览器红测先复现保存失败。验收准备先出现 E2E Node 配置不支持 DOM/模块扩展问题，修正为纯常量模块和浏览器字符串 IIFE；第一次运行另有读取函数未调用及 E2E 明确跳过自动启动读档的两个失败，修正调用和实际读取操作，保留压缩字节、资金持仓、tick30 与继续推进断言。没有弱化这些断言。
+
+最后 58 项相关短测通过 471ms，case/进程树 deadline10000ms、concurrency3；真实 WASM trading-workflows 6/6通过23.5秒，workers3、共享300000ms外部deadline，覆盖容量错误、日内不写、日终失效、刷新读取与继续运行。独立复核23项通过238ms，两个有效 P2（异常关闭与架构文档漂移）修复后复核通过，见 indexed-db-save-independent-review.md。最终 production Web 构建与 release WASM verified，RAYON_NUM_THREADS=10；变更文件定向 lint、strict premium audit、git diff --check通过。本批未重复完整 Web/unit 或全部公司资料 E2E，不宣称全量通过。
+
+真实 IAB 默认 20007 NPC 局显示“日终存档已更新（浏览器快速槽）”，见 indexed-db-save-current-window.png。实际刷新后重新启动正常，随后从游戏管理点击“读取本地进度”，完成后明确显示“已读档（第1个交易日）”，时钟回到09:15:00并保持暂停，见 indexed-db-save-restored.png。该档是初始休市自然日的日终档，不能把随后日内09:16:29当作已保存进度；也没有仅凭刷新启动正常声称精确恢复。资金/持仓完整一致的精确断言由受控真实 WASM 浏览器用例验证，默认大 NPC 局现场验证了实际保存和读取成功。
+
+完整终端目标继续在途：公司报告随机 fixture 确定性、剩余游戏/公司二三级阅读状态、行情排序统一及生成 acl-manifests.json 缺口仍需处理。本批只关闭默认局公共日终候选和快速槽容量路径，不等同全部菜单细节完成。

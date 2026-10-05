@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { SAVE_DATABASE, SAVE_OBJECT_STORE, QUICK_SAVE_KEY } from "../src/save/save-storage-keys.ts";
 
 const STOCK_CODE = "600101";
 const AUCTION_PRICE = "10.08";
@@ -54,6 +55,28 @@ function availableCash(page: Page): Locator {
 
 function normalizeVisibleText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+async function readQuickArchive(page: Page): Promise<string | null> {
+  // 此函数在浏览器执行；Node 侧 E2E tsconfig 不引入整套 DOM 全局类型。
+  return page.evaluate<string | null>(`(([databaseName, storeName, key]) => new Promise((resolve, reject) => {
+    const opening = indexedDB.open(databaseName, 1);
+    opening.onerror = () => reject(opening.error);
+    opening.onsuccess = () => {
+      const database = opening.result;
+      const transaction = database.transaction(storeName, "readonly");
+      const request = transaction.objectStore(storeName).get(key);
+      let value = null;
+      request.onsuccess = () => {
+        if (request.result === undefined) value = null;
+        else if (typeof request.result === "string") value = request.result;
+        else reject(new Error("快速槽内容不是压缩存档字符串"));
+      };
+      transaction.oncomplete = () => { database.close(); resolve(value); };
+      transaction.onabort = () => { database.close(); reject(transaction.error); };
+      transaction.onerror = () => { database.close(); reject(transaction.error); };
+    };
+  }))(${JSON.stringify([SAVE_DATABASE, SAVE_OBJECT_STORE, QUICK_SAVE_KEY])})`);
 }
 
 test("开盘集合竞价明确拒绝市价委托", async ({ page }) => {
@@ -136,12 +159,12 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
   await expect(playerOrder(page)).toContainText("资金已冻结");
 
   // 1 月 1 日是休市自然日，进入次日可能已自动归档；日内保存必须逐字节保留该存档。
-  const priorArchive = await page.evaluate(() => localStorage.getItem("stock-game-save"));
+  const priorArchive = await readQuickArchive(page);
   await page.getByRole("button", {name:"游戏与存档"}).click();
   await page.getByRole("button", {name:"保存当前进度"}).click();
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"交易", exact:true}).click();
   await expect(page.locator(".notice")).toContainText("日内不写档");
-  expect(await page.evaluate(() => localStorage.getItem("stock-game-save"))).toBe(priorArchive);
+  expect(await readQuickArchive(page)).toBe(priorArchive);
 
   // fixture 每日 30 tick，tick 31 前的 CivilUpdate 屏障只归档 tick 30。
   await advanceToTick(page, 31);
@@ -152,10 +175,10 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
   const savedCash = await availableCash(page).innerText();
   const positions = page.locator("#section-positions tbody");
   const savedPositions = normalizeVisibleText(await positions.innerText());
-  const archived = await page.evaluate(() => localStorage.getItem("stock-game-save"));
+  const archived = await readQuickArchive(page);
   expect(archived).toMatch(/^gzip:/);
   await advanceToTick(page, 32);
-  expect(await page.evaluate(() => localStorage.getItem("stock-game-save"))).toBe(archived);
+  expect(await readQuickArchive(page)).toBe(archived);
 
   await page.reload();
   await expectEngineReady(page);
@@ -172,4 +195,25 @@ test("日内不写档，日终委托失效后存档经刷新读档保留资金�
 
   await advanceToTick(page, savedTick + 1);
   await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", String(savedTick + 1));
+});
+
+test("LocalStorage 存档容量不足时日终快速槽仍可写入并在刷新后读档", async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key: string, value: string) {
+      if (key === "stock-game-save") throw new DOMException("存档超过 LocalStorage 容量", "QuotaExceededError");
+      return original.call(this, key, value);
+    };
+  });
+  await openGame(page);
+  await advanceToTick(page, 31);
+  await expect(page.locator(".notice")).toContainText("日终存档已更新");
+  await expect(page.locator(".notice")).not.toContainText("失败");
+  await page.reload();
+  await expectEngineReady(page);
+  await page.getByRole("button", { name: "游戏与存档" }).click();
+  await page.getByRole("button", { name: "读取本地进度" }).click();
+  await expect(page.locator(".notice")).toContainText("已读档");
+  await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", "30");
+  await expect(page.locator(".app-error")).toHaveCount(0);
 });
