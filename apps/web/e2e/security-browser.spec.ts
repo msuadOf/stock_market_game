@@ -74,7 +74,8 @@ test("手机与桌面共用查询，自选返回保留，320px 无溢出", async
   await expect(page.locator(".mobile-market-row")).toHaveCount(1);
   expect(await page.locator("html").evaluate(el => el.scrollWidth > el.clientWidth)).toBe(false);
   await page.setViewportSize({ width: 902, height: 833 });
-  await expect(page.getByRole("button", { name: "自选", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("navigation", { name: "桌面主导航", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "股票范围", exact: true }).getByRole("button", { name: "自选", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("自选读写错误明确展示，失败不改变已保存名单", async ({ page }) => {

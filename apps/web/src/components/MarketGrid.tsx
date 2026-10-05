@@ -94,14 +94,6 @@ export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes,
     return sortSecurityCodes(allRowData.map(row => row.code), markets, mobileSecuritySort(sortRules)).map(code => rows.get(code)!);
   }, [allRowData, markets, sortRules]);
 
-  const marketIndex = useMemo(() => {
-    if (allMarketRowData.length === 0) return { value: 0, change: 0 };
-    return {
-      value: allMarketRowData.reduce((sum, stock) => sum + yuan(stock.lastPrice), 0) / allMarketRowData.length * 100,
-      change: allMarketRowData.reduce((sum, stock) => sum + stock.changePct, 0) / allMarketRowData.length,
-    };
-  }, [allMarketRowData]);
-
   const colorClass = useCallback((diff: number) => {
     if (diff > 0) return "cell-up";
     if (diff < 0) return "cell-down";
@@ -250,12 +242,8 @@ export function MarketGrid({ markets, selectedCode, onSelect, onOpen, heldCodes,
         />
       </div>
       <div className="mobile-market-dashboard">
-        <section className="mobile-index-strip" aria-label="市场指数与快捷入口">
-          <div className={`mobile-index-quote ${marketIndex.change > 0 ? "up" : marketIndex.change < 0 ? "down" : "flat"}`}><strong>{marketIndex.value.toFixed(2)} <small>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}</small></strong><span>模拟指数　<b>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}%</b>⌄</span></div>
-          {[["⌁", "资金"], ["▤", "资讯"], ["▣", "资产"], ["⌁", "分析"]].map(([icon, label]) => <button type="button" key={label} title={`${label}尚未开放`} disabled><i>{icon}</i><span>{label}</span></button>)}
-        </section>
         <div className="mobile-market-toolbar" aria-label="行情列表工具栏">
-          <span>✎　　☷</span><b>▦ 多股同列</b>
+          <span>名称 / 代码</span>
           <button type="button" aria-pressed={mobileDirection !== undefined} onClick={() => setSortRules(cycleChangeSort(sortRules))}>涨幅　{mobileDirection === "desc" ? "↓" : mobileDirection === "asc" ? "↑" : "↕"}</button>
         </div>
       <div className="mobile-market-list" aria-label="股票行情列表">

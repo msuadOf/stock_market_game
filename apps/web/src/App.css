@@ -361,7 +361,7 @@
 .layout-mobile .grid-table { font-size: 12px; }
 .layout-mobile .grid-table th, .layout-mobile .grid-table td { padding: 4px 6px; }
 
-/* 移动端行情：指数概览、市场宽度、分类标签与信息行按参考层级排列。 */
+/* 移动端行情：筛选、搜索与真实证券信息行按参考层级排列。 */
 .mobile-market-dashboard { display: none; }
 .mobile-market-list { display: none; }
 .layout-mobile .market-panel .panel-title { display: none; }
@@ -369,7 +369,6 @@
 .layout-mobile .mobile-market-dashboard { display: block; background: var(--card-bg); }
 .layout-mobile .mobile-market-list { display: block; }
 .mobile-market-empty { margin: 0; padding: 52px 16px; color: #999; text-align: center; }
-.mobile-index-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 10px 12px 7px; }
 .mobile-index-card { min-width: 0; padding: 6px 3px; border-right: 1px solid #ececec; border-radius: 0; text-align: center; background: #fff; }
 .mobile-index-card:last-child { border-right: 0; }
 .mobile-index-card.up, .mobile-index-card.down { background: #fff; }
@@ -1022,24 +1021,12 @@
   .layout-mobile .mobile-brand-bar .mobile-pause-button { width:34px; padding:0; font-size:20px; }
   .layout-mobile .mobile-brand-bar .mobile-speed-select-wrap select { width:58px; }
   .layout-mobile .mobile-session-summary { display:none !important; }
-  .mobile-index-strip { height:65px; display:grid; grid-template-columns:1.85fr repeat(4, .76fr); padding:0 10px; border-bottom:4px solid #f5f5f5; }
-  .mobile-index-quote { display:flex; flex-direction:column; justify-content:center; min-width:0; }
-  .mobile-index-quote strong { font-size:18px; line-height:1.15; }
-  .mobile-index-quote.up strong,.mobile-index-quote.up b { color:var(--up); }
-  .mobile-index-quote.down strong,.mobile-index-quote.down b { color:var(--down); }
-  .mobile-index-quote.flat strong,.mobile-index-quote.flat b { color:var(--flat); }
-  .mobile-index-quote strong small { font-size:14px; }
-  .mobile-index-quote span { margin-top:5px; font-size:13px; font-weight:700; }
-  .mobile-index-quote b { font-weight:600; }
-  .mobile-index-strip > button { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:3px; border:0; background:#fff; color:#222; font-size:12px; font-weight:700; }
-  .mobile-index-strip > button i { display:grid; place-items:center; width:22px; height:22px; border:1.4px solid #333; border-radius:5px; font-style:normal; font-size:14px; }
   .mobile-market-tabs { height:39px; min-height:39px; padding:0 9px; overflow:hidden; border-top:0; }
   .mobile-market-tabs button { flex:0 0 auto; padding:0 9px; border:0; position:relative; font-size:14px; white-space:nowrap; }
   .mobile-market-tabs-spacer { flex:1; }
   .mobile-market-tabs button.active { color:#222; }
   .mobile-market-tabs button.active::after { content:""; position:absolute; bottom:2px; left:50%; width:14px; height:3px; border-radius:2px; background:#f52c38; transform:translateX(-50%); }
   .mobile-market-toolbar { height:36px; min-height:36px; padding:0 16px; font-size:13px; }
-  .mobile-market-toolbar b { margin-left:auto; margin-right:54px; color:#555; font-weight:500; }
   .mobile-market-row { height:52px; min-height:52px; grid-template-columns:96px 1fr 76px; padding:3px 18px; }
   .mobile-market-name strong { font-size:16px; font-weight:650; }
   .mobile-market-name small { display:flex; align-items:center; gap:3px; margin-top:1px; font-size:11px; }
