@@ -76,6 +76,18 @@ IAB原tab2真实DEV页面已实看自选/持仓正确标题及提示，保存sec
 
 用户新要求：每轮Independent review新建gpt-6.1-sol high，不复用旧agent或astra。本批此前reviewer及第一次sol reviewer均已按要求中断，independent_review_fresh_sol_high完成的审查保留在final-boundaries-independent-review.md。用户再次要求重新新建后，启动全新independent_review_restart_sol_high，对当前完整diff自行复核；本次结论另记final-boundaries-restarted-independent-review.md，不以旧审查替代。IAB当前第1日09:27:19暂停1x，实际000812+10.18%两端截图final-intraday-centered-desktop.png及mobile.png，设备留白维持原差异；恢复600101/自选/列表和viewport，本批未新增玩家委托/改名单，保留已有委托拒绝notice。源码HMR曾重建host，不能说延续上一轮09:24:23局。
 
-## 当前剩余范围反馈细节
+## 财务及文件批次结束时的范围反馈细节
 
 最终现场又观察到手机列表在自选页切范围为全部后，按钮/数据为全部，但顶栏仍显示自选。下一小批需先用实际App复现并判断标题owner，再复用已有范围状态修正；不混入当前两个门禁修复，不因64项绿色就宣布全goal结束。任意硬件/全天全部行情的无限组合不是已验收声明，已有浏览器输入及实际窗口证据按上表保留。
+
+## 2026-10-05 手机标题及玩家反馈范围
+
+财务/文件批已由全新restart_sol_high完成复核，bf8ef0e/d22de32分主题提交并推送，本地与origin一致。手机顶栏现在经mobilePrimaryTitle读取同一securityBrowser.view，仅行情/自选列表使用实际范围，其他主页面保持标题；NPC普通IntentRejected不冒充玩家notice，完整events/facts/游标/重试保留，account0拒单及所有SettlementError继续显示。详见feedback-scope-audit.md及该批独立审查记录。
+
+有效TDD11通过2失败，首次实现后另一次新fixture误将canonical facts当输入顺序的失败保留，修正为既有规范排序后仍逐字段校验全部事实。最终13/13短测116.30ms，完整849/849、8分片/155文件、wall2371ms；完整65/65浏览器44.0s、workers3、共享300000ms；结束后独立production362ms/tsc/releaseWASM通过。变更lint/premium0finding/diff通过，全库仍五个旧children-prop告警exit1。没有重复或延长普通10秒门禁，也不冒称浏览器live CPU采样（采样时已结束）。
+
+IAB HMR回启动页后重新本地启动，新会话09:15:51暂停1x；320实际自选入口→全部标题模拟行情/5行→持仓标题及空态一致，902保持范围。未提交玩家委托、改名单或读私人档；不冒称延续旧09:27:19，也不把早盘无notice当NPC拒单现场证据。
+
+## 当前剩余布局边界
+
+最终902×833真实K线/MA及报价买入展开交易栏，截图terminal-kline-trade-final-902.png。工作区与body高度833，但html.scrollHeight996；只读DOM定位两个auto-form sr-only绝对定位标签的bottom959.3125/996.3125，无显式锚点，逃离内部滚动区导致document额外滚动。原始几何terminal-trade-scroll-before.json已保存。该问题需下一小批先加真实浏览器失败几何断言，再修公共sr-only owner；本批标题/notice复核不替代它，整体goal仍未闭合。

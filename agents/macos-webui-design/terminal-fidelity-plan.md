@@ -326,3 +326,9 @@ IAB当前原tab2第1日09:24:23暂停1x，两空范围标题/提示实看并截�
 文件选择后再等beforeRead、再读取，FS/Tauri/upload及命令共用callback；取消不进入屏障，不提前invalidate；选择器以外AbortError错误可见，新局pending已有逻辑补回归。有效功能红、mock/类型失败分别保存，未增时限。最终847Web/33定向/64浏览器全通过，wall2173ms/410.49ms/50.6s；production343ms/tsc/releaseWASM通过，定向lint/premium/diff通过，全库仍5旧告警exit1。完整日志final-boundaries-*；全新gpt-6.1-sol high的历史审查保留在final-boundaries-independent-review.md，用户再次要求重新新建后的独立审查另记final-boundaries-restarted-independent-review.md，不以旧结论替代。
 
 IAB实际第1日09:27:19暂停1x、000812+10.18%两端零轴截图已保存；恢复原600101、自选范围及列表/viewport；本批未新增玩家委托，保留已有拒绝notice。HMR重建host的事实保留。手机自选页范围切全部时顶栏仍自选的新现场待下一批定位，整个goal不在本批误关。
+
+## 2026-10-05 手机顶栏与通知反馈范围
+
+mobilePrimaryTitle复用securityBrowser.view与共用标签，不以旧入口推断列表标题；其他主页面不变。protocol.effects仅将account0的普通IntentRejected作为玩家拒单通知；NPC事件/facts和游标保留、非玩家SettlementError也继续错误可见。有效红及canonical顺序fixture失败分开保存，13短测/849完整Web/65完整浏览器通过，production362ms/releaseWASM成功，五个旧全库lint告警仍exit1。记录feedback-scope-audit.md，Independent review另建全新gpt-6.1-sol high。
+
+IAB HMR重新回启动，新本地局09:15:51暂停，实际320标题及空态、902跨屏已核对。最终看盘栏实际截图又发现sr-only标签越过滚动容器，document996px而viewport833px；source owner在index.css，下一批专门TDD修复，不能把当前65绿当整个goal完成。
