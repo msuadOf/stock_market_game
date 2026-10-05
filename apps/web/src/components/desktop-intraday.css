@@ -9,8 +9,8 @@
 .intraday-gridline { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .intraday-baseline { stroke: var(--muted); stroke-dasharray: 4 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .intraday-auction-zone { fill: var(--surface-subtle); }
-.intraday-price-line, .intraday-auction-line, .intraday-indicator-line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.intraday-price-line, .intraday-auction-line { stroke: var(--text); }
+.intraday-price-line, .intraday-auction-line, .intraday-session-join, .intraday-indicator-line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.intraday-price-line, .intraday-auction-line, .intraday-session-join { stroke: var(--text); }
 .intraday-price-point, .intraday-auction-point { fill: var(--text); }
 .intraday-empty { position: absolute; top: 25%; left: 22%; right: 15%; text-align: center; line-height: 2; color: var(--muted); }
 .intraday-empty small { font-size: 10px; }

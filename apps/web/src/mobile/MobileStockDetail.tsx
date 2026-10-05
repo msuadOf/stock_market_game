@@ -1,5 +1,5 @@
 import { moneyToChartNumber } from "../utils/money.ts";
-import { auctionDisplayPoints } from "../components/intraday-auction-display.ts";
+import { auctionContinuousJoin, auctionDisplayPoints } from "../components/intraday-auction-display.ts";
 import { compareMoney, subtractMoney } from "../utils/money.ts";
 import { type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
@@ -67,6 +67,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elap
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
   const auction = auctionDisplayPoints(visibleAuctionPoints, moneyToChartNumber(market.last_close) / 100);
+  const sessionJoin = auctionContinuousJoin(auction, visiblePoints);
 
   return (
     <section
@@ -97,6 +98,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elap
             <line className="msd-session-line" x1="79" x2="79" y1="0" y2="100" />
             {auction.length > 0 && <polyline className="msd-auction-line" points={auction.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${projection.priceY(point.value)}`).join(" ")}><title>无指示价时沿昨收0%参考轴显示；粗点表示竞价指示更新，并非已成交</title></polyline>}
             {auction.filter(point => point.updated).map(point => <circle key={point.time} className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: point.time })} cy={projection.priceY(point.value)} r="0.15" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke"><title>竞价指示价或可匹配量更新</title></circle>)}
+            {sessionJoin.length > 0 && <polyline className="msd-session-join" points={sessionJoin.map(point => `${point.x},${projection.priceY(point.value)}`).join(" ")} />}
             <polyline className="msd-average-line" points={projection.averageLine()} />
             <polyline className="msd-price-line" points={projection.continuousLine()} />
           </svg>

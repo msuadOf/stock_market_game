@@ -270,3 +270,13 @@ IAB现场902×833与320×844核对常驻说明及四按钮，无横向溢出，�
 真实WASM新320/390两项及原移动暂停/倍率、两端存档说明共6/6通过8.5秒，workers3、RAYON_NUM_THREADS10、共享外部300000ms；新case10000ms，整行末端点击只改变对应选项、精确偏好JSON、两行不重叠及无横向溢出断言均通过。宿主暂停偏好短测实际6/6通过107.82ms，concurrency3、case/外部10000ms；调用参数里误带不存在host/pause-preferences.test.ts，Node未执行该文件，不冒称覆盖宿主全部测试。新E2E lint、strict premium audit0finding、git diff--check通过。浏览器退出后独立production359ms/release WASM成功，未并跑dist写入。独立复核完整diff通过，无有效finding，见game-settings-touch-independent-review.md。
 
 IAB真实320×844两行height44、width309、y277/321，截图game-settings-touch-mobile-320.jpg。CSS HMR前后仍第1日09:15:34已暂停，未操作用户偏好；原生label行尾切换由隔离E2E验证。本批不重复完整Web或56浏览器，不以6项通过关闭前批19/27失败。诊断入口核查表明原App仅DEV时加载，正式production本来不显示；此前“正式页面还有灰按钮”的口述不准确，当前IAB为Vite开发页面，其后端未启用诊断所以仍出现disabled，开发入口能力过滤下一批单独处理。
+
+## 2026-10-05 分时09:30接缝与默认NPC动态核对批次
+
+在原IAB默认20007 NPC局从09:15推进并暂停于09:48:49，没有提交玩家委托。600101竞价最终显示11.20、连续首分钟采样12.32，两条独立polyline在09:30断开；连续首分钟采样不冒称开盘成交价（权威日线open仍11.20）。先增加两端SSR有效红，缺连接导致2项失败，再由auctionContinuousJoin复用既有intradayChartX：仅已有竞价末槽99和连续首槽0共用x16、且显示值不同时画普通竖连接。缺端点、竞价不完整、连续晚到、同价均不延长或补价；null参考值保持源null且不生成交易/量能/粗点。各端自身价格域和non-scaling-stroke保持，连续竞价不加点。
+
+最终短测36/36通过892.82ms，case/外部10000ms、concurrency3；独立reviewer29/29通过802ms，完整diff复核通过无finding，见intraday-session-join-independent-review.md。完整Web155文件837/837通过2475ms，8分片并发/10核，普通case/外部10000ms。完整58浏览器57通过1旧财务gold失败53.3秒，workers3/RAYON10、共享外部300000ms；原净利12928574075.43对当前12822166575.42未改。此前19/27的原菜单/返回/时限路径这一轮全部通过，保留历史失败不把多次结果拼作全绿。运行中实际采到多个Chromium进程71.5%/102.7%等CPU；首次ps误用macOS不支持nlwp已修正，不把失败命令当有效线程采样。
+
+E2E确认exit1并结束后独立production480ms/release WASM验证成功，未并写dist。变更source/desktop及pure测试lint、strict premium audit0finding、git diff--check通过；mobile-component-render.test.ts保留两条原有children-prop警告，未冒称全局lint全绿。IAB320实际连接16,50→16,9.615、连续circle为0且scrollWidth320；恢复原902×833时连接16,50→16,0、竞价首点0,50、scrollWidth902。保存intraday-default-094849-desktop.jpg、intraday-session-join-mobile-320.jpg、intraday-session-join-desktop-current.jpg。恢复1x，保持09:48:49暂停、原tab2与服务。只针对该默认局/时刻核对，不声称全天所有行情或手机scale已经统一。
+
+整个终端目标继续：财务gold因果、DEV不可用诊断入口、手机320实际成交量省略、信息tab能力范围和文件读取pending边界仍需处理。

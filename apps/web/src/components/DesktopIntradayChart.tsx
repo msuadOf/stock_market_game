@@ -1,4 +1,4 @@
-import { auctionDisplayPoints } from "./intraday-auction-display.ts";
+import { auctionContinuousJoin, auctionDisplayPoints } from "./intraday-auction-display.ts";
 import { centsToYuanText, moneyToChartNumber } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
 import { Fragment } from "react";
@@ -37,6 +37,7 @@ export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indic
   const priceClass = (value: number) => value > close ? "up" : value < close ? "down" : "";
   const empty = p.visiblePoints.length === 0 && p.visibleAuctionPricePoints.length === 0;
   const points = p.visiblePoints;
+  const sessionJoin = auctionContinuousJoin(auction, points);
   const ready = (indicator === "macd" || indicator === "kdj") && result.kind === "ready"
     ? parseIndicatorResults(result.value, points.length, 0) : null;
   const lines = ready ? (indicator === "macd"
@@ -56,6 +57,7 @@ export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indic
         {close >= low && close <= high && <line x1="0" x2="100" y1={priceY(close)} y2={priceY(close)} className="intraday-baseline" />}
         {auction.length > 0 && <polyline className="intraday-auction-line" points={auction.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${priceY(point.value)}`).join(" ")}><title>无指示价时沿昨收0%参考轴显示；粗点表示竞价指示更新，并非已成交</title></polyline>}
         {auction.filter(point => point.updated).map(point => <circle key={point.time} className="intraday-auction-point" cx={intradayChartX({ phase: "auction", minute: point.time })} cy={priceY(point.value)} r="0.15" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke"><title>竞价指示价或可匹配量更新</title></circle>)}
+        {sessionJoin.length > 0 && <polyline className="intraday-session-join" points={sessionJoin.map(point => `${point.x},${priceY(point.value)}`).join(" ")} />}
         {points.length > 0 && <polyline className="intraday-price-line" points={points.map(point => `${intradayChartX({ phase: "continuous", minute: point.time })},${priceY(point.value)}`).join(" ")} />}
       </svg>
       {empty && <div className="intraday-empty" role="status">等待行情<br /><small>暂无有效指示价，按昨收0%参考轴显示</small></div>}

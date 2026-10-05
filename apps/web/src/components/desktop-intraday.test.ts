@@ -99,3 +99,25 @@ test("连续竞价有成交也只绘折线，不添加粗点", { timeout: 10000 
   assert.ok(html.includes('class="intraday-price-line"'));
   assert.ok(!html.includes('<circle'));
 });
+
+test("竞价结束与首个连续槽不同价时在09:30连接，不产生新的成交点", { timeout: 10000 }, () => {
+  const p = MobileIntradayProjection.fromInputs({ ...base, auctionPoints: [{ time: 99, value: 11, volume: 100, buy: true }], minutePoints: [{ time: 0, value: 12, volume: 200 }] });
+  const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
+  assert.ok(html.includes('class="intraday-session-join" points="16,100 16,0"'));
+  assert.equal((html.match(/<circle/g) || []).length, 1);
+  assert.ok(html.includes('class="intraday-price-line" points="16,0"'));
+});
+
+test("缺09:30端点或同价时不补跨阶段线，不连接到晚到分钟数据", { timeout: 10000 }, () => {
+  for (const [auctionPoints, minutePoints] of [
+    [[], [{ time: 0, value: 12 }]],
+    [[{ time: 99, value: 11, volume: 100, buy: true }], []],
+    [[{ time: 98, value: 11, volume: 100, buy: true }], [{ time: 0, value: 12 }]],
+    [[{ time: 99, value: 11, volume: 100, buy: true }], [{ time: 1, value: 12 }]],
+    [[{ time: 99, value: 11, volume: 100, buy: true }], [{ time: 0, value: 11 }]],
+  ] as const) {
+    const p = MobileIntradayProjection.fromInputs({ ...base, auctionPoints, minutePoints });
+    const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "none", result: { kind: "idle" } }));
+    assert.ok(!html.includes('class="intraday-session-join"'));
+  }
+});

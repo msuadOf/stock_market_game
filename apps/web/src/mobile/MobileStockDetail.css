@@ -92,9 +92,10 @@
 .msd-price-plot svg { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; }
 .msd-price-line,
 .msd-average-line,
-.msd-auction-line { fill: none; vector-effect: non-scaling-stroke; }
+.msd-auction-line,
+.msd-session-join { fill: none; vector-effect: non-scaling-stroke; }
 .msd-price-line { stroke: #292929; stroke-width: 1.15; }
-.msd-auction-line { stroke: #292929; stroke-width: 1.15; }
+.msd-auction-line, .msd-session-join { stroke: #292929; stroke-width: 1.15; }
 .msd-auction-dot { fill: #292929; vector-effect: non-scaling-stroke; }
 .msd-average-line { stroke: var(--msd-gold); stroke-width: 1; }
 .msd-auction-band { fill: rgb(245 247 250 / 72%); }

@@ -97,6 +97,16 @@ function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘
   })));
 }
 
+test("手机分时09:30连接已存在的两个阶段端点，不额外生成粗点", { timeout: 10000 }, () => {
+  const overrides = { auctionPoints: [{ time: 99, value: 11, volume: 100, buy: true }], minutePoints: [{ time: 0, value: 12, volume: 200 }], elapsedMinutes: 1 };
+  const html = renderDetail("分时", "盘口", overrides);
+  assert.match(html, /class="msd-session-join" points="16,[\d.]+ 16,[\d.]+"/);
+  assert.equal((html.match(/class="msd-auction-dot"/g) || []).length, 1);
+  for (const missing of [{ ...overrides, auctionPoints: [] }, { ...overrides, minutePoints: [] }, { ...overrides, minutePoints: [{ time: 1, value: 12 }] }, { ...overrides, minutePoints: [{ time: 0, value: 11 }] }]) {
+    assert.doesNotMatch(renderDetail("分时", "盘口", missing), /class="msd-session-join"/);
+  }
+});
+
 test("移动详情将权威股数接入盘口、逐笔和两种图表的手数显示", () => {
   const intraday = renderDetail("分时", "盘口");
   assert.match(intraday, /aria-label="五档盘口，数量单位为手"/);
