@@ -42,6 +42,7 @@ pub mod scheduler;
 mod spec;
 pub mod share_registry;
 pub mod cash_dividend_tax;
+pub mod ex_reference_price;
 
 pub use contracts::{
     ContractBook, ContractId, ContractRole, CreditLine, DayCountBasis, OperatingBudget,
