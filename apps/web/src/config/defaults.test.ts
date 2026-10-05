@@ -82,7 +82,7 @@ describe("game watchlist seed", () => {
   });
 
   it("keeps player starting cash, civil start date, and policy identity explicit", () => {
-    assert.equal(DEFAULT_SETUP.config.starting_cash, "1000000000");
+    assert.equal(DEFAULT_SETUP.config.starting_cash, "1000000000000");
     assert.equal(DEFAULT_SETUP.start_date, "2030-01-01");
     assert.equal(DEFAULT_SETUP.simulation_policy_id, "a-share-simulation");
   });

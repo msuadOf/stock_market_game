@@ -94,8 +94,7 @@ export const DEFAULT_SETUP: SessionSetup = {
     st_limit: 0.10,
     price_cage_enabled: true,
     lot_size: 100,
-    // 玩家初始资金 1 千万元；初始资金只有这一处真源。
-    starting_cash: "1000000000",
+    starting_cash: "1000000000000",
   },
   strategy_params: {
     // 三个数量字段是群体中心；基准不少于一手时，每个 NPC 在 60%–140% 内采样一次整手规模。

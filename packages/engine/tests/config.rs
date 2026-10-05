@@ -529,8 +529,7 @@ fn new_negative_starting_cash_rejected() {
 
 // GameConfig::proposed_defaults() 的默认配置。
 //
-// 返回 ref 提议默认值，逐字段断言；两次调用必须相等。这些数值来自参考游戏，
-// 标注「待 msuad 确认」，尚未作为硬编码常量散落代码。
+// 默认值逐字段断言；初始资金采用用户设定，两次调用必须相等。
 
 #[test]
 fn proposed_defaults_returns_ref_proposed_values() {
@@ -555,8 +554,8 @@ fn proposed_defaults_returns_ref_proposed_values() {
     );
     assert_eq!(
         cfg.starting_cash,
-        Money::from_cents(10_000_000),
-        "starting_cash mismatch (期望 100000.00 元 = 10_000_000 分)"
+        Money::from_cents(1_000_000_000_000),
+        "starting_cash mismatch (期望 100 亿元 = 1_000_000_000_000 分)"
     );
 }
 

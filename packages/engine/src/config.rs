@@ -91,7 +91,7 @@ pub struct GameConfig {
     pub price_cage_enabled: bool,
     /// 一手股数（ref 提议: 100）。
     pub lot_size: u32,
-    /// 初始资金（ref 提议: 100000.00 元 = 10_000_000 分）。
+    /// 初始资金（默认 100 亿元 = 1_000_000_000_000 分）。
     pub starting_cash: Money,
 }
 
@@ -195,7 +195,7 @@ impl GameConfig {
             0.10,
             true,
             100,
-            Money::from_cents(10_000_000),
+            Money::from_cents(1_000_000_000_000),
         )
         .expect("proposed defaults are valid；若失败说明提议值需重新校验")
     }
