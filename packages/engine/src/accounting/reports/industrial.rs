@@ -78,11 +78,12 @@ pub struct IndustrialPresentationLines {
     pub fixed_assets_net: AccountingAmount,
     /// 递延所得税资产（1811）。
     pub deferred_tax_assets: AccountingAmount,
+    pub current_tax_assets: AccountingAmount,
     /// 短期借款（2001）。
     pub short_term_debt: AccountingAmount,
     /// 应付账款（2202）。
     pub payables: AccountingAmount,
-    /// 应交税费净额（销项 − 进项 + 应交所得税；净借方 = 留抵，如实为负）。
+    /// 应交税费净额（销项 − 进项 + 未缴所得税；所得税超缴单列资产，不抵销增值税）。
     pub taxes_payable_net: AccountingAmount,
     /// 应付利息（2231）。
     pub interest_payable: AccountingAmount,
@@ -119,6 +120,17 @@ pub fn industrial_presentation_lines(
     let bad_debt = credit_of(codes::BAD_DEBT_ALLOW)?;
     let acc_dep = debit(ledger, "1602")?;
     let acc_impair = credit_of(codes::ACC_IMPAIR)?;
+    let income_tax_balance = debit(ledger, codes::CIT_PAYABLE)?;
+    let current_tax_assets = if income_tax_balance.is_positive() {
+        income_tax_balance
+    } else {
+        AccountingAmount::ZERO
+    };
+    let income_tax_payable = if income_tax_balance.is_negative() {
+        income_tax_balance.neg()?
+    } else {
+        AccountingAmount::ZERO
+    };
     Ok(IndustrialPresentationLines {
         cash_position: debit(ledger, "1001")?.add(debit(ledger, "1002")?)?,
         receivables_net: receivable.sub(bad_debt)?,
@@ -127,12 +139,13 @@ pub fn industrial_presentation_lines(
             .add(debit(ledger, codes::WIP)?)?,
         fixed_assets_net: debit(ledger, "1601")?.add(acc_dep)?.sub(acc_impair)?,
         deferred_tax_assets: debit(ledger, codes::DTA)?,
+        current_tax_assets,
         short_term_debt: credit_of("2001")?,
         payables: credit_of("2202")?,
         taxes_payable_net: credit_of("2221")?
             .add(credit_of(codes::VAT_OUT)?)?
             .add(credit_of(codes::VAT_IN)?)?
-            .add(credit_of(codes::CIT_PAYABLE)?)?,
+            .add(income_tax_payable)?,
         interest_payable: credit_of("2231")?,
         long_term_debt: credit_of(codes::LT_DEBT)?,
         operating_revenue: credit_of("6001")?,

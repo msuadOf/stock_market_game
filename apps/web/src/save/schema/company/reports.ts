@@ -4,7 +4,7 @@ import { amount, instant, period, type CivilInstantValue, type DecimalAmount } f
 
 const reportKinds = ["Monthly", "Quarter", "HalfYear", "Annual"] as const
 const scheduledKinds = ["Annual", "Q1", "HalfYear", "Q3"] as const
-const balanceLines = ["CashFunds", "Receivables", "InsuranceReceivables", "Inventory", "DevelopmentInventory", "FixedAssets", "LoansAndAdvances", "DeferredTaxAssets", "ShortTermBorrowings", "AccountsPayable", "ContractLiabilities", "TaxesPayable", "InterestPayable", "CustomerDeposits", "LongTermBorrowings", "InsuranceContractLiabilities", "DeferredTaxLiabilities", "PaidInCapital", "RetainedEarnings", "MinorityEquity"] as const
+const balanceLines = ["CashFunds", "Receivables", "InsuranceReceivables", "Inventory", "DevelopmentInventory", "FixedAssets", "LoansAndAdvances", "DeferredTaxAssets", "CurrentTaxAssets", "ShortTermBorrowings", "AccountsPayable", "ContractLiabilities", "TaxesPayable", "InterestPayable", "CustomerDeposits", "LongTermBorrowings", "InsuranceContractLiabilities", "DeferredTaxLiabilities", "PaidInCapital", "RetainedEarnings", "MinorityEquity"] as const
 const incomeLines = ["OperatingRevenue", "OperatingCost", "SellingExpense", "AdministrativeExpense", "ResearchExpense", "ImpairmentLoss", "InterestIncome", "InterestExpense", "NetInterestIncome", "FeeAndCommissionIncome", "InsuranceRevenue", "InsuranceServiceExpense", "InsuranceServiceResult", "InsuranceFinanceExpense", "FinanceExpense", "IncomeTaxExpense"] as const
 
 export type Scope = { readonly Standalone: string } | { readonly Consolidated: string }

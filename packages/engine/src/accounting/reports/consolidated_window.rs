@@ -50,6 +50,39 @@ pub(crate) struct ConsolidationFacts {
     pub prior_split: Option<PriorSplit>,
 }
 
+pub(crate) fn report_account_keys(
+    members: &BTreeMap<MemberId, &Books>,
+) -> crate::accounting::consolidation::AccountKeys {
+    let mut keys = crate::accounting::consolidation::account_keys(members);
+    for ((member, code), key) in &mut keys {
+        if code.0 == super::industrial::codes::CIT_PAYABLE {
+            *key = LedgerAccountId(format!(
+                "member-tax:{}:{}:{}",
+                member.0.len(),
+                member.0,
+                code.0
+            ));
+        }
+    }
+    keys
+}
+
+pub(crate) fn is_current_tax_key(code: &LedgerAccountId) -> bool {
+    if code.0 == super::industrial::codes::CIT_PAYABLE {
+        return true;
+    }
+    let Some(encoded) = code.0.strip_prefix("member-tax:") else {
+        return false;
+    };
+    let Some((length, member_and_code)) = encoded.split_once(':') else {
+        return false;
+    };
+    let Ok(length) = length.parse::<usize>() else {
+        return false;
+    };
+    member_and_code.get(length..) == Some(":222104")
+}
+
 /// 合并窗口（纯函数：只读成员账套 + 申报）。
 pub(crate) fn consolidated(
     request: ConsolidationRequest<'_>,
@@ -131,14 +164,20 @@ impl WindowConsolidationBuilder {
             .iter()
             .map(|member| (member.spec.id.clone(), member.books))
             .collect();
-        self.keys = crate::accounting::consolidation::account_keys(&books);
+        self.keys = report_account_keys(&books);
         for member in members {
             if member.spec.group_parent.is_some() {
                 self.sub_ids.insert(member.spec.id.clone());
             }
             for (id, def) in member.books.ledger().chart().iter() {
                 let key = &self.keys[&(member.spec.id.clone(), id.clone())];
-                self.defs.entry(key.clone()).or_insert_with(|| def.clone());
+                self.defs.entry(key.clone()).or_insert_with(|| {
+                    let mut definition = def.clone();
+                    if id.0 == super::industrial::codes::CIT_PAYABLE {
+                        definition.name = format!("{} / {}", member.spec.id, definition.name);
+                    }
+                    definition
+                });
             }
         }
         for member in members {
@@ -453,6 +492,33 @@ mod tests {
     use crate::accounting::journal::{BusinessEventId, BusinessKind, CashFlowClass, JournalLine};
     use crate::accounting::ledger::AccountChart;
     use crate::calendar::CivilDate;
+
+    #[test]
+    fn tax_member_keys_preserve_unicode_and_delimiter_identity() {
+        let root = Books::new(crate::company::industrial::industrial_account_chart());
+        let sub = Books::new(crate::company::industrial::industrial_account_chart());
+        let root_id = MemberId("母:222104".into());
+        let sub_id = MemberId("母:222104:222104".into());
+        let keys = report_account_keys(&BTreeMap::from([
+            (root_id.clone(), &root),
+            (sub_id.clone(), &sub),
+        ]));
+        let tax = LedgerAccountId("222104".into());
+        let root_key = &keys[&(root_id, tax.clone())];
+        let sub_key = &keys[&(sub_id, tax.clone())];
+        assert_ne!(root_key, sub_key);
+        assert!(is_current_tax_key(root_key));
+        assert!(is_current_tax_key(sub_key));
+        assert!(is_current_tax_key(&tax));
+        for invalid in [
+            "member-tax:1:母:222104",
+            "member-tax:4:a:222104",
+            "1122",
+            "v2:222104",
+        ] {
+            assert!(!is_current_tax_key(&LedgerAccountId(invalid.into())));
+        }
+    }
 
     fn books(capital: i128, date: &str) -> Books {
         let mut books = Books::new(AccountChart::generic_account_chart());

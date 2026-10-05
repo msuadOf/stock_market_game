@@ -14,6 +14,134 @@ fn amount(cents: i128) -> AccountingAmount {
 }
 
 #[test]
+fn standalone_current_tax_assets_keep_deferred_assets_and_each_comparison_direction_separate() {
+    use crate::accounting::BusinessEventId;
+    use crate::accounting::reports::{
+        generate_report_set, BsLine, Comparative, IndustryPresentation, ReportKind, ReportRequest,
+        ReportSource, ReportVersion, VersionKind,
+    };
+    for opening_tax in [100_i128, -100] {
+        let mut books = crate::accounting::Books::new(industrial_account_chart());
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(1),
+                date: date("2029-12-31"),
+                kind: BusinessKind::OpeningBalance,
+                cash_flow: CashFlowClass::Financing,
+                lines: vec![
+                    line(
+                        "1002",
+                        PostingSide::Debit,
+                        amount(10_000 - opening_tax - 50),
+                    ),
+                    line("1811", PostingSide::Debit, amount(50)),
+                    line(
+                        "222104",
+                        if opening_tax > 0 {
+                            PostingSide::Debit
+                        } else {
+                            PostingSide::Credit
+                        },
+                        amount(opening_tax.abs()),
+                    ),
+                    line("4001", PostingSide::Credit, amount(10_000)),
+                ],
+            }])
+            .unwrap();
+        let adjustment: i128 = if opening_tax > 0 { 300 } else { -250 };
+        books
+            .post_batch(vec![JournalEntry {
+                source: BusinessEventId::new(2),
+                date: date("2030-06-30"),
+                kind: BusinessKind::TaxAccrual,
+                cash_flow: CashFlowClass::NonCash,
+                lines: vec![
+                    line(
+                        "6801",
+                        if adjustment > 0 {
+                            PostingSide::Debit
+                        } else {
+                            PostingSide::Credit
+                        },
+                        amount(adjustment.abs()),
+                    ),
+                    line(
+                        "222104",
+                        if adjustment > 0 {
+                            PostingSide::Credit
+                        } else {
+                            PostingSide::Debit
+                        },
+                        amount(adjustment.abs()),
+                    ),
+                    line("6801", PostingSide::Debit, amount(40)),
+                    line("222101", PostingSide::Credit, amount(40)),
+                ],
+            }])
+            .unwrap();
+        let cash = books.ledger().cash_total().unwrap();
+        let presentation =
+            crate::accounting::reports::industrial::industrial_presentation_lines(books.ledger())
+                .unwrap();
+        let current_asset = if opening_tax > 0 { 0 } else { 150 };
+        let current_liability = if opening_tax > 0 { 240 } else { 40 };
+        assert_eq!(presentation.current_tax_assets, amount(current_asset));
+        assert_eq!(presentation.deferred_tax_assets, amount(50));
+        assert_eq!(presentation.taxes_payable_net, amount(current_liability));
+        let report = generate_report_set(ReportRequest {
+            period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
+            kind: ReportKind::Annual,
+            source: ReportSource::Standalone {
+                id: crate::accounting::consolidation::MemberId("TAX-PRESENTATION".into()),
+                books: &books,
+                industry: IndustryPresentation::Industrial,
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &std::collections::BTreeMap::new(),
+        })
+        .unwrap();
+        let line_value = |lines: &[(BsLine, AccountingAmount)], target| {
+            lines
+                .iter()
+                .find(|(line, _)| *line == target)
+                .map(|(_, value)| *value)
+                .unwrap_or(AccountingAmount::ZERO)
+        };
+        assert_eq!(
+            line_value(&report.balance_sheet.asset_lines, BsLine::CurrentTaxAssets),
+            amount(current_asset)
+        );
+        assert_eq!(
+            line_value(&report.balance_sheet.asset_lines, BsLine::DeferredTaxAssets),
+            amount(50)
+        );
+        assert_eq!(
+            line_value(&report.balance_sheet.liability_lines, BsLine::TaxesPayable),
+            amount(current_liability)
+        );
+        let Comparative::Available(prior) = &report.balance_sheet.prior_year_end else {
+            panic!("真实开局余额必须提供上年末比较项")
+        };
+        assert_eq!(
+            line_value(prior, BsLine::CurrentTaxAssets),
+            amount(opening_tax.max(0))
+        );
+        assert_eq!(line_value(prior, BsLine::DeferredTaxAssets), amount(50));
+        assert_eq!(
+            line_value(prior, BsLine::TaxesPayable),
+            amount((-opening_tax).max(0))
+        );
+        report.validate().unwrap();
+        assert_eq!(books.ledger().cash_total().unwrap(), cash);
+    }
+}
+
+
+#[test]
 fn audit_credit_arithmetic_error_is_not_reported_as_missing_credit() {
     let mut books = IndustrialBooks::new(config()).unwrap();
     let start = date("2030-01-01");

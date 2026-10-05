@@ -121,7 +121,7 @@ impl ReportClassification {
             .iter()
             .map(|member| (member.spec.id.clone(), member.books))
             .collect();
-        let keys = crate::accounting::consolidation::account_keys(&books);
+        let keys = super::consolidated_window::report_account_keys(&books);
         let mut assignments = BTreeMap::new();
         for member in members {
             let industry = super::industry_of_chart(member.books.ledger().chart())?;
@@ -223,7 +223,7 @@ pub(crate) fn build_notes(
         items.push(NoteItem {
             code: code.0.clone(),
             name,
-            target: target.clone(),
+            target: super::balance_sheet::effective_target(code, target, closing),
             opening: closing.sub(movement)?,
             movement,
             ytd_movement: ytd,
@@ -285,6 +285,7 @@ impl BsLine {
             BsLine::FixedAssets => "固定资产",
             BsLine::LoansAndAdvances => "贷款及垫款",
             BsLine::DeferredTaxAssets => "递延所得税资产",
+            BsLine::CurrentTaxAssets => "当期所得税资产",
             BsLine::ShortTermBorrowings => "短期借款",
             BsLine::AccountsPayable => "应付账款",
             BsLine::ContractLiabilities => "合同负债",

@@ -157,6 +157,187 @@ fn bs_amount(set: &engine::accounting::reports::ReportSet, line: BsLine) -> Acco
 }
 
 #[test]
+fn consolidated_current_tax_balances_preserve_separate_taxpayers_and_prior_year() {
+    use crate::fixture::{books_with, entry};
+    use engine::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
+    use engine::accounting::reports::NoteTarget;
+    use engine::accounting::{BusinessKind, CashFlowClass, PostingSide};
+    let make_books = |tax_side, amount| {
+        let cash = if tax_side == PostingSide::Debit {
+            100 - amount
+        } else {
+            100 + amount
+        };
+        books_with(
+            engine::company::industrial::industrial_account_chart(),
+            vec![entry(
+                1,
+                "2029-12-31",
+                BusinessKind::OpeningBalance,
+                CashFlowClass::Financing,
+                &[
+                    ("1002", PostingSide::Debit, cash),
+                    ("222104", tax_side, amount),
+                    ("4001", PostingSide::Credit, 100),
+                ],
+            )],
+        )
+    };
+    for (overpaid, payable) in [(30, 30), (30, 50), (50, 30)] {
+        let parent = make_books(PostingSide::Debit, overpaid);
+        let sub = make_books(PostingSide::Credit, payable);
+        let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+            spec: MemberSpec {
+                id: MemberId(id.into()),
+                group_parent: parent.map(|id| MemberId(id.into())),
+                issued_shares: 100,
+                parent_held_shares: held,
+            },
+            books,
+        };
+        let set = generate_report_set(ReportRequest {
+            period: AccountingPeriod::from_iso("2030-03").unwrap(),
+            kind: ReportKind::Monthly,
+            source: ReportSource::Consolidated {
+                request: ConsolidationRequest {
+                    root: MemberId("root".into()),
+                    members: vec![
+                        member("root", None, 0, &parent),
+                        member("sub", Some("root"), 80, &sub),
+                    ],
+                    intercompany_balances: vec![],
+                    intercompany_sales: vec![],
+                },
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &BTreeMap::new(),
+        })
+        .unwrap();
+        set.validate().unwrap();
+        assert_eq!(bs_amount(&set, BsLine::CurrentTaxAssets), yuan(overpaid));
+        assert_eq!(bs_amount(&set, BsLine::TaxesPayable), yuan(payable));
+        assert_eq!(set.balance_sheet.total_assets, yuan(200 + payable));
+        assert_eq!(set.balance_sheet.total_liabilities, yuan(payable));
+        assert_eq!(set.cash_flow.closing_cash, yuan(200 - overpaid + payable));
+        let Comparative::Available(prior) = &set.balance_sheet.prior_year_end else {
+            panic!("prior required")
+        };
+        assert!(prior.contains(&(BsLine::CurrentTaxAssets, yuan(overpaid))));
+        assert!(prior.contains(&(BsLine::TaxesPayable, yuan(payable))));
+        assert!(set.notes.items.iter().any(|item| item.target
+            == NoteTarget::BalanceSheet(BsLine::CurrentTaxAssets)
+            && item.closing == yuan(overpaid)
+            && item.opening == yuan(overpaid)
+            && item.movement.is_zero()));
+        assert!(set.notes.items.iter().any(|item| item.target
+            == NoteTarget::BalanceSheet(BsLine::TaxesPayable)
+            && item.closing == yuan(-payable)
+            && item.opening == yuan(-payable)
+            && item.movement.is_zero()));
+    }
+}
+
+#[test]
+fn consolidated_tax_assets_classify_prior_and_current_balances_independently() {
+    use crate::fixture::{books_with, entry};
+    use engine::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
+    use engine::accounting::reports::NoteTarget;
+    use engine::accounting::{BusinessKind, CashFlowClass, PostingSide};
+    let make_books = |tax_side, amount, adjustment_side| {
+        let cash = if tax_side == PostingSide::Debit {
+            100 - amount
+        } else {
+            100 + amount
+        };
+        let expense_side = if adjustment_side == PostingSide::Debit {
+            PostingSide::Credit
+        } else {
+            PostingSide::Debit
+        };
+        books_with(
+            engine::company::industrial::industrial_account_chart(),
+            vec![
+                entry(
+                    1,
+                    "2029-12-31",
+                    BusinessKind::OpeningBalance,
+                    CashFlowClass::Financing,
+                    &[
+                        ("1002", PostingSide::Debit, cash),
+                        ("222104", tax_side, amount),
+                        ("4001", PostingSide::Credit, 100),
+                    ],
+                ),
+                entry(
+                    2,
+                    "2030-03-01",
+                    BusinessKind::TaxAccrual,
+                    CashFlowClass::NonCash,
+                    &[("222104", adjustment_side, 50), ("6801", expense_side, 50)],
+                ),
+            ],
+        )
+    };
+    let parent = make_books(PostingSide::Debit, 30, PostingSide::Credit);
+    let child = make_books(PostingSide::Credit, 40, PostingSide::Debit);
+    let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+        spec: MemberSpec {
+            id: MemberId(id.into()),
+            group_parent: parent.map(|id| MemberId(id.into())),
+            issued_shares: 100,
+            parent_held_shares: held,
+        },
+        books,
+    };
+    let set = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-03").unwrap(),
+        kind: ReportKind::Monthly,
+        source: ReportSource::Consolidated {
+            request: ConsolidationRequest {
+                root: MemberId("root".into()),
+                members: vec![
+                    member("root", None, 0, &parent),
+                    member("child", Some("root"), 80, &child),
+                ],
+                intercompany_balances: vec![],
+                intercompany_sales: vec![],
+            },
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .unwrap();
+    set.validate().unwrap();
+    assert_eq!(bs_amount(&set, BsLine::CurrentTaxAssets), yuan(10));
+    assert_eq!(bs_amount(&set, BsLine::TaxesPayable), yuan(20));
+    let Comparative::Available(prior) = &set.balance_sheet.prior_year_end else {
+        panic!("prior required")
+    };
+    assert!(prior.contains(&(BsLine::CurrentTaxAssets, yuan(30))));
+    assert!(prior.contains(&(BsLine::TaxesPayable, yuan(40))));
+    assert_eq!(set.cash_flow.closing_cash, yuan(210));
+    assert_eq!(set.cash_flow.operating, AccountingAmount::ZERO);
+    assert!(set.notes.items.iter().any(|item| item.target
+        == NoteTarget::BalanceSheet(BsLine::CurrentTaxAssets)
+        && item.opening == yuan(-40)
+        && item.movement == yuan(50)
+        && item.closing == yuan(10)));
+    assert!(set.notes.items.iter().any(|item| item.target
+        == NoteTarget::BalanceSheet(BsLine::TaxesPayable)
+        && item.opening == yuan(30)
+        && item.movement == yuan(-50)
+        && item.closing == yuan(-20)));
+}
+
+#[test]
 fn consolidated_missing_parent_income_is_rejected_at_report_validation() {
     let parent = group_parent_books();
     let sub = group_sub_books();

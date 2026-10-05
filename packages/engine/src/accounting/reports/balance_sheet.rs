@@ -30,6 +30,7 @@ pub enum BsLine {
     FixedAssets,
     LoansAndAdvances,
     DeferredTaxAssets,
+    CurrentTaxAssets,
     ShortTermBorrowings,
     AccountsPayable,
     ContractLiabilities,
@@ -55,6 +56,7 @@ impl BsLine {
         BsLine::FixedAssets,
         BsLine::LoansAndAdvances,
         BsLine::DeferredTaxAssets,
+        BsLine::CurrentTaxAssets,
         BsLine::ShortTermBorrowings,
         BsLine::AccountsPayable,
         BsLine::ContractLiabilities,
@@ -102,6 +104,7 @@ impl BsLine {
                 | FixedAssets
                 | LoansAndAdvances
                 | DeferredTaxAssets
+                | CurrentTaxAssets
         )
     }
 
@@ -134,10 +137,29 @@ pub struct BalanceSheet {
     pub prior_year_end: Comparative<Vec<(BsLine, AccountingAmount)>>,
 }
 
-fn has_line(classification: &ReportClassification, line: BsLine) -> bool {
+fn has_line(
+    classification: &ReportClassification,
+    line: BsLine,
+    map: &BTreeMap<LedgerAccountId, AccountingAmount>,
+) -> bool {
     classification
         .iter()
-        .any(|(_, target)| matches!(target, NoteTarget::BalanceSheet(l) if *l == line))
+        .any(|(code, target)| matches!(effective_target(code, target, map.get(code).copied().unwrap_or(AccountingAmount::ZERO)), NoteTarget::BalanceSheet(candidate) if candidate == line))
+}
+
+pub(crate) fn effective_target(
+    code: &LedgerAccountId,
+    target: &NoteTarget,
+    value: AccountingAmount,
+) -> NoteTarget {
+    if super::consolidated_window::is_current_tax_key(code)
+        && value.is_positive()
+        && *target == NoteTarget::BalanceSheet(BsLine::TaxesPayable)
+    {
+        NoteTarget::BalanceSheet(BsLine::CurrentTaxAssets)
+    } else {
+        target.clone()
+    }
 }
 
 /// 行值 = 归类科目净借方按正常方向折算（备抵自然冲减）。
@@ -148,8 +170,9 @@ pub(crate) fn signed_sum(
 ) -> Result<AccountingAmount, ReportError> {
     let mut total = AccountingAmount::ZERO;
     for (code, target) in classification.iter() {
-        if matches!(target, NoteTarget::BalanceSheet(l) if *l == line) {
-            let value = map.get(code).copied().unwrap_or(AccountingAmount::ZERO);
+        let value = map.get(code).copied().unwrap_or(AccountingAmount::ZERO);
+        if matches!(effective_target(code, target, value), NoteTarget::BalanceSheet(candidate) if candidate == line)
+        {
             let signed = if line.credit_positive() {
                 value.neg()?
             } else {
@@ -172,7 +195,7 @@ pub(crate) fn generate(
     let mut liability_lines = Vec::new();
     let mut total_liabilities = AccountingAmount::ZERO;
     for line in BsLine::ALL {
-        if !has_line(classification, *line) {
+        if !has_line(classification, *line, &windows.closing) {
             continue;
         }
         let value = signed_sum(&windows.closing, classification, *line)?;
@@ -229,7 +252,10 @@ fn prior_lines(
 ) -> Result<Vec<(BsLine, AccountingAmount)>, ReportError> {
     let mut lines = Vec::new();
     for line in BsLine::ALL {
-        if !has_line(classification, *line) || line.is_derived() || *line == BsLine::PaidInCapital {
+        if !has_line(classification, *line, prior)
+            || line.is_derived()
+            || *line == BsLine::PaidInCapital
+        {
             continue;
         }
         lines.push((*line, signed_sum(prior, classification, *line)?));
