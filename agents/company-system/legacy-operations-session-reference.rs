@@ -194,7 +194,6 @@ fn session_year_end_failure_rolls_back_tax_and_depreciation_before_retry() {
 }
 
 "##;
-
 const LEGACY_INDUSTRY_SESSIONS: &str = r##"
 use super::fixtures::*;
 use super::session_boundary::session_with_company;
@@ -293,4 +292,3 @@ fn real_insurance_session_publishes_nonempty_demand_material_not_production_shoc
 }
 
 "##;
-

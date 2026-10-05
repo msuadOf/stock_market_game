@@ -1,6 +1,7 @@
 # Browser IndexedDB 存档批次独立复核
 
-审查日期：2026-10-05 至 2026-10-06  
+审查日期：2026-10-05 至 2026-10-06
+
 审查范围：`agents/day-end-storage/browser.md` 所列 Browser IndexedDB 存档 hunk 及相关跨层接线，并包括 root 后续授权的 UI 合并生命周期 group：`usePausePreferences.ts`、`useSaveCommands.ts`、`useSessionHostLifecycle.ts`、相关命令／生命周期／Worker ownership 测试、`DayEndPersistence`、授权 synthetic fixture 两个新增空事实，以及旧单槽 IndexedDB adapter 与专属 suite 退休。只读复核，未修改实现、未操作 Git index、未运行 Cargo 或测试命令。
 
 ## 依据与结论

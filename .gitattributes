@@ -18,3 +18,6 @@
 *.woff binary
 *.woff2 binary
 *.pdf binary
+
+# 保留工作补丁中空白上下文行所需的单个空格，不放宽源码空白检查。
+agents/**/*.patch whitespace=-blank-at-eol
