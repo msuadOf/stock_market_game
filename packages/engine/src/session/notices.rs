@@ -171,7 +171,6 @@ impl GameSession {
                     .collect();
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
-                codes.extend(belief.entry_stocks().cloned());
                 for code in &codes {
                     let Some(company) = self.state.company_registry.issuer_of(code) else {
                         continue;
@@ -342,6 +341,171 @@ impl GameSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn day_end_information_subscription_requires_current_holding_watchlist_or_active_plan() {
+        for qualification in ["faded", "held", "watched", "active_plan"] {
+            let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+            setup.stocks[0].float_shares = if qualification == "held" { 100 } else { 0 };
+            setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
+            let mut session = GameSession::new(setup, 42).unwrap();
+            let account = AccountId(1);
+            let code = session.state.setup.stocks[0].code.clone();
+            let company = session
+                .state
+                .company_registry
+                .issuer_of(&code)
+                .unwrap()
+                .clone();
+            session
+                .state
+                .belief_participants
+                .get_mut(&account)
+                .unwrap()
+                .watchlist_mut()
+                .record_attention(&code, 0, 0)
+                .unwrap();
+            session
+                .deliver_public_information(session.observation_civil_instant())
+                .unwrap();
+            let old_belief = session.state.belief_participants[&account]
+                .belief()
+                .entry(&code)
+                .unwrap()
+                .clone();
+            let old_information = session.state.belief_participants[&account]
+                .information()
+                .clone();
+            if qualification != "watched" {
+                session
+                    .state
+                    .belief_participants
+                    .get_mut(&account)
+                    .unwrap()
+                    .watchlist_mut()
+                    .stocks
+                    .remove(&code);
+            }
+            if qualification == "active_plan" {
+                session
+                    .state
+                    .plans
+                    .create(crate::plans::PlanOpen {
+                        account,
+                        code: code.clone(),
+                        direction: Side::Buy,
+                        target: crate::plans::PlanTarget::ShareCount(100),
+                        opinion: crate::plans::PlanOpinion {
+                            signal_score_bp: 8000,
+                            source: crate::plans::OpinionSource::Blended,
+                        },
+                        confidence_bp: 6000,
+                        urgency: crate::plans::Urgency::Patient,
+                        horizon_trading_days: 20,
+                        created_trading_day: 0,
+                    })
+                    .unwrap();
+            }
+            match qualification {
+                "held" => assert_eq!(
+                    session.state.accounts[&account]
+                        .position(&code)
+                        .unwrap()
+                        .qty(),
+                    100
+                ),
+                "watched" => assert!(session.state.belief_participants[&account]
+                    .watchlist()
+                    .stock(&code)
+                    .is_some()),
+                "active_plan" => assert!(session.state.plans.active_plan(account, &code).is_some()),
+                "faded" => {
+                    assert!(!session.state.accounts[&account]
+                        .positions()
+                        .contains_key(&code));
+                    assert!(session.state.belief_participants[&account]
+                        .watchlist()
+                        .stock(&code)
+                        .is_none());
+                    assert!(session.state.plans.active_plan(account, &code).is_none());
+                }
+                _ => unreachable!(),
+            }
+            let date = session.civil_date();
+            std::sync::Arc::make_mut(&mut session.state.operations)
+                .apply_company_shock(
+                    &company,
+                    crate::company::ActiveShock {
+                        kind: crate::company::ShockKind::ContractWon,
+                        amplitude_bp: 500,
+                        starts_on: date,
+                        expires_on: date.next().unwrap(),
+                    },
+                )
+                .unwrap();
+            let day_end = session.end_civil_day().unwrap();
+            let publication = day_end
+                .events
+                .iter()
+                .find_map(|event| {
+                    let Event::CompanyDisclosurePublished {
+                        publication_id,
+                        company: issuer,
+                        kind: CompanyDisclosureKind::Announcement,
+                        ..
+                    } = event
+                    else {
+                        return None;
+                    };
+                    let announcement = session
+                        .state
+                        .library
+                        .announcement(*publication_id, day_end.disclosure_instant)
+                        .unwrap();
+                    (issuer == &company
+                        && matches!(
+                            announcement.event.kind,
+                            crate::company::ShockKind::ContractWon
+                        ))
+                    .then_some(*publication_id)
+                })
+                .expect("真实日终经营公告必须已公开");
+            let participant = &session.state.belief_participants[&account];
+            if qualification == "faded" {
+                assert!(!session.state.accounts[&account]
+                    .positions()
+                    .contains_key(&code));
+                assert!(participant.watchlist().stock(&code).is_none());
+                assert!(session.state.plans.active_plan(account, &code).is_none());
+                assert_eq!(
+                    participant.information().observed_at_of(publication),
+                    None,
+                    "历史belief不能恢复已经淡出的订阅资格"
+                );
+                assert_eq!(participant.information().save(), old_information.save());
+                assert_eq!(participant.belief().entry(&code), Some(&old_belief));
+            } else {
+                assert_eq!(
+                    participant.information().observed_at_of(publication),
+                    Some(day_end.disclosure_instant),
+                    "有效订阅资格 {qualification} 必须继续接收相关公开公告"
+                );
+                assert!(participant.belief().entry(&code).is_some());
+            }
+            let saved = session.save().unwrap();
+            let restored = GameSession::restore(&saved).unwrap();
+            assert_eq!(
+                restored.state.belief_participants[&account]
+                    .information()
+                    .save(),
+                participant.information().save()
+            );
+            assert_eq!(
+                restored.state.belief_participants[&account].belief(),
+                participant.belief()
+            );
+        }
+    }
 
     #[test]
     fn information_check_cadence_preserves_personal_natural_month_and_half_day_schedule() {
