@@ -29,7 +29,7 @@ export interface SaveCommandPorts {
   activeSetup: SessionSetup;
   startDateDraft: string;
   priceCageEnabledDraft: boolean;
-  loadFromFile(): Promise<StrictSaveEnvelope | null>;
+  loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
   getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
   resetMarketHistory(snapshot: Snapshot): void;
@@ -65,7 +65,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     const recoveryGeneration = sessionReplacementGateRef.current.begin();
     if (recoveryGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
     try {
-      const slot = await loadFromFile();
+      const slot = await loadFromFile(() => dayEndPersistenceRef.current.beforeRead());
       if (!sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) return;
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);
@@ -178,7 +178,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     saveSelectionGenerationRef.current += 1;
     const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
-      const slot = await loadFromFile();
+      const slot = await loadFromFile(() => dayEndPersistenceRef.current.beforeRead());
       if (!isCurrent()) return;
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);

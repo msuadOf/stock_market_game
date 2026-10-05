@@ -23,7 +23,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     speedMetricsLoadInProgressRef: { current: false }, speedMetricsRequestGateRef: { current: new SpeedMetricsRequestGate() },
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
     activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false,
-    loadFromFile: async () => archive, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
+    loadFromFile: async beforeRead => { await beforeRead?.(); return archive; }, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
     getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
     configureMarketTiming: () => { calls.push("timing"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
@@ -168,6 +168,29 @@ test("恢复入口等待旧日终写入屏障，选择首次读档源并请求�
   assert.deepEqual(f.calls, ["orders-clear", "error:null", "ready:false", "session-setup"]);
   assert.deepEqual(f.setup(), f.archive.setup); assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => null), f.archive);
 });
+
+test("文件读档与错误恢复传入提交屏障，读取前不取消当前日终写入", { timeout: 10000 }, async () => {
+  for (const kind of ["loadFile", "recoverFromFile"] as const) {
+    const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+    const queue = f.ports.dayEndPersistenceRef.current; queue.install("current");
+    let reads = 0;
+    const writing = queue.completed("current", Promise.resolve(f.archive), async (_slot, current) => {
+      entered.resolve(); await commit.promise;
+      assert.equal(current(), true);
+    });
+    await entered.promise;
+    f.ports.loadFromFile = async beforeRead => {
+      assert.equal(typeof beforeRead, "function");
+      await beforeRead!(); reads++; return f.archive;
+    };
+    const loading = createSaveCommands(f.ports)[kind]();
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(reads, 0); assert.deepEqual(f.calls, []);
+    commit.resolve(); await Promise.all([writing, loading]);
+    assert.equal(reads, 1);
+    assert.equal(f.calls.some(call => call === (kind === "loadFile" ? "load" : "session-setup")), true);
+  }
+});
 test("新局日期错误不进入替换；合法新局只请求重建并保留价格笼子草稿", async () => {
   const f = fixture(); f.ports.startDateDraft = "不存在日期"; await createSaveCommands(f.ports).newGame();
   assert.match(f.calls[0], /date-error:/); assert.equal(f.setup(), null); assert.equal(f.ports.saveSelectionGenerationRef.current, 0);
@@ -175,6 +198,27 @@ test("新局日期错误不进入替换；合法新局只请求重建并保留�
   assert.deepEqual(f.calls, ["date-error:null", "orders-clear", "error:null", "ready:false", "session-setup"]);
   assert.equal(f.setup()?.start_date, "2031-02-03"); assert.equal(f.setup()?.config.price_cage_enabled, false);
   let reads = 0; assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { reads++; return f.archive; }), null); assert.equal(reads, 0);
+});
+
+test("新局使旧日终写入失效，并等待写入退出后才请求重建", { timeout: 10000 }, async () => {
+  const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
+  const queue = f.ports.dayEndPersistenceRef.current; queue.install("old");
+  let written = false;
+  const writing = queue.completed("old", Promise.resolve(f.archive), async (_slot, current) => {
+    entered.resolve(); await commit.promise;
+    if (!current()) return false;
+    written = true;
+  });
+  await entered.promise;
+  const replacing = f.commands.newGame();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(f.setup(), null);
+  assert.deepEqual(f.calls, ["date-error:null"]);
+  commit.resolve();
+  assert.equal(await writing, false); await replacing;
+  assert.equal(written, false);
+  assert.equal(f.setup()?.start_date, "2031-02-03");
+  assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => f.archive), null);
 });
 
 test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同一入口可以重新读档", async () => {

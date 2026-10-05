@@ -104,7 +104,7 @@ async function selectViaTauri(): Promise<DayEndFileTarget | null> {
 }
 
 /** 用 Tauri 原生对话框选择文件并读回。返回解析后的对象；用户取消返回 null。 */
-async function loadViaTauri(): Promise<unknown | null> {
+async function loadViaTauri(beforeRead?: () => Promise<void>): Promise<unknown | null> {
   const path = await openDialog({
     multiple: false,
     directory: false,
@@ -117,6 +117,7 @@ async function loadViaTauri(): Promise<unknown | null> {
   if (typeof p !== "string" || p.length === 0) {
     throw new Error("未选择有效文件路径");
   }
+  await beforeRead?.();
   const text = await readTextFile(p);
   return parseSaveJson(text);
 }
@@ -172,19 +173,22 @@ async function selectViaFsAccess(): Promise<DayEndFileTarget> {
   };
 }
 
-async function loadViaFsAccess(): Promise<unknown | null> {
+async function loadViaFsAccess(beforeRead?: () => Promise<void>): Promise<unknown | null> {
   const w = window as unknown as {
     showOpenFilePicker: (opts: unknown) => Promise<FileSystemFileHandle[]>;
   };
-  const [handle] = await w.showOpenFilePicker({
-    multiple: false,
-    types: [
-      {
-        description: "股票存档",
-        accept: { [SAVE_MIME]: [`.${SAVE_EXT}`] },
-      },
-    ],
-  });
+  let handles: FileSystemFileHandle[];
+  try {
+    handles = await w.showOpenFilePicker({
+      multiple: false,
+      types: [{ description: "股票存档", accept: { [SAVE_MIME]: [`.${SAVE_EXT}`] } }],
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return null;
+    throw error;
+  }
+  const [handle] = handles;
+  await beforeRead?.();
   const file = await handle.getFile();
   const text = await file.text();
   return parseSaveJson(text);
@@ -198,7 +202,7 @@ async function loadViaFsAccess(): Promise<unknown | null> {
  * 弹出隐藏的 `<input type=file>` 让用户选一个文件并读回。
  * 用户取消 → resolve(null)；读取失败 → reject。
  */
-function loadViaUpload(): Promise<unknown | null> {
+function loadViaUpload(beforeRead?: () => Promise<void>): Promise<unknown | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -212,8 +216,8 @@ function loadViaUpload(): Promise<unknown | null> {
         if (!settled) { settled = true; resolve(null); }
         return;
       }
-      file
-        .text()
+      Promise.resolve().then(() => beforeRead?.())
+        .then(() => file.text())
         .then((text) => {
           try {
             resolve(parseSaveJson(text));
@@ -273,21 +277,21 @@ export async function selectDayEndFileTarget(): Promise<DayEndFileTarget | null>
 
 /**
  * 从文件读档。环境自适应。
+ * 选择器先打开；选中后由调用方屏障等待日终提交，再读取文件。取消不进入屏障。
  * @returns 存档对象；用户取消返回 null。失败抛出 Error。
  */
-export async function loadFromFile(): Promise<StrictSaveEnvelope | null> {
+export async function loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null> {
   let loaded: unknown | null;
   if (isTauri()) {
-    loaded = await loadViaTauri();
+    loaded = await loadViaTauri(beforeRead);
   } else if (hasFsAccessApi()) {
     try {
-      loaded = await loadViaFsAccess();
+      loaded = await loadViaFsAccess(beforeRead);
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") return null;
       throw new Error(`文件读取失败：${e instanceof Error ? e.message : String(e)}`);
     }
   } else {
-    loaded = await loadViaUpload();
+    loaded = await loadViaUpload(beforeRead);
   }
   return loaded === null ? null : parseSaveSlot(loaded);
 }

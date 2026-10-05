@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test, type TestContext } from "node:test";
 import { createServer, type ViteDevServer } from "vite";
 import { currentSaveFixture } from "./current-save-fixture.ts";
+import { DayEndPersistence } from "./day-end-persistence.ts";
 
 let vite: ViteDevServer;
 let files: typeof import("./save-file.ts");
@@ -217,6 +218,82 @@ test("loadFromFile 保留读档行为，读后不创建 writable 或写回文件
   assert.deepEqual(browser.calls, ["getFile"]);
 });
 
+test("选择正在写入的日终文件后等待提交，再获取新 File；取消不等待或取消写入", { timeout: 10000 }, async (context) => {
+  const old = currentSaveFixture(); old.seed = "41";
+  const next = currentSaveFixture();
+  let stored = JSON.stringify(old), reads = 0, selected = 0;
+  let release!: () => void;
+  const commit = new Promise<void>(resolve => { release = resolve; });
+  const queue = new DayEndPersistence(); queue.install("current");
+  const writing = queue.completed("current", Promise.resolve(next), async (_slot, current) => {
+    await commit;
+    assert.equal(current(), true);
+    stored = JSON.stringify(next);
+  });
+  installWindowMock(context, {
+    showSaveFilePicker: async () => {},
+    showOpenFilePicker: async () => { selected++; return [{ getFile: async () => { reads++; const text = stored; return { text: async () => text }; } }]; },
+  });
+  const loading = files.loadFromFile(() => queue.beforeRead());
+  try {
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    assert.equal(selected, 1, "选择器在等待前打开，保留用户激活");
+    assert.equal(reads, 0, "未提交前不能抓取旧 File");
+  } finally { release(); await writing; }
+  assert.equal((await loading)?.seed, "42");
+  let barriers = 0;
+  installWindowMock(context, {
+    showSaveFilePicker: async () => {},
+    showOpenFilePicker: async () => { throw new DOMException("cancelled", "AbortError"); },
+  });
+  assert.equal(await files.loadFromFile(async () => { barriers++; }), null);
+  assert.equal(barriers, 0);
+});
+
+test("日终文件写入屏障失败明确拒绝读取旧内容", { timeout: 10000 }, async (context) => {
+  let reads = 0;
+  installWindowMock(context, {
+    showSaveFilePicker: async () => {},
+    showOpenFilePicker: async () => [{ getFile: async () => { reads++; return { text: async () => JSON.stringify(currentSaveFixture()) }; } }],
+  });
+  for (const failure of [new Error("日终文件写入失败"), new DOMException("日终文件写入失败", "AbortError")]) {
+    await assert.rejects(files.loadFromFile(async () => { throw failure; }), /日终文件写入失败/);
+  }
+  assert.equal(reads, 0);
+});
+
+test("上传读档选中文件后等待屏障，屏障失败不读，取消不进入屏障", { timeout: 10000 }, async (context) => {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  context.after(() => {
+    if (originalDocument === undefined) Reflect.deleteProperty(globalThis, "document");
+    else Object.defineProperty(globalThis, "document", originalDocument);
+  });
+  let reads = 0;
+  let selected = true;
+  Object.defineProperty(globalThis, "document", { configurable: true, value: {
+    createElement: () => Object.assign(new EventTarget(), {
+      style: {},
+      files: selected ? [{ text: async () => { reads++; return JSON.stringify(currentSaveFixture()); } }] : [],
+      click(this: EventTarget) { this.dispatchEvent(new Event("change")); },
+      remove() {},
+    }), body: { appendChild: () => {} },
+  } });
+  installWindowMock(context, { addEventListener: () => {} });
+  let release!: () => void;
+  const commit = new Promise<void>(resolve => { release = resolve; });
+  const loading = files.loadFromFile(() => commit);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(reads, 0);
+  release(); assert.equal((await loading)?.seed, "42");
+  assert.equal(reads, 1);
+  await assert.rejects(files.loadFromFile(async () => { throw new Error("日终写入失败"); }), /日终写入失败/);
+  assert.equal(reads, 1);
+  selected = false;
+  let barriers = 0;
+  assert.equal(await files.loadFromFile(async () => { barriers++; }), null);
+  assert.equal(barriers, 0);
+});
+
 function tauriTarget(context: TestContext, hooks: {
   failAt?: string;
   cleanupError?: unknown;
@@ -231,6 +308,12 @@ function tauriTarget(context: TestContext, hooks: {
       invoke: async (command: string, args: Record<string, unknown>, options?: { headers: Record<string, string> }) => {
         calls.push(command);
         if (command === "plugin:dialog|save") return Object.hasOwn(hooks, "selection") ? hooks.selection : "/virtual/save.json";
+        if (command === "plugin:dialog|open") return "/virtual/save.json";
+        if (command === "plugin:fs|read_text_file") {
+          const text = paths.get(String(args.path));
+          assert.equal(typeof text, "string");
+          return [...new TextEncoder().encode(text)];
+        }
         if (command === "plugin:fs|open") {
           assert.notEqual(args.path, "/virtual/save.json");
           assert.match(String(args.path), /^\/virtual\/stock-game-day-end-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/);
@@ -271,6 +354,21 @@ function tauriTarget(context: TestContext, hooks: {
   });
   return { calls, paths, nativeError };
 }
+
+test("Tauri 选中文件后等待屏障再读取路径；屏障失败不读旧文件", { timeout: 10000 }, async (context) => {
+  const native = tauriTarget(context);
+  native.paths.set("/virtual/save.json", JSON.stringify(currentSaveFixture()));
+  let release!: () => void;
+  const commit = new Promise<void>(resolve => { release = resolve; });
+  const loading = files.loadFromFile(() => commit);
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(native.calls, ["plugin:dialog|open"]);
+  release(); assert.equal((await loading)?.seed, "42");
+  assert.deepEqual(native.calls, ["plugin:dialog|open", "plugin:fs|read_text_file"]);
+  native.calls.length = 0;
+  await assert.rejects(files.loadFromFile(async () => { throw new Error("日终写入失败"); }), /日终写入失败/);
+  assert.deepEqual(native.calls, ["plugin:dialog|open"]);
+});
 
 test("Tauri 选择仅复用路径，两次写入都先生成独占同目录临时文件再 rename", async (context) => {
   const native = tauriTarget(context);
