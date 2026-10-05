@@ -146,10 +146,13 @@
 .desktop-terminal[data-view="stock"] .market-chart-slot { grid-column: 1; grid-row: 2; min-height: 0; overflow: auto; }
 .desktop-terminal .shared-intraday-host > .price-chart { height: 100%; }
 .desktop-terminal .shared-kline-host > .msd-kline { height: 100%; min-height: 465px; display: flex; flex-direction: column; }
-.desktop-terminal .market-chart-slot .msd-candle-chart { flex: 1; min-height: 190px; }
+.desktop-terminal .market-chart-slot .kline-price-plot { flex: 1; min-height: 190px; }
 .desktop-terminal .market-chart-slot .msd-kline-meta { height: auto; min-height: 32px; flex: none; }
 .desktop-terminal .market-chart-slot .msd-chart-tools { position: static; flex: none; height: 30px; }
-.desktop-terminal .market-chart-slot .msd-k-volume, .desktop-terminal .market-chart-slot .msd-kdj { flex: none; }
+.desktop-terminal .kline-coordinate-plot { grid-template-columns: var(--kline-axis-width) minmax(0, 1fr) var(--kline-axis-width); }
+.desktop-terminal .kline-coordinate-mirror { display: block; text-align: right; }
+.desktop-terminal .kline-coordinate-mirror > span { left: 2px; right: 4px; }
+.desktop-terminal .kline-time-row { padding-left: var(--kline-axis-width); }
 
 .desktop-terminal .shared-kline-host, .desktop-terminal .shared-intraday-host { height: 100%; }
 
@@ -186,10 +189,10 @@
 .desktop-terminal[data-trading-open="true"][data-view="stock"] .terminal-body { grid-template-rows: minmax(280px, 1fr) 36px; }
 .desktop-terminal[data-trading-open="true"][data-view="stock"] .chart-panel { grid-template-rows: auto minmax(0, 1fr); }
 .desktop-terminal[data-trading-open="true"] .shared-kline-host > .msd-kline { min-height: 290px; }
-.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-candle-chart { min-height: 80px; }
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-price-plot { min-height: 80px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-volume-title,
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kdj-title { flex: none; height: 20px; padding: 2px 8px; }
-.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-k-volume,
-.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kdj { height: 40px; min-height: 24px; flex: 0 1 40px; }
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-volume-plot,
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-indicator-plot { height: 40px; min-height: 24px; flex: 0 1 40px; }
 @media (max-width: 1100px) { .terminal-dock-content { grid-template-columns: 350px minmax(0, 1fr); } }
 @media (max-height: 650px) { .terminal-trading-region[data-expanded="dock"] { flex-basis: 220px; } }

@@ -75,3 +75,25 @@ test("长均线超出可见蜡烛区间时仍纳入价格域", { timeout: 10000 
   assert.ok(p.priceY(85) >= 0);
   assert.ok(p.priceY(85) <= 190);
 });
+
+test("坐标与曲线共用价格及KDJ范围，平价留出空间且不出现负价", { timeout: 10000 }, () => {
+  const p = model.MobileKlineProjection.fromInputs([candle(0)], { capacity: 72, offsetFromEnd: 0 }, pending, [85]);
+  assert.deepEqual(p.priceScale, { min: 9, max: 85 });
+  assert.equal(p.priceY(p.priceScale.max), 8);
+  assert.equal(p.priceY(p.priceScale.min), 174);
+  for (const price of [0, 10, 1e16]) {
+    const flat = model.MobileKlineProjection.fromInputs([{ ...candle(0), open: price, close: price, high: price, low: price }], { capacity: 72, offsetFromEnd: 0 }, pending);
+    assert.ok(flat.priceScale.min >= 0);
+    assert.ok(flat.priceScale.max > flat.priceScale.min);
+    if (price > 0) assert.equal(flat.priceY(price), 91);
+    assert.ok(Number.isFinite(flat.priceY(price)));
+  }
+  const ready: IndicatorResultState = { kind: "ready", value: { macd: { dif: [], dea: [], histogram: [] }, priceKdj: { k: [], d: [], j: [] }, candleKdj: { k: [50, 50], d: [50, 50], j: [-50, 150] } } };
+  const kdj = model.MobileKlineProjection.fromInputs([candle(0), candle(1)], { capacity: 72, offsetFromEnd: 0 }, ready);
+  assert.deepEqual(kdj.indicatorScale, { min: -50, max: 150 });
+  assert.equal(p.volumeMax, 0);
+  const flatCandle = { ...candle(0), open: 10.01, close: 10.01, high: 10.01, low: 10.01 };
+  const almostFlat = model.MobileKlineProjection.fromInputs([flatCandle], { capacity: 72, offsetFromEnd: 0 }, pending, [10.010000000000002]);
+  assert.ok(almostFlat.priceScale.max - almostFlat.priceScale.min >= .019, "均线浮点误差不能放大成整张价格图的波动");
+  assert.ok(Math.abs(almostFlat.priceY(10.01) - 91) < .01);
+});

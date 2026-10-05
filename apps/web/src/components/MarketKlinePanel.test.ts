@@ -26,6 +26,20 @@ test("共用 K 线包含五条可选均线、手机版蜡烛与量柱及缩放�
   assert.match(html, /msd-chart-tools/);
 });
 
+test("共用K线显示元价、手数量及真实游戏交易日坐标，不把游戏日伪装成公历日期", { timeout: 10000 }, () => {
+  const dailyCandles = Array.from({ length: 75 }, (_, index) => ({ time: (index * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 250 }));
+  const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
+  assert.match(html, /aria-label="价格坐标，单位为元"/);
+  assert.match(html, /aria-label="成交量坐标，单位为手"/);
+  assert.match(html, /aria-label="游戏交易日坐标"/);
+  assert.match(html, />12\.00<\/span>/);
+  assert.match(html, />9\.00<\/span>/);
+  assert.match(html, />2\.5<\/span>/);
+  assert.match(html, />第4日<\/span>/);
+  assert.match(html, />第75日<\/span>/);
+  assert.doesNotMatch(html, /1970-|NaN|Infinity/);
+});
+
 test("共用 MACD 全零居中，小幅值撑满纵轴并按当前窗口槽位绘制", { timeout: 10000 }, () => {
   const candles = Array.from({ length: 35 }, (_, i) => ({ time: i as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11 }));
   const projection = MobileKlineProjection.fromInputs(candles, { capacity: 30, offsetFromEnd: 0 }, { kind: "idle" });
@@ -37,6 +51,24 @@ test("共用 MACD 全零居中，小幅值撑满纵轴并按当前窗口槽位�
   assert.match(small, /y1="68" y2="4"/);
   assert.match(small, new RegExp(`x1="${projection.slotFor(0).center}"`));
   assert.doesNotMatch(small, /NaN|Infinity/);
+  const tiny = render(1e-10);
+  assert.match(tiny, />1\.00e-10<\/span>/);
+  assert.match(tiny, />5\.00e-11<\/span>/);
+  assert.match(tiny, /y1="68" y2="4"/);
+});
+test("奇数股历史的成交量坐标不会把半股传给真实成交量格式化器", { timeout: 10000 }, () => {
+  const dailyCandles = [{ time: 0 as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 3 }];
+  const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
+  assert.match(html, />0\.03<\/span>/);
+  assert.match(html, />0\.02<\/span>/);
+});
+test("高位平价使用可表示的坐标留白，SVG与刻度不产生NaN", { timeout: 10000 }, () => {
+  const dailyCandles = [{ time: 0 as import("lightweight-charts").UTCTimestamp, open: 1e16, high: 1e16, low: 1e16, close: 1e16, volume: 0 }];
+  const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
+  assert.doesNotMatch(html, /NaN|Infinity/);
+  assert.match(html, /aria-label="价格坐标，单位为元"/);
+  const width = html.match(/--kline-axis-width:(\d+)px/);
+  assert.ok(width && Number(width[1]) >= 148, "高位坐标必须保留足够文字宽度，不能溢入图形或被固定54px裁切");
 });
 test("共用 MACD 显式展示宿主不可用与真实错误", { timeout: 10000 }, () => {
   const projection = MobileKlineProjection.fromInputs([], { capacity: 72, offsetFromEnd: 0 }, { kind: "idle" });

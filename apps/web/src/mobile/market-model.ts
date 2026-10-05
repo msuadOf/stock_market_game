@@ -713,6 +713,9 @@ export class MobileKlineProjection {
   readonly kdj: { readonly k: readonly number[]; readonly d: readonly number[]; readonly j: readonly number[] } | null;
   readonly volumes: readonly number[];
   readonly latestSignature: string;
+  readonly priceScale: Readonly<{ min: number; max: number }>;
+  readonly indicatorScale: Readonly<{ min: number; max: number }>;
+  readonly volumeMax: number;
   private readonly priceMax: number;
   private readonly priceRange: number;
   private readonly indicatorMin: number;
@@ -730,17 +733,24 @@ export class MobileKlineProjection {
     const { start, end } = this.visibleWindow;
     this.visibleCandles = allCandles.slice(start, end);
     const values = [...this.visibleCandles.flatMap(candle => [candle.high, candle.low]), ...overlayPrices];
-    this.priceMax = values.length === 0 ? 0 : Math.max(...values);
+    const priceMax = values.length === 0 ? 0 : Math.max(...values);
     const priceMin = values.length === 0 ? 0 : Math.min(...values);
-    this.priceRange = Math.max(.01, this.priceMax - priceMin);
+    // 近似绘图留白大于浮点间隔，极窄域不放大 MA 累加误差；真实 Cents 不变。
+    const flatPadding = Math.max(.01, priceMax * Number.EPSILON * 4);
+    const midpoint = priceMin + (priceMax - priceMin) / 2;
+    this.priceScale = priceMax - priceMin < flatPadding ? { min: Math.max(0, midpoint - flatPadding), max: midpoint + flatPadding } : { min: priceMin, max: priceMax };
+    this.priceMax = this.priceScale.max;
+    this.priceRange = this.priceScale.max - this.priceScale.min;
     this.averages = new Map([5, 10, 20].map(days => [days, allCandles.map((_, index) => allCandles.slice(Math.max(0, index - days + 1), index + 1).reduce((sum, candle) => sum + candle.close, 0) / Math.min(days, index + 1)).slice(start, end)]));
     const completeKdj = result.kind === "ready" ? result.value.candleKdj : null;
     this.kdj = completeKdj === null ? null : { k: completeKdj.k.slice(start, end), d: completeKdj.d.slice(start, end), j: completeKdj.j.slice(start, end) };
     this.indicatorMin = this.kdj === null ? 0 : Math.min(0, ...this.kdj.j);
     const indicatorMax = this.kdj === null ? 100 : Math.max(100, ...this.kdj.j);
+    this.indicatorScale = { min: this.indicatorMin, max: indicatorMax };
     this.indicatorRange = Math.max(1, indicatorMax - this.indicatorMin);
     this.volumes = this.visibleCandles.map(candle => candle.volume ?? 0);
-    this.maxVolume = Math.max(1, ...this.volumes);
+    this.volumeMax = Math.max(0, ...this.volumes);
+    this.maxVolume = Math.max(1, this.volumeMax);
     const latest = allCandles.at(-1);
     this.latestSignature = latest ? `${latest.time}:${latest.open}:${latest.high}:${latest.low}:${latest.close}:${latest.volume ?? 0}` : "empty";
   }

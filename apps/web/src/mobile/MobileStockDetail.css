@@ -217,14 +217,14 @@
 .msd-chart-empty { display:grid; place-content:center; gap:8px; color:#888; text-align:center; }.msd-chart-empty b { color:#333; font-size:16px; }.msd-chart-empty p { margin:0; }
 .msd-kline-meta { height:48px; padding:3px 8px; display:flex; align-content:center; flex-wrap:wrap; gap:3px 9px; font-size:12px; }
 .msd-kline-meta button { border:0; background:#eee; padding:3px 5px; }.msd-kline-meta span:nth-of-type(1){color:#222}.msd-kline-meta span:nth-of-type(2){color:#d59a00}.msd-kline-meta span:nth-of-type(3){color:#dc5571}
-.msd-candle-chart { display:block; width:100%; height:190px; background:repeating-linear-gradient(0deg,transparent 0 46px,#eee 47px),repeating-linear-gradient(90deg,transparent 0 64px,#eee 65px); border:1px solid #eee; }
+.msd-candle-chart { display:block; width:100%; height:190px; background:transparent; }
 .msd-candle-chart g line { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-candle-chart g rect { stroke:currentColor; stroke-width:1; }.msd-candle-chart g.rise rect { fill:none; }.msd-candle-chart g.fall rect { fill:currentColor; }.msd-candle-chart g.rise { color:#ed3943; }.msd-candle-chart g.fall { color:#15952d; }
 .msd-candle-chart polyline,.msd-kdj polyline { fill:none; vector-effect:non-scaling-stroke; stroke-width:1; }.msd-candle-chart .ma5 { stroke:#222; }.msd-candle-chart .ma10 { stroke:#d8a100; }.msd-candle-chart .ma20 { stroke:#e15977; }
 .msd-candle-chart .msd-marker rect { fill:#f7c96b; stroke:none; opacity:.85; }.msd-candle-chart .msd-marker text { fill:#b87800; font-size:10px; font-weight:700; text-anchor:middle; }
 .msd-chart-tools { position:absolute; top:205px; left:12px; right:12px; display:flex; justify-content:space-around; }.msd-chart-tools button { display:grid; place-items:center; flex:0 0 27px; width:27px; height:27px; aspect-ratio:1; padding:0; border:0; border-radius:50%; background:rgba(235,235,235,.88); color:#555; font-size:20px; line-height:1; }.msd-chart-tools button:not(:disabled) { cursor:pointer; }.msd-chart-tools button:disabled { opacity:.42; }.msd-chart-tools button:focus-visible { outline:2px solid var(--msd-focus); outline-offset:2px; }
 .msd-volume-title,.msd-kdj-title { height:23px; padding:3px 8px; border-top:1px solid #eee; font-size:12px; font-weight:700; }.msd-volume-title span { color:#e35137; }
-.msd-k-volume { display:block; width:100%; height:75px; border-bottom:1px solid #eee; }.msd-k-volume rect { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-k-volume rect.rise { fill:none; color:#ed3943; }.msd-k-volume rect.fall { fill:currentColor; color:#15952d; }
-.msd-kdj-title span { color:#e56b38; }.msd-kdj-title em { color:#c73771; font-style:normal; }.msd-kdj { width:100%; height:72px; background:repeating-linear-gradient(0deg,transparent 0 34px,#eee 35px); }.msd-kdj polyline { stroke:#222; }.msd-kdj .orange { stroke:#e56b38; }.msd-kdj .pink { stroke:#c73771; }
+.msd-k-volume { display:block; width:100%; height:75px; }.msd-k-volume rect { stroke:currentColor; stroke-width:1; vector-effect:non-scaling-stroke; }.msd-k-volume rect.rise { fill:none; color:#ed3943; }.msd-k-volume rect.fall { fill:currentColor; color:#15952d; }
+.msd-kdj-title span { color:#e56b38; }.msd-kdj-title em { color:#c73771; font-style:normal; }.msd-kdj { width:100%; height:72px; background:transparent; }.msd-kdj polyline { stroke:#222; }.msd-kdj .orange { stroke:#e56b38; }.msd-kdj .pink { stroke:#c73771; }
 
 /* 两端共用的图例与缩放工具采用正常文档流，数值换行不覆盖蜡烛。 */
 .msd-kline { height: auto; min-height: 465px; display: flex; flex-direction: column; }
@@ -244,3 +244,31 @@
 
 .kline-details { pointer-events: none; }
 .kline-details button { pointer-events: auto; }
+
+/* 坐标文字保持屏幕字号，价、量、指标的画布共同占用中间列。 */
+.msd-kline { --kline-axis-width: 54px; }
+.kline-coordinate-plot { display: grid; grid-template-columns: minmax(0, 1fr) var(--kline-axis-width); flex: none; min-width: 0; color: #555; }
+.kline-price-plot { height: 190px; }
+.kline-volume-plot { height: 75px; }
+.kline-indicator-plot { height: 72px; }
+.kline-coordinate-mirror { display: none; }
+.kline-coordinate-axis { position: relative; min-width: 0; font-size: 11px; line-height: 12px; font-variant-numeric: tabular-nums; container-type: size; container-name: kline-axis; }
+.kline-coordinate-axis > span { position: absolute; left: 4px; right: 2px; white-space: nowrap; transform: translateY(-50%); }
+.kline-coordinate-axis > span[data-edge="bottom"] { transform: translateY(-100%); }
+.kline-coordinate-axis > span[data-edge="top"] { transform: none; }
+.kline-plot-canvas { position: relative; min-width: 0; min-height: 0; }
+.kline-plot-canvas > svg { position: relative; z-index: 1; width: 100%; height: 100%; display: block; }
+.kline-coordinate-grid { position: absolute; inset: 0; pointer-events: none; }
+.kline-grid-horizontal { position: absolute; left: 0; right: 0; border-top: 1px solid #e8ebee; }
+.kline-grid-vertical { position: absolute; top: 0; bottom: 0; border-left: 1px solid #eef0f2; }
+.kline-time-row { flex: none; height: 21px; padding-right: var(--kline-axis-width); }
+.kline-time-axis { position: relative; height: 100%; color: #555; font-size: 11px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.kline-time-axis > span { position: absolute; white-space: nowrap; }
+.kline-time-axis .kline-selected-time { z-index: 2; background: #222; color: #fff; padding: 0 3px; }
+@media (orientation: portrait) { .kline-time-secondary { display: none; } }
+@container kline-axis (height < 100px) { .kline-price-plot .kline-coordinate-axis > span:nth-child(even) { display: none; } }
+@container kline-axis (height < 44px) { .kline-coordinate-axis > span:not([data-edge]):not(:only-child) { display: none; } }
+
+.kline-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; flex: none; min-height: 32px; }
+.kline-footer .msd-chart-tools { flex: 1; min-width: 180px; }
+.shared-indicator-controls { display: flex; flex: none; }

@@ -117,3 +117,18 @@ TDD：深色文字实际rgb237/243/251，预期34/34/34；跨屏MA5误恢复true
 真实IAB恢复默认902×833并检查320×844：游戏时钟均09:16:03，320px document.scrollWidth=320；日K/MA/KDJ两端共用，未提交模拟委托。源文件HMR触发启动页后重新启动，不能称维持了旧局；最后暂停第1日09:16:03的600101日K，视口902×833。trading-timeline-current-window.png和trading-timeline-mobile-320.png为实看截图。真实预览仍明确显示“日终存档不能包含未处理的日内请求”，此前还观察到快速槽quota错误；短局存档测试通过不代表默认NPC局这些问题已关闭。
 
 整个终端目标仍在途：K线价格/时间/量能坐标读数缺口在本次截图仍可见，需下一批重点补；真实默认局日终错误、公司报告确定性E2E、剩余游戏/公司二三级阅读层级、行情排序状态及全量生成artifact问题继续保留。不将本批时间一致性修复当作全部界面完成。
+
+
+## 2026-10-05 共用 K 线坐标与读数批次
+
+补齐 KlineCoordinatePlot 的 HTML 价格／量能／KDJ／MACD 坐标，文本保持11px而不随SVG拉伸；左右共用gutter及中间390投影，桌面镜像、手机仅右轴。价格域含选中MA，量轴整数股刻度投影后转手，零量只显示零；移除与投影不一致的重复背景网格。时间标签取实际游戏日序与槽位，短历史不拉满，周/月仍是聚合起始游戏日，手机减少中间标签。点选时间黑底提示与三图参考线同步，原鼠标、Shift滚轮、触屏路径不另写一套。
+
+实看奇数股中间刻度曾把8403682.5股传入格式化器触发UI_RENDER_FAILED，补SSR红绿修复，不弱化formatTradeLots整数股校验。新增时间轴一度在900×740周/月看盘交易中裁切底部按钮，既有E2E红测复现后把副图切换及KlineViewportControls合入共用footer。又补压缩副图首尾文字越界/相邻刻度重叠红测，向内摆首尾坐标，短高度仅减少中间刻度而不隐藏全零单刻度。
+
+独立review发现高位平价±.01不可表示导致零域NaN，以及微小指标全部显示0、非零基数科学计数有效位不足。全部补projection/pure/SSR红绿：留白考虑数值浮点间隔，极窄价格域按midpoint留白，不放大MA累加误差；step<1e-8用按value/step确定有效位的科学计数。动态gutter依据最终格式文本，高位价格不溢入图形。真实raw Cents、指标数据、MA值、撮合及存档契约不变。kline-coordinates-independent-review.md最终无未修复有效finding，独立20短测通过0.756秒。
+
+最后62项相关短测全部通过1.12秒，case/进程树10000ms、concurrency=3；24项相关浏览器全部通过18.9秒，workers=3、共享300000ms外部deadline，覆盖图形对齐、现有鼠标/触屏、线宽、跨股/方向设置、显示菜单、902看盘下单、900×740周月及320窄屏。测试准备一度因E2E使用未包含在其tsconfig的SVGLineElement类型而tsc失败，移除不必要类型断言后真实重跑；未弱化几何断言。最后production build/release WASM验证通过，RAYON_NUM_THREADS=10；变更源码/测试lint、strict audit、git diff --check通过。CPU抽样返回时该18.9秒批次已完成，不冒称取得了运行中CPU采样；日志确认3个浏览器worker。本批未重复完整Webunit或公司报告全E2E，不称全量baseline。
+
+真实IAB实看902×833与320/390/430×844，document.scrollWidth分别902/320/390/430，无横向溢出；三个手机画布宽255/325/365且x均0。桌面价/量/指标canvas均x265、宽360。源模块热更新数次返回启动页，重新启动本地游戏后最终暂停第1日09:15:54、600101日K、全部5MA/KDJ/72最新窗口、无对齐详情、交易栏关闭；未提交模拟委托。截图kline-coordinates-current-window.png、kline-coordinates-details.png、kline-coordinates-trading-dock.png与kline-coordinates-mobile-320.png保存本批实看，不声称热更新保留了先前局的日内行情。
+
+完整目标继续在途：真实默认NPC局仍明确提示“日终存档不能包含未处理的日内请求”，此前quota问题未关闭；公司报告随机fixture的确定性E2E、剩余游戏/公司二三级阅读状态、行情排序统一和生成acl-manifests.json缺口仍需后续验证。仅本批共享坐标细节完成，不将它等同全部终端完成。
