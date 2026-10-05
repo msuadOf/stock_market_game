@@ -54,3 +54,12 @@
 - `time -v` 显示16 worker实际仅约225–233% CPU，系统耗时23–28秒、数百万次context switches。各级cgroup的cpu.max为max，未观察到CPU quota限流；仍须进一步定位调度开销。
 - 独立 Luna high 复核记录见 resource-cache-review.md，未发现当前语义/失效缺陷。通用closure尚只有一个生产validator；如扩充调用方必须重新设计失效契约。
 - diff --check 与本次文件 rustfmt --check 通过。没有跑完整回归，不宣称全局green。
+
+## 第二批 Worker task 调度
+
+- 0 delay 使用 MessageChannel，正 delay 仍使用 timer；一个task仍只调用一次step。
+- 新增 cancel/dispose、异步 task、即时 task 不经过timer 的3项测试；获得行为红灯及绿灯。合并既有11项tick-loop测试共14项通过，约0.2s，整批由进程外10000ms监督且case timeout=10000。
+- 独立Luna high审查未发现阻断项，记录见task-scheduler-review.md。
+- TypeScript build、WASM release编译及WASM threading检查通过；未跑完整回归。
+- 真实Chromium同16 CPU和默认setup，100 tick warmup后466提交帧/16.943s=27.504x，无fatal。和21.7x旧样本相比窗口不同且同时包含资源缓存，不能把全部差异归于调度器。
+- 同一修正后的host probe，默认3000 tick：1 worker=75.06x、4 worker=92.06x、16 worker=76.89x、32 worker=66.64x。更多worker当前反而降低吞吐；后续应减少小任务调度与反复全量ledger工作，不能仅增加线程数。

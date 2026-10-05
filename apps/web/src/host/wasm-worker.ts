@@ -2,6 +2,7 @@ import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
+import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { resolveThreadCount } from "./thread-count.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
@@ -38,11 +39,12 @@ const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 let ingressBridge: { module: WebAssembly.Module; memory: WebAssembly.Memory; diagnostics: boolean } | null = null;
 const slot = new WasmSessionSlot(() => wasmModule);
+const taskScheduler = new WorkerTaskScheduler();
 const loop = new WasmTickLoop({
   slot,
   now: () => performance.now(),
-  schedule: (callback, delay) => setTimeout(callback, delay),
-  cancel: (timer) => clearTimeout(timer),
+  schedule: (callback, delay) => taskScheduler.schedule(callback, delay),
+  cancel: (timer) => taskScheduler.cancel(timer),
   post: (message) => ctx.postMessage(message),
   failure: postFailure,
 });
