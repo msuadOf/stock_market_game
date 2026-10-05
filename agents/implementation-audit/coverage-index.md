@@ -2,9 +2,11 @@
 
 ## 固定范围与阅读方法
 
-本索引用于核对来源是否覆盖以及结论依据何在；功能状态和开发缺口统一见 [实现缺口总账](implementation-audit-2026-10-02.md)。
+本轮Simple状态补记：当前HEAD为`04d3c49e`，Simple代码基线为`a001681d`。周期算法、四类财务／披露、Session严格当前契约、native hosts与Web已分别由 `8d07a779`、`e488cbfe`、`ce5b3a1c`、`f1bc6f84`、`a001681d`提交；required cfg kind→issuer→finance/chart调用链已接。Simple支持Monthly／Quarter／HalfYear／Annual、定点half-even年化及四类noise。可编辑seed preset只初始化Day 0，允许price/share及明确虚拟P/E、P/B反推，不作后续anchor或涨跌保证。无SyntheticFunding、公司实际资金跟踪、旧schema兼容或migration。`股本 cash cap=false`实际caller未接线，公司行为偏好仍缺；Simulation由用户另分支，整项Q14/D01与其未来范围均未核销。验证证据：root 70 Rust／实际typegen 128、Web 45、root 76五个tiny case、root 75 workspace all-targets及WASM＋Vite构建、root 77 Panel 7项与tsc通过；最新root78 Web types、Vite 6.88秒和Release WASM check通过；完整回归和Windows／macOS runtime未执行。旧SessionGroup/shock integration归档futureSim门禁，不计Simple通过。详见[公司系统实施清单](../company-system/implementation-checklist.md)、[最终复核](../company-system/decision-sync-final-review.md)与[接线记录](../company-system/session-integration.md)。
 
-本轮固定已提交产品基线`c0ab429`，按用户要求新建`.worktree/implementation-audit-final`隔离主工作区的并行未提交改动。该提交仅更新审计，产品代码与此前`43b1aa5`相同；原来源/代码记录保留原版本，不把HEAD相同当作工作树字节相同。扩展全文原有78项，本轮纠正Q19恢复可达性并登记G80，现行79项；G78补未来待办日期边界，双profile候选保留Q25。新裁定见 [固定基线续核](renewed-check/README.md)，原 [补扫](hidden-review/README.md) 与 [裁定](exhaustive-review/resolution.md)保留历史计数和证据。
+本索引用于核对来源是否覆盖以及结论依据何在；功能状态和开发缺口统一见 [实现缺口总账](implementation-audit-2026-10-02.md)。当前Simple事实、实施提交和短测复核以Q14／D01对应现位置及公司系统实施记录为准。完整回归、全宿主E2E和Windows／macOS runtime未执行，不将其写成已通过，也不作为本轮Simple限定代码范围的额外门禁；生产caller、stub和跨层契约遗漏仍照实登记。Q14模型以营收、固定开支和变动开支月度变化驱动利润，不独立生成net margin／利润目标。Simple与Simulation共享完整财务、披露及股本目标；Simple账面展示、不追公司实际资金，不设SyntheticFunding；分红不因展示现金不足拒绝但仍检查可分配利润／方案，认购检查投资者本人真实现金，回购依真实委托成交。Simulation由用户另分支，本轮不实现，不核销其未来范围。
+
+本轮固定已提交产品基线`c0ab429`，按用户要求新建`.worktree/implementation-audit-final`隔离主工作区的并行未提交改动。该提交仅更新审计，产品代码与此前`43b1aa5`相同；原来源/代码记录保留原版本，不把HEAD相同当作工作树字节相同。扩展全文原有78项，本轮纠正Q19恢复可达性并登记G80，现行79项；G78补未来待办日期边界，双profile候选保留Q25。新裁定见 [固定基线续核](renewed-check/README.md)，原 [补扫](hidden-review/README.md) 与 [裁定](exhaustive-review/resolution.md)保留历史计数和证据。后续产品代码状态按对应修复提交和当前证据更新，不沿用旧主工作区迁移快照；不能外推未执行的完整回归或Windows／macOS runtime。
 
 原集合包含 **229个跟踪Markdown路径**、**3份未跟踪历史草稿**、**2份删除文档最后版本**，共234个来源路径；`CLAUDE.md` 是AGENTS别名，保留路径不重复算独立正文。原147个来源及后续87份OOP/发布/main记录已有80份全文记录和 [机器清单](exhaustive-review/source-index.json)，但此前漏纳入 Git 忽略目录及其他历史分支，不能将234份描述为本地全部文档。
 
