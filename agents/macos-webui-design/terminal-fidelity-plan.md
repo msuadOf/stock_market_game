@@ -80,3 +80,11 @@ TDD证据包括：共用周期及菜单缺失；F10切公司页遗留portal；32
 - 在最终完整E2E之后只改了低价股价格格式一行及对应SSR：原手机列表把8.55多补成8.550，现统一精确两位元价。last_price855／last_close900（跌5%）新增SSR红后绿，纳入最后27项短测，独立复核17短测通过。没有据此宣称完整E2E覆盖了此最后一行；最终生产构建覆盖该改动。
 
 暗色现场：新列表、search、自选开关可读可操作；原图表周期文字、量能/KDJ标题与FiveLevelBook仍有白底继承浅色字的问题，继续待修，最后已恢复浅色与真实窗口。完整终端目标仍在途：剩余二／三级游戏/公司资料阅读层次、全回归5失败、跨实例图表与排序状态、暗色共用图表/盘口文字及日终存档问题。不能把本批验收当作全部细节已完成。
+
+## 2026-10-05 暂停偏好真实操作批次
+
+复现完整回归中的 checkbox 不更新：usePausePreferences 将显式用户修改也按 tradingE2EMode 跳过。移除此 UI 测试旁路及 synchronize 无生产用途的 skip 参数；手机/桌面都沿用宿主确认→Redux settings→sessionStorage，不改变 engine 屏障、交易阶段或初始化受控停止。
+
+原浏览器红测复现失败；第一次修复后 check() 仍因异步确认要求即时状态失败，保留日志而不称通过。最终用 click 后逐步等待选中/取消状态，并加强两次 sessionStorage 精确断言；不采用乐观状态、不弱化确认要求。9项相关短测通过（case/命令10000ms、concurrency=3），2项移动浏览器验收通过（实际2 workers、8.1秒含构建、暂停偏好case1.7秒）。production build与release WASM验证通过（RAYON_NUM_THREADS=10），四个变更源码/测试文件lint与git diff --check通过。独立复核再次通过，见pause-preferences-independent-review.md。
+
+本批未重复完整回归，不据此称其他四项公司报告/活动委托/存档失败已解决。完整终端目标继续在途；暗色共享图表/盘口、横竖屏图表设置保持及剩余层级继续处理。

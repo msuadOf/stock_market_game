@@ -35,21 +35,28 @@ test("移动详情显示真实分时午休轴、倍率和共享暂停状态", as
 });
 
 test("移动我的页面与桌面控制区均可操作自然日暂停偏好", async ({ page }) => {
+  test.setTimeout(10_000);
   await openControlledGame(page, 390);
   await page.getByRole("button", { name: "打开我的与存档" }).click();
   const mobileState = page.locator(".mobile-game-state");
   const afterClose = mobileState.getByRole("checkbox", { name: "收盘后暂停复盘" });
   const beforeOpen = mobileState.getByRole("checkbox", { name: "开盘前暂停查看资讯" });
-  await afterClose.check();
-  await beforeOpen.check();
+  await afterClose.click();
   await expect(afterClose).toBeChecked();
+  await beforeOpen.click();
   await expect(beforeOpen).toBeChecked();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("stock-game-pause-preferences"))).toBe(
+    '{"pause_after_close":true,"pause_before_open":true}',
+  );
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "游戏与存档", exact: true }).click();
   const desktopControls = page.locator(".mobile-game-state");
   await expect(desktopControls.getByRole("checkbox", { name: "收盘后暂停复盘" })).toBeChecked();
   await expect(desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" })).toBeChecked();
-  await desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" }).uncheck();
+  await desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" }).click();
   await expect(desktopControls.getByRole("checkbox", { name: "开盘前暂停查看资讯" })).not.toBeChecked();
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("stock-game-pause-preferences"))).toBe(
+    '{"pause_after_close":true,"pause_before_open":false}',
+  );
 });

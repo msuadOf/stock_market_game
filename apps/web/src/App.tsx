@@ -345,7 +345,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     onAutoTriggered: (id) => { store.dispatch(markTriggered(id)); },
   });
 
-  const pausePreferences = usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen, tradingE2EMode: TRADING_E2E_MODE,
+  const pausePreferences = usePausePreferences({ hostRef, pauseAfterClose, pauseBeforeOpen,
     apply(preferences) {
       store.dispatch(setPauseAfterClose(preferences.pause_after_close));
       store.dispatch(setPauseBeforeOpen(preferences.pause_before_open));
