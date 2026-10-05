@@ -56,7 +56,11 @@ pub(super) fn prepare_candidate_commit<'authority>(
             .checked_add(1)
             .ok_or_else(|| invariant("market tick overflow".to_owned()))?
     {
-        super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
+        if candidate.state.day > authority.state.day {
+            super::npc_tick_preparation::queue_empty_npc_at_day_end(&mut candidate)?;
+        } else {
+            super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
+        }
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
             "CommitTick candidate 推进了超过一个市场 tick".to_owned(),

@@ -116,6 +116,69 @@ fn prepare_npc_projection(
     Ok((captured, source, projection, roots))
 }
 
+pub(super) fn queue_empty_npc_at_day_end(session: &mut GameSession) -> Result<(), StepFatal> {
+    if session.state.pending_npc.is_some() {
+        return Err(invariant(
+            "day-end NPC queue still contains an unconsumed batch",
+        ));
+    }
+    if session.state.day == 0
+        || u64::from(session.state.day) * u64::from(session.state.setup.ticks_per_day)
+            != session.state.tick
+    {
+        return Err(invariant("empty day-end NPC batch requires a completed trading-day boundary"));
+    }
+    session.state.pending_npc = Some(PendingNpcBatch {
+        observed_tick: session.state.tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+        dependencies: Vec::new(),
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod day_end_tests {
+    #[test]
+    fn empty_batch_rejects_unconsumed_npc_without_mutating_facts() {
+        let mut session = crate::GameSession::new(
+            crate::session::npc_working_quote_tests::retail_quote_setup(),
+            2,
+        ).unwrap();
+        let before = serde_json::to_value(session.save().unwrap()).unwrap();
+        assert!(super::queue_empty_npc_at_day_end(&mut session).is_err());
+        assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+    }
+
+    #[test]
+    fn empty_batch_rejects_non_day_end_without_mutating_facts() {
+        let mut session = crate::GameSession::new(
+            crate::session::npc_working_quote_tests::retail_quote_setup(),
+            2,
+        ).unwrap();
+        session.state.pending_npc = None;
+        let before = serde_json::to_value(session.save().unwrap()).unwrap();
+        assert!(super::queue_empty_npc_at_day_end(&mut session).is_err());
+        assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+    }
+
+    #[test]
+    fn empty_batch_preserves_u64_market_tick_domain() {
+        let mut session = crate::GameSession::new(
+            crate::session::npc_working_quote_tests::retail_quote_setup(),
+            2,
+        ).unwrap();
+        session.state.pending_npc = None;
+        session.state.day = u32::MAX;
+        session.state.tick = u64::from(session.state.day) * u64::from(session.state.setup.ticks_per_day);
+        assert!(session.state.tick > u64::from(u32::MAX));
+        super::queue_empty_npc_at_day_end(&mut session).unwrap();
+        let batch = session.state.pending_npc.as_ref().unwrap();
+        assert_eq!(batch.observed_tick, session.state.tick);
+        assert!(batch.observed_accounts.is_empty() && batch.intents.is_empty() && batch.dependencies.is_empty());
+    }
+}
+
 /// 在完整 tick candidate 的 CommitTick 之前调用。
 /// 决策基于即将提交的状态，其订单进入下一市场 tick。
 pub(in crate::session) fn queue_npc_for_next_tick(

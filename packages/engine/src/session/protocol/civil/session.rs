@@ -397,6 +397,10 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
 }
 
 #[cfg(test)]
+#[path = "day_end_npc_tests.rs"]
+mod day_end_npc_tests;
+
+#[cfg(test)]
 mod rollback_tests {
     use super::*;
 
