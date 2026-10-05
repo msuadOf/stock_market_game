@@ -34,6 +34,28 @@ fn due_retail(seed: u64, order_size: u32) -> (GameSession, AccountId) {
 }
 
 #[test]
+fn missing_npc_batch_is_valid_only_at_a_day_boundary() {
+    let mut session = GameSession::new(
+        crate::session::npc_working_quote_tests::retail_quote_setup(),
+        42,
+    )
+    .unwrap();
+    let boundary = session.save().unwrap();
+    assert!(boundary.pending_npc.is_none());
+    GameSession::restore(&boundary).unwrap();
+    session.step().unwrap();
+    let mut intraday = session.save().unwrap();
+    intraday.pending_npc = None;
+    assert!(matches!(GameSession::restore(&intraday),
+        Err(crate::SessionError::InvalidSave(message)) if message.contains("pending NPC observation tick")));
+    session.state.pending_npc = None;
+    assert!(
+        matches!(session.step(), Err(StepFatal::InvariantViolation { description, .. })
+        if description.contains("next-tick NPC queue is missing"))
+    );
+}
+
+#[test]
 fn no_due_npc_queues_an_empty_batch_without_building_a_market_view() {
     let mut session = GameSession::new(
         crate::session::npc_working_quote_tests::retail_quote_setup(),

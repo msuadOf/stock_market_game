@@ -132,3 +132,13 @@ TDD：深色文字实际rgb237/243/251，预期34/34/34；跨屏MA5误恢复true
 真实IAB实看902×833与320/390/430×844，document.scrollWidth分别902/320/390/430，无横向溢出；三个手机画布宽255/325/365且x均0。桌面价/量/指标canvas均x265、宽360。源模块热更新数次返回启动页，重新启动本地游戏后最终暂停第1日09:15:54、600101日K、全部5MA/KDJ/72最新窗口、无对齐详情、交易栏关闭；未提交模拟委托。截图kline-coordinates-current-window.png、kline-coordinates-details.png、kline-coordinates-trading-dock.png与kline-coordinates-mobile-320.png保存本批实看，不声称热更新保留了先前局的日内行情。
 
 完整目标继续在途：真实默认NPC局仍明确提示“日终存档不能包含未处理的日内请求”，此前quota问题未关闭；公司报告随机fixture的确定性E2E、剩余游戏/公司二三级阅读状态、行情排序统一和生成acl-manifests.json缺口仍需后续验证。仅本批共享坐标细节完成，不将它等同全部终端完成。
+
+### 日界 NPC 请求与公共日终档修复（2026-10-05）
+
+真实默认 20007 NPC 开局先结算休市自然日，原 GameSession::new 已提前生成请求；最后市场 tick 的 commit 也会提前生成下一日批次。两个入口均违背 ADR-0025 的公共日级档边界。现改为日界 pending_npc=None，首 tick 在隔离 TickShadow、ExpiryShadow 之前基于已完成自然日结的版本准备；日内继续消费前 commit 缓存。None 只在 tick 日界合法，日内缺失与非空公共待处理输入仍拒绝。
+
+TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休市用例真实因候选含待处理 NPC 请求失败。最初多账户 continuation 暴露并行请求顺序差异，改用确定性单 NPC fixture，保留完整状态精确断言；seed74 实际 NoSignal，因此改用既有 retail_quote_setup 与 seed8、正常玩家买盘信号，实际请求断言限定 NPC AccountId(1)，未让玩家单冒充 NPC 验证。独立复核 P1（底层 None 恢复校验）和 P2（首 tick due 观察分支缺测）均修复并复核关闭。新增 due=0、1000ticks/day 但只跑1tick的短 fixture，证明观察改变 attention、首tick失败完整回滚、成功时 attention 等于日界准备探针。
+
+最终116个相关 Rust case全部通过23.38秒，4进程并发，每case harness1+Rayon1，普通case及命令10000ms外部deadline，定向验收共享300000ms；独立4项通过1.07秒。预编译与release WASM构建jobs10，实际采样rustc先有254% CPU，WASM单crate前端阶段约97% CPU，其依赖阶段不冒称可并行；production构建与release WASM verified。git diff --check通过。没有重跑全工作区或完整浏览器矩阵。
+
+真实IAB重载并启动默认NPC局后，原pending错误消失，但实际出现LocalStorage quota错误。day-end-npc-before.png与day-end-npc-quota.png记录先后反馈。引擎档边界已闭环，默认局快速槽写入及刷新恢复尚未通过，下一独立Web批次继续处理容量；不宣称默认局保存全部成功或完整终端目标完成。

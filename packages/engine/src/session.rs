@@ -450,7 +450,7 @@ pub struct SaveSlot {
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<(AccountId, Intent)>,
-    /// 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
+    /// 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求；日界处尚未生成。
     pub pending_npc: Option<PendingNpcBatch>,
     /// 保持订单 id/到达序继续单调递增。
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -1480,7 +1480,8 @@ impl GameSession {
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
         sess.initialize_retail_experience()?;
         sess.reconcile_institutional_holdings()?;
-        pipeline::queue_npc_for_next_tick(&mut sess)?;
+        // 日界不提前生成日内请求，首个 tick 在隔离 shadow 上基于日结后的版本准备。
+        // 因此休市日日结和交易日日结都能产生不含待处理请求的公共存档。
         Ok(sess)
     }
 
@@ -2961,8 +2962,7 @@ impl GameSession {
         sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.state.pending_player = save.pending_player.clone();
         sess.state.pending_npc = save.pending_npc.clone();
-        // new() prepares its own first NPC batch; the saved batch replaces it, so its
-        // diagnostic samples must not leak into the restored session.
+        // 诊断缓存不属于存档事实，恢复后由实际 tick 重新生成。
         sess.state.last_retail_decisions.clear();
 
         // 权威状态连续性（完整存档）：公司域与个体决策链权威状态直接从档恢复——不再前史

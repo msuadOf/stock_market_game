@@ -895,6 +895,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         ));
     }
     match &save.pending_npc {
+        None if context.day_tick == 0 => {}
         Some(queued) if queued.observed_tick == save.snapshot.tick => {
             queued
                 .validate_dependencies()

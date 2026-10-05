@@ -56,7 +56,14 @@ pub(super) fn prepare_candidate_commit<'authority>(
             .checked_add(1)
             .ok_or_else(|| invariant("market tick overflow".to_owned()))?
     {
-        super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
+        // 收盘后的自然日结仍可能发布经营和披露；下一日请求不能先进入日终候选。
+        if !candidate
+            .state
+            .tick
+            .is_multiple_of(candidate.state.setup.ticks_per_day)
+        {
+            super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
+        }
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
             "CommitTick candidate 推进了超过一个市场 tick".to_owned(),

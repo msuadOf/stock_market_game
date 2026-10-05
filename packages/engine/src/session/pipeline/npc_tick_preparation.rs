@@ -107,7 +107,8 @@ fn prepare_npc_projection(
 }
 
 /// 在完整 tick candidate 的 CommitTick 之前调用。
-/// 决策基于即将提交的状态，其订单进入下一市场 tick。
+/// 日内决策基于即将提交的状态，其订单进入下一市场 tick；
+/// 日界首个 tick 则在 ExpiryShadow 前的隔离 shadow 上基于已提交日结版本准备。
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
