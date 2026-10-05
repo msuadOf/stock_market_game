@@ -478,7 +478,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <div className="mobile-brand-bar">
           <button type="button" aria-label="打开我的与存档" onClick={() => switchMobileTab("user")}><span aria-hidden="true">☰</span></button>
           <ConnectedMobileGameClock />
-          <strong>{mobilePrimaryTitle(mobileTab)}</strong>
+          <strong>{mobilePrimaryTitle(mobileTab, securityBrowser.view)}</strong>
           <span className="mobile-head-tools">
             <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
             <MobileSpeedSelect

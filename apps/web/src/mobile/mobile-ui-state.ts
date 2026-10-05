@@ -1,3 +1,5 @@
+import { SECURITY_LIST_VIEW_LABELS, type SecurityListView } from "../app/security-browser-model.ts";
+
 export type MobilePrimaryTab = "market" | "watchlist" | "positions" | "trades" | "user";
 export type MobileChartPeriod = "分时" | "日K" | "周K" | "月K";
 export const MOBILE_INFO_TABS = ["财务", "盘口", "资金"] as const;
@@ -30,10 +32,10 @@ export const MOBILE_PRIMARY_NAV = [
   ["user", "我的"],
 ] as const satisfies readonly (readonly [MobilePrimaryTab, string])[];
 
-export function mobilePrimaryTitle(tab: MobilePrimaryTab): string {
+export function mobilePrimaryTitle(tab: MobilePrimaryTab, view: SecurityListView): string {
   switch (tab) {
-    case "market": return "模拟行情";
-    case "watchlist": return "自选";
+    case "market":
+    case "watchlist": return view === "all" ? "模拟行情" : SECURITY_LIST_VIEW_LABELS[view];
     case "trades": return "交易";
     case "positions": return "持仓";
     case "user": return "我的";

@@ -59,14 +59,27 @@ test("共用周期选择不随主导航切换丢失", { timeout: 10000 }, () => 
 });
 
 test("主导航页面拥有稳定标题，持仓和我的能从详情直接进入", () => {
-  assert.equal(mobilePrimaryTitle("market"), "模拟行情");
-  assert.equal(mobilePrimaryTitle("positions"), "持仓");
-  assert.equal(mobilePrimaryTitle("user"), "我的");
+  assert.equal(mobilePrimaryTitle("market", "all"), "模拟行情");
+  assert.equal(mobilePrimaryTitle("positions", "all"), "持仓");
+  assert.equal(mobilePrimaryTitle("user", "all"), "我的");
 
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600101" });
   const user = reduceMobileUi(detail, { type: "switch-primary", tab: "user" });
   assert.equal(user.primaryTab, "user");
   assert.equal(user.detailCode, null);
+});
+
+test("行情与自选入口的顶栏读取实际股票范围，其他主页面保留自身标题", { timeout: 10000 }, () => {
+  for (const tab of ["market", "watchlist"] as const) {
+    assert.equal(mobilePrimaryTitle(tab, "all"), "模拟行情");
+    assert.equal(mobilePrimaryTitle(tab, "watchlist"), "自选");
+    assert.equal(mobilePrimaryTitle(tab, "holdings"), "持仓");
+  }
+  for (const view of ["all", "watchlist", "holdings"] as const) {
+    assert.equal(mobilePrimaryTitle("positions", view), "持仓");
+    assert.equal(mobilePrimaryTitle("trades", view), "交易");
+    assert.equal(mobilePrimaryTitle("user", view), "我的");
+  }
 });
 
 test("移动端顶栏提供完整的常用倍速", () => {

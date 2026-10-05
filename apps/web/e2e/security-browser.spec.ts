@@ -2,6 +2,36 @@ import { expect, test } from "@playwright/test";
 
 test.setTimeout(10_000);
 
+test("手机列表顶栏随当前范围更新，横竖屏与其他主导航保留真实身份", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("/?tradingE2E=1");
+  const title = page.locator(".mobile-brand-bar > strong");
+  const navigation = page.getByRole("navigation", { name: "主导航", exact: true });
+  const scope = page.getByRole("navigation", { name: "股票范围", exact: true });
+  await expect(title).toHaveText("模拟行情");
+  await navigation.getByRole("button", { name: "自选", exact: true }).click();
+  await expect(title).toHaveText("自选");
+  await scope.getByRole("button", { name: "全部", exact: true }).click();
+  await expect(title).toHaveText("模拟行情");
+  await expect(page.locator(".mobile-market-row")).toHaveCount(5);
+  await scope.getByRole("button", { name: "持仓", exact: true }).click();
+  await expect(title).toHaveText("持仓");
+  await expect(page.locator(".mobile-market-list")).toContainText("暂无持仓");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator(".terminal-slot-section-market > .terminal-sectionbar strong")).toHaveText("持仓股票");
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect(title).toHaveText("持仓");
+  await expect(scope.getByRole("button", { name: "持仓", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await navigation.getByRole("button", { name: "我的", exact: true }).click();
+  await expect(title).toHaveText("我的");
+  await navigation.getByRole("button", { name: "持仓", exact: true }).click();
+  await expect(title).toHaveText("持仓");
+  await navigation.getByRole("button", { name: "行情", exact: true }).click();
+  await expect(title).toHaveText("模拟行情");
+  await expect(scope.getByRole("button", { name: "全部", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".mobile-market-row")).toHaveCount(5);
+});
+
 test("桌面行情标题随证券范围更新，搜索及横竖屏切换保持范围", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/?tradingE2E=1");
