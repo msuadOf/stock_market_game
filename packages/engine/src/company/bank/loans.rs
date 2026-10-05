@@ -25,12 +25,15 @@ const ACT_365F_DIVISOR: i128 = 3_650_000;
 
 /// 单笔贷款状态：本金、应收利息、计息余数、ECL 阶段与准备、核销/回收面。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BankLoanState {
     principal: AccountingAmount,
     accrued_receivable: AccountingAmount,
     /// ACT/365F 计息余数（单位 1/3_650_000 分；随合同累计，落分守恒）。
     carried: FractionUnits,
     last_accrual_date: CivilDate,
+    start_date: CivilDate,
+    maturity_date: CivilDate,
     rate_bp: i32,
     counterparty: CounterpartyId,
     stage: EclStage,
@@ -55,6 +58,7 @@ impl BankLoanState {
         rate_bp: i32,
         counterparty: CounterpartyId,
         start: CivilDate,
+        maturity: CivilDate,
         day_one_allowance: AccountingAmount,
     ) -> Self {
         Self {
@@ -62,6 +66,8 @@ impl BankLoanState {
             accrued_receivable: AccountingAmount::ZERO,
             carried: FractionUnits::ZERO,
             last_accrual_date: start,
+            start_date: start,
+            maturity_date: maturity,
             rate_bp,
             counterparty,
             stage: EclStage::Stage1,
@@ -86,6 +92,18 @@ impl BankLoanState {
 
     pub fn last_accrual_date(&self) -> CivilDate {
         self.last_accrual_date
+    }
+
+    pub fn start_date(&self) -> CivilDate {
+        self.start_date
+    }
+
+    pub fn maturity_date(&self) -> CivilDate {
+        self.maturity_date
+    }
+
+    pub(super) fn rate_bp(&self) -> i32 {
+        self.rate_bp
     }
 
     pub fn stage(&self) -> EclStage {
@@ -136,6 +154,7 @@ impl BankLoanState {
         let (amount, remaining_carried) = accrue_act_365f(base, self.rate_bp, days, self.carried)?;
         Ok(Some(LoanAccrualItem {
             loan: contract.clone(),
+            source: None,
             days,
             amount,
             remaining_carried,

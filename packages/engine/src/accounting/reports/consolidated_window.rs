@@ -14,8 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::consolidation::{
-    consolidate, ConsolidationOutput, ConsolidationRequest, GroupMember, MemberId,
-    MinorityInterest, ScopeId,
+    ConsolidationOutput, ConsolidationRequest, GroupMember, MemberId, MinorityInterest, ScopeId,
 };
 use crate::accounting::error::AccountingError;
 use crate::accounting::journal::{JournalEntry, PostingSide};
@@ -89,38 +88,68 @@ pub(crate) fn consolidated(
     window: Window,
     prior_window: Window,
 ) -> Result<StatementWindows, ReportError> {
-    let mut bounded = Vec::with_capacity(request.members.len());
-    for member in &request.members {
-        let mut books = Books::new(member.books.ledger().chart().clone());
-        let entries = member
-            .books
-            .journal()
-            .entries()
-            .filter(|entry| entry.period() <= window.1)
-            .cloned()
-            .collect::<Vec<_>>();
-        if !entries.is_empty() {
-            books.post_batch(entries)?;
-        }
-        bounded.push((member.spec.clone(), books));
-    }
-    let request = ConsolidationRequest {
-        root: request.root,
-        members: bounded
+    consolidated_restated(request, window, prior_window, &BTreeMap::new())
+}
+
+pub(crate) fn consolidated_restated(
+    request: ConsolidationRequest<'_>,
+    window: Window,
+    prior_window: Window,
+    member_adjustments: &BTreeMap<
+        MemberId,
+        &BTreeMap<crate::accounting::BusinessEventId, AccountingPeriod>,
+    >,
+) -> Result<StatementWindows, ReportError> {
+    for (member_id, adjustments) in member_adjustments {
+        let member = request
+            .members
             .iter()
-            .map(|(spec, books)| GroupMember {
-                spec: spec.clone(),
-                books,
-            })
-            .collect(),
-        intercompany_balances: request.intercompany_balances,
-        intercompany_sales: request.intercompany_sales,
-    };
+            .find(|member| &member.spec.id == member_id)
+            .ok_or_else(|| ReportError::InternalWindowInconsistent {
+                detail: format!("集团重述引用未知成员 {member_id}"),
+            })?;
+        for (source, effective) in *adjustments {
+            let actual = member.books.journal().posted_date(*source).ok_or_else(|| {
+                ReportError::InternalWindowInconsistent {
+                    detail: format!("集团成员 {member_id} 重述引用未知来源 {source:?}"),
+                }
+            })?;
+            if *effective >= AccountingPeriod::from_ymd(actual.year(), actual.month())? {
+                return Err(ReportError::InternalWindowInconsistent {
+                    detail: format!("集团成员 {member_id} 重述有效期必须早于实际期间"),
+                });
+            }
+        }
+    }
+    let mut projections = BTreeMap::new();
+    let mut covered = BTreeMap::new();
+    for member in &request.members {
+        let mut ledger = crate::accounting::Ledger::new(member.books.ledger().chart().clone());
+        let adjustments = member_adjustments.get(&member.spec.id).copied();
+        let mut periods = BTreeSet::new();
+        for entry in member.books.journal().entries() {
+            let mapped = adjustments.and_then(|map| map.get(&entry.source)).copied();
+            let effective = mapped.unwrap_or_else(|| entry.period());
+            if effective <= window.1 {
+                ledger.apply_entry(entry)?;
+            }
+            if mapped.is_none() && entry.period() <= window.1 {
+                periods.insert(entry.period());
+            }
+        }
+        covered.insert(member.spec.id.clone(), periods);
+        projections.insert(member.spec.id.clone(), ledger);
+    }
+    let ledgers = projections
+        .iter()
+        .map(|(id, ledger)| (id.clone(), ledger))
+        .collect();
     let root = request.root.clone();
     let members = request.members.clone();
-    let output = consolidate(request)?;
+    let output =
+        crate::accounting::consolidation::consolidate_with_projection(request, &ledgers, &covered)?;
     let mut builder = WindowConsolidationBuilder::new(window, prior_window)?;
-    builder.scan_members(&root, &members)?;
+    builder.scan_members(&root, &members, member_adjustments)?;
     builder.apply_consolidation_output(&output)?;
     builder.finish(output)
 }
@@ -159,6 +188,10 @@ impl WindowConsolidationBuilder {
         &mut self,
         root: &MemberId,
         members: &[GroupMember<'_>],
+        member_adjustments: &BTreeMap<
+            MemberId,
+            &BTreeMap<crate::accounting::BusinessEventId, AccountingPeriod>,
+        >,
     ) -> Result<(), ReportError> {
         let books = members
             .iter()
@@ -185,15 +218,20 @@ impl WindowConsolidationBuilder {
             let is_root = &member.spec.id == root;
             let mut prior_equity = AccountingAmount::ZERO;
             for entry in member.books.journal().entries() {
+                let mapped = member_adjustments
+                    .get(&member.spec.id)
+                    .and_then(|map| map.get(&entry.source))
+                    .copied();
+                let effective = mapped.unwrap_or_else(|| entry.period());
                 let income = entry_income(entry, member.books)?;
-                if entry.period().year() == self.window.1.year() {
+                if effective.year() == self.window.1.year() && effective <= self.window.1 {
                     let total = self
                         .member_ytd_income
                         .entry(member.spec.id.clone())
                         .or_default();
                     *total = total.add(income)?;
                 }
-                if entry.period() >= self.window.0 && entry.period() <= self.window.1 {
+                if effective >= self.window.0 && effective <= self.window.1 {
                     let total = self
                         .member_window_income
                         .entry(member.spec.id.clone())
@@ -206,13 +244,19 @@ impl WindowConsolidationBuilder {
                         self.keys[&(member.spec.id.clone(), line.account.clone())].clone();
                 }
                 self.acc
-                    .add_entry(&mapped, entry.period(), false, &self.defs)
+                    .add_entry(
+                        &mapped,
+                        effective,
+                        mapped_period_exists(member_adjustments, &member.spec.id, entry.source),
+                        &self.defs,
+                    )
                     .map_err(|e| ReportError::Accounting(Box::new(e)))?;
                 prior_equity = prior_equity
                     .add(equity_rolling_delta(
                         entry,
                         member.books,
                         self.acc.prior_dec_bound(),
+                        effective,
                     )?)
                     .map_err(|e| ReportError::Accounting(Box::new(e)))?;
                 if is_sub {
@@ -221,6 +265,7 @@ impl WindowConsolidationBuilder {
                         member.books,
                         Some(&mut self.non_root_equity),
                         self.window.1,
+                        effective,
                     )?;
                 }
                 if is_root {
@@ -231,6 +276,7 @@ impl WindowConsolidationBuilder {
                             member.books,
                             None,
                             self.acc.prior_dec_bound(),
+                            effective,
                         )?)
                         .map_err(|e| ReportError::Accounting(Box::new(e)))?;
                 }
@@ -337,6 +383,19 @@ impl WindowConsolidationBuilder {
     }
 }
 
+fn mapped_period_exists(
+    member_adjustments: &BTreeMap<
+        MemberId,
+        &BTreeMap<crate::accounting::BusinessEventId, AccountingPeriod>,
+    >,
+    member: &MemberId,
+    source: crate::accounting::BusinessEventId,
+) -> bool {
+    member_adjustments
+        .get(member)
+        .is_some_and(|map| map.contains_key(&source))
+}
+
 fn entry_income(entry: &JournalEntry, books: &Books) -> Result<AccountingAmount, AccountingError> {
     let mut income = AccountingAmount::ZERO;
     for line in &entry.lines {
@@ -366,8 +425,9 @@ fn credit_of_equity(
     books: &Books,
     mut into: Option<&mut BTreeMap<LedgerAccountId, AccountingAmount>>,
     bound: AccountingPeriod,
+    effective: AccountingPeriod,
 ) -> Result<AccountingAmount, AccountingError> {
-    if entry.period() > bound {
+    if effective > bound {
         return Ok(AccountingAmount::ZERO);
     }
     let mut total = AccountingAmount::ZERO;
@@ -409,8 +469,9 @@ fn equity_rolling_delta(
     entry: &JournalEntry,
     books: &Books,
     bound: AccountingPeriod,
+    effective: AccountingPeriod,
 ) -> Result<AccountingAmount, AccountingError> {
-    if entry.period() > bound {
+    if effective > bound {
         return Ok(AccountingAmount::ZERO);
     }
     let mut delta = AccountingAmount::ZERO;

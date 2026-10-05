@@ -55,18 +55,46 @@ pub enum CompanyKind {
 ///
 /// [`CompanyRegistry::validate_issuer_mapping`]: crate::company::CompanyRegistry::validate_issuer_mapping
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompanySpec {
     pub id: CompanyId,
     pub name: String,
     pub industry: IndustryId,
     pub kind: CompanyKind,
     /// 发行人映射：`None` = 未上市独立测试实体。
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub listed_stock: Option<StockCode>,
     /// 已发行普通股总股数（>0；映射股票时与其 total_shares 精确相等）。
+    #[serde(with = "positive_canonical_u64_decimal")]
     pub issued_shares: u64,
     /// 固定集团母公司（开局后不变；accounting::consolidation 提供合并计算，
     /// accounting::reports 生成合并报表）。
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub group_parent: Option<CompanyId>,
+}
+
+mod positive_canonical_u64_decimal {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        crate::orderbook::canonical_u64_decimal::serialize(value, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = crate::orderbook::canonical_u64_decimal::deserialize(deserializer)?;
+        if value == 0 {
+            return Err(serde::de::Error::custom(
+                "issued_shares must be greater than zero",
+            ));
+        }
+        Ok(value)
+    }
 }
 
 impl CompanySpec {
@@ -137,5 +165,41 @@ impl CompanySpec {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+    use crate::account::StockCode;
+
+    fn spec(issued_shares: u64) -> CompanySpec {
+        CompanySpec {
+            id: CompanyId("C-600101".to_string()),
+            name: "虚构上市公司600101".to_string(),
+            industry: IndustryId("listed-simple".to_string()),
+            kind: CompanyKind::Industrial,
+            listed_stock: Some(StockCode("600101".to_string())),
+            issued_shares,
+            group_parent: None,
+        }
+    }
+
+    #[test]
+    fn issued_shares_uses_canonical_decimal_string_and_round_trips_u64_max() {
+        let original = spec(u64::MAX);
+        let encoded = serde_json::to_string(&original).expect("公司规格序列化");
+        assert!(encoded.contains("\"issued_shares\":\"18446744073709551615\""));
+        let restored: CompanySpec = serde_json::from_str(&encoded).expect("股本无损恢复");
+        assert_eq!(restored, original);
+
+        for invalid in ["0", "01", "18446744073709551616"] {
+            let value = format!(
+                "{{\"id\":\"C-600101\",\"name\":\"公司\",\"industry\":\"listed-simple\",\"kind\":\"Industrial\",\"listed_stock\":\"600101\",\"issued_shares\":\"{invalid}\",\"group_parent\":null}}"
+            );
+            assert!(serde_json::from_str::<CompanySpec>(&value).is_err(), "{invalid}");
+        }
+        let numeric = encoded.replace("\"18446744073709551615\"", "18446744073709551615");
+        assert!(serde_json::from_str::<CompanySpec>(&numeric).is_err());
     }
 }

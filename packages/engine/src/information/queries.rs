@@ -18,6 +18,65 @@ use crate::information::{
 };
 
 impl PublicLibrary {
+    pub fn query_report_availability(
+        &self,
+        system: &crate::company::CompanySystem,
+        query: &crate::company::PublicReportAvailabilityQuery,
+        frequency: crate::information::ReportFrequency,
+        as_of: CivilInstant,
+    ) -> Result<crate::company::PublicReportAvailability, InformationError> {
+        use crate::accounting::consolidation::{MemberId, ScopeId};
+        use crate::company::{api::CompanyReportAvailability, PublicReportAvailability, PublicReportKind, PublicReportScope, PublicReportUnavailableReason};
+        let invalid = |detail: String| InformationError::InconsistentLibrary { detail };
+        let company = CompanyId(query.company_id.clone());
+        if system.issuers().get(&company).is_none() {
+            return Err(invalid(format!("报告查询引用未知公司 {}", query.company_id)));
+        }
+        let date = crate::calendar::CivilDate::from_iso(&query.period_end)?;
+        let period = AccountingPeriod::of_date(date);
+        if super::period_end_date(period)? != date {
+            return Err(invalid(format!("报告查询期末 {} 不是自然月末", query.period_end)));
+        }
+        let kind = match query.kind {
+            PublicReportKind::Monthly => ReportKind::Monthly,
+            PublicReportKind::Quarter => ReportKind::Quarter,
+            PublicReportKind::HalfYear => ReportKind::HalfYear,
+            PublicReportKind::Annual => ReportKind::Annual,
+        };
+        kind.resolve(period).map_err(|error| InformationError::ReportNotPublishable(Box::new(error)))?;
+        let scope = match &query.scope {
+            PublicReportScope::Standalone { entity_id } => ScopeId::Standalone(MemberId(entity_id.clone())),
+            PublicReportScope::Consolidated { root_entity_id } => ScopeId::Consolidated(MemberId(root_entity_id.clone())),
+        };
+        super::publication::ensure_scope_mirrors_company(&company, &scope)?;
+        if let Some(report) = self.reports_for_company(&company, as_of).into_iter()
+            .filter(|report| report.reports.scope == scope && report.reports.kind == kind && report.reports.period == period)
+            .max_by_key(|report| (report.reports.version.sequence, report.id))
+        {
+            return Ok(PublicReportAvailability::Available { report: PublicReportSummary::from(report) });
+        }
+        let unavailable = |reason| Ok(PublicReportAvailability::Unavailable { reason });
+        if matches!(scope, ScopeId::Consolidated(_)) {
+            return unavailable(PublicReportUnavailableReason::ScopeNotRepresented);
+        }
+        let scheduled = match (kind, period.month()) {
+            (ReportKind::Annual, 12) | (ReportKind::HalfYear, 6) | (ReportKind::Quarter, 3 | 9) => true,
+            (ReportKind::Monthly, _) => matches!(frequency, crate::information::ReportFrequency::Monthly { .. }),
+            _ => false,
+        };
+        if !scheduled { return unavailable(PublicReportUnavailableReason::NotScheduled); }
+        if date > as_of.date() {
+            return unavailable(PublicReportUnavailableReason::NotYetSettled);
+        }
+        let availability = system.report_availability(&company, period, kind)
+            .map_err(|error| invalid(format!("报告期间可用性查询失败：{error}")))?;
+        unavailable(match availability {
+            CompanyReportAvailability::Available => PublicReportUnavailableReason::NotYetPublished,
+            CompanyReportAvailability::BeforeOpening => PublicReportUnavailableReason::BeforeOpening,
+            CompanyReportAvailability::NotYetSettled => PublicReportUnavailableReason::NotYetSettled,
+            CompanyReportAvailability::PeriodNotRepresented => PublicReportUnavailableReason::PeriodNotRepresented,
+        })
+    }
     /// Host-safe report page ordered only by immutable publication ID.
     ///
     /// The opaque cursor is the decimal ID of the last report returned. It must refer to

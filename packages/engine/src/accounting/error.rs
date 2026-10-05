@@ -11,6 +11,11 @@ use thiserror::Error;
 /// `cause` 内是首条被拒原因（可 `matches!` 精确匹配）。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum AccountingError {
+    #[error("Simple 汇总摘要 {event:?} 必须使用 NonCash，实际为 {cash_flow:?}")]
+    SimpleSummaryCashFlow {
+        event: BusinessEventId,
+        cash_flow: crate::accounting::CashFlowClass,
+    },
     /// i128 分运算溢出（加/减/乘/基点缩放）。数值游戏不应触达，触达即显式失败。
     #[error("amount overflow in {op}: {detail}")]
     AmountOverflow { op: &'static str, detail: String },

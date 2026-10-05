@@ -14,14 +14,12 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum IndustrialError {
+    #[error("tax correction of company {company:?} affects a fixed consolidated group and requires a grouped atomic correction")]
+    GroupedTaxCorrectionUnsupported { company: crate::company::CompanyId },
+    #[error("correction of account {account} requires structured subledger facts rather than plain journal lines")]
+    StructuredCorrectionRequired { account: LedgerAccountId },
     #[error("inconsistent income tax state: {detail}")]
     IncomeTaxStateInconsistent { detail: String },
-
-    #[error("historical income tax reassessment for {requested_year} before latest assessed year {latest_year} requires cascading recalculation")]
-    HistoricalTaxReassessmentUnsupported {
-        requested_year: i32,
-        latest_year: i32,
-    },
 
     #[error("inconsistent industrial credit state: {detail}")]
     CreditStateInconsistent { detail: String },

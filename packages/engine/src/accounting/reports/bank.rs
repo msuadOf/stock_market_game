@@ -17,6 +17,9 @@ use crate::accounting::ledger::LedgerAccountId;
 /// 银行科目代码（AccountChart.version=3，company/bank/chart.rs 以此构造科目表）。
 pub mod codes {
     pub const CASH: &str = "1003"; // 存放中央银行款项（现金类）
+    pub const DTA: &str = "1811";
+    pub const CIT_PAYABLE: &str = "222104";
+    pub const TAX_EXP: &str = "6801";
     pub const LOAN_INT_RCV: &str = "1131"; // 应收利息（贷款）
     pub const LOAN_PRINCIPAL: &str = "1301"; // 贷款——本金
     pub const LOAN_ALLOWANCE: &str = "1303"; // 贷款减值准备（资产备抵）
@@ -97,13 +100,16 @@ pub fn bank_presentation_lines(ledger: &Ledger) -> Result<BankPresentationLines,
 pub fn assignments() -> Vec<super::notes::Assignment> {
     use super::notes::{a, NoteTarget};
     use super::BsLine::{
-        CashFunds, CustomerDeposits, InterestPayable, LoansAndAdvances, PaidInCapital,
-        RetainedEarnings,
+        CashFunds, CustomerDeposits, DeferredTaxAssets, InterestPayable, LoansAndAdvances,
+        PaidInCapital, RetainedEarnings, TaxesPayable,
     };
     use super::IncomeLine::{
-        FeeAndCommissionIncome, ImpairmentLoss, InterestExpense, InterestIncome,
+        FeeAndCommissionIncome, ImpairmentLoss, IncomeTaxExpense, InterestExpense, InterestIncome,
     };
     vec![
+        a(codes::DTA, NoteTarget::BalanceSheet(DeferredTaxAssets)),
+        a(codes::CIT_PAYABLE, NoteTarget::BalanceSheet(TaxesPayable)),
+        a(codes::TAX_EXP, NoteTarget::Income(IncomeTaxExpense)),
         a(codes::CASH, NoteTarget::BalanceSheet(CashFunds)),
         a(
             codes::LOAN_INT_RCV,

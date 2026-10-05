@@ -31,6 +31,7 @@ mod config;
 mod csm;
 mod error;
 mod groups;
+mod income_tax;
 mod premium;
 mod remeasure;
 mod service_release;
@@ -97,6 +98,8 @@ pub struct InsuranceBooks {
     groups: BTreeMap<ContractId, ContractGroupState>,
     counterparties: CounterpartyLedger,
     discount: DiscountAssumption,
+    income_tax_policy: crate::accounting::IncomeTaxPolicy,
+    income_tax_position: crate::company::income_tax::IncomeTaxPosition,
     next_event_id: u64,
 }
 
@@ -105,6 +108,7 @@ impl InsuranceBooks {
     /// 对手方登记。任一步失败 ⇒ 不产生半构造账套。
     pub fn new(config: InsuranceConfig) -> Result<Self, InsuranceError> {
         config.discount.validate()?;
+        income_tax::validate_policy(&config.income_tax_policy)?;
         config.check_opening_lines()?;
         let mut books = Books::new(config.chart);
         books.post_batch(vec![crate::accounting::JournalEntry {
@@ -118,11 +122,15 @@ impl InsuranceBooks {
         for counterparty in config.counterparties {
             counterparties.register(counterparty)?;
         }
+        let income_tax_position = crate::company::income_tax::IncomeTaxPosition::new(&books)
+            .map_err(income_tax::map_tax_error)?;
         Ok(Self {
             books,
             groups: BTreeMap::new(),
             counterparties,
             discount: config.discount,
+            income_tax_policy: config.income_tax_policy,
+            income_tax_position,
             next_event_id: 2,
         })
     }

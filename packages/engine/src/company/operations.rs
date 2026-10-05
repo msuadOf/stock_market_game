@@ -23,11 +23,13 @@ mod injections;
 mod insurance;
 mod maturity_payments;
 mod real_estate;
+mod restore;
 mod settlements;
 mod state;
 
 pub use bank::BankFlowParams;
 pub use config::{CompanyOperationsConfig, FlowParams, IndustryBooks, OperatingCompanyConfig};
+pub use core::OperatingReportCorrection;
 pub use core::{
     ActivatedShockRecord, CompanyDayReport, CompanyOperations, ExpiredShockRecord,
     OperatingCompany, PaymentFailureRecord,

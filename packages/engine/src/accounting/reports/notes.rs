@@ -125,7 +125,14 @@ impl ReportClassification {
         let mut assignments = BTreeMap::new();
         for member in members {
             let industry = super::industry_of_chart(member.books.ledger().chart())?;
-            let source = merge_into(BTreeMap::new(), assignments_for(industry))?;
+            let mut source = merge_into(BTreeMap::new(), assignments_for(industry))?;
+            let summary = super::simple_summary::assignments()
+                .into_iter()
+                .filter(|item| {
+                    member.books.ledger().chart().get(&LedgerAccountId(item.code.into())).is_some()
+                })
+                .collect();
+            source = merge_into(source, summary)?;
             for (code, _) in member.books.ledger().chart().iter() {
                 let target =
                     source
@@ -156,6 +163,11 @@ impl ReportClassification {
         for industry in industries {
             merged = merge_into(merged, assignments_for(*industry))?;
         }
+        let summary = super::simple_summary::assignments()
+            .into_iter()
+            .filter(|item| defs.contains_key(&LedgerAccountId(item.code.into())))
+            .collect();
+        merged = merge_into(merged, summary)?;
         for code in defs.keys() {
             if !merged.contains_key(code) {
                 return Err(super::ReportError::UnclassifiedAccount { code: code.clone() });

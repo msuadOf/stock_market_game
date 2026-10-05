@@ -87,6 +87,14 @@ pub struct ClosingEngine {
     hash_projection_cache: OnceLock<ClosingEngineHashProjection>,
 }
 
+impl PartialEq for ClosingEngine {
+    fn eq(&self, other: &Self) -> bool {
+        self.versions == other.versions && self.restatements.scopes == other.restatements.scopes
+    }
+}
+
+impl Eq for ClosingEngine {}
+
 /// Content-sensitive, constant-size projection used by diagnostic state hashes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct ClosingEngineHashProjection {
@@ -143,6 +151,8 @@ pub enum ClosingError {
     CorrectionEntriesNotForward {
         first_entry_period: AccountingPeriod,
     },
+    #[error("invalid correction effective periods: {detail}")]
+    InvalidCorrectionPeriods { detail: String },
     #[error("report version sequence overflow for {scope} at {period}")]
     VersionSequenceOverflow {
         scope: ScopeId,
@@ -273,14 +283,9 @@ impl ClosingEngine {
         request: CorrectionRequest,
     ) -> Result<ReportHandle, ClosingError> {
         let reason = request.reason.clone();
-        match self.correct_with_publication(
-            books,
-            id,
-            industry,
-            target,
-            request,
-            |_| Ok::<(), std::convert::Infallible>(()),
-        ) {
+        match self.correct_with_publication(books, id, industry, target, request, |_| {
+            Ok::<(), std::convert::Infallible>(())
+        }) {
             Ok((handle, ())) => Ok(handle),
             Err(CorrectionTransactionError::Closing(error)) => {
                 Err(correction_failure(reason, error))
@@ -301,9 +306,39 @@ impl ClosingEngine {
         request: CorrectionRequest,
         prepare_publication: impl FnOnce(&ReportSet) -> Result<T, E>,
     ) -> Result<(ReportHandle, T), CorrectionTransactionError<E>> {
+        self.correct_with_periods_and_publication(
+            books,
+            id,
+            industry,
+            target,
+            request,
+            &BTreeMap::new(),
+            false,
+            prepare_publication,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn correct_with_periods_and_publication<T, E>(
+        &mut self,
+        books: &mut Books,
+        id: &MemberId,
+        industry: IndustryPresentation,
+        target: (AccountingPeriod, ReportKind),
+        request: CorrectionRequest,
+        effective_periods: &BTreeMap<BusinessEventId, AccountingPeriod>,
+        published_snapshot: bool,
+        prepare_publication: impl FnOnce(&ReportSet) -> Result<T, E>,
+    ) -> Result<(ReportHandle, T), CorrectionTransactionError<E>> {
         let scope = ScopeId::Standalone(id.clone());
         let key = (scope.clone(), target.0, target.1);
-        if books.journal().period_status(target.0) != crate::accounting::PeriodStatus::Closed {
+        if books.journal().period_status(target.0) != crate::accounting::PeriodStatus::Closed
+            && !(published_snapshot
+                && matches!(
+                    target.1,
+                    ReportKind::Quarter | ReportKind::HalfYear | ReportKind::Annual
+                ))
+        {
             return Err(CorrectionTransactionError::Closing(
                 ClosingError::CorrectionTargetNotClosed { period: target.0 },
             ));
@@ -332,8 +367,34 @@ impl ClosingEngine {
             .for_scope(&scope)
             .cloned()
             .unwrap_or_default();
+        for source in effective_periods.keys() {
+            if !request.entries.iter().any(|entry| entry.source == *source) {
+                return Err(CorrectionTransactionError::Closing(
+                    ClosingError::InvalidCorrectionPeriods {
+                        detail: format!("来源 {source:?} 不属于本批更正凭证"),
+                    },
+                ));
+            }
+        }
         for entry in &request.entries {
-            worksheet.insert(entry.source, target.0);
+            let effective = effective_periods
+                .get(&entry.source)
+                .copied()
+                .unwrap_or(target.0);
+            if effective > entry.period() {
+                return Err(CorrectionTransactionError::Closing(
+                    ClosingError::InvalidCorrectionPeriods {
+                        detail: format!(
+                            "来源 {:?} 的有效期间 {effective} 晚于实际过账期间 {}",
+                            entry.source,
+                            entry.period()
+                        ),
+                    },
+                ));
+            }
+            if effective < entry.period() {
+                worksheet.insert(entry.source, effective);
+            }
         }
         let sequence = previous.checked_add(1).ok_or_else(|| {
             CorrectionTransactionError::Closing(ClosingError::VersionSequenceOverflow {
@@ -404,6 +465,29 @@ impl ClosingEngine {
             .get(&(scope.clone(), period, kind))
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    pub fn report_versions(
+        &self,
+    ) -> impl Iterator<Item = (&ScopeId, AccountingPeriod, ReportKind, &[ReportSet])> {
+        self.versions
+            .iter()
+            .map(|((scope, period, kind), reports)| (scope, *period, *kind, reports.as_slice()))
+    }
+
+    pub fn restatement_periods(
+        &self,
+        scope: &ScopeId,
+    ) -> Option<&BTreeMap<BusinessEventId, AccountingPeriod>> {
+        self.restatements.for_scope(scope)
+    }
+
+    pub(crate) fn latest_reports_for_scope(&self, scope: &ScopeId) -> Vec<ReportSet> {
+        self.versions
+            .iter()
+            .filter(|((candidate, _, _), _)| candidate == scope)
+            .filter_map(|(_, versions)| versions.last().cloned())
+            .collect()
     }
 
     /// 按序号取版本（不可变查询：原版本逐字节不变）。

@@ -75,17 +75,40 @@ impl PublicLibrary {
         closing: &crate::accounting::closing::ClosingEngine,
         request: PublicationRequest,
     ) -> Result<PublicationId, InformationError> {
+        self.publish_closed_with_source(closing, request, super::PublicationSource::SimulationAccounting)
+    }
+
+    pub fn publish_simple_closed(
+        &mut self,
+        closing: &crate::accounting::closing::ClosingEngine,
+        request: PublicationRequest,
+    ) -> Result<PublicationId, InformationError> {
+        self.publish_closed_with_source(closing, request, super::PublicationSource::SimpleGenerated)
+    }
+
+    fn publish_closed_with_source(
+        &mut self,
+        closing: &crate::accounting::closing::ClosingEngine,
+        request: PublicationRequest,
+        source: super::PublicationSource,
+    ) -> Result<PublicationId, InformationError> {
         ensure_origin_supersedes(&request.origin, request.supersedes)?;
         ensure_scope_mirrors_company(&request.company, &request.scope)?;
         ensure_schedule_window(&request.origin, request.period)?;
-        ensure_publication_times(request.period, request.approved_at, request.published_at)?;
-        ensure_schedule_instant(&request.origin, request.published_at)?;
+        ensure_publication_times(
+            request.period,
+            request.approved_at,
+            request.published_at,
+            &request.origin,
+        )?;
+        ensure_schedule_instant(&request.origin, request.published_at, request.period)?;
         if let Some(target) = request.supersedes {
             let original = self
                 .reports
                 .get(&target)
                 .ok_or(InformationError::CorrectionTargetUnknown { target })?;
             if original.company != request.company
+                || original.source != source
                 || original.reports.period != request.period
                 || original.reports.kind != request.kind
                 || original.reports.scope != request.scope
@@ -116,6 +139,7 @@ impl PublicLibrary {
         let report = PublishedReport {
             id,
             company: request.company.clone(),
+            source,
             policy: request.policy,
             approved_at: request.approved_at,
             published_at: request.published_at,
@@ -137,12 +161,92 @@ impl PublicLibrary {
         correction: CorrectionRequest,
         publication: PublicationRequest,
     ) -> Result<(ReportHandle, PublicationId), super::CorrectionPublicationError> {
+        self.correct_and_publish_with_periods(
+            closing,
+            books,
+            member,
+            industry,
+            correction,
+            publication,
+            &BTreeMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn correct_and_publish_with_periods(
+        &mut self,
+        closing: &mut ClosingEngine,
+        books: &mut Books,
+        member: &MemberId,
+        industry: IndustryPresentation,
+        correction: CorrectionRequest,
+        publication: PublicationRequest,
+        effective_periods: &BTreeMap<
+            crate::accounting::BusinessEventId,
+            crate::accounting::AccountingPeriod,
+        >,
+    ) -> Result<(ReportHandle, PublicationId), super::CorrectionPublicationError> {
         let reason = correction.reason.clone();
         let target = (publication.period, publication.kind);
-        let prepared =
-            closing.correct_with_publication(books, member, industry, target, correction, |set| {
-                self.prepare_correction_publication(set, publication)
-            });
+        let published_snapshot = if matches!(
+            publication.kind,
+            crate::accounting::reports::ReportKind::Quarter
+                | crate::accounting::reports::ReportKind::HalfYear
+                | crate::accounting::reports::ReportKind::Annual
+        ) {
+            let validate_snapshot = || -> Result<(), InformationError> {
+                ensure_origin_supersedes(&publication.origin, publication.supersedes)?;
+                ensure_scope_mirrors_company(&publication.company, &publication.scope)?;
+                ensure_publication_times(
+                    publication.period,
+                    publication.approved_at,
+                    publication.published_at,
+                    &publication.origin,
+                )?;
+                let id = publication
+                    .supersedes
+                    .ok_or(InformationError::OriginSupersedesMismatch)?;
+                let original = self
+                    .reports
+                    .get(&id)
+                    .ok_or(InformationError::CorrectionTargetUnknown { target: id })?;
+                if original.company != publication.company
+                    || original.reports.scope != publication.scope
+                    || original.reports.period != publication.period
+                    || original.reports.kind != publication.kind
+                {
+                    return Err(InformationError::CorrectionTargetMismatch {
+                        target: id,
+                        company: publication.company.clone(),
+                    });
+                }
+                if original.published_at > publication.published_at {
+                    return Err(InformationError::InconsistentLibrary {
+                        detail: "更正公布时点早于被更正的公开快照".into(),
+                    });
+                }
+                Ok(())
+            };
+            validate_snapshot().map_err(|cause| {
+                super::CorrectionPublicationError::Information {
+                    reason: reason.clone(),
+                    cause: Box::new(cause),
+                }
+            })?;
+            true
+        } else {
+            false
+        };
+        let prepared = closing.correct_with_periods_and_publication(
+            books,
+            member,
+            industry,
+            target,
+            correction,
+            effective_periods,
+            published_snapshot,
+            |set| self.prepare_correction_publication(set, publication),
+        );
         match prepared {
             Ok((handle, pending)) => {
                 let publication_id = self.commit_prepared_report(pending);
@@ -177,8 +281,13 @@ impl PublicLibrary {
         ensure_origin_supersedes(&request.origin, request.supersedes)?;
         ensure_scope_mirrors_company(&request.company, &request.scope)?;
         ensure_schedule_window(&request.origin, request.period)?;
-        ensure_publication_times(request.period, request.approved_at, request.published_at)?;
-        ensure_schedule_instant(&request.origin, request.published_at)?;
+        ensure_publication_times(
+            request.period,
+            request.approved_at,
+            request.published_at,
+            &request.origin,
+        )?;
+        ensure_schedule_instant(&request.origin, request.published_at, request.period)?;
         let target = request
             .supersedes
             .ok_or(InformationError::OriginSupersedesMismatch)?;
@@ -194,6 +303,14 @@ impl PublicLibrary {
             return Err(InformationError::CorrectionTargetMismatch {
                 target,
                 company: request.company,
+            });
+        }
+        if original.published_at > request.published_at {
+            return Err(InformationError::InconsistentLibrary {
+                detail: format!(
+                    "更正公布 {:?} 早于原公开报告 {target:?} 的 {:?}",
+                    request.published_at, original.published_at
+                ),
             });
         }
         if set.scope != request.scope || set.period != request.period || set.kind != request.kind {
@@ -224,6 +341,7 @@ impl PublicLibrary {
         let report = PublishedReport {
             id,
             company: request.company,
+            source: original.source,
             policy: request.policy,
             approved_at: request.approved_at,
             published_at: request.published_at,
@@ -232,6 +350,7 @@ impl PublicLibrary {
             reports: set.clone(),
         };
         ensure_report_shape(&report)?;
+        self.validate_correction_target(&report)?;
         let digest = extend_content_digest(self.content_digest, b'R', id, &report)?;
         Ok(PreparedReportPublication {
             report,
@@ -280,11 +399,12 @@ impl PublicLibrary {
 
     /// 恢复边界：全量校验（id 域一致 + 无重复、逐条形状校验、更正链
     /// 完整、计数器与最大 id 严格衔接、索引重建）。任何失败 ⇒ 库不产生。
-    pub fn from_parts(save: PublicLibrarySave) -> Result<Self, InformationError> {
+    pub fn from_parts(mut save: PublicLibrarySave) -> Result<Self, InformationError> {
         let mut library = Self {
             next_seq: save.next_seq,
             ..Self::default()
         };
+        save.reports.sort_by_key(|report| report.id);
         for report in save.reports {
             if report.id.value() >= save.next_seq {
                 return Err(InformationError::InconsistentLibrary {
@@ -381,39 +501,70 @@ impl PublicLibrary {
 
     fn insert_report(&mut self, report: PublishedReport) -> Result<(), InformationError> {
         ensure_report_shape(&report)?;
+        self.validate_correction_target(&report)?;
         let id = report.id;
         let company = report.company.clone();
-        let appended_digest = (id.value() == self.next_seq)
-            .then(|| extend_content_digest(self.content_digest, b'R', id, &report))
-            .transpose()?;
-        if self.reports.insert(id, report).is_some() {
+        if self.reports.contains_key(&id) || self.announcements.contains_key(&id) {
             return Err(InformationError::DuplicatePublicationId { id });
         }
-        self.by_company.entry(company).or_default().insert(id);
-        self.next_seq = self.next_seq.max(id.value() + 1);
-        self.content_digest = match appended_digest {
-            Some(digest) => digest,
-            // Reports restored or injected with a non-contiguous publication id cannot be
-            // appended to the incremental chain. Recompute the canonical id order instead of
-            // leaving a stale digest that would make diagnostic hashes miss the mutation.
-            None => self.recompute_content_digest()?,
+        let following = id.value().checked_add(1).ok_or_else(|| InformationError::InconsistentLibrary { detail: "公开材料 ID 空间耗尽".into() })?;
+        let content_digest = if id.value() == self.next_seq {
+            extend_content_digest(self.content_digest, b'R', id, &report)?
+        } else {
+            self.recompute_content_digest_with_report(&report)?
         };
+        self.reports.insert(id, report);
+        self.by_company.entry(company).or_default().insert(id);
+        self.next_seq = self.next_seq.max(following);
+        self.content_digest = content_digest;
+        Ok(())
+    }
+
+    fn validate_correction_target(&self, report: &PublishedReport) -> Result<(), InformationError> {
+        let Some(target) = report.supersedes else { return Ok(()); };
+        let original = self.reports.get(&target).ok_or(InformationError::CorrectionTargetUnknown { target })?;
+        if original.company != report.company || original.source != report.source
+            || original.reports.scope != report.reports.scope || original.reports.period != report.reports.period
+            || original.reports.kind != report.reports.kind || target >= report.id
+            || original.reports.version.sequence >= report.reports.version.sequence
+            || !matches!(&report.reports.version.kind, crate::accounting::reports::VersionKind::Correction { reason } if !reason.trim().is_empty())
+            || !report.reports.version.supersedes.is_some_and(|prior| prior >= original.reports.version.sequence && prior < report.reports.version.sequence)
+        {
+            return Err(InformationError::CorrectionTargetMismatch { target, company: report.company.clone() });
+        }
+        if original.published_at > report.published_at {
+            return Err(InformationError::CorrectionPrecedesOriginal { original: target, original_at: original.published_at, published_at: report.published_at });
+        }
         Ok(())
     }
 
     fn recompute_content_digest(&self) -> Result<u64, InformationError> {
+        self.content_digest_including(None)
+    }
+
+    fn recompute_content_digest_with_report(&self, report: &PublishedReport) -> Result<u64, InformationError> {
+        self.content_digest_including(Some(report))
+    }
+
+    fn content_digest_including(&self, additional: Option<&PublishedReport>) -> Result<u64, InformationError> {
         let mut publications = self
             .reports
             .keys()
             .copied()
             .map(|id| (id, b'R'))
             .chain(self.announcements.keys().copied().map(|id| (id, b'A')))
+            .chain(additional.map(|report| (report.id, b'R')))
             .collect::<Vec<_>>();
         publications.sort_unstable();
         publications
             .into_iter()
             .try_fold(CONTENT_DIGEST_SEED, |digest, (id, kind)| match kind {
-                b'R' => extend_content_digest(digest, kind, id, &self.reports[&id]),
+                b'R' => {
+                    let report = if additional.is_some_and(|report| report.id == id) {
+                        additional.expect("额外报告 ID 已验证")
+                    } else { &self.reports[&id] };
+                    extend_content_digest(digest, kind, id, report)
+                },
                 b'A' => extend_content_digest(digest, kind, id, &self.announcements[&id]),
                 _ => unreachable!("publication digest kind is closed"),
             })

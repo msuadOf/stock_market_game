@@ -50,6 +50,48 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
+    pub(super) fn validate_timeline(&self, project: &ProjectId) -> Result<(), RealEstateError> {
+        let Some(started) = self.dev_started_on else {
+            return Ok(());
+        };
+        let mut earliest = started;
+        for interval in &self.interruptions {
+            if interval.start < earliest || interval.end <= interval.start {
+                return Err(RealEstateError::OwnerStateInconsistent {
+                    detail: format!("项目{project:?}中断早于开发、重叠或未按序"),
+                });
+            }
+            earliest = interval.end;
+        }
+        if self.interrupted_on.is_some_and(|date| date < earliest)
+            || self.completed_on.is_some_and(|date| date < earliest)
+        {
+            return Err(RealEstateError::OwnerStateInconsistent {
+                detail: format!("项目{project:?}暂停或完工早于开发／复工"),
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_lifecycle_date(
+        &self,
+        project: &ProjectId,
+        date: CivilDate,
+    ) -> Result<(), RealEstateError> {
+        self.validate_timeline(project)?;
+        let earliest = self
+            .interruptions
+            .last()
+            .map(|interval| interval.end)
+            .or(self.dev_started_on);
+        if earliest.is_some_and(|earliest| date < earliest) {
+            return Err(RealEstateError::OwnerStateInconsistent {
+                detail: format!("项目{project:?}操作日期{date}早于开发／复工"),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn new(land_cost: AccountingAmount, total_units: i128) -> Self {
         Self {
             total_units,

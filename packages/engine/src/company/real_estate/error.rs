@@ -12,6 +12,16 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum RealEstateError {
+    #[error("地产子账状态不一致：{detail}")]
+    OwnerStateInconsistent { detail: String },
+    #[error("地产所得税状态不一致：{detail}")]
+    IncomeTaxStateInconsistent { detail: String },
+
+    #[error("所得税付款 {requested:?} 超过真实应交余额 {payable:?}")]
+    TaxOverpayment {
+        requested: AccountingAmount,
+        payable: AccountingAmount,
+    },
     /// 付款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化拒绝，
     /// 账套与子账零改动；无透支、无自动补钱（会计与资金边界）。
     #[error("payment failed (insufficient cash): {source}")]

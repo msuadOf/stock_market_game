@@ -10,6 +10,14 @@ use thiserror::Error;
 /// `matches!` 字段绑定——observation 套件先例）。
 #[derive(Debug, Error)]
 pub enum OperationsError {
+    #[error("独立经营状态恢复非法：{detail}")]
+    InvalidRestoredState { detail: String },
+    #[error("独立经营公司 {company:?} 恢复失败：{cause}")]
+    InvalidRestoredOwner {
+        company: crate::company::CompanyId,
+        #[source]
+        cause: Box<OperationsError>,
+    },
     #[error("invalid company payment history: {detail}")]
     InvalidPaymentHistory { detail: String },
     #[error(transparent)]

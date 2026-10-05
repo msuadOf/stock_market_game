@@ -22,6 +22,7 @@ use crate::company::counterparty::FlowDirection;
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct LoanAccrualItem {
     pub loan: ContractId,
+    pub source: Option<BusinessEventId>,
     pub days: i64,
     pub amount: AccountingAmount,
     pub remaining_carried: FractionUnits,
@@ -39,17 +40,27 @@ impl BankBooks {
         let base = self.next_event_id;
         let mut items = Vec::new();
         let mut entries = Vec::new();
+        let mut updated_states = Vec::new();
         let states: Vec<(ContractId, BankLoanState)> = self
             .loans
             .iter()
             .map(|(id, state)| (id.clone(), state.clone()))
             .collect();
-        for (loan_id, state) in states {
-            let Some(item) = state.preview_accrual(through, &loan_id)? else {
+        for (loan_id, mut state) in states {
+            let Some(mut item) = state.preview_accrual(through, &loan_id)? else {
                 continue;
             };
-            let event = BusinessEventId::new(base + items.len() as u64);
+            let offset =
+                u64::try_from(items.len()).map_err(|_| BankError::OwnershipStateInconsistent {
+                    detail: "贷款计提数量超出u64值域".into(),
+                })?;
+            let event = BusinessEventId::new(base.checked_add(offset).ok_or_else(|| {
+                BankError::OwnershipStateInconsistent {
+                    detail: "贷款计提事件身份空间耗尽".into(),
+                }
+            })?);
             if item.amount.is_positive() {
+                item.source = Some(event);
                 entries.push(JournalEntry {
                     source: event,
                     date: through,
@@ -65,12 +76,30 @@ impl BankBooks {
                     ],
                 });
             }
+            state.apply_accrual(item.amount, item.remaining_carried, through)?;
+            updated_states.push((loan_id, state));
             items.push(item);
         }
-        self.post_with_commit(base + items.len() as u64, entries)?;
+        let next_event_id = base
+            .checked_add(u64::try_from(items.len()).map_err(|_| {
+                BankError::OwnershipStateInconsistent {
+                    detail: "贷款计提数量超出u64值域".into(),
+                }
+            })?)
+            .ok_or_else(|| BankError::OwnershipStateInconsistent {
+                detail: "贷款计提事件身份空间耗尽".into(),
+            })?;
+        self.post_with_commit(next_event_id, entries)?;
+        for (loan, state) in updated_states {
+            self.loans.insert(loan, state);
+        }
         for item in &items {
-            if let Some(state) = self.loans.get_mut(&item.loan) {
-                state.apply_accrual(item.amount, item.remaining_carried, through)?;
+            if let Some(source) = item.source {
+                self.loan_claim_sources.push(super::BankLoanClaimSource {
+                    loan: item.loan.clone(),
+                    source,
+                    kind: super::BankLoanClaimKind::Interest,
+                });
             }
         }
         Ok(items)

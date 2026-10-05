@@ -51,6 +51,10 @@ fn config() -> RealEstateConfig {
             suspension_min_days: 2,
         },
         max_projects: 2,
+        income_tax_policy: crate::accounting::IncomeTaxPolicy {
+            rate_bp: 2500,
+            loss_carryforward_years: 5,
+        },
     }
 }
 
@@ -113,12 +117,17 @@ fn project_guards_preserve_first_error_and_rejected_state() {
     ));
     assert_eq!(books, before);
     books.resume_development(&project(), date(4)).unwrap();
-    // 当前 API 接受早于开发日的完工日期，纯重构不新增时间方向 guard。
-    books.complete_project(&project(), date(1)).unwrap();
+    let before = books.clone();
+    assert!(matches!(
+        books.complete_project(&project(), date(1)),
+        Err(RealEstateError::OwnerStateInconsistent { .. })
+    ));
+    assert_eq!(books, before);
+    books.complete_project(&project(), date(4)).unwrap();
     let state = books.project(&project()).unwrap();
     assert_eq!(state.dev_started_on(), Some(date(2)));
-    assert_eq!(state.completed_on(), Some(date(1)));
-    assert!(state.completed_on().unwrap() < state.dev_started_on().unwrap());
+    assert_eq!(state.completed_on(), Some(date(4)));
+    assert!(state.completed_on().unwrap() >= state.dev_started_on().unwrap());
     let before = books.clone();
     assert_eq!(
         books
@@ -453,4 +462,171 @@ fn loan_apply_overflow_preserves_existing_posted_partial_failure() {
     assert_ne!(books.books(), before.books());
     assert_eq!(books.loan(&contract("A")), before.loan(&contract("A")));
     assert_eq!(books.project(&project()), before.project(&project()));
+}
+
+#[test]
+fn annual_income_tax_excludes_presales_and_repeated_assessment_is_idempotent() {
+    let mut books = developing();
+    books
+        .sign_presale(
+            contract("税务预售"),
+            &project(),
+            &party(),
+            3,
+            amount(100),
+            date(2),
+        )
+        .unwrap();
+    books
+        .collect_presale(&contract("税务预售"), amount(100), date(2))
+        .unwrap();
+    let before = books.clone();
+    let first = books.accrue_income_tax(date(3)).unwrap();
+    assert_eq!(first.pretax, amount(0));
+    assert_eq!(first.current_tax, amount(0));
+    assert_eq!(books.books(), before.books());
+    books.complete_project(&project(), date(3)).unwrap();
+    books.deliver(&contract("税务预售"), date(4)).unwrap();
+    let actual = books.accrue_income_tax(date(4)).unwrap();
+    assert_eq!(actual.pretax, amount(89));
+    assert_eq!(actual.current_tax, amount(22));
+    let assessed = books.clone();
+    let repeat = books.accrue_income_tax(date(4)).unwrap();
+    assert_eq!(repeat.current_tax_delta, amount(0));
+    assert_eq!(books, assessed);
+    books.validate_income_tax_state().unwrap();
+}
+
+#[test]
+fn income_tax_payment_failure_preserves_owner_and_does_not_generate_cash() {
+    let mut books = developing();
+    books
+        .sign_presale(
+            contract("税款"),
+            &project(),
+            &party(),
+            3,
+            amount(8_000_000),
+            date(2),
+        )
+        .unwrap();
+    books.complete_project(&project(), date(3)).unwrap();
+    let delivery = books.deliver(&contract("税款"), date(4)).unwrap();
+    let tax = books.accrue_income_tax(date(4)).unwrap();
+    let before = books.clone();
+    assert!(matches!(
+        books.pay_income_tax(tax.current_tax, date(4)),
+        Err(RealEstateError::PaymentFailed { .. })
+    ));
+    assert_eq!(books, before);
+    books
+        .collect_final(&delivery.receivable.unwrap(), amount(8_000_000), date(5))
+        .unwrap();
+    books.pay_income_tax(tax.current_tax, date(5)).unwrap();
+    assert_eq!(books.net_of("222104").unwrap(), amount(0));
+    books.validate_income_tax_state().unwrap();
+}
+
+#[test]
+fn income_tax_owner_rejects_missing_assessment_and_invalid_policy() {
+    let mut input = config();
+    input.income_tax_policy.rate_bp = -1;
+    assert!(matches!(
+        RealEstateBooks::new(input),
+        Err(RealEstateError::IncomeTaxStateInconsistent { .. })
+    ));
+    let mut books = developing();
+    books
+        .sign_presale(
+            contract("恢复税"),
+            &project(),
+            &party(),
+            3,
+            amount(100),
+            date(2),
+        )
+        .unwrap();
+    books.complete_project(&project(), date(3)).unwrap();
+    books.deliver(&contract("恢复税"), date(4)).unwrap();
+    books.accrue_income_tax(date(4)).unwrap();
+    let saved = serde_json::to_value(&books).unwrap();
+    let restored: RealEstateBooks = serde_json::from_value(saved.clone()).unwrap();
+    restored.validate_income_tax_state().unwrap();
+    assert_eq!(restored, books);
+    let mut invalid = saved.clone();
+    invalid["income_tax_position"]["assessments"] = serde_json::json!({});
+    let rejected: RealEstateBooks = serde_json::from_value(invalid).unwrap();
+    assert!(rejected.validate_income_tax_state().is_err());
+    let mut missing = saved;
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("income_tax_position");
+    assert!(serde_json::from_value::<RealEstateBooks>(missing).is_err());
+}
+
+#[test]
+fn failed_income_tax_post_preserves_assessment_and_event_identity() {
+    let mut books = developing();
+    books
+        .sign_presale(
+            contract("失败税"),
+            &project(),
+            &party(),
+            3,
+            amount(100),
+            date(2),
+        )
+        .unwrap();
+    books.complete_project(&project(), date(3)).unwrap();
+    books.deliver(&contract("失败税"), date(4)).unwrap();
+    books.next_event_id = 1;
+    let before = books.clone();
+    assert!(books.accrue_income_tax(date(4)).is_err());
+    assert_eq!(books, before);
+    books.next_event_id = 100;
+    books.accrue_income_tax(date(4)).unwrap();
+    books.validate_income_tax_state().unwrap();
+}
+
+#[test]
+fn income_tax_loss_reassessment_reverses_only_deferred_difference() {
+    let mut books = developing();
+    books
+        .borrow_project_loan(
+            contract("费用借款"),
+            &party(),
+            amount(365_000),
+            1000,
+            date(1),
+            date(20),
+            None,
+        )
+        .unwrap();
+    books.accrue_interest(date(3)).unwrap();
+    let first = books.accrue_income_tax(date(3)).unwrap();
+    assert_eq!(first.pretax, amount(-200));
+    assert_eq!(first.current_tax, amount(0));
+    assert_eq!(first.deferred_delta, amount(50));
+    books
+        .sign_presale(
+            contract("亏损交付"),
+            &project(),
+            &party(),
+            3,
+            amount(100),
+            date(3),
+        )
+        .unwrap();
+    books.complete_project(&project(), date(3)).unwrap();
+    books.deliver(&contract("亏损交付"), date(4)).unwrap();
+    let changed = books.accrue_income_tax(date(4)).unwrap();
+    assert_eq!(changed.pretax, amount(-111));
+    assert_eq!(changed.current_tax, amount(0));
+    assert_eq!(changed.deferred_delta, amount(-22));
+    assert_eq!(books.net_of("1811").unwrap(), amount(28));
+    let before = books.clone();
+    books.accrue_income_tax(date(4)).unwrap();
+    assert_eq!(books, before);
+    books.validate_income_tax_state().unwrap();
 }

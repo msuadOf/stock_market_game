@@ -59,6 +59,7 @@ impl BusinessEventId {
     ts_rs::TS,
 )]
 pub enum BusinessKind {
+    SimplePeriodSummary,
     /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。
@@ -211,6 +212,14 @@ impl JournalEntry {
     /// 复式不变量验证（过账与存档恢复共用同一路径）：
     /// 非空行、每行正金额、借贷两侧俱全、借贷总额相等。
     pub fn validate_invariants(&self) -> Result<(), AccountingError> {
+        if self.kind == BusinessKind::SimplePeriodSummary
+            && self.cash_flow != CashFlowClass::NonCash
+        {
+            return Err(AccountingError::SimpleSummaryCashFlow {
+                event: self.source,
+                cash_flow: self.cash_flow,
+            });
+        }
         if self.lines.is_empty() {
             return Err(AccountingError::EmptyLines { event: self.source });
         }

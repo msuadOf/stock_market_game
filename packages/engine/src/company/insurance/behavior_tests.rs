@@ -26,6 +26,10 @@ fn config() -> InsuranceConfig {
             kind: CounterpartyKind::Customer,
             name: "测试投保人".into(),
         }],
+        income_tax_policy: crate::accounting::IncomeTaxPolicy {
+            rate_bp: 2_500,
+            loss_carryforward_years: 5,
+        },
         // Fixture：显式游戏假设，不代表真实精算利率。
         discount: DiscountAssumption {
             version: 1,
@@ -407,4 +411,264 @@ fn maximum_premium_established_by_public_api_roundtrips() {
         serde_json::from_slice::<InsuranceBooks>(&serde_json::to_vec(&books).unwrap()).unwrap(),
         books
     );
+}
+
+#[test]
+fn annual_income_tax_is_idempotent_and_payment_does_not_repeat_expense() {
+    let (mut books, group) = seeded();
+    books.release_service(&group, 365, date()).unwrap();
+    let closing_date = CivilDate::from_iso("2030-12-31").unwrap();
+    let first = books.accrue_income_tax(closing_date).unwrap();
+    assert_eq!(first.current_tax, amount(25_000));
+    let after_first = books.clone();
+    let repeated = books.accrue_income_tax(closing_date).unwrap();
+    assert_eq!(repeated.current_tax_delta, amount(0));
+    assert_eq!(books, after_first);
+    books.pay_income_tax(amount(10_000), closing_date).unwrap();
+    assert_eq!(
+        books
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId("222104".into()))
+            .unwrap(),
+        amount(-15_000)
+    );
+    assert_eq!(
+        books
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId("6801".into()))
+            .unwrap(),
+        amount(25_000)
+    );
+    books.validate_restore().unwrap();
+}
+
+#[test]
+fn failed_income_tax_payment_and_corrupt_owner_restore_are_atomic() {
+    let (mut books, group) = seeded();
+    books.release_service(&group, 365, date()).unwrap();
+    let closing_date = CivilDate::from_iso("2030-12-31").unwrap();
+    books.accrue_income_tax(closing_date).unwrap();
+    let before = books.clone();
+    assert!(books.pay_income_tax(amount(25_001), closing_date).is_err());
+    assert_eq!(books, before);
+    let mut saved = serde_json::to_value(&books).unwrap();
+    saved["income_tax_position"]["assessments"] = serde_json::json!({});
+    let corrupt: InsuranceBooks = serde_json::from_value(saved).unwrap();
+    assert!(corrupt.validate_restore().is_err());
+    let mut saved = serde_json::to_value(&books).unwrap();
+    saved.as_object_mut().unwrap().remove("income_tax_policy");
+    assert!(serde_json::from_value::<InsuranceBooks>(saved).is_err());
+}
+
+#[test]
+fn initial_deferred_tax_asset_is_real_and_invalid_policy_is_rejected() {
+    let mut input = config();
+    input
+        .opening_lines
+        .push(line("1811", PostingSide::Debit, amount(100)));
+    input
+        .opening_lines
+        .push(line("4001", PostingSide::Credit, amount(100)));
+    let books = InsuranceBooks::new(input.clone()).unwrap();
+    let saved = serde_json::to_value(&books).unwrap();
+    assert_eq!(
+        saved["income_tax_position"]["initial_deferred_tax_asset"],
+        serde_json::to_value(amount(100)).unwrap()
+    );
+    books.validate_restore().unwrap();
+    input.income_tax_policy.rate_bp = -1;
+    assert!(InsuranceBooks::new(input).is_err());
+}
+
+#[test]
+fn restore_rejects_insurance_subledger_drift_and_reused_event_slot() {
+    let (mut books, group) = seeded();
+    books.release_service(&group, 100, date()).unwrap();
+    books.validate_restore().unwrap();
+    let valid = books.clone();
+    books.next_event_id = 2;
+    assert!(books.validate_restore().is_err());
+    books = valid;
+    books
+        .books
+        .post_batch(vec![crate::accounting::JournalEntry {
+            source: crate::accounting::BusinessEventId::new(books.next_event_id),
+            date: date(),
+            kind: crate::accounting::BusinessKind::InsuranceServiceRevenue,
+            cash_flow: crate::accounting::CashFlowClass::NonCash,
+            lines: vec![
+                line("2501", PostingSide::Debit, amount(1)),
+                line("6051", PostingSide::Credit, amount(1)),
+            ],
+        }])
+        .unwrap();
+    books.next_event_id += 1;
+    assert!(books.validate_restore().is_err());
+}
+
+#[test]
+fn paid_income_tax_reassessment_creates_asset_without_cash_refund() {
+    let (mut books, group) = seeded();
+    books.release_service(&group, 365, date()).unwrap();
+    let closing_date = CivilDate::from_iso("2030-12-31").unwrap();
+    books.accrue_income_tax(closing_date).unwrap();
+    books.pay_income_tax(amount(25_000), closing_date).unwrap();
+    let cash = books
+        .books()
+        .ledger()
+        .account_net_debit(&LedgerAccountId("1002".into()))
+        .unwrap();
+    books
+        .record_claim(
+            &group,
+            ClaimId("LATE".into()),
+            amount(120_000),
+            closing_date,
+        )
+        .unwrap();
+    let outcome = books.accrue_income_tax(closing_date).unwrap();
+    assert_eq!(outcome.current_tax_delta, amount(-25_000));
+    assert_eq!(outcome.deferred_delta, amount(5_000));
+    assert_eq!(
+        books
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId("1002".into()))
+            .unwrap(),
+        cash
+    );
+    assert_eq!(
+        books
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId("222104".into()))
+            .unwrap(),
+        amount(25_000)
+    );
+    books.validate_restore().unwrap();
+    let before = books.clone();
+    books.accrue_income_tax(closing_date).unwrap();
+    assert_eq!(books, before);
+}
+
+#[test]
+fn failed_tax_post_preserves_owner_and_insufficient_cash_is_not_replenished() {
+    let (mut books, group) = seeded();
+    books.release_service(&group, 365, date()).unwrap();
+    let closing_date = CivilDate::from_iso("2030-12-31").unwrap();
+    let valid_next = books.next_event_id;
+    books.next_event_id = 2;
+    let before = books.clone();
+    assert!(books.accrue_income_tax(closing_date).is_err());
+    assert_eq!(books, before);
+    books.next_event_id = valid_next;
+    books.accrue_income_tax(closing_date).unwrap();
+    books
+        .books
+        .post_batch(vec![crate::accounting::JournalEntry {
+            source: crate::accounting::BusinessEventId::new(books.next_event_id),
+            date: closing_date,
+            kind: crate::accounting::BusinessKind::CashExpense,
+            cash_flow: crate::accounting::CashFlowClass::Financing,
+            lines: vec![
+                line("4001", PostingSide::Debit, amount(200_000)),
+                line("1002", PostingSide::Credit, amount(200_000)),
+            ],
+        }])
+        .unwrap();
+    books.next_event_id += 1;
+    let before = books.clone();
+    assert!(matches!(
+        books.pay_income_tax(amount(25_000), closing_date),
+        Err(InsuranceError::PaymentFailed { .. })
+    ));
+    assert_eq!(books, before);
+}
+
+#[test]
+fn historical_tax_cascade_survives_restore_and_keeps_real_cash_dates() {
+    let (mut books, group) = seeded();
+    let first_end = CivilDate::from_iso("2030-12-31").unwrap();
+    books.release_service(&group, 365, first_end).unwrap();
+    books
+        .record_claim(&group, ClaimId("FIRST".into()), amount(120_000), first_end)
+        .unwrap();
+    books.accrue_income_tax(first_end).unwrap();
+    assert_eq!(books.loss_pool()[0].remaining, amount(20_000));
+    let mut restored: InsuranceBooks =
+        serde_json::from_slice(&serde_json::to_vec(&books).unwrap()).unwrap();
+    restored.validate_restore().unwrap();
+    let second_start = CivilDate::from_iso("2031-01-01").unwrap();
+    let second_end = CivilDate::from_iso("2031-12-31").unwrap();
+    let second_group = ContractId("SECOND".into());
+    restored
+        .establish_group(
+            InsuranceProductKind::TermProtection,
+            second_group.clone(),
+            &CounterpartyId("POL".into()),
+            amount(100_000),
+            amount(80_000),
+            amount(5_000),
+            second_start,
+            CivilDate::from_iso("2032-01-01").unwrap(),
+        )
+        .unwrap();
+    restored
+        .release_service(&second_group, 365, second_end)
+        .unwrap();
+    assert_eq!(
+        restored.accrue_income_tax(second_end).unwrap().current_tax,
+        amount(20_000)
+    );
+    let posted_on = CivilDate::from_iso("2032-01-01").unwrap();
+    let late_source = restored
+        .record_claim(
+            &group,
+            ClaimId("LATE-HISTORY".into()),
+            amount(80_000),
+            posted_on,
+        )
+        .unwrap();
+    let adjustments = std::collections::BTreeMap::from([(
+        late_source,
+        crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
+    )]);
+    let cash = restored
+        .books()
+        .ledger()
+        .account_net_debit(&LedgerAccountId("1002".into()))
+        .unwrap();
+    let outcome = restored
+        .reassess_income_tax(2030, posted_on, &adjustments)
+        .unwrap();
+    assert_eq!(outcome.current_tax_delta, amount(-20_000));
+    assert!(restored.loss_pool().is_empty());
+    assert_eq!(
+        restored
+            .books()
+            .journal()
+            .entries()
+            .find(|entry| entry.source == late_source)
+            .unwrap()
+            .date,
+        posted_on
+    );
+    assert_eq!(
+        restored
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId("1002".into()))
+            .unwrap(),
+        cash
+    );
+    restored.validate_restore().unwrap();
+    let mut final_restore: InsuranceBooks =
+        serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+    final_restore.validate_restore().unwrap();
+    final_restore
+        .reassess_income_tax(2030, posted_on, &adjustments)
+        .unwrap();
+    assert_eq!(final_restore, restored);
 }

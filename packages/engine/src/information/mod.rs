@@ -24,6 +24,10 @@ mod prehistory;
 mod public_view;
 mod publication;
 mod queries;
+mod simple_disclosures;
+pub use simple_disclosures::publish_simple_scheduled;
+#[cfg(test)]
+mod source_tests;
 mod schedule;
 
 pub use acquisition::{
@@ -38,10 +42,13 @@ pub use public_view::{PublicLibrary, PublicLibrarySave};
 pub(crate) use publication::period_end_date;
 pub use publication::{
     AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementRequest, PublicationId,
-    PublicationOrigin, PublicationRequest, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
+    PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
 };
+mod monthly_schedule;
+pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};
 pub use schedule::{
-    scheduled_instant, stable_company_offset, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
+    scheduled_instant, stable_company_offset, ReportFrequency, ScheduledReportKind,
+    SCHEDULE_OFFSET_MAX,
 };
 
 use crate::accounting::closing::ClosingError;
@@ -143,6 +150,12 @@ pub enum InformationError {
     /// 更正目标不在库中。
     #[error("correction target {target:?} is not in the library")]
     CorrectionTargetUnknown { target: PublicationId },
+    #[error("集团更正公布时点早于被更正报告 {original:?}：原时点 {original_at:?}，请求时点 {published_at:?}")]
+    CorrectionPrecedesOriginal {
+        original: PublicationId,
+        original_at: CivilInstant,
+        published_at: CivilInstant,
+    },
     /// 更正目标与本公司/范围/期间/种类不一致。
     #[error("correction target {target:?} does not match the corrected publication")]
     CorrectionTargetMismatch {

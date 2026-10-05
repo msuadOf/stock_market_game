@@ -13,6 +13,7 @@
 pub mod bank;
 pub mod insurance;
 pub mod real_estate;
+pub mod simple_summary;
 
 pub mod balance_sheet;
 pub mod cash_flow;
@@ -144,6 +145,10 @@ pub enum ReportSource<'a> {
     Consolidated {
         request: ConsolidationRequest<'a>,
     },
+    ConsolidatedRestated {
+        request: ConsolidationRequest<'a>,
+        member_adjustments: &'a BTreeMap<MemberId, &'a BTreeMap<BusinessEventId, AccountingPeriod>>,
+    },
 }
 
 /// 生成请求（`adjustments` = 重述映射：调整分录来源 → 目标历史期间）。
@@ -216,6 +221,33 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
                 .ok_or_else(|| ReportError::InternalWindowInconsistent {
                     detail: "consolidated windows missing facts".to_string(),
                 })?;
+            (ScopeId::Consolidated(root), windows, classification)
+        }
+        ReportSource::ConsolidatedRestated {
+            request: group_request,
+            member_adjustments,
+        } => {
+            if restatement {
+                return Err(ReportError::InternalWindowInconsistent {
+                    detail: "合并重述必须使用成员命名空间，不能同时提供单体调整映射".into(),
+                });
+            }
+            let members = group_request.members.clone();
+            let windows = consolidated_window::consolidated_restated(
+                group_request,
+                (first, last),
+                prior_window,
+                member_adjustments,
+            )?;
+            let classification = notes::ReportClassification::from_members(&members)?;
+            let root = windows
+                .consolidation
+                .as_ref()
+                .ok_or_else(|| ReportError::InternalWindowInconsistent {
+                    detail: "合并重述窗口缺少集团事实".into(),
+                })?
+                .root
+                .clone();
             (ScopeId::Consolidated(root), windows, classification)
         }
     };

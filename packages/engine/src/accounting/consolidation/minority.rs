@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::journal::PostingSide;
 use crate::accounting::ledger::AccountElement;
-use crate::accounting::Books;
+use crate::accounting::Ledger;
 
 use super::error::ConsolidationError;
 use super::group::{MemberId, SubsidiaryOwnership, ValidatedGroup};
@@ -59,12 +59,12 @@ fn bp_i32(bp: i64) -> i32 {
 /// 行效应按要素折算：ΔNI = Σ(费用行 Δnet_debit) − Σ(收入行 Δnet_debit)；
 /// Δ权益科目 = −Σ(权益行 Δnet_debit)；Δ权益滚动 = Δ权益科目 + ΔNI。
 pub(crate) fn adjusted_economics(
-    members: &BTreeMap<MemberId, &Books>,
+    members: &BTreeMap<MemberId, &Ledger>,
     worksheet: &[WorksheetEntry],
 ) -> Result<BTreeMap<MemberId, MemberEconomics>, ConsolidationError> {
     let mut result = BTreeMap::new();
     for (id, books) in members {
-        let ledger = books.ledger();
+        let ledger = books;
         let mut ni_delta = AccountingAmount::ZERO;
         let mut equity_account_delta = AccountingAmount::ZERO;
         for line in worksheet.iter().flat_map(|entry| entry.lines.iter()) {

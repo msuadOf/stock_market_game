@@ -40,6 +40,9 @@ pub fn real_estate_account_chart() -> AccountChart {
         acc(codes::COGS, AccountDef::new("主营业务成本", Expense)),
         acc(codes::FIN_EXP, AccountDef::new("财务费用", Expense)),
         acc(codes::IMPAIR_LOSS, AccountDef::new("资产减值损失", Expense)),
+        acc(codes::DTA, AccountDef::new("递延所得税资产", Asset)),
+        acc(codes::CIT_PAYABLE, AccountDef::new("应交所得税", Liability)),
+        acc(codes::TAX_EXP, AccountDef::new("所得税费用", Expense)),
     ];
     AccountChart::new(5, accounts).expect("地产科目表定义合法（AccountChart.version=5）")
 }

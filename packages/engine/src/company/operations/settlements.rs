@@ -17,27 +17,40 @@ impl CompanyOperations {
             if let IndustryBooks::Industrial(books) = &mut company.books {
                 if month_end {
                     books.depreciate_month(date)?;
-                    if date.month() == 12 {
-                        books.accrue_income_tax(date)?;
-                    }
                 }
-                let payable = books
-                    .books()
-                    .ledger()
-                    .account_net_debit(&LedgerAccountId("222104".into()))?
-                    .neg()?;
-                if payable.is_positive() {
-                    if let Err(error) = books.pay_income_tax(payable, date) {
-                        if matches!(error, IndustrialError::PaymentFailed { .. }) {
-                            failures.push(PaymentFailureRecord {
-                                obligation_status: crate::company::events::PaymentObligationStatus::StatutoryPaymentFailure,
-                                company: id.clone(),
-                                what: "overdue income tax payment".into(),
-                                amount: payable,
-                            });
-                        } else {
-                            return Err(error.into());
-                        }
+            }
+            if month_end && date.month() == 12 {
+                company.books.accrue_income_tax(date)?;
+            }
+            let payable = company
+                .books
+                .books()
+                .ledger()
+                .account_net_debit(&LedgerAccountId("222104".into()))?
+                .neg()?;
+            if payable.is_positive() {
+                if let Err(error) = company.books.pay_income_tax(payable, date) {
+                    if matches!(
+                        error,
+                        OperationsError::Industrial(IndustrialError::PaymentFailed { .. })
+                            | OperationsError::Bank(
+                                crate::company::bank::BankError::PaymentFailed { .. }
+                            )
+                            | OperationsError::Insurance(
+                                crate::company::insurance::InsuranceError::PaymentFailed { .. }
+                            )
+                            | OperationsError::RealEstate(
+                                crate::company::real_estate::RealEstateError::PaymentFailed { .. }
+                            )
+                    ) {
+                        failures.push(PaymentFailureRecord {
+                            obligation_status: crate::company::events::PaymentObligationStatus::StatutoryPaymentFailure,
+                            company: id.clone(),
+                            what: "overdue income tax payment".into(),
+                            amount: payable,
+                        });
+                    } else {
+                        return Err(error);
                     }
                 }
             }

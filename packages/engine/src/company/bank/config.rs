@@ -21,6 +21,7 @@ pub struct BankConfig {
     pub counterparties: Vec<ExternalCounterparty>,
     /// 版本化 ECL 政策（无默认构造——PD/LGD 属显式游戏假设，不从市场推导）。
     pub ecl_policy: EclPolicy,
+    pub income_tax_policy: crate::accounting::IncomeTaxPolicy,
 }
 
 impl BankConfig {

@@ -16,6 +16,12 @@ pub enum InsuranceError {
     #[error("invalid restored Insurance state: {detail}")]
     InvalidRestoredState { detail: String },
 
+    #[error("income tax payment {requested:?} exceeds payable {payable:?}")]
+    TaxOverpayment {
+        requested: AccountingAmount,
+        payable: AccountingAmount,
+    },
+
     /// 赔款支付将打负现金（`NegativeCashProhibited` 的领域映射）：类型化
     /// 拒绝，账套与子账零改动（客户流动性约束：险企继续运行）。
     #[error("payment failed (insufficient cash): {source}")]

@@ -164,11 +164,14 @@ pub(in crate::company::operations) fn advance_day(
     }
 
     // 4. 日常管理费用。
-    if let Err(error) = books.pay_expense(ExpenseKind::Admin, params.daily_admin_expense, date) {
-        if is_payment_failure(&error) {
-            record_failure(failures, "daily admin expense", params.daily_admin_expense);
-        } else {
-            return Err(error.into());
+    if !params.daily_admin_expense.is_zero() {
+        if let Err(error) = books.pay_expense(ExpenseKind::Admin, params.daily_admin_expense, date)
+        {
+            if is_payment_failure(&error) {
+                record_failure(failures, "daily admin expense", params.daily_admin_expense);
+            } else {
+                return Err(error.into());
+            }
         }
     }
 

@@ -12,13 +12,26 @@
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
 pub mod bank;
+pub mod api;
+pub mod capabilities;
+pub mod config;
+pub mod identity;
+pub mod persistence;
+pub mod simple;
+mod system;
+pub use system::{CompanySystem, CompanySystemError};
 mod contracts;
+mod correction;
 mod counterparty;
 pub mod customer_finance;
 mod defaults;
 mod error;
 pub mod events;
 pub mod industrial;
+pub(crate) mod income_tax;
+pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
+pub(crate) mod report_correction;
+pub use report_correction::CompanyCorrectionError;
 pub mod insurance;
 mod opening;
 pub mod operations;
@@ -27,6 +40,8 @@ pub mod real_estate;
 pub mod rng;
 pub mod scheduler;
 mod spec;
+pub mod share_registry;
+pub mod cash_dividend_tax;
 
 pub use contracts::{
     ContractBook, ContractId, ContractRole, CreditLine, DayCountBasis, OperatingBudget,
@@ -61,6 +76,7 @@ pub use operations::{
     OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
 };
 pub use query::{
+    PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportUnavailableReason,
     PublicComparativeAmount, PublicReportAccountingSummary, PublicReportBalanceComparison,
     PublicReportBalanceSheet, PublicReportCashFlow, PublicReportComparative, PublicReportEquity,
     PublicReportFinancials, PublicReportIncome, PublicReportIncomeColumns, PublicReportKind,

@@ -28,6 +28,11 @@ impl BankBooks {
         maturity: CivilDate,
     ) -> Result<Vec<BusinessEventId>, BankError> {
         kind.require_loan()?;
+        if loan.0.trim().is_empty() {
+            return Err(BankError::OwnershipStateInconsistent {
+                detail: "贷款合同身份不能为空".into(),
+            });
+        }
         validate_terms(&loan, principal, annual_rate_bp, start, maturity)?;
         self.ensure_counterparty(borrower)?;
         if self.loans.contains_key(&loan) || self.deposits.contains_key(&loan) {
@@ -48,7 +53,11 @@ impl BankBooks {
             ],
         }];
         if day_one.is_positive() {
-            let impairment = BusinessEventId::new(base + 1);
+            let impairment = BusinessEventId::new(base.checked_add(1).ok_or_else(|| {
+                BankError::OwnershipStateInconsistent {
+                    detail: "贷款事件身份空间耗尽".into(),
+                }
+            })?);
             events.push(impairment);
             entries.push(JournalEntry {
                 source: impairment,
@@ -61,9 +70,30 @@ impl BankBooks {
                 ],
             });
         }
-        self.post_with_commit(base + events.len() as u64, entries)?;
-        let state = BankLoanState::new(principal, annual_rate_bp, borrower.clone(), start, day_one);
+        let next_event_id = base
+            .checked_add(u64::try_from(events.len()).map_err(|_| {
+                BankError::OwnershipStateInconsistent {
+                    detail: "贷款来源数量超出u64值域".into(),
+                }
+            })?)
+            .ok_or_else(|| BankError::OwnershipStateInconsistent {
+                detail: "贷款事件身份空间耗尽".into(),
+            })?;
+        self.post_with_commit(next_event_id, entries)?;
+        let state = BankLoanState::new(
+            principal,
+            annual_rate_bp,
+            borrower.clone(),
+            start,
+            maturity,
+            day_one,
+        );
         self.loans.insert(loan.clone(), state);
+        self.loan_claim_sources.push(super::BankLoanClaimSource {
+            loan: loan.clone(),
+            source: disbursement,
+            kind: super::BankLoanClaimKind::Principal,
+        });
         self.record_flow(
             start,
             borrower,

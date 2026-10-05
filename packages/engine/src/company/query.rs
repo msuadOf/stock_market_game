@@ -23,6 +23,35 @@ pub struct PublicReportQuery {
     pub page_size: Option<u16>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct PublicReportAvailabilityQuery {
+    pub company_id: String,
+    pub period_end: String,
+    pub kind: PublicReportKind,
+    pub scope: PublicReportScope,
+}
+
+#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[serde(tag = "status")]
+#[ts(export)]
+pub enum PublicReportAvailability {
+    Available { report: PublicReportSummary },
+    Unavailable { reason: PublicReportUnavailableReason },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub enum PublicReportUnavailableReason {
+    BeforeOpening,
+    NotYetSettled,
+    PeriodNotRepresented,
+    NotYetPublished,
+    NotScheduled,
+    ScopeNotRepresented,
+}
+
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportPage {
@@ -36,6 +65,7 @@ pub struct PublicReportSummary {
     /// PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
     pub id: String,
     pub company_id: String,
+    pub source: crate::information::PublicationSource,
     pub period: String,
     pub kind: PublicReportKind,
     pub version_sequence: String,
@@ -48,7 +78,7 @@ pub struct PublicReportSummary {
     pub financials: PublicReportFinancials,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum PublicReportKind {
     Monthly,
@@ -103,7 +133,8 @@ pub struct PublicReportFinancials {
     pub notes: PublicReportNotes,
 }
 
-#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub enum PublicReportScope {
     Standalone { entity_id: String },
@@ -489,6 +520,7 @@ impl From<&PublishedReport> for PublicReportSummary {
         Self {
             id: report.id.value().to_string(),
             company_id: report.company.0.clone(),
+            source: report.source,
             period: period_end_date(reports.period)
                 .expect("a published report always has a valid period end")
                 .to_iso(),
