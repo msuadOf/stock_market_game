@@ -101,6 +101,9 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     saveSelectionGenerationRef.current += 1;
     const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
+      setNotice("正在读取日终快速存档，等待已提交的写入完成…");
+      await dayEndPersistenceRef.current.beforeRead();
+      if (!isCurrent()) return;
       const slot = await getBrowserSaveRepository().load();
       if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }

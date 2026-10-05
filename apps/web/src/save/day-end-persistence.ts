@@ -2,6 +2,7 @@ export class DayEndPersistence {
   private generation: string | null = null;
   private epoch = 0;
   private tail: Promise<void> = Promise.resolve();
+  private pendingWrite: Promise<boolean> | null = null;
 
   install(generation: string): void {
     this.epoch += 1;
@@ -15,6 +16,13 @@ export class DayEndPersistence {
 
   idle(): Promise<void> {
     return this.tail;
+  }
+
+  /** 等待调用前已提交的写入；本次等待的错误必须交给读档入口显示。 */
+  async beforeRead(): Promise<void> {
+    const pending = this.pendingWrite;
+    await this.tail;
+    if (pending !== null) await pending;
   }
 
   completed(
@@ -32,7 +40,9 @@ export class DayEndPersistence {
       const committed = await write(result.slot, isCurrent);
       return committed !== false && isCurrent();
     });
-    this.tail = operation.then(() => undefined, () => undefined);
+    this.pendingWrite = operation;
+    const finish = () => { if (this.pendingWrite === operation) this.pendingWrite = null; };
+    this.tail = operation.then(finish, finish);
     return operation;
   }
 }

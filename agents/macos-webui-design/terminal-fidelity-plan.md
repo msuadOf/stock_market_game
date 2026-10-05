@@ -236,3 +236,15 @@ TDD 首轮编译因写错 Event 变体失败，不算行为红测；修正后休
 实看内置浏览器320×844，删除无效内容后直接看到工具栏与股票行，没有残留空栏，scrollWidth320；截图mobile-market-scope-320.jpg。本次MarketGrid/App.css热更新前后均为第1日09:15:28暂停局，未重启宿主；不把这一局部HMR观察推广为任意源码更改都保持会话。恢复原902×833、000812日K、5MA/KDJ、交易栏关闭，保留游戏页与服务，未提交模拟委托。
 
 完整终端目标继续在途：原财务gold的因果依据、写档中立即读档的并发边界，以及最终逐项需求审计仍需完成。此前周期10秒边缘超时已保留历史证据，最新完整52项周期通过也不能抹去该记录。
+
+## 2026-10-05 快速槽读档等待已提交写入批次
+
+有效短测红证据：首次/已有快速槽在日终压缩尚未提交时已调用repository.load，实际1次、期望0次；pending失败仍读取旧槽的两项边界均失败。新增beforeRead捕获调用前的tail/pendingWrite，先等已提交写入完成再读取。不会提前invalidate正在提交的候选，不等待调用后新排队日终；pending失败明确显示读档错误，本次不自动读旧槽，完成清理后显式重试可以读取上一有效档。重复点击、等待中换host、排队快照、旧repository晚到响应都有测试。文件读取/新局保持已有替换屏障，不据本批声称所有文件选择竞态解决。无engine、交易、财务、存档格式或依赖变更。
+
+第一次绿测23项21通过2失败，原fixture复用旧commands和原notice期望未覆盖新增进度提示；修正fixture及精确notice前提。独立复核另发现P2：旧异步repository宿主替换测试因新await在读取开始前退出，失去原在途边界。新增entered deferred，明确等repository.load开始后换host再返回，原无回写断言保留。最终相关25/25通过193.16ms，concurrency3、case/整命令进程树10000ms；reviewer独立三文件24/24通过151.59ms，P2修复再次复核通过，见quick-load-barrier-independent-review.md。UX-CONTRACT记录快速槽行为，并纠正既已批准的共享排序/手机能力范围陈旧描述。
+
+真实WASM/IndexedDB专项8/8通过14.6秒。两项新E2E在真实native gzip前设置测试流门闩，分别验证pending期间旧槽未动、显示等待、不提前恢复，以及受控压缩故障的可见错误/旧档保留；没有伪造engine或档案。quick-load-waiting-e2e.png是受控fixture等待现场，不是当前默认NPC局。最终完整Web155文件833/833通过2686ms、8进程、普通case/外部10000ms；完整54浏览器53通过1失败42.3秒，唯一仍是原净利gold12928574075.43对实际12822166575.42，未改断言或财务公式。浏览器workers3、RAYON_NUM_THREADS10、共享外部300000ms；该轮CPU采样时任务已经结束，不能冒称采到运行期多核CPU。production构建/release WASM验证、变更文件lint、strict premium audit0finding及git diff--check通过。完整lint仍exit1，5项原有children-prop警告未压制。
+
+当前IAB旧页面HMR保留旧队列实例，新方法beforeRead不存在而明确报错；quick-load-stale-hmr-instance.jpg保存证据，不将新实例自动验收冒充旧页面可用。实际刷新并通过启动入口初始化后，暂停第1日09:15:22，再点击读取本地进度，最终显示已读档（第1个交易日）、09:15:00已暂停。quick-load-restored-current-window.jpg保存真实902×833成功读档现场，保留原tab2与本地服务。刷新重建宿主，不声称保留此前日内行情；未提交模拟委托。
+
+完整终端目标仍在途：原财务gold因果差额和最终逐项需求审计未关闭。实看游戏管理“保存当前进度”和“另存为文件”文案与日终专用行为可能不符，需独立TDD批次核对；不能把快速槽屏障完成等同所有菜单细节完成。
