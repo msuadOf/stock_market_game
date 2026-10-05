@@ -7,6 +7,8 @@ use crate::calendar::CivilDate;
 use crate::company::counterparty::CounterpartyId;
 use thiserror::Error;
 
+mod restore;
+
 /// 客户侧财务事件身份；同一身份只能对应相同命令载荷。
 #[derive(
     Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
@@ -24,6 +26,7 @@ pub enum CashEndpoint {
 
 /// 客户现金流事实；金额恒正，资金方向由来源和去向明确表达。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomerCashFlow {
     pub event: CustomerFinanceEventId,
     pub date: CivilDate,
@@ -39,8 +42,17 @@ pub struct CustomerCashFlow {
 pub struct DebtId(pub String);
 
 /// 核销决策调用方提供的事实依据；本模块不根据账龄或随机结果判定核销。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String")]
 pub struct WriteOffEvidence(String);
+
+impl TryFrom<String> for WriteOffEvidence {
+    type Error = CustomerFinanceError;
+
+    fn try_from(description: String) -> Result<Self, Self::Error> {
+        Self::new(description)
+    }
+}
 
 impl WriteOffEvidence {
     pub fn new(description: String) -> Result<Self, CustomerFinanceError> {
@@ -105,15 +117,18 @@ impl CustomerDebt {
 
 /// 一次普通到期付款在债务间的分配。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DebtPayment {
     pub debt: DebtId,
     pub amount: AccountingAmount,
     pub original_due_on: CivilDate,
+    #[serde(deserialize_with = "restore::required_optional_date")]
     pub overdue_since: Option<CivilDate>,
 }
 
 /// 一次核销事实。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DebtWriteOff {
     pub debt: DebtId,
     pub amount: AccountingAmount,
@@ -139,7 +154,8 @@ impl CustomerFinanceState {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 enum FinanceCommand {
     CashFlow {
         source: CashEndpoint,
@@ -168,7 +184,7 @@ enum FinanceCommand {
     },
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 enum FinanceResult {
     Flow,
     Payments(Vec<DebtPayment>),
@@ -176,8 +192,10 @@ enum FinanceResult {
     Recovered,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AppliedEvent {
+    sequence: u64,
     command: FinanceCommand,
     result: FinanceResult,
 }
@@ -188,7 +206,7 @@ pub struct CustomerFinanceBook {
     customers: BTreeMap<CounterpartyId, CustomerFinanceState>,
     cash_flows: Vec<CustomerCashFlow>,
     events: BTreeMap<CustomerFinanceEventId, AppliedEvent>,
-    next_debt_sequence: u64,
+    next_fact_sequence: u64,
     last_event_date: Option<CivilDate>,
 }
 
@@ -262,10 +280,7 @@ impl CustomerFinanceBook {
                 debt: id,
             });
         }
-        let next = self
-            .next_debt_sequence
-            .checked_add(1)
-            .ok_or(CustomerFinanceError::SequenceOverflow)?;
+        let next = self.reserve_fact_sequence()?;
         self.customers
             .get_mut(customer)
             .expect("customer validated")
@@ -280,10 +295,10 @@ impl CustomerFinanceBook {
                     paid: AccountingAmount::ZERO,
                     written_off: AccountingAmount::ZERO,
                     recovered: AccountingAmount::ZERO,
-                    registration_sequence: self.next_debt_sequence,
+                    registration_sequence: self.next_fact_sequence,
                 },
             );
-        self.next_debt_sequence = next;
+        self.next_fact_sequence = next;
         self.last_event_date = Some(opened_on);
         Ok(())
     }
@@ -307,6 +322,7 @@ impl CustomerFinanceBook {
             return expect_result(result, "cash flow");
         }
         validate_event_id(&event)?;
+        let next_fact_sequence = self.reserve_fact_sequence()?;
         self.validate_event_date(date)?;
         validate_endpoints(&self.customers, &source, &destination, amount)?;
         let updates = self.cash_updates(&source, &destination, amount)?;
@@ -321,10 +337,12 @@ impl CustomerFinanceBook {
         self.events.insert(
             event,
             AppliedEvent {
+                sequence: self.next_fact_sequence,
                 command,
                 result: FinanceResult::Flow,
             },
         );
+        self.next_fact_sequence = next_fact_sequence;
         self.last_event_date = Some(date);
         Ok(())
     }
@@ -346,6 +364,7 @@ impl CustomerFinanceBook {
             return expect_result(result, "repayment");
         }
         validate_event_id(&event)?;
+        let next_fact_sequence = self.reserve_fact_sequence()?;
         self.validate_event_date(date)?;
         let state =
             self.customers
@@ -421,10 +440,12 @@ impl CustomerFinanceBook {
         self.events.insert(
             event,
             AppliedEvent {
+                sequence: self.next_fact_sequence,
                 command,
                 result: FinanceResult::Payments(payments.clone()),
             },
         );
+        self.next_fact_sequence = next_fact_sequence;
         self.last_event_date = Some(date);
         Ok(payments)
     }
@@ -450,6 +471,7 @@ impl CustomerFinanceBook {
             return expect_result(result, "write-off");
         }
         validate_event_id(&event)?;
+        let next_fact_sequence = self.reserve_fact_sequence()?;
         self.validate_event_date(date)?;
         let debt = self.debt_or_err(customer, debt_id)?;
         if date < debt.opened_on {
@@ -485,10 +507,12 @@ impl CustomerFinanceBook {
         self.events.insert(
             event,
             AppliedEvent {
+                sequence: self.next_fact_sequence,
                 command,
                 result: FinanceResult::WriteOff(result.clone()),
             },
         );
+        self.next_fact_sequence = next_fact_sequence;
         self.last_event_date = Some(date);
         Ok(result)
     }
@@ -514,6 +538,7 @@ impl CustomerFinanceBook {
             return expect_result(result, "recovery");
         }
         validate_event_id(&event)?;
+        let next_fact_sequence = self.reserve_fact_sequence()?;
         self.validate_event_date(date)?;
         let state =
             self.customers
@@ -577,12 +602,20 @@ impl CustomerFinanceBook {
         self.events.insert(
             event,
             AppliedEvent {
+                sequence: self.next_fact_sequence,
                 command,
                 result: FinanceResult::Recovered,
             },
         );
+        self.next_fact_sequence = next_fact_sequence;
         self.last_event_date = Some(date);
         Ok(())
+    }
+
+    fn reserve_fact_sequence(&self) -> Result<u64, CustomerFinanceError> {
+        self.next_fact_sequence
+            .checked_add(1)
+            .ok_or(CustomerFinanceError::SequenceOverflow)
     }
 
     fn replay(
@@ -790,6 +823,8 @@ impl TryFrom<FinanceResult> for () {
 /// 客户财务事实错误。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum CustomerFinanceError {
+    #[error("invalid restored customer finance: {detail}")]
+    InvalidRestore { detail: String },
     #[error("invalid empty {what} id")]
     InvalidId { what: &'static str },
     #[error("customer {customer:?} already registered")]
@@ -861,7 +896,7 @@ pub enum CustomerFinanceError {
         requested: AccountingAmount,
         recoverable: AccountingAmount,
     },
-    #[error("debt registration sequence overflow")]
+    #[error("customer finance fact sequence overflow")]
     SequenceOverflow,
     #[error(transparent)]
     Accounting(#[from] crate::accounting::AccountingError),
@@ -898,6 +933,372 @@ mod tests {
         )
         .expect("登记债务");
         (book, customer)
+    }
+
+    #[test]
+    fn valid_customer_finance_facts_pass_restore_validation() {
+        let (mut book, customer) = debt_book(100);
+        book.repay_due(
+            &customer,
+            CashEndpoint::External("company-1".to_string()),
+            date("2030-01-02"),
+            CustomerFinanceEventId("paid".to_string()),
+        )
+        .expect("真实有限现金付款");
+        book.validate().expect("合法账簿可恢复");
+        let encoded = serde_json::to_string(&book).expect("序列化真实账簿");
+        let mut restored: CustomerFinanceBook = serde_json::from_str(&encoded).expect("严格恢复");
+        assert_eq!(restored, book);
+        restored
+            .repay_due(
+                &customer,
+                CashEndpoint::External("company-1".to_string()),
+                date("2030-01-02"),
+                CustomerFinanceEventId("paid".to_string()),
+            )
+            .expect("恢复后相同付款幂等");
+        assert_eq!(restored, book);
+    }
+
+    #[test]
+    fn impossible_customer_finance_balances_and_event_receipts_are_rejected() {
+        let (mut book, customer) = debt_book(100);
+        book.repay_due(
+            &customer,
+            CashEndpoint::External("company-1".to_string()),
+            date("2030-01-02"),
+            CustomerFinanceEventId("paid".to_string()),
+        )
+        .expect("真实有限现金付款");
+        let mut negative = book.clone();
+        negative.customers.get_mut(&customer).expect("客户").cash = amount(-1);
+        assert!(negative.validate().is_err());
+        let mut debt = book.clone();
+        debt.customers
+            .get_mut(&customer)
+            .expect("客户")
+            .debts
+            .get_mut(&DebtId("debt-a".to_string()))
+            .expect("债务")
+            .paid = amount(101);
+        assert!(debt.validate().is_err());
+        let mut receipt = book.clone();
+        receipt
+            .events
+            .get_mut(&CustomerFinanceEventId("paid".to_string()))
+            .expect("付款事件")
+            .result = FinanceResult::Flow;
+        assert!(receipt.validate().is_err());
+        let mut missing_flow = book;
+        missing_flow.cash_flows.clear();
+        assert!(missing_flow.validate().is_err());
+    }
+
+    #[test]
+    fn restored_finance_rejects_missing_unknown_duplicate_and_invalid_fields() {
+        let (book, _) = debt_book(100);
+        let original = serde_json::to_value(&book).expect("真实账簿");
+        let mut missing = original.clone();
+        missing
+            .as_object_mut()
+            .expect("对象")
+            .remove("last_event_date");
+        assert!(serde_json::from_value::<CustomerFinanceBook>(missing).is_err());
+        let mut unknown = original.clone();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<CustomerFinanceBook>(unknown).is_err());
+        let mut bad_date = original.clone();
+        bad_date["customers"]["customer-a"]["debts"]["debt-a"]["due_on"] =
+            serde_json::json!("2030-02-30");
+        assert!(serde_json::from_value::<CustomerFinanceBook>(bad_date).is_err());
+        let mut overflow = original.clone();
+        overflow["customers"]["customer-a"]["cash"] =
+            serde_json::json!("999999999999999999999999999999999999999999999");
+        assert!(serde_json::from_value::<CustomerFinanceBook>(overflow).is_err());
+        let duplicate = serde_json::to_string(&original)
+            .expect("完整JSON")
+            .replacen("\"events\":{}", "\"events\":{},\"events\":{}", 1);
+        assert!(serde_json::from_str::<CustomerFinanceBook>(&duplicate).is_err());
+        let duplicate_customer = format!("{{\"customers\":{{\"customer-a\":{0},\"customer-a\":{0}}},\"cash_flows\":[],\"events\":{{}},\"next_fact_sequence\":1,\"last_event_date\":\"2030-01-01\"}}", original["customers"]["customer-a"]);
+        assert!(serde_json::from_str::<CustomerFinanceBook>(&duplicate_customer).is_err());
+        let mut edited = original;
+        edited["customers"]["customer-a"]["cash"] = serde_json::json!("1.50");
+        assert_eq!(
+            serde_json::from_value::<CustomerFinanceBook>(edited)
+                .expect("允许编辑合法现金")
+                .customer(&id("customer-a"))
+                .expect("客户")
+                .cash(),
+            amount(150)
+        );
+    }
+
+    fn recovered_book() -> CustomerFinanceBook {
+        let (mut book, customer) = debt_book(100);
+        book.write_off(
+            &customer,
+            &DebtId("debt-a".to_string()),
+            amount(40),
+            date("2030-01-03"),
+            WriteOffEvidence::new("已有明确无法收回事实".to_string()).expect("核销依据"),
+            CustomerFinanceEventId("write-off".to_string()),
+        )
+        .expect("核销");
+        book.recover_written_off(
+            &customer,
+            &DebtId("debt-a".to_string()),
+            CashEndpoint::External("company-1".to_string()),
+            amount(25),
+            date("2030-01-04"),
+            CustomerFinanceEventId("recovery".to_string()),
+        )
+        .expect("核销后真实回收");
+        book
+    }
+
+    #[test]
+    fn restoration_rejects_recovery_before_write_off_even_when_totals_match() {
+        let mut book = recovered_book();
+        match &mut book
+            .events
+            .get_mut(&CustomerFinanceEventId("recovery".to_string()))
+            .expect("事件")
+            .command
+        {
+            FinanceCommand::Recover {
+                date: event_date, ..
+            } => *event_date = date("2030-01-02"),
+            _ => panic!("应为回收事件"),
+        }
+        book.cash_flows[0].date = date("2030-01-02");
+        book.last_event_date = Some(date("2030-01-03"));
+        assert!(book.validate().is_err(), "总量相同不能证明核销前回收合法");
+    }
+
+    #[test]
+    fn restoration_rejects_wrong_historical_write_off_receipt() {
+        let mut book = recovered_book();
+        match &mut book
+            .events
+            .get_mut(&CustomerFinanceEventId("write-off".to_string()))
+            .expect("事件")
+            .result
+        {
+            FinanceResult::WriteOff(result) => result.legal_balance_after = amount(90),
+            _ => panic!("应为核销回执"),
+        }
+        assert!(book.validate().is_err(), "核销当时法律余额应为100而不是90");
+    }
+
+    #[test]
+    fn restoration_rejects_paying_later_debt_while_earlier_debt_is_partial() {
+        let (mut book, customer) = debt_book(150);
+        book.register_debt(
+            &customer,
+            DebtId("debt-b".to_string()),
+            date("2030-01-01"),
+            date("2030-01-03"),
+            amount(100),
+        )
+        .expect("第二笔债务");
+        let event = CustomerFinanceEventId("payment".to_string());
+        book.repay_due(
+            &customer,
+            CashEndpoint::External("company-1".to_string()),
+            date("2030-01-04"),
+            event.clone(),
+        )
+        .expect("按合同优先支付");
+        let debts = &mut book.customers.get_mut(&customer).expect("客户").debts;
+        debts
+            .get_mut(&DebtId("debt-a".to_string()))
+            .expect("前债")
+            .paid = amount(50);
+        debts
+            .get_mut(&DebtId("debt-b".to_string()))
+            .expect("后债")
+            .paid = amount(100);
+        match &mut book.events.get_mut(&event).expect("付款事件").result {
+            FinanceResult::Payments(payments) => {
+                payments[0].amount = amount(50);
+                payments[1].amount = amount(100);
+            }
+            _ => panic!("应为付款回执"),
+        }
+        book.cash_flows[0].amount = amount(50);
+        book.cash_flows[1].amount = amount(100);
+        assert!(book.validate().is_err(), "前债未付清不能先付后债");
+    }
+
+    #[test]
+    fn same_day_restore_uses_fact_order_not_event_id_or_future_debts() {
+        let (mut book, customer) = debt_book(200);
+        book.write_off(
+            &customer,
+            &DebtId("debt-a".to_string()),
+            amount(40),
+            date("2030-01-02"),
+            WriteOffEvidence::new("已有明确无法收回事实".to_string()).expect("依据"),
+            CustomerFinanceEventId("z-write-off".to_string()),
+        )
+        .expect("先核销");
+        book.recover_written_off(
+            &customer,
+            &DebtId("debt-a".to_string()),
+            CashEndpoint::External("company-1".to_string()),
+            amount(25),
+            date("2030-01-02"),
+            CustomerFinanceEventId("a-recovery".to_string()),
+        )
+        .expect("同日后回收");
+        book.repay_due(
+            &customer,
+            CashEndpoint::External("company-1".to_string()),
+            date("2030-01-02"),
+            CustomerFinanceEventId("m-payment".to_string()),
+        )
+        .expect("偿付剩余普通余额");
+        book.register_debt(
+            &customer,
+            DebtId("later-registered".to_string()),
+            date("2030-01-02"),
+            date("2030-01-02"),
+            amount(100),
+        )
+        .expect("同日付款之后登记新债");
+        let restored: CustomerFinanceBook =
+            serde_json::from_str(&serde_json::to_string(&book).expect("真实账簿"))
+                .expect("同日按事实顺序严格恢复");
+        assert_eq!(restored, book);
+        assert_eq!(
+            restored
+                .customer(&customer)
+                .expect("客户")
+                .debt(&DebtId("later-registered".to_string()))
+                .expect("新债")
+                .ordinary_balance(),
+            amount(100)
+        );
+    }
+
+    #[test]
+    fn fact_sequence_overflow_rejects_all_mutations_atomically() {
+        let (mut book, customer) = debt_book(100);
+        book.write_off(
+            &customer,
+            &DebtId("debt-a".to_string()),
+            amount(40),
+            date("2030-01-02"),
+            WriteOffEvidence::new("已有明确无法收回事实".to_string()).expect("依据"),
+            CustomerFinanceEventId("write-off".to_string()),
+        )
+        .expect("核销");
+        book.next_fact_sequence = u64::MAX;
+        let before = book.clone();
+        assert!(matches!(
+            book.record_cash_flow(
+                CustomerFinanceEventId("flow".to_string()),
+                CashEndpoint::External("income".to_string()),
+                CashEndpoint::Customer(customer.clone()),
+                amount(1),
+                date("2030-01-03")
+            ),
+            Err(CustomerFinanceError::SequenceOverflow)
+        ));
+        assert_eq!(book, before);
+        assert!(matches!(
+            book.repay_due(
+                &customer,
+                CashEndpoint::External("company-1".to_string()),
+                date("2030-01-03"),
+                CustomerFinanceEventId("payment".to_string())
+            ),
+            Err(CustomerFinanceError::SequenceOverflow)
+        ));
+        assert_eq!(book, before);
+        assert!(matches!(
+            book.write_off(
+                &customer,
+                &DebtId("debt-a".to_string()),
+                amount(1),
+                date("2030-01-03"),
+                WriteOffEvidence::new("已有明确无法收回事实".to_string()).expect("依据"),
+                CustomerFinanceEventId("another-write-off".to_string())
+            ),
+            Err(CustomerFinanceError::SequenceOverflow)
+        ));
+        assert_eq!(book, before);
+        assert!(matches!(
+            book.recover_written_off(
+                &customer,
+                &DebtId("debt-a".to_string()),
+                CashEndpoint::External("company-1".to_string()),
+                amount(1),
+                date("2030-01-03"),
+                CustomerFinanceEventId("recovery".to_string())
+            ),
+            Err(CustomerFinanceError::SequenceOverflow)
+        ));
+        assert_eq!(book, before);
+        assert!(matches!(
+            book.register_debt(
+                &customer,
+                DebtId("new".to_string()),
+                date("2030-01-03"),
+                date("2030-01-04"),
+                amount(1)
+            ),
+            Err(CustomerFinanceError::SequenceOverflow)
+        ));
+        assert_eq!(book, before);
+    }
+
+    #[test]
+    fn restoration_rejects_single_payment_batch_total_overflow() {
+        let customer = id("customer-a");
+        let mut book = CustomerFinanceBook::new();
+        book.register_customer(customer.clone(), AccountingAmount::MAX)
+            .expect("有限最大现金");
+        for debt in ["first", "second"] {
+            book.register_debt(
+                &customer,
+                DebtId(debt.to_string()),
+                date("2030-01-01"),
+                date("2030-01-02"),
+                AccountingAmount::MAX,
+            )
+            .expect("登记真实债务");
+        }
+        let event = CustomerFinanceEventId("payment".to_string());
+        let payments = book
+            .repay_due(
+                &customer,
+                CashEndpoint::External("company-1".to_string()),
+                date("2030-01-02"),
+                event.clone(),
+            )
+            .expect("最多偿付有限MAX现金");
+        assert_eq!(payments.len(), 1);
+        book.customers
+            .get_mut(&customer)
+            .expect("客户")
+            .debts
+            .get_mut(&DebtId("second".to_string()))
+            .expect("后债")
+            .paid = AccountingAmount::MAX;
+        match &mut book.events.get_mut(&event).expect("事件").result {
+            FinanceResult::Payments(payments) => {
+                let mut impossible = payments[0].clone();
+                impossible.debt = DebtId("second".to_string());
+                payments.push(impossible);
+            }
+            _ => panic!("应为付款回执"),
+        }
+        book.cash_flows.push(book.cash_flows[0].clone());
+        assert!(
+            book.validate().is_err(),
+            "同次付款总额超i128值域不可能由一个现金余额支付"
+        );
     }
 
     #[test]
