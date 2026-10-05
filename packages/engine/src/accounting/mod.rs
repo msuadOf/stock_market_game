@@ -23,6 +23,7 @@ pub(crate) use inventory::rhe_div;
 mod journal;
 mod ledger;
 mod period;
+pub mod period_roe;
 mod receivables;
 pub mod reports;
 mod tax;
