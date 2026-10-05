@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { validateSecuritySort, type SecuritySort } from "./security-sort-model.ts";
 import { WatchlistPreferences } from "../config/watchlist-preferences.ts";
 import { toggleWatchlistCode, type SecurityListView } from "./security-browser-model.ts";
 
@@ -10,6 +11,12 @@ export function useSecurityBrowser(onNotice: (message: string) => void) {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<SecurityListView>("all");
   const [query, setQuery] = useState("");
+  const [sortRules, updateSortRules] = useState<readonly SecuritySort[]>([]);
+  const setSortRules = useCallback((rules: readonly SecuritySort[]) => {
+    validateSecuritySort(rules);
+    updateSortRules(previous => previous.length === rules.length && previous.every((rule, index) => rule.field === rules[index].field && rule.direction === rules[index].direction)
+      ? previous : rules.map(rule => ({ ...rule })));
+  }, []);
 
   const load = useCallback(() => {
     try {
@@ -47,7 +54,7 @@ export function useSecurityBrowser(onNotice: (message: string) => void) {
     }
   }
 
-  return { favorites, ready, error, view, query, setView, setQuery, toggleFavorite, reload };
+  return { favorites, ready, error, view, query, sortRules, setSortRules, setView, setQuery, toggleFavorite, reload };
 }
 
 export type SecurityBrowser = ReturnType<typeof useSecurityBrowser>;

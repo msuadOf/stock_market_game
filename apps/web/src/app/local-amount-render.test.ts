@@ -72,7 +72,7 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   }));
 }
 
-const browserFixture = { favorites: ["600101"], ready: true, error: null, view: "watchlist" as const, query: "", setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} };
+const browserFixture = { favorites: ["600101"], ready: true, error: null, view: "watchlist" as const, query: "", sortRules: [], setSortRules() {}, setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} };
 
 test("账户金额以元显示，持仓和 T+1 可卖股数仍以股显示", () => {
   const assets = renderView(createElement(views.DesktopAssets));

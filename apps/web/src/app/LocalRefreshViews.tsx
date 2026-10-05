@@ -1,4 +1,5 @@
 import type { SecurityBrowser } from "./useSecurityBrowser.ts";
+import { sortSecurityCodes, mobileSecuritySort } from "./security-sort-model.ts";
 import { filterSecurityCodes, adjacentSecurityCode, securityListEmptyMessage, securityListKeyboardTarget } from "./security-browser-model.ts";
 import { SecurityListControls, WatchlistToggle } from "../components/SecurityListControls.tsx";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
@@ -103,7 +104,7 @@ export function ConnectedTerminalStockList({ onSelect, browser }: MarketPanelPro
   const selectedCode = useMarketRuntimeSelection();
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
   const heldCodes = new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code));
-  const codes = filterSecurityCodes({ codes: marketCodesForView(Object.keys(markets), STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: browser.favorites, heldCodes, query: browser.query, view: browser.view });
+  const codes = sortSecurityCodes(filterSecurityCodes({ codes: marketCodesForView(Object.keys(markets), STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: browser.favorites, heldCodes, query: browser.query, view: browser.view }), markets, browser.sortRules);
   return <nav aria-label="个股列表"><SecurityListControls browser={browser} codes={codes} onOpen={onSelect} />
     {codes.length === 0 && <p className="security-list-empty">{securityListEmptyMessage(browser.view, browser.query, browser.ready)}</p>}
     {codes.map(code => {
@@ -206,8 +207,9 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
   const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
-  const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
-  const marketCodes = useSelector((state: RootState) => Object.keys(state.snapshot.snapshot?.markets ?? {}));
+  const markets = useSelector((state: RootState) => state.snapshot.snapshot?.markets ?? {});
+  const market = markets[chartCode];
+  const marketCodes = Object.keys(markets);
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
   const allTrades = useSelector((state: RootState) => state.trades.items);
   const trades = useMemo(() => allTrades.filter((trade) => trade.code === chartCode), [allTrades, chartCode]);
@@ -215,7 +217,7 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const tick = useSelector((state: RootState) => state.snapshot.snapshot?.tick ?? 0);
   if (!market) return null;
   const heldCodes = new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code));
-  const orderedCodes = filterSecurityCodes({ codes: marketCodesForView(marketCodes, STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: props.browser.favorites, heldCodes, query: props.browser.query, view: props.browser.view });
+  const orderedCodes = sortSecurityCodes(filterSecurityCodes({ codes: marketCodesForView(marketCodes, STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: props.browser.favorites, heldCodes, query: props.browser.query, view: props.browser.view }), markets, mobileSecuritySort(props.browser.sortRules));
   const previous = adjacentSecurityCode(orderedCodes, chartCode, -1);
   const next = adjacentSecurityCode(orderedCodes, chartCode, 1);
   const latestMinute = chartData.at(-1)?.time;
