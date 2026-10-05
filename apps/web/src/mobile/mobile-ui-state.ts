@@ -31,7 +31,7 @@ export const MOBILE_PRIMARY_NAV = [
 
 export function mobilePrimaryTitle(tab: MobilePrimaryTab): string {
   switch (tab) {
-    case "market": return "模拟自选";
+    case "market": return "模拟行情";
     case "watchlist": return "自选";
     case "trades": return "交易";
     case "positions": return "持仓";

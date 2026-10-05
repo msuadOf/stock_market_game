@@ -50,6 +50,8 @@ interface Props {
   onPrevious: () => void;
   onNext: () => void;
   companyContent: ReactNode;
+  watchlistControl?: ReactNode;
+  canSwitchStock?: boolean;
 }
 
 function tone(diff: number): "rise" | "fall" | "flat" {
@@ -157,11 +159,11 @@ export function MobileStockDetail(props: Props) {
   return (
     <main className="mobile-stock-detail">
       <header className="msd-header">
-        <button type="button" className="msd-back" aria-label="返回自选列表" onClick={props.onBack}>‹</button>
+        <button type="button" className="msd-back" aria-label="返回股票列表" onClick={props.onBack}>‹</button>
         <MobileGameClock day={props.gameDay} tick={props.gameTick} variant="detail" />
-        <button type="button" className="msd-stock-switch msd-previous" aria-label="上一只" onClick={props.onPrevious}>◀</button>
+        <button type="button" className="msd-stock-switch msd-previous" aria-label="上一只" disabled={props.canSwitchStock === false} onClick={props.onPrevious}>◀</button>
         <div className="msd-security-title"><strong>{props.name}</strong><small>{props.code}</small></div>
-        <button type="button" className="msd-stock-switch msd-next" aria-label="下一只" onClick={props.onNext}>▶</button>
+        <button type="button" className="msd-stock-switch msd-next" aria-label="下一只" disabled={props.canSwitchStock === false} onClick={props.onNext}>▶</button>
         <MobileRunToggle running={props.running} onToggle={props.onPauseToggle} variant="detail" />
         <MobileSpeedSelect
           speed={props.speed}
@@ -175,6 +177,7 @@ export function MobileStockDetail(props: Props) {
         <div className="msd-day-prices">{([["高", prices?.high], ["低", prices?.low], ["开", prices?.open]] as const).map(([label, price]) => <span key={label}>{label} <b className={price === undefined ? "flat" : tone(compareMoney(price, market.last_close))}>{price === undefined ? "--" : yuan(price)}</b></span>)}</div>
         <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(facts.volume)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
+      {props.watchlistControl && <div className="msd-watchlist">{props.watchlistControl}</div>}
       <ChartPeriodTabs period={props.period} onChange={props.onPeriodChange} panelId="mobile-chart-panel" variant="detail" />
       <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
         <div hidden={chartType !== "分时"}><IntradayPanel {...props} /></div>

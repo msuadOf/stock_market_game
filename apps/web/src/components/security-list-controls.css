@@ -1,0 +1,22 @@
+.security-list-controls { flex: none; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--card-bg); color: var(--text); }
+.security-list-views { display: flex; align-items: center; gap: 3px; }
+.security-list-views button { min-height: 34px; padding: 4px 8px; border: 1px solid transparent; background: transparent; color: inherit; border-radius: 2px; white-space: nowrap; }
+.security-list-views button[aria-pressed="true"] { background: var(--surface-selected); color: var(--accent); border-color: var(--accent); }
+.security-list-count { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.security-search { display: flex; align-items: center; gap: 3px; margin-top: 5px; }
+.security-search input { width: 100%; min-width: 0; min-height: 34px; padding: 5px 7px; color: var(--text); background: var(--card-bg); border: 1px solid var(--border); border-radius: 2px; }
+.security-search button { flex: none; min-width: 34px; min-height: 34px; border: 1px solid var(--border); color: var(--muted); background: var(--surface-subtle); }
+.security-list-error p { margin: 7px 0; overflow-wrap: anywhere; }
+.security-list-error { font-size: 11px; color: var(--up); }
+.security-list-error button { min-height: 34px; color: var(--text); background: var(--card-bg); border: 1px solid var(--border); }
+.security-list-pending { font-size: 11px; color: var(--muted); }
+.security-list-empty { margin: 0; padding: 20px 8px; text-align: center; color: var(--muted); overflow-wrap: anywhere; }
+.watchlist-toggle { min-height: 32px; border: 1px solid var(--border); border-radius: 2px; color: var(--text); background: var(--card-bg); white-space: nowrap; }
+.watchlist-toggle[aria-pressed="true"] { color: var(--accent); }
+.terminal-stocklist .security-list-controls { position: sticky; top: 0; z-index: 1; }
+.terminal-stocklist .security-list-views { gap: 2px; }
+.terminal-stocklist .security-list-views button { padding-inline: 4px; font-size: 11px; }
+.layout-mobile .security-list-controls { padding: 6px 12px; }
+.layout-mobile .security-list-views button, .layout-mobile .security-search input, .layout-mobile .security-search button { min-height: 44px; }
+.msd-watchlist { display: flex; justify-content: flex-end; padding: 4px 10px; border-top: 1px solid var(--border); }
+.msd-watchlist .watchlist-toggle { min-height: 44px; }

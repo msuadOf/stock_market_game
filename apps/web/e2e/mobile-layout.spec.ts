@@ -26,7 +26,7 @@ test("移动详情显示真实分时午休轴、倍率和共享暂停状态", as
   await expect(detailToggle).toHaveAttribute("data-state", "paused");
   await detailToggle.click();
   await expect(detail.getByRole("button", { name: "暂停模拟" })).toHaveAttribute("data-state", "running");
-  await detail.getByRole("button", { name: "返回自选列表" }).click();
+  await detail.getByRole("button", { name: "返回股票列表" }).click();
   const globalToggle = page.locator(".mobile-brand-bar").getByRole("button", { name: "暂停模拟" });
   await expect(globalToggle).toHaveAttribute("data-state", "running");
   await globalToggle.click();

@@ -1,3 +1,6 @@
+import type { SecurityBrowser } from "./useSecurityBrowser.ts";
+import { filterSecurityCodes, adjacentSecurityCode, securityListEmptyMessage, securityListKeyboardTarget } from "./security-browser-model.ts";
+import { SecurityListControls, WatchlistToggle } from "../components/SecurityListControls.tsx";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
 import { MarketQuotePanel } from "../components/MarketQuotePanel.tsx";
@@ -83,35 +86,46 @@ export function DesktopAssets() {
   </div>;
 }
 
-interface MarketPanelProps { onSelect: (code: string) => void; onOpen?: (code: string) => void }
-export function ConnectedMarketPanel({ onSelect, onOpen }: MarketPanelProps) {
+interface MarketPanelProps { browser: SecurityBrowser; onSelect: (code: string) => void; onOpen?: (code: string) => void }
+export function ConnectedMarketPanel({ onSelect, onOpen, browser }: MarketPanelProps) {
   const markets = useSelector((state: RootState) => state.snapshot.snapshot?.markets ?? {});
   const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
   const chartCode = useMarketRuntimeSelection();
   const { getPriceHistory } = useMarketRuntimeActions();
   const heldCodes = useMemo(() => new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code)), [account]);
-  return <MarketGrid markets={markets} selectedCode={chartCode} onSelect={onSelect} onOpen={onOpen} heldCodes={heldCodes} priceHistoryByCode={getPriceHistory()} />;
+  return <MarketGrid browser={browser} markets={markets} selectedCode={chartCode} onSelect={onSelect} onOpen={onOpen} heldCodes={heldCodes} priceHistoryByCode={getPriceHistory()} />;
 }
 
-export function ConnectedTerminalStockList({ onSelect }: MarketPanelProps) {
+export function ConnectedTerminalStockList({ onSelect, browser }: MarketPanelProps) {
   const markets = useSelector((state: RootState) => state.snapshot.snapshot?.markets ?? {});
   const selectedCode = useMarketRuntimeSelection();
-  return <nav aria-label="个股列表"><div className="terminal-sectionbar"><strong>模拟股票</strong><span>{Object.keys(markets).length} 只</span></div>
-    {marketCodesForView(Object.keys(markets), STOCK_LIST.map(stock => stock.code), "watchlist", new Set()).map(code => {
+  const account = useSelector((state: RootState) => state.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY]);
+  const heldCodes = new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code));
+  const codes = filterSecurityCodes({ codes: marketCodesForView(Object.keys(markets), STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: browser.favorites, heldCodes, query: browser.query, view: browser.view });
+  return <nav aria-label="个股列表"><SecurityListControls browser={browser} codes={codes} onOpen={onSelect} />
+    {codes.length === 0 && <p className="security-list-empty">{securityListEmptyMessage(browser.view, browser.query, browser.ready)}</p>}
+    {codes.map(code => {
       const market = markets[code]!;
       const pct = priceChangePercent(market.last_price, market.last_close);
-      return <button key={code} className="terminal-stock-row" aria-current={code === selectedCode ? "true" : undefined} onClick={() => onSelect(code)}><span><strong>{STOCK_NAMES[code] ?? code}</strong><small>{code}</small></span><span className={colorClass(pct)}><strong>{yuan(market.last_price)}</strong><small>{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%</small></span></button>;
+      return <button type="button" key={code} className="terminal-stock-row" data-security-code={code} onKeyDown={event => {
+        const target = securityListKeyboardTarget(codes, code, event.key);
+        if (target === null) return;
+        event.preventDefault();
+        onSelect(target);
+        Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>(".terminal-stock-row")).find(button => button.dataset.securityCode === target)?.focus();
+      }} aria-current={code === selectedCode ? "true" : undefined} onClick={() => onSelect(code)}><span><strong>{STOCK_NAMES[code] ?? code}</strong><small>{code}</small></span><span className={colorClass(pct)}><strong>{yuan(market.last_price)}</strong><small>{pct >= 0 ? "+" : ""}{pct.toFixed(2)}%</small></span></button>;
     })}
   </nav>;
 }
 
 interface ChartPanelProps {
+  browser: SecurityBrowser;
   chartPeriod: MobileChartPeriod;
   setChartPeriod: (period: MobileChartPeriod) => void;
   klineDays: number;
   onTrade?: (side: "Buy" | "Sell") => void;
 }
-export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade }: ChartPanelProps) {
+export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade, browser }: ChartPanelProps) {
   const panelId = useId();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const chartCode = useMarketRuntimeSelection();
@@ -126,7 +140,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
   const cls = colorClass(compareMoney(diff, "0"));
   return <>
     <div className="chart-toolbar"><ChartPeriodTabs period={chartPeriod} onChange={setChartPeriod} panelId={panelId} variant="terminal" /></div>
-    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
+    <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><WatchlistToggle browser={browser} code={chartCode} /><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
     <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
   </>;
@@ -170,7 +184,7 @@ export function UserPanel(props: UserPanelProps) {
 }
 
 interface CompanyPanelActions { initialCivilDate: string; onCompanyQuery: (companyId: string, cursor: string | null) => void; onAdvanceCivilDay: () => Promise<void> }
-interface MobileDetailProps extends CompanyPanelActions { klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onSpeedChange: (speed: number) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
+interface MobileDetailProps extends CompanyPanelActions { browser: SecurityBrowser; klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onSpeedChange: (speed: number) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
 
 export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContext?: boolean }) {
   const chartCode = useMarketRuntimeSelection();
@@ -195,9 +209,10 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const tick = useSelector((state: RootState) => state.snapshot.snapshot?.tick ?? 0);
   if (!market) return null;
   const heldCodes = new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code));
-  const orderedCodes = marketCodesForView(marketCodes, STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes);
-  const index = orderedCodes.indexOf(chartCode);
+  const orderedCodes = filterSecurityCodes({ codes: marketCodesForView(marketCodes, STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: props.browser.favorites, heldCodes, query: props.browser.query, view: props.browser.view });
+  const previous = adjacentSecurityCode(orderedCodes, chartCode, -1);
+  const next = adjacentSecurityCode(orderedCodes, chartCode, 1);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={props.onSpeedChange} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={props.onSpeedChange} onPauseToggle={props.onPauseToggle} onBack={props.onBack} canSwitchStock={previous !== null && next !== null} onPrevious={() => { if (previous !== null) props.onSelect(previous); }} onNext={() => { if (next !== null) props.onSelect(next); }} watchlistControl={<WatchlistToggle browser={props.browser} code={chartCode} />} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

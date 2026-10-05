@@ -72,6 +72,8 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   }));
 }
 
+const browserFixture = { favorites: ["600101"], ready: true, error: null, view: "watchlist" as const, query: "", setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} };
+
 test("账户金额以元显示，持仓和 T+1 可卖股数仍以股显示", () => {
   const assets = renderView(createElement(views.DesktopAssets));
   assert.match(assets, /总资产<\/span><span class="value">2623\.45<\/span>/);
@@ -87,7 +89,7 @@ test("桌面逐笔与五档盘口以手显示权威股数，不把零股量舍�
   const trades = renderView(createElement(views.TradesPanel));
   assert.match(trades, /成交量（手）<\/th>/);
   assert.match(trades, /<td class="num">2\.5<\/td>/);
-  const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20 }));
+  const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20, browser: browserFixture }));
   assert.match(book, /五档盘口<span>价格（元） \/ 数量（手）<\/span>/);
   assert.match(book, /class="msd-book-depth sell"[^>]*><span>5<\/span>/);
   assert.match(book, /class="msd-book-depth buy"[^>]*><span>2\.5<\/span>/);
@@ -97,7 +99,7 @@ test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一�
   for (const count of [1, 2, 5]) {
     const active = structuredClone(snapshot);
     active.markets["600101"].asks = Array.from({ length: count }, (_, index) => [String(1001 + index), 100]);
-    const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20 }), active);
+    const book = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20, browser: browserFixture }), active);
     const rows = [...book.matchAll(/msd-book-row[^>]*><span>卖(\d)<\/span><b class="[^"]*">([\d.]+)</g)];
     assert.deepEqual(rows.map(row => [Number(row[1]), row[2]]), Array.from({ length: count }, (_, index) => [count - index, ((1000 + count - index) / 100).toFixed(2)]));
   }
@@ -136,6 +138,15 @@ test("G68：快捷涨跌停从当前setup读取非默认证券的创业板规则
 });
 
 test("G65：行情分类SSR公开当前分类而非只有active class", { timeout: 10000 }, () => {
-  const html = renderView(createElement(views.ConnectedMarketPanel, { onSelect() {} }));
-  assert.match(html, /aria-current="page"[^>]*>自选/);
+  const html = renderView(createElement(views.ConnectedMarketPanel, { onSelect() {}, browser: browserFixture }));
+  assert.match(html, /aria-pressed="true"[^>]*>自选<\/button>/);
+});
+
+test("低价股票的手机列表仍显示精确两位元价格，不额外补第三位", { timeout: 10000 }, () => {
+  const active = structuredClone(snapshot);
+  active.markets["600101"].last_price = "855";
+  active.markets["600101"].last_close = "900";
+  const html = renderView(createElement(views.ConnectedMarketPanel, { onSelect() {}, browser: browserFixture }), active);
+  assert.match(html, /<small>8\.55<\/small>/);
+  assert.doesNotMatch(html, /<small>8\.550<\/small>/);
 });

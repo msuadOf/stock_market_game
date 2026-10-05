@@ -59,7 +59,7 @@ test("共用周期选择不随主导航切换丢失", { timeout: 10000 }, () => 
 });
 
 test("主导航页面拥有稳定标题，持仓和我的能从详情直接进入", () => {
-  assert.equal(mobilePrimaryTitle("market"), "模拟自选");
+  assert.equal(mobilePrimaryTitle("market"), "模拟行情");
   assert.equal(mobilePrimaryTitle("positions"), "持仓");
   assert.equal(mobilePrimaryTitle("user"), "我的");
 

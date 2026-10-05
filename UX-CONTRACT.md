@@ -39,6 +39,8 @@
 | 图表设置菜单 | `ChartDisplayMenu` + Blueprint Popover | MarketKlinePanel 的 MA／indicator 状态 | 均线多选、副图单选；直接按钮与菜单共享状态 | 窄屏、逐层 Escape、外部点击及隐藏页测试 |
 | 个股行情摘要 | `marketQuoteFacts` | 引擎活动日K精确 OHLCV 与成交统计 | 桌面行情标签、手机报价和资金页 | 零成交、缺失统计与精确金额测试 |
 | 个股成交明细 | `MarketTradeTape` | 统一宿主最近100笔市场成交缓存 | 桌面右栏、手机分时右栏 | 证券筛选、小数手、缓存展开浏览器检查 |
+| 证券范围与查询 | `SecurityListControls` | App/useSecurityBrowser | 原生 search 无浏览器约束校验，名称／代码查询；全部／自选／持仓 | 空态、Enter／Escape、横竖屏与真实行序检查 |
+| 自选偏好 | `WatchlistToggle` + `WatchlistPreferences` | App/useSecurityBrowser | 桌面报价、手机报价；独立浏览器偏好 | 保存、读取失败、权限恢复、刷新保持检查 |
 
 ## Navigation and responsive behavior
 
@@ -120,3 +122,13 @@
 - 对齐线与详情默认隐藏；点击/轻点图形显示，再次点击/轻点一起隐藏。选中后的触屏拖动只更新位置，松手不会隐藏；双指缩放不触发点按切换。
 
 - 桌面个股右栏的“盘口／明细／行情”保持当前证券上下文；左右方向键循环切换并移动焦点，Home/End 到首尾标签。切股保留标签，缓存明细的展开状态随证券重置。明细只筛选当前证券，时间取成交 tick；时间缺失明确显示，不推算。默认七笔，展开当前缓存并明确提示不是完整逐笔历史。开盘价、最高价、最低价在零成交时显示“--”，成交额与笔数缺失时不可用，不用近期明细累加替代全天统计。
+
+### 自选、查询与名单边界
+
+- Canonical owner：App/useSecurityBrowser；SecurityListControls 与 WatchlistToggle 为共用入口，filterSecurityCodes 为共用筛选规则。范围、query、favorites 只有一份；证券选择仍由 MarketRuntime 负责，不增加第二个 selectedCode。
+- 全部／自选／持仓与名称、代码查询取交集，范围按钮通过 aria-pressed 公开状态，结果数使用 status；空查询与无匹配、自选未读取、无自选、无持仓分别说明。搜索 Enter 进入第一项，Escape 清空并保留焦点。过滤不自动切换证券、改写草稿或提交交易。
+- 自选是浏览器展示偏好，以 stock-game-watchlist 保存，经 WatchlistPreferences 校验读写。未保存初始为空，明确保存的 [] 仍为空；未知当前局的代码不显示但保留偏好。JSON、字段或权限错误必须带上下文显示且不覆盖原数据。写入失败保留上一份有效状态；读取失败禁用开关，全部行情与查询仍可用，提供重试读取入口。游戏存档与该偏好独立。
+- 手机底栏行情选择全部范围、自选选择自选范围，其余页面保留范围与查询；详情返回不清空筛选。横竖屏共用状态。桌面左列表上下键、Home/End 同步选中和焦点，手机相邻证券在当前过滤后的代码顺序中循环；不足两只或当前证券已移出名单时禁用切股，不突然跳到其他证券。
+- AG Grid 继续按稳定代码与异步行事务更新，查询和范围只改变显示行；模拟指数取全部证券，不随筛选变化。手机原有涨幅排序仅改变列表显示顺序，仍属于列表局部状态，未宣称跨实例保留或已统一任意 AG Grid 列排序。
+- 查询恢复成员或名单顺序变化时，MarketGridRowSynchronizer 先 flush 已提交异步事务，再以稳定 row ID 替换有序 rowData；普通报价变化继续只发对应行 update。AG Grid 主动列排序保留，桌面搜索 Enter 打开实际表格首行；手机打开实际手机列表首行，不读取隐藏表格的首行。
+- 自选重试成功用现有通知明确反馈，撤下读取错误并重新启用开关；此前失败不能在成功后仍显示为当前操作失败。

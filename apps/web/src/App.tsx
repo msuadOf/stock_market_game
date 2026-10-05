@@ -44,6 +44,8 @@ import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
 import { useSaveCommands } from "./app/useSaveCommands.ts";
 import { useTradingCommands } from "./app/useTradingCommands.ts";
 import { useSpeedMetricsPolling } from "./app/useSpeedMetricsPolling.ts";
+import { useSecurityBrowser } from "./app/useSecurityBrowser.ts";
+import type { MobilePrimaryTab } from "./mobile/mobile-ui-state";
 import { usePausePreferences } from "./app/usePausePreferences.ts";
 import "./App.css";
 import "./app/desktop-terminal.css";
@@ -185,7 +187,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     tradeSheetOpen,
     mobileDetail,
     tradeSheetRef,
-    switchMobileTab,
+    switchMobileTab: switchPrimaryTab,
     openTradeSheet,
     closeTradeSheet,
     showDetailInfo,
@@ -232,6 +234,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   useEffect(() => {
     if (desktopTradingOpen && orientation === "landscape") tradeSheetRef.current?.querySelector<HTMLInputElement>('input[placeholder="委托价"]')?.focus();
   }, [desktopTradingOpen, desktopTradeSide, orientation, tradeSheetRef]);
+  const securityBrowser = useSecurityBrowser(setNotice);
+  function switchMobileTab(tab: MobilePrimaryTab) {
+    if (tab === "market" || tab === "watchlist") securityBrowser.setView(tab === "market" ? "all" : "watchlist");
+    switchPrimaryTab(tab);
+  }
   const chartPeriod = mobileUi.chartPeriod;
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
@@ -514,16 +521,16 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         </div>
       </header>
 
-      <WorkspaceGrid orientation={orientation} desktopView={desktopView} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
+      <WorkspaceGrid orientation={orientation} desktopView={desktopView} onDesktopViewChange={setDesktopView} onTradeCurrent={() => openDesktopTrade()} desktopTradingOpen={desktopTradingOpen} onDesktopTradingOpenChange={changeDesktopTradingOpen} stockList={<ConnectedTerminalStockList browser={securityBrowser} onSelect={selectStock} />} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market" tabIndex={-1} aria-label="行情列表">
           <h3 className="panel-title">行情</h3>
-          <ConnectedMarketPanel onSelect={selectStock} onOpen={(code) => { selectStock(code); setDesktopView("stock"); }} />
+          <ConnectedMarketPanel browser={securityBrowser} onSelect={selectStock} onOpen={(code) => { selectStock(code); setDesktopView("stock"); }} />
         </Card>
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={(period) => dispatchMobileUi({ type: "select-period", period })} klineDays={klineDays} onTrade={openDesktopTrade} />
+          <ConnectedChartPanel browser={securityBrowser} chartPeriod={chartPeriod} setChartPeriod={(period) => dispatchMobileUi({ type: "select-period", period })} klineDays={klineDays} onTrade={openDesktopTrade} />
         </Card>
 
         <Card className="panel company-panel-shell" id="section-company">
@@ -669,7 +676,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {orientation === "portrait" && (
         <>
         <MobileDetailLayer ui={mobileUi}>
-            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
         </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
