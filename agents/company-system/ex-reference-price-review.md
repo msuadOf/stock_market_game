@@ -24,3 +24,7 @@
 已亲读实施者提供的 `.tmp/company-system/ex-reference-short.log` 原始输出：9 项目标测试通过、0 失败，耗时 0.01 秒。实施记录给出的实际命令为 `node scripts/run-with-deadline.mjs 10000 -- target/debug/deps/engine-eb8b0dcc57b8995e company::ex_reference_price --nocapture`，退出码 0；由 deadline runner 对测试 binary 进程树施加 10,000ms 上限，单 binary 执行。此前失败仅为测试日期 fixture 落在模拟春节假期/预期日期错误，实施记录未将其冒称为需求红测；早期编译失败涉及并行模块，当前限定结论不使用该失败作证。
 
 结论：**限定 PASS**，仅通过 `ex_reference_price` 标准纯现金整数分基础模块的静态语义复核及本次 9 项短测。参考日期只按调用者提供的 `TradingCalendar` 计算；当前默认日历对未有已核实官方覆盖的年份会用模拟假日规则，因此这不是实际未来交易日历完整性证明。该模块未接入真实市场，不支持不足一分/股、获批调整公式计算、股东登记/税务/付款、行情前收或涨跌幅基准，也不代表完整公司分红或公司行为已完成。未运行完整回归。
+
+## 状态文档增量复核
+
+2026-10-06 另复核 `agents/company-system/implementation-checklist.md` 与 `current-handoff.md` 的除息状态新增段落。两处均保留 `cash_settlement=false` 与共同股本行为结算未接通事实，且把 9 项短测限定为基础模块证据，不扩称分红/认购/回购可从 Session 使用；同时明确市场参考价/涨跌幅锚尚待接线。链接指向本记录且目标存在。增量表达与上述限定 PASS 一致，没有发现过度核销或遗漏关键未完成边界。
