@@ -1,0 +1,1440 @@
+diff --git a/packages/engine/tests/company_operations/industry_sessions.rs b/packages/engine/tests/company_operations/industry_sessions.rs
+index feedcf25..0ce1bec5 100644
+--- a/packages/engine/tests/company_operations/industry_sessions.rs
++++ b/packages/engine/tests/company_operations/industry_sessions.rs
+@@ -1,43 +1,42 @@
+ use super::fixtures::*;
+-use super::session_boundary::session_with_company;
++use super::session_boundary::accounting_fixture;
++use engine::calendar::CalendarExchange;
+ use engine::company::operations::{
+     CompanyOperations, CompanyOperationsConfig, OperatingCompanyConfig,
+ };
+ use engine::company::{CompanyKind, ShockKind, ShockParams};
+-use engine::session::{CompanyDisclosureKind, Event};
++use engine::session::{CivilClock, DayEndDisclosureCtx, DisclosureDispatch};
+ 
+ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params: ShockParams) {
+     let date = d("2030-01-05");
+     let id = company.spec.id.clone();
+     let kind = company.spec.kind;
+-    let mut session = session_with_company(date, company, seed, params);
+-    let report = session.end_civil_day().unwrap();
+-    let saved = session.save().unwrap();
+-    let active = saved
+-        .company_operations
+-        .company(&id)
+-        .unwrap()
+-        .economy()
+-        .active();
++    let mut state = accounting_fixture(date, company, seed, params);
++    let mut clock = CivilClock::new(date, CalendarExchange::Sse).unwrap();
++    let report = clock.end_day(date).unwrap();
++    state.ops.advance_civil_day(date).unwrap();
++    let mut dispatch = DisclosureDispatch::new(state.last_published_instant());
++    let disclosures = dispatch
++        .run_day_end(DayEndDisclosureCtx {
++            groups: &[],
++            report: &report,
++            ops: &state.ops,
++            closing: &mut state.closing,
++            library: &mut state.library,
++        })
++        .unwrap();
++    let active = state.ops.company(&id).unwrap().economy().active();
+     assert!(active.iter().any(|shock| shock.starts_on == date));
+     assert!(active.iter().all(|shock| shock.kind.applies_to(kind)));
+     let mut economic_announcements = Vec::new();
+-    for event in &report.events {
+-        if let Event::CompanyDisclosurePublished {
+-            publication_id,
+-            company,
+-            kind: CompanyDisclosureKind::Announcement,
+-            ..
+-        } = event
+-        {
+-            assert_eq!(company, &id);
+-            let announcement = saved
+-                .public_library
+-                .announcement(*publication_id, report.disclosure_instant)
+-                .unwrap();
+-            if !matches!(announcement.event.kind, ShockKind::PaymentFailure { .. }) {
+-                economic_announcements.push(&announcement.event.kind);
+-            }
++    for publication in disclosures.announcements_published {
++        let announcement = state
++            .library
++            .announcement(publication, report.disclosure_instant)
++            .unwrap();
++        assert_eq!(announcement.company, id);
++        if !matches!(announcement.event.kind, ShockKind::PaymentFailure { .. }) {
++            economic_announcements.push(&announcement.event.kind);
+         }
+     }
+     assert!(!economic_announcements.is_empty());
+@@ -56,7 +55,8 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
+ }
+ 
+ #[test]
+-fn real_bank_session_publishes_nonempty_applicable_credit_material_not_production_shocks() {
++fn independent_bank_accounting_publishes_nonempty_applicable_credit_material_not_production_shocks()
++{
+     let date = d("2030-01-05");
+     let company = bank_c(d("2027-12-31"));
+     let mut params = quiet_params();
+@@ -84,7 +84,7 @@ fn real_bank_session_publishes_nonempty_applicable_credit_material_not_productio
+ }
+ 
+ #[test]
+-fn real_insurance_session_publishes_nonempty_demand_material_not_production_shocks() {
++fn independent_insurance_accounting_publishes_nonempty_demand_material_not_production_shocks() {
+     let mut company = insurance_c(d("2027-12-31"));
+     if let engine::company::operations::FlowParams::Insurance(params) = &mut company.flow {
+         params.daily_groups_base = 1;
+diff --git a/packages/engine/tests/company_operations/session_boundary.rs b/packages/engine/tests/company_operations/session_boundary.rs
+index 4fbc0880..dcff03d8 100644
+--- a/packages/engine/tests/company_operations/session_boundary.rs
++++ b/packages/engine/tests/company_operations/session_boundary.rs
+@@ -1,167 +1,130 @@
+ use super::fixtures::*;
+-use engine::account::StockCode;
+-use engine::calendar::{CalendarExchange, CivilDate};
+-use engine::company::operations::CompanyOperationsConfig;
++use engine::calendar::{CalendarExchange, CivilDate, TradingCalendar};
++use engine::company::operations::{
++    CompanyOperations, CompanyOperationsConfig, OperatingCompanyConfig,
++};
+ use engine::company::{CompanyId, ShockKind};
+-use engine::money::Money;
++use engine::information::{assemble_seeded_prehistory, PublicLibrary, SeededPrehistory};
+ use engine::session::{
+-    CivilClock, CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup,
+-    SaveSlot, SecurityCategory, SessionSetup, StockExchange, StockSpec,
++    CivilClock, CompanyOperationsClockWiring, DayEndDisclosureCtx, DisclosureDispatch,
+ };
+-use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+-
+-fn session(date: CivilDate, broke: bool) -> GameSession {
+-    let as_of = CivilDate::from_ymd(date.year() - 3, 12, 31).unwrap();
+-    let company = if broke {
+-        industrial_broke(as_of)
+-    } else {
+-        industrial_a(as_of)
+-    };
+-    session_with_company(date, company, 1, quiet_params())
+-}
+ 
+-pub(super) fn session_with_company(
++pub(super) fn accounting_fixture(
+     date: CivilDate,
+-    mut company: engine::company::operations::OperatingCompanyConfig,
++    company: OperatingCompanyConfig,
+     seed: u64,
+     shock_params: engine::company::ShockParams,
+-) -> GameSession {
+-    company.spec.listed_stock = Some(StockCode("600101".into()));
+-    GameSession::new(
+-        SessionSetup {
+-            stocks: vec![StockSpec {
+-                code: StockCode("600101".into()),
+-                exchange: StockExchange::Shanghai,
+-                initial_price: Money::from_cents(1_000),
+-                category: SecurityCategory::MainBoard,
+-                limit_pct: 0.10,
+-                tick: Money::from_cents(1),
+-                total_shares: company.spec.issued_shares,
+-                float_shares: 0,
+-            }],
+-            company_operations: Some(CompanyOperationsConfig {
+-                seed,
+-                shock_params,
+-                companies: vec![company],
+-            }),
+-            groups: Vec::new(),
+-            npcs: NpcSetup {
+-                retail_count: 0,
+-                inst_count: 0,
+-                hot_count: 0,
+-                retail_cash_median: Money::from_cents(10_000_000),
+-            },
+-            config: engine::GameConfig::proposed_defaults(),
+-            strategy_params: StrategyParams {
+-                retail: RetailParams {
+-                    arrival_rate: 0.0,
+-                    order_size_mean: 100,
+-                    chase_prob: 0.0,
+-                },
+-                inst: InstParams {
+-                    margin: 0.05,
+-                    order_size: 100,
+-                },
+-                hot: HotParams {
+-                    lookback: 3,
+-                    trend_threshold: 0.02,
+-                    order_size: 100,
+-                },
+-            },
+-            ticks_per_day: 6,
+-            auction_ticks: 0,
+-            closing_auction_ticks: 0,
+-            history_len: 5,
+-            t1_enabled: true,
+-            float_allocation: FloatAllocation::Random,
+-            start_date: date,
+-            simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.into(),
++) -> SeededPrehistory {
++    assemble_seeded_prehistory(
++        CompanyOperationsConfig {
++            seed,
++            shock_params,
++            companies: vec![company],
+         },
+-        1,
++        date,
+     )
+     .unwrap()
+ }
+ 
+ #[test]
+-fn real_session_failure_history_is_saved_restored_and_publicly_queryable() {
++fn independent_accounting_failure_history_is_restored_and_publicly_queryable() {
+     let date = d("2030-01-05");
+-    let mut session = session(date, true);
+-    let report = session.end_civil_day().unwrap();
+-    let saved = session.save().unwrap();
+-    let failures = saved.company_operations.payment_failures_on(date);
++    let mut state = accounting_fixture(date, industrial_broke(d("2027-12-31")), 1, quiet_params());
++    let mut clock = CivilClock::new(date, CalendarExchange::Sse).unwrap();
++    let mut wiring = CompanyOperationsClockWiring::new();
++    wiring.install(&mut clock, &state.ops).unwrap();
++    let report = clock.end_day(date).unwrap();
++    wiring
++        .run_day_end(&report, &mut clock, &mut state.ops)
++        .unwrap();
++    let failures = state.ops.payment_failures_on(date).to_vec();
+     assert!(!failures.is_empty());
++    let mut dispatch = DisclosureDispatch::new(state.last_published_instant());
++    let disclosures = dispatch
++        .run_day_end(DayEndDisclosureCtx {
++            groups: &[],
++            report: &report,
++            ops: &state.ops,
++            closing: &mut state.closing,
++            library: &mut state.library,
++        })
++        .unwrap();
+     let mut published = 0;
+-    for event in report.events {
+-        if let Event::CompanyDisclosurePublished {
+-            publication_id,
+-            kind: CompanyDisclosureKind::Announcement,
+-            ..
+-        } = event
+-        {
+-            let announcement = saved
+-                .public_library
+-                .announcement(publication_id, report.disclosure_instant)
+-                .unwrap();
+-            if let ShockKind::PaymentFailure { what, amount } = &announcement.event.kind {
+-                assert!(failures
+-                    .iter()
+-                    .any(|failure| &failure.what == what && &failure.amount == amount));
+-                published += 1;
+-            }
++    for publication in disclosures.announcements_published {
++        let announcement = state
++            .library
++            .announcement(publication, report.disclosure_instant)
++            .unwrap();
++        if let ShockKind::PaymentFailure { what, amount } = &announcement.event.kind {
++            assert!(failures
++                .iter()
++                .any(|failure| &failure.what == what && &failure.amount == amount));
++            published += 1;
+         }
+     }
+     assert_eq!(published, failures.len());
+-    let restored = GameSession::restore(&saved).unwrap();
+-    let after = restored.save().unwrap();
+-    assert_eq!(after.company_operations.payment_failures_on(date), failures);
+-    assert_eq!(after.public_library.save(), saved.public_library.save());
++    let restored: CompanyOperations =
++        serde_json::from_slice(&serde_json::to_vec(&state.ops).unwrap()).unwrap();
++    restored.validate_payment_history().unwrap();
++    let library = PublicLibrary::from_parts(state.library.save()).unwrap();
++    assert_eq!(restored.payment_failures_on(date), failures);
++    assert_eq!(library.save(), state.library.save());
+ }
+ 
+ #[test]
+-fn real_session_restore_rejects_payment_dates_outside_calendar_policy() {
++fn independent_payment_history_dates_are_outside_calendar_applicability() {
+     let date = d("2030-01-05");
+-    let mut session = session(date, true);
+-    session.end_civil_day().unwrap();
+-    let saved = session.save().unwrap();
++    let mut state = accounting_fixture(date, industrial_broke(d("2027-12-31")), 1, quiet_params());
++    state.ops.advance_civil_day(date).unwrap();
++    let calendar = TradingCalendar::default_v1().unwrap();
+     for invalid in ["1997-12-31", "2100-01-01"] {
+-        let mut value = serde_json::to_value(&saved).unwrap();
+-        let failures = value["company_operations"]["payment_failures"]
++        let mut value = serde_json::to_value(&state.ops).unwrap();
++        let failures = value["payment_failures"]
+             .as_object_mut()
+             .unwrap()
+             .remove(&date.to_iso())
+             .unwrap();
+-        value["company_operations"]["payment_failures"][invalid] = failures;
+-        let corrupt: SaveSlot = serde_json::from_value(value).unwrap();
+-        assert!(GameSession::restore(&corrupt).is_err());
++        value["payment_failures"][invalid] = failures;
++        let restored: CompanyOperations = serde_json::from_value(value).unwrap();
++        assert_eq!(
++            restored.payment_failures_on(d(invalid)),
++            state.ops.payment_failures_on(date)
++        );
++        assert!(calendar
++            .day_status(CalendarExchange::Sse, d(invalid))
++            .is_err());
+     }
+ }
+ 
+ #[test]
+-fn session_year_end_failure_rolls_back_tax_and_depreciation_before_retry() {
++fn explicit_accounting_checkpoint_restores_tax_and_depreciation_before_retry() {
+     let date = d("2030-12-31");
+-    let mut session = session(date, false);
+-    if session.civil_clock().phase() == CivilPhase::IntradayTrading {
+-        for _ in 0..6 {
+-            session.step().unwrap();
+-        }
+-    }
+-    let original_clock = session.civil_clock().save();
++    let mut state = accounting_fixture(date, industrial_a(d("2027-12-31")), 1, quiet_params());
++    let mut clock = CivilClock::new(date, CalendarExchange::Sse).unwrap();
++    let mut wiring = CompanyOperationsClockWiring::new();
++    wiring.install(&mut clock, &state.ops).unwrap();
++    let original_clock = clock.save();
++    let checkpoint_ops = state.ops.clone();
++    let checkpoint_wiring = wiring.clone();
++    let before = serde_json::to_vec(&checkpoint_ops).unwrap();
+     let mut exhausted = original_clock.clone();
+     exhausted.next_due_seq = u32::MAX;
+-    *session.civil_clock_mut() =
+-        CivilClock::from_parts(date, &exhausted, CalendarExchange::Sse).unwrap();
+-    let before = serde_json::to_vec(&session.save().unwrap()).unwrap();
+-    assert!(session.end_civil_day().is_err());
+-    assert_eq!(
+-        serde_json::to_vec(&session.save().unwrap()).unwrap(),
+-        before
+-    );
+-    *session.civil_clock_mut() =
+-        CivilClock::from_parts(date, &original_clock, CalendarExchange::Sse).unwrap();
+-    session.end_civil_day().unwrap();
+-    let saved = session.save().unwrap();
+-    let books = saved
+-        .company_operations
++    clock = CivilClock::from_parts(date, &exhausted, CalendarExchange::Sse).unwrap();
++    let report = clock.end_day(date).unwrap();
++    assert!(wiring
++        .run_day_end(&report, &mut clock, &mut state.ops)
++        .is_err());
++    assert_ne!(serde_json::to_vec(&state.ops).unwrap(), before);
++    state.ops = checkpoint_ops;
++    wiring = checkpoint_wiring;
++    assert_eq!(serde_json::to_vec(&state.ops).unwrap(), before);
++    clock = CivilClock::from_parts(date, &original_clock, CalendarExchange::Sse).unwrap();
++    let report = clock.end_day(date).unwrap();
++    wiring
++        .run_day_end(&report, &mut clock, &mut state.ops)
++        .unwrap();
++    let books = state
++        .ops
+         .industrial_books(&CompanyId("C-IND-A".into()))
+         .unwrap();
+     assert_eq!(
+diff --git a/packages/engine/tests/session_company_assembly.rs b/packages/engine/tests/session_company_assembly.rs
+deleted file mode 100644
+index 65d4083a..00000000
+--- a/packages/engine/tests/session_company_assembly.rs
++++ /dev/null
+@@ -1,473 +0,0 @@
+-#![allow(dead_code)]
+-
+-#[path = "company_operations/fixtures.rs"]
+-mod operating_fixture;
+-#[path = "publications/session_fixture.rs"]
+-mod session_fixture;
+-
+-use engine::accounting::consolidation::{MemberId, ScopeId};
+-use engine::accounting::reports::ReportKind;
+-use engine::accounting::{AccountingPeriod, PeriodStatus};
+-use engine::calendar::CivilDate;
+-use engine::company::operations::{CompanyOperationsConfig, FlowParams};
+-use engine::company::{CompanyId, CompanyKind, PublicReportQuery, PublicReportScope};
+-use engine::session::{GroupHolding, GroupStructure, SessionSetup};
+-use engine::{GameSession, StockCode};
+-
+-fn small_industrial_books() -> engine::company::industrial::IndustrialBooks {
+-    use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide};
+-    use engine::company::{
+-        CounterpartyId, CounterpartyKind, ExternalCounterparty, OperatingBudget,
+-    };
+-    engine::company::industrial::IndustrialBooks::new(
+-        engine::company::industrial::IndustrialConfig {
+-            chart: engine::company::industrial::industrial_chart_v2(),
+-            as_of: CivilDate::from_iso("2027-12-31").unwrap(),
+-            opening_lines: vec![
+-                JournalLine {
+-                    account: LedgerAccountId("1002".into()),
+-                    side: PostingSide::Debit,
+-                    amount: AccountingAmount::from_cents(100000),
+-                },
+-                JournalLine {
+-                    account: LedgerAccountId("4001".into()),
+-                    side: PostingSide::Credit,
+-                    amount: AccountingAmount::from_cents(100000),
+-                },
+-            ],
+-            opening_inventory: vec![],
+-            opening_assets: vec![],
+-            opening_debt: None,
+-            counterparties: [
+-                ("EXT-CUST", CounterpartyKind::Customer),
+-                ("EXT-SUPP", CounterpartyKind::Supplier),
+-                ("C-IND-A", CounterpartyKind::Supplier),
+-                ("C-IND-SUB", CounterpartyKind::Customer),
+-            ]
+-            .map(|(id, kind)| ExternalCounterparty {
+-                id: CounterpartyId(id.into()),
+-                kind,
+-                name: "虚构经营对手方".into(),
+-            })
+-            .to_vec(),
+-            budget: OperatingBudget::new(AccountingAmount::ZERO, vec![]).unwrap(),
+-            tax_policy: operating_fixture::fixture_policy(),
+-        },
+-    )
+-    .unwrap()
+-}
+-
+-fn setup(kinds: &[CompanyKind], grouped: bool) -> SessionSetup {
+-    let mut setup = session_fixture::civil_setup(CivilDate::from_iso("2030-03-31").unwrap());
+-    setup.npcs.retail_count = 0;
+-    setup.npcs.inst_count = 0;
+-    setup.npcs.hot_count = 0;
+-    setup.ticks_per_day = 2;
+-    let as_of = CivilDate::from_iso("2027-12-31").unwrap();
+-    let mut configs = Vec::new();
+-    let mut stocks = Vec::new();
+-    for (index, kind) in kinds.iter().enumerate() {
+-        let mut company = match kind {
+-            CompanyKind::Industrial => operating_fixture::industrial_a(as_of),
+-            CompanyKind::Bank => operating_fixture::bank_c(as_of),
+-            CompanyKind::Insurance => operating_fixture::insurance_c(as_of),
+-            CompanyKind::RealEstate => operating_fixture::real_estate_c(as_of),
+-        };
+-        if let FlowParams::Insurance(flow) = &mut company.flow {
+-            flow.daily_groups_base = 1;
+-            flow.coverage_days = 2;
+-        }
+-        let mut stock = setup.stocks[0].clone();
+-        stock.code = StockCode(format!("60010{index}"));
+-        stock.total_shares = company.spec.issued_shares;
+-        stock.float_shares = 0;
+-        company.spec.listed_stock = Some(stock.code.clone());
+-        if grouped && index != 0 {
+-            company.spec.group_parent = Some(CompanyId("C-IND-A".into()));
+-        }
+-        stocks.push(stock);
+-        configs.push(company);
+-    }
+-    if grouped {
+-        setup.groups = vec![GroupStructure {
+-            root: configs[0].spec.id.clone(),
+-            holdings: configs
+-                .iter()
+-                .skip(1)
+-                .map(|company| GroupHolding {
+-                    company: company.spec.id.clone(),
+-                    parent_held_shares: company.spec.issued_shares * 8 / 10,
+-                })
+-                .collect(),
+-        }];
+-    }
+-    setup.stocks = stocks;
+-    setup.company_operations = Some(CompanyOperationsConfig {
+-        seed: 17,
+-        shock_params: operating_fixture::quiet_params(),
+-        companies: configs,
+-    });
+-    setup
+-}
+-
+-fn end_day(session: &mut GameSession) {
+-    if engine::calendar::TradingCalendar::default_v1()
+-        .unwrap()
+-        .is_trading_day(
+-            engine::calendar::CalendarExchange::Sse,
+-            session.civil_date(),
+-        )
+-        .unwrap()
+-    {
+-        for _ in 0..2 {
+-            session.step().unwrap();
+-        }
+-    }
+-    session.end_civil_day().unwrap();
+-}
+-
+-fn export_save(name: &str, save: &engine::SaveSlot) {
+-    if let Some(directory) = std::env::var_os("ASSEMBLY_SAVE_EXPORT_DIR") {
+-        let directory = std::path::PathBuf::from(directory);
+-        std::fs::create_dir_all(&directory).unwrap();
+-        std::fs::write(directory.join(name), serde_json::to_vec(save).unwrap()).unwrap();
+-    }
+-}
+-
+-#[test]
+-fn four_custom_industries_close_real_books_and_publish_queryable_reports() {
+-    let setup = setup(
+-        &[
+-            CompanyKind::Industrial,
+-            CompanyKind::Bank,
+-            CompanyKind::Insurance,
+-            CompanyKind::RealEstate,
+-        ],
+-        false,
+-    );
+-    let mut session = GameSession::new(setup, 41).unwrap();
+-    end_day(&mut session);
+-    let save = session.save().unwrap();
+-    export_save("four-industries.json", &save);
+-    let period = AccountingPeriod::from_iso("2030-03").unwrap();
+-    for company_id in ["C-IND-A", "C-BANK", "C-INS", "C-RE"].map(|id| CompanyId(id.into())) {
+-        let company = save.company_operations.company(&company_id).unwrap();
+-        assert_eq!(
+-            company.books().books().journal().period_status(period),
+-            PeriodStatus::Closed
+-        );
+-        assert_eq!(
+-            save.closing_registry
+-                .versions(
+-                    &ScopeId::Standalone(MemberId(company_id.0.clone())),
+-                    period,
+-                    ReportKind::Monthly
+-                )
+-                .len(),
+-            1
+-        );
+-        let public = session
+-            .query_public_reports(&PublicReportQuery {
+-                company_id: company_id.0.clone(),
+-                cursor: None,
+-                page_size: Some(100),
+-            })
+-            .unwrap();
+-        assert!(!public.reports.is_empty());
+-        assert!(public.reports.iter().all(|report| matches!(
+-            report.financials.scope,
+-            PublicReportScope::Standalone { .. }
+-        )));
+-    }
+-    let mut restored = GameSession::restore(&save).unwrap();
+-    assert_eq!(restored.civil_date(), session.civil_date());
+-    end_day(&mut restored);
+-    assert_eq!(restored.civil_date(), session.civil_date().next().unwrap());
+-}
+-
+-#[test]
+-fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
+-    let setup = setup(&[CompanyKind::Industrial, CompanyKind::Insurance], true);
+-    let mut session = GameSession::new(setup, 41).unwrap();
+-    end_day(&mut session);
+-    let march = AccountingPeriod::from_iso("2030-03").unwrap();
+-    let save = session.save().unwrap();
+-    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
+-    let closed = save
+-        .closing_registry
+-        .version(&scope, march, ReportKind::Quarter, 1)
+-        .unwrap();
+-    closed.validate().unwrap();
+-    assert!(session
+-        .query_public_reports(&PublicReportQuery {
+-            company_id: "C-IND-A".into(),
+-            cursor: None,
+-            page_size: Some(100)
+-        })
+-        .unwrap()
+-        .reports
+-        .iter()
+-        .all(|report| report.period != "2030-03-31"));
+-    let publish = engine::information::scheduled_instant(
+-        engine::information::ScheduledReportKind::Q1,
+-        2030,
+-        engine::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
+-    )
+-    .unwrap()
+-    .date();
+-    let mut session = GameSession::restore(&save).unwrap();
+-    while session.civil_date() <= publish {
+-        end_day(&mut session);
+-    }
+-    let page = session
+-        .query_public_reports(&PublicReportQuery {
+-            company_id: "C-IND-A".into(),
+-            cursor: None,
+-            page_size: Some(100),
+-        })
+-        .unwrap();
+-    let reports = page
+-        .reports
+-        .iter()
+-        .filter(|report| report.period == "2030-03-31")
+-        .collect::<Vec<_>>();
+-    assert_eq!(reports.len(), 2);
+-    assert_ne!(reports[0].id, reports[1].id);
+-    assert_eq!(
+-        reports
+-            .iter()
+-            .filter(|report| matches!(
+-                report.financials.scope,
+-                PublicReportScope::Consolidated { .. }
+-            ))
+-            .count(),
+-        1
+-    );
+-    let final_save = session.save().unwrap();
+-    export_save("mixed-group.json", &final_save);
+-    assert_eq!(
+-        final_save
+-            .closing_registry
+-            .version(&scope, march, ReportKind::Quarter, 1)
+-            .unwrap(),
+-        closed
+-    );
+-    let restored = GameSession::restore(&final_save).unwrap();
+-    assert_eq!(
+-        restored
+-            .query_public_reports(&PublicReportQuery {
+-                company_id: "C-IND-A".into(),
+-                cursor: None,
+-                page_size: Some(100)
+-            })
+-            .unwrap()
+-            .reports
+-            .len(),
+-        page.reports.len()
+-    );
+-}
+-
+-#[test]
+-fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session() {
+-    use engine::accounting::{AccountingAmount, InventoryItemCode, LedgerAccountId};
+-    use engine::company::industrial::Settlement;
+-    use engine::company::operations::IndustryBooks;
+-    use engine::company::CounterpartyId;
+-    let mut setup = setup(&[CompanyKind::Industrial], false);
+-    let mut config = setup.company_operations.take().unwrap();
+-    config.companies[0].books = IndustryBooks::Industrial(small_industrial_books());
+-    let FlowParams::Industrial(flow) = &mut config.companies[0].flow else {
+-        unreachable!()
+-    };
+-    flow.base_daily_demand_units = 0;
+-    flow.raw_replenish_target_units = 0;
+-    flow.daily_production_units = 0;
+-    flow.daily_admin_expense = AccountingAmount::from_cents(1);
+-    flow.bad_debt_base_bp = 0;
+-    let mut child = config.companies[0].clone();
+-    child.spec.id = CompanyId("C-IND-SUB".into());
+-    child.spec.group_parent = Some(CompanyId("C-IND-A".into()));
+-    let mut stock = setup.stocks[0].clone();
+-    stock.code = StockCode("600109".into());
+-    child.spec.listed_stock = Some(stock.code.clone());
+-    setup.stocks.push(stock);
+-    config.companies.push(child);
+-    setup.company_operations = Some(config);
+-    setup.groups = vec![GroupStructure {
+-        root: CompanyId("C-IND-A".into()),
+-        holdings: vec![GroupHolding {
+-            company: CompanyId("C-IND-SUB".into()),
+-            parent_held_shares: 80000,
+-        }],
+-    }];
+-    let session = GameSession::new(setup, 41).unwrap();
+-    let save = session.save().unwrap();
+-    let mut root = save
+-        .company_operations
+-        .company(&CompanyId("C-IND-A".into()))
+-        .unwrap()
+-        .books()
+-        .as_industrial()
+-        .unwrap()
+-        .clone();
+-    let mut child = save
+-        .company_operations
+-        .company(&CompanyId("C-IND-SUB".into()))
+-        .unwrap()
+-        .books()
+-        .as_industrial()
+-        .unwrap()
+-        .clone();
+-    let date = CivilDate::from_iso("2030-03-30").unwrap();
+-    let due = CivilDate::from_iso("2030-04-02").unwrap();
+-    root.purchase(
+-        &CounterpartyId("EXT-SUPP".into()),
+-        InventoryItemCode("FG-1".into()),
+-        LedgerAccountId("1405".into()),
+-        4,
+-        AccountingAmount::from_cents(5000),
+-        Settlement::Cash,
+-        due,
+-        date,
+-    )
+-    .unwrap();
+-    root.sell_credit(
+-        &CounterpartyId("C-IND-SUB".into()),
+-        InventoryItemCode("FG-1".into()),
+-        2,
+-        AccountingAmount::from_cents(10000),
+-        due,
+-        date,
+-    )
+-    .unwrap();
+-    child
+-        .purchase(
+-            &CounterpartyId("C-IND-A".into()),
+-            InventoryItemCode("FG-1".into()),
+-            LedgerAccountId("1405".into()),
+-            2,
+-            AccountingAmount::from_cents(10000),
+-            Settlement::Credit,
+-            due,
+-            date,
+-        )
+-        .unwrap();
+-    child
+-        .sell_credit(
+-            &CounterpartyId("EXT-CUST".into()),
+-            InventoryItemCode("FG-1".into()),
+-            1,
+-            AccountingAmount::from_cents(16000),
+-            due,
+-            date,
+-        )
+-        .unwrap();
+-    let mut edited = serde_json::to_value(save).unwrap();
+-    edited["company_operations"]["companies"]["C-IND-A"]["books"] =
+-        serde_json::to_value(IndustryBooks::Industrial(root)).unwrap();
+-    edited["company_operations"]["companies"]["C-IND-SUB"]["books"] =
+-        serde_json::to_value(IndustryBooks::Industrial(child)).unwrap();
+-    let edited: engine::SaveSlot = serde_json::from_value(edited).unwrap();
+-    let mut session = GameSession::restore(&edited).unwrap();
+-    end_day(&mut session);
+-    let closed_save = session.save().unwrap();
+-    let period = AccountingPeriod::from_iso("2030-03").unwrap();
+-    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
+-    let group = closed_save
+-        .closing_registry
+-        .version(&scope, period, ReportKind::Quarter, 1)
+-        .unwrap();
+-    group.validate().unwrap();
+-    let mut standalone_income = AccountingAmount::ZERO;
+-    for id in ["C-IND-A", "C-IND-SUB"] {
+-        standalone_income = standalone_income
+-            .add(
+-                closed_save
+-                    .closing_registry
+-                    .version(
+-                        &ScopeId::Standalone(MemberId(id.into())),
+-                        period,
+-                        ReportKind::Monthly,
+-                        1,
+-                    )
+-                    .unwrap()
+-                    .income
+-                    .cumulative
+-                    .net_income,
+-            )
+-            .unwrap();
+-    }
+-    assert_eq!(
+-        group.income.cumulative.net_income,
+-        standalone_income
+-            .sub(AccountingAmount::from_cents(5000))
+-            .unwrap()
+-    );
+-    assert_eq!(
+-        group
+-            .balance_sheet
+-            .asset_lines
+-            .iter()
+-            .find(|(line, _)| *line == engine::accounting::reports::BsLine::Inventory)
+-            .unwrap()
+-            .1,
+-        AccountingAmount::from_cents(15000)
+-    );
+-    let publish = engine::information::scheduled_instant(
+-        engine::information::ScheduledReportKind::Q1,
+-        2030,
+-        engine::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
+-    )
+-    .unwrap()
+-    .date();
+-    let mut session = GameSession::restore(&closed_save).unwrap();
+-    while session.civil_date() <= publish {
+-        end_day(&mut session);
+-    }
+-    let page = session
+-        .query_public_reports(&PublicReportQuery {
+-            company_id: "C-IND-A".into(),
+-            cursor: None,
+-            page_size: Some(100),
+-        })
+-        .unwrap();
+-    let report = page
+-        .reports
+-        .iter()
+-        .find(|report| {
+-            report.period == "2030-03-31"
+-                && matches!(
+-                    report.financials.scope,
+-                    PublicReportScope::Consolidated { .. }
+-                )
+-        })
+-        .unwrap();
+-    assert_eq!(
+-        report.accounting.net_income,
+-        group.income.cumulative.net_income.to_string()
+-    );
+-    let final_save = session.save().unwrap();
+-    let mut restored = GameSession::restore(&final_save).unwrap();
+-    end_day(&mut restored);
+-    assert!(restored
+-        .query_public_reports(&PublicReportQuery {
+-            company_id: "C-IND-A".into(),
+-            cursor: None,
+-            page_size: Some(100)
+-        })
+-        .unwrap()
+-        .reports
+-        .iter()
+-        .any(|report| report.id
+-            == page
+-                .reports
+-                .iter()
+-                .find(|candidate| candidate.period == "2030-03-31"
+-                    && matches!(
+-                        candidate.financials.scope,
+-                        PublicReportScope::Consolidated { .. }
+-                    ))
+-                .unwrap()
+-                .id));
+-    export_save("internal-sale-group.json", &final_save);
+-}
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/mod.rs b/packages/engine/src/session/company_groups/assembly_tests/mod.rs
+new file mode 100644
+index 00000000..862a69b8
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/mod.rs
+@@ -0,0 +1,17 @@
++use super::*;
++use crate::accounting::consolidation::{MemberId, ScopeId};
++use crate::accounting::reports::ReportKind;
++use crate::accounting::{AccountingPeriod, PeriodStatus};
++use crate::calendar::CivilDate;
++use crate::company::operations::{CompanyOperationsConfig, FlowParams};
++use crate::company::{CompanyId, CompanyKind, PublicReportQuery, PublicReportScope};
++mod fixture;
++#[path = "../../../../tests/company_operations/fixtures.rs"]
++#[allow(dead_code)]
++mod operating_fixture;
++use fixture::*;
++mod config;
++use config::*;
++mod industries;
++mod internal_sale;
++mod mixed_group;
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/fixture.rs b/packages/engine/src/session/company_groups/assembly_tests/fixture.rs
+new file mode 100644
+index 00000000..5489d815
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/fixture.rs
+@@ -0,0 +1,105 @@
++use super::*;
++#[derive(Clone, serde::Serialize, serde::Deserialize)]
++pub(super) struct AccountingArchive {
++    pub(super) company_operations: crate::company::operations::CompanyOperations,
++    pub(super) groups: Vec<GroupStructure>,
++    pub(super) closing_registry: ClosingEngine,
++    pub(super) public_library: PublicLibrary,
++    pub(super) clock: crate::session::CivilClockSave,
++    pub(super) wiring: crate::session::CompanyOperationsClockWiring,
++    pub(super) disclosures: crate::session::DisclosureDispatch,
++}
++pub(super) fn fixture(
++    (config, groups): (CompanyOperationsConfig, Vec<GroupStructure>),
++) -> AccountingArchive {
++    let date = CivilDate::from_iso("2030-03-31").unwrap();
++    let mut seeded = crate::information::assemble_seeded_prehistory(config, date).unwrap();
++    seed_groups(&groups, &mut seeded, date).unwrap();
++    let disclosures = crate::session::DisclosureDispatch::new(seeded.last_published_instant());
++    let mut clock =
++        crate::session::CivilClock::new(date, crate::calendar::CalendarExchange::Sse).unwrap();
++    let mut wiring = crate::session::CompanyOperationsClockWiring::new();
++    wiring.install(&mut clock, &seeded.ops).unwrap();
++    AccountingArchive {
++        company_operations: seeded.ops,
++        groups,
++        closing_registry: seeded.closing,
++        public_library: seeded.library,
++        clock: clock.save(),
++        wiring,
++        disclosures,
++    }
++}
++pub(super) fn end_day(state: &mut AccountingArchive) {
++    let date = state.clock.current_date;
++    let mut clock = crate::session::CivilClock::from_parts(
++        CivilDate::from_iso("2030-03-31").unwrap(),
++        &state.clock,
++        crate::calendar::CalendarExchange::Sse,
++    )
++    .unwrap();
++    let report = clock.end_day(date).unwrap();
++    state
++        .wiring
++        .run_day_end(&report, &mut clock, &mut state.company_operations)
++        .unwrap();
++    if date.next().unwrap().month() != date.month() {
++        let period = AccountingPeriod::from_ymd(date.year(), date.month()).unwrap();
++        let ids: Vec<_> = state.company_operations.companies.keys().cloned().collect();
++        for id in ids {
++            let company = state.company_operations.company_mut(&id).unwrap();
++            let member = MemberId(id.0.clone());
++            let industry = crate::information::industry_presentation(company.spec().kind);
++            if date.month() == 12 {
++                state
++                    .closing_registry
++                    .close_year(company.books_mut(), &member, industry, date.year())
++                    .unwrap();
++            } else {
++                state
++                    .closing_registry
++                    .close_month(company.books_mut(), &member, industry, period)
++                    .unwrap();
++            }
++        }
++        record_group_periods(
++            &state.groups,
++            &state.company_operations,
++            &mut state.closing_registry,
++            period,
++        )
++        .unwrap();
++    }
++    state
++        .disclosures
++        .run_day_end(crate::session::DayEndDisclosureCtx {
++            groups: &state.groups,
++            report: &report,
++            ops: &state.company_operations,
++            closing: &mut state.closing_registry,
++            library: &mut state.public_library,
++        })
++        .unwrap();
++    state.wiring.prune_dispatched(&state.company_operations);
++    state.clock = clock.save();
++}
++pub(super) fn restore(
++    saved: &AccountingArchive,
++) -> Result<AccountingArchive, Box<dyn std::error::Error>> {
++    let restored: AccountingArchive = serde_json::from_slice(&serde_json::to_vec(saved)?)?;
++    restored.company_operations.validate_payment_history()?;
++    validate_groups(&restored.groups, &restored.company_operations)?;
++    assert!(restored
++        .wiring
++        .mirror_is_exact(&restored.company_operations));
++    Ok(restored)
++}
++pub(super) fn query(
++    state: &AccountingArchive,
++    query: &PublicReportQuery,
++) -> Result<crate::company::PublicReportPage, InformationError> {
++    state.public_library.query_public_reports(
++        query,
++        CivilInstant::new(state.clock.current_date, 0).unwrap(),
++    )
++}
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/config.rs b/packages/engine/src/session/company_groups/assembly_tests/config.rs
+new file mode 100644
+index 00000000..eace7b90
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/config.rs
+@@ -0,0 +1,86 @@
++use super::*;
++pub(super) fn small_industrial_books() -> crate::company::industrial::IndustrialBooks {
++    use crate::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide};
++    use crate::company::{CounterpartyId, CounterpartyKind, ExternalCounterparty, OperatingBudget};
++    crate::company::industrial::IndustrialBooks::new(crate::company::industrial::IndustrialConfig {
++        chart: crate::company::industrial::industrial_chart_v2(),
++        as_of: CivilDate::from_iso("2027-12-31").unwrap(),
++        opening_lines: vec![
++            JournalLine {
++                account: LedgerAccountId("1002".into()),
++                side: PostingSide::Debit,
++                amount: AccountingAmount::from_cents(100000),
++            },
++            JournalLine {
++                account: LedgerAccountId("4001".into()),
++                side: PostingSide::Credit,
++                amount: AccountingAmount::from_cents(100000),
++            },
++        ],
++        opening_inventory: vec![],
++        opening_assets: vec![],
++        opening_debt: None,
++        counterparties: [
++            ("EXT-CUST", CounterpartyKind::Customer),
++            ("EXT-SUPP", CounterpartyKind::Supplier),
++            ("C-IND-A", CounterpartyKind::Supplier),
++            ("C-IND-SUB", CounterpartyKind::Customer),
++        ]
++        .map(|(id, kind)| ExternalCounterparty {
++            id: CounterpartyId(id.into()),
++            kind,
++            name: "虚构经营对手方".into(),
++        })
++        .to_vec(),
++        budget: OperatingBudget::new(AccountingAmount::ZERO, vec![]).unwrap(),
++        tax_policy: operating_fixture::fixture_policy(),
++    })
++    .unwrap()
++}
++
++pub(super) fn setup(
++    kinds: &[CompanyKind],
++    grouped: bool,
++) -> (CompanyOperationsConfig, Vec<GroupStructure>) {
++    let as_of = CivilDate::from_iso("2027-12-31").unwrap();
++    let mut configs = Vec::new();
++    let mut groups = Vec::new();
++    for (index, kind) in kinds.iter().enumerate() {
++        let mut company = match kind {
++            CompanyKind::Industrial => operating_fixture::industrial_a(as_of),
++            CompanyKind::Bank => operating_fixture::bank_c(as_of),
++            CompanyKind::Insurance => operating_fixture::insurance_c(as_of),
++            CompanyKind::RealEstate => operating_fixture::real_estate_c(as_of),
++        };
++        if let FlowParams::Insurance(flow) = &mut company.flow {
++            flow.daily_groups_base = 1;
++            flow.coverage_days = 2;
++        }
++        company.spec.listed_stock = Some(crate::StockCode(format!("60010{index}")));
++        if grouped && index != 0 {
++            company.spec.group_parent = Some(CompanyId("C-IND-A".into()));
++        }
++        configs.push(company);
++    }
++    if grouped {
++        groups = vec![GroupStructure {
++            root: configs[0].spec.id.clone(),
++            holdings: configs
++                .iter()
++                .skip(1)
++                .map(|company| GroupHolding {
++                    company: company.spec.id.clone(),
++                    parent_held_shares: company.spec.issued_shares * 8 / 10,
++                })
++                .collect(),
++        }];
++    }
++    (
++        CompanyOperationsConfig {
++            seed: 17,
++            shock_params: operating_fixture::quiet_params(),
++            companies: configs,
++        },
++        groups,
++    )
++}
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/industries.rs b/packages/engine/src/session/company_groups/assembly_tests/industries.rs
+new file mode 100644
+index 00000000..78e2ae7e
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/industries.rs
+@@ -0,0 +1,55 @@
++use super::*;
++#[test]
++fn four_independent_industries_close_real_books_and_publish_queryable_reports() {
++    let setup = setup(
++        &[
++            CompanyKind::Industrial,
++            CompanyKind::Bank,
++            CompanyKind::Insurance,
++            CompanyKind::RealEstate,
++        ],
++        false,
++    );
++    let mut state = fixture(setup);
++    end_day(&mut state);
++    let save = state.clone();
++    let period = AccountingPeriod::from_iso("2030-03").unwrap();
++    for company_id in ["C-IND-A", "C-BANK", "C-INS", "C-RE"].map(|id| CompanyId(id.into())) {
++        let company = save.company_operations.company(&company_id).unwrap();
++        assert_eq!(
++            company.books().books().journal().period_status(period),
++            PeriodStatus::Closed
++        );
++        assert_eq!(
++            save.closing_registry
++                .versions(
++                    &ScopeId::Standalone(MemberId(company_id.0.clone())),
++                    period,
++                    ReportKind::Monthly
++                )
++                .len(),
++            1
++        );
++        let public = query(
++            &state,
++            &PublicReportQuery {
++                company_id: company_id.0.clone(),
++                cursor: None,
++                page_size: Some(100),
++            },
++        )
++        .unwrap();
++        assert!(!public.reports.is_empty());
++        assert!(public.reports.iter().all(|report| matches!(
++            report.financials.scope,
++            PublicReportScope::Standalone { .. }
++        )));
++    }
++    let mut restored = restore(&save).unwrap();
++    assert_eq!(restored.clock.current_date, state.clock.current_date);
++    end_day(&mut restored);
++    assert_eq!(
++        restored.clock.current_date,
++        state.clock.current_date.next().unwrap()
++    );
++}
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/mixed_group.rs b/packages/engine/src/session/company_groups/assembly_tests/mixed_group.rs
+new file mode 100644
+index 00000000..0cd45f96
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/mixed_group.rs
+@@ -0,0 +1,87 @@
++use super::*;
++#[test]
++fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
++    let setup = setup(&[CompanyKind::Industrial, CompanyKind::Insurance], true);
++    let mut state = fixture(setup);
++    end_day(&mut state);
++    let march = AccountingPeriod::from_iso("2030-03").unwrap();
++    let save = state.clone();
++    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
++    let closed = save
++        .closing_registry
++        .version(&scope, march, ReportKind::Quarter, 1)
++        .unwrap();
++    closed.validate().unwrap();
++    assert!(query(
++        &state,
++        &PublicReportQuery {
++            company_id: "C-IND-A".into(),
++            cursor: None,
++            page_size: Some(100)
++        }
++    )
++    .unwrap()
++    .reports
++    .iter()
++    .all(|report| report.period != "2030-03-31"));
++    let publish = crate::information::scheduled_instant(
++        crate::information::ScheduledReportKind::Q1,
++        2030,
++        crate::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
++    )
++    .unwrap()
++    .date();
++    let mut state = restore(&save).unwrap();
++    while state.clock.current_date <= publish {
++        end_day(&mut state);
++    }
++    let page = query(
++        &state,
++        &PublicReportQuery {
++            company_id: "C-IND-A".into(),
++            cursor: None,
++            page_size: Some(100),
++        },
++    )
++    .unwrap();
++    let reports = page
++        .reports
++        .iter()
++        .filter(|report| report.period == "2030-03-31")
++        .collect::<Vec<_>>();
++    assert_eq!(reports.len(), 2);
++    assert_ne!(reports[0].id, reports[1].id);
++    assert_eq!(
++        reports
++            .iter()
++            .filter(|report| matches!(
++                report.financials.scope,
++                PublicReportScope::Consolidated { .. }
++            ))
++            .count(),
++        1
++    );
++    let final_save = state.clone();
++    assert_eq!(
++        final_save
++            .closing_registry
++            .version(&scope, march, ReportKind::Quarter, 1)
++            .unwrap(),
++        closed
++    );
++    let restored = restore(&final_save).unwrap();
++    assert_eq!(
++        query(
++            &restored,
++            &PublicReportQuery {
++                company_id: "C-IND-A".into(),
++                cursor: None,
++                page_size: Some(100)
++            }
++        )
++        .unwrap()
++        .reports
++        .len(),
++        page.reports.len()
++    );
++}
+diff --git a/packages/engine/src/session/company_groups/assembly_tests/internal_sale.rs b/packages/engine/src/session/company_groups/assembly_tests/internal_sale.rs
+new file mode 100644
+index 00000000..53b51e02
+--- /dev/null
++++ b/packages/engine/src/session/company_groups/assembly_tests/internal_sale.rs
+@@ -0,0 +1,205 @@
++use super::*;
++#[test]
++fn real_internal_sale_facts_in_editable_accounting_archive_close_and_publish() {
++    use crate::accounting::{AccountingAmount, InventoryItemCode, LedgerAccountId};
++    use crate::company::industrial::Settlement;
++    use crate::company::operations::IndustryBooks;
++    use crate::company::CounterpartyId;
++    let mut setup = setup(&[CompanyKind::Industrial], false);
++    let mut config = setup.0.clone();
++    config.companies[0].books = IndustryBooks::Industrial(small_industrial_books());
++    let FlowParams::Industrial(flow) = &mut config.companies[0].flow else {
++        unreachable!()
++    };
++    flow.base_daily_demand_units = 0;
++    flow.raw_replenish_target_units = 0;
++    flow.daily_production_units = 0;
++    flow.daily_admin_expense = AccountingAmount::from_cents(1);
++    flow.bad_debt_base_bp = 0;
++    let mut child = config.companies[0].clone();
++    child.spec.id = CompanyId("C-IND-SUB".into());
++    child.spec.group_parent = Some(CompanyId("C-IND-A".into()));
++    child.spec.listed_stock = Some(crate::StockCode("600109".into()));
++    config.companies.push(child);
++    setup.0 = config;
++    setup.1 = vec![GroupStructure {
++        root: CompanyId("C-IND-A".into()),
++        holdings: vec![GroupHolding {
++            company: CompanyId("C-IND-SUB".into()),
++            parent_held_shares: 80000,
++        }],
++    }];
++    let state = fixture(setup);
++    let save = state.clone();
++    let mut root = save
++        .company_operations
++        .company(&CompanyId("C-IND-A".into()))
++        .unwrap()
++        .books()
++        .as_industrial()
++        .unwrap()
++        .clone();
++    let mut child = save
++        .company_operations
++        .company(&CompanyId("C-IND-SUB".into()))
++        .unwrap()
++        .books()
++        .as_industrial()
++        .unwrap()
++        .clone();
++    let date = CivilDate::from_iso("2030-03-30").unwrap();
++    let due = CivilDate::from_iso("2030-04-02").unwrap();
++    root.purchase(
++        &CounterpartyId("EXT-SUPP".into()),
++        InventoryItemCode("FG-1".into()),
++        LedgerAccountId("1405".into()),
++        4,
++        AccountingAmount::from_cents(5000),
++        Settlement::Cash,
++        due,
++        date,
++    )
++    .unwrap();
++    root.sell_credit(
++        &CounterpartyId("C-IND-SUB".into()),
++        InventoryItemCode("FG-1".into()),
++        2,
++        AccountingAmount::from_cents(10000),
++        due,
++        date,
++    )
++    .unwrap();
++    child
++        .purchase(
++            &CounterpartyId("C-IND-A".into()),
++            InventoryItemCode("FG-1".into()),
++            LedgerAccountId("1405".into()),
++            2,
++            AccountingAmount::from_cents(10000),
++            Settlement::Credit,
++            due,
++            date,
++        )
++        .unwrap();
++    child
++        .sell_credit(
++            &CounterpartyId("EXT-CUST".into()),
++            InventoryItemCode("FG-1".into()),
++            1,
++            AccountingAmount::from_cents(16000),
++            due,
++            date,
++        )
++        .unwrap();
++    let mut edited = serde_json::to_value(save).unwrap();
++    edited["company_operations"]["companies"]["C-IND-A"]["books"] =
++        serde_json::to_value(IndustryBooks::Industrial(root)).unwrap();
++    edited["company_operations"]["companies"]["C-IND-SUB"]["books"] =
++        serde_json::to_value(IndustryBooks::Industrial(child)).unwrap();
++    let edited: AccountingArchive = serde_json::from_value(edited).unwrap();
++    let mut state = restore(&edited).unwrap();
++    end_day(&mut state);
++    let closed_save = state.clone();
++    let period = AccountingPeriod::from_iso("2030-03").unwrap();
++    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
++    let group = closed_save
++        .closing_registry
++        .version(&scope, period, ReportKind::Quarter, 1)
++        .unwrap();
++    group.validate().unwrap();
++    let mut standalone_income = AccountingAmount::ZERO;
++    for id in ["C-IND-A", "C-IND-SUB"] {
++        standalone_income = standalone_income
++            .add(
++                closed_save
++                    .closing_registry
++                    .version(
++                        &ScopeId::Standalone(MemberId(id.into())),
++                        period,
++                        ReportKind::Monthly,
++                        1,
++                    )
++                    .unwrap()
++                    .income
++                    .cumulative
++                    .net_income,
++            )
++            .unwrap();
++    }
++    assert_eq!(
++        group.income.cumulative.net_income,
++        standalone_income
++            .sub(AccountingAmount::from_cents(5000))
++            .unwrap()
++    );
++    assert_eq!(
++        group
++            .balance_sheet
++            .asset_lines
++            .iter()
++            .find(|(line, _)| *line == crate::accounting::reports::BsLine::Inventory)
++            .unwrap()
++            .1,
++        AccountingAmount::from_cents(15000)
++    );
++    let publish = crate::information::scheduled_instant(
++        crate::information::ScheduledReportKind::Q1,
++        2030,
++        crate::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
++    )
++    .unwrap()
++    .date();
++    let mut state = restore(&closed_save).unwrap();
++    while state.clock.current_date <= publish {
++        end_day(&mut state);
++    }
++    let page = query(
++        &state,
++        &PublicReportQuery {
++            company_id: "C-IND-A".into(),
++            cursor: None,
++            page_size: Some(100),
++        },
++    )
++    .unwrap();
++    let report = page
++        .reports
++        .iter()
++        .find(|report| {
++            report.period == "2030-03-31"
++                && matches!(
++                    report.financials.scope,
++                    PublicReportScope::Consolidated { .. }
++                )
++        })
++        .unwrap();
++    assert_eq!(
++        report.accounting.net_income,
++        group.income.cumulative.net_income.to_string()
++    );
++    let final_save = state.clone();
++    let mut restored = restore(&final_save).unwrap();
++    end_day(&mut restored);
++    assert!(query(
++        &restored,
++        &PublicReportQuery {
++            company_id: "C-IND-A".into(),
++            cursor: None,
++            page_size: Some(100)
++        }
++    )
++    .unwrap()
++    .reports
++    .iter()
++    .any(|report| report.id
++        == page
++            .reports
++            .iter()
++            .find(|candidate| candidate.period == "2030-03-31"
++                && matches!(
++                    candidate.financials.scope,
++                    PublicReportScope::Consolidated { .. }
++                ))
++            .unwrap()
++            .id));
++}
+diff --git a/packages/engine/src/lib.rs b/packages/engine/src/lib.rs
+--- a/packages/engine/src/lib.rs
++++ b/packages/engine/src/lib.rs
+@@ -19,1 +19,3 @@
+ pub mod indicators;
++#[cfg(test)]
++extern crate self as engine;
+diff --git a/packages/engine/src/session/company_groups.rs b/packages/engine/src/session/company_groups.rs
+--- a/packages/engine/src/session/company_groups.rs
++++ b/packages/engine/src/session/company_groups.rs
+@@ -22,1 +22,3 @@
+ mod sales;
++#[cfg(test)]
++mod assembly_tests;

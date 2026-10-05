@@ -1,0 +1,68 @@
+这段代码保留自迁移前的 Session 集成契约，供未来获批的 `Simulation` 接线时参考；
+它依赖 `GameSession` 持有并推进 `CompanyOperations`，不能作为当前 `Simple` Session
+支持经营冲击的证据。当前 `Simple` 不模拟该经营状态。
+
+```rust
+fn announcement_event_follows_successful_immutable_library_insertion() {
+    // Given: a closed civil day whose company operating state contains an active public shock.
+    let session = GameSession::new(setup("2030-01-01"), 41).expect("fixture session is valid");
+    let mut save = session.save().expect("healthy save");
+    let company = CompanyId("C-600101".to_string());
+    let date = save.civil_clock.current_date;
+    save.company_operations
+        .apply_company_shock(
+            &company,
+            ActiveShock {
+                kind: ShockKind::ContractWon,
+                amplitude_bp: 1_000,
+                starts_on: date,
+                expires_on: date.next().expect("fixture date has a next day"),
+            },
+        )
+        .expect("fixture shock must be accepted");
+    let mut session = GameSession::restore(&save).expect("modified authoritative state restores");
+
+    // When: the normal GameSession civil/disclosure path publishes the announcement.
+    let report = session.end_civil_day().expect("closed day settles");
+
+    // Then: the event points to a queryable immutable announcement and precedes date advancement.
+    let announcement_index = report
+        .events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                Event::CompanyDisclosurePublished {
+                    kind: CompanyDisclosureKind::Announcement,
+                    ..
+                }
+            )
+        })
+        .expect("successful announcement insertion must emit one publication event");
+    let Event::CompanyDisclosurePublished {
+        publication_id,
+        company: event_company,
+        published_at,
+        kind: CompanyDisclosureKind::Announcement,
+        ..
+    } = &report.events[announcement_index]
+    else {
+        panic!("expected announcement publication event");
+    };
+    let saved = session.save().expect("healthy save");
+    let announcement = saved
+        .public_library
+        .announcement(*publication_id, *published_at)
+        .expect("event publication id must resolve in the immutable public library");
+    assert_eq!(&announcement.company, event_company);
+    assert_eq!(announcement.published_at, *published_at);
+    assert!(saved
+        .public_library
+        .all_publication_ids()
+        .unwrap()
+        .contains(publication_id));
+    assert!(report.events[announcement_index + 1..]
+        .iter()
+        .any(|event| matches!(event, Event::CivilDateAdvanced { .. })));
+}
+```
