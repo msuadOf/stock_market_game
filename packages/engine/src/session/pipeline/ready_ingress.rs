@@ -133,9 +133,7 @@ fn stamp_ready_receipts(
             return Err(invariant("queued candidate is missing its receive ordinal"));
         }
         let received = session
-            .state
-            .ingress_receipt_cursors
-            .receive(candidate.owner(), candidate.intent().clone())
+            .receive_private_intent(candidate.owner(), candidate.intent().clone())
             .map_err(|error| invariant(&error.to_string()))?;
         candidate.set_ingress_order(received.account_ordinal, received.stock_ordinal);
     }
@@ -146,5 +144,41 @@ fn invariant(description: &str) -> StepFatal {
     StepFatal::InvariantViolation {
         description: description.to_owned(),
         location: "pipeline::ready_ingress".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod shared_receipt_tests {
+    use super::*;
+    use crate::{AccountId, Intent, LimitPrice, Money, Side};
+
+    #[test]
+    fn ready_plan_stamping_shares_late_player_and_npc_receipt_source() {
+        let mut session =
+            GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+        let source = session.shared_ingress();
+        let code = session.state.setup.stocks[0].code.clone();
+        let intent = || Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: LimitPrice::Fixed(Money::from_cents(990)),
+            qty: 100,
+        };
+        let mut shadow = session.clone_for_tick_shadow().unwrap();
+        shadow.freeze_shared_ingress().unwrap();
+        source
+            .enqueue_player_intent(AccountId(0), intent())
+            .unwrap();
+        let mut plans = vec![IntentCandidate::new(
+            super::super::IntentCandidateKey::plan_chain(0),
+            AccountId(0),
+            intent(),
+        )];
+        stamp_ready_receipts(&mut shadow, &mut plans).unwrap();
+        assert_eq!(plans[0].ingress_order(), Some((1, 1)));
+        let npc = shadow
+            .receive_private_intent(AccountId(0), intent())
+            .unwrap();
+        assert_eq!((npc.account_ordinal, npc.stock_ordinal), (2, 2));
     }
 }

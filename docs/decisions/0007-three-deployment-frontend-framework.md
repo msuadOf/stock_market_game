@@ -42,7 +42,7 @@ engine 已完成（7 模块 + 初始持仓，144 测试绿、市场转活），�
   newtype，`ts-rs` 能按原结构导出；不得为了迁就生成器改变已经由三宿主使用的序列化协议。
 
 ### §6 多线程 + GPU（架构预留）
-- **多线程**：engine 加 `Send + Sync`（`GameSession: Send`）；宿主 **actor-per-session**（无锁、无共享可变状态，契合 ADR-0005）。实现细节以仓库内 actor 源码与测试为准。
+- **多线程**：engine 加 `Send + Sync`（`GameSession: Send`）；宿主 **actor-per-session** 独占账户与市场状态。Player/NPC 共用每会话 ingress；短生命周期与 receipt metadata 锁不覆盖决策、账户验证或撮合，不把局部 metadata 同步称为全系统无锁。Browser 使用独立 Intake Worker 与 Engine Worker 共享 WASM memory；详见 [ADR-0032](0032-session-ingress-receipt-order.md)。
 - **GPU offload（可选，默认关）**：`ComputeBackend` trait + `CpuBackend`(rayon) + `engine-gpu`(wgpu) crate + `ComputeMode` 配置；wgpu 跨 native/WebGPU 三端复用；**确定性用 GPU 整数/定点计算解决**（i32/i64 bit-精确，契合 Money=i64）；为大规模 NPC 预备，当前规模默认关。
 
 ### §7 包管理器与许可证

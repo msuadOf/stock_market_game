@@ -93,10 +93,14 @@ async fn create_session<R: Runtime>(
 async fn enqueue(
     state: State<'_, DesktopState>,
     session_id: String,
+    generation: String,
     intent: Intent,
 ) -> Result<(), String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.enqueue(intent).await.map_err(map_send_error)
+    handles
+        .enqueue(parse_generation(generation)?, intent)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 取完整快照（首次连 / 重连 / 存档）。

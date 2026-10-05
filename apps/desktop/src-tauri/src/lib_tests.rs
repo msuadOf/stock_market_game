@@ -84,6 +84,57 @@ fn invoke_json(
 }
 
 #[tokio::test]
+async fn enqueue_ipc_requires_current_canonical_generation() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let mut setup = diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut completed = engine::session::protocol::ProtocolSession::new(setup.clone(), 7).unwrap();
+    completed.end_civil_day_update().unwrap();
+    let slot = completed.save().unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({ "setup": setup, "seed": "7" }),
+    )
+    .unwrap();
+    invoke_json(
+        &webview,
+        "restore_session",
+        json!({ "sessionId": session_id, "generation": "1", "slot": slot }),
+    )
+    .unwrap();
+    let intent = json!({ "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } });
+    for generation in [
+        Some(json!("1")),
+        None,
+        Some(json!("01")),
+        Some(json!(1)),
+        Some(json!("18446744073709551616")),
+    ] {
+        let mut body = json!({ "sessionId": session_id, "intent": intent });
+        if let Some(generation) = generation {
+            body["generation"] = generation;
+        }
+        assert!(
+            invoke_json(&webview, "enqueue", body).is_err(),
+            "旧 generation、缺失或非法 generation 必须在 intake 前拒绝"
+        );
+    }
+    invoke_json(
+        &webview,
+        "enqueue",
+        json!({ "sessionId": session_id, "generation": "2", "intent": intent }),
+    )
+    .unwrap();
+    invoke_json(&webview, "stop_session", json!({ "sessionId": session_id })).unwrap();
+}
+
+#[tokio::test]
 async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
     let app = command_builder(mock_builder())
         .build(mock_context(noop_assets()))

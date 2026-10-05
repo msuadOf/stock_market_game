@@ -62,6 +62,7 @@ pub mod verification_evidence;
 
 pub mod session;
 pub use session::{
+    SharedSessionIngress,
     decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
     DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
     NpcAttentionState, NpcSetup, ParentOrderPlan, PendingNpcBatch, PendingPlanEvent, PositionSnap,

@@ -72,6 +72,31 @@ async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHo
   }
 }
 
+test("Tauri enqueue 严格携带当前 generation，restore 后旧入队确认不得报告新代成功", { timeout: 10000 }, async () => {
+  const requests: unknown[] = [];
+  let complete: (() => void) | undefined;
+  await withTauriHost(async (host) => {
+    const intent = { Cancel: { code: "600101", id: 7 } };
+    const pending = host.submitIntent(intent);
+    const rejected = assert.rejects(pending, /已过期.*generation/);
+    await host.load({});
+    assert.ok(complete);
+    complete();
+    await rejected;
+    assert.deepEqual(requests[0], { sessionId: "session-1", generation: "1", intent });
+    const current = host.submitIntent(intent);
+    await Promise.resolve();
+    assert.ok(complete);
+    complete();
+    await current;
+    assert.deepEqual(requests[1], { sessionId: "session-1", generation: "2", intent });
+  }, (command, args) => {
+    if (command !== "enqueue") return undefined;
+    requests.push(args);
+    return new Promise<void>((resolve) => { complete = resolve; });
+  });
+});
+
 test("Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume", async () => {
   await withTauriHost(async (host, calls) => {
     const updates: unknown[] = [];

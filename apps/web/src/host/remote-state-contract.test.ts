@@ -53,6 +53,24 @@ function commandId(socket: FakeSocket, position: number): number {
 
 const options = { timeout: 10000, concurrency: true };
 
+test("Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝", options, async () => {
+  const { host, socket } = await fixture();
+  await assert.rejects(host.submitIntent(intent), /尚未完成权威基线同步/);
+  assert.deepEqual(socket.sent, []);
+  socket.receive(baseline());
+  const pending = host.submitIntent(intent);
+  const rejected = assert.rejects(pending, /已过期.*generation/);
+  socket.receive(baseline(2));
+  socket.receive({ CommandQueued: { request_id: commandId(socket, 0) } });
+  await rejected;
+  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent } });
+  const current = host.submitIntent(intent);
+  socket.receive({ CommandQueued: { request_id: commandId(socket, 1) } });
+  await current;
+  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent } });
+  await host.dispose();
+});
+
 test("并发 remote command 逆序确认只完成对应 request，重复确认显式失败", options, async () => {
   const { host, socket, failures } = await fixture();
   socket.receive(baseline());

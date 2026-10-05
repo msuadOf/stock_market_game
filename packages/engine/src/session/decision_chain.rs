@@ -592,6 +592,7 @@ impl GameSession {
 
     /// 首次 StockProcessing operation 前捕获完整根域；batch 按需生产。
     /// 仅当私有 coordinator 访问该根时，才运行账户发现、生命周期与报价。
+    #[cfg(test)]
     pub(in crate::session) fn capture_decision_chain_roots(
         &self,
         accepted_due_npc_ids: &[AccountId],

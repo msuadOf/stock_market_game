@@ -471,7 +471,7 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 
     // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
     handles
-        .enqueue(Intent::PlaceLimit {
+        .enqueue(1, Intent::PlaceLimit {
             code: StockCode("600101".to_string()),
             side: Side::Buy,
             price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
@@ -597,7 +597,7 @@ async fn actor_market_goes_live_produces_trade_events() {
             }
         }
         handles
-            .enqueue(Intent::PlaceLimit {
+            .enqueue(2, Intent::PlaceLimit {
                 code: StockCode("600101".to_string()),
                 side: Side::Sell,
                 price: engine::LimitPrice::Lowest,

@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+engine = { version = "0.1.0", path = "../../packages/engine", features = ["verification-harness"] }
 # 虚拟时间用于证明 Fastest 不依赖 interval 时间推进。
 tokio = { version = "1.52.3", features = ["full", "test-util"] }
 # tower 的 ServiceExt::oneshot 用于集成测试黑盒打 router（与 healthz.rs 一致）。

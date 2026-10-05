@@ -336,6 +336,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 6,
+                "generation": "1",
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
             }
         }).to_string(),
@@ -351,6 +352,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 6,
+                "generation": "1",
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
             }
         }).to_string(),
@@ -366,6 +368,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
         serde_json::json!({
             "SubmitIntent": {
                 "request_id": 7,
+                "generation": "1",
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } }
             }
         }).to_string(),
@@ -661,7 +664,30 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
         assert_eq!(resync["ResyncRequired"]["reason"], "timeline_changed");
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
-            serde_json::json!({ "SubmitIntent": { "request_id": 8,
+            serde_json::json!({ "SubmitIntent": { "request_id": 9, "generation": "1",
+                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
+                    "price": { "Fixed": "1000" }, "qty": 100 } } } })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+        let stale = tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap();
+        let stale: serde_json::Value = serde_json::from_str(&stale).unwrap();
+        assert_eq!(stale["GatewayError"]["request_id"], 9);
+        assert_eq!(stale["GatewayError"]["code"], "INTENT_QUEUE_REJECTED");
+        assert!(stale["GatewayError"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("STALE_SESSION_GENERATION"));
+
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            serde_json::json!({ "SubmitIntent": { "request_id": 8, "generation": "2",
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
                     "price": { "Fixed": "1000" }, "qty": 100 } } } })
             .to_string(),

@@ -6,8 +6,10 @@ pub struct TickShadow {
 
 impl TickShadow {
     pub(super) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
+        let mut candidate = session.clone_for_tick_shadow()?;
+        candidate.freeze_shared_ingress()?;
         Ok(Self {
-            session: Some(session.clone_for_tick_shadow()?),
+            session: Some(candidate),
         })
     }
 

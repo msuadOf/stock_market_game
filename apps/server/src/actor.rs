@@ -1,8 +1,8 @@
 //! actor-per-session（ADR-0005 §5）：每 session 一个 tokio task 独占 `GameSession`。
 //!
-//! 设计要点（无锁、契合 engine `Send`）：
-//! - **无共享可变状态、无锁**：`GameSession` 由 actor task 独占 own，外部一律经**消息**与之交互。
-//! - **命令通道**（`tokio::sync::mpsc`）：外部投递 `SessionCommand`（入队意图 / 取快照 / 改速）。
+//! 设计要点（市场状态独占、契合 engine `Send`）：
+//! - `GameSession` 由 actor task 独占；Player 与 NPC 共用每会话 ingress，短生命周期锁不覆盖 step。
+//! - Player 在鉴权与 generation 检查后直接登记 ingress；控制命令（快照 / 改速 / restore）走 mpsc。
 //! - **更新广播**（`tokio::sync::broadcast`）：actor 每轮把 `Event[]` 与必要的权威运行快照
 //!   作为一个原子批次 broadcast；WS 只是传输适配器，与 Worker/Tauri 的应用层语义一致。
 //! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
@@ -10,7 +10,7 @@
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -615,6 +615,7 @@ mod interval_tests {
 #[derive(Clone)]
 pub struct SessionHandles {
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     event_tx: broadcast::Sender<EngineUpdate>,
     pub ticks_per_day: u64,
     pub auction_ticks: u64,
@@ -634,30 +635,36 @@ impl SessionHandles {
         self.event_tx.subscribe()
     }
 
-    /// 便捷：入队玩家意图（固定 `AccountId(0)`）。把 `oneshot` 收发封装成 `Result` 返回。
+    /// 便捷：入队玩家意图（固定 `AccountId(0)`），立即登记到共享 ingress。
     ///
     /// 失败两种：actor 已退出（通道关闭）→ `SendCommandError`；engine 拒绝 → `SessionError`。
     /// 两者都显式上抛，不静默。
-    pub async fn enqueue(&self, intent: Intent) -> Result<(), SendCommandError> {
-        self.enqueue_as(AccountId(0), intent).await
+    pub async fn enqueue(&self, generation: u64, intent: Intent) -> Result<(), SendCommandError> {
+        self.enqueue_as(generation, AccountId(0), intent).await
     }
 
     /// 入队指定玩家的意图（联机多账户预留接口，当前由 player 0 调用）。
     pub async fn enqueue_as(
         &self,
+        generation: u64,
         player_id: AccountId,
         intent: Intent,
     ) -> Result<(), SendCommandError> {
-        let (tx, rx) = oneshot::channel();
-        self.cmd_tx
-            .send(SessionCommand::Enqueue {
-                player_id,
-                intent,
-                reply: tx,
-            })
-            .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await
-            .map_err(|_| SendCommandError::ActorGone)?
+        if self.cmd_tx.is_closed() {
+            return Err(SendCommandError::ActorGone);
+        }
+        let ingress = self.ingress.read().map_err(|error| {
+            SendCommandError::Rejected(format!("session ingress lifecycle lock poisoned: {error}"))
+        })?;
+        if generation != ingress.0 {
+            return Err(SendCommandError::Rejected(format!(
+                "STALE_SESSION_GENERATION: requested {generation}; current generation is {}",
+                ingress.0
+            )));
+        }
+        ingress
+            .1
+            .enqueue_player_intent(player_id, intent)
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
@@ -690,14 +697,26 @@ impl SessionHandles {
         code: StockCode,
     ) -> Result<(u64, engine::session::HistoricalStockData), SendCommandError> {
         let (tx, rx) = oneshot::channel();
-        self.cmd_tx.send(SessionCommand::StockHistory { generation, code, reply: tx })
+        self.cmd_tx
+            .send(SessionCommand::StockHistory {
+                generation,
+                code,
+                reply: tx,
+            })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
 
-    pub async fn initial_allocation(&self, generation: u64) -> Result<(u64, engine::session::InitialAllocation), SendCommandError> {
+    pub async fn initial_allocation(
+        &self,
+        generation: u64,
+    ) -> Result<(u64, engine::session::InitialAllocation), SendCommandError> {
         let (tx, rx) = oneshot::channel();
-        self.cmd_tx.send(SessionCommand::InitialAllocation { generation, reply: tx })
+        self.cmd_tx
+            .send(SessionCommand::InitialAllocation {
+                generation,
+                reply: tx,
+            })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
@@ -975,9 +994,11 @@ impl SessionManager {
         // 命令按提交顺序入队；不以固定条数暂停投递，调用方仍等待逐条处理回执。
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (event_tx, _event_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let ingress = Arc::new(RwLock::new((1, game.shared_ingress())));
 
         let handles = Arc::new(SessionHandles {
             cmd_tx,
+            ingress: Arc::clone(&ingress),
             event_tx,
             ticks_per_day,
             auction_ticks,
@@ -987,6 +1008,7 @@ impl SessionManager {
         self.sessions.insert(session_id.clone(), handles.clone());
 
         let actor = SessionActor {
+            ingress,
             #[cfg(test)]
             injected_step_failure: None,
             pacing: ServerPacing::new(self.base_ms, game.tick()),
@@ -1031,6 +1053,7 @@ impl Default for SessionManager {
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `event_tx`。
 struct SessionActor {
+    ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
     injected_step_failure: Option<(usize, engine::session::StepFatal)>,
     pacing: ServerPacing,
@@ -1248,6 +1271,11 @@ impl SessionActor {
     }
 
     fn stop_with_failure(&mut self, mut failure: HostFailure) {
+        if let Err(error) = self.game.shared_ingress().close() {
+            failure
+                .message
+                .push_str(&format!("；关闭 ingress 失败：{error}"));
+        }
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
         failure.context.day = Some(self.game.day());
@@ -1346,11 +1374,16 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
-            SessionCommand::StockHistory { generation, code, reply } => {
+            SessionCommand::StockHistory {
+                generation,
+                code,
+                reply,
+            } => {
                 let result = if generation != self.timeline_generation {
                     Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
                 } else {
-                    self.game.query_stock_history(AccountId(0), &code)
+                    self.game
+                        .query_stock_history(AccountId(0), &code)
                         .map(|data| (self.timeline_generation, data))
                         .map_err(|error| SendCommandError::Rejected(error.to_string()))
                 };
@@ -1407,8 +1440,34 @@ impl SessionActor {
                 .map_or_else(|| ProtocolSession::restore(&slot), Err)
             {
                 Ok(restored) => {
+                    let next_generation = match self.timeline_generation.checked_add(1) {
+                        Some(generation) => generation,
+                        None => {
+                            let _ = reply.send(Err(SessionError::ResourceLimit(
+                                "session generation exhausted; create a new session".to_owned(),
+                            )));
+                            return;
+                        }
+                    };
+                    let replacement = self
+                        .ingress
+                        .write()
+                        .map_err(|error| {
+                            SessionError::ResourceLimit(format!(
+                                "session ingress lifecycle lock poisoned: {error}"
+                            ))
+                        })
+                        .and_then(|mut ingress| {
+                            ingress.1.close()?;
+                            *ingress = (next_generation, restored.shared_ingress());
+                            Ok(())
+                        });
+                    if let Err(error) = replacement {
+                        let _ = reply.send(Err(error));
+                        return;
+                    }
                     self.game = restored;
-                    self.timeline_generation = self.timeline_generation.saturating_add(1);
+                    self.timeline_generation = next_generation;
                     self.public_revision = self.public_revision.saturating_add(1);
                     self.pacing.reset_after_restore(self.game.tick());
                     self.broadcast_timeline_reset();
@@ -1536,6 +1595,9 @@ impl SessionActor {
                 let _ = reply.send(result);
             }
             SessionCommand::Shutdown { reply } => {
+                if let Err(error) = self.game.shared_ingress().close() {
+                    self.stop_with_failure(HostFailure::civil(&error));
+                }
                 let _ = reply.send(());
             }
         }

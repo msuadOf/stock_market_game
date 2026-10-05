@@ -152,10 +152,12 @@ pub(in crate::session) fn npc_rng_seed(base: u64, tick: u64, account: AccountId)
 }
 
 pub(in crate::session) struct NpcAccountDecision {
+    #[cfg(test)]
     pub(in crate::session) account: AccountId,
     pub(in crate::session) output: NpcDecisionSourceOutput,
 }
 
+#[derive(Debug)]
 pub(in crate::session) enum NpcDecisionStreamError<E> {
     Decision(NpcDecisionSourceError),
     Consumer(E),
@@ -388,7 +390,11 @@ fn record_stream_result<E>(
 ) {
     match result {
         Ok(output) => {
-            if let Err(error) = receive(NpcAccountDecision { account, output }) {
+            if let Err(error) = receive(NpcAccountDecision {
+                #[cfg(test)]
+                account,
+                output,
+            }) {
                 errors.push((account, NpcDecisionStreamError::Consumer(error)));
             }
         }

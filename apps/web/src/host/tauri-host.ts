@@ -255,7 +255,9 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       return parseSpeedMetrics(await invoke<unknown>("speed_metrics", { sessionId: requireSession() }));
     },
     async submitIntent(intent) {
-      await invoke("enqueue", { sessionId: requireSession(), intent });
+      const generation = timeline.captureGeneration();
+      await invoke("enqueue", { sessionId: requireSession(), generation, intent });
+      assertResponseCurrent(generation, "submitIntent");
     },
     snapshot() {
       return timeline.baselineForRead().snapshot;

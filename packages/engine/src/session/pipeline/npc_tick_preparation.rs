@@ -3,6 +3,8 @@
 //! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
 
 #[cfg(test)]
+use super::decision_snapshot_capture::CapturedDecisionSnapshot;
+#[cfg(test)]
 use super::npc_decisions::run_npc_decisions;
 #[cfg(test)]
 use super::npc_state_projection::project_npc_state;
@@ -10,9 +12,7 @@ use super::npc_state_projection::project_npc_state;
 use super::DecisionSnapshot;
 use super::{
     candidate_composition::CandidateCompositionError,
-    decision_snapshot_capture::{
-        capture_decision_snapshot, CapturedDecisionSnapshot, DecisionSnapshotCaptureError,
-    },
+    decision_snapshot_capture::{capture_decision_snapshot, DecisionSnapshotCaptureError},
     npc_decisions::{
         stream_npc_decisions, NpcDecisionSourceError, NpcDecisionSourceOutput,
         NpcDecisionStreamError,
@@ -154,7 +154,7 @@ pub(in crate::session) fn queue_npc_for_next_tick(
         for (owner, intent) in projected.intents {
             intents.push(
                 session
-                    .state.ingress_receipt_cursors.receive(owner, intent)
+                    .receive_private_intent(owner, intent)
                     .map_err(|error| error.to_string())?,
             );
         }

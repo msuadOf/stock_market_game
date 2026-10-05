@@ -22,6 +22,8 @@ mod execution;
 mod failure;
 mod hash;
 mod history_reads;
+mod shared_ingress;
+pub use shared_ingress::SharedSessionIngress;
 mod initial_allocation;
 mod institutional_behavior;
 mod minimal_snapshot;
@@ -1375,6 +1377,7 @@ impl SessionSetup {
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
+    ingress: Option<shared_ingress::IngressBinding>,
     poison: Option<StepFatal>,
     fresh_initial_allocation: bool,
     #[cfg(test)]
@@ -1581,6 +1584,7 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
+            ingress: self.ingress.as_ref().map(shared_ingress::IngressBinding::fork).transpose().map_err(shared_ingress::ingress_fatal)?,
             poison: None,
             fresh_initial_allocation: self.fresh_initial_allocation,
             #[cfg(test)]
@@ -1592,6 +1596,7 @@ impl GameSession {
     }
 
     pub(super) fn commit_tick_shadow(&mut self, shadow: Self) {
+        self.ingress = shadow.ingress;
         self.state.commit_from(shadow.state);
     }
     /// 构造 session。校验参数 → 建 markets/accounts → 注入 NPC 策略。
@@ -1671,6 +1676,7 @@ impl GameSession {
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
+            ingress: None,
             poison: None,
             fresh_initial_allocation: true,
             #[cfg(test)]
@@ -2831,6 +2837,9 @@ impl GameSession {
         player_id: AccountId,
         intent: Intent,
     ) -> Result<(), SessionError> {
+        if let Some(binding) = &self.ingress {
+            return binding.source.enqueue_player_intent(player_id, intent);
+        }
         let account = self
             .state
             .accounts

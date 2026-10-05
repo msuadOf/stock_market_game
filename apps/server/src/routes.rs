@@ -2,7 +2,7 @@
 //!
 //! 契约（见任务详情 / ADR-0005 §6 双通道）：
 //! - POST /api/new     body {setup, seed}        -> 200 {session_id} | 400
-//! - POST /api/intent  body {session_id, intent} -> 200 | 401 | 403 | 400
+//! - POST /api/intent  body {session_id, generation, intent} -> 200 | 401 | 403 | 400
 //! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 401 | 403
 //! - POST /api/speed   body {session_id, speed}  -> 200 | 401 | 403 | 400
 //! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 401 | 403
@@ -148,6 +148,7 @@ fn invalid_json_response(error: JsonRejection) -> Response {
 #[derive(Debug, Deserialize)]
 pub struct IntentBody {
     pub session_id: String,
+    pub generation: String,
     pub intent: engine::Intent,
 }
 
@@ -473,6 +474,7 @@ enum ClientCommand {
     Resync {},
     SubmitIntent {
         request_id: u64,
+        generation: String,
         intent: engine::Intent,
     },
 }
@@ -726,7 +728,11 @@ pub async fn api_intent(
         Ok(handles) => handles,
         Err(response) => return *response,
     };
-    match handles.enqueue(body.intent).await {
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.enqueue(generation, body.intent).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "intent: actor gone");
@@ -813,16 +819,36 @@ pub async fn api_stock_history(
     Query(query): Query<StockHistoryQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    {
         Ok(handles) => handles,
         Err(response) => return *response,
     };
-    match handles.query_stock_history(query.generation, query.code).await {
-        Ok((generation, data)) => (StatusCode::OK, Json(serde_json::json!({ "generation": generation.to_string(), "data": data }))).into_response(),
-        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
-        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "session actor gone"),
-        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "STOCK_HISTORY_REJECTED", reason),
-        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("stock history query cannot validate speed"),
+    match handles
+        .query_stock_history(query.generation, query.code)
+        .await
+    {
+        Ok((generation, data)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "generation": generation.to_string(), "data": data })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "STOCK_HISTORY_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("stock history query cannot validate speed")
+        }
     }
 }
 
@@ -831,16 +857,35 @@ pub async fn api_initial_allocation(
     Query(query): Query<InitialAllocationQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    {
         Ok(handles) => handles,
         Err(response) => return *response,
     };
     match handles.initial_allocation(query.generation).await {
-        Ok((generation, data)) => (StatusCode::OK, Json(serde_json::json!({ "generation": generation.to_string(), "data": data }))).into_response(),
-        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
-        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "session actor gone"),
-        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "INITIAL_ALLOCATION_REJECTED", reason),
-        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("initial allocation query cannot validate speed"),
+        Ok((generation, data)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "generation": generation.to_string(), "data": data })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => api_error(
+            StatusCode::BAD_REQUEST,
+            "INITIAL_ALLOCATION_REJECTED",
+            reason,
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("initial allocation query cannot validate speed")
+        }
     }
 }
 
@@ -1689,8 +1734,15 @@ async fn run_ws_connection(
                                         }
                                     }
                                 }
-                                ClientCommand::SubmitIntent { request_id, intent } => {
-                                    match handles.enqueue(intent).await {
+                                ClientCommand::SubmitIntent { request_id, generation, intent } => {
+                                    let generation = match parse_host_parity_generation(&generation) {
+                                        Ok(generation) => generation,
+                                        Err(_) => {
+                                            if !send_gateway_error(&mut sender, Some(request_id), "INVALID_CLIENT_COMMAND", "generation 必须是 canonical decimal u64").await { break; }
+                                            continue;
+                                        }
+                                    };
+                                    match handles.enqueue(generation, intent).await {
                                         Ok(()) => {
                                             let queued = serde_json::json!({ "CommandQueued": { "request_id": request_id } }).to_string();
                                             if sender.send(axum::extract::ws::Message::Text(queued)).await.is_err() {

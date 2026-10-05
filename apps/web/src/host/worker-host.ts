@@ -144,6 +144,16 @@ export function createWorkerHost(
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
     const requests = new WorkerRequestScope(worker);
+    let ingressWorker: Worker | null = null;
+    let ingressRequests: WorkerRequestScope | null = null;
+    let ingressReady: Promise<unknown> | null = null;
+    let ingressGeneration = 0;
+    const closeIngress = (error: Error) => {
+      ingressRequests?.close(error);
+      ingressWorker?.terminate();
+      ingressWorker = null;
+      ingressRequests = null;
+    };
     let callback: ((update: HostUpdate) => void | boolean) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
@@ -156,8 +166,7 @@ export function createWorkerHost(
     let pendingFailure: HostFailure | null = null;
     const timeout = setTimeout(() => {
       if (!initialized) {
-        lifecycle.dispose();
-        reject(new Error("WASM 多线程初始化超时（10s）。请检查 SharedArrayBuffer、COOP/COEP 和 WASM 线程绑定。"));
+        notifyFailure({ code: "WASM_WORKER_INIT_TIMEOUT", where: "worker-host.initialize", message: "WASM 多线程初始化超时（10s）。请检查 SharedArrayBuffer、COOP/COEP 和 WASM 线程绑定。" });
       }
     }, 10_000);
 
@@ -169,6 +178,7 @@ export function createWorkerHost(
       const reportFailure = fatalCallback;
       fatalCallback = null;
       requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
+      closeIngress(new Error(`${failure.code}: ${failure.message}`));
       if (!initialized) {
         clearTimeout(timeout);
         lifecycle.dispose();
@@ -206,6 +216,26 @@ export function createWorkerHost(
       try {
         const incoming = message(event.data);
         switch (incoming.type) {
+          case "ingress": {
+            const nextGeneration = generation(incoming.generation, "Browser ingress generation");
+            if (nextGeneration <= ingressGeneration) throw new Error("Browser ingress generation 必须严格推进");
+            if (ingressWorker === null) {
+              ingressWorker = new Worker(new URL("./wasm-ingress-worker.ts", import.meta.url), { type: "module" });
+              ingressRequests = new WorkerRequestScope(ingressWorker);
+              ingressWorker.addEventListener("error", (event) => {
+                notifyFailure({ code: "WASM_INGRESS_WORKER", where: "worker-host.ingress", message: event.message || "Browser ingress worker 执行失败" });
+              });
+            }
+            if (ingressRequests === null) throw new Error("Browser ingress request scope 尚未初始化");
+            ingressGeneration = nextGeneration;
+            ingressReady = ingressRequests.request({
+              ...incoming, type: "bindIngress", requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
+            }, "ingressBound");
+            void ingressReady.catch((error: unknown) => {
+              notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
+            });
+            return;
+          }
           case "ready":
             worker.postMessage({ type: "create", setup, seed });
             return;
@@ -228,9 +258,16 @@ export function createWorkerHost(
             baselineEpoch += 1;
             cachedBaseline = next;
             if (!initialized) {
-              initialized = true;
-              clearTimeout(timeout);
-              resolve(host());
+              const finishInitialization = () => {
+                if (disposed || initialized) return;
+                initialized = true;
+                clearTimeout(timeout);
+                resolve(host());
+              };
+              if (ingressReady === null) finishInitialization();
+              else void ingressReady.then(finishInitialization).catch((error: unknown) => {
+                notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
+              });
             }
             if (callback !== null && deliveredGeneration !== next.generation) {
               deliverLiveBaseline(next);
@@ -251,6 +288,7 @@ export function createWorkerHost(
               }));
               if (accepted === false) {
                 requests.close(new Error("Worker 消费者拒绝协议更新，会话已停止"));
+                closeIngress(new Error("Worker 消费者拒绝协议更新，会话已停止"));
                 lifecycle.dispose();
                 disposed = true;
                 callback = null;
@@ -319,6 +357,7 @@ export function createWorkerHost(
           if (disposed) return;
           disposed = true;
           requests.close(new Error("WASM Worker 已被销毁，操作已取消"));
+          closeIngress(new Error("WASM ingress 已被销毁，操作已取消"));
           callback = null;
           fatalCallback = null;
           cachedBaseline = null;
@@ -375,7 +414,14 @@ export function createWorkerHost(
           return stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration);
         },
         async submitIntent(intent) {
-          await requests.request({ type: "enqueue", requestId: requests.nextRequestId(), generation: currentGeneration, intent }, "enqueued");
+          const requestedGeneration = currentGeneration;
+          const ready = ingressReady;
+          if (ready === null) throw new Error("Browser 共享 ingress 尚未就绪，请重建 WASM bindings");
+          await ready;
+          if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
+          if (ingressRequests === null) throw new Error("Browser ingress 已关闭");
+          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent }, "enqueued");
+          if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
         },
         snapshot() {
           if (cachedBaseline === null) throw new Error("快照尚未就绪");

@@ -1,0 +1,40 @@
+{"classification":"真实 Browser 代表性验收","threads":4,"engineWorkers":1,"intakeWorkers":1,"caseTimeoutMs":10000}
+8:51:47 AM [vite] (client) [console.warn] using deprecated parameters for the initialization function; pass a single object instead
+8:51:48 AM [vite] (client) [console.warn] using deprecated parameters for the initialization function; pass a single object instead
+{
+  "threads": 4,
+  "blockedOwnerFullPayloadReceived": true,
+  "nextProductionTick": 1,
+  "orders": [
+    {
+      "id": 1,
+      "code": "600101",
+      "side": "Buy",
+      "price": "1008",
+      "remainingQty": 100,
+      "venue": "auction",
+      "frozen": "cash"
+    }
+  ],
+  "producerSaveTick": 30,
+  "previousToken": 1,
+  "restoredToken": 2,
+  "restoredGeneration": 2,
+  "restoredProductionTick": 31,
+  "continuedOrders": [
+    {
+      "id": 2,
+      "code": "600101",
+      "side": "Buy",
+      "price": "1008",
+      "remainingQty": 200,
+      "venue": "auction",
+      "frozen": "cash"
+    }
+  ],
+  "closedTokenError": "session resource limit exceeded: WASM ingress token 1 已关闭或不存在",
+  "staleGenerationError": "Browser ingress 请求属于已过期 generation",
+  "npcCompetitionRuntimeVerified": false,
+  "productionStepBusyRuntimeVerified": false
+}
+elapsed_seconds=4.13

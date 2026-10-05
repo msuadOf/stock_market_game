@@ -81,6 +81,12 @@ impl GameSession {
     }
 
     pub fn save(&self) -> Result<SaveSlot, StepFatal> {
+        let mut save = self.save_committed_projection()?;
+        self.project_shared_ingress_save(&mut save)?;
+        Ok(save)
+    }
+
+    pub(in crate::session) fn save_committed_projection(&self) -> Result<SaveSlot, StepFatal> {
         self.require_healthy()?;
         let runtime_state = super::persistence::capture_runtime_state(self)?;
         Ok(self.save_projection(runtime_state))

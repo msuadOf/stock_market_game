@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, seed)?;
+    session.shared_ingress();
     for _ in 0..2 {
         for _ in 0..ticks_per_day {
             session.step()?;

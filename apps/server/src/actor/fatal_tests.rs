@@ -1,5 +1,56 @@
 use super::*;
 
+#[tokio::test]
+async fn shared_ingress_receives_player_without_actor_command_polling() {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut game = ProtocolSession::new(setup.clone(), 7).unwrap();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let handles = SessionHandles {
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        cmd_tx,
+        event_tx,
+        ticks_per_day: setup.ticks_per_day,
+        auction_ticks: setup.auction_ticks,
+        closing_auction_ticks: setup.closing_auction_ticks,
+        session_token: "shared-ingress".into(),
+    };
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        handles.enqueue(
+            1,
+            engine::Intent::PlaceLimit {
+                code: engine::StockCode("600101".into()),
+                side: engine::Side::Buy,
+                price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
+                qty: 100,
+            },
+        ),
+    )
+    .await
+    .expect("actor 未消费命令时，Player 仍必须登记到共享 ingress")
+    .unwrap();
+    assert!(cmd_rx.try_recv().is_err());
+    let rejected = handles
+        .enqueue_as(
+            1,
+            AccountId(999),
+            Intent::Cancel {
+                code: engine::StockCode("600101".into()),
+                id: engine::OrderId(1),
+            },
+        )
+        .await;
+    assert!(
+        matches!(rejected, Err(SendCommandError::Rejected(message)) if message.contains("999"))
+    );
+    game.step_frame().unwrap();
+    assert_eq!(game.player_working_orders().len(), 1);
+}
+
 #[test]
 fn producer_failure_contains_real_location_and_recovery_details() {
     let error = engine::session::StepFatal::InvariantViolation {
@@ -30,6 +81,85 @@ fn assert_fatal_rejection(error: SessionError) {
     );
 }
 
+fn assert_failed_cycle_preserves_business_and_ingress_facts(
+    saved_before: &serde_json::Value,
+    saved_after: engine::SaveSlot,
+    successful_steps: usize,
+) {
+    let mut before_business = saved_before.clone();
+    let before_cursors = before_business
+        .as_object_mut()
+        .unwrap()
+        .remove("ingress_receipt_cursors")
+        .unwrap();
+    let mut after_business = serde_json::to_value(&saved_after).unwrap();
+    let after_cursors = after_business
+        .as_object_mut()
+        .unwrap()
+        .remove("ingress_receipt_cursors")
+        .unwrap();
+    assert_eq!(
+        after_business, before_business,
+        "失败 cycle 必须完整回滚业务状态与全部未消费 receipt"
+    );
+    let previous: engine::session::IngressReceiptCursors =
+        serde_json::from_value(before_cursors.clone()).unwrap();
+    for (account, ordinal) in previous.next_account_ordinal {
+        assert!(
+            saved_after
+                .ingress_receipt_cursors
+                .next_account_ordinal
+                .get(&account)
+                .is_some_and(|current| *current >= ordinal),
+            "account receipt cursor 不得回退或丢失：{account:?}"
+        );
+    }
+    for (code, ordinal) in previous.next_stock_ordinal {
+        assert!(
+            saved_after
+                .ingress_receipt_cursors
+                .next_stock_ordinal
+                .get(&code)
+                .is_some_and(|current| *current >= ordinal),
+            "stock receipt cursor 不得回退或丢失：{code:?}"
+        );
+    }
+    if successful_steps == 0 {
+        assert_eq!(
+            after_cursors, before_cursors,
+            "未执行成功 tick 时不得凭空登记 NPC receipt"
+        );
+    } else {
+        assert_ne!(
+            after_cursors, before_cursors,
+            "失败 cycle 的已接收 NPC 事实必须保留真实 ordinal gap"
+        );
+    }
+    for receipt in saved_after.pending_player.iter().chain(
+        saved_after
+            .pending_npc
+            .as_ref()
+            .into_iter()
+            .flat_map(|batch| batch.intents.iter()),
+    ) {
+        assert!(saved_after
+            .ingress_receipt_cursors
+            .next_account_ordinal
+            .get(&receipt.owner)
+            .is_some_and(|cursor| receipt.account_ordinal < *cursor));
+        let code = match &receipt.intent {
+            Intent::PlaceLimit { code, .. }
+            | Intent::PlaceMarket { code, .. }
+            | Intent::Cancel { code, .. } => code,
+        };
+        assert!(saved_after
+            .ingress_receipt_cursors
+            .next_stock_ordinal
+            .get(code)
+            .is_some_and(|cursor| receipt.stock_ordinal < *cursor));
+    }
+}
+
 async fn capture(successful_steps: usize) {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let mut game = ProtocolSession::new(setup, 7).unwrap();
@@ -54,6 +184,7 @@ async fn capture(successful_steps: usize) {
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
         injected_step_failure: Some((successful_steps, fatal.clone())),
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -92,13 +223,25 @@ async fn capture(successful_steps: usize) {
         before
     );
     assert_eq!(actor.public_revision, 4);
-    assert_eq!(
-        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
-        saved_before
+    assert_failed_cycle_preserves_business_and_ingress_facts(
+        &saved_before,
+        actor.game.game().save().unwrap(),
+        successful_steps,
     );
     assert_eq!(actor.pacing.speed_meter.started_tick, before.0);
     assert_eq!(actor.pacing.speed_meter.sample_ticks, 0);
     assert!(!actor.pacing.is_running());
+    assert!(actor
+        .game
+        .shared_ingress()
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: engine::StockCode("600101".into()),
+                id: engine::OrderId(1)
+            }
+        )
+        .is_err());
     actor.run_fastest_batch();
     assert!(receiver.try_recv().is_err());
 
@@ -186,17 +329,19 @@ async fn capture(successful_steps: usize) {
         ),
         before
     );
-    assert_eq!(
-        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
-        saved_before
+    assert_failed_cycle_preserves_business_and_ingress_facts(
+        &saved_before,
+        actor.game.game().save().unwrap(),
+        successful_steps,
     );
     assert_eq!(actor.pacing.requested_speed, RequestedSpeed::Fastest);
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.pause_preferences, PausePreferences::default());
+    let mut verification = actor.game.fork_for_verification().unwrap();
     for _ in before.0..fixture::TICKS_PER_DAY {
-        actor.game.step_frame().unwrap();
+        verification.step_frame().unwrap();
     }
-    let civil = actor.game.end_civil_day_update().unwrap();
+    let civil = verification.end_civil_day_update().unwrap();
     assert_eq!(
         civil.refresh.intraday.len(),
         usize::try_from(fixture::TICKS_PER_DAY).unwrap()
@@ -265,7 +410,19 @@ async fn stale_preferences_leave_actor_settings_unchanged() {
     let slot = completed.save().unwrap();
     let id = manager.new_session(setup, 1).unwrap();
     let handles = manager.lookup(&id).unwrap();
+    let old_ingress = handles.ingress.read().unwrap().1.clone();
     handles.restore(slot).await.unwrap();
+    let intent = Intent::PlaceLimit {
+        code: engine::StockCode("600101".into()),
+        side: engine::Side::Buy,
+        price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
+        qty: 100,
+    };
+    assert!(old_ingress
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    assert!(handles.enqueue(1, intent.clone()).await.is_err());
+    handles.enqueue(2, intent.clone()).await.unwrap();
 
     let result = handles
         .set_pause_preferences(
@@ -283,6 +440,10 @@ async fn stale_preferences_leave_actor_settings_unchanged() {
         .await
         .unwrap();
     manager.remove(&id).unwrap().shutdown().await.unwrap();
+    assert!(matches!(
+        handles.enqueue(2, intent).await,
+        Err(SendCommandError::ActorGone)
+    ));
 }
 
 #[tokio::test]
@@ -292,6 +453,7 @@ async fn authority_reads_reject_stale_generations() {
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
+        ingress: Arc::new(RwLock::new((7, game.shared_ingress()))),
         #[cfg(test)]
         injected_step_failure: None,
         pacing: ServerPacing {
@@ -361,6 +523,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let handles = SessionHandles {
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
         cmd_tx,
         event_tx: event_tx.clone(),
         ticks_per_day: setup.ticks_per_day,
@@ -369,6 +532,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         session_token: "command-burst".into(),
     };
     let mut actor = SessionActor {
+        ingress: Arc::clone(&handles.ingress),
         injected_step_failure: None,
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -401,16 +565,13 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
             )
         })
         .collect();
-    // 每个真实 handle 只轮询一次完成提交，再丢弃调用者的 reply future。
+    // 真实 handle 在 actor 忙碌时直接登记，不依赖调用者继续等待命令回执。
     for (_, intent) in &expected {
-        assert!(handles.enqueue(intent.clone()).now_or_never().is_none());
-    }
-    for _ in &expected {
-        let command = actor
-            .cmd_rx
-            .try_recv()
-            .expect("every request must reach the actor");
-        actor.handle_command(command).await;
+        handles
+            .enqueue(1, intent.clone())
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     assert!(matches!(
         actor.cmd_rx.try_recv(),
@@ -419,8 +580,20 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     let saved = actor.game.game().save().unwrap();
     assert_eq!(saved.snapshot.tick, 0, "暂停的市场不能提前消费玩家请求");
     assert_eq!(saved.pending_player.len(), expected.len());
+    assert!(saved
+        .pending_player
+        .windows(2)
+        .all(|pair| pair[0].account_ordinal < pair[1].account_ordinal
+            && pair[0].stock_ordinal < pair[1].stock_ordinal));
     assert_eq!(
-        serde_json::to_value(saved.pending_player).unwrap(),
+        serde_json::to_value(
+            saved
+                .pending_player
+                .into_iter()
+                .map(|received| (received.owner, received.intent))
+                .collect::<Vec<_>>()
+        )
+        .unwrap(),
         serde_json::to_value(expected).unwrap(),
         "请求须按投递顺序各保留一次"
     );

@@ -320,13 +320,17 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     async submitIntent(intent: Intent) {
       const current = publisher.currentSocket();
       if (current === null || current.readyState !== WebSocket.OPEN || publisher.isAwaitingBaseline()) throw new Error("远程 Publisher 尚未完成权威基线同步，写请求未入队");
+      const baseline = publisher.baselineForRead();
+      if (baseline === null) throw new Error("远程权威 generation 尚未就绪，写请求未入队");
+      const generation = baseline.generation;
       const requestId = commands.next();
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_TIMEOUT", where: "remote-host.submitIntent", message: "入队确认超时（5000ms），结果未知，请核对权威委托状态，勿重复提交" }, true), 5000);
         commands.register(requestId, { resolve() { clearTimeout(timeout); resolve(); }, reject(error) { clearTimeout(timeout); reject(error); } });
-        try { current.send(JSON.stringify({ SubmitIntent: { request_id: requestId, intent } })); }
+        try { current.send(JSON.stringify({ SubmitIntent: { request_id: requestId, generation, intent } })); }
         catch (error) { commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_SEND", where: "remote-host.submitIntent", message: `写请求发送中断，结果未知：${error instanceof Error ? error.message : String(error)}` }); }
       });
+      if (disposed || !publisher.hasGeneration(generation) || publisher.isAwaitingBaseline()) throw new Error("远程入队确认属于已过期会话 generation，请核对权威委托状态，勿重复提交");
     },
     snapshot(): Snapshot {
       const baseline = publisher.baselineForRead();

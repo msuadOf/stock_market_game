@@ -81,6 +81,17 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     );
     assert!(!actor.pacing.is_running());
     assert!(harness.cmd_tx.is_closed());
+    assert!(actor
+        .game
+        .shared_ingress()
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: StockCode("600101".into()),
+                id: engine::OrderId(1)
+            }
+        )
+        .is_err());
     let (reply, rejected) = oneshot::channel();
     actor
         .handle_command(SessionCommand::SetRunning {
@@ -190,6 +201,7 @@ async fn desktop_controls_resolve_only_after_actor_applies_them() {
         "timeline",
     );
     let handles = SessionHandles {
+        ingress: Arc::clone(&harness.actor.ingress),
         cmd_tx: harness.cmd_tx.clone(),
     };
     let command = handles.set_running(false);

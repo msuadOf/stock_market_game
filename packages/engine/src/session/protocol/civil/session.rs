@@ -88,6 +88,21 @@ impl ProtocolSession {
         self.state = checkpoint.state;
     }
 
+    #[cfg(feature = "verification-harness")]
+    pub fn fork_for_verification(&self) -> Result<Self, StepFatal> {
+        let mut state = self.state.try_clone_for_checkpoint()?;
+        state.game.freeze_shared_ingress()?;
+        state.game.ingress = None;
+        state.game.shared_ingress();
+        Ok(Self {
+            state,
+            #[cfg(test)]
+            malformed_frame: false,
+            #[cfg(test)]
+            malformed_civil: false,
+        })
+    }
+
     pub fn civil_day_ready(&self) -> Result<bool, SessionError> {
         Ok(self.state.game.day()
             == self
@@ -159,7 +174,8 @@ impl ProtocolSession {
         Ok(Self::from_game(GameSession::restore(slot)?, None))
     }
 
-    fn from_game(game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
+    fn from_game(mut game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
+        game.shared_ingress();
         Self {
             state: ProtocolState {
                 game,
@@ -178,6 +194,10 @@ impl ProtocolSession {
 
     pub fn game(&self) -> &GameSession {
         &self.state.game
+    }
+
+    pub fn shared_ingress(&self) -> crate::SharedSessionIngress {
+        self.state.game.ingress.as_ref().expect("ProtocolSession initializes shared ingress").source.clone()
     }
 
     pub fn save(&self) -> Result<crate::SaveSlot, SessionError> {
@@ -316,7 +336,7 @@ impl ProtocolSession {
                     .attach_after(&update.events)
                     .map_err(protocol_fatal)?;
                 update.validate().map_err(protocol_fatal)?;
-                let candidate = self.state.game.save()?;
+                let candidate = self.state.game.save_committed_projection()?;
                 Ok((update, candidate))
             });
         let (update, candidate) = match result {
@@ -557,6 +577,81 @@ mod rollback_tests {
             ProtocolSession::restore(&raw_current_state),
             Err(SessionError::InvalidSave(_))
         ));
+    }
+
+    #[test]
+    fn day_end_archive_excludes_late_ingress_without_losing_the_live_input() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        let steps = setup.ticks_per_day;
+        let code = setup.stocks[0].code.clone();
+        let mut session = ProtocolSession::new(setup, 79).unwrap();
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        assert!(session.civil_day_ready().unwrap());
+        session.shared_ingress().enqueue_player_intent(crate::AccountId(0), crate::Intent::PlaceLimit {
+            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
+        }).unwrap();
+        session.end_civil_day_update().unwrap();
+        let archived = session.save().unwrap();
+        assert!(archived.pending_player.is_empty());
+        ProtocolSession::restore(&archived).unwrap();
+        assert_eq!(session.game().save().unwrap().pending_player.len(), 1);
+        let received = session.step_frame().unwrap();
+        assert_eq!(received.events.iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, code: received_code, .. } if *account == crate::AccountId(0) && *received_code == code)).count(), 1);
+        let next = session.step_frame().unwrap();
+        assert!(!next.events.iter().any(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))));
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn verification_fork_preserves_failed_concurrent_player_receipts_and_isolates_intake() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        let code = setup.stocks[0].code.clone();
+        let intent = || crate::Intent::PlaceLimit {
+            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
+        };
+        let mut session = ProtocolSession::new(setup, 83).unwrap();
+        let retained = session.step_frame().unwrap();
+        let original = session.shared_ingress();
+        let checkpoint = session.checkpoint().unwrap();
+        let before = session.business_state_hash().unwrap();
+        let player = intent();
+        std::thread::scope(|scope| {
+            scope.spawn(|| original.enqueue_player_intent(crate::AccountId(0), player).unwrap()).join().unwrap();
+        });
+        session.malformed_frame = true;
+        assert!(session.step_frame().is_err());
+        session.rollback(checkpoint);
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        let npc_intent = intent();
+        let mut failed_private = session.state.game.clone_for_tick_shadow().unwrap();
+        let discarded = failed_private.receive_private_intent(crate::AccountId(0), npc_intent).unwrap();
+        failed_private.state.pending_npc = Some(crate::PendingNpcBatch { observed_tick: failed_private.tick(), observed_accounts: Vec::new(), intents: vec![discarded], dependencies: Vec::new() });
+        drop(failed_private);
+        original.close().unwrap();
+        let original_save = session.game().save().unwrap();
+        assert_eq!(original_save.pending_player.len(), 1);
+        assert_eq!(original_save.pending_player[0].account_ordinal, 0);
+        assert_eq!(original_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 2);
+        let mut branch = session.fork_for_verification().unwrap();
+        assert_eq!(serde_json::to_value(branch.game().save().unwrap()).unwrap(), serde_json::to_value(&original_save).unwrap());
+        branch.shared_ingress().enqueue_player_intent(crate::AccountId(0), intent()).unwrap();
+        let branch_save = branch.game().save().unwrap();
+        assert_eq!(branch_save.pending_player.iter().map(|receipt| receipt.account_ordinal).collect::<Vec<_>>(), vec![0, 2]);
+        assert_eq!(branch_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 3);
+        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), serde_json::to_value(original_save).unwrap());
+        assert!(original.enqueue_player_intent(crate::AccountId(0), intent()).is_err());
+        let accepted = branch.step_frame().unwrap();
+        assert_eq!(accepted.events.iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))).count(), 2);
+        assert_eq!(serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(), serde_json::to_value(retained).unwrap());
+        assert!(branch.game().save().unwrap().pending_npc.as_ref().unwrap().intents.is_empty());
     }
 
     #[test]

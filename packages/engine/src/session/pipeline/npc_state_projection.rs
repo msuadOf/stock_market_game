@@ -135,6 +135,7 @@ pub(in crate::session) enum NpcDecisionProjectionError {
 
 /// 把纯 NPC 决策结果投影到调用方可丢弃的 tick shadow。
 /// 失败时调用方必须丢弃整个 tick candidate，不能继续使用部分投影。
+#[cfg(test)]
 pub(in crate::session) fn project_npc_state(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,

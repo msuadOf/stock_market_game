@@ -32,6 +32,8 @@ async function createFixture(
   register: (hooks: ReturnType<typeof registerHooks>) => void,
 ) {
   const posted: Message[] = [];
+  let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
+  const ready = new Promise<void>((resolve) => { initialized = resolve; });
   const calls: string[] = [];
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
@@ -40,7 +42,8 @@ async function createFixture(
   let listener: ((event: { data: Message }) => void) | undefined;
   const saved = currentSaveFixture();
   const bindings = {
-    default: async () => {},
+    default: async () => ({ memory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }) }),
+    ingress_token: (current: number) => current,
     initThreadPool: async (threads: number) => { calls.push(`threads:${threads}`); },
     create_session: () => { calls.push(`create:${handle}`); return handle; },
     snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot") throw new Error("snapshot failed"); return { handle: current }; },
@@ -54,9 +57,9 @@ async function createFixture(
     end_civil_day: () => civilUpdate(),
   };
   replace(bindingsKey, bindings);
-  replace("self", { postMessage: (message: Message) => { posted.push(message); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
+  replace("self", { postMessage: (message: Message) => { posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   replace("navigator", { hardwareConcurrency: 4 });
-  replace("fetch", async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }));
+  replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
   const id = ++fixtureId;
@@ -84,16 +87,21 @@ async function createFixture(
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
   send({ type: "init", threads: 2 });
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await ready;
   assert.deepEqual(posted, [{ type: "ready", threads: 2 }]);
   posted.length = 0;
-  return { send, calls, posted, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; } };
+  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; } };
 }
 
-test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先于新 baseline 和 microtask restart", async () => {
+test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先于新 baseline 和 microtask restart", { timeout: 10000 }, async () => {
   await withWorker(async (f) => {
     f.send({ type: "create", setup: {}, seed: 1n });
-    assert.deepEqual(f.posted, [
+    assert.equal(f.posted[0].type, "ingress");
+    assert.equal(f.posted[0].token, 7);
+    assert.equal(f.posted[0].generation, 1);
+    assert.ok(f.posted[0].module instanceof WebAssembly.Module);
+    assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
+    assert.deepEqual(f.posted.slice(1), [
       { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } },
       { type: "baseline", generation: 1, snapshot: { handle: 7 } },
     ]);
@@ -107,7 +115,10 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     f.handle(9);
     f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
     assert.equal(f.timers.size, 0, "restore 完成回应之前不能同步 restart");
-    assert.deepEqual(f.posted, [
+    assert.equal(f.posted[0].type, "ingress");
+    assert.equal((f.posted[0] as Message).token, 9);
+    assert.equal(f.posted[0].generation, 2);
+    assert.deepEqual(f.posted.slice(1), [
       { type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: { handle: 9 } },
       { type: "baseline", generation: 2, snapshot: { handle: 9 } },
     ]);
@@ -134,7 +145,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
   });
 });
 
-test("Worker restore snapshot 失败仍以 microtask 恢复原会话，prepare 失败保留新 authority", async () => {
+test("Worker restore snapshot 失败仍以 microtask 恢复原会话，prepare 失败保留新 authority", { timeout: 10000 }, async () => {
   await withWorker(async (f) => {
     f.send({ type: "create", setup: {}, seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 20 });

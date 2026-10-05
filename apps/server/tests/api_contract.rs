@@ -2,7 +2,7 @@
 //!
 //! 验证的宿主契约：
 //! - POST /api/new     body {setup, seed}        -> 200 {session_id, session_token} | 400
-//! - POST /api/intent  body {session_id, intent} -> Bearer 鉴权后 200 | 400
+//! - POST /api/intent  body {session_id, generation, intent} -> Bearer 鉴权后 200 | 400
 //! - GET  /api/snapshot?session_id=..           -> Bearer 鉴权后 200 Snapshot
 //! - POST /api/speed   body {session_id, speed}  -> 200
 //! - GET  /api/speed?session_id=..              -> Bearer 鉴权后 200 SpeedMetrics
@@ -922,6 +922,61 @@ fn player_buy_intent() -> Value {
 }
 
 #[tokio::test]
+async fn intent_requires_current_canonical_generation() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let mut setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut completed = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
+    completed.end_civil_day_update().unwrap();
+    manager
+        .lookup(&session_id)
+        .unwrap()
+        .restore(completed.save().unwrap())
+        .await
+        .unwrap();
+    for generation in [
+        Some(json!("1")),
+        None,
+        Some(json!("01")),
+        Some(json!(1)),
+        Some(json!("18446744073709551616")),
+    ] {
+        let mut body = json!({ "session_id": session_id, "intent": player_buy_intent() });
+        if let Some(generation) = generation {
+            body["generation"] = generation;
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/intent")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "旧 generation、缺失或非法 generation 必须在 intake 前拒绝"
+        );
+    }
+    let response = app.oneshot(Request::builder().method("POST").uri("/api/intent").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(axum::body::Body::from(json!({ "session_id": session_id, "generation": "2", "intent": player_buy_intent() }).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    manager
+        .remove(&session_id)
+        .unwrap()
+        .shutdown()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn intent_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
@@ -931,7 +986,7 @@ async fn intent_unknown_session_with_token_is_forbidden() {
                 .uri("/api/intent")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": "nope", "intent": player_buy_intent() }).to_string(),
+                    json!({ "session_id": "nope", "generation": "1", "intent": player_buy_intent() }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -982,7 +1037,8 @@ async fn intent_known_session_returns_200() {
                 .uri("/api/intent")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "intent": player_buy_intent() }).to_string(),
+                    json!({ "session_id": id, "generation": "1", "intent": player_buy_intent() })
+                        .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1123,9 +1179,10 @@ fn large_pending_player_queue_survives_engine_save_restore_exactly() {
     let setup: engine::SessionSetup = serde_json::from_value(closed_day_setup_json()).unwrap();
     let mut slot = closed_day_save(setup, 42).expect("日终 fixture 应合法");
     const REQUEST_COUNT: usize = 5_001;
-    slot.pending_player = (0..REQUEST_COUNT)
-        .map(|_| {
-            (
+    let mut producer = engine::GameSession::restore(&slot).unwrap();
+    for _ in 0..REQUEST_COUNT {
+        producer
+            .enqueue_player_intent(
                 engine::AccountId(0),
                 Intent::PlaceLimit {
                     code: StockCode("600101".to_string()),
@@ -1134,8 +1191,9 @@ fn large_pending_player_queue_survives_engine_save_restore_exactly() {
                     qty: 100,
                 },
             )
-        })
-        .collect();
+            .unwrap();
+    }
+    slot = producer.save().unwrap();
     assert_eq!(slot.pending_player.len(), REQUEST_COUNT);
 
     // Low-level engine checkpoints retain pending input and its order. Public
@@ -1169,9 +1227,10 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
 
     let mut candidate = serde_json::from_value::<engine::SaveSlot>(before.clone()).unwrap();
     const REQUEST_COUNT: usize = 5_001;
-    candidate.pending_player = (0..REQUEST_COUNT)
-        .map(|_| {
-            (
+    let mut producer = engine::GameSession::restore(&candidate).unwrap();
+    for _ in 0..REQUEST_COUNT {
+        producer
+            .enqueue_player_intent(
                 engine::AccountId(0),
                 Intent::PlaceLimit {
                     code: StockCode("600101".to_string()),
@@ -1180,8 +1239,9 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
                     qty: 100,
                 },
             )
-        })
-        .collect();
+            .unwrap();
+    }
+    candidate = producer.save().unwrap();
     assert_eq!(candidate.pending_player.len(), REQUEST_COUNT);
 
     let response = app

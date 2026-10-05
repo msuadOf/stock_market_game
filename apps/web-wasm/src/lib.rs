@@ -16,6 +16,7 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
 // Export the Rayon bootstrap itself; the Web Worker awaits its Promise before
@@ -47,6 +48,16 @@ thread_local! {
 #[cfg(test)]
 mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
+static INGRESS: Mutex<Option<HashMap<u32, engine::SharedSessionIngress>>> = Mutex::new(None);
+
+fn ingress_operation<T>(
+    operation: impl FnOnce(&mut HashMap<u32, engine::SharedSessionIngress>) -> Result<T, SessionError>,
+) -> Result<T, SessionError> {
+    let mut registry = INGRESS.lock().map_err(|_| {
+        SessionError::ResourceLimit("WASM ingress registry 锁已损坏，请重新启动会话".into())
+    })?;
+    operation(registry.get_or_insert_with(HashMap::new))
+}
 
 fn reserve_session_handle(next: &AtomicU32) -> Result<u32, SessionError> {
     next.fetch_update(
@@ -80,6 +91,13 @@ impl SessionRegistry {
         let id = reserve_session_handle(next)?;
         match self.sessions.entry(id) {
             Entry::Vacant(entry) => {
+                ingress_operation(|registry| {
+                    if registry.contains_key(&id) {
+                        return Err(SessionError::ResourceLimit(format!("WASM ingress token {id} 已登记")));
+                    }
+                    registry.insert(id, session.shared_ingress());
+                    Ok(())
+                })?;
                 entry.insert(session);
                 Ok(id)
             }
@@ -113,8 +131,18 @@ impl SessionRegistry {
             .ok_or_else(|| format!("invalid session handle: {handle}"))
     }
 
-    fn remove(&mut self, handle: u32) {
+    fn remove(&mut self, handle: u32) -> Result<(), SessionError> {
+        if !self.sessions.contains_key(&handle) {
+            return Ok(());
+        }
+        ingress_operation(|registry| {
+            if let Some(service) = registry.remove(&handle) {
+                service.close()?;
+            }
+            Ok(())
+        })?;
         self.sessions.remove(&handle);
+        Ok(())
     }
 
     fn step_update(&mut self, handle: u32) -> Result<EngineUpdate, StepUpdateError> {
@@ -519,12 +547,28 @@ pub fn enqueue(handle: u32, intent: JsValue) -> Result<(), JsValue> {
     })
 }
 
+#[wasm_bindgen]
+pub fn ingress_token(handle: u32) -> Result<u32, JsValue> {
+    with_session(handle, |_| Ok(handle))
+}
+
+#[wasm_bindgen]
+pub fn ingress_enqueue(token: u32, intent: JsValue) -> Result<(), JsValue> {
+    let intent: Intent = serde_wasm_bindgen::from_value(intent)?;
+    let service = ingress_operation(|registry| {
+        registry.get(&token).cloned().ok_or_else(|| {
+            SessionError::ResourceLimit(format!("WASM ingress token {token} 已关闭或不存在"))
+        })
+    }).map_err(session_error_to_js)?;
+    service.enqueue_player_intent(AccountId(0), intent).map_err(session_error_to_js)
+}
+
 /// 销毁会话（释放内存）。
 #[wasm_bindgen]
-pub fn drop_session(handle: u32) {
+pub fn drop_session(handle: u32) -> Result<(), JsValue> {
     REGISTRY.with(|r| {
-        r.borrow_mut().remove(handle);
-    });
+        r.borrow_mut().remove(handle)
+    }).map_err(session_error_to_js)
 }
 
 /// 返回最近完成自然日的存档候选；首个日终完成前返回错误。

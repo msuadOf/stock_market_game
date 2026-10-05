@@ -113,7 +113,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         (
             "POST",
             "/api/intent",
-            json!({"session_id":session_id,"intent":intent}),
+            json!({"session_id":session_id,"generation":"1","intent":intent}),
         ),
         (
             "GET",
@@ -257,7 +257,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
             app.clone(),
             "POST",
             "/api/intent",
-            Some(json!({"session_id":session_id,"intent":intent})),
+            Some(json!({"session_id":session_id,"generation":"1","intent":intent})),
             Some(session_token)
         )
         .await

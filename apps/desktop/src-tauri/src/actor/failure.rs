@@ -174,6 +174,11 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     pub(super) fn stop_after_host_failure(&mut self, mut failure: HostFailure) {
+        if let Err(error) = self.game.shared_ingress().close() {
+            failure
+                .message
+                .push_str(&format!("；关闭 ingress 失败：{error}"));
+        }
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
         failure.context.day = Some(self.game.day());

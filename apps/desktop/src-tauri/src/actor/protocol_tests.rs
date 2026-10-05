@@ -1,6 +1,104 @@
 use super::*;
 use engine::session::protocol::ReplayGuard;
 
+#[tokio::test]
+async fn shared_ingress_receives_player_without_actor_command_polling() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.npcs.inst_count = 0;
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+    let handles = SessionHandles {
+        cmd_tx,
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+    };
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        handles.enqueue(
+            1,
+            engine::Intent::PlaceLimit {
+                code: engine::StockCode("600101".into()),
+                side: engine::Side::Buy,
+                price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
+                qty: 100,
+            },
+        ),
+    )
+    .await
+    .expect("actor 未消费命令时，Player 仍必须登记到共享 ingress")
+    .unwrap();
+    assert!(cmd_rx.try_recv().is_err());
+    let rejected = handles
+        .enqueue_as(
+            1,
+            AccountId(999),
+            Intent::Cancel {
+                code: StockCode("600101".into()),
+                id: engine::OrderId(1),
+            },
+        )
+        .await;
+    assert!(
+        matches!(rejected, Err(SendCommandError::Rejected(message)) if message.contains("999"))
+    );
+    game.step_frame().unwrap();
+    assert_eq!(game.player_working_orders().len(), 1);
+}
+
+#[tokio::test]
+async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut completed = ProtocolSession::new(setup.clone(), 7).unwrap();
+    completed.end_civil_day_update().unwrap();
+    let slot = completed.save().unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "restore-ingress",
+        "restore-timeline",
+    );
+    let handles = SessionHandles {
+        cmd_tx: harness.cmd_tx.clone(),
+        ingress: Arc::clone(&harness.actor.ingress),
+    };
+    let previous = handles.ingress.read().unwrap().1.clone();
+    let intent = Intent::PlaceLimit {
+        code: StockCode("600101".into()),
+        side: engine::Side::Buy,
+        price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
+        qty: 100,
+    };
+    let restored = harness.actor.restore(1, Box::new(slot)).unwrap();
+    assert_eq!(restored.generation, "2");
+    assert!(previous
+        .enqueue_player_intent(AccountId(0), intent.clone())
+        .is_err());
+    assert!(handles.enqueue(1, intent.clone()).await.is_err());
+    handles.enqueue(2, intent.clone()).await.unwrap();
+    let saved = harness.actor.game.game().save().unwrap();
+    assert_eq!(saved.pending_player.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&saved.pending_player[0].intent).unwrap(),
+        serde_json::to_value(&intent).unwrap()
+    );
+    let (reply, applied) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::Shutdown { reply })
+        .await;
+    applied.await.unwrap();
+    assert!(handles
+        .ingress
+        .read()
+        .unwrap()
+        .1
+        .enqueue_player_intent(AccountId(0), intent)
+        .is_err());
+}
+
 async fn capture(fastest: bool, preferences: PausePreferences) {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();

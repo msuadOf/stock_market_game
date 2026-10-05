@@ -100,8 +100,12 @@ msuad 2026-06-29 重新定调：**一份 engine + 一份「宿主无关的应用
   push 与 pull 只改变谁触发发送，不改变帧内容语义。单客户端
   停止消费并达到 65,536 个原始事件预算时，网关显式发 `ResyncRequired`、清空该客户端缓冲并由
   权威快照恢复当前状态；禁止为了保住失联消费者而无界增长内存。
-- `SubmitIntent` 等写请求经同一客户端网关进入 actor 的有界命令队列；`CommandQueued` 只表示
-  已进入权威会话待处理队列，不冒充委托已成交或已进入订单簿。进程退出后的可靠投递不在游戏范围内。
+- `SubmitIntent` 经客户端网关鉴权并验证 canonical 十进制字符串 `generation` 后，直接登记到
+  每会话共享 ingress；REST `/api/intent` 与 Tauri `enqueue` 同样必须显式携带当前 `generation`，
+  不为旧请求补当前值。控制命令仍由 actor 独占处理，但 Player 收件不等待 actor 消费命令。
+  `CommandQueued` 只表示完整委托已进入权威会话内存队列，不冒充已成交或已进入订单簿。
+  Player/NPC 的局部 receipt、T cutoff 与失败隔离见 [ADR-0032](0032-session-ingress-receipt-order.md)；
+  进程退出后的可靠投递不在游戏范围内。
 - **心跳 ping-pong**（后端 ~30s 发 ping，客户端不回 pong 即重连）——防中间设备杀空闲连接。
 - **事件流带单调递增 `seq` 序号** + **状态可随时快照**——断线重连后按 seq 续传 / 拉快照对齐。
 - **`wss://` + TLS 证书**（明文 `ws://` 在公网会被拦截/注入）。

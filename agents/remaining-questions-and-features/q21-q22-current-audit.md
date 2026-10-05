@@ -2,7 +2,9 @@
 
 ## 范围与依据
 
-只核对当前工作区生产路径和其短测试，不运行测试或编译，不把旧审计扫描结果当作当前事实。领域契约按优先级对照用户在 `agents/implementation-audit/implementation-audit-2026-10-02.md` 中 Q21/Q22 的完整回答、[ADR-0017](../../docs/decisions/0017-escrow-parallel-tick.md)、[ADR-0018](../../docs/decisions/0018-long-running-immutable-timeline.md) §6.1、§6.2、§7 和 [ADR-0020](../../docs/decisions/0020-native-allocator-for-concurrent-ticks.md)。`docs/testing.md`“并发受理与重放的覆盖边界”是目前测试解释契约。
+早期核对只读取生产路径和短测试，不运行测试或编译；后续实施由 root 统一编译、实测并保留日志，不把旧审计扫描结果当作当前事实。领域契约按优先级对照用户在 `agents/implementation-audit/implementation-audit-2026-10-02.md` 中 Q21/Q22 的完整回答、[ADR-0017](../../docs/decisions/0017-escrow-parallel-tick.md)、[ADR-0018](../../docs/decisions/0018-long-running-immutable-timeline.md) §6.1、§6.2、§7 和 [ADR-0020](../../docs/decisions/0020-native-allocator-for-concurrent-ticks.md)。`docs/testing.md`“并发受理与重放的覆盖边界”是目前测试解释契约。
+
+**当前状态：** queued/NPC stream 与 Server、Tauri、Browser 三宿主 shared ingress 已实现，严格 generation、一次 cutoff 与 private 失败隔离已接线并通过代表性验证。后文旧来源排序／整批 collect 是明确标注的历史反例。真实 Browser basic 已在最终重建产物通过，但忙碌 production step/NPC/cutoff 跨来源竞争 runtime 尚未验收，Q22 整体保持开放。最终证据见本文末节与[共享宿主记录](q22-shared-host-ingress.md)。
 
 Q21 用户回答：多个非法条件没有特定报错优先级，一个明确原因即可；NPC 可以预检查，但不能替代受理时的最新资金、股份和价格校验，也不得误拒合法零费用或非正净成本。
 
@@ -48,9 +50,9 @@ Q22 用户回答：多线程并行、减少锁是首要目标；来源排列不�
 
 本报告早期记录包含 Q22 只读流水核实和 Q21 实施记录；截至该记录时只改了 Engine 测试源码与 `docs/testing.md`，未改生产逻辑、ADR、公开 open-questions 或审计总账。root 刷新编译后在外部 10000ms deadline 下精确执行 Q21 新 case，通过，实际执行 0.22 秒。非作者 `review_q21_current` 完整复核三文件通过；当时 Q22 仍是待实现项，未跑完整回归。
 
-### 当前 Engine stream 阶段及证据
+### Engine queued/NPC stream 阶段历史证据
 
-上文 Q22“尚未逐账户异步入队”及来源阶段排序的描述是实施前基线，仅作为历史证据保留。当前 receipt-bearing queue 阶段已有以下实现；上游真实 ingress 与 Q22 整体仍未完成。
+上文 Q22“尚未逐账户异步入队”及来源阶段排序的描述是实施前基线，仅作为历史证据保留。以下记录 `97e4953` 的 receipt-bearing queue 阶段：当时尚未接宿主 shared ingress；后续真实入口已实现，见末节，不把该阶段限制当作当前结论。
 
 - `queue_npc_for_next_tick` 对同一不可变 `DecisionSnapshot` 按账户并行运行决策；单账户 `Result` 送入 unbounded channel 后，由单一 consumer 立即调用 `project_npc_account` 并通过同一个 `IngressReceiptCursors::receive` 生成账户/股票两条局部 ordinal。NPC 收据顺序由 consumer 实际收到完成结果的顺序确定，不等待所有账户决策后再投影；错误时继续排空 worker 结果，按最低账户 ID 选择错误，失败 tick shadow 不提交。
 - 原生 consumer 在 scoped OS thread 上运行，Rayon scope 仅生产结果；因此当前调用方即使占用配置的 Rayon worker，也不会因阻塞收件而耗尽生产线程。单 worker 嵌套调用使用相同单账户决策与消费函数串行推进。WASM 外部入口保留 `in_place_scope`；嵌套 Rayon worker 调用显式串行，未以此声称浏览器 WASM 运行验收通过。
@@ -62,8 +64,16 @@ Q22 用户回答：多线程并行、减少锁是首要目标；来源排列不�
 
 - 用户 Q22 原答已登记为 [ADR-0032](../../docs/decisions/0032-session-ingress-receipt-order.md)：每个 `GameSession` 共用 receipt 接收机制，按 receive 事实产生账户资源域和股票入口域的局部 ordinal；Server、Desktop、Browser 的真实接收点必须接入该机制，T cutoff 明确当前轮归属，局部资源冲突按相应 receipt 排序；Browser 必须在 WASM worker 忙碌时仍非阻塞接收。此 ADR 是契约，不表示宿主已接线。
 - 当前代码已实现的只是 Engine queued/NPC stream 阶段：NPC 账户决策完成后通过 consumer 即时 projection、生成账户/股票局部 receipt 并入队。该阶段经 root 汇总最新测试结果后独立收口；不能外推为 Server、Desktop、Browser 的实际 receiver 已共用。
-- root 的 `build-8.jsonl` / `build-8.stderr` 记录当前阶段 Engine `sim-diagnostics` lib/session no-run 成功，`--jobs 32`，耗时 23.47 秒。外部每 case 10000ms deadline 下并行精确执行 12 项短测全部通过：单 worker／满池两 worker 无死锁、快账户先收及失败排空、失败 NPC receipt 整 tick shadow 回滚、恢复拒绝反向同股依赖、完整 `u64` 原子溢出、非规范十进制拒绝、跨 lane 环拒绝、Player/NPC 同股 receive FIFO、必需 receipt 与 NPC owner 校验、cutoff 后延至下一轮、失败保留外部 queue。各 case 日志位于 `.tmp/checklist-wave3/*-stage-final.log`，最长 0.62 秒；确切路径中的 ready ingress 测试模块为 `ready_ingress::tests`，不计此前错误过滤得到的零 case 结果。
-- Server、Desktop、Browser 还没有把 auth/generation ingress 的真实接收点接入同一个 per-session receipt receiver；当前 host actor/worker 排队中已到达请求的先后仍不可由 Engine 最终同步 `enqueue_player_intent` 证明。
+- root 的 `build-8.jsonl` / `build-8.stderr` 记录该阶段 Engine `simulation-diagnostics` lib/session no-run 成功，`--jobs 32`，耗时 23.47 秒。外部每 case 10000ms deadline 下并行精确执行 12 项短测全部通过：单 worker／满池两 worker 无死锁、快账户先收及失败排空、失败 NPC receipt 整 tick shadow 回滚、恢复拒绝反向同股依赖、完整 `u64` 原子溢出、非规范十进制拒绝、跨 lane 环拒绝、Player/NPC 同股 receive FIFO、必需 receipt 与 NPC owner 校验、cutoff 后延至下一轮、失败保留外部 queue。各 case 日志位于 `.tmp/checklist-wave3/*-stage-final.log`，最长 0.62 秒；确切路径中的 ready ingress 测试模块为 `ready_ingress::tests`，不计此前错误过滤得到的零 case 结果。
+- 该阶段的 Server、Desktop、Browser 尚未共用 auth/generation ingress receiver；这是当时缺口，后续 shared-host 实施已补齐，不代表当前路径仍经阻塞 actor/worker 才登记。
 - root 另将暂存源码导出到隔离的临时验证目录，以 `--jobs 32` 编译 Engine 和 web-wasm，`staged-receipt-build.jsonl` / `.stderr` 记录 no-run 成功，耗时 58.14 秒。暂存态产物的上述 12 项 exact 短测再次全部通过，日志为 `.tmp/checklist-wave3/*-index-final.log`，最长 0.62 秒；避免用包含后续宿主改动的工作树结果代替本次提交证据。存档契约、完整真实存档与日终 archive 的 42 项 Web 短测通过，耗时 3.20 秒，日志为 `stage-web-save-final.log`。非作者对完整 37 文件暂存 diff 复核通过，发现的游标提交漏 hunk、宿主阶段混入和 fixture 漏暂存均已修复并再审。
-- 正式 Engine producer 已实际重建两日日终 representative save，并校验 save→restore→resave 相等；完整公司投影一起更新，人工 receipt/cursor 适配未保留。该样本来自本阶段 build5，后续 shared-host 阶段稳定后仍须用最终 Engine 再生成。Browser worker 忙于前轮时的非阻塞 main/ingress-worker 或共享 WASM-memory receiver 尚未在本批完成。
-- 需要补真实跨来源 Player/NPC 同股 FIFO 生产 `step` 顺序、可生产 Player/PlanChain 同账户资源胜者的合约证据，并完成三宿主集成及适用 WASM 运行验证。Q22 整体仍开放，不运行完整回归结论替代这些缺口。
+- 正式 Engine producer 已实际重建两日日终 representative save，并校验 save→restore→resave 相等；完整公司投影一起更新，人工 receipt/cursor 适配未保留。该样本来自本阶段 build5，后续 shared-host 稳定后仍须用最终 Engine 再生成；本段不拿早期样本冒充最终 source fixture。
+- 当时需补三宿主入口与真实跨来源生产 `step` 合约；后续代表性实现与短测见下节。忙碌 Browser step/NPC/cutoff 的更强运行验收仍待完成，不以完整回归或 basic 验证替代。
+
+### 最终三宿主 shared ingress 与验证
+
+- Player、NPC 完成后的 projection 和 PlanChain 就绪动作共用 per-session receipt receiver；Server/Tauri 正式 Player 入口不等待 actor command 消费，Browser 独立 intake worker 与 Engine worker 使用真实 shared Module/Memory。正式 REST/WS/Tauri enqueue 显式携带 canonical generation，旧代在分配 receipt 前拒绝；不是事后补盖 timestamp。
+- tick shadow 一次冻结 cutoff，之后到达输入留给后轮；checkpoint reader 保留已真实收到的 Player，失败 private NPC 不逃逸。公共日终 archive 使用 committed projection，不混入晚到活动 Player；live verification projection 仍保留真实输入。fatal 会话不可恢复、旧 capability 关闭，仅 verification-harness 的独立 fork 用于严格 retained intraday 验证。
+- root 最终四包/API 编译成功，49 exact 与 WASM protocol 17 cases 全绿；Server actor integration 17/17（0.90 秒），恢复 gated resync 的 WS case（0.61 秒）、gateway malformed/queued case（0.20 秒）、intent-known-session（0.20 秒）及拒绝活动 Player archive（1.55 秒）全部通过。追加 Native 编译 47.09 秒，日志 `.tmp/checklist-wave3/shared-native-integration-build.jsonl` / `.stderr` 与 `*-transport-final.log`、`actor-integration-final.log`。Web 64 tests 与 TypeScript force 全绿，非作者完整源码及必要 ADR 增量复核通过。
+- 最终源码正式 WASM release 重建 59.78 秒后，真实 Browser basic 命令 exit 0；日志 `.tmp/checklist-wave3/browser-ingress-final-runtime.log`。实际 4 Rayon threads，阻塞 owner 时 intake 已登记 full payload；生产 step、日终 save→restore、旧 token/generation 拒绝与 tick 31 唯一新代 200 股订单均验证。输出 `productionStepBusyRuntimeVerified` / `npcCompetitionRuntimeVerified` 仍为 `false`。
+- 最终 representative save 已由正式 producer 显式启用 shared ingress 后生成，使用 `final-build-3` Engine artifact：tick 120、26 NPC、5 公司、pending Player 0，低层 GameSession save→restore→resave 严格一致，company slice 为完整 company_operations 原样投影；Web 存档短测 42/42（3.36 秒）通过，日志 `.tmp/checklist-wave3/shared-fixture-compile.log` / `shared-fixture-generation.log` / `shared-fixture-web-final.log`。样本保留 1 条真实 pending NPC，是 GameSession 可恢复完整样本，不冒称 Protocol 公共无活动委托 archive。详细 chronology 见[共享宿主记录](q22-shared-host-ingress.md)；忙碌 production Browser step/NPC/cutoff 跨来源 ordinal runtime 仍待验收，因此 Q22 整体未核销，未宣称本批完整回归通过。

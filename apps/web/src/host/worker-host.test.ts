@@ -16,6 +16,113 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
+test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class IntakeWorker extends EventTarget {
+    static readonly instances: IntakeWorker[] = [];
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); IntakeWorker.instances.push(this); }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const engine = IntakeWorker.instances[0];
+    engine.emit({ type: "ingress", generation: 1, token: 42 });
+    const intake = IntakeWorker.instances[1];
+    const binding = intake.sent[0];
+    assert.equal(binding.type, "bindIngress");
+    intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
+    engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    const intent = { Cancel: { code: "600000", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+    const submitting = host.submitIntent(intent);
+    await Promise.resolve();
+    const request = intake.sent.at(-1)!;
+    assert.equal(request.type, "enqueue");
+    assert.deepEqual(request.intent, intent);
+    assert.equal(engine.sent.some((message) => message.type === "enqueue"), false);
+    intake.emit({ type: "enqueued", requestId: request.requestId, generation: 1 });
+    await submitting;
+    await host.dispose();
+    assert.equal(engine.terminations, 1);
+    assert.equal(intake.terminations, 1);
+    await assert.rejects(host.submitIntent(intent), /已过期|已关闭/);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueued", "disposedEnqueued"] as const) {
+  test(`Browser ingress ${scenario} 不泄漏 intake worker 或误报旧代成功`, { timeout: 10000 }, async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    class IntakeWorker extends EventTarget {
+      static readonly instances: IntakeWorker[] = [];
+      readonly sent: Record<string, unknown>[] = [];
+      terminations = 0;
+      constructor() { super(); IntakeWorker.instances.push(this); }
+      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      terminate() { this.terminations++; }
+      emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+    }
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
+    let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+    try {
+      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const engine = IntakeWorker.instances[0];
+      if (scenario === "initializationTimeout") context.mock.timers.tick(1);
+      engine.emit({ type: "ingress", generation: 1, token: 42 });
+      const intake = IntakeWorker.instances[1];
+      if (scenario === "initializationTimeout") {
+        const rejected = assert.rejects(creating, /初始化超时/);
+        context.mock.timers.tick(9999);
+        await rejected;
+        assert.equal(engine.terminations, 1);
+        assert.equal(intake.terminations, 1);
+        return;
+      }
+      intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
+      engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      host = await creating;
+      const intent = { Cancel: { code: "600101", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+      const pending = host.submitIntent(intent);
+      await Promise.resolve();
+      const rejected = assert.rejects(pending, /消费者拒绝|已过期/);
+      if (scenario === "consumerReject") {
+        let accept = true;
+        const starting = host.start(() => accept);
+        engine.emit({ type: "started", generation: 1, requestId: engine.sent.at(-1)!.requestId });
+        await starting;
+        accept = false;
+        engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+      } else {
+        const request = intake.sent.at(-1)!;
+        intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
+        if (scenario === "disposedEnqueued") await host.dispose();
+        else engine.emit({ type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
+      }
+      if (scenario === "consumerReject") {
+        assert.equal(intake.terminations, 1);
+      }
+      await rejected;
+      await host.dispose();
+      assert.equal(engine.terminations, 1);
+      assert.equal(intake.terminations, 1);
+    } finally {
+      await host?.dispose();
+      if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+      else Object.defineProperty(globalThis, "Worker", original);
+    }
+  });
+}
+
 test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户", { timeout: 10000 }, async () => {
   const worker = new FakeWorker();
   const requests = new WorkerRequestScope(worker);

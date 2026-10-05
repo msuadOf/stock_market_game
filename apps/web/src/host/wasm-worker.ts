@@ -12,6 +12,7 @@ import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDecisionTraceRecord[];
 type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
+  readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
   readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
@@ -35,6 +36,7 @@ export function isE2EStepMode(mode: unknown): boolean {
 const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
 
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
+let ingressBridge: { module: WebAssembly.Module; memory: WebAssembly.Memory; diagnostics: boolean } | null = null;
 const slot = new WasmSessionSlot(() => wasmModule);
 const loop = new WasmTickLoop({
   slot,
@@ -101,6 +103,14 @@ function postBaseline(): void {
   });
 }
 
+function postIngressBridge(): void {
+  const [session, wasm] = slot.requireHandle();
+  if (ingressBridge === null) throw new Error("共享 WASM ingress memory 尚未初始化");
+  const token = (wasm as WasmTransportExtensions).ingress_token;
+  if (token === undefined) throw new Error("当前 WASM bindings 缺少共享 ingress，请重建 bindings");
+  ctx.postMessage({ type: "ingress", generation: slot.readGeneration(), token: token(session), ...ingressBridge });
+}
+
 function respondOperationError(message: WorkerMessage, error: unknown): void {
   ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
 }
@@ -127,7 +137,9 @@ async function initialize(requestedThreads: unknown): Promise<void> {
   }
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`加载 WASM 二进制失败：HTTP ${response.status}`);
-  await wasmModule.default(new Uint8Array(await response.arrayBuffer()));
+  const module = await WebAssembly.compile(await response.arrayBuffer());
+  const exports = await wasmModule.default(module);
+  ingressBridge = { module, memory: exports.memory, diagnostics: diagnosticsWasm };
   await wasmModule.initThreadPool(threads);
   ctx.postMessage({ type: "ready", threads });
 }
@@ -144,6 +156,7 @@ ctx.addEventListener("message", (event) => {
           slot.create(message.setup, message.seed);
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
+          postIngressBridge();
           ctx.postMessage({ type: "created", generation: slot.readGeneration(), capabilities: {
             ...capabilities,
             npcDecisionDiagnostics: capabilities.npcDecisionDiagnostics && optionalNpcDecisionTrace(wasm) !== undefined,
@@ -248,6 +261,7 @@ ctx.addEventListener("message", (event) => {
             stop: () => loop.stop(),
             restart: () => { queueMicrotask(() => loop.start()); },
           });
+          postIngressBridge();
           ctx.postMessage({
             type: "restored",
             requestId: message.requestId,

@@ -16,6 +16,81 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[test]
+fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 2;
+    let mut session = crate::GameSession::new(setup, 42).unwrap();
+    let source = session.shared_ingress();
+    let code = session.state.setup.stocks[0].code.clone();
+    let baseline = session
+        .state
+        .ingress_receipt_cursors
+        .next_stock_ordinal
+        .get(&code)
+        .copied()
+        .unwrap_or(0);
+    let intent = Intent::PlaceLimit {
+        code: code.clone(),
+        side: crate::Side::Buy,
+        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
+        qty: 100,
+    };
+    let (fast_tx, fast_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let mut npc_receipts = Vec::new();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap();
+    std::thread::scope(|scope| {
+        let player_intent = intent.clone();
+        scope.spawn(move || {
+            fast_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("快 NPC receipt 必须先完成");
+            source
+                .enqueue_player_intent(AccountId(0), player_intent)
+                .unwrap();
+            release_tx.send(()).unwrap();
+        });
+        pool.install(|| {
+            stream_npc_decisions_with(
+                snapshot(vec![AccountId(1), AccountId(2)]),
+                &crate::GameConfig::proposed_defaults(),
+                |account| {
+                    if account == AccountId(1) {
+                        release_rx
+                            .lock()
+                            .unwrap()
+                            .recv_timeout(std::time::Duration::from_secs(1))
+                            .expect("慢 NPC 必须等正式入口收到 Player 后才完成");
+                    }
+                },
+                |completed| {
+                    let received = session
+                        .receive_private_intent(completed.account, intent.clone())
+                        .unwrap();
+                    npc_receipts.push((completed.account, received.stock_ordinal));
+                    if completed.account == AccountId(2) {
+                        fast_tx.send(()).unwrap();
+                    }
+                    Ok::<_, ()>(())
+                },
+            )
+            .unwrap();
+        });
+    });
+    assert_eq!(
+        npc_receipts,
+        vec![(AccountId(2), baseline), (AccountId(1), baseline + 2)]
+    );
+    let players = session.save().unwrap().pending_player;
+    assert_eq!(players.len(), 1);
+    assert_eq!(players[0].stock_ordinal, baseline + 1);
+}
+
+#[test]
 fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_failure() {
     let snapshot = snapshot(vec![AccountId(1), AccountId(2)]);
     let received = Arc::new(std::sync::Mutex::new(Vec::new()));

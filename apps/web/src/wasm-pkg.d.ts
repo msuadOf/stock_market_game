@@ -11,8 +11,11 @@ declare module "*wasm-pkg/web_wasm.js" {
   } from "./types/engine";
   import type { EngineUpdate } from "./types/generated/EngineUpdate";
 
-  const init: (input: BufferSource) => Promise<void>;
+  const init: (input: BufferSource | WebAssembly.Module) => Promise<{ memory: WebAssembly.Memory }>;
   export default init;
+  export function initSync(options: { module: WebAssembly.Module; memory: WebAssembly.Memory }): unknown;
+  export function ingress_token(handle: number): number;
+  export function ingress_enqueue(token: number, intent: unknown): void;
   export function create_session(setup: SessionSetup, seed: bigint): number;
   export function step(handle: number): EngineUpdate;
   export function snapshot(handle: number): Snapshot;
