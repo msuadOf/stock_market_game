@@ -1,7 +1,6 @@
 use super::{GameSession, StepFatal, TickShadowPlan};
 use crate::session::account_book::AccountBook;
 use crate::{AccountId, Money, StockCode};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 /// DecisionShadow 观察、AccountValidation 预留的资源均来自报价过期后的事实；每个账户只准备一次。
@@ -123,14 +122,14 @@ impl DecisionResourceSnapshot {
                 .ok_or_else(|| allocation_invariant("live sell reservation overflow"))?;
         }
 
-        session
-            .state
-            .accounts
-            .par_iter()
-            .try_for_each(|(account_id, account)| {
+        session.state.accounts.validate_resources(
+            &configured_stocks,
+            &reserved_cash,
+            &reserved_sell,
+            |account_id, account| {
                 (|| {
                     let reserved = reserved_cash
-                        .get(account_id)
+                        .get(&account_id)
                         .copied()
                         .unwrap_or(Money::ZERO);
                     let available_cash = account.cash().sub(reserved).map_err(allocation_money)?;
@@ -141,7 +140,7 @@ impl DecisionResourceSnapshot {
                     }
 
                     let mut equity = account.cash();
-                    let reserved_for_account = reserved_sell.get(account_id);
+                    let reserved_for_account = reserved_sell.get(&account_id);
                     for (stock, position) in account.positions() {
                         let Some(price) = configured_stocks.get(stock) else {
                             continue;
@@ -179,7 +178,8 @@ impl DecisionResourceSnapshot {
                     let _ = equity;
                     Ok(())
                 })()
-            })?;
+            },
+        )?;
         if reserved_cash
             .keys()
             .any(|account| !session.state.accounts.contains_key(account))

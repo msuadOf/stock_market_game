@@ -8,7 +8,7 @@ use crate::{Account, AccountId};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::ops::Index;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const PAGE_SHIFT: u32 = 5;
 const GROUP_SHIFT: u32 = 4;
@@ -24,6 +24,13 @@ pub(super) struct AccountBook {
 struct AccountPage {
     accounts: BTreeMap<AccountId, Account>,
     validated: OnceLock<Result<(), StrategyStateError>>,
+    resource_validation: Mutex<Option<ResourceValidationCache>>,
+}
+
+struct ResourceValidationCache {
+    prices: Arc<BTreeMap<crate::StockCode, crate::Money>>,
+    cash: Vec<(AccountId, crate::Money)>,
+    sell: Vec<(AccountId, BTreeMap<crate::StockCode, u32>)>,
 }
 
 impl Clone for AccountPage {
@@ -31,6 +38,7 @@ impl Clone for AccountPage {
         Self {
             accounts: self.accounts.clone(),
             validated: OnceLock::new(),
+            resource_validation: Mutex::new(None),
         }
     }
 }
@@ -51,10 +59,58 @@ impl AccountPage {
 
     fn invalidate(&mut self) {
         self.validated = OnceLock::new();
+        self.resource_validation = Mutex::new(None);
     }
 }
 
 impl AccountBook {
+    /// 在相同账户页、价格及预留事实下校验资源。
+    pub(super) fn validate_resources(
+        &self,
+        prices: &BTreeMap<crate::StockCode, crate::Money>,
+        cash: &BTreeMap<AccountId, crate::Money>,
+        sell: &BTreeMap<AccountId, BTreeMap<crate::StockCode, u32>>,
+        validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
+    ) -> Result<(), super::StepFatal> {
+        let prices = Arc::new(prices.clone());
+        self.groups
+            .values()
+            .flat_map(|group| group.iter())
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .try_for_each(|(page_id, page)| {
+                let start = AccountId(page_id << PAGE_SHIFT);
+                let end = AccountId((page_id << PAGE_SHIFT) | ((1 << PAGE_SHIFT) - 1));
+                let cash_rows = || cash.range(start..=end).map(|(id, value)| (*id, *value));
+                let sell_rows = || sell.range(start..=end).map(|(id, value)| (*id, value));
+                let mut cache = page.resource_validation.lock().map_err(|error| {
+                    super::StepFatal::InvariantViolation {
+                        description: format!("账户资源校验缓存锁失败：{error}"),
+                        location: "AccountBook::validate_resources".to_owned(),
+                    }
+                })?;
+                if cache.as_ref().is_some_and(|cached| {
+                    cached.prices.as_ref() == prices.as_ref()
+                        && cached.cash.iter().copied().eq(cash_rows())
+                        && cached
+                            .sell
+                            .iter()
+                            .map(|(id, value)| (*id, value))
+                            .eq(sell_rows())
+                }) {
+                    return Ok(());
+                }
+                for (id, account) in &page.accounts {
+                    validate(*id, account)?;
+                }
+                *cache = Some(ResourceValidationCache {
+                    prices: prices.clone(),
+                    cash: cash_rows().collect(),
+                    sell: sell_rows().map(|(id, value)| (id, value.clone())).collect(),
+                });
+                Ok(())
+            })
+    }
     /// Install the committed account directory and release detached old pages
     /// across the worker pool. Each group owns disjoint account pages.
     pub(super) fn replace_and_drop_parallel(&mut self, replacement: Self) {
@@ -88,15 +144,6 @@ impl AccountBook {
         self.groups
             .values()
             .flat_map(|group| group.values().flat_map(|page| page.accounts.iter()))
-    }
-
-    pub(super) fn par_iter(&self) -> impl ParallelIterator<Item = (&AccountId, &Account)> {
-        self.groups
-            .values()
-            .flat_map(|group| group.values())
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .flat_map_iter(|page| page.accounts.iter())
     }
 
     pub(super) fn keys(&self) -> impl DoubleEndedIterator<Item = &AccountId> {
@@ -223,6 +270,73 @@ mod tests {
     use super::*;
     use crate::strategy::{MomentumStrategy, StrategyState};
     use crate::{AccountKind, Money, StockCode};
+
+    #[test]
+    fn resource_validation_reuses_immutable_pages_and_invalidates_every_input() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut accounts = AccountBook::default();
+        for id in [0, 32] {
+            accounts.insert(
+                AccountId(id),
+                Account::new(AccountId(id), AccountKind::Player, Money::from_cents(100)),
+            );
+        }
+        let calls = AtomicUsize::new(0);
+        let validate = |_: AccountId, _: &Account| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        };
+        let mut prices = BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]);
+        let mut cash = BTreeMap::new();
+        let mut sell = BTreeMap::new();
+        accounts
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        let mut shadow = accounts.clone_for_shadow().unwrap();
+        shadow
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 2, "未变化的页不应重复计算");
+        shadow
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(90));
+        shadow
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
+        prices.insert(StockCode("600000".to_owned()), Money::from_cents(101));
+        shadow
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
+        cash.insert(AccountId(32), Money::from_cents(5));
+        shadow
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
+        sell.insert(
+            AccountId(0),
+            BTreeMap::from([(StockCode("600000".to_owned()), 100)]),
+        );
+        shadow
+            .validate_resources(&prices, &cash, &sell, &validate)
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
+        accounts
+            .validate_resources(
+                &BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            8,
+            "shadow 的预留缓存不得错误适用于旧 authority"
+        );
+    }
 
     #[test]
     fn shadow_detaches_only_a_changed_group_and_account_page() {

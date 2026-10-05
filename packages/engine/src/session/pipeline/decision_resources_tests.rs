@@ -593,6 +593,8 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         .unwrap()
         .grant_position(code.clone(), 1, crate::Money::from_cents(1))
         .unwrap();
+    // 先建立成功缓存，再单独改变价格；旧成功结果不能掩盖后续溢出。
+    DecisionResourceSnapshot::seal(&game).unwrap();
     game.state
         .markets
         .get_mut(&code)
