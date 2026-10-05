@@ -1,4 +1,5 @@
 import type { AccountSnap } from "../../types/generated/AccountSnap.ts";
+import { accountId as canonicalU64 } from "./guards.ts";
 import type { AuctionPoint } from "../../types/generated/AuctionPoint.ts";
 import type { CivilRefresh } from "../../types/generated/CivilRefresh.ts";
 import type { CivilUpdate } from "../../types/generated/CivilUpdate.ts";
@@ -29,12 +30,12 @@ import {
 } from "./wire-values.ts";
 
 const EVENT_NAMES = [
-  "Trade", "AuctionTick", "AuctionCompleted", "PriceTick", "DayBoundary", "CivilDateAdvanced",
+  "Trade", "PublicTrade", "PrivateEventOmitted", "AuctionTick", "AuctionCompleted", "PriceTick", "DayBoundary", "CivilDateAdvanced",
   "CompanyDisclosurePublished", "IntentRejected", "SettlementError", "OrderCanceled", "OrderAccepted",
 ] as const;
 const EVENT_SOURCES = ["Sealed", "QuoteExpiry", "PriceTick", "DayEnd", "Session"] as const;
 const REJECTION_REASONS = [
-  "InsufficientCash", "InsufficientShares", "LimitExceeded", "PriceCageExceeded", "UnknownStock",
+  "InsufficientCash", "InsufficientShares", "LimitExceeded", "PriceCageExceeded", "UnknownStock", "ExchangeClosed",
   "AuctionLimitOrderRequired", "AuctionOrderNotCancelable", "AuctionOrderEntryClosed", "InvalidQuantity",
   "OrderNotFound", "OrderAlreadyFilled", "NotOrderOwner",
 ] as const;
@@ -54,7 +55,7 @@ function entity(value: unknown, path: string): EntityTag {
     case "Stock":
       return { Stock: text(payload, `${path}.Stock`) };
     case "Account":
-      return { Account: safeInteger(payload, `${path}.Account`) };
+      return { Account: canonicalU64(payload, `${path}.Account`) };
     default:
       return malformed(path, `未知实体标签：${kind}`);
   }
@@ -83,7 +84,13 @@ function event(value: unknown, path: string): Event {
   switch (kind) {
     case "Trade":
       exact(payload, ["seq", "code", "price", "qty", "maker", "taker"], `${path}.Trade`);
-      return { Trade: { seq, code: text(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: safeInteger(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: safeInteger(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
+return { Trade: { seq, code: text(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: canonicalU64(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: canonicalU64(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
+    case "PublicTrade":
+      exact(payload, ["seq", "code", "price", "qty"], `${path}.PublicTrade`);
+      return { PublicTrade: { seq, code: text(field(payload, "code", `${path}.PublicTrade`), `${path}.PublicTrade.code`), price: parseMoney(field(payload, "price", `${path}.PublicTrade`), `${path}.PublicTrade.price`), qty: safeU32(field(payload, "qty", `${path}.PublicTrade`), `${path}.PublicTrade.qty`) } };
+    case "PrivateEventOmitted":
+      exact(payload, ["seq"], `${path}.PrivateEventOmitted`);
+      return { PrivateEventOmitted: { seq } };
     case "AuctionTick":
       exact(payload, ["seq", "tick", "phase", "code", "indicative_price", "matched_volume", "imbalance"], `${path}.AuctionTick`);
       return { AuctionTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionTick`), `${path}.AuctionTick.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionTick`), TRADING_PHASES, `${path}.AuctionTick.phase`), code: text(field(payload, "code", `${path}.AuctionTick`), `${path}.AuctionTick.code`), indicative_price: nullable(field(payload, "indicative_price", `${path}.AuctionTick`), parseMoney, `${path}.AuctionTick.indicative_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionTick`), `${path}.AuctionTick.matched_volume`), imbalance: safeInteger(field(payload, "imbalance", `${path}.AuctionTick`), `${path}.AuctionTick.imbalance`) } };
@@ -104,16 +111,16 @@ function event(value: unknown, path: string): Event {
       return { CompanyDisclosurePublished: { seq, publication_id: safeU32(field(payload, "publication_id", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.publication_id`), company: text(field(payload, "company", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.company`), published_at: parseInstant(field(payload, "published_at", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.published_at`), kind: parseDisclosureKind(field(payload, "kind", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.kind`) } };
     case "IntentRejected":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.IntentRejected`);
-      return { IntentRejected: { seq, account: safeInteger(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: text(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
+      return { IntentRejected: { seq, account: canonicalU64(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: text(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
     case "SettlementError":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.SettlementError`);
-      return { SettlementError: { seq, account: safeInteger(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: text(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
+      return { SettlementError: { seq, account: canonicalU64(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: text(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
     case "OrderCanceled":
       exact(payload, ["seq", "account", "code", "id", "remaining_qty"], `${path}.OrderCanceled`);
-      return { OrderCanceled: { seq, account: safeInteger(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: text(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
+      return { OrderCanceled: { seq, account: canonicalU64(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: text(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
     case "OrderAccepted":
       exact(payload, ["seq", "account", "code", "id", "side", "price", "remaining_qty"], `${path}.OrderAccepted`);
-      return { OrderAccepted: { seq, account: safeInteger(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: text(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
+      return { OrderAccepted: { seq, account: canonicalU64(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: text(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
     default:
       return malformed(path, `未处理事件变体：${kind}`);
   }
@@ -167,6 +174,7 @@ export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapsh
     active_daily_candles: mapEntries(field(source, "active_daily_candles", path), `${path}.active_daily_candles`, parseDailyCandle),
   };
   for (const [accountId, account] of Object.entries(snapshot.accounts)) {
+    canonicalU64(accountId, `${path}.accounts.${accountId}`);
     for (const code of Object.keys(account.positions)) {
       if (!Object.hasOwn(snapshot.markets, code)) {
         malformed(`${path}.accounts.${accountId}.positions.${code}`, `持仓 ${code} 缺少行情，不能估值`);

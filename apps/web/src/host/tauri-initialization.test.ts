@@ -3,6 +3,7 @@ import test from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { createTauriHost } from "./tauri-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
 
 const initialSnapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
 type IpcHandler = Parameters<typeof mockIPC>[0];
@@ -16,9 +17,9 @@ async function withInitializationIpc(run: (calls: { command: string; args: Recor
     const response = handler(command, args);
     if (response !== undefined) return response;
     if (command === "plugin:event|listen") return (args as { handler: number }).handler;
-    if (command === "create_session") return "owned-session";
+    if (command === "create_session") return { sessionId: "owned-session", setup: DEFAULT_SETUP, seed: "1", resumed: false };
     if (command === "engine_baseline") return { snapshot: initialSnapshot, generation: "1", timeline_id: "owned-timeline", civil_date: "2030-01-01" };
-    if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
+    if (command === "host_capabilities") return { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
     return null;
   });
   try {

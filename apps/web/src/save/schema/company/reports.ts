@@ -1,4 +1,6 @@
-import { SaveSchemaError, array, civilDate, exact, integer, oneOf, record, string } from "../primitives.ts"
+import { SaveSchemaError, array, boolean, civilDate, exact, integer, oneOf, record, string } from "../primitives.ts"
+import { parseMonthlyReportSchedule } from "../report-frequency.ts"
+import type { MonthlyReportSchedule } from "../../../types/generated/MonthlyReportSchedule"
 import { parseShockKind, type ShockKind } from "./policies/shock.ts"
 import { amount, instant, period, type CivilInstantValue, type DecimalAmount } from "./value.ts"
 
@@ -19,8 +21,9 @@ export type Notes = { readonly items: readonly NoteItem[]; readonly consolidatio
 export type NoteItem = { readonly code: string; readonly name: string; readonly target: NoteTarget; readonly opening: DecimalAmount; readonly movement: DecimalAmount; readonly ytd_movement: DecimalAmount; readonly closing: DecimalAmount }
 export type ReportVersion = { readonly sequence: number; readonly supersedes: number | null; readonly kind: "Original" | { readonly Correction: { readonly reason: string } } }
 export type ReportSet = { readonly scope: Scope; readonly period: string; readonly kind: (typeof reportKinds)[number]; readonly window: readonly [string, string]; readonly version: ReportVersion; readonly balance_sheet: BalanceSheet; readonly income: { readonly quarter: IncomeColumns; readonly cumulative: IncomeColumns; readonly prior_year: Comparative<IncomeColumns>; readonly minority_net_income: DecimalAmount | null; readonly net_income_to_parent: DecimalAmount | null }; readonly cash_flow: CashFlow; readonly equity: Equity; readonly notes: Notes }
-export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | "Correction"
-export type PublishedReport = { readonly id: number; readonly company: string; readonly policy: { readonly chart_version: number }; readonly approved_at: CivilInstantValue; readonly published_at: CivilInstantValue; readonly origin: PublicationOrigin; readonly supersedes: number | null; readonly reports: ReportSet }
+type ScheduledKind = (typeof scheduledKinds)[number] | { readonly Monthly: { readonly month: number } }
+export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly MonthlyDisclosure: { readonly schedule: MonthlyReportSchedule; readonly delay_days: number; readonly seeded: boolean } } | "Correction"
+export type PublishedReport = { readonly source: "SimpleGenerated" | "SimulationAccounting"; readonly id: number; readonly company: string; readonly policy: { readonly chart_version: number }; readonly approved_at: CivilInstantValue; readonly published_at: CivilInstantValue; readonly origin: PublicationOrigin; readonly supersedes: number | null; readonly reports: ReportSet }
 export type Announcement = { readonly id: number; readonly company: string; readonly occurred_on: string; readonly published_at: CivilInstantValue; readonly event: { readonly kind: ShockKind; readonly amplitude_bp: number; readonly starts_on: string; readonly expires_on: string } }
 export type PublicLibrary = { readonly next_seq: number; readonly reports: readonly PublishedReport[]; readonly announcements: readonly Announcement[] }
 
@@ -36,6 +39,56 @@ export function parseReportSet(value: unknown, path: string): ReportSet {
 }
 
 function parseVersion(value: unknown, path: string): ReportVersion { const item = record(value, path); exact(item, ["sequence", "supersedes", "kind"], path); const kind = item.kind === "Original" ? item.kind : (() => { const [tag, body] = variant(item.kind, `${path}.kind`); if (tag !== "Correction") throw new SaveSchemaError(`${path}.kind`, "包含无效版本种类"); const correction = record(body, `${path}.kind.Correction`); exact(correction, ["reason"], `${path}.kind.Correction`); return { Correction: { reason: string(correction.reason, `${path}.kind.Correction.reason`) } } })(); return { sequence: integer(item.sequence, `${path}.sequence`, 1), supersedes: item.supersedes === null ? null : integer(item.supersedes, `${path}.supersedes`, 1), kind } }
-function parseOrigin(value: unknown, path: string): PublicationOrigin { if (value === "Correction") return value; const [tag, body] = variant(value, path); if (tag !== "SeededPrehistory" && tag !== "ScheduledDisclosure") throw new SaveSchemaError(path, "包含无效公布来源"); const item = record(body, `${path}.${tag}`); exact(item, ["fiscal_year", "kind", "offset_days"], `${path}.${tag}`); const result = { fiscal_year: integer(item.fiscal_year, `${path}.${tag}.fiscal_year`), kind: oneOf(item.kind, `${path}.${tag}.kind`, scheduledKinds), offset_days: integer(item.offset_days, `${path}.${tag}.offset_days`, 0) }; return tag === "SeededPrehistory" ? { SeededPrehistory: result } : { ScheduledDisclosure: result } }
+function parseScheduledKind(value: unknown, path: string): ScheduledKind {
+  if (typeof value === "string") return oneOf(value, path, scheduledKinds)
+  const item = record(value, path)
+  exact(item, ["Monthly"], path)
+  const body = record(item.Monthly, `${path}.Monthly`)
+  exact(body, ["month"], `${path}.Monthly`)
+  const month = integer(body.month, `${path}.Monthly.month`, 1)
+  if (month > 12) throw new SaveSchemaError(`${path}.Monthly.month`, "月份不能超过 12")
+  return { Monthly: { month } }
+}
+export function parsePublicationOrigin(value: unknown, path: string): PublicationOrigin {
+  if (value === "Correction") return value
+  const [tag, body] = variant(value, path)
+  const item = record(body, `${path}.${tag}`)
+  if (tag === "MonthlyDisclosure") {
+    exact(item, ["schedule", "delay_days", "seeded"], `${path}.MonthlyDisclosure`)
+    const schedule = parseMonthlyReportSchedule(item.schedule, `${path}.MonthlyDisclosure.schedule`)
+    const delay = integer(item.delay_days, `${path}.MonthlyDisclosure.delay_days`, 0)
+    const configured = "Preset" in schedule ? schedule.Preset.delay : schedule.Custom.delay
+    const maximum = configured === "None" ? 0 : configured.Uniform.max_days
+    if (delay > maximum) throw new SaveSchemaError(`${path}.MonthlyDisclosure.delay_days`, "实际延迟超出排期配置")
+    return { MonthlyDisclosure: { schedule, delay_days: delay, seeded: boolean(item.seeded, `${path}.MonthlyDisclosure.seeded`) } }
+  }
+  if (tag !== "SeededPrehistory" && tag !== "ScheduledDisclosure") throw new SaveSchemaError(path, "包含无效公布来源")
+  exact(item, ["fiscal_year", "kind", "offset_days"], `${path}.${tag}`)
+  const result = { fiscal_year: integer(item.fiscal_year, `${path}.${tag}.fiscal_year`), kind: parseScheduledKind(item.kind, `${path}.${tag}.kind`), offset_days: integer(item.offset_days, `${path}.${tag}.offset_days`, 0) }
+  if (typeof result.kind === "object") throw new SaveSchemaError(path, "Monthly必须使用显式MonthlyDisclosure排期来源")
+  return tag === "SeededPrehistory" ? { SeededPrehistory: result } : { ScheduledDisclosure: result }
+}
 
-export function parsePublicLibrary(value: unknown, path = "public_library"): PublicLibrary { const item = record(value, path); exact(item, ["next_seq", "reports", "announcements"], path); const reports = array(item.reports, `${path}.reports`).map((entry, index) => { const reportPath = `${path}.reports[${index}]`; const report = record(entry, reportPath); exact(report, ["id", "company", "policy", "approved_at", "published_at", "origin", "supersedes", "reports"], reportPath); const policy = record(report.policy, `${reportPath}.policy`); exact(policy, ["chart_version"], `${reportPath}.policy`); return { id: integer(report.id, `${reportPath}.id`, 0), company: string(report.company, `${reportPath}.company`), policy: { chart_version: integer(policy.chart_version, `${reportPath}.policy.chart_version`, 1) }, approved_at: instant(report.approved_at, `${reportPath}.approved_at`), published_at: instant(report.published_at, `${reportPath}.published_at`), origin: parseOrigin(report.origin, `${reportPath}.origin`), supersedes: report.supersedes === null ? null : integer(report.supersedes, `${reportPath}.supersedes`, 0), reports: parseReportSet(report.reports, `${reportPath}.reports`) } }); const announcements = array(item.announcements, `${path}.announcements`).map((entry, index) => { const announcementPath = `${path}.announcements[${index}]`; const announcement = record(entry, announcementPath); exact(announcement, ["id", "company", "occurred_on", "published_at", "event"], announcementPath); const event = record(announcement.event, `${announcementPath}.event`); exact(event, ["kind", "amplitude_bp", "starts_on", "expires_on"], `${announcementPath}.event`); const parsedKind = parseShockKind(event.kind, `${announcementPath}.event.kind`); if (typeof parsedKind === "object" && "PaymentFailure" in parsedKind && (event.amplitude_bp !== 0 || event.starts_on !== announcement.occurred_on || event.expires_on !== announcement.occurred_on)) throw new SaveSchemaError(`${announcementPath}.event`, "PaymentFailure 必须为幅度 0 的当日事实"); return { id: integer(announcement.id, `${announcementPath}.id`, 0), company: string(announcement.company, `${announcementPath}.company`), occurred_on: civilDate(announcement.occurred_on, `${announcementPath}.occurred_on`), published_at: instant(announcement.published_at, `${announcementPath}.published_at`), event: { kind: parsedKind, amplitude_bp: integer(event.amplitude_bp, `${announcementPath}.event.amplitude_bp`), starts_on: civilDate(event.starts_on, `${announcementPath}.event.starts_on`), expires_on: civilDate(event.expires_on, `${announcementPath}.event.expires_on`) } } }); return { next_seq: integer(item.next_seq, `${path}.next_seq`, 0), reports, announcements } }
+function parsePublishedReport(value: unknown, path: string): PublishedReport {
+  const report = record(value, path)
+  exact(report, ["source", "id", "company", "policy", "approved_at", "published_at", "origin", "supersedes", "reports"], path)
+  const policy = record(report.policy, `${path}.policy`)
+  exact(policy, ["chart_version"], `${path}.policy`)
+  const origin = parsePublicationOrigin(report.origin, `${path}.origin`)
+  const reports = parseReportSet(report.reports, `${path}.reports`)
+  const published = instant(report.published_at, `${path}.published_at`)
+  if (typeof origin === "object" && "MonthlyDisclosure" in origin) {
+    if (reports.kind !== "Monthly") throw new SaveSchemaError(`${path}.origin`, "MonthlyDisclosure来源必须为Monthly报告")
+    const monthly = origin.MonthlyDisclosure
+    const day = "Custom" in monthly.schedule ? monthly.schedule.Custom.day : monthly.schedule.Preset.preset === "FirstDayEvening" ? 1 : 10
+    const second = "Custom" in monthly.schedule ? monthly.schedule.Custom.second_of_day : 64800
+    const [yearText, monthText] = reports.period.split("-")
+    const date = new Date(Date.UTC(Number(yearText), Number(monthText), day + monthly.delay_days))
+    const expected = date.toISOString().slice(0, 10)
+    civilDate(expected, `${path}.origin.MonthlyDisclosure`)
+    if (date.getUTCFullYear() < 1900 || date.getUTCFullYear() > 2199 || published.date !== expected || published.second_of_day !== second) throw new SaveSchemaError(`${path}.published_at`, "公布时点不符合原期间月报排期与实抽延迟")
+  }
+  return { source: oneOf(report.source, `${path}.source`, ["SimpleGenerated", "SimulationAccounting"] as const), id: integer(report.id, `${path}.id`, 0), company: string(report.company, `${path}.company`), policy: { chart_version: integer(policy.chart_version, `${path}.policy.chart_version`, 1) }, approved_at: instant(report.approved_at, `${path}.approved_at`), published_at: published, origin, supersedes: report.supersedes === null ? null : integer(report.supersedes, `${path}.supersedes`, 0), reports }
+}
+
+export function parsePublicLibrary(value: unknown, path = "public_library"): PublicLibrary { const item = record(value, path); exact(item, ["next_seq", "reports", "announcements"], path); const reports = array(item.reports, `${path}.reports`).map((entry, index) => parsePublishedReport(entry, `${path}.reports[${index}]`)); const announcements = array(item.announcements, `${path}.announcements`).map((entry, index) => { const announcementPath = `${path}.announcements[${index}]`; const announcement = record(entry, announcementPath); exact(announcement, ["id", "company", "occurred_on", "published_at", "event"], announcementPath); const event = record(announcement.event, `${announcementPath}.event`); exact(event, ["kind", "amplitude_bp", "starts_on", "expires_on"], `${announcementPath}.event`); const parsedKind = parseShockKind(event.kind, `${announcementPath}.event.kind`); if (typeof parsedKind === "object" && "PaymentFailure" in parsedKind && (event.amplitude_bp !== 0 || event.starts_on !== announcement.occurred_on || event.expires_on !== announcement.occurred_on)) throw new SaveSchemaError(`${announcementPath}.event`, "PaymentFailure 必须为幅度 0 的当日事实"); return { id: integer(announcement.id, `${announcementPath}.id`, 0), company: string(announcement.company, `${announcementPath}.company`), occurred_on: civilDate(announcement.occurred_on, `${announcementPath}.occurred_on`), published_at: instant(announcement.published_at, `${announcementPath}.published_at`), event: { kind: parsedKind, amplitude_bp: integer(event.amplitude_bp, `${announcementPath}.event.amplitude_bp`), starts_on: civilDate(event.starts_on, `${announcementPath}.event.starts_on`), expires_on: civilDate(event.expires_on, `${announcementPath}.event.expires_on`) } } }); return { next_seq: integer(item.next_seq, `${path}.next_seq`, 0), reports, announcements } }

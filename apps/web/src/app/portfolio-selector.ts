@@ -1,5 +1,6 @@
 import type { AccountSnap, Cents } from "../types/engine.ts";
 import type { RootState } from "../store/store.ts";
+import { selectPlayerAccount } from "../store/remote-membership.ts";
 
 export interface PortfolioInput {
   account: AccountSnap | null;
@@ -7,7 +8,7 @@ export interface PortfolioInput {
 }
 
 export function selectPortfolioInput(state: RootState): PortfolioInput {
-  const account = state.snapshot.snapshot?.accounts["0"] ?? null;
+  const account = selectPlayerAccount(state);
   const markets = state.snapshot.snapshot?.markets ?? {};
   const heldPrices = Object.fromEntries(
     Object.entries(account?.positions ?? {})

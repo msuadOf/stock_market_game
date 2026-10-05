@@ -2,6 +2,7 @@
 import type { PublicReportAccountingSummary } from "./PublicReportAccountingSummary";
 import type { PublicReportFinancials } from "./PublicReportFinancials";
 import type { PublicReportKind } from "./PublicReportKind";
+import type { PublicationSource } from "./PublicationSource";
 
 export type PublicReportSummary = {
   /**
@@ -9,6 +10,7 @@ export type PublicReportSummary = {
    */
   id: string;
   company_id: string;
+  source: PublicationSource;
   period: string;
   kind: PublicReportKind;
   version_sequence: string;

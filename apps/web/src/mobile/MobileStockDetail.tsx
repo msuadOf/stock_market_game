@@ -1,7 +1,7 @@
 import { moneyToChartNumber } from "../utils/money.ts";
 import { auctionContinuousJoin, auctionDisplayPoints } from "../components/intraday-auction-display.ts";
 import { compareMoney, subtractMoney } from "../utils/money.ts";
-import { type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
@@ -10,6 +10,9 @@ import { FiveLevelBook } from "../components/FiveLevelBook.tsx";
 import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { MarketTradeTape } from "../components/MarketTradeTape.tsx";
 import { marketQuoteFacts } from "../components/market-quote-facts.ts";
+import type { IndicatorCapabilities, IntradayAverageCurveInput, IntradayAverageResult } from "../host/engine-host.ts";
+import type { IndicatorDataSource } from "../store/store.ts";
+import { resolveIndicatorRoute } from "../components/indicator-source-policy.ts";
 import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
@@ -20,8 +23,13 @@ import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
 const infoTabs = MOBILE_INFO_TABS;
+import { intradayAverageYuan } from "./market-model";
+import { calendarCandlePeriod, minuteKlinePeriod } from "../components/kline-periods.ts";
+import { TradeConfirmationTable } from "../components/TradeConfirmationTable.tsx";
+import type { PersonalTradeConfirmation } from "../host/engine-host.ts";
 
 interface Props {
+  canControl?: boolean;
   code: string;
   name: string;
   market: MarketSnap;
@@ -30,6 +38,20 @@ interface Props {
   dailyCandles: readonly KlinePoint[];
   activeDailyCandle?: KlinePoint;
   indicatorCalculator: IndicatorCalculator | null;
+  indicatorDataSource: IndicatorDataSource;
+  indicatorCapabilities: IndicatorCapabilities;
+  calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
+  onIndicatorDataSourceChange: (source: IndicatorDataSource) => void;
+  confirmations: readonly PersonalTradeConfirmation[];
+  confirmationLoading: boolean;
+  confirmationError: string | null;
+  confirmationQueried: boolean;
+  onRefreshConfirmations: () => void;
+  onOlderConfirmations?: () => void;
+  tradeHistoryContent?: ReactNode;
+  minuteHistoryContent?: ReactNode;
+  minuteKlineContent?: ReactNode;
+  dateMinuteHistoryContent?: ReactNode;
   trades: readonly TradeEvent[];
   elapsedMinutes: number;
   totalMinutes: number;
@@ -60,10 +82,71 @@ function tone(diff: number): "rise" | "fall" | "flat" {
 }
 
 
-function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
+function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, activeDailyCandle, elapsedMinutes, totalMinutes, gameDay, gameTick, indicatorDataSource, indicatorCapabilities, calculateIntradayAverageCurve }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "activeDailyCandle" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick" | "indicatorDataSource" | "indicatorCapabilities" | "calculateIntradayAverageCurve">) {
   const timeline = useTradingTimeline();
-  const projection = MobileIntradayProjection.fromInputs({ timeline, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
+  const projection = MobileIntradayProjection.fromInputs({ timeline, market, minutePoints, auctionPoints, trades, activeDailyCandle, elapsedMinutes, totalMinutes, gameDay, gameTick });
   const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress } = projection;
+  const averageRoute = resolveIndicatorRoute(indicatorDataSource, "intradayAverage", indicatorCapabilities);
+  const [rustAveragePoints, setRustAveragePoints] = useState<readonly { time: number; value: number }[]>([]);
+  const [rustCurrentAverage, setRustCurrentAverage] = useState<number | null>(null);
+  const [rustAveragePending, setRustAveragePending] = useState(false);
+  const [rustAverageError, setRustAverageError] = useState<string | null>(null);
+  const curvePoints = useMemo(() => minutePoints.filter((point) => point.cumulativeTurnoverCents !== undefined && point.cumulativeVolumeShares !== undefined && point.cumulativeTradeCount !== undefined), [minutePoints]);
+  const curveSamples = useMemo(() => curvePoints.map((point) => ({ turnoverCents: point.cumulativeTurnoverCents!, volumeShares: point.cumulativeVolumeShares!, tradeCount: point.cumulativeTradeCount! })), [curvePoints]);
+  const stats = activeDailyCandle?.tradeStats;
+  const volumeShares = activeDailyCandle?.volume;
+  const dailySample = stats === undefined || volumeShares === undefined ? null : { turnoverCents: stats.turnoverCents, tradeCount: stats.tradeCount, volumeShares };
+  const curveSamplesWithCurrent = useMemo(() => {
+    if (dailySample === null) return curveSamples;
+    const lastSample = curveSamples.at(-1);
+    return lastSample?.turnoverCents === dailySample.turnoverCents && lastSample.tradeCount === dailySample.tradeCount && lastSample.volumeShares === dailySample.volumeShares
+      ? curveSamples
+      : [...curveSamples, dailySample];
+  }, [curveSamples, dailySample?.turnoverCents, dailySample?.tradeCount, dailySample?.volumeShares]);
+  useEffect(() => {
+    let current = true;
+    setRustAveragePoints([]);
+    setRustCurrentAverage(null);
+    setRustAveragePending(false);
+    setRustAverageError(null);
+    if (averageRoute.kind !== "rust" || stats === undefined || volumeShares === undefined || volumeShares === 0) return () => { current = false; };
+    setRustAveragePending(true);
+    const currentSample = curveSamplesWithCurrent.at(-1);
+    const seriesKey = `${code}:${gameDay}:${minutePoints.length}:${minutePoints.at(-1)?.time ?? "empty"}:${currentSample?.turnoverCents ?? "none"}:${currentSample?.tradeCount ?? -1}:${currentSample?.volumeShares ?? -1}`;
+    void calculateIntradayAverageCurve({ seriesKey, samples: curveSamplesWithCurrent }).then((results) => {
+      if (!current) return;
+      if (results.length !== curveSamplesWithCurrent.length) throw new Error("Rust 分时均价曲线结果长度与请求不一致");
+      const values = results.flatMap((result, index) => {
+        const sample = curveSamplesWithCurrent[index];
+        if (result === null) {
+          if (sample.turnoverCents !== "0" || sample.volumeShares !== 0 || sample.tradeCount !== 0) throw new Error("Rust 分时均价曲线对非零成交事实返回无结果");
+          return [];
+        }
+        if (result.turnoverCents !== sample.turnoverCents || result.volumeShares !== sample.volumeShares) throw new Error("Rust 分时均价曲线返回统计与请求不一致");
+        const average = intradayAverageYuan(result.turnoverCents, result.volumeShares);
+        return average === null ? [] : [{ time: curvePoints[index]?.time ?? null, value: average }];
+      });
+      setRustAveragePoints(values.flatMap((point) => point.time === null ? [] : [point]));
+      setRustCurrentAverage(values.at(-1)?.value ?? null);
+      setRustAveragePending(false);
+    }).catch((error: unknown) => {
+      if (current) {
+        setRustAverageError(error instanceof Error ? error.message : String(error));
+        setRustAveragePending(false);
+      }
+    });
+    return () => { current = false; };
+  }, [averageRoute.kind, calculateIntradayAverageCurve, code, curvePoints, curveSamples, curveSamplesWithCurrent, gameDay, minutePoints, stats?.turnoverCents, stats?.tradeCount, volumeShares]);
+  const visibleTimes = new Set(visiblePoints.map((point) => point.time));
+  const rustAverageLine = rustAveragePoints.filter((point) => visibleTimes.has(point.time)).map((point) => `${intradayChartX({ phase: "continuous", minute: point.time })},${projection.priceY(point.value)}`).join(" ");
+  const selectedAverage = averageRoute.kind === "frontend" ? displayedAverage : rustCurrentAverage;
+  const averageUnavailableReason = averageRoute.kind === "unsupported"
+    ? `所选${indicatorDataSource === "rust" ? "Rust" : "前端"}指标源不支持分时均价，未回退到另一数据源。`
+    : rustAveragePending ? "Rust 分时均价曲线计算中…"
+      : rustAverageError !== null ? `Rust 分时均价计算失败：${rustAverageError}`
+      : stats === undefined ? "不支持（缺少真实成交额统计）"
+        : volumeShares === undefined ? "不支持（缺少真实成交股数）"
+          : "暂无成交";
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();
   const auction = auctionDisplayPoints(visibleAuctionPoints, moneyToChartNumber(market.last_close) / 100);
@@ -80,7 +163,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elap
     >
       <div className="msd-intraday-main">
         <div className="msd-chart-meta">
-          <span>集合竞价</span><b className="average">均价:{displayedAverage === null ? projection.averageUnavailableReason : displayedAverage.toFixed(2)}</b>
+          <span>集合竞价</span><b className="average">均价:{selectedAverage === null ? averageUnavailableReason : selectedAverage.toFixed(2)}</b>
           <span>最新:{yuan(market.last_price)}</span>
         </div>
         <div className="msd-intraday-chart">
@@ -99,7 +182,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elap
             {auction.length > 0 && <polyline className="msd-auction-line" points={auction.map(point => `${intradayChartX({ phase: "auction", minute: point.time })},${projection.priceY(point.value)}`).join(" ")}><title>无指示价时沿昨收0%参考轴显示；粗点表示竞价指示更新，并非已成交</title></polyline>}
             {auction.filter(point => point.updated).map(point => <circle key={point.time} className="msd-auction-dot" cx={intradayChartX({ phase: "auction", minute: point.time })} cy={projection.priceY(point.value)} r="0.15" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke"><title>竞价指示价或可匹配量更新</title></circle>)}
             {sessionJoin.length > 0 && <polyline className="msd-session-join" points={sessionJoin.map(point => `${point.x},${projection.priceY(point.value)}`).join(" ")} />}
-            <polyline className="msd-average-line" points={projection.averageLine()} />
+            <polyline className="msd-average-line" points={averageRoute.kind === "frontend" ? projection.averageLine() : rustAverageLine} />
             <polyline className="msd-price-line" points={projection.continuousLine()} />
           </svg>
           </div>
@@ -137,7 +220,7 @@ function FundsPanel({ activeDailyCandle }: Pick<Props, "activeDailyCandle">) {
           <div><span>成交量（手）</span><b>{formatTradeLots(facts.volume)}</b></div>
           <div><span>成交笔数</span><b>{facts.tradeCount === null ? "--" : facts.tradeCount}</b></div>
         </div>
-        <div className="msd-fund-bars" aria-label={statsUnavailable ? "旧存档缺少当日成交额和成交笔数" : "资金方向暂无数据"}><p>{statsUnavailable ? "当前旧存档只有成交量，没有可对账的成交额和笔数；进入下一交易日后会恢复完整统计。" : "引擎暂未提供主动买卖方向，故不推算或伪造“大单流入/流出”。"}</p></div>
+        <div className="msd-fund-bars" aria-label={statsUnavailable ? "缺少当日成交额和成交笔数" : "资金方向暂无数据"}><p>{statsUnavailable ? "当前没有可对账的当日成交额和笔数，不从截取成交缓存推算；请检查行情快照并反馈此错误。" : "引擎暂未提供主动买卖方向，故不推算或伪造“大单流入/流出”。"}</p></div>
       </div>
     </section>
   );
@@ -149,7 +232,6 @@ export function MobileStockDetail(props: Props) {
   const percent = priceChangePercent(market.last_price, market.last_close);
   const facts = marketQuoteFacts(props.activeDailyCandle);
   const { prices } = facts;
-  const chartType = props.period === "分时" ? "分时" : "日K";
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, items: readonly string[]) {
     const buttons = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
@@ -174,8 +256,9 @@ export function MobileStockDetail(props: Props) {
         <button type="button" className="msd-stock-switch msd-previous" aria-label="上一只" disabled={props.canSwitchStock === false} onClick={props.onPrevious}>◀</button>
         <div className="msd-security-title"><strong>{props.name}</strong><small>{props.code}</small></div>
         <button type="button" className="msd-stock-switch msd-next" aria-label="下一只" disabled={props.canSwitchStock === false} onClick={props.onNext}>▶</button>
-        <MobileRunToggle running={props.running} onToggle={props.onPauseToggle} variant="detail" />
+        <MobileRunToggle running={props.running} onToggle={props.onPauseToggle} variant="detail" disabled={props.canControl === false} />
         <MobileSpeedSelect
+          disabled={props.canControl === false}
           speed={props.speed}
           measuredSpeed={props.measuredSpeed}
           measuredSpeedTitle={props.measuredSpeedTitle}
@@ -189,9 +272,10 @@ export function MobileStockDetail(props: Props) {
       </section>
       {props.watchlistControl && <div className="msd-watchlist">{props.watchlistControl}</div>}
       <ChartPeriodTabs period={props.period} onChange={props.onPeriodChange} panelId="mobile-chart-panel" variant="detail" />
+      <label>指标数据源<select aria-label="指标数据源" value={props.indicatorDataSource} onChange={(event) => props.onIndicatorDataSourceChange(event.currentTarget.value === "rust" ? "rust" : "frontend")}><option value="frontend">前端</option><option value="rust">Rust</option></select></label>
       <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
-        <div hidden={chartType !== "分时"}><IntradayPanel {...props} /></div>
-        <div hidden={chartType === "分时"}><MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} /></div>
+        <div hidden={props.period !== "分时"}><IntradayPanel {...props} /></div>
+        {props.period === "五日" ? props.minuteHistoryContent : minuteKlinePeriod(props.period) !== null ? props.minuteKlineContent : calendarCandlePeriod(props.period) !== null && <MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} indicatorDataSource={props.indicatorDataSource} indicatorCapabilities={props.indicatorCapabilities} />}
       </div>
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
@@ -199,6 +283,9 @@ export function MobileStockDetail(props: Props) {
       <div id="mobile-info-panel" role="tabpanel" aria-labelledby={`info-${props.infoTab}`}>
         {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook code={props.code} market={market} /></section> : props.companyContent}
       </div>
+      <TradeConfirmationTable rows={props.confirmations} loading={props.confirmationLoading} error={props.confirmationError} hasQueried={props.confirmationQueried} onRefresh={props.onRefreshConfirmations} onOlder={props.onOlderConfirmations} />
+      {props.tradeHistoryContent}
+      {props.dateMinuteHistoryContent}
     </main>
   );
 }

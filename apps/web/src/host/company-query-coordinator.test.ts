@@ -54,8 +54,19 @@ function disclosure(seq: number, company: string): EngineEvent {
 }
 
 const host = {
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
+  capabilities: { persistence: "browser" as const, deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false },
 };
+
+test("公司公开状态覆盖匿名成交与私有省略seq，不把占位当作披露或金融通知", { timeout: 10000 }, () => {
+  const actions: unknown[] = [];
+  const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
+  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  const before = actions.length;
+  coordinator.acceptFrame(normalizedFrame([{ PublicTrade: { seq: 1, code: "600000", price: "1000", qty: 100 } }, { PrivateEventOmitted: { seq: 2 } }], 0, 2), { civilDate: "2030-01-01", revision: "1" });
+  assert.deepEqual(actions.slice(before).map((action) => (action as { type: string }).type), ["company/advanceCompanyEventCoverage", "company/reconcileCompanyPublicMetadata"]);
+  coordinator.acceptFrame(normalizedFrame([disclosure(3, "600001")], 2, 3), { civilDate: "2030-01-01", revision: "1" });
+  assert.ok(actions.length > before);
+});
 
 test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局", async () => {
   for (const rejected of [false, true]) {

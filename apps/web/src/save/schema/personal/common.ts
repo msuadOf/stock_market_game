@@ -1,5 +1,5 @@
 import { money as parseCanonicalMoney } from "../primitives.ts"
-import { SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
+import { accountId, SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
 
 export type StringMap<T> = { readonly [key: string]: T }
 
@@ -9,7 +9,7 @@ const U16_MAX = 65_535n
 const U64_MAX = 18_446_744_073_709_551_615n
 
 export function accountKey(key: string, path: string): void {
-  boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
+  accountId(key, path)
 }
 
 export function planKey(key: string, path: string): void {

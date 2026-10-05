@@ -23,6 +23,7 @@ export function ReportNotes({ report }: ReportNotesProps) {
   return (
     <section className="company-notes" aria-labelledby="company-notes-title">
       <h4 id="company-notes-title">报表附注与口径</h4>
+      <p>生成来源：{report.source}；仅显示已公开财务材料，不展示未披露的模型状态。</p>
       <dl>
         <div><dt>批准时刻</dt><dd>{report.approved_date} {formatSecondOfDay(report.approved_second_of_day)}</dd></div>
         <div><dt>发布时刻</dt><dd>{report.published_date} {formatSecondOfDay(report.published_second_of_day)}</dd></div>
@@ -36,7 +37,7 @@ export function ReportNotes({ report }: ReportNotesProps) {
       <NoteDetails items={financials.notes.items} title="已披露科目明细" />
       {"Consolidated" in financials.scope && <NoteDetails items={financials.notes.consolidation_split_items} title="合并权益拆分附注" />}
       <p>附注金额为净借方口径，负数不等于股价下跌。本界面只显示已公布报告，不显示总账、未披露经营事实或 NPC 私有信息。</p>
-      <p>游戏简化：未实现其他综合收益或股东分配；无对应科目的类别不补造明细，未披露的比较项不填零。报表按现有会计模型列报，不构成真实会计准则合规声明。</p>
+      <p>游戏报表按当前财务规则列报，不构成真实会计准则合规声明。生成来源不改变查询或股本行为规则；无对应科目的类别不补造明细，未披露的比较项不填零。</p>
     </section>
   );
 }

@@ -4,6 +4,7 @@ import type { Side } from "./Side";
 import type { StockCode } from "./StockCode";
 
 export type PlayerWorkingOrder = {
+  owner: string;
   id: number;
   code: StockCode;
   side: Side;

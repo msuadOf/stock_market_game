@@ -4,6 +4,7 @@ import type { StrictSaveEnvelope } from "./schema/root.ts";
 export type DayEndSaveReference = { readonly seq: number; readonly settledDate: string };
 
 export function validateDayEndArchive(slot: StrictSaveEnvelope): StrictSaveEnvelope {
+  if (Object.keys(slot.runtime_state.active_minute_history).length > 0) throw new Error("日终存档不能包含日内活动分钟事实");
   if (slot.civil_clock.settled_through === null) throw new Error("存档没有已完成的日终结算");
   if (slot.snapshot.tick % slot.setup.ticks_per_day !== 0) throw new Error("日内快照不能作为日终存档加载");
   if (slot.pending_player.length > 0 || (slot.pending_npc !== null && slot.pending_npc.intents.length > 0)) {

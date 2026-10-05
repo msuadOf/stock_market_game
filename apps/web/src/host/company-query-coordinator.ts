@@ -212,6 +212,8 @@ export class CompanyQueryCoordinator {
 
 function companyEventSeq(event: EngineEvent): number {
   if ("Trade" in event) return event.Trade.seq;
+  if ("PublicTrade" in event) return event.PublicTrade.seq;
+  if ("PrivateEventOmitted" in event) return event.PrivateEventOmitted.seq;
   if ("AuctionTick" in event) return event.AuctionTick.seq;
   if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
   if ("PriceTick" in event) return event.PriceTick.seq;

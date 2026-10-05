@@ -9,6 +9,7 @@ export type RejectionReason =
   | "LimitExceeded"
   | "PriceCageExceeded"
   | "UnknownStock"
+  | "ExchangeClosed"
   | "AuctionLimitOrderRequired"
   | "AuctionOrderNotCancelable"
   | "AuctionOrderEntryClosed"

@@ -3,7 +3,7 @@ import test from "node:test"
 import { parseBeliefBook } from "./beliefs.ts"
 
 const base = {
-  npc: 1,
+  npc: "1",
   institution_account_risk_paused: false,
   profile: { Institution: "Balanced" },
   analysis: {

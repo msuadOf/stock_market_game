@@ -4,10 +4,9 @@ import type { HostFailure, HostUpdate } from "../host/host-update.ts";
 import { createProtocolUpdate } from "../host/host-update.ts";
 import { createTauriHost } from "../host/tauri-host.ts";
 import { createRemoteHost } from "../host/remote-host.ts";
-import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";
+import type { WorkerE2EHost } from "../host/worker-host.ts";
 import { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";
-import { DEFAULT_SEED } from "../config/defaults.ts";
-import { createNewSessionSeed } from "../config/session-seed.ts";
+import { parseSessionSeed } from "../config/seed-draft.ts";
 import type { SessionSetup } from "../types/engine.ts";
 import { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
@@ -38,16 +37,19 @@ export interface SessionHostLifecyclePorts {
   setIndicatorCalculator(calculator: IndicatorCalculator): () => void;
   connectProtocol(host: EngineHost): void;
   disconnectProtocol(): void;
-  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget): Promise<EngineHost>;
-  createSeed?(): bigint;
+  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, resumeArchive?: boolean): Promise<EngineHost>;
+  consumeChosenSessionSeed(): bigint;
+  setSeedDraft(seed: string, preserveOrigin?: boolean): void;
   checkWasmEnvironment(): void;
   isDocumentHidden(): boolean;
-  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
+  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null>; cancelPending(): void };
   setActiveSetup(setup: SessionSetup): void;
   configureMarketTiming(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
   setFloatAllocationDraft(allocation: SessionSetup["float_allocation"]): void;
+  setReportFrequencyDraft(frequency: SessionSetup["report_frequency"]): void;
+  setCompanySystemDraft(config: string): void;
   setInitialAllocation(allocation: InitialAllocation | null): void;
   setDeliveryModes(modes: readonly DeliveryMode[]): void;
   setDeliveryModeState(mode: DeliveryMode | null): void;
@@ -67,7 +69,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
     isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
-    createSeed = createNewSessionSeed,
+    consumeChosenSessionSeed,
   } = ports;
   let cancelled = false;
   let ownedHost: EngineHost | null = null;
@@ -91,7 +93,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     sessionReplacementGateRef.current.invalidate();
     playerOrderRefreshGateRef.current.invalidate();
     let stopFailure: unknown;
-    try { await ownedHost?.stop(); } catch (failure) { stopFailure = failure; }
+    try { if (ownedHost?.capabilities.persistence !== "remote") await ownedHost?.stop(); } catch (failure) { stopFailure = failure; }
     try { await releaseOwnedHost(); } catch (failure) {
       if (stopFailure !== undefined) throw new AggregateError([stopFailure, failure], "停止宿主与释放资源均失败");
       throw failure;
@@ -103,15 +105,16 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     try {
       setInitialAllocation(null);
       if (startupTarget.kind === "wasm") checkWasmEnvironment();
-      const initialSlot = await initialSaveSourceRef.current.read(async () => {
-        if (TRADING_E2E_MODE) return null;
+      const resumeArchive = initialSaveSourceRef.current.shouldResume();
+      const initialSlot = startupTarget.kind === "remote" ? null : await initialSaveSourceRef.current.read(async () => {
+        if (TRADING_E2E_MODE || startupTarget.kind !== "wasm") return null;
         const slot = await getBrowserSaveRepository().load();
         return slot === null ? null : validateDayEndArchive(slot);
       });
       if (cancelled) return;
       const setup = initialSlot === null ? sessionSetup : initialSlot.setup;
-      const seed = initialSlot === null ? (TRADING_E2E_MODE ? DEFAULT_SEED : createSeed()) : BigInt(initialSlot.seed);
-      const host = await createHost(setup, seed, startupTarget);
+      const seed = initialSlot === null ? consumeChosenSessionSeed() : parseSessionSeed(initialSlot.seed);
+      const host = await createHost(setup, seed, startupTarget, resumeArchive);
       ownedHost = host;
       if (cancelled) {
         // React StrictMode 会执行一次探测性挂载；异步创建完成后必须停掉该宿主，避免泄漏 Worker/线程池。
@@ -120,16 +123,22 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
       if (initialSlot !== null) await host.load(initialSlot);
       if (cancelled) return;
-      if (initialSlot === null) {
+      const actualSetup = initialSlot === null && host.startupContext !== undefined ? host.startupContext.setup : setup;
+      const actualSeed = initialSlot === null && host.startupContext !== undefined ? host.startupContext.seed : seed.toString();
+      parseSessionSeed(actualSeed);
+      if (initialSlot === null && host.startupContext?.resumed !== true) {
         const allocation = await host.initialAllocation();
         if (cancelled) return;
         setInitialAllocation(allocation);
       }
-      setActiveSetup(setup);
-      configureMarketTiming(setup);
-      setStartDateDraft(setup.start_date);
-      setPriceCageEnabledDraft(setup.config.price_cage_enabled);
-      setFloatAllocationDraft(setup.float_allocation);
+      setActiveSetup(actualSetup);
+      configureMarketTiming(actualSetup);
+      setStartDateDraft(actualSetup.start_date);
+      setPriceCageEnabledDraft(actualSetup.config.price_cage_enabled);
+      setFloatAllocationDraft(actualSetup.float_allocation);
+      ports.setReportFrequencyDraft(actualSetup.report_frequency);
+      ports.setCompanySystemDraft(JSON.stringify(actualSetup.company_system, null, 2));
+      ports.setSeedDraft(actualSeed, initialSlot === null && host.startupContext?.resumed !== true);
       hostRef.current = host;
       unsetIndicatorCalculator = setIndicatorCalculator(host.calculateIndicators);
       connectProtocol(host);
@@ -156,9 +165,9 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         if (!cancelled) setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
       });
       // 同步 RTK autoOrders → Manager
-      await host.setSpeed(speed);
+      if (host.capabilities.persistence !== "remote") await host.setSpeed(speed);
       if (cancelled) return;
-      await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
+      if (host.capabilities.persistence !== "remote") await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
       if (cancelled) return;
       await host.start(
         (update) => !cancelled && host === hostRef.current ? hostUpdateRef.current(update) : false,
@@ -193,14 +202,14 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
       // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
       // 避免隐藏页持续以 720x/最快占满 CPU。
-      if (isDocumentHidden()) await host.stop();
+      if (host.capabilities.persistence !== "remote" && isDocumentHidden()) await host.stop();
       if (cancelled) return;
       if (TRADING_E2E_MODE) {
         await host.stop();
         if (cancelled) return;
         onRunning(false);
       } else {
-        onRunning(true);
+        onRunning(host.capabilities.persistence === "remote" ? (await host.readSpeedMetrics()).running : true);
       }
       if (!cancelled) {
         initialSaveSourceRef.current.complete();
@@ -224,6 +233,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   const dispose = async () => {
     cancelled = true;
     dayEndPersistenceRef.current.invalidate();
+    if (startupTarget.kind === "wasm") getBrowserSaveRepository().cancelPending();
     saveSelectionGenerationRef.current += 1;
     sessionReplacementGateRef.current.invalidate();
     if (TRADING_E2E_MODE) delete window.__STOCK_GAME_E2E__;
@@ -232,10 +242,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   };
   return { start, stopCurrentSession, releaseOwnedHost, dispose };
 }
-function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean): Promise<EngineHost> {
-  if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
-  if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
-  // 受控验收页面各保留双线程，避免并行页面重复占满全部核心；生产继续读取浏览器能力。
+async function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, resumeArchive: boolean): Promise<EngineHost> {
+  if (startupTarget.kind === "tauri") return createTauriHost(setup, seed, { resumeArchive });
+  if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl, token: startupTarget.token, context: startupTarget.context });
+  const { createWorkerHost } = await import("../host/worker-host.ts");
   return createWorkerHost(setup, seed, { enableE2EStepping: tradingE2EMode, threadCount: tradingE2EMode ? 2 : undefined });
 }
 
@@ -251,7 +261,7 @@ export function useSessionHostLifecycle(options: Options): void {
   const { sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator } = options;
   useEffect(() => {
     const lifecycle = createSessionHostLifecycle({ ...options,
-      createHost: (setup, seed, target) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE),
+      createHost: (setup, seed, target, resumeArchive) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, resumeArchive === true),
       checkWasmEnvironment: () => assertWasmEnvironment(browserWasmEnvironment()),
       isDocumentHidden: () => document.hidden,
     });

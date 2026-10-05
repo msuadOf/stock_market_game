@@ -20,7 +20,7 @@ test("Money wire：条件单价格不能按字符串字典序比较", { timeout:
 });
 
 test("Money wire：活动委托严格拒绝 Number 并保留大金额原值", { timeout: 10000 }, () => {
-  const order = { id: 1, code: "600101", side: "Buy", price: "9007199254740993", remainingQty: 100, venue: "continuous", frozen: "cash" };
+  const order = { owner: "0", id: 1, code: "600101", side: "Buy", price: "9007199254740993", remainingQty: 100, venue: "continuous", frozen: "cash" };
   assert.equal(normalizePlayerWorkingOrders([order])[0]?.price, "9007199254740993");
   assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: 1000 }]), /十进制整数分字符串/);
 });

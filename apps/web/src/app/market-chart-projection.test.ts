@@ -116,8 +116,8 @@ test("竞价成交量不混入连续分钟量，新日只保留新日采样且�
   const oldDay = quoteWithDailyStats(15300, 200, 200, "240000", 10);
   owner.upsertFrames([oldDay, next, later]);
   assert.deepEqual(owner.pricePointsFor("600000"), [
-    { time: 0, value: 12, volume: 5, buy: true, cumulativeTurnoverCents: "6000", cumulativeVolumeShares: 5 },
-    { time: 1, value: 12, volume: 3, buy: true, cumulativeTurnoverCents: "9600", cumulativeVolumeShares: 8 },
+    { time: 0, value: 12, volume: 5, buy: true, cumulativeTurnoverCents: "6000", cumulativeVolumeShares: 5, cumulativeTradeCount: 1 },
+    { time: 1, value: 12, volume: 3, buy: true, cumulativeTurnoverCents: "9600", cumulativeVolumeShares: 8, cumulativeTradeCount: 2 },
   ]);
   assert.deepEqual(owner.auctionPointsFor("600000"), []);
 });
@@ -138,13 +138,13 @@ test("分时采样附着同帧权威日累计成交额与股数，含基线与�
   owner.installBaseline({ ...baseState(), intraday: [first] });
   assert.deepEqual(owner.pricePointsFor("600000"), [{
     time: 0, value: 10, volume: 100, buy: true,
-    cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100,
+    cumulativeTurnoverCents: "100000", cumulativeVolumeShares: 100, cumulativeTradeCount: 2,
   }]);
   const updated = quoteWithDailyStats(902, 160, 300, "260000", 3, "800", { open: "1000", high: "1000", low: "800", close: "800" });
   owner.upsertFrames([updated]);
   assert.deepEqual(owner.pricePointsFor("600000").at(-1), {
     time: 0, value: 8, volume: 160, buy: true,
-    cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300,
+    cumulativeTurnoverCents: "260000", cumulativeVolumeShares: 300, cumulativeTradeCount: 3,
   });
 });
 

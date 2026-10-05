@@ -171,6 +171,8 @@ export function rejectionText(reason: IntentRejectedEvent["reason"]): string {
       return "委托价格超出连续竞价价格笼子";
     case "UnknownStock":
       return "未知股票";
+    case "ExchangeClosed":
+      return "该证券所属交易所今日休市，不接受委托";
     case "AuctionLimitOrderRequired":
       return "集合竞价仅接受限价委托";
     case "AuctionOrderNotCancelable":

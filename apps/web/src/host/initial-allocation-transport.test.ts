@@ -3,6 +3,7 @@ import test from "node:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { createWorkerHost } from "./worker-host.ts";
 import { createTauriHost } from "./tauri-host.ts";
+import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost } from "./remote-host.ts";
 import { DEFAULT_SETUP } from "../config/defaults.ts";
 import { snapshot } from "./protocol-test-fixtures.ts";
@@ -57,8 +58,8 @@ test("Tauri实际分配query使用会话身份，refresh后拒绝旧响应", { t
   let finish!: (value: unknown) => void;
   let requestCount = 0;
   mockIPC((command, args) => {
-    if (command === "create_session") return "allocation-session";
-    if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
+    if (command === "create_session") return { sessionId: "allocation-session", setup: DEFAULT_SETUP, seed: "1", resumed: false };
+    if (command === "host_capabilities") return { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
     if (command === "engine_baseline") return { snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session" };
     if (command === "initial_allocation") {
       assert.deepEqual(args, { sessionId: "allocation-session", generation: "1" });
@@ -98,13 +99,14 @@ test("Remote实际分配首次开跑前连接基线、不启动撮合，load后�
   };
   const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
   const host = await createRemoteHost(setup, 17n, {
+    token: "owner-token", context: { ...remoteTestContext("allocation-session", "1", "17"), setup },
     baseUrl: "https://allocation.example",
     webSocketFactory: () => { queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(baseline()) } as MessageEvent)); return socket as unknown as WebSocket; },
     fetchFn: async (input, init) => {
       const url = new URL(String(input));
       requests.push({ pathname: url.pathname, init });
-      if (url.pathname === "/api/new") return json({ session_id: "allocation-session", session_token: "owner-token" });
-      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false });
+      if (url.pathname === "/api/market/context") return json({ ...remoteTestContext("allocation-session", responseGeneration, "17"), setup });
+      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
       if (url.pathname === "/api/load") { responseGeneration = "2"; return json({}); }
       if (url.pathname === "/api/initial-allocation") {
         assert.equal(url.searchParams.get("session_id"), "allocation-session");

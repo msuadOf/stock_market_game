@@ -3,6 +3,9 @@ import { createHash } from "node:crypto"
 import test, { after } from "node:test"
 import { representativeCurrentSaveFixture } from "./representative-save-test-fixture.ts"
 import { parseSaveSlot } from "./save-schema.ts"
+import { parseFlowParams } from "./schema/company/policies/flow.ts"
+import { parseIndustryBooks } from "./schema/company/books/index.ts"
+import { owners } from "./schema/company/books/tax-owner-test-fixture.ts"
 
 const MATURE_SAVE = representativeCurrentSaveFixture()
 const MATURE_SAVE_SHA256 = createHash("sha256").update(JSON.stringify(MATURE_SAVE)).digest("hex")
@@ -52,9 +55,15 @@ test("strict save boundary preserves a populated current-schema save", () => {
 test("strict save boundary rejects malformed nested company and personal-state branches", () => {
   const save = matureSave()
   assert.ok(typeof save === "object" && save !== null)
-  const operations = Reflect.get(save, "company_operations")
-  assert.ok(typeof operations === "object" && operations !== null)
-  const companies = Reflect.get(operations, "companies")
+  const system = Reflect.get(save, "company_system")
+  assert.ok(typeof system === "object" && system !== null)
+  const issuers = Reflect.get(system, "issuers")
+  assert.ok(typeof issuers === "object" && issuers !== null)
+  const implementation = Reflect.get(system, "implementation")
+  assert.ok(typeof implementation === "object" && implementation !== null)
+  const state = Reflect.get(implementation, "state")
+  assert.ok(typeof state === "object" && state !== null)
+  const companies = Reflect.get(state, "companies")
   assert.ok(typeof companies === "object" && companies !== null)
   const company = Object.keys(companies)[0]
   const information = Reflect.get(save, "information_states")
@@ -88,7 +97,7 @@ test("strict save boundary rejects malformed nested company and personal-state b
   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [
     [["setup", "start_date"], "2030-02-30", /setup\.start_date/],
     [["snapshot", "seq"], "0", /snapshot\.seq/],
-    [["auction_orders", "600101"], [{ owner: 1 }], /auction_orders/],
+    [["auction_orders", "600101"], [{ owner: "1" }], /auction_orders/],
     [["resting_orders", market], [{ id: 1 }], /resting_orders/],
     [["price_history", market, 0], 1.5, /price_history/],
     [["market_minute_closes", market], [{ absolute_trading_minute: 1, close: 1000 }], /market_minute_closes/],
@@ -97,14 +106,14 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["runtime_state", "strategy_states", account], { Institution: "Unknown" }, /runtime_state/],
     [["retail_experience", "1", "consecutive_failed_buys"], "1", /retail_experience/],
     [["parent_orders"], { [account]: { [market]: { code: market } } }, /parent_orders/],
-    [["npc_order_lifecycles"], [{ account: 1 }], /npc_order_lifecycles/],
+    [["npc_order_lifecycles"], [{ account: "1" }], /npc_order_lifecycles/],
     [["pending_player"], [[1, { Retired: {} }]], /pending_player/],
     [["next_order_id"], 9_007_199_254_740_992, /next_order_id/],
     [["civil_clock", "policy", "unexpected"], true, /civil_clock\.policy\.unexpected/],
-    [["company_operations", "companies", company, "spec", "unexpected"], true, /company_operations/],
-    [["closing_registry", "versions"], [{}], /closing_registry/],
+    [["company_system", "issuers", company, "unexpected"], true, /unexpected/],
+    [["company_system", "implementation", "state", "companies", company, "finance", "closing", "versions"], [{}], /closing.*versions/],
     [["public_library", "next_seq"], "35", /public_library/],
-    [["ops_wiring", "mirrored", 0], "7067", /ops_wiring/],
+    [["company_system", "implementation", "state", "companies", company, "finance", "next_event_id"], 7067, /next_event_id/],
     [["disclosures", "announced_through"], "2030-02-30", /disclosures/],
     [["plans", "plans", plan, "status"], { Unknown: {} }, /plans/],
     [["plans", "plans", plan, "review", "last_review_resources"], undefined, /last_review_resources/],
@@ -122,45 +131,48 @@ test("strict save boundary rejects malformed nested company and personal-state b
 
 test("strict save boundary rejects unsafe company RNG numbers", () => {
   assert.throws(
-    () => parseSaveSlot(mutate(["company_operations", "market_rng", "state"], 9_007_199_254_740_992)),
-    /company_operations\.market_rng\.state/,
+    () => parseSaveSlot(mutate(["company_system", "implementation", "state", "environment_rng", "state"], 9_007_199_254_740_992)),
+    /environment_rng\.state/,
   )
 })
 
-test("strict save boundary rejects malformed company book and flow internals", () => {
+test("strict save boundary rejects malformed Simple company book and generation internals", () => {
   const save = matureSave()
   assert.ok(typeof save === "object" && save !== null)
-  const operations = Reflect.get(save, "company_operations")
-  assert.ok(typeof operations === "object" && operations !== null)
-  const companies = Reflect.get(operations, "companies")
+  const system = Reflect.get(save, "company_system")
+  assert.ok(typeof system === "object" && system !== null)
+  const implementation = Reflect.get(system, "implementation")
+  assert.ok(typeof implementation === "object" && implementation !== null)
+  const state = Reflect.get(implementation, "state")
+  assert.ok(typeof state === "object" && state !== null)
+  const companies = Reflect.get(state, "companies")
   assert.ok(typeof companies === "object" && companies !== null)
   const company = Object.keys(companies)[0]
   if (company === undefined) throw new Error("mature save must contain a company")
 
   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [
-    [["company_operations", "companies", company, "books", "Industrial", "inventory"], 7, /company_operations\.companies\..*\.books\.Industrial\.inventory/],
-    [["company_operations", "companies", company, "books", "Industrial", "books", "chart", "accounts", "1001", "name"], 7, /company_operations\.companies\..*\.books\.Industrial\.books\.chart\.accounts\.1001\.name/],
-    [["company_operations", "companies", company, "params", "Industrial", "unit_price_excl_vat"], {}, /company_operations\.companies\..*\.params\.Industrial\.unit_price_excl_vat/],
+    [["company_system", "implementation", "state", "companies", company, "finance", "books", "chart", "accounts", "1001", "name"], 7, /finance\.books\.chart\.accounts\.1001\.name/],
+    [["company_system", "implementation", "state", "companies", company, "generation", "amounts", "revenue"], {}, /amounts\.revenue/],
   ]
   for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutate(path, value)), expected)
 })
 
-test("strict save boundary rejects malformed representative fields for every flow variant", () => {
+test("independent industry books still reject malformed inventory structures", () => {
+  assert.throws(() => parseIndustryBooks({ Industrial: { ...owners.Industrial, inventory: 7 } }, "books"), /books\.Industrial\.inventory/)
+})
+
+test("independent flow parsers reject malformed representative fields for every industry variant", () => {
   const flows: readonly [unknown, RegExp][] = [
     [{ Industrial: { customer: "C", supplier: "S", raw_item: "RAW", finished_item: "FIN", raw_account: "1403", finished_account: "1405", base_daily_demand_units: 1, unit_price_excl_vat: {}, receivable_credit_days: 1, raw_replenish_target_units: 1, raw_unit_cost_excl_vat: "1.00", daily_production_units: 1, daily_conversion_cost: "1.00", daily_admin_expense: "1.00", bad_debt_base_bp: 1, asset_impairment_fraction_bp: 1 } }, /params\.Industrial\.unit_price_excl_vat/],
     [{ Bank: { depositor: "D", borrower: "B", fee_customer: "F", deposit_principal: {}, deposit_rate_bp: 1, deposit_term_days: 1, deposit_every_days: 1, loan_principal: "1.00", loan_rate_bp: 1, loan_term_days: 1, lending_every_days: 1, daily_fee_income: "1.00", credit_deterioration_scenarios: [] } }, /params\.Bank\.deposit_principal/],
     [{ Insurance: { policyholder: "P", daily_groups_base: 1, premium: "1.00", expected_claims: {}, risk_adjustment: "1.00", coverage_days: 1, claim_every_days: 1, claim_size: "1.00" } }, /params\.Insurance\.expected_claims/],
     [{ RealEstate: { land_seller: "L", contractor: "C", buyer: "B", project: "P", total_units: 1, land_cost: "1.00", development_days: 1, daily_development_spend: "1.00", presale_open_day: 1, presale_units_per_day: 1, unit_price: {}, delivery_lag_days: 1 } }, /params\.RealEstate\.unit_price/],
   ]
-  for (const [flow, expected] of flows) {
-    const save = matureSave()
-    assert.ok(typeof save === "object" && save !== null)
-    const operations = Reflect.get(save, "company_operations")
-    assert.ok(typeof operations === "object" && operations !== null)
-    const companies = Reflect.get(operations, "companies")
-    assert.ok(typeof companies === "object" && companies !== null)
-    const company = Object.keys(companies)[0]
-    if (company === undefined) throw new Error("mature save must contain a company")
-    assert.throws(() => parseSaveSlot(mutate(["company_operations", "companies", company, "params"], flow)), expected)
+  for (const [flow, expected] of flows) assert.throws(() => parseFlowParams(flow, "params"), expected)
+})
+
+test("Simple slots reject retired simulation containers instead of accepting compatibility fields", { timeout: 10000 }, () => {
+  for (const field of ["company_operations", "closing_registry", "ops_wiring", "groups"]) {
+    assert.throws(() => parseSaveSlot({ ...(matureSave() as Record<string, unknown>), [field]: {} }), new RegExp(field))
   }
 })

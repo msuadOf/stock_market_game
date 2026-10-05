@@ -11,7 +11,7 @@ function snapshot(tick = 0): Snapshot {
 }
 function fixture() {
   let current = snapshot(); const submitted: Intent[] = [];
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, autoAllowed: () => true, submit: async (intent: Intent) => { submitted.push(intent); } });
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, account: () => current.accounts["0"], autoAllowed: () => true, submit: async (intent: Intent) => { submitted.push(intent); } });
   return { trading, submitted, update: (next: Snapshot) => { current = next; return trading.advance(next); } };
 }
 test("游戏秒只累计存在的竞价阶段，自定义局跨日不会让自动提前到期", { timeout: 10000 }, async () => {
@@ -20,7 +20,7 @@ test("游戏秒只累计存在的竞价阶段，自定义局跨日不会让自�
     assert.equal(tradingSecond(setup.ticks_per_day, setup) - tradingSecond(setup.ticks_per_day - 1, setup), 1);
     assert.equal(tradingSecond(opening, setup), opening);
     let current = snapshot(setup.ticks_per_day - 1); const submitted: Intent[] = [];
-    const trading = new QuickTrading({ setup: () => setup, snapshot: () => current, autoAllowed: () => true, submit: async intent => { submitted.push(intent); } });
+    const trading = new QuickTrading({ setup: () => setup, snapshot: () => current, account: () => current.accounts["0"], autoAllowed: () => true, submit: async intent => { submitted.push(intent); } });
     trading.edit("600101", "Buy", { interval: 10 }); trading.toggleAuto("600101", "Buy");
     current = snapshot(setup.ticks_per_day); await trading.advance(current); assert.equal(submitted.length, 0);
     current = snapshot(setup.ticks_per_day + 9); await trading.advance(current); assert.equal(submitted.length, 1);
@@ -84,7 +84,7 @@ test("取消所有覆盖全股票双向且不停止自动", { timeout: 10000 }, 
 test("重新同步期间的批量撤单不会继续发往新会话", { timeout: 10000 }, async () => {
   const submitted: Intent[] = [];
   let release!: () => void;
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => snapshot(), autoAllowed: () => true, submit: async intent => {
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => snapshot(), account: () => snapshot().accounts["0"], autoAllowed: () => true, submit: async intent => {
     submitted.push(intent); if (submitted.length === 1) await new Promise<void>(resolve => { release = resolve; });
   } });
   const cancel = trading.cancelAll([{ code: "600101", id: 1 }, { code: "002156", id: 2 }]);
@@ -94,7 +94,7 @@ test("重新同步期间的批量撤单不会继续发往新会话", { timeout: 
 });
 test("撤单部分失败仍尝试同会话剩余订单并明确报告", { timeout: 10000 }, async () => {
   const ids: number[] = [];
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => snapshot(), autoAllowed: () => true, submit: async intent => {
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => snapshot(), account: () => snapshot().accounts["0"], autoAllowed: () => true, submit: async intent => {
     if (!("Cancel" in intent)) throw new Error("测试仅允许撤单");
     ids.push(intent.Cancel.id); if (intent.Cancel.id === 1) throw new Error("传输中断");
   } });
@@ -104,7 +104,7 @@ test("撤单部分失败仍尝试同会话剩余订单并明确报告", { timeou
 test("待处理买单占用跨证券可用资金，失败释放，不污染重新同步后状态", { timeout: 10000 }, async () => {
   let reject!: (error: Error) => void;
   const current = snapshot(); current.accounts[0]!.cash = "300000";
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, account: () => current.accounts["0"], autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
   assert.equal(trading.capacity("002156", "Buy"), 1n);
   const submitting = trading.submit("600101", "Buy");
   assert.equal(trading.busy("600101", "Buy"), true);
@@ -118,7 +118,7 @@ test("待处理买单占用跨证券可用资金，失败释放，不污染重�
 test("面板与跨股可买能力共用扣除pending的精确分现金，失败释放后恢复", { timeout: 10000 }, async () => {
   let reject!: (error: Error) => void;
   const current = snapshot(); current.accounts[0]!.cash = "9007199254740993"; current.accounts[0]!.reserved_cash = "123";
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, account: () => current.accounts["0"], autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
   assert.equal(trading.availableCash(), "9007199254740870");
   const submitting = trading.submit("600101", "Buy");
   assert.equal(trading.availableCash(), "9007199254640369");
@@ -136,7 +136,7 @@ test("合法不足一手零股仍可整笔卖出，买入小数手拒绝", { tim
 test("暂停确认发生在提交等待期间，剩余到期自动任务不会下单", { timeout: 10000 }, async () => {
   let running = true, current = snapshot(); let release!: () => void;
   const submitted: Intent[] = [];
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, autoAllowed: () => running, submit: async intent => {
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, account: () => current.accounts["0"], autoAllowed: () => running, submit: async intent => {
     submitted.push(intent); if (submitted.length === 1) await new Promise<void>(resolve => { release = resolve; });
   } });
   trading.toggleAuto("600101", "Buy"); trading.toggleAuto("002156", "Buy");
@@ -144,4 +144,18 @@ test("暂停确认发生在提交等待期间，剩余到期自动任务不会�
   const advancing = trading.advance(current); running = false; release(); await advancing;
   assert.equal(submitted.length, 1);
   assert.equal(trading.jobs().every(job => job.enabled), true);
+});
+test("共享市场快捷委托仅使用本人非零账户，缺席不能借用账户0余额", { timeout: 10000 }, async () => {
+  const current = snapshot();
+  current.accounts["7"] = { ...current.accounts["0"], cash: "100510", positions: {}, reserved_sell_qty: {} };
+  current.accounts["0"].cash = "0";
+  let own: import("../types/engine.ts").AccountSnap | null = current.accounts["7"];
+  const submitted: Intent[] = [];
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, account: () => own, autoAllowed: () => true, submit: async (intent) => { submitted.push(intent); } });
+  assert.equal(trading.capacity("600101", "Buy"), 1n);
+  assert.equal(trading.availableCash(), "100510");
+  own = null;
+  assert.throws(() => trading.availableCash(), /本人.*账户/);
+  assert.equal(await trading.submit("600101", "Buy"), false);
+  assert.equal(submitted.length, 0);
 });

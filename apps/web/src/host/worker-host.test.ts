@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
-import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, requestWorkerIntradayAverage, requestWorkerIntradayAverageCurve, requestWorkerPersonalTradeConfirmations, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { frame, snapshot as protocolSnapshot, tickBatch } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
+import { requestWorkerPersonalTradeHistory } from "./worker-host.ts";
+import { requestWorkerMarketHistory } from "./worker-host.ts";
+import { requestWorkerCurrentMinuteHistory } from "./worker-host.ts";
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -15,6 +18,77 @@ class FakeWorker implements WorkerRequestPort {
   postMessage(message: unknown): void { this.sent.push(message); }
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
+
+test("Worker当前分钟绑定本人宿主与generation，不混已归档历史", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker(), scope = new WorkerRequestScope(worker), query = { code: "600000" };
+  const pending = requestWorkerCurrentMinuteHistory(scope, 73, 3, query);
+  assert.deepEqual(worker.sent[0], { type: "currentMinuteHistory", requestId: 73, generation: 3, query });
+  const response = { code: "600000", date: "2030-01-02", observed_at: { date: "2030-01-02", second_of_day: 0 }, live: true, status: "Trading", phase: "Continuous", bars: [] };
+  worker.emit({ type: "currentMinuteHistory", requestId: 73, generation: 2, response: { ...response, code: "000001" } });
+  worker.emit({ type: "currentMinuteHistory", requestId: 73, generation: 3, response });
+  assert.deepEqual(await pending, response);
+});
+
+test("Worker永久量价历史绑定generation且不携带账户", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker(), scope = new WorkerRequestScope(worker);
+  const query = { code: "600000", date_from: "2030-01-02", date_to: "2030-01-03", after: null, page_size: 2 };
+  const pending = requestWorkerMarketHistory(scope, 72, 3, query);
+  assert.deepEqual(worker.sent[0], { type: "marketHistory", requestId: 72, generation: 3, query });
+  const page = { code: "600000", entries: ["2030-01-02", "2030-01-03"].map(date => ({ date, availability: "NotEnded", bars: [], daily_candle: null })), next_cursor: null, settled_through: null };
+  worker.emit({ type: "marketHistory", requestId: 72, generation: 2, page: { ...page, code: "000001" } });
+  worker.emit({ type: "marketHistory", requestId: 72, generation: 3, page });
+  assert.deepEqual(await pending, page);
+});
+
+test("Worker本人日期页携带完整filters与receipt ceiling且拒绝旧generation", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker();
+  const scope = new WorkerRequestScope(worker);
+  const query = { date_from: "2030-01-02", date_to: "2030-01-04", code: null, side: null, before_receipt: "9007199254740993", as_of_receipt: "9007199254741000", page_size: 100 };
+  const pending = requestWorkerPersonalTradeHistory(scope, 71, 3, query);
+  assert.deepEqual(worker.sent[0], { type: "personalTradeHistory", requestId: 71, generation: 3, query });
+  const page = { request: query, confirmations: [], next_cursor: null, as_of_receipt: query.as_of_receipt, start_date: "2030-01-02", current_date: "2030-01-05", settled_through: "2030-01-04" };
+  worker.emit({ type: "personalTradeHistory", requestId: 71, generation: 2, page: { ...page, as_of_receipt: "1" } });
+  worker.emit({ type: "personalTradeHistory", requestId: 71, generation: 3, page });
+  assert.deepEqual(await pending, page);
+  assert.equal((worker.sent[0] as Record<string, unknown>).account, undefined);
+});
+
+test("WASM Worker 按需请求Rust VWAP和本人交割单，旧generation结果不匹配", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker();
+  const scope = new WorkerRequestScope(worker);
+  const average = requestWorkerIntradayAverage(scope, 1, 3, { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 });
+  assert.deepEqual(worker.sent[0], {
+    type: "calculateIntradayAverage", requestId: 1, generation: 3,
+    turnoverCents: "260000", tradeCount: 2, volumeShares: 300,
+  });
+  worker.emit({ type: "intradayAverageCalculated", requestId: 1, generation: 2, result: { turnover_cents: "1", volume_shares: 1 } });
+  worker.emit({ type: "intradayAverageCalculated", requestId: 1, generation: 3, result: { turnover_cents: "260000", volume_shares: 300 } });
+  assert.deepEqual(await average, { turnoverCents: "260000", volumeShares: 300 });
+
+  const history = requestWorkerPersonalTradeConfirmations(scope, 2, 3);
+  assert.deepEqual(worker.sent[1], { type: "personalTradeConfirmations", requestId: 2, generation: 3, beforeReceipt: null });
+  worker.emit({ type: "personalTradeConfirmations", requestId: 2, generation: 3, confirmations: [] });
+  assert.deepEqual(await history, []);
+});
+
+test("WASM Worker 一次请求完整VWAP曲线并校验seriesKey与结果数量", { timeout: 10000 }, async () => {
+  const worker = new FakeWorker();
+  const scope = new WorkerRequestScope(worker);
+  const curve = requestWorkerIntradayAverageCurve(scope, 7, 3, { seriesKey: "600000:3:2:901", samples: [
+    { turnoverCents: "100000", tradeCount: 1, volumeShares: 100 },
+    { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 },
+  ] });
+  assert.deepEqual(worker.sent[0], {
+    type: "calculateIntradayAverageCurve", requestId: 7, generation: 3, seriesKey: "600000:3:2:901",
+    samples: [{ turnoverCents: "100000", tradeCount: 1, volumeShares: 100 }, { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }],
+  });
+  worker.emit({ type: "intradayAverageCurveCalculated", requestId: 7, generation: 3, seriesKey: "600000:3:2:901", results: [
+    { turnover_cents: "100000", volume_shares: 100 }, { turnover_cents: "260000", volume_shares: 300 },
+  ] });
+  assert.deepEqual(await curve, [
+    { turnoverCents: "100000", volumeShares: 100 }, { turnoverCents: "260000", volumeShares: 300 },
+  ]);
+});
 
 test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -37,7 +111,7 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
     const binding = intake.sent[0];
     assert.equal(binding.type, "bindIngress");
     intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
-    engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const intent = { Cancel: { code: "600000", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const submitting = host.submitIntent(intent);
@@ -89,7 +163,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         return;
       }
       intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
-      engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       const intent = { Cancel: { code: "600101", id: 7 } } as Parameters<typeof host.submitIntent>[0];
       const pending = host.submitIntent(intent);
@@ -253,7 +327,7 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = SaveWorker.current;
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true } });
     worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };
@@ -283,10 +357,10 @@ test("Given a generation-correlated Worker order response, when read, then it pr
   const worker = new FakeWorker();
   const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    owner: "0", id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }] });
   assert.deepEqual(await pending, [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    owner: "0", id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }]);
 });
 
@@ -389,7 +463,7 @@ test("Worker initialization passes the requested pool size and reports startup f
     const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n, { threadCount: 128 });
     const worker = StartupWorker.current;
     assert.deepEqual(worker.sent, [{ type: "init", threads: 128 }]);
-    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "线程池启动失败" });
+    worker.emit({ type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "线程池启动失败" });
     await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 线程池启动失败/);
     assert.equal(worker.terminated, true);
   } finally {
@@ -583,7 +657,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const dateAssertion = assert.rejects(date, /已被销毁|TEST_FATAL/);
       void date.then(() => { settled = true; }, () => { settled = true; });
       if (reason === "dispose") host.dispose();
-      else worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+      else worker.emit({ type: "failure", generation: 1, code: "TEST_FATAL", where: "worker-test", message: "失败" });
       await dateAssertion;
       assert.equal(settled, true);
       assert.equal(worker.terminations, 1);

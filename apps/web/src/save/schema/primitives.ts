@@ -2,7 +2,7 @@ import { parseMoney } from "../../utils/money.ts"
 
 export type JsonRecord = Record<string, unknown>
 
-const UNSIGNED_DECIMAL = /^\d+$/
+const UNSIGNED_DECIMAL = /^(0|[1-9]\d*)$/
 const ACCOUNTING_AMOUNT = /^-?\d+\.\d{2}$/
 const ISO_CIVIL_DATE = /^\d{4}-\d{2}-\d{2}$/
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -81,6 +81,16 @@ export function safeIntegerKey(value: string, path: string): void {
   if (!/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > JAVASCRIPT_SAFE_INTEGER_MAX) {
     throw new SaveSchemaError(path, "必须是 JavaScript 安全整数范围内的规范非负十进制键")
   }
+}
+
+export function accountId(value: unknown, path: string): string {
+  const parsed = decimal(value, path)
+  if (!/^(0|[1-9]\d*)$/.test(parsed)) throw new SaveSchemaError(path, "必须是规范 u64 账户十进制字符串")
+  return parsed
+}
+
+export function accountKey(value: string, path: string): void {
+  accountId(value, path)
 }
 
 export function accountingAmount(value: unknown, path: string): string {

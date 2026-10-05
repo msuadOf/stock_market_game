@@ -1,5 +1,5 @@
 export type NpcDecisionTraceRecord = {
-  readonly account: number;
+  readonly account: string;
   readonly tick: string;
   readonly source_report_ids: readonly string[];
   readonly expectation_method: string | null;
@@ -51,7 +51,7 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
   if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段不完整`);
   }
-  if (!isNonNegativeInteger(value["account"]) || !isU64Decimal(value["tick"])
+  if (!isU64Decimal(value["account"]) || !isU64Decimal(value["tick"])
     || !isStringArray(value["source_report_ids"]) || !isStringOrNull(value["expectation_method"])
     || !isNonNegativeIntegerArray(value["plan_ids"]) || !isStringArray(value["plan_changes"])
     || !isStringArray(value["budget_constraints"])

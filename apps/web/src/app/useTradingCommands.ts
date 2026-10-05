@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type MutableRefObject } from "react";
 import type { EngineHost } from "../host/engine-host.ts";
 import type { AccountSnap, Cents, Intent, SessionSetup } from "../types/engine.ts";
 import { tradingFieldErrors, type TradingFieldErrors } from "./trading-field-errors.ts";
-import { store, addAutoOrder } from "../store/store.ts";
+import { store, addAutoOrder, selectPlayerAccountId } from "../store/store.ts";
 import { AUTO_ORDER_LABELS, type AutoOrderManager, type AutoOrderType } from "../components/auto-order-manager.ts";
 import type { PlayerOrderRefreshGate, PlayerWorkingOrder } from "../components/player-orders.ts";
 import { maxAShareOrderQuantity, parseShareQuantity, parseYuanPrice, validateAShareQuantity } from "../utils/trade-input.ts";
@@ -21,6 +21,7 @@ interface Options {
 
 /** 聚合委托表单、查询列表与取消中状态；engine 与 Redux 仍为交易事实权威。 */
 export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrderMgrRef, activeSetup, playerAccount, protocolPlayerOrders, playerOrdersReady, setNotice }: Options) {
+  const accountId = selectPlayerAccountId(store.getState());
   // 委托面板状态
   const [requestedTradeCode, setTradeCode] = useState<string>(() => activeSetup.stocks[0]?.code ?? "");
   const tradeCode = activeSetup.stocks.some((stock) => stock.code === requestedTradeCode) || activeSetup.stocks.length === 0
@@ -47,19 +48,21 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
     setSubmittedErrors((current) => ({ ...current, quantity: undefined }));
   }
   const [queriedPlayerOrders, setPlayerOrders] = useState<readonly PlayerWorkingOrder[]>([]);
-  const playerOrders = useMemo(() => playerOrdersReady
+  const playerOrders = useMemo(() => accountId === null ? [] : (playerOrdersReady
     ? Object.values(protocolPlayerOrders).sort((left, right) => left.id - right.id)
-    : queriedPlayerOrders, [playerOrdersReady, protocolPlayerOrders, queriedPlayerOrders]);
+    : queriedPlayerOrders).filter((order) => order.owner === accountId), [accountId, playerOrdersReady, protocolPlayerOrders, queriedPlayerOrders]);
   const [cancelingOrderIds, setCancelingOrderIds] = useState<ReadonlySet<number>>(new Set());
 
   const refreshPlayerOrders = useCallback(async () => {
     const host = hostRef.current;
     if (!host) return;
+    const requestedAccountId = selectPlayerAccountId(store.getState());
+    if (requestedAccountId === null) { setPlayerOrders([]); return; }
     if (store.getState().snapshot.playerOrdersReady) return;
     const generation = playerOrderRefreshGateRef.current.next();
     try {
       const orders = await host.playerWorkingOrders();
-      if (playerOrderRefreshGateRef.current.isCurrent(generation) && host === hostRef.current) {
+      if (playerOrderRefreshGateRef.current.isCurrent(generation) && host === hostRef.current && selectPlayerAccountId(store.getState()) === requestedAccountId) {
         setPlayerOrders(orders);
       }
     } catch (refreshError) {
@@ -90,6 +93,10 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
   }
 
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
+    if (selectPlayerAccountId(store.getState()) === null || playerAccount === null) {
+      setNotice("尚未加入市场，无法提交本人交易委托");
+      return null;
+    }
     const errors = tradingFieldErrors(orderKind, priceChoice, priceText, qtyText);
     if (errors.price || errors.quantity) {
       setSubmittedErrors(errors);
@@ -128,6 +135,11 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
   }
 
   async function cancelPlayerOrder(order: PlayerWorkingOrder) {
+    const currentAccountId = selectPlayerAccountId(store.getState());
+    if (currentAccountId === null || order.owner !== currentAccountId) {
+      setNotice("只能撤销本人账户的委托，请确认已加入市场");
+      return;
+    }
     const host = hostRef.current;
     if (!host) {
       setNotice("游戏引擎尚未就绪，无法撤销委托");
@@ -148,6 +160,10 @@ export function useTradingCommands({ hostRef, playerOrderRefreshGateRef, autoOrd
   }
 
   function addAuto() {
+    if (selectPlayerAccountId(store.getState()) === null || playerAccount === null) {
+      setNotice("尚未加入市场，无法添加本人条件单");
+      return;
+    }
     const errors = tradingFieldErrors("limit", "fixed", autoTrigger, autoQty);
     if (errors.price || errors.quantity) {
       setAutoSubmittedErrors(errors);

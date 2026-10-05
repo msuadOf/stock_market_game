@@ -10,7 +10,7 @@ import type { AccountSnap, Intent } from "../types/engine.ts";
 import type { EngineHost } from "../host/engine-host.ts";
 import { store, clearAutoOrders } from "../store/store.ts";
 
-const order: PlayerWorkingOrder = { id: 1, code: "600101", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
+const order: PlayerWorkingOrder = { owner: "0", id: 1, code: "600101", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
 function fixture() {
   const notices: string[] = [], intents: Intent[] = [];
   const host = commandHostFixture({ submitIntent: async (intent: Intent) => { intents.push(intent); }, playerWorkingOrders: async () => [order] });

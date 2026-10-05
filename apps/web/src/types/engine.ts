@@ -25,6 +25,8 @@ export type { NpcSetup } from "./generated/NpcSetup";
 export type { PositionSnap } from "./generated/PositionSnap";
 export type { PublicComparativeAmount } from "./generated/PublicComparativeAmount";
 export type { PublicReportAccountingSummary } from "./generated/PublicReportAccountingSummary";
+export type { PublicReportAvailability } from "./generated/PublicReportAvailability";
+export type { PublicReportAvailabilityQuery } from "./generated/PublicReportAvailabilityQuery";
 export type { PublicReportBalanceComparison } from "./generated/PublicReportBalanceComparison";
 export type { PublicReportBalanceSheet } from "./generated/PublicReportBalanceSheet";
 export type { PublicReportCashFlow } from "./generated/PublicReportCashFlow";
@@ -43,6 +45,7 @@ export type { PublicReportQuery } from "./generated/PublicReportQuery";
 export type { PublicReportScope } from "./generated/PublicReportScope";
 export type { PublicReportSummary } from "./generated/PublicReportSummary";
 export type { PublicReportVersionKind } from "./generated/PublicReportVersionKind";
+export type { PublicReportUnavailableReason } from "./generated/PublicReportUnavailableReason";
 export type { PublicUnavailableReason } from "./generated/PublicUnavailableReason";
 export type { RejectionReason } from "./generated/RejectionReason";
 export type { SaveSlot } from "./generated/SaveSlot";
@@ -69,7 +72,7 @@ export type HistoricalStockData = {
 export type RestingOrderSnap = import("./generated/Order").Order;
 export type PriceLevel = [Cents, number];
 
-export type TradeEvent = Extract<Event, { Trade: unknown }>["Trade"] & { readonly tick?: number };
+export type TradeEvent = (Extract<Event, { Trade: unknown }>["Trade"] | Extract<Event, { PublicTrade: unknown }>["PublicTrade"]) & { readonly tick?: number };
 export type PriceTickEvent = Extract<Event, { PriceTick: unknown }>["PriceTick"];
 export type AuctionTickEvent = Extract<Event, { AuctionTick: unknown }>["AuctionTick"];
 export type AuctionCompletedEvent = Extract<Event, { AuctionCompleted: unknown }>["AuctionCompleted"];
@@ -100,6 +103,10 @@ export interface WasmApi {
     handle: number,
     id: string,
   ): import("./generated/PublicReportSummary").PublicReportSummary;
+  public_report_availability(
+    handle: number,
+    query: import("./generated/PublicReportAvailabilityQuery").PublicReportAvailabilityQuery,
+  ): import("./generated/PublicReportAvailability").PublicReportAvailability;
   player_working_orders(handle: number): readonly import("../host/player-working-orders").PlayerWorkingOrder[];
   query_stock_history(handle: number, code: import("./generated/StockCode").StockCode): HistoricalStockData;
   host_capabilities(): { readonly npcDecisionDiagnostics: boolean };

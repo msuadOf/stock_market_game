@@ -59,7 +59,7 @@ export function NpcDecisionInspector({ host, timelineGeneration = null }: { read
       <input id="npc-account" inputMode="numeric" value={accountText} onChange={(event) => setAccountText(event.target.value)} />
       <button type="button" onClick={() => void refresh()} disabled={host?.npcDecisionTrace === undefined || timelineGeneration === null || account === null || requestBusy}>{requestBusy ? "正在读取…" : "读取当前会话记录"}</button>
     </div>
-    {account === null && <p role="alert">账户 ID 必须是非负安全整数。</p>}
+    {account === null && <p role="alert">账户 ID 必须是规范 u64 非负十进制字符串。</p>}
     {timelineGeneration === null && <p role="status">等待当前会话代际就绪。</p>}
     <p className="npc-inspector__count">已读取 {state.records.length} / 128 条记录</p>
     <ol className="npc-inspector__records" aria-label="NPC 决策记录">
@@ -84,8 +84,7 @@ export function TraceRecord({ record }: { readonly record: NpcDecisionTraceRecor
   </li>;
 }
 
-function parseAccountId(value: string): number | null {
-  if (!/^\d+$/.test(value)) return null;
-  const account = Number(value);
-  return Number.isSafeInteger(account) ? account : null;
+function parseAccountId(value: string): string | null {
+  if (!/^(0|[1-9]\d*)$/.test(value) || value.length > 20 || BigInt(value) > 18_446_744_073_709_551_615n) return null;
+  return value;
 }

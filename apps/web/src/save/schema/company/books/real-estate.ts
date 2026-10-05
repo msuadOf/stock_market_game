@@ -1,9 +1,10 @@
 import { array, boolean, civilDate, exact, integer, map, nullable, record, string } from "../../primitives.ts"
 import { parseBooks, type Books } from "../accounting/index.ts"
+import { parseIncomeTaxPolicy, parseIncomeTaxPosition, type IncomeTaxPolicy, type IncomeTaxPosition } from "./income-tax.ts"
 import { amount } from "../value.ts"
 import { parseBudget, parseCounterpartyLedger, parseFraction, parseI128Number, parseTradeOpenLedger, type CounterpartyLedger, type OperatingBudget, type TradeOpenLedger } from "./common.ts"
 
-export type RealEstateBooks = { readonly books: Books; readonly projects: Readonly<Record<string, ProjectState>>; readonly presales: Readonly<Record<string, PresaleContract>>; readonly loans: Readonly<Record<string, ProjectLoanState>>; readonly receivables: TradeOpenLedger; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly capitalization_policy: CapitalizationPolicy; readonly max_projects: number; readonly next_event_id: number }
+export type RealEstateBooks = { readonly income_tax_policy: IncomeTaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly books: Books; readonly projects: Readonly<Record<string, ProjectState>>; readonly presales: Readonly<Record<string, PresaleContract>>; readonly loans: Readonly<Record<string, ProjectLoanState>>; readonly receivables: TradeOpenLedger; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly capitalization_policy: CapitalizationPolicy; readonly max_projects: number; readonly next_event_id: number }
 type ProjectState = { readonly total_units: number; readonly remaining_units: number; readonly land_cost: string; readonly development_cost: string; readonly capitalized_interest: string; readonly remaining_cost: string; readonly carried_out_cost: string; readonly dev_started_on: string | null; readonly interrupted_on: string | null; readonly interruptions: readonly Interruption[]; readonly completed_on: string | null }
 type Interruption = { readonly start: string; readonly end: string }
 type PresaleContract = { readonly project: string; readonly buyer: string; readonly units: number; readonly price_total: string; readonly collected: string; readonly delivered: boolean }
@@ -12,8 +13,10 @@ type CapitalizationPolicy = { readonly version: number; readonly suspension_min_
 
 export function parseRealEstateBooks(value: unknown, path: string): RealEstateBooks {
   const parsed = record(value, path)
-  exact(parsed, ["books", "projects", "presales", "loans", "receivables", "counterparties", "budget", "capitalization_policy", "max_projects", "next_event_id"], path)
-  return { books: parseBooks(parsed.books, `${path}.books`), projects: map(parsed.projects, `${path}.projects`, stringKey, parseProject), presales: map(parsed.presales, `${path}.presales`, stringKey, parsePresale), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), capitalization_policy: parseCapitalizationPolicy(parsed.capitalization_policy, `${path}.capitalization_policy`), max_projects: integer(parsed.max_projects, `${path}.max_projects`, 0), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+  exact(parsed, ["income_tax_policy", "income_tax_position", "books", "projects", "presales", "loans", "receivables", "counterparties", "budget", "capitalization_policy", "max_projects", "next_event_id"], path)
+  const books = parseBooks(parsed.books, `${path}.books`)
+  const policy = parseIncomeTaxPolicy(parsed.income_tax_policy, `${path}.income_tax_policy`)
+  return { books, income_tax_policy: policy, income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`, policy, books), projects: map(parsed.projects, `${path}.projects`, stringKey, parseProject), presales: map(parsed.presales, `${path}.presales`, stringKey, parsePresale), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), capitalization_policy: parseCapitalizationPolicy(parsed.capitalization_policy, `${path}.capitalization_policy`), max_projects: integer(parsed.max_projects, `${path}.max_projects`, 0), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
 }
 
 function parseProject(value: unknown, path: string): ProjectState {

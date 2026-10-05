@@ -2,6 +2,7 @@ import { parseMoney, compareMoney } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
 
 export type PlayerWorkingOrder = {
+  readonly owner: string;
   readonly id: number;
   readonly code: string;
   readonly side: "Buy" | "Sell";
@@ -30,11 +31,14 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
   return value.map((item, index) => {
     const path = `玩家活动委托[${index}]`;
     const order = record(item, path);
-    const expected = ["id", "code", "side", "price", "remainingQty", "venue", "frozen"];
+    const expected = ["owner", "id", "code", "side", "price", "remainingQty", "venue", "frozen"];
     if (Object.keys(order).length !== expected.length || expected.some((key) => !Object.hasOwn(order, key))) {
       throw new TypeError(`${path} 字段不符合 DTO 契约`);
     }
     if (typeof order.code !== "string" || order.code.length === 0) throw new TypeError(`${path}.code 必须是非空证券代码`);
+    if (typeof order.owner !== "string" || !/^(0|[1-9][0-9]*)$/.test(order.owner) || BigInt(order.owner) > 18446744073709551615n) {
+      throw new TypeError(`${path}.owner 必须是规范 u64 AccountID 字符串`);
+    }
     if (order.side !== "Buy" && order.side !== "Sell") throw new TypeError(`${path}.side 无效`);
     if (order.venue !== "auction" && order.venue !== "continuous") throw new TypeError(`${path}.venue 无效`);
     if (order.frozen !== "cash" && order.frozen !== "shares") throw new TypeError(`${path}.frozen 无效`);
@@ -45,6 +49,7 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     if (remainingQty === 0) throw new TypeError(`${path}.remainingQty 必须是正股数`);
     if (remainingQty > 0xffff_ffff) throw new TypeError(`${path}.remainingQty 必须是 u32`);
     return {
+      owner: order.owner,
       id: nonnegativeSafeInteger(order.id, `${path}.id`),
       code: order.code,
       side: order.side,

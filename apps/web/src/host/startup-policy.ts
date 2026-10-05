@@ -3,7 +3,7 @@ export type StartupMode = "local" | "remote";
 export type StartupTarget =
   | { readonly kind: "wasm" }
   | { readonly kind: "tauri" }
-  | { readonly kind: "remote"; readonly baseUrl: string };
+  | { readonly kind: "remote"; readonly baseUrl: string; readonly token?: string; readonly context?: import("./remote-market-context.ts").RemoteMarketContext };
 
 export interface WasmEnvironment {
   readonly isSecureContext: boolean;
@@ -45,7 +45,7 @@ export function validateRemoteServerAddress(value: string): string {
     throw new Error("Server 地址无效，请检查主机、IPv6 括号和端口。", { cause: error });
   }
   if (url.username !== "" || url.password !== "") {
-    throw new Error("Server 地址不能包含用户名或密码；本次启动选择不新增账户认证。");
+    throw new Error("Server 地址不能包含用户名或密码；请选择地址后通过独立登录界面认证。");
   }
   return url.href.replace(/\/+$/, "");
 }

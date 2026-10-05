@@ -16,6 +16,7 @@ Object.assign(financials.income.cumulative, { net_income: "1.00", income_tax: "0
 Object.assign(financials.cash_flow, { operating: "1.00", investing: "0.00", financing: "0.00", net_change: "1.00" });
 
 const publicReport = {
+  source: "SimulationAccounting",
   id: "9007199254740993",
   company_id: "C-600101",
   period: "2030-03-31",
@@ -120,7 +121,7 @@ test("WASM public report parser rejects malformed opaque IDs and fixed-point dec
   );
 });
 
-test("WASM restore converts validated numeric account IDs back to numeric Map keys", () => {
+test("WASM restore converts canonical account IDs back to string Map keys", () => {
   const slot = {
     snapshot: {
       accounts: {
@@ -163,20 +164,20 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     price_memories: Record<string, unknown>;
     plans: { plans: Record<string, unknown> };
   }) as {
-    snapshot: { accounts: Map<number, unknown> };
-    retail_experience: Map<number, unknown>;
-    parent_orders: Map<number, unknown>;
-    runtime_state: { strategy_states: Map<number, unknown> };
+    snapshot: { accounts: Map<string, unknown> };
+    retail_experience: Map<string, unknown>;
+    parent_orders: Map<string, unknown>;
+    runtime_state: { strategy_states: Map<string, unknown> };
   };
 
   assert.ok(prepared.snapshot.accounts instanceof Map);
-  assert.deepEqual([...prepared.snapshot.accounts.keys()], [0, 12]);
+  assert.deepEqual([...prepared.snapshot.accounts.keys()], ["0", "12"]);
   assert.ok(prepared.retail_experience instanceof Map);
-  assert.deepEqual([...prepared.retail_experience.keys()], [12]);
+  assert.deepEqual([...prepared.retail_experience.keys()], ["12"]);
   assert.ok(prepared.parent_orders instanceof Map);
-  assert.deepEqual([...prepared.parent_orders.keys()], [12]);
+  assert.deepEqual([...prepared.parent_orders.keys()], ["12"]);
   assert.ok(prepared.runtime_state.strategy_states instanceof Map);
-  assert.deepEqual([...prepared.runtime_state.strategy_states.keys()], [12]);
+  assert.deepEqual([...prepared.runtime_state.strategy_states.keys()], ["12"]);
 });
 
 test("WASM restore rehydrates every new-save account map without changing decimal map keys", () => {
@@ -214,8 +215,8 @@ test("WASM restore rehydrates every new-save account map without changing decima
       : prepared[field];
     assert.ok(value instanceof Map, `${field} must cross the WASM boundary as a Map`);
   }
-  const parentOrders = prepared.parent_orders as Map<number, Record<string, unknown>>;
-  const accountPlans = parentOrders.get(1);
+  const parentOrders = prepared.parent_orders as Map<string, Record<string, unknown>>;
+  const accountPlans = parentOrders.get("1");
   assert.deepEqual(Object.keys(accountPlans ?? {}), ["600101"]);
   assert.deepEqual(
     prepared.runtime_state,
@@ -224,7 +225,7 @@ test("WASM restore rehydrates every new-save account map without changing decima
       next_receipt_base: "3",
       live_envelopes: [{ key: "preserved" }],
       retail_projection_seen: [{ index: "2" }],
-      strategy_states: new Map([[1, {}]]),
+      strategy_states: new Map([["1", {}]]),
     },
     "non-map runtime_state authority must cross the WASM boundary unchanged",
   );
@@ -238,20 +239,20 @@ test("WASM restore rejects malformed account-map keys", () => {
   assert.throws(
     () => prepareSaveForWasm({
       snapshot: { accounts: {} },
-      runtime_state: { strategy_states: { "9007199254740992": {} } },
+      runtime_state: { strategy_states: { "18446744073709551616": {} } },
     } as never),
-    /策略状态账户 ID 超出 JavaScript 安全整数范围/,
+    /策略状态账户 ID/,
   );
   assert.throws(
     () => prepareSaveForWasm({
       snapshot: { accounts: { "01": {} } },
     } as never),
-    /账户 ID 不是规范非负十进制整数：01/,
+    /账户 ID/,
   );
   assert.throws(
     () => prepareSaveForWasm({
       snapshot: { accounts: { "1": {}, "01": {} } },
     } as never),
-    /账户 ID 转换后重复：01/,
+    /账户 ID/,
   );
 });

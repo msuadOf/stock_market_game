@@ -1,4 +1,4 @@
-import type { PublicReportPage, PublicReportSummary } from "../types/engine.ts";
+import type { PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportSummary } from "../types/engine.ts";
 
 type Validator = (value: unknown, path: string) => void;
 type Shape = Record<string, Validator>;
@@ -107,6 +107,7 @@ const financials = object({
   notes: object({ items: array(note), consolidation_split_items: array(note) }),
 });
 const report = object({
+  source: choice(["SimpleGenerated", "SimulationAccounting"]),
   id: decimalId, company_id: text, period: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]),
   version_sequence: decimalId, supersedes: optional(decimalId), approved_date: date, approved_second_of_day: secondOfDay,
   published_date: date, published_second_of_day: secondOfDay,
@@ -163,4 +164,42 @@ export function parsePublicReportPage(value: unknown): PublicReportPage {
   const parsed = value as PublicReportPage;
   parsed.reports.forEach(validateConsistency);
   return parsed;
+}
+
+export function parsePublicReportAvailability(value: unknown, query?: PublicReportAvailabilityQuery): PublicReportAvailability {
+  const fields = record(value, "公开报告可用性");
+  if (fields.status === "Available") object({ status: choice(["Available"]), report })(fields, "公开报告可用性");
+  else if (fields.status === "Unavailable") object({
+    status: choice(["Unavailable"]),
+    reason: choice(["BeforeOpening", "NotYetSettled", "PeriodNotRepresented", "NotYetPublished", "NotScheduled", "ScopeNotRepresented"]),
+  })(fields, "公开报告可用性");
+  else throw new TypeError("公开报告可用性.status 变体无效");
+  const parsed = value as PublicReportAvailability;
+  if (parsed.status === "Available") {
+    validateConsistency(parsed.report);
+    if (query !== undefined) {
+      const reportValue = parsed.report;
+      const reportScope = reportValue.financials.scope;
+      const scopeMatches = "Standalone" in query.scope
+        ? "Standalone" in reportScope && query.scope.Standalone.entity_id === reportScope.Standalone.entity_id
+        : "Consolidated" in reportScope && query.scope.Consolidated.root_entity_id === reportScope.Consolidated.root_entity_id;
+      if (reportValue.company_id !== query.company_id || reportValue.period !== query.period_end || reportValue.kind !== query.kind || !scopeMatches) {
+        throw new TypeError("公开报告可用性报告与请求的 company、期间、类型或 scope 不一致");
+      }
+    }
+  }
+  return parsed;
+}
+
+export function normalizePublicReportAvailabilityQuery(value: unknown): PublicReportAvailabilityQuery {
+  const query = record(value, "公开报告可用性请求");
+  object({ company_id: text, period_end: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]), scope: tagged({
+    Standalone: object({ entity_id: text }),
+    Consolidated: object({ root_entity_id: text }),
+  }) })(query, "公开报告可用性请求");
+  const periodEnd = query.period_end as string;
+  if (new Date(Date.UTC(Number(periodEnd.slice(0, 4)), Number(periodEnd.slice(5, 7)), 0)).toISOString().slice(0, 10) !== periodEnd) {
+    throw new TypeError("公开报告可用性请求.period_end 必须是 ISO 自然月末");
+  }
+  return query as unknown as PublicReportAvailabilityQuery;
 }

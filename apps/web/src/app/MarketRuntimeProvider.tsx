@@ -11,12 +11,18 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { EngineHost } from "../host/engine-host.ts";
+import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "../host/engine-host.ts";
+import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
+import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
+import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
+import { store, selectPlayerAccountId } from "../store/store.ts";
+import type { EngineHost, IndicatorCapabilities, IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "../host/engine-host.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
 import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
 import { TradingTimelineContext } from "../components/TradingTimelineContext.tsx";
+import { queryPrivateHistory } from "./private-history-query.ts";
 
 type Runtime = ReturnType<typeof useMarketChartRuntime>;
 
@@ -31,6 +37,13 @@ interface MarketRuntimeActions {
   refreshDailyChart: Runtime["refreshDailyChart"];
   queryChartHistory: Runtime["queryChartHistory"];
   setIndicatorCalculator: (calculator: IndicatorCalculator) => () => void;
+  queryPersonalTradeConfirmations: (beforeReceipt?: string | null) => Promise<readonly PersonalTradeConfirmation[]>;
+  queryPersonalTradeHistory: (request: PersonalTradeHistoryRequest) => Promise<PersonalTradeHistoryPage>;
+  queryMarketHistory: (request: MarketHistoryRequest) => Promise<MarketHistoryPage>;
+  queryCurrentMinuteHistory: (request: CurrentMinuteHistoryRequest) => Promise<CurrentMinuteHistoryResponse>;
+  queryPublicReportAvailability: (query: PublicReportAvailabilityQuery) => Promise<PublicReportAvailability>;
+  calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
+  calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
 
 interface MarketRuntimeData {
@@ -38,6 +51,7 @@ interface MarketRuntimeData {
   auctionChartData: readonly AuctionPoint[];
   dailyChartData: readonly KlinePoint[];
   indicatorCalculator: IndicatorCalculator | null;
+  indicatorCapabilities: IndicatorCapabilities;
 }
 
 const ActionsContext = createContext<MarketRuntimeActions | null>(null);
@@ -62,6 +76,64 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     setCalculatorRegistration({ token, calculator });
     return () => setCalculatorRegistration((current) => current?.token === token ? null : current);
   }, []);
+  const queryPersonalTradeConfirmations = useCallback(async (beforeReceipt: string | null = null) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询本人交割单");
+    if (!host.capabilities.personalTradeHistory) throw new Error("当前宿主明确不支持本人交割单查询");
+    return host.queryPersonalTradeConfirmations(beforeReceipt);
+  }, [hostRef]);
+  const queryPersonalTradeHistory = useCallback(async (request: PersonalTradeHistoryRequest) => {
+    return queryPrivateHistory(() => {
+      const state = store.getState();
+      return { host: hostRef.current, generation: state.snapshot.generation, account: selectPlayerAccountId(state) };
+    }, async host => {
+      if (!host.capabilities.personalTradeHistory) throw new Error("当前宿主不支持本人交割历史查询");
+      return host.queryPersonalTradeHistory(request);
+    });
+  }, [hostRef]);
+  const calculateIntradayAverage = useCallback(async (input: IntradayAverageInput) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价");
+    if (!host.capabilities.indicatorCapabilities.intradayAverage) throw new Error("当前宿主明确不支持 Rust 分时均价计算");
+    return host.calculateIntradayAverage(input);
+  }, [hostRef]);
+  const queryMarketHistory = useCallback(async (request: MarketHistoryRequest) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询分钟历史");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const account = selectPlayerAccountId(before);
+    const page = await host.queryMarketHistory(request);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation || selectPlayerAccountId(after) !== account) throw new Error("分钟历史响应属于已切换的宿主、市场或账户");
+    return page;
+  }, [hostRef]);
+  const queryCurrentMinuteHistory = useCallback(async (request: CurrentMinuteHistoryRequest) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询当前分钟");
+    const before = store.getState(), generation = before.snapshot.generation, account = selectPlayerAccountId(before);
+    const response = await host.queryCurrentMinuteHistory(request);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation || selectPlayerAccountId(after) !== account) throw new Error("当前分钟响应属于已切换的宿主、市场或账户");
+    return response;
+  }, [hostRef]);
+  const queryPublicReportAvailability = useCallback(async (query: PublicReportAvailabilityQuery) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询公开报告可用性");
+    if (host.queryPublicReportAvailability === undefined) throw new Error("当前宿主不支持公开报告可用性查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.queryPublicReportAvailability(query);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("公开报告可用性响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
+    if (!host.capabilities.indicatorCapabilities.intradayAverage) throw new Error("当前宿主明确不支持 Rust 分时均价曲线计算");
+    return host.calculateIntradayAverageCurve(input);
+  }, [hostRef]);
   const actions = useMemo<MarketRuntimeActions>(() => ({
     configureMarketTiming: runtime.configureMarketTiming,
     getPriceHistory: runtime.getPriceHistory,
@@ -73,6 +145,13 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     refreshDailyChart: runtime.refreshDailyChart,
     queryChartHistory: runtime.queryChartHistory,
     setIndicatorCalculator,
+    queryPersonalTradeConfirmations,
+    queryPersonalTradeHistory,
+    queryMarketHistory,
+    queryCurrentMinuteHistory,
+    queryPublicReportAvailability,
+    calculateIntradayAverage,
+    calculateIntradayAverageCurve,
   }), [
     runtime.configureMarketTiming,
     runtime.acceptReduction,
@@ -84,13 +163,21 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     runtime.selectChart,
     runtime.queryChartHistory,
     setIndicatorCalculator,
+    queryPersonalTradeConfirmations,
+    queryPersonalTradeHistory,
+    queryMarketHistory,
+    queryCurrentMinuteHistory,
+    queryPublicReportAvailability,
+    calculateIntradayAverage,
+    calculateIntradayAverageCurve,
   ]);
   const data = useMemo<MarketRuntimeData>(() => ({
     chartData: runtime.chartData,
     auctionChartData: runtime.auctionChartData,
     dailyChartData: runtime.dailyChartData,
     indicatorCalculator: calculatorRegistration?.calculator ?? null,
-  }), [calculatorRegistration, runtime.auctionChartData, runtime.chartData, runtime.dailyChartData]);
+    indicatorCapabilities: hostRef.current?.capabilities.indicatorCapabilities ?? { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false },
+  }), [calculatorRegistration, hostRef, runtime.auctionChartData, runtime.chartData, runtime.dailyChartData]);
 
   return (
     <ActionsContext.Provider value={actions}>

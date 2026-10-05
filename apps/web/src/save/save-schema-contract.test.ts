@@ -14,9 +14,23 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
   return save
 }
 
+test("财报频率必须显式保存且只接受月度或季度", () => {
+  const slot = structuredClone(currentSaveFixture());
+  assert.equal(parseSaveSlot(slot).setup.report_frequency, "Quarterly");
+  const setup = slot.setup as unknown as Record<string, unknown>;
+  setup.report_frequency = { Monthly: { schedule: { Preset: { preset: "FirstDayEvening", delay: "None" } } } };
+  assert.deepEqual(parseSaveSlot(slot).setup.report_frequency, setup.report_frequency);
+  setup.report_frequency = "Monthly";
+  assert.throws(() => parseSaveSlot(slot), /请明确选择月报排期/);
+  delete setup.report_frequency;
+  assert.throws(() => parseSaveSlot(slot), /report_frequency/);
+  setup.report_frequency = "Weekly";
+  assert.throws(() => parseSaveSlot(slot), /report_frequency/);
+});
+
 function validEnvelope(): Record<string, unknown> {
   return {
-    key: { account: 0, stock: "600888", order: 1, side: "Buy" },
+    key: { account: "0", stock: "600888", order: 1, side: "Buy" },
     charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" },
   }
 }
@@ -28,7 +42,7 @@ function validReceipt(): Record<string, unknown> {
       journal: "SealedBatch",
       source: { SealedIntent: "0" },
       transition: {
-        envelope: { account: 0, stock: "600888", order: 1, side: "Buy" },
+        envelope: { account: "0", stock: "600888", order: 1, side: "Buy" },
         ordinal: "0",
       },
     },
@@ -59,13 +73,13 @@ test("存档 Money 保留完整 i64 分值并拒绝旧 number 编码", { timeout
   for (const cash of ["0", "9007199254740993", "9223372036854775807"]) {
     const save = currentSaveFixture()
     const snapshot = save.snapshot as Record<string, unknown>
-    snapshot.accounts = { "0": { cash, positions: {} } }
+    snapshot.accounts = { "0": { cash, positions: {} }, "1": { cash: "0", positions: {} } }
     assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
   }
   for (const cash of [0, 1000000000000, "00", "+1", "-0", "1.0", "-1", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"]) {
     const save = currentSaveFixture()
     const snapshot = save.snapshot as Record<string, unknown>
-    snapshot.accounts = { "0": { cash, positions: {} } }
+    snapshot.accounts = { "0": { cash, positions: {} }, "1": { cash: "0", positions: {} } }
     assert.throws(() => parseSaveSlot(save), /snapshot\.accounts\.0\.cash/)
   }
 })
@@ -104,7 +118,7 @@ test("save snapshot derives day and phase instead of accepting persisted mirrors
 test("runtime envelope persists identity and actual charges only", () => {
   const charged = { commission: "3", stamp_tax: "2", transfer_fee: "1" }
   const envelope = {
-    key: { account: 0, stock: "600888", order: 1, side: "Sell" },
+    key: { account: "0", stock: "600888", order: 1, side: "Sell" },
     charged,
   }
   const runtime = {
@@ -112,6 +126,7 @@ test("runtime envelope persists identity and actual charges only", () => {
     next_receipt_base: "0",
     live_envelopes: [envelope],
     retail_projection_seen: [],
+    personal_trade_confirmations: {},
     strategy_states: {},
   }
   assert.deepEqual(parseSaveRuntime(runtime), runtime)
@@ -178,8 +193,8 @@ test("pending player and NPC limit intents preserve fixed, highest and lowest pr
   ]
   const save = {
     ...currentSaveFixture(),
-    pending_player: intents.map((intent, index) => ({ owner: 0, intent, account_ordinal: String(index), stock_ordinal: String(index) })),
-    pending_npc: { observed_tick: 0, observed_accounts: [1], intents: intents.map((intent, index) => ({ owner: 1, intent, account_ordinal: String(index), stock_ordinal: String(index) })), dependencies: [] },
+    pending_player: intents.map((intent, index) => ({ owner: "0", intent, account_ordinal: String(index), stock_ordinal: String(index) })),
+    pending_npc: { observed_tick: 0, observed_accounts: ["1"], intents: intents.map((intent, index) => ({ owner: "1", intent, account_ordinal: String(index), stock_ordinal: String(index) })), dependencies: [] },
   }
   assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, save.pending_npc)
@@ -189,7 +204,7 @@ test("receipt cursors and pending ordinals preserve lossless u64 decimal strings
   const current = currentSaveFixture()
   const { ingress_receipt_cursors: _removed, ...missing } = current
   assert.throws(() => parseSaveSlot(missing), /ingress_receipt_cursors.*必填/)
-  const item = { owner: 0, intent: { Cancel: { code: "600888", id: 1 } }, account_ordinal: "18446744073709551615", stock_ordinal: "18446744073709551615" }
+  const item = { owner: "0", intent: { Cancel: { code: "600888", id: 1 } }, account_ordinal: "18446744073709551615", stock_ordinal: "18446744073709551615" }
   assert.deepEqual(parseSaveSlot({ ...current, pending_player: [item] }).pending_player, [item])
   for (const ordinal of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "01", "+1", "-1", "18446744073709551616"]) {
     assert.throws(() => parseSaveSlot({ ...current, pending_player: [{ ...item, account_ordinal: ordinal }] }), /pending_player\[0\]\.account_ordinal/)
@@ -202,17 +217,17 @@ test("receipt cursors and pending ordinals preserve lossless u64 decimal strings
 test("pending limit intents reject legacy numeric and malformed symbolic prices", () => {
   for (const price of [1000, { Fixed: 1000 }, { Fixed: "1.5" }, { Fixed: "01" }, { Fixed: "-0" }, { Fixed: "1000", Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price, qty: 100 } }
-    const queued = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }
+    const queued = { owner: "0", intent, account_ordinal: "0", stock_ordinal: "0" }
     const save = { ...currentSaveFixture(), pending_player: [queued] }
     assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
-    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [{ owner: 1, intent, account_ordinal: "0", stock_ordinal: "0" }], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
+    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: ["1"], intents: [{ owner: "1", intent, account_ordinal: "0", stock_ordinal: "0" }], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
   }
 })
 
 test("pending fixed price preserves integer amounts for later engine rejection", () => {
   for (const value of ["0", "-1"]) {
     const intent = { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: value }, qty: 100 } }
-    const save = { ...currentSaveFixture(), pending_player: [{ owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }] }
+    const save = { ...currentSaveFixture(), pending_player: [{ owner: "0", intent, account_ordinal: "0", stock_ordinal: "0" }] }
     assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   }
 })
@@ -220,13 +235,13 @@ test("pending fixed price preserves integer amounts for later engine rejection",
 function pendingNpcReplacementBatch() {
   return {
     observed_tick: 0,
-    observed_accounts: [1],
+    observed_accounts: ["1"],
     intents: [
-      { owner: 1, intent: { Cancel: { code: "600888", id: 42 } }, account_ordinal: "0", stock_ordinal: "0" },
-      { owner: 1, intent: { Cancel: { code: "600888", id: 43 } }, account_ordinal: "1", stock_ordinal: "1" },
-      { owner: 1, intent: { Cancel: { code: "600888", id: 44 } }, account_ordinal: "2", stock_ordinal: "2" },
-      { owner: 1, intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
-      { owner: 1, intent: { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }, account_ordinal: "4", stock_ordinal: "4" },
+      { owner: "1", intent: { Cancel: { code: "600888", id: 42 } }, account_ordinal: "0", stock_ordinal: "0" },
+      { owner: "1", intent: { Cancel: { code: "600888", id: 43 } }, account_ordinal: "1", stock_ordinal: "1" },
+      { owner: "1", intent: { Cancel: { code: "600888", id: 44 } }, account_ordinal: "2", stock_ordinal: "2" },
+      { owner: "1", intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+      { owner: "1", intent: { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }, account_ordinal: "4", stock_ordinal: "4" },
     ],
     dependencies: [[0, 3], [1, 3], [1, 4]],
   }
@@ -262,8 +277,8 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
     )
   }
   for (const replacement of [
-    { owner: 2, intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
-    { owner: 1, intent: { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+    { owner: "2", intent: { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+    { owner: "1", intent: { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
   ]) {
     const intents = structuredClone(batch.intents)
     intents[3] = replacement
@@ -284,7 +299,7 @@ test("存档仅接受当前结构，不接受任何 schema_version 标记", () =
 })
 
 test("auction save identifies orders without accepting the old arrival field", () => {
-  const order = { owner: 0, side: "Buy", limit: "100", qty: 100, order_id: 1 }
+  const order = { owner: "0", side: "Buy", limit: "100", qty: 100, order_id: 1 }
   const save = { ...currentSaveFixture(), auction_orders: { "600888": [order] } }
   assert.deepEqual(parseSaveSlot(save).auction_orders, save.auction_orders)
   const { order_id: _removed, ...oldOrder } = order
@@ -505,6 +520,7 @@ test("SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签",
   const runtime = {
     poisoned: false, next_receipt_base: "1", live_envelopes: [], strategy_states: {},
     retail_projection_seen: [{ ...validReceipt(), local_key: { ...validReceipt().local_key as object, source: { QuoteExpiry: 7 } } }],
+    personal_trade_confirmations: {},
   }
   assert.deepEqual(parseSaveRuntime(runtime), runtime)
   const legacy = structuredClone(runtime)

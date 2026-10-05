@@ -6,7 +6,7 @@ import type { PositionSnap } from "../../types/generated/PositionSnap.ts"
 import type { StockCode } from "../../types/generated/StockCode.ts"
 import { parseDailyCandle } from "./market.ts"
 import { stockKey } from "./personal/common.ts"
-import { array, exact, integer, map, record, safeIntegerKey } from "./primitives.ts"
+import { array, exact, integer, map, record, accountKey } from "./primitives.ts"
 
 type SaveMarket = { readonly last_price: Money; readonly last_close: Money }
 type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<StockCode, PositionSnap>> }
@@ -50,7 +50,7 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
       last_close: money(market.last_close, `${itemPath}.last_close`),
     }
   })
-  const accounts = map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => {
+  const accounts = map(parsed.accounts, `${path}.accounts`, accountKey, (item, itemPath) => {
     const account = record(item, itemPath)
     exact(account, ["cash", "positions"], itemPath)
     const cash = money(account.cash, `${itemPath}.cash`)

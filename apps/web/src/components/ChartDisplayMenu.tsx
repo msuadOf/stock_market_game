@@ -10,6 +10,8 @@ interface Settings {
   onToggleAverage: (days: number) => void;
   indicator: ChartIndicator;
   onIndicator: (indicator: ChartIndicator) => void;
+  averages?: readonly { readonly days: number; readonly color: string }[];
+  onEditAverages?: () => void;
 }
 
 /** 菜单只负责入口和焦点，均线与副图状态仍由共用图表持有。 */
@@ -76,7 +78,7 @@ function DisplayMenuContent({ section, returnTo, onEnter, onBack, onClose, ...se
   return <div ref={menu} className="chart-display-menu" role="menu" aria-label={section === "root" ? "图表显示设置" : section === "averages" ? "均线设置" : "副图指标设置"} onKeyDown={keyDown}>
     {section === "root" ? <>{([ ["averages", "均线"], ["indicator", "副图指标"] ] as const).map(([value, label]) => <button type="button" role="menuitem" tabIndex={-1} data-section={value} aria-haspopup="menu" key={value} onClick={() => onEnter(value)}>{label}<span aria-hidden="true">›</span></button>)}</> : <>
       <button type="button" className="chart-display-back" tabIndex={-1} aria-label="返回显示菜单" onClick={onBack}>‹ {section === "averages" ? "均线（可多选）" : "副图指标"}</button>
-      {section === "averages" ? KLINE_MOVING_AVERAGES.map(({ days, color }) => <button type="button" role="menuitemcheckbox" aria-checked={settings.selected.includes(days)} aria-label={`MA${days}`} tabIndex={-1} key={days} onClick={() => settings.onToggleAverage(days)}><span style={{ color }}>MA{days}</span><span aria-hidden="true">{settings.selected.includes(days) ? "✓" : ""}</span></button>) : CHART_INDICATORS.map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={settings.indicator === value} aria-label={label} tabIndex={-1} key={value} onClick={() => { settings.onIndicator(value); onClose(true); }}>{label}<span aria-hidden="true">{settings.indicator === value ? "✓" : ""}</span></button>)}
+      {section === "averages" ? <>{(settings.averages === undefined ? KLINE_MOVING_AVERAGES : settings.averages).map(({ days, color }) => <button type="button" role="menuitemcheckbox" aria-checked={settings.selected.includes(days)} aria-label={`MA${days}`} tabIndex={-1} key={days} onClick={() => settings.onToggleAverage(days)}><span style={{ color }}>MA{days}</span><span aria-hidden="true">{settings.selected.includes(days) ? "✓" : ""}</span></button>)}{settings.onEditAverages !== undefined && <button type="button" role="menuitem" tabIndex={-1} onClick={() => { settings.onEditAverages!(); onClose(false); }}>编辑均线周期</button>}</> : CHART_INDICATORS.map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={settings.indicator === value} aria-label={label} tabIndex={-1} key={value} onClick={() => { settings.onIndicator(value); onClose(true); }}>{label}<span aria-hidden="true">{settings.indicator === value ? "✓" : ""}</span></button>)}
     </>}
   </div>;
 }

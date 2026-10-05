@@ -5,6 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { setImmediate } from "node:timers/promises";
 import { createTauriHost } from "./tauri-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
 
 test("Tauri save pins generation for keyed and latest candidates and rejects a late response after load", async () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -13,8 +14,8 @@ test("Tauri save pins generation for keyed and latest candidates and rejects a l
   let completeSave: ((slot: unknown) => void) | null = null;
   const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   mockIPC((command, args) => {
-    if (command === "create_session") return "session-1";
-    if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
+    if (command === "create_session") return { sessionId: "session-1", setup: DEFAULT_SETUP, seed: "1", resumed: false };
+    if (command === "host_capabilities") return { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
     if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
     if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
     if (command === "save_session") {
@@ -43,7 +44,74 @@ test("Tauri save pins generation for keyed and latest candidates and rejects a l
   }
 });
 
+test("Tauri当前分钟使用独立Rust命令并拒绝旧generation", { timeout: 10000 }, async () => {
+  const query = { code: "600000" };
+  const response = { code: "600000", date: "2030-01-02", observed_at: { date: "2030-01-02", second_of_day: 0 }, live: true, status: "Trading", phase: "Continuous", bars: [] };
+  let stale = false, received: unknown;
+  await withTauriHost(async host => {
+    assert.deepEqual(await host.queryCurrentMinuteHistory(query), response);
+    assert.deepEqual(received, { sessionId: "session-1", generation: "1", query });
+    stale = true;
+    await assert.rejects(host.queryCurrentMinuteHistory(query), /generation/);
+  }, (command, args) => {
+    if (command === "current_minute_history") { received = args; return { generation: stale ? "0" : "1", response }; }
+    return undefined;
+  });
+});
+
+test("Tauri永久量价历史使用显式Rust命令和generation", { timeout: 10000 }, async () => {
+  const query = { code: "600000", date_from: "2030-01-02", date_to: "2030-01-03", after: null, page_size: 2 };
+  const page = { code: "600000", entries: ["2030-01-02", "2030-01-03"].map(date => ({ date, availability: "NotEnded", bars: [], daily_candle: null })), next_cursor: null, settled_through: null };
+  let received: unknown;
+  await withTauriHost(async (host) => {
+    assert.deepEqual(await host.queryMarketHistory(query), page);
+  }, (command, args) => {
+    if (command === "market_history") { received = args; return { generation: "1", page }; }
+    return undefined;
+  });
+  assert.deepEqual(received, { sessionId: "session-1", generation: "1", query });
+});
+
+test("Tauri按需VWAP与个人交割单查询只调用显式Rust能力命令", { timeout: 10000 }, async () => {
+  const calls: { command: string; args: unknown }[] = [];
+  await withTauriHost(async (host) => {
+    assert.equal(host.capabilities.indicatorCapabilities.intradayAverage, true);
+    assert.deepEqual(await host.calculateIntradayAverage({ turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }), {
+      turnoverCents: "260000", volumeShares: 300,
+    });
+    assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "600000:1:901", samples: [{ turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }] }), [
+      { turnoverCents: "260000", volumeShares: 300 },
+    ]);
+    assert.deepEqual(await host.queryPersonalTradeConfirmations(), []);
+  }, (command, args) => {
+    calls.push({ command, args });
+    if (command === "host_capabilities") return {
+      npcDecisionDiagnostics: false,
+      indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true },
+      personalTradeHistory: true,
+    };
+    if (command === "calculate_intraday_average") return { turnover_cents: "260000", volume_shares: 300 };
+    if (command === "calculate_intraday_average_curve") return { series_key: "600000:1:901", results: [{ turnover_cents: "260000", volume_shares: 300 }] };
+    if (command === "personal_trade_confirmations") return { generation: "1", confirmations: [] };
+    return undefined;
+  });
+  assert.ok(calls.some(({ command }) => command === "calculate_intraday_average"));
+  const history = calls.find(({ command }) => command === "personal_trade_confirmations");
+  assert.ok(history);
+  assert.equal((history.args as Record<string, unknown>).account, undefined);
+});
+
 const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+test("Tauri本人日期页通过严格query参数与generation绑定，不允许指定账户", { timeout: 10000 }, async () => {
+  const query = { date_from: "2030-01-02", date_to: "2030-01-04", code: "600001", side: "Buy", before_receipt: null, as_of_receipt: null, page_size: 100 } as const;
+  const page = { request: query, confirmations: [], next_cursor: null, as_of_receipt: "10", start_date: "2030-01-02", current_date: "2030-01-05", settled_through: "2030-01-04" };
+  let received: unknown;
+  await withTauriHost(async (host) => { assert.deepEqual(await host.queryPersonalTradeHistory(query), page); }, (command, args) => {
+    if (command === "personal_trade_history") { received = args; return { generation: "1", page }; }
+    return undefined;
+  });
+  assert.deepEqual(received, { sessionId: "session-1", generation: "1", query });
+});
 type IpcHandler = Parameters<typeof mockIPC>[0];
 
 async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHost>>, calls: string[]) => Promise<void>, handler: IpcHandler = () => undefined) {
@@ -54,8 +122,8 @@ async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHo
     calls.push(command);
     const response = handler(command, args);
     if (response !== undefined) return response;
-    if (command === "create_session") return "session-1";
-    if (command === "host_capabilities") return { npcDecisionDiagnostics: true };
+    if (command === "create_session") return { sessionId: "session-1", setup: DEFAULT_SETUP, seed: "1", resumed: false };
+    if (command === "host_capabilities") return { npcDecisionDiagnostics: true, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
     if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
     if (command === "restore_session") return { snapshot: { ...snapshot, tick: 2 }, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
     return null;
@@ -122,7 +190,7 @@ test("Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save �
   let finishSave!: (value: unknown) => void;
   await withTauriHost(async (host) => {
     const orders = assert.rejects(host.playerWorkingOrders(), /玩家活动委托响应属于已过期/);
-    const diagnostics = assert.rejects(host.npcDecisionTrace!(1), /NPC 诊断响应属于已过期/);
+    const diagnostics = assert.rejects(host.npcDecisionTrace!("1"), /NPC 诊断响应属于已过期/);
     const saved = host.save();
     await host.refreshBaseline();
     finishOrders({ generation: "1", value: [] });
@@ -235,6 +303,20 @@ test("Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration", as
   }, (command) => command === "restore_session" ? { snapshot, generation: "9007199254740993", timeline_id: "wrong", civil_date: "2030-01-01" } : undefined);
 });
 
+test("Tauri坏恢复generation、snapshot或日期不能提前确认所选档配置", { timeout: 10000 }, async () => {
+  for (const response of [
+    { snapshot, generation: "1", timeline_id: "bad-generation", civil_date: "2030-01-01" },
+    { snapshot: null, generation: "2", timeline_id: "bad-snapshot", civil_date: "2030-01-01" },
+    { snapshot, generation: "2", timeline_id: "bad-date", civil_date: "2030-02-30" },
+  ]) {
+    let confirmations = 0;
+    await withTauriHost(async host => {
+      await assert.rejects(host.load({}, "selected-archive", () => { confirmations++; }));
+      assert.equal(confirmations, 0);
+    }, command => command === "restore_session" ? response : undefined);
+  }
+});
+
 test("Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline", { timeout: 10000 }, async () => {
   let finishControl: (() => void) | null = null;
   await withTauriHost(async (host) => {
@@ -343,9 +425,12 @@ test("Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败�
     await host.start(update => { if (update.generation === "2") assert.equal(restored, true); });
     calls.length = 0;
     refuseResume = true;
-    await assert.rejects(host.load({}, () => { restored = true; calls.push("restored-setup"); }), /恢复运行失败/);
+    await assert.rejects(host.load({}, "selected-archive", () => { restored = true; calls.push("restored-setup"); }), /恢复运行失败/);
     assert.equal(restored, true);
     assert.deepEqual(calls, ["pause_session", "restore_session", "restored-setup", "resume_session"]);
     assert.equal(host.tick(), 2);
-  }, command => command === "resume_session" && refuseResume ? Promise.reject(new Error("恢复运行失败")) : undefined);
+  }, (command, args) => {
+    if (command === "restore_session") assert.deepEqual(args, { sessionId: "session-1", generation: "1", slot: {}, archiveSlotId: "selected-archive" });
+    return command === "resume_session" && refuseResume ? Promise.reject(new Error("恢复运行失败")) : undefined;
+  });
 });

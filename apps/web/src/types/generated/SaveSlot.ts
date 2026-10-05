@@ -4,6 +4,7 @@ import type { AuctionOrderSnap } from "./AuctionOrderSnap";
 import type { CivilClockSave } from "./CivilClockSave";
 import type { FilledOrderSnap } from "./FilledOrderSnap";
 import type { IngressReceiptCursors } from "./IngressReceiptCursors";
+import type { MarketMembershipState } from "./MarketMembershipState";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
@@ -16,6 +17,7 @@ import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
 import type { ReceiptBearingIntent } from "./ReceiptBearingIntent";
 import type { RetailExperienceState } from "./RetailExperienceState";
+import type { RetainedHistoryDay } from "./RetainedHistoryDay";
 import type { SaveParentOrderPlan } from "./SaveParentOrderPlan";
 import type { SaveSnapshot } from "./SaveSnapshot";
 import type { SessionSetup } from "./SessionSetup";
@@ -23,17 +25,18 @@ import type { StockCode } from "./StockCode";
 import type { UrgencyPolicy } from "./UrgencyPolicy";
 
 /**
- * 存档槽：保存权威市场、账户、集合竞价及连续竞价未成交委托。
- * 前端分时采样属于派生 UI 数据，不进入权威存档；日 K 由 engine 持久化。
+ * 当前契约的状态槽。公共持久档仅接受完整日结；低层内存 checkpoint 另保留活动状态。
+ * 真实分钟量价、日 K 和交割事实永久保留；前端展示采样不冒充真实成交历史。
  */
 export type SaveSlot = {
+  retained_market_history: Array<RetainedHistoryDay>;
+  market_memberships: MarketMembershipState;
   /**
    * Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
    * parser 共同维护，避免把策略私有结构扩成通用宿主命令。
    */
   runtime_state: import("../../save/schema/runtime-state").SavedRuntimeState;
   setup: SessionSetup;
-  groups: import("../../save/schema/company/groups").GroupStructure[];
   seed: string;
   snapshot: SaveSnapshot;
   /**
@@ -90,7 +93,7 @@ export type SaveSlot = {
    */
   pending_player: Array<ReceiptBearingIntent>;
   /**
-   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
+   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求；日界处尚未生成。
    */
   pending_npc: PendingNpcBatch | null;
   ingress_receipt_cursors: IngressReceiptCursors;
@@ -105,11 +108,9 @@ export type SaveSlot = {
   /**
    * ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
    *    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
-   * 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
-   * 余额在反序列化重放边界校验）。
+   * 新局选定的公司系统、财务事实与独立随机状态。
    */
-  company_operations:
-    import("../../save/schema/company/operations").CompanyOperations;
+  company_system: import("../../save/schema/company/system").CompanySystem;
   /**
    * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
    */

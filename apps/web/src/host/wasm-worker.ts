@@ -1,5 +1,6 @@
 import { parseSaveSlot } from "../save/save-schema.ts";
-import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
+import { parseTurnoverCents } from "../utils/turnover.ts";
+import { normalizePublicReportAvailability, normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
@@ -8,17 +9,40 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
+import { parseReportCorrectionStatus } from "./report-corrections.ts";
+import { parseCompanyReportCorrection } from "../save/schema/company/report-corrections.ts";
+import { normalizeMarketHistoryRequest } from "./market-history.ts";
+import { normalizeCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDecisionTraceRecord[];
 type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
+  readonly public_report_availability?: (handle: number, query: unknown) => unknown;
   readonly ingress_token?: (handle: number) => number;
+  readonly submit_report_correction?: (handle: number, request: unknown) => void;
+  readonly cancel_report_correction?: (handle: number, operationId: string) => void;
+  readonly query_report_corrections?: (handle: number) => unknown;
   readonly prepare_public_baseline?: (handle: number) => void;
-  readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
+  readonly host_capabilities?: () => {
+    readonly npcDecisionDiagnostics: boolean;
+    readonly indicatorCapabilities: {
+      readonly intradayAverage: boolean;
+      readonly macd: boolean;
+      readonly priceKdj: boolean;
+      readonly candleKdj: boolean;
+    };
+    readonly personalTradeHistory: boolean;
+  };
   readonly player_working_orders?: (handle: number) => unknown;
   readonly query_stock_history?: (handle: number, code: string) => unknown;
   readonly initial_allocation?: (handle: number) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
+  readonly calculate_intraday_average?: (turnoverCents: string, tradeCount: bigint, volumeShares: bigint) => unknown;
+  readonly calculate_intraday_average_curve?: (samples: unknown) => unknown;
+  readonly personal_trade_confirmations?: (handle: number, beforeReceipt: string | null) => unknown;
+  readonly personal_trade_history?: (handle: number, query: unknown) => unknown;
+  readonly market_history?: (handle: number, query: unknown) => unknown;
+  readonly current_minute_history?: (handle: number, query: unknown) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
 };
@@ -291,10 +315,46 @@ ctx.addEventListener("message", (event) => {
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
+        case "submitReportCorrection": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const submit = (wasm as WasmTransportExtensions).submit_report_correction;
+          if (typeof submit !== "function") throw new Error("当前 WASM 产物缺少财报更正入口");
+          submit(session, parseCompanyReportCorrection(message.request));
+          ctx.postMessage({ type: "reportCorrectionSubmitted", requestId: message.requestId, generation: requestedGeneration });
+          break;
+        }
+        case "cancelReportCorrection": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const cancel = (wasm as WasmTransportExtensions).cancel_report_correction;
+          if (typeof cancel !== "function") throw new Error("当前 WASM 产物缺少财报更正取消入口");
+          if (typeof message.operationId !== "string" || message.operationId.trim().length === 0) throw new Error("更正 operation_id 必须非空");
+          cancel(session, message.operationId);
+          ctx.postMessage({ type: "reportCorrectionCancelled", requestId: message.requestId, generation: requestedGeneration });
+          break;
+        }
+        case "queryReportCorrections": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const query = (wasm as WasmTransportExtensions).query_report_corrections;
+          if (typeof query !== "function") throw new Error("当前 WASM 产物缺少财报更正查询入口");
+          const value = parseReportCorrectionStatus(query(session));
+          ctx.postMessage({ type: "reportCorrections", requestId: message.requestId, generation: requestedGeneration, value });
+          break;
+        }
         case "publicReports": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
           ctx.postMessage({ type: "publicReports", requestId: message.requestId, generation: requestedGeneration, page: normalizePublicReportPage(wasm.public_report_page(session, message.query) ) });
+          return;
+        }
+        case "publicReportAvailability": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const queryAvailability = (wasm as WasmTransportExtensions).public_report_availability;
+          if (queryAvailability === undefined) throw new Error("当前 WASM bindings 不支持公开报告可用性查询，请重建 bindings");
+          ctx.postMessage({ type: "publicReportAvailability", requestId: message.requestId, generation: requestedGeneration, availability: normalizePublicReportAvailability(queryAvailability(session, message.query)) });
           return;
         }
         case "playerWorkingOrders": {
@@ -329,7 +389,7 @@ ctx.addEventListener("message", (event) => {
         }
         case "npcDecisionTrace": {
           const requestedGeneration = slot.requireGeneration(message.generation);
-          if (!Number.isSafeInteger(message.account) || Number(message.account) < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
+          if (typeof message.account !== "string" || !/^(0|[1-9]\d*)$/.test(message.account) || message.account.length > 20 || BigInt(message.account) > 18_446_744_073_709_551_615n) throw new Error("NPC 账户 ID 必须是规范 u64 非负十进制字符串");
           const [session, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           const trace = optionalNpcDecisionTrace(wasm);
@@ -338,7 +398,7 @@ ctx.addEventListener("message", (event) => {
             type: "npcDecisionTrace",
             requestId: message.requestId,
             generation: requestedGeneration,
-            records: trace(session, BigInt(Number(message.account))),
+            records: trace(session, BigInt(message.account)),
           });
           return;
         }
@@ -364,6 +424,77 @@ ctx.addEventListener("message", (event) => {
           ctx.postMessage({ type: "indicatorsCalculated", requestId: message.requestId, generation: requestedGeneration, result });
           return;
         }
+        case "calculateIntradayAverage": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("VWAP 请求 ID 无效");
+          const turnoverCents = parseTurnoverCents(message.turnoverCents, "VWAP turnoverCents");
+          if (!Number.isSafeInteger(message.tradeCount) || Number(message.tradeCount) < 0) throw new Error("VWAP tradeCount 必须是非负安全整数");
+          if (!Number.isSafeInteger(message.volumeShares) || Number(message.volumeShares) < 0) throw new Error("VWAP volumeShares 必须是非负安全整数");
+          const [, wasm] = slot.requireHandle();
+          const calculateAverage = (wasm as WasmTransportExtensions).calculate_intraday_average;
+          if (calculateAverage === undefined) throw new Error("当前 WASM bindings 不支持 VWAP，请重建 bindings");
+          const result = calculateAverage(turnoverCents, BigInt(Number(message.tradeCount)), BigInt(Number(message.volumeShares)));
+          ctx.postMessage({ type: "intradayAverageCalculated", requestId: message.requestId, generation: requestedGeneration, result });
+          return;
+        }
+        case "calculateIntradayAverageCurve": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("VWAP curve 请求 ID 无效");
+          if (typeof message.seriesKey !== "string" || message.seriesKey.length === 0 || message.seriesKey.length > 256 || !Array.isArray(message.samples) || message.samples.length > 600) throw new Error("VWAP curve 请求字段无效");
+          const [, wasm] = slot.requireHandle();
+          const calculateCurve = (wasm as WasmTransportExtensions).calculate_intraday_average_curve;
+          if (calculateCurve === undefined) throw new Error("当前 WASM bindings 不支持 VWAP curve，请重建 bindings");
+          const samples = message.samples.map((item) => {
+            if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("VWAP curve sample 必须是对象");
+            const sample = item as Record<string, unknown>;
+            const turnoverCents = parseTurnoverCents(sample.turnoverCents, "VWAP curve turnoverCents");
+            if (!Number.isSafeInteger(sample.tradeCount) || Number(sample.tradeCount) < 0
+              || !Number.isSafeInteger(sample.volumeShares) || Number(sample.volumeShares) < 0) throw new Error("VWAP curve sample 字段无效");
+            return { turnover_cents: turnoverCents, trade_count: Number(sample.tradeCount), volume_shares: Number(sample.volumeShares) };
+          });
+          const results = calculateCurve(samples);
+          ctx.postMessage({ type: "intradayAverageCurveCalculated", requestId: message.requestId, generation: requestedGeneration, seriesKey: message.seriesKey, results });
+          return;
+        }
+        case "currentMinuteHistory": {
+          const generation = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("当前分钟requestId无效");
+          const request = normalizeCurrentMinuteHistoryRequest(message.query);
+          const [session, wasm] = slot.requireHandle();
+          const query = (wasm as WasmTransportExtensions).current_minute_history;
+          if (query === undefined) throw new Error("当前WASM bindings不支持当前分钟，请重建bindings");
+          ctx.postMessage({ type: "currentMinuteHistory", requestId: message.requestId, generation, response: query(session, request) });
+          return;
+        }
+        case "marketHistory": {
+          const generation = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("量价历史requestId无效");
+          const request = normalizeMarketHistoryRequest(message.query);
+          const [session, wasm] = slot.requireHandle();
+          const query = (wasm as WasmTransportExtensions).market_history;
+          if (query === undefined) throw new Error("当前WASM bindings不支持永久量价历史，请重建bindings");
+          ctx.postMessage({ type: "marketHistory", requestId: message.requestId, generation, page: query(session, request) });
+          return;
+        }
+        case "personalTradeHistory": {
+          const generation = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("日期交割历史requestId无效");
+          const [session, wasm] = slot.requireHandle();
+          const query = (wasm as WasmTransportExtensions).personal_trade_history;
+          if (query === undefined) throw new Error("当前WASM bindings不支持日期交割历史，请重建bindings");
+          ctx.postMessage({ type: "personalTradeHistory", requestId: message.requestId, generation, page: query(session, message.query) });
+          return;
+        }
+        case "personalTradeConfirmations": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("交割单请求 ID 无效");
+          const [session, wasm] = slot.requireHandle();
+          const queryConfirmations = (wasm as WasmTransportExtensions).personal_trade_confirmations;
+          if (queryConfirmations === undefined) throw new Error("当前 WASM bindings 不支持本人交割单，请重建 bindings");
+          if (message.beforeReceipt !== null && (typeof message.beforeReceipt !== "string" || message.beforeReceipt.length > 20 || !/^(0|[1-9]\d*)$/.test(message.beforeReceipt) || BigInt(message.beforeReceipt) > 18_446_744_073_709_551_615n)) throw new Error("交割单 beforeReceipt 必须是规范u64字符串或null");
+          ctx.postMessage({ type: "personalTradeConfirmations", requestId: message.requestId, generation: requestedGeneration, confirmations: queryConfirmations(session, message.beforeReceipt) });
+          return;
+        }
         case "publicReportById": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
@@ -382,6 +513,7 @@ ctx.addEventListener("message", (event) => {
       const structuredFailure = structuredHostFailure(error, `wasm-worker.${message.type}`);
       if (structuredFailure !== null) {
         loop.stop();
+        if (structuredFailure.code === "REPORT_CORRECTION_REJECTED" && structuredFailure.recoverable === true && typeof message.requestId === "number") respondOperationError(message, error);
         postFailureDetails(`wasm-worker.${message.type}`, structuredFailure);
       } else if (typeof message.requestId === "number") {
         respondOperationError(message, error);

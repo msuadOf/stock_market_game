@@ -79,10 +79,10 @@ describe("fast-forward event buffer", () => {
 
   it("retains errors and only the newest trades needed by the visible tape", () => {
     const rejected: EngineEvent = {
-      IntentRejected: { seq: 5, account: 1, code: "AAA", reason: "InsufficientCash" },
+      IntentRejected: { seq: 5, account: "1", code: "AAA", reason: "InsufficientCash" },
     };
     const trades = Array.from({ length: 4 }, (_, i): EngineEvent => ({
-      Trade: { seq: i + 1, code: "AAA", qty: 1, price: String(100 + i), maker: 1, taker: 2 },
+      Trade: { seq: i + 1, code: "AAA", qty: 1, price: String(100 + i), maker: "1", taker: "2" },
     }));
 
     assert.deepEqual(compactFastForwardEvents([...trades, rejected], 2), [trades[2], trades[3], rejected]);

@@ -56,3 +56,7 @@ test("每一种引擎拒单原因都有明确中文说明", () => {
   assert.equal(rejectionText("AuctionOrderEntryClosed"), "09:25–09:30 不接受新委托");
   assert.equal(rejectionText("OrderAlreadyFilled"), "委托已全部成交，无法撤单");
 });
+
+test("逐交易所闭市不能冒充盘前禁止申报或未知股票", { timeout: 10000 }, () => {
+  assert.equal(rejectionText("ExchangeClosed"), "该证券所属交易所今日休市，不接受委托");
+});

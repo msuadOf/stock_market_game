@@ -1,9 +1,9 @@
-import { array, boolean, exact, integer, map, nullable, oneOf, record, SaveSchemaError, string } from "../primitives.ts"
+import { accountId, array, boolean, exact, integer, map, nullable, oneOf, record, SaveSchemaError, string } from "../primitives.ts"
 import { accountKey, companyKey, externalTag, i32, money, orderId, publicationId, stockKey, tagged, u16, type StringMap } from "./common.ts"
 import { parseRetailExperienceState, type RetailExperienceState } from "./experience.ts"
 import { parseInstitutionExperiencePolicy, type InstitutionExperiencePolicy } from "./institution-policy.ts"
 
-export type BeliefBook = { readonly npc: number; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry>; readonly experience: RetailExperienceState; readonly institution_policy: InstitutionExperiencePolicy | null; readonly institution_account_risk_paused: boolean }
+export type BeliefBook = { readonly npc: string; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry>; readonly experience: RetailExperienceState; readonly institution_policy: InstitutionExperiencePolicy | null; readonly institution_account_risk_paused: boolean }
 export type StrategyProfile = { readonly Retail: RetailStyle } | { readonly Institution: InstitutionStyle } | { readonly Hot: HotStyle }
 export type RetailStyle = "Dormant" | "LongTerm" | "Noise" | "DipBuyer" | "Momentum" | "Panic"
 export type InstitutionStyle = "DeepValue" | "Growth" | "Balanced" | "Defensive" | "ActiveTrader"
@@ -36,7 +36,7 @@ export function parseBeliefBook(value: unknown, path: string): BeliefBook {
   const profile = parseProfile(parsed.profile, `${path}.profile`)
   if ("Retail" in profile && parsed.institution_policy !== null) throw new SaveSchemaError(`${path}.institution_policy`, "Retail 不得携带 Institution policy")
   if ("Retail" in profile && parsed.institution_account_risk_paused !== false) throw new SaveSchemaError(`${path}.institution_account_risk_paused`, "Retail 不得携带 Institution 账户暂停状态")
-  return { npc: integer(parsed.npc, `${path}.npc`, 0), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
+  return { npc: accountId(parsed.npc, `${path}.npc`), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
 }
 
 function parseProfile(value: unknown, path: string): StrategyProfile {

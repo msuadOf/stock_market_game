@@ -8,6 +8,7 @@ export function publicReportGold(): PublicReportSummary {
     discontinued: [], discontinued_subtotal: "0.00", income_tax: "22.00", net_income: "88.00",
   };
   return {
+    source: "SimulationAccounting",
     id: "7", company_id: "C-600101", period: "2030-03-31", kind: "Quarter" as const,
     version_sequence: "2", supersedes: "6", approved_date: "2030-04-01", approved_second_of_day: 28_800,
     published_date: "2030-04-02", published_second_of_day: 64_800,

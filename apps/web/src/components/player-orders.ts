@@ -1,16 +1,7 @@
 import type { StrictSaveEnvelope } from "../save/schema/root.ts"
 import type { Event } from "../types/generated/Event.ts"
-import type { Cents } from "../types/engine.ts"
-
-export type PlayerWorkingOrder = {
-  readonly id: number
-  readonly code: string
-  readonly side: "Buy" | "Sell"
-  readonly price: Cents
-  readonly remainingQty: number
-  readonly venue: "auction" | "continuous"
-  readonly frozen: "cash" | "shares"
-}
+import type { PlayerWorkingOrder } from "../host/player-working-orders.ts"
+export type { PlayerWorkingOrder } from "../host/player-working-orders.ts"
 
 type WorkingOrderSource = Pick<StrictSaveEnvelope, "auction_orders" | "resting_orders">
 
@@ -18,8 +9,9 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
   const orders: PlayerWorkingOrder[] = []
   for (const [code, auctionOrders] of Object.entries(slot.auction_orders)) {
     for (const order of auctionOrders) {
-      if (order.owner !== 0) continue
+      if (order.owner !== "0") continue
       orders.push({
+        owner: "0",
         id: order.order_id,
         code,
         side: order.side,
@@ -32,8 +24,9 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
   }
   for (const [code, restingOrders] of Object.entries(slot.resting_orders)) {
     for (const order of restingOrders) {
-      if (order.owner !== 0 || order.qty === 0) continue
+      if (order.owner !== "0" || order.qty === 0) continue
       orders.push({
+        owner: "0",
         id: order.id,
         code,
         side: order.side,
@@ -65,11 +58,11 @@ export class PlayerOrderRefreshGate {
   }
 }
 
-export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[]): boolean {
+export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[], accountId: string | null = "0"): boolean {
   return facts.some(({ event }) =>
-    ("OrderAccepted" in event && event.OrderAccepted.account === 0)
-    || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
-    || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0))
+    ("OrderAccepted" in event && String(event.OrderAccepted.account) === accountId)
+    || ("OrderCanceled" in event && String(event.OrderCanceled.account) === accountId)
+    || ("Trade" in event && (String(event.Trade.maker) === accountId || String(event.Trade.taker) === accountId))
     || "AuctionCompleted" in event
     || "DayBoundary" in event,
   )

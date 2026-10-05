@@ -20,6 +20,7 @@ import {
 } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
 import { parseMoney as parseCanonicalMoney } from "../../utils/money.ts";
+import { parseTurnoverCents } from "../../utils/turnover.ts";
 
 export const TRADING_PHASES = ["CallAuction", "PreOpen", "ClosingAuction", "Continuous"] as const;
 export const HOLIDAY_KINDS = [
@@ -88,8 +89,13 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
   if (rawStats === null) return { ...candle, trade_stats: null };
   const stats = record(rawStats, `${path}.trade_stats`);
   exact(stats, ["turnover_cents", "trade_count"], `${path}.trade_stats`);
-  const turnoverCents = text(field(stats, "turnover_cents", `${path}.trade_stats`), `${path}.trade_stats.turnover_cents`);
-  if (!isU64Decimal(turnoverCents)) malformed(`${path}.trade_stats.turnover_cents`, "成交额必须是 u64 范围内的无损非负十进制字符串");
+  let turnoverCents: string;
+  try {
+    turnoverCents = parseTurnoverCents(field(stats, "turnover_cents", `${path}.trade_stats`), `${path}.trade_stats.turnover_cents`);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    malformed(`${path}.trade_stats.turnover_cents`, error.message);
+  }
   return {
     ...candle,
     trade_stats: {

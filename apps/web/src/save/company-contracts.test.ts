@@ -1,39 +1,40 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { currentSaveFixture } from "./current-save-fixture.ts"
+import { representativeCurrentSaveFixture } from "./representative-save-test-fixture.ts"
 import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
 import { parseSetup } from "./schema/market.ts"
-import { parseCompanyOperations } from "./schema/company/operations.ts"
+import { parseCompanyOperations, parseCompanyOperationsConfig } from "./schema/company/operations.ts"
 import { parseActiveShocks, parseShockKind } from "./schema/company/policies/shock.ts"
 import { parsePublicLibrary } from "./schema/company/reports.ts"
 import { parseGroups } from "./schema/company/groups.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 
-test("当前存档保留 groups 与职责运行时字段且拒绝代际字段", { timeout: 10_000 }, () => {
-  const save: Record<string, unknown> = { ...currentSaveFixture(), groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
+test("当前存档保留 company_system 与职责运行时字段且拒绝旧仿真和代际字段", { timeout: 10_000 }, () => {
+  const save = representativeCurrentSaveFixture()
   assert.deepEqual(parseSaveSlot(save), save)
-  const { groups: _removed, ...missingGroups } = save
-  assert.throws(() => parseSaveSlot(missingGroups), /groups/)
+  const { company_system: _removed, ...missingSystem } = save
+  assert.throws(() => parseSaveSlot(missingSystem), /company_system/)
+  assert.throws(() => parseSaveSlot({ ...save, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }), /groups/)
   for (const schema_version of [1, 2, 3]) assert.throws(() => parseSaveSlot({ ...save, schema_version }), /schema_version/)
   assert.throws(() => parseSaveSlot({ ...save, runtime_v2: save.runtime_state }), /runtime_v2/)
 })
 
-test("setup 保留省略字段并严格解析显式 company config 与 groups", () => {
-  const setup = currentSaveFixture().setup as Record<string, unknown>
+test("setup 严格解析现行 company_system，旧 CompanyOperations 配置在独立低层校验", () => {
+  const setup = representativeCurrentSaveFixture().setup as Record<string, unknown>
   assert.deepEqual(parseSetup(setup, "setup"), setup)
   const empty = { ...setup, company_operations: null, groups: [] }
-  assert.deepEqual(parseSetup(empty, "setup"), empty)
+  assert.throws(() => parseSetup(empty, "setup"), /company_operations|groups/)
   const operations = representativeCompanyOperationsFixture() as any
   const config = { seed: 42, shock_params: operations.shock_params, companies: Object.values(operations.companies).map((company: any) => ({ spec: company.spec, books: company.books, flow: company.params })) }
-  const explicit = { ...setup, company_operations: config, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
-  assert.deepEqual(parseSetup(explicit, "setup"), explicit)
-  assert.throws(() => parseSetup({ ...explicit, company_operations: {} }, "setup"), /company_operations\.seed/)
-  assert.throws(() => parseSetup({ ...explicit, company_operations: { ...config, unknown: true } }, "setup"), /unknown/)
-  assert.throws(() => parseSetup({ ...explicit, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: "60" }] }] }, "setup"), /parent_held_shares/)
+  assert.deepEqual(parseCompanyOperationsConfig(config, "company_operations"), config)
+  assert.throws(() => parseCompanyOperationsConfig({}, "company_operations"), /company_operations\.seed/)
+  assert.throws(() => parseCompanyOperationsConfig({ ...config, unknown: true }, "company_operations"), /unknown/)
+  assert.throws(() => parseGroups([{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: "60" }] }]), /parent_held_shares/)
 })
 
 test("groups 拒绝重复 root、跨组重复成员、自持和不安全股份数", () => {
   const group = { root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }
+  assert.deepEqual(parseGroups([group]), [group])
   for (const invalid of [[group, group], [group, { root: "ROOT2", holdings: group.holdings }], [{ root: "ROOT", holdings: [{ company: "ROOT", parent_held_shares: 1 }] }]]) assert.throws(() => parseGroups(invalid), /groups/)
   for (const shares of [0, -1, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => parseGroups([{ ...group, holdings: [{ company: "CHILD", parent_held_shares: shares }] }]), /parent_held_shares/)
 })

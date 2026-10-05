@@ -1,4 +1,4 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { MutableRefObject } from "react";
 import type { EngineHost, SpeedMetrics } from "../host/engine-host.ts";
 import type { HostFailure } from "../host/host-update.ts";
 import type { FloatAllocation, SessionSetup, Snapshot } from "../types/engine.ts";
@@ -14,8 +14,14 @@ import type { SpeedMetricsRequestGate } from "../host/speed.ts";
 import { store, clearAutoOrders } from "../store/store.ts";
 import { parseStartDate, setupWithStartDate } from "../components/start-date.ts";
 import type { InitialAllocation } from "../host/initial-allocation.ts";
+import type { BrowserArchiveStore } from "../save/archive-store.ts";
+import type { ReportFrequencyDraft } from "../components/ReportFrequencyInput.tsx";
+import { parseReportFrequency } from "../save/schema/report-frequency.ts";
+import { parseSessionSeed } from "../config/seed-draft.ts";
+import { parseCompanySystemConfig } from "../save/schema/company/system-config.ts";
 
 export interface SaveCommandPorts {
+  browserLocal: boolean;
   hostRef: MutableRefObject<EngineHost | null>;
   initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
   dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
@@ -31,9 +37,12 @@ export interface SaveCommandPorts {
   startDateDraft: string;
   priceCageEnabledDraft: boolean;
   floatAllocationDraft: FloatAllocation;
+  reportFrequencyDraft: ReportFrequencyDraft;
+  companySystemDraft: string;
+  seedDraft: string;
   loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
-  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
+  getBrowserSaveRepository(): Pick<BrowserArchiveStore, "load" | "select" | "cancelPending" | "newSlot">;
   resetMarketHistory(snapshot: Snapshot): void;
   configureMarketTiming(setup: SessionSetup): void;
   refreshPlayerOrders(): Promise<void>;
@@ -41,11 +50,14 @@ export interface SaveCommandPorts {
   setNotice(notice: string): void;
   setError(error: string | HostFailure | null): void;
   setReady(ready: boolean): void;
-  setSessionSetup: Dispatch<SetStateAction<SessionSetup>>;
+  setSessionCreation(setup: SessionSetup, seed: string): void;
+  setSeedDraft(seed: string): void;
   setActiveSetup(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
   setPriceCageEnabledDraft(enabled: boolean): void;
   setFloatAllocationDraft(allocation: FloatAllocation): void;
+  setReportFrequencyDraft(frequency: SessionSetup["report_frequency"]): void;
+  setCompanySystemDraft(config: string): void;
   setInitialAllocation(allocation: InitialAllocation | null): void;
   setStartDateError(error: string | null): void;
   setSpeedMetricsPollingGeneration(generation: number): void;
@@ -58,10 +70,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
-    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft,
+    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
-    clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    clearPlayerOrders, setNotice, setError, setReady, setSessionCreation, setActiveSetup, setStartDateDraft,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -74,16 +86,18 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);
       dayEndPersistenceRef.current.invalidate();
+      if (ports.browserLocal) getBrowserSaveRepository().cancelPending();
       saveSelectionGenerationRef.current += 1;
       await dayEndPersistenceRef.current.idle();
       if (!sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) return;
+      if (ports.browserLocal) getBrowserSaveRepository().newSlot();
       initialSaveSourceRef.current.select(slot);
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       clearPlayerOrders();
       setError(null);
       setReady(false);
-      setSessionSetup({ ...slot.setup });
+      setSessionCreation({ ...slot.setup }, slot.seed);
     } catch (recoveryError) {
       if (sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) {
         setNotice(`选择日终存档失败：${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
@@ -97,7 +111,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     if (!hostRef.current) return;
     setNotice("已启用日终自动存档；日内不写档，首次完整自然日日结前没有可用日终存档。");
   }
-  async function handleLoad() {
+  async function handleLoad(slotId?: string) {
     const host = hostRef.current;
     if (host === null) return;
     const loadGeneration = sessionReplacementGateRef.current.begin();
@@ -108,11 +122,14 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       setNotice("正在读取日终快速存档，等待已提交的写入完成…");
       await dayEndPersistenceRef.current.beforeRead();
       if (!isCurrent()) return;
-      const slot = await getBrowserSaveRepository().load();
+      const repository = host.capabilities.persistence === "browser" ? getBrowserSaveRepository() : host.archiveStore;
+      if (!repository) throw new Error("宿主未提供存档管理接口，请反馈错误");
+      const slot = await repository.load(slotId);
       if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }
       validateDayEndArchive(slot);
       dayEndPersistenceRef.current.invalidate();
+      if (host.capabilities.persistence === "browser") getBrowserSaveRepository().cancelPending();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
       playerOrderRefreshGateRef.current.invalidate();
@@ -129,11 +146,14 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setStartDateDraft(slot.setup.start_date);
         setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
         setFloatAllocationDraft(slot.setup.float_allocation);
+        setReportFrequencyDraft(slot.setup.report_frequency);
+        setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
+        ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
       };
       try {
-        await host.load(slot, installRestoredSetup);
+        await host.load(slot, slotId, installRestoredSetup);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
@@ -149,6 +169,15 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
+      if (slotId !== undefined) {
+        try {
+          const selected = await repository.select(slotId, isCurrent);
+          if (!isCurrent() || !selected) return;
+        } catch (selectionError) {
+          if (isCurrent()) setNotice(`市场已加载；启动槽选择保存失败：${selectionError instanceof Error ? selectionError.message : String(selectionError)}。原启动槽保持不变，当前局及下一日终写入仍使用已加载槽。请检查存储权限并反馈错误。`);
+          return;
+        }
+      }
       setNotice(`已读档（第 ${host.day() + 1} 个交易日）`);
     } catch (e) {
       const result = await synchronizeCurrentBaseline(() => host.refreshBaseline(), isCurrent);
@@ -189,6 +218,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       if (slot === null) { setNotice("已取消读档"); return; }
       validateDayEndArchive(slot);
       dayEndPersistenceRef.current.invalidate();
+      if (host.capabilities.persistence === "browser") getBrowserSaveRepository().cancelPending();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
       playerOrderRefreshGateRef.current.invalidate();
@@ -205,11 +235,15 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setStartDateDraft(slot.setup.start_date);
         setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
         setFloatAllocationDraft(slot.setup.float_allocation);
+        setReportFrequencyDraft(slot.setup.report_frequency);
+        setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
+        ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
       };
       try {
-        await host.load(slot, installRestoredSetup);
+        await host.load(slot, undefined, installRestoredSetup);
+        if (host.capabilities.persistence === "browser") getBrowserSaveRepository().newSlot();
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
@@ -243,25 +277,63 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       return;
     }
     setStartDateError(null);
+    let seed: bigint;
+    try { seed = parseSessionSeed(ports.seedDraft); } catch (failure) {
+      setNotice(`新局 seed 无效：${failure instanceof Error ? failure.message : String(failure)}；请修正后再创建新游戏。`);
+      return;
+    }
+    let companySystem: SessionSetup["company_system"];
+    try {
+      companySystem = parseCompanySystemConfig(JSON.parse(companySystemDraft));
+    } catch (failure) {
+      setNotice(`公司基本面设置无效：${failure instanceof Error ? failure.message : String(failure)}；请修正后再创建新游戏。`);
+      return;
+    }
+    let reportFrequency: SessionSetup["report_frequency"];
+    try {
+      reportFrequency = parseReportFrequency(reportFrequencyDraft);
+    } catch (failure) {
+      setNotice(`财报公开设置无效：${failure instanceof Error ? failure.message : String(failure)}`);
+      return;
+    }
     const newGameGeneration = sessionReplacementGateRef.current.begin();
     if (newGameGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
     try {
+      const nextSetup = {
+        ...setupWithStartDate(activeSetup, result.value),
+        config: { ...activeSetup.config, price_cage_enabled: priceCageEnabledDraft },
+        float_allocation: floatAllocationDraft,
+        report_frequency: reportFrequency,
+        company_system: companySystem,
+      };
+      const host = hostRef.current;
+      if (host?.capabilities.persistence === "remote") {
+        if (host.resetMarket === undefined) throw new Error("远程宿主没有共享市场重置接口");
+        await host.resetMarket(nextSetup, seed);
+        if (host !== hostRef.current || !sessionReplacementGateRef.current.isCurrent(newGameGeneration)) return;
+        autoOrderMgrRef.current?.clear();
+        store.dispatch(clearAutoOrders());
+        clearPlayerOrders();
+        setInitialAllocation(null);
+        setNotice(`已按 ${result.value} 重置全市场；所有玩家切换至同一时间线，登录身份和控制授权不从存档恢复。`);
+        return;
+      }
       dayEndPersistenceRef.current.invalidate();
+      if (ports.browserLocal) getBrowserSaveRepository().cancelPending();
       saveSelectionGenerationRef.current += 1;
       await dayEndPersistenceRef.current.idle();
       if (!sessionReplacementGateRef.current.isCurrent(newGameGeneration)) return;
+      if (ports.browserLocal) getBrowserSaveRepository().newSlot();
       initialSaveSourceRef.current.reset();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       clearPlayerOrders();
       setError(null);
       setReady(false);
-      setSessionSetup({
-        ...setupWithStartDate(activeSetup, result.value),
-        config: { ...activeSetup.config, price_cage_enabled: priceCageEnabledDraft },
-        float_allocation: floatAllocationDraft,
-      });
+      setSessionCreation(nextSetup, seed.toString());
       setNotice(`已按 ${result.value} 创建新模拟会话`);
+    } catch (failure) {
+      setNotice(`新游戏失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈此错误。`);
     } finally {
       sessionReplacementGateRef.current.finish(newGameGeneration);
     }

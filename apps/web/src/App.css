@@ -1,5 +1,30 @@
 /* 应用布局与组件样式（券商终端浅色风格）。 */
 
+.archive-manager {
+  position: fixed;
+  inset: 15% 10%;
+  z-index: 100;
+  overflow: auto;
+  padding: 20px;
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px #0003;
+}
+
+.archive-manager li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.archive-manager input {
+  margin-left: 8px;
+}
+
 .app-root {
   display: flex;
   flex-direction: column;

@@ -40,6 +40,12 @@ export function canonicalJson(value: unknown): string {
 }
 
 export function eventStableKey(event: Event, localEventIndex: number): EventFact["key"] {
+  if ("PublicTrade" in event) {
+    return { phase_rank: 4, entity: { Stock: event.PublicTrade.code }, source: "Sealed", local_event_index: localEventIndex };
+  }
+  if ("PrivateEventOmitted" in event) {
+    return { phase_rank: 4, entity: "Session", source: "Sealed", local_event_index: event.PrivateEventOmitted.seq };
+  }
   if ("Trade" in event) {
     return { phase_rank: 4, entity: { Stock: event.Trade.code }, source: "Sealed", local_event_index: localEventIndex };
   }

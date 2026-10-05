@@ -1,24 +1,26 @@
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
 import type { Event } from "../../types/generated/Event.ts";
 import type { EventFact } from "../../types/generated/EventFact.ts";
+import type { AccountId } from "../../types/generated/AccountId.ts";
 import { factIdentity } from "./canonical.ts";
+import { accountId as canonicalU64 } from "./guards.ts";
 import { ProtocolError, type AutomaticOrderPoint, type ProtocolEffect } from "./types.ts";
 
 function assertNever(value: never): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.effects", `未处理拒单原因：${String(value)}`);
 }
 
-function effectsFromEvent(event: Event, tick: number): readonly ProtocolEffect[] {
+function effectsFromEvent(event: Event, tick: number, selfAccountId: AccountId | null): readonly ProtocolEffect[] {
   if ("IntentRejected" in event) {
     const reason = rejectionMessage(event.IntentRejected.reason);
-    // account 0 是现有玩家账户；NPC 业务拒单保留为事实，不冒充玩家操作反馈。
-    if (event.IntentRejected.account !== 0) return [];
+    if (selfAccountId === null || event.IntentRejected.account !== selfAccountId) return [];
     return [{ kind: "notice", message: `委托被拒：${event.IntentRejected.code} - ${reason}` }];
   }
   if ("SettlementError" in event) {
     return [{ kind: "notice", message: `结算错误：${event.SettlementError.code} - ${event.SettlementError.reason}` }];
   }
   if ("Trade" in event) return [{ kind: "trade", event: { ...event.Trade, tick } }];
+  if ("PublicTrade" in event) return [{ kind: "trade", event: { ...event.PublicTrade, tick } }];
   return [];
 }
 
@@ -34,6 +36,8 @@ function rejectionMessage(reason: Extract<Event, { IntentRejected: unknown }>["I
       return "委托价格超出连续竞价价格笼子";
     case "UnknownStock":
       return "未知股票";
+    case "ExchangeClosed":
+      return "该证券所属交易所今日休市，不接受委托";
     case "AuctionLimitOrderRequired":
       return "集合竞价仅接受限价委托";
     case "AuctionOrderNotCancelable":
@@ -63,11 +67,13 @@ export function effectsFromFacts(
   facts: readonly EventFact[],
   continuousPoints: Readonly<Record<string, ContinuousPoint>>,
   tick: number,
+  selfAccountId: AccountId | null = null,
 ): readonly ProtocolEffect[] {
+  const owner = selfAccountId === null ? null : canonicalU64(selfAccountId, "protocol.effects.selfAccountId");
   const effects = facts
     .slice()
     .sort((left, right) => factIdentity(left).localeCompare(factIdentity(right)))
-    .flatMap((fact) => effectsFromEvent(fact.event, tick));
+    .flatMap((fact) => effectsFromEvent(fact.event, tick, owner));
   const points = sortedPoints(continuousPoints);
   if (points.length > 0) effects.push({ kind: "automatic-order", points });
   return effects;

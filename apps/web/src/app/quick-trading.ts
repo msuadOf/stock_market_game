@@ -1,4 +1,4 @@
-import type { GameConfig, Intent, MarketSnap, SessionSetup, Snapshot } from "../types/engine.ts";
+import type { AccountSnap, GameConfig, Intent, MarketSnap, SessionSetup, Snapshot } from "../types/engine.ts";
 import { aSharePriceLimits, maxAShareOrderQuantity, parseShareQuantity, parseYuanPrice, validateAShareQuantity } from "../utils/trade-input.ts";
 import { moneyToBigInt, moneyFromBigInt, centsToYuanText, yuanTextToCents } from "../utils/money.ts";
 
@@ -7,7 +7,7 @@ export type PriceMode = "fixed" | "bid" | "ask" | "lowest" | "highest";
 export type BookField = "price" | "quantity";
 export interface TradeDraft { priceText: string; quantityText: string; priceMode: PriceMode; orderKind: "limit" | "market"; interval: number }
 export interface RepeatingTrade { code: string; side: TradeSide; enabled: boolean; status: string; nextSecond: number }
-interface Options { setup(): SessionSetup; snapshot(): Snapshot | null; autoAllowed(): boolean; submit(intent: Intent): Promise<void> }
+interface Options { setup(): SessionSetup; snapshot(): Snapshot | null; account(): AccountSnap | null; autoAllowed(): boolean; submit(intent: Intent): Promise<void> }
 
 export function fractionLots(lots: bigint, divisor: number): bigint {
   if (!Number.isSafeInteger(divisor) || divisor < 1 || lots < 0n) throw new Error("数量比例必须使用非负手数和正整数除数");
@@ -81,6 +81,11 @@ export class QuickTrading {
   private changed() { this.revision += 1; this.listeners.forEach(listener => listener()); }
   private key(code: string, side: TradeSide) { return `${code}:${side}`; }
   private snapshot(): Snapshot { const snapshot = this.options.snapshot(); if (!snapshot) throw new Error("游戏行情尚未就绪"); return snapshot; }
+  account(): AccountSnap {
+    const account = this.options.account();
+    if (account === null) throw new Error("本人资金账户尚未就绪或未加入当前市场");
+    return account;
+  }
   draft(code: string, side: TradeSide): TradeDraft {
     const key = this.key(code, side); let draft = this.drafts.get(key);
     if (!draft) { const market = this.options.snapshot()?.markets[code]; draft = { priceText: market ? centsToYuanText(market.last_price) : "", quantityText: "1", priceMode: "fixed", orderKind: "limit", interval: 1 }; this.drafts.set(key, draft); }
@@ -99,13 +104,12 @@ export class QuickTrading {
     return parseYuanPrice(draft.priceText);
   }
   capacity(code: string, side: TradeSide): bigint {
-    const snapshot = this.snapshot(), account = snapshot.accounts[0]; if (!account) throw new Error("缺少当前玩家账户");
+    const account = this.account();
     if (side === "Sell") { const position = account.positions[code]; const pending = this.reservations.filter(item => item.code === code && item.side === "Sell").reduce((sum, item) => sum + item.qty, 0); return BigInt(Math.max(0, (position ? position.qty - position.t1_locked : 0) - (account.reserved_sell_qty[code] ?? 0) - pending)) / 100n; }
     return buyingCapacity(this.availableCash(), this.price(code, side), this.options.setup().config);
   }
   availableCash(): string {
-    const account = this.snapshot().accounts[0];
-    if (!account) throw new Error("缺少当前玩家账户");
+    const account = this.account();
     const pending = this.reservations.reduce((sum, item) => sum + item.cash, 0n);
     const cash = moneyToBigInt(account.cash) - moneyToBigInt(account.reserved_cash) - pending;
     return moneyFromBigInt(cash > 0n ? cash : 0n);
@@ -124,7 +128,7 @@ export class QuickTrading {
   validation(code: string, side: TradeSide): { field: "price" | "quantity" | "form"; message: string } | null {
     let field: "price" | "quantity" | "form" = "form";
     try {
-      const draft = this.draft(code, side), snapshot = this.snapshot(), account = snapshot.accounts[0];
+      const draft = this.draft(code, side), snapshot = this.snapshot(), account = this.account();
       const spec = this.options.setup().stocks.find(stock => stock.code === code); if (!spec || !account) throw new Error("缺少当前股票规则或玩家账户");
       field = "quantity";
       const qty = parseShareQuantity(yuanTextToCents(draft.quantityText));

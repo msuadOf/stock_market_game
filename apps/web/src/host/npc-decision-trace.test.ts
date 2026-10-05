@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { parseNpcDecisionDiagnostics, parseNpcDecisionTrace } from "./npc-decision-trace.ts";
 
 const trace = [{
-  account: 5,
+  account: "5",
   tick: "129",
   source_report_ids: ["17"],
   expectation_method: "CashFlow",
@@ -26,7 +26,7 @@ describe("NPC decision trace boundary", { timeout: 10_000 }, () => {
   });
   it("rejects malformed trace records before they reach a DEV surface", () => {
     assert.throws(
-      () => parseNpcDecisionTrace([{ ...trace[0], account: "5" }]),
+      () => parseNpcDecisionTrace([{ ...trace[0], account: 5 }]),
       /字段无效/,
     );
   });

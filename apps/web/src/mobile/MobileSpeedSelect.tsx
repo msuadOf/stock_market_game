@@ -6,12 +6,13 @@ interface Props {
   measuredSpeed?: string;
   measuredSpeedTitle?: string;
   onChange: (speed: number) => void;
+  disabled?: boolean;
 }
 
-export function MobileSpeedSelect({ speed, measuredSpeed, measuredSpeedTitle, onChange }: Props) {
+export function MobileSpeedSelect({ speed, measuredSpeed, measuredSpeedTitle, onChange, disabled = false }: Props) {
   return (
     <span className={`mobile-speed-select-wrap ${measuredSpeed ? "has-telemetry" : ""}`}>
-      <select aria-label="模拟速度" value={String(speed)} onChange={(event) => onChange(Number(event.target.value))}>
+      <select aria-label="模拟速度" value={String(speed)} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))}>
         {!MOBILE_SPEED_OPTIONS.some((value) => value === speed) && <option value={String(speed)}>{mobileSpeedLabel(speed)}</option>}
         {MOBILE_SPEED_OPTIONS.map((value) => <option key={String(value)} value={String(value)}>{mobileSpeedLabel(value)}</option>)}
       </select>

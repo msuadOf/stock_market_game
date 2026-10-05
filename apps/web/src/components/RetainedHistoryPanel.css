@@ -1,0 +1,8 @@
+.retained-history { padding: 12px; color: var(--text-primary, #243447); background: var(--surface, #fff); }
+.retained-history form { display: flex; gap: 8px; flex-wrap: wrap; }
+.retained-history form label { display: flex; flex-direction: column; }
+.retained-history-day { border-top: 1px solid var(--border, #d5dce5); margin-top: 8px; }
+.retained-history-day svg { width: 100%; max-height: 160px; }
+.retained-history-table { overflow-x: auto; }
+.retained-history-table table { border-collapse: collapse; white-space: nowrap; width: 100%; font-size: 12px; }
+.retained-history-table th, .retained-history-table td { padding: 4px; border-bottom: 1px solid var(--border, #d5dce5); text-align: right; }

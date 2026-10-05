@@ -1,17 +1,20 @@
 import { civilDate, exact, integer, map, record, string } from "../../primitives.ts"
 import { parseBooks, type Books } from "../accounting/index.ts"
+import { parseIncomeTaxPolicy, parseIncomeTaxPosition, type IncomeTaxPolicy, type IncomeTaxPosition } from "./income-tax.ts"
 import { amount } from "../value.ts"
 import { parseCounterpartyLedger, parseFraction, type CounterpartyLedger } from "./common.ts"
 
-export type InsuranceBooks = { readonly books: Books; readonly groups: Readonly<Record<string, ContractGroupState>>; readonly counterparties: CounterpartyLedger; readonly discount: DiscountAssumption; readonly next_event_id: number }
+export type InsuranceBooks = { readonly income_tax_policy: IncomeTaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly books: Books; readonly groups: Readonly<Record<string, ContractGroupState>>; readonly counterparties: CounterpartyLedger; readonly discount: DiscountAssumption; readonly next_event_id: number }
 type ContractGroupState = { readonly policyholder: string; readonly premium: string; readonly premium_collected: string; readonly expected_claims_remaining: string; readonly risk_adjustment_remaining: string; readonly csm: string; readonly loss_component: string; readonly finance_remaining: string; readonly units_total: number; readonly units_released: number; readonly coverage_start: string; readonly coverage_end: string; readonly day_one_loss: string; readonly released_revenue: string; readonly released_finance: string; readonly remeasure_finance: string; readonly remeasure_loss: string; readonly reestimated_csm: string; readonly carried_claims: string; readonly carried_risk_adjustment: string; readonly carried_csm: string; readonly carried_finance: string; readonly carried_loss: string; readonly claims: Readonly<Record<string, ClaimState>> }
 type ClaimState = { readonly incurred: string; readonly paid: string; readonly date_incurred: string }
 type DiscountAssumption = { readonly version: number; readonly rate_bp: number }
 
 export function parseInsuranceBooks(value: unknown, path: string): InsuranceBooks {
   const parsed = record(value, path)
-  exact(parsed, ["books", "groups", "counterparties", "discount", "next_event_id"], path)
-  return { books: parseBooks(parsed.books, `${path}.books`), groups: map(parsed.groups, `${path}.groups`, stringKey, parseGroup), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), discount: parseDiscount(parsed.discount, `${path}.discount`), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+  exact(parsed, ["income_tax_policy", "income_tax_position", "books", "groups", "counterparties", "discount", "next_event_id"], path)
+  const books = parseBooks(parsed.books, `${path}.books`)
+  const policy = parseIncomeTaxPolicy(parsed.income_tax_policy, `${path}.income_tax_policy`)
+  return { books, income_tax_policy: policy, income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`, policy, books), groups: map(parsed.groups, `${path}.groups`, stringKey, parseGroup), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), discount: parseDiscount(parsed.discount, `${path}.discount`), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
 }
 
 function parseGroup(value: unknown, path: string): ContractGroupState {

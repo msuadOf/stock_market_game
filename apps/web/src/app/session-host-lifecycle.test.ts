@@ -29,24 +29,70 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     hostUpdateRef: { current: () => { calls.push("update"); } }, fatalHostErrorRef: { current: () => { calls.push("failure"); } },
     startupTarget: { kind: "wasm" }, sessionSetup: DEFAULT_SETUP, speed: 1, pauseAfterClose: true, pauseBeforeOpen: false,
     TRADING_E2E_MODE: false, malformedProtocolFixture: () => false,
-    createSeed: () => 123456789n,
+    consumeChosenSessionSeed: () => 123456789n,
+    setSeedDraft: () => {},
     setIndicatorCalculator: () => { calls.push("register"); return () => { calls.push("unregister"); }; },
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
-    isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; } }),
-    setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
-    setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
+    isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; }, cancelPending: () => {} }),
+    setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {}, setFloatAllocationDraft: () => {}, setReportFrequencyDraft: () => {}, setCompanySystemDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
     setError: (value) => { calls.push(String(value)); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
   };
   return { calls, host, source, ports, runtime: createSessionHostLifecycle(ports), update: () => update, failure: () => failure };
 }
 
+test("远程生命周期只订阅已有公共市场，后台与离开不暂停全市场且不恢复浏览器资金档", { timeout: 10000 }, async () => {
+  const fixtureState = fixture();
+  fixtureState.source.select(commandDayEndArchiveFixture());
+  const remoteHost = commandHostFixture({
+    capabilities: { ...fixtureState.host.capabilities, persistence: "remote" },
+    startupContext: { setup: DEFAULT_SETUP, seed: "17", resumed: true },
+    start: async () => { fixtureState.calls.push("remote-subscribe"); },
+    stop: async () => { throw new Error("离开不能暂停全市场"); },
+    load: async () => { throw new Error("远程不能恢复浏览器资金档"); },
+    setSpeed: async () => { throw new Error("不能以客户端设置覆盖共享市场倍速"); },
+    setPausePreferences: async () => { throw new Error("不能以客户端偏好覆盖全市场设置"); },
+    readSpeedMetrics: async () => ({ requested: { mode: "fixed", multiplier: 5 }, actual_multiplier: 0, sample_duration_ms: 500, sample_ticks: 0, running: false }),
+    dispose: async () => { fixtureState.calls.push("remote-disconnect"); },
+  });
+  const lifecycle = createSessionHostLifecycle({ ...fixtureState.ports, startupTarget: { kind: "remote", baseUrl: "http://localhost:3000" },
+    createHost: async () => remoteHost,
+    getBrowserSaveRepository: () => { throw new Error("远程不能访问浏览器游戏存储"); },
+  });
+  await lifecycle.start();
+  assert.ok(fixtureState.calls.includes("ready"));
+  assert.ok(fixtureState.calls.includes("remote-subscribe"));
+  assert.ok(fixtureState.calls.includes("running:false"));
+  await lifecycle.stopCurrentSession();
+  assert.ok(fixtureState.calls.includes("remote-disconnect"));
+  assert.equal(fixtureState.calls.includes("load"), false);
+});
+
 test("SessionHostLifecycle 先校验环境和读取，再创建/注册/启动；后台补暂停", async () => {
   const f = fixture(); await f.runtime.start();
   assert.deepEqual(f.calls, ["environment", "read", "create", "setup", "timing", "register", "connect", "speed", "preferences", "start", "stop", "running:true", "ready"]);
   assert.equal(f.ports.hostRef.current, f.host);
   let reads = 0; await f.source.read(async () => { reads++; return null; }); assert.equal(reads, 0);
+});
+
+test("Native和Remote启动不读取浏览器游戏档，Native恢复使用真实setup且不冒称初始分配", { timeout: 10000 }, async () => {
+  for (const kind of ["tauri", "remote"] as const) {
+    const actualSetup = { ...DEFAULT_SETUP, start_date: "2031-02-03" };
+    const f = fixture({ startupTarget: kind === "remote" ? { kind, baseUrl: "https://example.test" } : { kind },
+      getBrowserSaveRepository: () => { throw new Error("远程和Native不能读取IndexedDB"); },
+      setActiveSetup: (setup) => { assert.equal(setup, actualSetup); f.calls.push("actual-setup"); },
+    });
+    f.host.startupContext = { setup: actualSetup, seed: "9007199254740993", resumed: true };
+    f.host.initialAllocation = async () => { throw new Error("恢复市场不应查询新局分配"); };
+    f.ports.createHost = async (_setup, _seed, _target, resumeArchive) => { assert.equal(resumeArchive, true); return f.host; };
+    const runtime = createSessionHostLifecycle(f.ports);
+    await runtime.start();
+    assert.ok(f.calls.includes("ready"));
+    assert.equal(f.calls.includes("read"), false);
+    assert.equal(f.calls.includes("load"), false);
+    await runtime.dispose();
+  }
 });
 test("新局在同一宿主开跑前取得真实分配，读档不查询初始分配", { timeout: 10000 }, async () => {
   const f = fixture({ setInitialAllocation: (value) => { f.calls.push(value === null ? "clear-allocation" : "show-allocation"); } });
@@ -227,10 +273,10 @@ test("stop 抛错仍释放 indicator、协议与宿主资源并保留原错误",
   assert.equal(f.ports.autoOrderMgrRef.current, null);
 });
 
-test("G20：无存档新局使用熵端口，E2E固定seed与读档seed不消耗熵", { timeout: 10000 }, async () => {
-  for (const mode of ["new", "e2e", "save"] as const) {
+for (const mode of ["new", "e2e", "save"] as const) {
+  test(`G20：${mode} 新局消费预览 seed，E2E不再抽取，读档优先真实 seed`, { timeout: 10000 }, async () => {
     let seeds = 0; let seen: bigint | null = null;
-    const f = fixture({ createSeed: () => { seeds++; return 9007199254740999n; }, TRADING_E2E_MODE: mode === "e2e" });
+    const f = fixture({ consumeChosenSessionSeed: () => { seeds++; return mode === "e2e" ? 42n : 9007199254740999n; }, TRADING_E2E_MODE: mode === "e2e" });
     if (mode === "save") f.source.select({ ...commandDayEndArchiveFixture(), seed: "9007199254740993" });
     f.ports.createHost = async (_setup, seed) => { seen = seed; return f.host; };
     if (mode === "e2e") {
@@ -239,10 +285,10 @@ test("G20：无存档新局使用熵端口，E2E固定seed与读档seed不消耗
       Object.assign(globalThis, { window: {} });
     }
     await createSessionHostLifecycle(f.ports).start();
-    assert.equal(seeds, mode === "new" ? 1 : 0);
+    assert.equal(seeds, mode === "save" ? 0 : 1);
     assert.equal(seen, mode === "new" ? 9007199254740999n : mode === "save" ? 9007199254740993n : 42n);
-  }
-});
+  });
+}
 
 test("G40：speed/start异步确认前不得ready，dispose失败不能消失", { timeout: 10000 }, async () => {
   let confirm!: () => void; let entered!: () => void;
@@ -256,16 +302,41 @@ test("G40：speed/start异步确认前不得ready，dispose失败不能消失", 
   await assert.rejects(f.runtime.dispose(), /释放 IPC 失败/);
 });
 
-test("G20：0 seed无损进入host，熵失败显错且不创建或ready", { timeout: 10000 }, async () => {
-  const zero = fixture({ createSeed: () => 0n });
+test("G20：0 seed无损进入host，预览 seed 无效显错且不创建或ready", { timeout: 10000 }, async () => {
+  const zero = fixture({ consumeChosenSessionSeed: () => 0n });
   let seen: bigint | null = null;
   zero.ports.createHost = async (_setup, seed) => { seen = seed; return zero.host; };
   await createSessionHostLifecycle(zero.ports).start();
   assert.equal(seen, 0n); assert.equal(zero.calls.includes("ready"), true);
-  const failed = fixture({ createSeed: () => { throw new Error("crypto 熵获取被拒绝"); } });
+  const failed = fixture({ consumeChosenSessionSeed: () => { throw new Error("预览 seed 无效"); } });
   await failed.runtime.start();
   assert.equal(failed.calls.includes("create"), false); assert.equal(failed.calls.includes("ready"), false);
-  assert.ok(failed.calls.some((call) => call.includes("crypto 熵获取被拒绝")));
+  assert.ok(failed.calls.some((call) => call.includes("预览 seed 无效")));
+});
+
+test("Native 实际 seed 安装到草稿", { timeout: 10000 }, async () => {
+  const seeds: string[] = [];
+  const f = fixture({ startupTarget: { kind: "tauri" }, setSeedDraft: (seed) => { seeds.push(seed); } });
+  f.host.startupContext = { setup: DEFAULT_SETUP, seed: "18446744073709551615", resumed: true };
+  await f.runtime.start();
+  assert.deepEqual(seeds, ["18446744073709551615"]);
+  await f.runtime.dispose();
+});
+
+test("晚到宿主恢复确认不改新局 seed 草稿", { timeout: 10000 }, async () => {
+  const seeds: string[] = [];
+  let complete!: (host: EngineHost) => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const f = fixture({ startupTarget: { kind: "tauri" }, setSeedDraft: seed => { seeds.push(seed); }, createHost: () => new Promise(resolve => { complete = resolve; entered(); }) });
+  f.host.startupContext = { setup: DEFAULT_SETUP, seed: "18446744073709551615", resumed: true };
+  const starting = f.runtime.start();
+  await waiting;
+  await f.runtime.dispose();
+  complete(f.host);
+  await starting;
+  assert.deepEqual(seeds, []);
+  assert.equal(f.calls.includes("ready"), false);
 });
 
 test("宿主callback同步传回协议失败，不将false变成void或继续消费旧会话", { timeout: 10000 }, async () => {

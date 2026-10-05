@@ -29,6 +29,7 @@ function runtime(strategyStates: unknown) {
   return {
     poisoned: false, next_receipt_base: "0", live_envelopes: [],
     retail_projection_seen: [], strategy_states: strategyStates,
+    personal_trade_confirmations: {},
   }
 }
 

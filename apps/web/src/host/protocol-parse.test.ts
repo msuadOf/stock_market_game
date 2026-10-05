@@ -79,17 +79,17 @@ test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts s
 
 test("Given every Event wire variant, when parsed in an update, then all eleven tags are accepted", () => {
   const events: readonly JsonRecord[] = [
-    { Trade: { seq: 1, code: "600000", price: "1000", qty: 100, maker: 0, taker: 1 } },
+    { Trade: { seq: 1, code: "600000", price: "1000", qty: 100, maker: "0", taker: "1" } },
     { AuctionTick: { seq: 2, tick: 1, phase: "CallAuction", code: "600000", indicative_price: null, matched_volume: 0, imbalance: 0 } },
     { AuctionCompleted: { seq: 3, tick: 1, phase: "ClosingAuction", code: "600000", clearing_price: "1000", matched_volume: 100 } },
     { PriceTick: { seq: 4, tick: 1, code: "600000", last_price: "1000", daily_candle: dailyCandle(), bids: [], asks: [] } },
     { DayBoundary: { seq: 5, day: 1, closed_daily_candles: { "600000": dailyCandle() } } },
     { CivilDateAdvanced: { seq: 6, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: { OfficialHoliday: { citation_id: "SSE-2030" } } } } },
     { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: "C-600000", published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
-    { IntentRejected: { seq: 8, account: 0, code: "600000", reason: "OrderAlreadyFilled" } },
-    { SettlementError: { seq: 9, account: 0, code: "600000", reason: "settlement failed" } },
-    { OrderCanceled: { seq: 10, account: 0, code: "600000", id: 8, remaining_qty: 100 } },
-    { OrderAccepted: { seq: 11, account: 0, code: "600000", id: 9, side: "Buy", price: "1000", remaining_qty: 100 } },
+    { IntentRejected: { seq: 8, account: "0", code: "600000", reason: "OrderAlreadyFilled" } },
+    { SettlementError: { seq: 9, account: "0", code: "600000", reason: "settlement failed" } },
+    { OrderCanceled: { seq: 10, account: "0", code: "600000", id: 8, remaining_qty: 100 } },
+    { OrderAccepted: { seq: 11, account: "0", code: "600000", id: 9, side: "Buy", price: "1000", remaining_qty: 100 } },
   ];
   const keys: readonly JsonRecord[] = [
     { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
@@ -99,10 +99,10 @@ test("Given every Event wire variant, when parsed in an update, then all eleven 
     { phase_rank: 5, entity: "Session", source: "DayEnd", local_event_index: 0 },
     { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
     { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 1 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 2 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 3 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 0 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 1 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 2 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 3 },
   ];
   const update = {
     TickBatch: {
@@ -138,7 +138,7 @@ test("Given malformed tags, fields, keys, bigint, or enums, when parsed, then ea
   }
 });
 
-test("Given a decimal string beyond u64, when parsed, then opaque protocol IDs and totals are rejected", () => {
+test("证券总股本与累计成交额分别拒绝各自u64及u128范围外字符串", () => {
   const valid = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
   const current = firstFrame(valid.TickBatch);
   const oversizedStock = {
@@ -173,7 +173,7 @@ test("Given a decimal string beyond u64, when parsed, then opaque protocol IDs a
         ...current,
         timeseries_payload: {
           ...timeseries(1),
-          active_daily_candles: { "600000": { ...dailyCandle(), trade_stats: { turnover_cents: "18446744073709551616", trade_count: 0 } } },
+          active_daily_candles: { "600000": { ...dailyCandle(), trade_stats: { turnover_cents: "340282366920938463463374607431768211456", trade_count: 0 } } },
         },
       }],
     },

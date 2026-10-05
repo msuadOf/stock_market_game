@@ -9,6 +9,19 @@ type Source<Value> = {
   reset(): void;
 };
 
+test("Native首次恢复标志跨探测性启动保持，明确新局或选档不隐式恢复", { timeout: 10000 }, async () => {
+  const initial = new replacement.InitialSaveSource<string>();
+  assert.equal(initial.shouldResume(), true);
+  await initial.read(async () => null);
+  assert.equal(initial.shouldResume(), true);
+  initial.complete();
+  assert.equal(initial.shouldResume(), false);
+  initial.select("明确档案");
+  assert.equal(initial.shouldResume(), false);
+  initial.reset();
+  assert.equal(initial.shouldResume(), false);
+});
+
 function source<Value>(): Source<Value> {
   const Constructor = Reflect.get(replacement, "InitialSaveSource");
   assert.equal(typeof Constructor, "function", "startup requires a one-time archive source");

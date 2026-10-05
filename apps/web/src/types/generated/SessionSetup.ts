@@ -3,6 +3,7 @@ import type { CivilDate } from "./CivilDate";
 import type { FloatAllocation } from "./FloatAllocation";
 import type { GameConfig } from "./GameConfig";
 import type { NpcSetup } from "./NpcSetup";
+import type { ReportFrequency } from "./ReportFrequency";
 import type { StockSpec } from "./StockSpec";
 import type { StrategyParams } from "./StrategyParams";
 
@@ -11,10 +12,8 @@ import type { StrategyParams } from "./StrategyParams";
  */
 export type SessionSetup = {
   stocks: Array<StockSpec>;
-  company_operations?:
-    | import("../../save/schema/company/operations").CompanyOperationsConfig
-    | null;
-  groups?: import("../../save/schema/company/groups").GroupStructure[];
+  company_system:
+    import("../../save/schema/company/system").CompanySystemConfig;
   npcs: NpcSetup;
   config: GameConfig;
   strategy_params: StrategyParams;
@@ -34,6 +33,7 @@ export type SessionSetup = {
    * 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
    */
   float_allocation: FloatAllocation;
+  report_frequency: ReportFrequency;
   /**
    * 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
    * （1998–1999 仅供初始化前史查询）。休市起点保持原日，不挪到开市日。

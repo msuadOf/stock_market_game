@@ -26,7 +26,9 @@ test("WASM 校验在快速槽读取和 Worker 创建前，远程地址显式传�
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("initialSaveSourceRef.current.read("));
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("await createHost("));
   assert.match(initialization, /if \(startupTarget.kind === "wasm"\) checkWasmEnvironment/);
-  assert.match(lifecycle, /return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget.baseUrl \}\)/);
+  assert.match(lifecycle, /return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget.baseUrl, token: startupTarget.token, context: startupTarget.context \}\)/);
+  assert.match(source, /<RemoteLoginScreen/);
+  assert.match(source, /setStartupTarget\(\{ kind: "remote", baseUrl: remoteLoginAddress, token, context \}\)/);
   assert.doesNotMatch(initialization, /VITE_ENGINE_HOST|VITE_REMOTE_BASE_URL/);
 });
 
@@ -46,7 +48,8 @@ test("重选先关闭当前实例并等待外层日终屏障，显式新局配�
   assert.ok(app.includes("new DayEndPersistence()"));
   assert.equal(shell.includes("new DayEndPersistence()"), false);
   assert.ok(app.includes("dayEndPersistenceRef={dayEndPersistenceRef}"));
-  assert.ok(app.includes("sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}"));
+  assert.ok(app.includes("sessionSetup={sessionSetup} chosenSessionSeed={sessionCreation.draft.seed}"));
+  assert.ok(app.includes("setSessionCreation={setSessionCreation}"));
   const returning = app.slice(app.indexOf("const returnToStartup"), app.indexOf("if (startupTarget === null)"));
   assert.ok(returning.indexOf("stopSession()") < returning.indexOf("dayEndPersistenceRef.current.invalidate()"));
   assert.ok(returning.indexOf("await dayEndPersistenceRef.current.idle()") < returning.indexOf("setStartupTarget(null)"));

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionSetup } from "../types/engine.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
+import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost } from "./remote-host.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 
@@ -14,12 +15,12 @@ async function fixture(deliver: (socket: WebSocket) => void, loadResponse?: () =
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     requests.push({ url, init });
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "startup", session_token: "token" }));
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }));
+    if (url.includes("/api/market/context?")) return Response.json(remoteTestContext("startup", "2", "7"));
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true }));
     if (url.endsWith("/api/load") && loadResponse) return await loadResponse();
     return new Response(null);
   }) as typeof fetch;
-  const host = await createRemoteHost({} as SessionSetup, 7n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 7n, { token: "token", context: remoteTestContext("startup", "1", "7"),
     baseUrl: "http://127.0.0.1:3000", fetchFn,
     webSocketFactory: () => {
       connections += 1;
@@ -44,7 +45,7 @@ test("remote startup restores and caches the authoritative baseline without runn
     await host.start((update) => { received.push(update); });
     assert.equal(connections(), 1);
     assert.equal((received[0] as { generation: string }).generation, "2");
-    assert.ok(requests.some(({ url, init }) => url.endsWith("/api/running") && JSON.parse(String(init?.body)).running === true));
+    assert.equal(requests.some(({ url }) => url.endsWith("/api/running")), false);
     assert.equal(requests.filter(({ url }) => url.endsWith("/api/load")).length, 1);
     context.mock.timers.tick(5000);
     assert.equal(closes(), 0, "successful restoration must clear its timeout");

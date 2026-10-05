@@ -112,8 +112,10 @@ test("Given reversed fact arrays, when reduced, then effects and canonical state
     facts: [...recordArray(current.facts, "facts")].reverse(),
   }], snapshot(1, 2));
 
-  const left = reduceEngineUpdate(baseState(), "generation-1", original);
-  const right = reduceEngineUpdate(baseState(), "generation-1", reversed);
+  const baseline = baseState();
+  const state = { ...baseline, snapshot: { ...baseline.snapshot, accounts: { "0": { cash: "100000", positions: {}, reserved_cash: "0", reserved_sell_qty: {} } } } };
+  const left = reduceEngineUpdate(state, "generation-1", original);
+  const right = reduceEngineUpdate(state, "generation-1", reversed);
 
   assert.equal(left.kind, "applied");
   assert.equal(right.kind, "applied");

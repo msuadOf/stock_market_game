@@ -5,6 +5,9 @@
  * 策略参数、开局自然日与模拟政策身份。金额一律为「分」。
  */
 import type { SessionSetup, StockExchange, StockSpec } from "../types/engine";
+import { createCompanyInitialPreset } from "./company-initial-preset.ts";
+
+export const DEFAULT_SEED = 42n;
 
 export interface StockMeta {
   code: string;
@@ -54,6 +57,30 @@ const STOCK_SPECS: StockSpec[] = [
   // ST低价股 2.85 元 / 2026-07-06 起主板风险警示股票涨跌停 10%
   mkSpec("000812", "Shenzhen", "285", "StMainBoard", "1052631579", 842_105_263),
 ];
+
+function simpleCompany(code: string, revenueGrowth: number, fixedExpenseGrowth: number) {
+  const stock = STOCK_SPECS.find(stock => stock.code === code);
+  if (stock === undefined) throw new Error(`虚拟初始化预设引用未知股票 ${code}`);
+  const initial = createCompanyInitialPreset(stock, DEFAULT_SEED, 1);
+  return {
+    company: `C-${code}`,
+    kind: "Industrial" as const,
+    generation: {
+      initial_revenue: initial.initial_revenue, initial_fixed_expense: initial.initial_fixed_expense,
+      revenue_trend: { kind: "Persistent" as const, annual_growth_min_bp: revenueGrowth, annual_growth_max_bp: revenueGrowth + 800, duration_min_months: 6, duration_max_months: 24 },
+      fixed_expense_trend: { kind: "Persistent" as const, annual_growth_min_bp: fixedExpenseGrowth, annual_growth_max_bp: fixedExpenseGrowth + 300, duration_min_months: 6, duration_max_months: 24 },
+      demand_sensitivity_bp: 10000,
+      revenue_noise: { monthly_bp: 100, quarterly_bp: 150, half_year_bp: 200, annual_bp: 300 },
+      fixed_expense_noise: { monthly_bp: 50, quarterly_bp: 80, half_year_bp: 100, annual_bp: 150 },
+      variable_expense: { rule: "RevenueRatio" as const, ratio_bp: initial.variable_expense_ratio_bp, noise: { monthly_bp: 50, quarterly_bp: 75, half_year_bp: 100, annual_bp: 125 } },
+    },
+    finance: {
+      opening_lines: [{ account: "simple_receivable", side: "Debit" as const, amount: initial.initial_equity }, { account: "4001", side: "Credit" as const, amount: initial.initial_equity }],
+      tax_policy: { version: 1, vat: { output_rate_bp: 1300, input_rate_bp: 1300, deductible_share_bp: 10000 }, income_tax: { rate_bp: 2500, loss_carryforward_years: 5 } },
+      summary_rule: "ReceivableRevenuePayableExpenses" as const,
+    },
+  };
+}
 
 /** 构造单只股票的 StockSpec，tick 取最小价位 1 分。 */
 function mkSpec(
@@ -111,13 +138,26 @@ export const DEFAULT_SETUP: SessionSetup = {
   closing_auction_ticks: CLOSING_AUCTION_TICKS,
   history_len: 20,
   t1_enabled: true,
+  report_frequency: "Quarterly",
   float_allocation: {
     between_kinds: { Percentage: { retail: 0.45, inst: 0.53, hot: 0.02 } },
     within_kind: "EqualPercentage",
   },
   start_date: "2030-01-01",
   simulation_policy_id: "a-share-simulation",
+  company_system: {
+    mode: "Simple",
+    config: {
+      environment: { initial_change_bp: 0, persistence_bp: 7000, noise: { monthly_bp: 100, quarterly_bp: 150, half_year_bp: 200, annual_bp: 300 } },
+      settlement_cycle: "Monthly",
+      prehistory_periods: 36,
+      companies: [
+        simpleCompany("600101", 200, 100),
+        simpleCompany("002156", 400, 200),
+        simpleCompany("300260", -800, 0),
+        simpleCompany("600610", -1200, 100),
+        simpleCompany("000812", -1500, 0),
+      ],
+    },
+  },
 };
-
-/** 会话随机种子。 */
-export const DEFAULT_SEED = 42n;

@@ -3,6 +3,8 @@ import { effectsFromFacts, civilBarrierEffects } from "./effects.ts";
 import { normalizeEngineUpdate } from "./normalize.ts";
 import { parseEngineUpdate } from "./parse.ts";
 import { applyRuntimeDelta } from "./runtime-delta.ts";
+import { accountId as canonicalU64 } from "./guards.ts";
+import type { AccountId } from "../../types/generated/AccountId.ts";
 import {
   type NormalizedEngineUpdate,
   type ProtocolEffect,
@@ -24,12 +26,18 @@ function updateRange(update: EngineUpdate): { readonly firstTick: number; readon
   return { firstTick: update.CivilUpdate.tick, tick: update.CivilUpdate.tick, from: update.CivilUpdate.seq_from, to: update.CivilUpdate.seq_to, civil: true };
 }
 
-function updateEffects(update: NormalizedEngineUpdate): readonly ProtocolEffect[] {
+function scopedBaselineAccount(state: ProtocolState): AccountId | null {
+  const accounts = Object.keys(state.snapshot.accounts);
+  if (accounts.length !== 1) return null;
+  return canonicalU64(accounts[0], "protocol.reduce.scopedBaselineAccount");
+}
+
+function updateEffects(update: NormalizedEngineUpdate, selfAccountId: AccountId | null): readonly ProtocolEffect[] {
   if (update.kind === "tick-batch") {
-    return update.frames.flatMap((frame) => effectsFromFacts(frame.facts, frame.continuousPoints, frame.tick));
+    return update.frames.flatMap((frame) => effectsFromFacts(frame.facts, frame.continuousPoints, frame.tick, selfAccountId));
   }
   return [
-    ...effectsFromFacts(update.update.facts, {}, update.update.tick),
+    ...effectsFromFacts(update.update.facts, {}, update.update.tick, selfAccountId),
     ...civilBarrierEffects(update.update.kinds),
   ];
 }
@@ -117,6 +125,6 @@ export function reduceEngineUpdate(
     kind: "applied",
     state: appliedState(state, generation, update, canonical),
     update: normalizedUpdate,
-    effects: updateEffects(normalizedUpdate),
+    effects: updateEffects(normalizedUpdate, scopedBaselineAccount(state)),
   };
 }

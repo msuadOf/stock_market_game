@@ -36,13 +36,13 @@ export function snapshot(tick: number, seq: number): JsonRecord {
 }
 
 export function rejection(seq: number, code = "600000"): JsonRecord {
-  return { IntentRejected: { seq, account: 0, code, reason: "UnknownStock" } };
+  return { IntentRejected: { seq, account: "0", code, reason: "UnknownStock" } };
 }
 
 export function fact(seq: number, localEventIndex: number, code = "600000"): JsonRecord {
   const event = rejection(seq, code);
   return {
-    key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: localEventIndex },
+    key: { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: localEventIndex },
     event,
     canonical_payload: canonicalJson(event),
   };

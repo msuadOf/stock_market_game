@@ -65,7 +65,7 @@ describe("worker request correlation", () => {
     const port = new FakePort();
     const pending = requestWorker(
       port,
-      { type: "npcDecisionTrace", requestId: 12, generation: 4, account: 1 },
+      { type: "npcDecisionTrace", requestId: 12, generation: 4, account: "1" },
       "npcDecisionTrace",
     );
     port.emit({ type: "npcDecisionTrace", requestId: 12, generation: 3, trace: [{ private: "old" }] });

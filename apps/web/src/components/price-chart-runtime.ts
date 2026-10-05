@@ -1,4 +1,3 @@
-import { KLINE_MOVING_AVERAGES, klineMovingAverage } from "./kline-moving-averages.ts";
 import {
   createChart, LineSeries, CandlestickSeries, HistogramSeries, ColorType, CrosshairMode,
   type UTCTimestamp, type IChartApi, type ISeriesApi,
@@ -9,7 +8,7 @@ import { observeChartContainers } from "./chart-resize.ts";
 import { type buildPriceChartIndicatorSource, priceChartIndicatorData, priceChartVolumeData } from "./price-chart-indicators.ts";
 import type { IndicatorResultState } from "./useIndicatorResults.ts";
 
-export type PriceChartIndicator = "none" | "volume" | "macd" | "kdj";
+export type PriceChartIndicator = "none" | "volume" | "macd" | "kdj" | "intradayAverage";
 interface ChartContainers { readonly main: HTMLDivElement | null; readonly indicator: HTMLDivElement | null }
 export interface PriceChartRuntimePorts {
   readonly createChart: typeof createChart;
@@ -22,10 +21,11 @@ export interface PriceChartRuntimePorts {
 
 /** 仅持有 Lightweight Charts 句柄及 resize 资源；输入行情仍由调用方拥有。 */
 export class PriceChartRuntime {
-  private readonly movingAverages = new Map<number, ISeriesApi<"Line">>();
   private chart: IChartApi | null = null;
   private indicatorChart: IChartApi | null = null;
   private priceSeries: ISeriesApi<"Line"> | null = null;
+  private averageSeries: ISeriesApi<"Line"> | null = null;
+  private movingAverageSeries = new Map<number, ISeriesApi<"Line">>();
   private candleSeries: ISeriesApi<"Candlestick"> | null = null;
   private volumeSeries: ISeriesApi<"Histogram"> | null = null;
   private macdHistogram: ISeriesApi<"Histogram"> | null = null;
@@ -170,6 +170,35 @@ export class PriceChartRuntime {
     }
   }
 
+  updateAverageOverlay(points: readonly { readonly time: number; readonly value: number }[]): void {
+    if (this.chart === null) return;
+    if (this.averageSeries === null) {
+      this.averageSeries = this.chart.addSeries(LineSeries, {
+        color: "#e6a400",
+        lineWidth: 1,
+        priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+      });
+    }
+    this.averageSeries.setData(points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+  }
+
+  updateMovingAverageOverlays(lines: readonly { readonly period: number; readonly color: string; readonly points: readonly { readonly time: number; readonly value: number }[] }[]): void {
+    if (this.chart === null) return;
+    const requested = new Set(lines.map((line) => line.period));
+    for (const [period, series] of this.movingAverageSeries) {
+      if (!requested.has(period)) { this.chart.removeSeries(series); this.movingAverageSeries.delete(period); }
+    }
+    for (const line of lines) {
+      let series = this.movingAverageSeries.get(line.period);
+      if (series === undefined) {
+        series = this.chart.addSeries(LineSeries, { color: line.color, lineWidth: 1, title: `MA${line.period}`, priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
+        this.movingAverageSeries.set(line.period, series);
+      }
+      series.applyOptions({ color: line.color });
+      series.setData(line.points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+    }
+  }
+
   updateIndicator(indicator: PriceChartIndicator, indicatorSource: ReturnType<typeof buildPriceChartIndicatorSource>, indicatorResult: IndicatorResultState, klineDays: number): void {
     if (!this.indicatorChart) return;
     const chart = this.indicatorChart;
@@ -227,24 +256,6 @@ export class PriceChartRuntime {
     chart.timeScale().fitContent();
   }
 
-  updateMovingAverages(candles: readonly KlinePoint[], periods: readonly number[], chartType: "分时" | "日K", visibleDays: number): void {
-    if (!this.chart) return;
-    const selected = new Set(chartType === "日K" ? periods : []);
-    for (const [days, series] of this.movingAverages) {
-      if (!selected.has(days)) { this.chart.removeSeries(series); this.movingAverages.delete(days); }
-    }
-    for (const days of selected) {
-      const definition = KLINE_MOVING_AVERAGES.find(item => item.days === days);
-      if (!definition) throw new RangeError(`不支持的均线周期：${days}`);
-      let series = this.movingAverages.get(days);
-      if (!series) {
-        series = this.chart.addSeries(LineSeries, { color: definition.color, lineWidth: 1, title: `MA${days}`, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: true });
-        this.movingAverages.set(days, series);
-      }
-      series.setData(klineMovingAverage(candles, days, visibleDays));
-    }
-  }
-
   private removeIndicatorSeries(chart: IChartApi, field: "macdHistogram" | "macdDif" | "macdDea" | "kdjK" | "kdjD" | "kdjJ"): void {
     const series = this[field];
     if (series === null) return;
@@ -259,9 +270,9 @@ export class PriceChartRuntime {
     this.ports.resizeEvents.removeEventListener("resize", this.handleResize);
     this.chart?.remove();
     this.indicatorChart?.remove();
-    this.movingAverages.clear();
     this.chart = this.indicatorChart = null;
     this.priceSeries = null;
+    this.movingAverageSeries.clear();
     this.candleSeries = null;
     this.volumeSeries = this.macdHistogram = null;
     this.macdDif = this.macdDea = this.kdjK = this.kdjD = this.kdjJ = null;

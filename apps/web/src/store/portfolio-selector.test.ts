@@ -11,7 +11,7 @@ const account = {
   positions: { HELD: { qty: 100, t1_locked: 0, invested_cents: "1000", recovered_cents: "0" } },
 } as AccountSnap;
 const market = (lastPrice: string) => ({ last_price: lastPrice } as MarketSnap);
-const state = (held: string, unrelated: string) => ({ snapshot: { snapshot: { accounts: { "0": account }, markets: { HELD: market(held), OTHER: market(unrelated) } } } } as unknown as RootState);
+const state = (held: string, unrelated: string) => ({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: { accounts: { "0": account }, markets: { HELD: market(held), OTHER: market(unrelated) } } } } as unknown as RootState);
 
 test("portfolio selector ignores unrelated market ticks but observes held-price changes", () => {
   const before = selectPortfolioInput(state("100", "200"));

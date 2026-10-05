@@ -5,11 +5,16 @@ type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
   return {
+    retained_market_history: [],
+    market_memberships: { members: { "local-owner": { account_id: "0", admission_funding: { external_cash: "1000000000" } } } },
+    report_correction_operations: {},
     runtime_state: {
+      active_minute_history: {},
       poisoned: false,
       next_receipt_base: "0",
       live_envelopes: [],
       retail_projection_seen: [],
+      personal_trade_confirmations: {},
       strategy_states: {
         "1": {
           Momentum: {
@@ -55,6 +60,7 @@ export function currentSaveFixture(): JsonObject {
       closing_auction_ticks: 180,
       history_len: 20,
       t1_enabled: true,
+      report_frequency: "Quarterly",
       float_allocation: {
         between_kinds: { Percentage: { retail: 1, inst: 0, hot: 0 } },
         within_kind: "Random",
@@ -74,6 +80,7 @@ export function currentSaveFixture(): JsonObject {
       },
       accounts: {
         "0": { cash: "1000000000", positions: {} },
+        "1": { cash: "20000000", positions: {} },
       },
       daily_candles: {
         "600101": [{ time: 1893369600, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
@@ -164,7 +171,7 @@ export function currentSaveFixture(): JsonObject {
     belief_books: {},
     watchlists: {},
     price_memories: {},
-    history_reads: { "0": { stocks: {} } },
+    history_reads: { "0": { stocks: {} }, "1": { stocks: {} } },
     pending_plan_events: [],
   }
 }

@@ -166,3 +166,9 @@ export function normalizeSerdeValue(value: unknown, path = "protocol.normalize")
   }
   return value;
 }
+export function accountId(value: unknown, path: string): string {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || value.length > 20 || BigInt(value) > 18446744073709551615n) {
+    throw new ProtocolError("PROTOCOL_MALFORMED", path, "账户必须是规范 u64 十进制字符串");
+  }
+  return value;
+}

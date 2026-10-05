@@ -1,4 +1,5 @@
 import type { AccountSnap } from "../../types/generated/AccountSnap.ts";
+import { accountId as canonicalU64 } from "./guards.ts";
 import type { RuntimeDelta } from "../../types/generated/RuntimeDelta.ts";
 import type { Snapshot } from "../../types/generated/Snapshot.ts";
 import type { PlayerWorkingOrder } from "../player-working-orders.ts";
@@ -13,8 +14,9 @@ function malformed(where: string, message: string): never {
 
 function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
   const source = record(value, path);
-  exact(source, ["id", "code", "side", "price", "remainingQty", "venue", "frozen"], path);
+  exact(source, ["owner", "id", "code", "side", "price", "remainingQty", "venue", "frozen"], path);
   const order = {
+    owner: text(field(source, "owner", path), `${path}.owner`),
     id: safeInteger(field(source, "id", path), `${path}.id`),
     code: text(field(source, "code", path), `${path}.code`),
     side: enumValue(field(source, "side", path), ["Buy", "Sell"], `${path}.side`),
@@ -23,6 +25,9 @@ function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
     venue: enumValue(field(source, "venue", path), ["auction", "continuous"], `${path}.venue`),
     frozen: enumValue(field(source, "frozen", path), ["cash", "shares"], `${path}.frozen`),
   };
+  if (!/^(0|[1-9][0-9]*)$/.test(order.owner) || BigInt(order.owner) > 18446744073709551615n) {
+    malformed(`${path}.owner`, "活动委托 owner 必须是规范 u64 AccountID 字符串");
+  }
   if (order.code.length === 0 || BigInt(order.price) <= 0n || order.remainingQty === 0
     || order.frozen !== (order.side === "Buy" ? "cash" : "shares")) {
     malformed(path, "活动委托代码、价格、余量或冻结资源不合法");
@@ -69,7 +74,7 @@ export function parseRuntimeDelta(
   exact(source, ["seq_from", "seq_to", "tick", "day", "phase", "accounts", "working_orders"], path);
   const accounts = mapEntries(field(source, "accounts", path), `${path}.accounts`, parseAccount);
   for (const [id, account] of Object.entries(accounts)) {
-    if (id !== "0") malformed(`${path}.accounts.${id}`, "增量只允许公开玩家账户，不允许 NPC 私有账户");
+    canonicalU64(id, `${path}.accounts.${id}`);
     validateAccount(account, `${path}.accounts.${id}`);
   }
   const orderPath = `${path}.working_orders`;
@@ -77,9 +82,14 @@ export function parseRuntimeDelta(
   exact(orders, ["reset", "upserts", "removed"], orderPath);
   const reset = boolean(field(orders, "reset", orderPath), `${orderPath}.reset`);
   const upserts = values(field(orders, "upserts", orderPath), `${orderPath}.upserts`).map((order, index) => workingOrder(order, `${orderPath}.upserts[${index}]`));
-  const removed = values(field(orders, "removed", orderPath), `${orderPath}.removed`).map((id, index) => safeInteger(id, `${orderPath}.removed[${index}]`));
+  const removed = values(field(orders, "removed", orderPath), `${orderPath}.removed`).map((value, index) => {
+    const removedPath = `${orderPath}.removed[${index}]`;
+    const removal = record(value, removedPath);
+    exact(removal, ["id", "owner"], removedPath);
+    return { id: safeInteger(field(removal, "id", removedPath), `${removedPath}.id`), owner: canonicalU64(field(removal, "owner", removedPath), `${removedPath}.owner`) };
+  });
   const ids = new Set<number>();
-  for (const id of [...upserts.map((order) => order.id), ...removed]) {
+  for (const id of [...upserts.map((order) => order.id), ...removed.map((removal) => removal.id)]) {
     if (ids.has(id)) malformed(orderPath, "委托增量 ID 不得重复或同时新增与删除");
     ids.add(id);
   }
@@ -104,11 +114,13 @@ export function applyRuntimeDelta(
   const orderPath = "protocol.reduce.runtime_delta.working_orders";
   if (!state.playerOrdersReady && !delta.working_orders.reset) malformed(orderPath, "基线后的首批委托增量必须显式 reset");
   const playerWorkingOrders: Record<number, PlayerWorkingOrder> = delta.working_orders.reset ? {} : { ...state.playerWorkingOrders };
-  for (const id of delta.working_orders.removed) {
+  for (const { id, owner } of delta.working_orders.removed) {
     if (!Object.hasOwn(playerWorkingOrders, id)) malformed(orderPath, `不能删除未知活动委托 ${id}`);
+    if (!Object.hasOwn(state.snapshot.accounts, owner) || playerWorkingOrders[id]!.owner !== owner) malformed(orderPath, `删除委托 ${id} 的 owner 不属于当前本人账户`);
     delete playerWorkingOrders[id];
   }
   for (const order of delta.working_orders.upserts) {
+    if (!Object.hasOwn(state.snapshot.accounts, order.owner)) malformed(orderPath, `委托 owner ${order.owner} 不在当前本人账户基线`);
     if (!Object.hasOwn(markets, order.code)) malformed(orderPath, `委托证券 ${order.code} 不在当前市场`);
     playerWorkingOrders[order.id] = workingOrder(order, orderPath);
   }
@@ -118,9 +130,9 @@ export function applyRuntimeDelta(
     if (Object.keys(account.positions).some((code) => !Object.hasOwn(markets, code))) {
       malformed("protocol.reduce.runtime_delta.accounts", "持仓证券不在当前市场");
     }
-    if (canonicalJson(accounts[Number(id)]) !== canonicalJson(account)) {
+    if (canonicalJson(accounts[id]) !== canonicalJson(account)) {
       if (accounts === state.snapshot.accounts) accounts = { ...accounts };
-      accounts[Number(id)] = account;
+      accounts[id] = account;
     }
   }
   return {

@@ -24,7 +24,7 @@ export type StockPriceMemory = {
    */
   observed_low: Money;
   /**
-   * 最近一次实际接触（本人观察或公开读取取较晚者）的市场分钟；驱逐排序键。
+   * 最近一次实际接触（本人观察或公开读取取较晚者）的共享账户市场分钟；驱逐排序键。
    */
   last_touched_minute: string;
 };

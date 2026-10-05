@@ -9,7 +9,7 @@ const account = {
   cash: "100000", reserved_cash: "1000", reserved_sell_qty: {},
   positions: { "600000": { qty: 100, t1_locked: 100, invested_cents: "1000", recovered_cents: "0" } },
 };
-const order = { id: 1, code: "600000", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
+const order = { owner: "0", id: 1, code: "600000", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" };
 
 function initial() {
   return createProtocolState(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }), "1");
@@ -18,14 +18,14 @@ function initial() {
 type DeltaWire = {
   tick: number; seq_from: number; seq_to: number; day: number; phase: string;
   accounts: Readonly<Record<string, unknown>>;
-  working_orders: { reset: boolean; upserts: readonly unknown[]; removed: readonly number[] };
+  working_orders: { reset: boolean; upserts: readonly unknown[]; removed: readonly { id: number; owner: string }[] };
 };
 
 function delta(tick = 1, seqFrom = 0, seqTo = 1): DeltaWire {
   return {
     tick, seq_from: seqFrom, seq_to: seqTo, day: 0, phase: "Continuous",
     accounts: { "0": { ...account, cash: "99000" } },
-    working_orders: { reset: tick === 1, upserts: [order], removed: [] as number[] },
+    working_orders: { reset: tick === 1, upserts: [order], removed: [] as { id: number; owner: string }[] },
   };
 }
 
@@ -61,7 +61,7 @@ test("subsequent delta replaces remaining quantity and removes filled/canceled o
   const second = reduceEngineUpdate(first.state, "1", batch(partial));
   assert.equal(second.state.snapshot.accounts, first.state.snapshot.accounts);
   assert.deepEqual(Reflect.get(second.state, "playerWorkingOrders"), { "1": { ...order, remainingQty: 50 } });
-  const removed = { ...delta(3, 2, 3), accounts: {}, working_orders: { reset: false, upserts: [], removed: [1] } };
+  const removed = { ...delta(3, 2, 3), accounts: {}, working_orders: { reset: false, upserts: [], removed: [{ id: 1, owner: "0" }] } };
   const third = reduceEngineUpdate(second.state, "1", batch(removed));
   assert.deepEqual(Reflect.get(third.state, "playerWorkingOrders"), {});
 });
@@ -114,10 +114,10 @@ test("delta rejects NPC account data, invalid reservations and inconsistent orde
     { ...delta(), accounts: { "0": { ...account, reserved_cash: "100001" } } },
     { ...delta(), accounts: { "0": { ...account, positions: { "600000": { ...account.positions["600000"], t1_locked: 101 } } } } },
     { ...delta(), working_orders: { reset: true, upserts: [order, order], removed: [] } },
-    { ...delta(), working_orders: { reset: false, upserts: [order], removed: [1] } },
-    { ...delta(), working_orders: { reset: true, upserts: [], removed: [1] } },
+    { ...delta(), working_orders: { reset: false, upserts: [order], removed: [{ id: 1, owner: "0" }] } },
+    { ...delta(), working_orders: { reset: true, upserts: [], removed: [{ id: 1, owner: "0" }] } },
     { ...delta(), working_orders: { reset: true, upserts: [{ ...order, remainingQty: 0 }], removed: [] } },
-    { ...delta(), working_orders: { reset: true, upserts: [{ ...order, owner: 1 }], removed: [] } },
+    { ...delta(), working_orders: { reset: true, upserts: [{ ...order, owner: "1" }], removed: [] } },
   ]) {
     assert.throws(() => reduceEngineUpdate(initial(), "1", batch(runtimeDelta)), (error: unknown) => {
       assert.ok(error instanceof ProtocolError);
@@ -130,7 +130,7 @@ test("delta rejects NPC account data, invalid reservations and inconsistent orde
 test("delta cannot remove unknown orders or skip the explicit order reset after a baseline", () => {
   const state = initial();
   for (const workingOrders of [
-    { reset: false, upserts: [], removed: [99] },
+    { reset: false, upserts: [], removed: [{ id: 99, owner: "0" }] },
     { reset: false, upserts: [order], removed: [] },
   ]) {
     assert.throws(() => reduceEngineUpdate(state, "1", batch({ ...delta(), working_orders: workingOrders })), (error: unknown) => {

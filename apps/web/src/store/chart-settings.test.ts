@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chartSettingsReducer, setChartIndicator, toggleChartAverage, changeChartViewport, selectChartViewport } from "./chart-settings-slice.ts";
+import { chartSettingsReducer, setChartAverageSettings, setChartIndicator, toggleChartAverage, changeChartViewport, selectChartViewport } from "./chart-settings-slice.ts";
 
 test("共用图表偏好独立于证券与视口，各股窗口分别保留", () => {
   const initial = chartSettingsReducer(undefined, { type: "init" });
@@ -36,4 +36,14 @@ test("较短历史上首次右移从当前可见窗口起步，不重复夹回�
   assert.equal(selectChartViewport(earliest, "600101").offsetFromEnd, 289);
   const moved = chartSettingsReducer(earliest, changeChartViewport({ code: "600101", total: 80, action: "pan-right" }));
   assert.deepEqual(selectChartViewport(moved, "600101"), { capacity: 72, offsetFromEnd: 0 });
+});
+test("可编辑MA周期及显示开关使用唯一Reduxowner，不改变证券viewport", { timeout: 10000 }, () => {
+  let state = chartSettingsReducer(undefined, changeChartViewport({ code: "600101", total: 361, action: "zoom-in" }));
+  state = chartSettingsReducer(state, setChartAverageSettings([{ period: 7, visible: true }, { period: 25, visible: false }]));
+  assert.deepEqual(state.averagePeriods, [7, 25]);
+  assert.deepEqual(state.selectedAverages, [7]);
+  state = chartSettingsReducer(state, toggleChartAverage(25));
+  assert.deepEqual(state.selectedAverages, [7, 25]);
+  assert.deepEqual(selectChartViewport(state, "600101"), { capacity: 48, offsetFromEnd: 0 });
+  assert.throws(() => chartSettingsReducer(state, setChartAverageSettings([{ period: 7, visible: true }, { period: 7, visible: false }])));
 });

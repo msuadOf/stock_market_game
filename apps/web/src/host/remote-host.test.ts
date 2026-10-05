@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionSetup } from "../types/engine.ts";
-import type { HostFailure } from "./host-update.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
+import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost, remoteSpeedValue } from "./remote-host.ts";
 import { parseRemoteMessage } from "./remote-wire.ts";
 import { remotePausePreferencePayload } from "./remote-request.ts";
@@ -9,6 +9,60 @@ import { remotePausePreferencePayload } from "./remote-request.ts";
 const snapshot = {
   seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {},
 };
+
+const capabilities = (npcDecisionDiagnostics = false) => ({
+  npcDecisionDiagnostics,
+  indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true },
+  personalTradeHistory: true,
+});
+
+test("远程当前分钟供未入场身份公开读取并严格隔离generation", { timeout: 10000 }, async () => {
+  const query = { code: "600000" };
+  const response = { code: "600000", date: "2030-01-02", observed_at: { date: "2030-01-02", second_of_day: 0 }, live: true, status: "Trading", phase: "Continuous", bars: [] };
+  let stale = false, received: RequestInit | undefined, socket: WebSocket | null = null;
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("host-capabilities")) return Response.json(capabilities());
+    if (url.endsWith("/api/current-minute-history")) { received = init; return Response.json({ generation: stale ? "1" : "2", response }); }
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "viewer-token", context: { ...remoteTestContext("session-1", "2"), member: null, can_control: false, needs_rejoin: false }, fetchFn,
+    webSocketFactory: () => { socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket; return socket; },
+  });
+  try {
+    await host.start(() => undefined);
+    socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+    assert.deepEqual(await host.queryCurrentMinuteHistory(query), response);
+    assert.deepEqual(JSON.parse(String(received!.body)), { session_id: "session-1", generation: "2", query });
+    assert.equal(new Headers(received!.headers).get("authorization"), "Bearer viewer-token");
+    stale = true;
+    await assert.rejects(host.queryCurrentMinuteHistory(query), /generation/);
+  } finally { await host.dispose(); }
+});
+
+test("远程永久量价历史允许未入场公开读取且绑定generation，不注入账户", { timeout: 10000 }, async () => {
+  const query = { code: "600000", date_from: "2030-01-02", date_to: "2030-01-03", after: null, page_size: 2 };
+  const page = { code: "600000", entries: ["2030-01-02", "2030-01-03"].map(date => ({ date, availability: "NotEnded", bars: [], daily_candle: null })), next_cursor: null, settled_through: null };
+  let received: RequestInit | undefined, stale = false, socket: WebSocket | null = null;
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("host-capabilities")) return Response.json(capabilities());
+    if (url.endsWith("/api/market-history")) { received = init; return Response.json({ generation: stale ? "1" : "2", page }); }
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "viewer-token", context: { ...remoteTestContext("session-1", "2"), member: null, can_control: false, needs_rejoin: false }, fetchFn,
+    webSocketFactory: () => { socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket; return socket; },
+  });
+  try {
+    await host.start(() => undefined);
+    socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+    assert.deepEqual(await host.queryMarketHistory(query), page);
+    assert.deepEqual(JSON.parse(String(received!.body)), { session_id: "session-1", generation: "2", query });
+    assert.equal(new Headers(received!.headers).get("authorization"), "Bearer viewer-token");
+    stale = true;
+    await assert.rejects(host.queryMarketHistory(query), /generation/);
+  } finally { await host.dispose(); }
+});
 
 test("Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate", () => {
   const parsed = parseRemoteMessage(JSON.stringify({ PublisherFrame: {
@@ -113,13 +167,10 @@ test("Given an authenticated remote host, when player orders are queried, then i
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     requests.push({ url, init });
-    if (url.endsWith("/api/new")) {
-      return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    }
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     if (url.includes("/api/player-working-orders?")) {
       return new Response(JSON.stringify({ generation: "2", orders: [{
-        id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
+        id: 7, owner: "0", code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
       }] }), { status: 200 });
     }
     if (url.endsWith("/api/indicators")) return new Response(JSON.stringify({
@@ -130,7 +181,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   let socket: WebSocket | null = null;
-  const host = await createRemoteHost({} as SessionSetup, 1n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"),
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => {
@@ -141,7 +192,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
   await host.start(() => undefined);
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.playerWorkingOrders(), [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
+    id: 7, owner: "0", code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
   }]);
   assert.equal((await host.calculateIndicators({ prices: [10], candles: [{ high: 11, low: 9, close: 10 }] })).macd.dif[0], 0);
   const request = requests.find(({ url }) => url.includes("/api/player-working-orders?"));
@@ -151,18 +202,79 @@ test("Given an authenticated remote host, when player orders are queried, then i
   assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
 });
 
+test("远程按需指标与本人交割单查询使用能力、授权和generation绑定", { timeout: 10000 }, async () => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requests.push({ url, init });
+    if (url.includes("/api/host-capabilities?")) return Response.json({
+      npcDecisionDiagnostics: false,
+      indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true },
+      personalTradeHistory: true,
+    });
+    if (url.endsWith("/api/intraday-average")) return Response.json({
+      turnover_cents: "260000", volume_shares: 300,
+    });
+    if (url.endsWith("/api/intraday-average-curve")) return Response.json({
+      generation: "2", series_key: "600000:2:0:901", results: [{ turnover_cents: "260000", volume_shares: 300 }],
+    });
+    if (url.includes("/api/personal-trade-confirmations?")) return Response.json({
+      generation: "2", confirmations: [],
+    });
+    if (url.endsWith("/api/personal-trade-history")) {
+      const body = JSON.parse(String(init?.body));
+      return Response.json({ generation: "2", page: { request: body.query, confirmations: [], next_cursor: null, as_of_receipt: "10", start_date: "2030-01-02", current_date: "2030-01-05", settled_through: "2030-01-04" } });
+    }
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  let socket: WebSocket | null = null;
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"),
+    baseUrl: "http://127.0.0.1:3000", fetchFn,
+    webSocketFactory: () => {
+      socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+      return socket;
+    },
+  });
+  await host.start(() => undefined);
+  socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  assert.equal(host.capabilities.indicatorCapabilities.intradayAverage, true);
+  assert.deepEqual(await host.calculateIntradayAverage({ turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }), {
+    turnoverCents: "260000", volumeShares: 300,
+  });
+  assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "600000:2:0:901", samples: [{ turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }] }), [
+    { turnoverCents: "260000", volumeShares: 300 },
+  ]);
+  assert.deepEqual(await host.queryPersonalTradeConfirmations(), []);
+  const dateQuery = { date_from: "2030-01-02", date_to: "2030-01-04", code: null, side: null, before_receipt: null, as_of_receipt: null, page_size: 100 };
+  assert.deepEqual((await host.queryPersonalTradeHistory(dateQuery)).request, dateQuery);
+  const dateRequest = requests.find(({ url }) => url.endsWith("/api/personal-trade-history"));
+  assert.ok(dateRequest);
+  assert.deepEqual(JSON.parse(String(dateRequest.init?.body)), { session_id: "session-1", generation: "2", query: dateQuery });
+  assert.equal(new Headers(dateRequest.init?.headers).get("authorization"), "Bearer token-1");
+  const average = requests.find(({ url }) => url.endsWith("/api/intraday-average"));
+  assert.ok(average);
+  assert.equal(new Headers(average.init?.headers).get("authorization"), "Bearer token-1");
+  const curve = requests.find(({ url }) => url.endsWith("/api/intraday-average-curve"));
+  assert.ok(curve);
+  assert.equal(new Headers(curve.init?.headers).get("authorization"), "Bearer token-1");
+  const history = requests.find(({ url }) => url.includes("/api/personal-trade-confirmations?"));
+  assert.ok(history);
+  assert.equal(new URL(history.url).searchParams.get("generation"), "2");
+  assert.equal(new URL(history.url).searchParams.has("account"), false);
+  await host.dispose();
+});
+
 test("远程股票历史只通过显式 query endpoint 读取并绑定 generation", { timeout: 10000 }, async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     requests.push({ url, init });
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     if (url.includes("/api/stock-history?")) return new Response(JSON.stringify({ generation: "2", data: { code: "600000", daily_candles: [], active_daily_candle: null } }), { status: 200 });
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   let socket: WebSocket | null = null;
-  const host = await createRemoteHost({} as SessionSetup, 1n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"),
     baseUrl: "http://127.0.0.1:3000", fetchFn,
     webSocketFactory: () => {
       socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
@@ -189,8 +301,8 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     requests.push({ url, init });
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/market/context?")) return Response.json(remoteTestContext("session-1", "3"));
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     if (url.endsWith("/api/save")) {
       if (delaySave) return new Promise<Response>((resolve) => { completeSave = resolve; });
       return new Response(JSON.stringify({ saved: true }), { status: 200 });
@@ -198,7 +310,7 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
-  const host = await createRemoteHost({} as SessionSetup, 1n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"),
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => socket,
@@ -214,22 +326,23 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
   assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
   delaySave = true;
   const pending = host.save();
+  const rejected = assert.rejects(pending, /generation/);
   assert.deepEqual(JSON.parse(String(requests.at(-1)!.init?.body)), { session_id: "session-1", generation: "2" });
   socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 3, snapshot, civil_date: "2030-01-02", public_revision: 1, public_report_ids: [] } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   completeSave!(new Response(JSON.stringify({ old: true }), { status: 200 }));
-  await assert.rejects(pending, /generation/);
+  await rejected;
 });
 
 test("Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays", async () => {
   const fetchFn = (async (input: string | URL | Request) => {
     const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     if (url.endsWith("/api/indicators")) return new Response(JSON.stringify({ code: "INVALID_INDICATOR_INPUT", message: "candles[0]: high must be at least low" }), { status: 400 });
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
-  const host = await createRemoteHost({} as SessionSetup, 1n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"),
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => socket,
@@ -243,12 +356,11 @@ test("Given a remote host without a Publisher baseline, when player orders are q
   const fetchFn = (async (input: string | URL | Request) => {
     const url = input instanceof Request ? input.url : String(input);
     calls.push(url);
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     return new Response(JSON.stringify([]), { status: 200 });
   }) as typeof fetch;
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
-  const host = await createRemoteHost({} as SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"), baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
   await assert.rejects(host.playerWorkingOrders(), /基线尚未就绪/);
   await assert.rejects(host.save(), /基线尚未就绪/);
   assert.equal(calls.some((url) => url.includes("/api/player-working-orders?")), false);
@@ -257,12 +369,11 @@ test("Given a remote host without a Publisher baseline, when player orders are q
 test("Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline", async () => {
   const fetchFn = (async (input: string | URL | Request) => {
     const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   let socket: WebSocket | null = null;
-  const host = await createRemoteHost({} as SessionSetup, 1n, {
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "1", "1"),
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => {
@@ -284,15 +395,14 @@ test("Given a server without diagnostic support, when created, then RemoteHost n
   const fetchFn = (async (input: string | URL | Request) => {
     const url = input instanceof Request ? input.url : String(input);
     calls.push(url);
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify(capabilities()), { status: 200 });
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
-  const host = await createRemoteHost({} as SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "2", "1"), baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
   assert.equal(host.capabilities.npcDecisionDiagnostics, false);
   assert.ok(host.npcDecisionTrace);
-  await assert.rejects(host.npcDecisionTrace(1), /未协商启用/);
+  await assert.rejects(host.npcDecisionTrace("1"), /未协商启用/);
   assert.ok(calls.some((url) => url.includes("/api/host-capabilities?")));
 });
 
@@ -307,55 +417,51 @@ test("Given remote pause preferences, when serialized for the authenticated curr
   });
 });
 
-test("Given remote session deletion fails, when disposed, then the host reports an explicit fatal failure", async () => {
-  const failures: HostFailure[] = [];
-  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith("/api/new")) {
-      return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
-    if (init?.method === "DELETE") return new Response("delete denied", { status: 500 });
-    return new Response(null, { status: 200 });
-  }) as typeof fetch;
-  const socket = {
-    readyState: 1,
-    close() {},
-    send() {},
-    onmessage: null,
-    onerror: null,
-    onclose: null,
-  } as unknown as WebSocket;
-  const remote = await createRemoteHost({} as SessionSetup, 1n, {
-    baseUrl: "http://127.0.0.1:3000",
-    fetchFn,
+test("市场控制请求在订阅前绑定 context generation，订阅不得自动开跑", async () => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, {
+    token: "controller-token", context: remoteTestContext("market", "7"),
     webSocketFactory: () => socket,
+    fetchFn: async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/api/host-capabilities?")) return Response.json(capabilities());
+      return Response.json({});
+    },
   });
-  await remote.start(() => {}, (failure) => failures.push(failure));
-  await assert.rejects(remote.dispose(), /HTTP 500/);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(failures, [{
-    code: "REMOTE_DISPOSE",
-    where: "remote-host.dispose",
-    message: "远程服务请求失败（HTTP 500）：delete denied",
-  }]);
+  try {
+    await host.setSpeed(60);
+    await host.setPausePreferences!({ pause_after_close: true, pause_before_open: false });
+    await host.stop();
+    const controls = requests.filter(({ init }) => init?.method === "POST");
+    assert.deepEqual(controls.map(({ url }) => new URL(url).pathname), ["/api/speed", "/api/pause-preferences", "/api/running"]);
+    assert.deepEqual(controls.map(({ init }) => JSON.parse(String(init?.body))), [
+      { session_id: "market", generation: "7", speed: 60 },
+      { session_id: "market", generation: "7", preferences: { pause_after_close: true, pause_before_open: false } },
+      { session_id: "market", generation: "7", running: false },
+    ]);
+    for (const { init } of controls) assert.equal(new Headers(init?.headers).get("authorization"), "Bearer controller-token");
+    await host.start(() => undefined);
+    assert.equal(requests.filter(({ init }) => init?.method === "POST").length, 3);
+  } finally { await host.dispose(); }
 });
 
-test("remote disposal authenticates the owning session before deletion", async () => {
-  let deletion: RequestInit | undefined;
-  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "owned", session_token: "owner-token" }));
-    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }));
-    if (init?.method === "DELETE") deletion = init;
-    return new Response(null);
-  }) as typeof fetch;
-  const host = await createRemoteHost({} as SessionSetup, 1n, { fetchFn });
+test("远程离开只关闭本地连接，不请求删除共享市场", async () => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+  const host = await createRemoteHost(DEFAULT_SETUP, 1n, {
+    token: "owner-token", context: remoteTestContext("owned"),
+    webSocketFactory: () => socket,
+    fetchFn: async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/api/host-capabilities?")) return Response.json(capabilities());
+      throw new Error(`离开不得请求远程市场变更：${url}`);
+    },
+  });
+  await host.start(() => undefined);
   await host.dispose();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.ok(deletion);
-  assert.equal(new Headers(deletion.headers).get("authorization"), "Bearer owner-token");
+  assert.equal(requests.length, 1);
+  assert.equal(requests.some(({ init }) => init?.method === "DELETE"), false);
 });

@@ -59,9 +59,28 @@ const candle: KlinePoint = {
   tradeStats: { turnoverCents: "225000", tradeCount: 2 },
 };
 
-const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 2 };
+const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: "1", taker: "2" };
+
+test("移动KDJ严格遵守所选指标源，不支持时明确显示而不调用Rust", { timeout: 10000 }, () => {
+  assert.match(renderDetail("日K", "盘口"), /前端.*不支持.*KDJ/);
+  assert.match(renderDetail("日K", "盘口", { indicatorDataSource: "rust" }), /Rust.*不支持.*KDJ/);
+  const dailyCandles = [2, 3, 4, 7, 8].map((day) => ({ ...candle, time: (Date.parse(`2030-01-${String(day).padStart(2, "0")}T00:00:00Z`) / 1000) as KlinePoint["time"] }));
+  const rust = renderDetail("日K", "盘口", { indicatorDataSource: "rust", dailyCandles });
+  assert.match(rust, /Rust.*不支持.*MA/);
+  assert.doesNotMatch(rust, /<polyline class="ma5"/);
+  assert.match(renderDetail("日K", "盘口", { dailyCandles }), /<polyline class="ma5" aria-label="MA5曲线"[^>]*points="[^"]+,174"/);
+  const insufficient = renderDetail("日K", "盘口");
+  assert.match(insufficient, /MA5：历史不足/);
+  assert.doesNotMatch(insufficient, /<polyline class="ma5"/);
+});
 
 type DetailProps = Parameters<typeof DetailComponent>[0];
+
+test("普通成员的移动详情禁用共享市场暂停与倍速控制", { timeout: 10000 }, () => {
+  const markup = renderDetail("分时", "盘口", { canControl: false, running: false });
+  assert.match(markup, /data-state="paused"[^>]*disabled=""/);
+  assert.match(markup, /<select aria-label="模拟速度"[^>]*disabled=""/);
+});
 
 function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘口" | "资金", overrides: Partial<DetailProps> = {}): string {
   return renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MobileStockDetail, {
@@ -73,6 +92,15 @@ function renderDetail(period: "分时" | "日K" | "周K" | "月K", infoTab: "盘
     dailyCandles: [candle],
     activeDailyCandle: candle,
     indicatorCalculator: null,
+    indicatorDataSource: "frontend",
+    indicatorCapabilities: { intradayAverage: true, macd: false, priceKdj: false, candleKdj: false },
+    calculateIntradayAverageCurve: async ({ samples }) => samples.map((input) => ({ turnoverCents: input.turnoverCents, volumeShares: input.volumeShares })),
+    onIndicatorDataSourceChange() {},
+    confirmations: [],
+    confirmationLoading: false,
+    confirmationError: null,
+    confirmationQueried: false,
+    onRefreshConfirmations() {},
     trades: [trade],
     elapsedMinutes: 121,
     totalMinutes: 240,
@@ -184,6 +212,21 @@ test("没有真实成交额统计或成交量时，组件明确显示不可用�
   assert.ok(missingShares.includes("均价:不支持（缺少真实成交股数）"));
   const noTrades = renderDetail("分时", "盘口", { activeDailyCandle: { ...candle, volume: 0, tradeStats: { turnoverCents: "0", tradeCount: 0 } } });
   assert.match(noTrades, /均价:暂无成交/);
+});
+
+test("选中 Rust 但能力关闭时明确提示不支持且不回退前端", () => {
+  const html = renderDetail("分时", "盘口", {
+    indicatorDataSource: "rust",
+    indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false },
+  });
+  assert.match(html, /所选Rust指标源不支持分时均价，未回退到另一数据源/);
+});
+
+test("移动详情提供共享指标源选择及本人交割单的按需查询入口", () => {
+  const html = renderDetail("分时", "盘口");
+  assert.match(html, /aria-label="指标数据源"/);
+  assert.match(html, /交割单按需查询，不会使用公开成交事件补造/);
+  assert.match(html, /查询本人交割单/);
 });
 
 test("G12：真实分时量renderer绘制红色空心和绿色实心，不改变半像素槽宽", { timeout: 10000 }, () => {

@@ -58,7 +58,7 @@ test("NPC 经历金额严格使用 Money 而不误改失败计数", { timeout: 1
 
 test("计划历史资源按整数金额而非字符串字典序校验占用", { timeout: 10000 }, () => {
   const plan = {
-    plan_id: 1, account: 1, code: "600000", direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
+    plan_id: 1, account: "1", code: "600000", direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
     opinion: { signal_score_bp: 1, source: "Fundamental" }, confidence_bp: 1, urgency: "Normal", status: "Active",
     version: 1, last_revision: null, last_resume: null, created_trading_day: 0, horizon_trading_days: 1,
     active_child_order_id: null, last_event_trading_day: 0,

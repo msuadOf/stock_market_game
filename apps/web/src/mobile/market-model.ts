@@ -1,4 +1,5 @@
 import { moneyToChartNumber, subtractMoney, ratioMoney } from "../utils/money.ts";
+import { parseTurnoverCents } from "../utils/turnover.ts";
 import type { IndicatorResultState } from "../components/useIndicatorResults.ts";
 import type { TradeEvent, MarketSnap } from "../types/engine.ts";
 import type { EngineEvent, PriceLevel } from "../types/engine";
@@ -12,9 +13,7 @@ export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../
 
 /** 将真实日累计成交额分与股数保留到分时图坐标边界才转为近似元数。 */
 export function intradayAverageYuan(turnoverCents: string, volumeShares: number): number | null {
-  if (!/^(0|[1-9]\d*)$/.test(turnoverCents)) {
-    throw new RangeError(`分时成交额必须是规范十进制分字符串，收到 ${turnoverCents}`);
-  }
+  parseTurnoverCents(turnoverCents, "分时成交额");
   if (!Number.isSafeInteger(volumeShares) || volumeShares < 0) {
     throw new RangeError(`分时成交股数必须是非负安全整数，收到 ${String(volumeShares)}`);
   }
@@ -446,6 +445,10 @@ export class MinutePointCollector {
       }
       if ("Trade" in event && event.Trade.code === this.code) {
         this.lastTradePrice = moneyToChartNumber(event.Trade.price) / 100;
+        continue;
+      }
+      if ("PublicTrade" in event && event.PublicTrade.code === this.code) {
+        this.lastTradePrice = moneyToChartNumber(event.PublicTrade.price) / 100;
         continue;
       }
       if (!("PriceTick" in event) || event.PriceTick.code !== this.code) continue;

@@ -13,6 +13,14 @@ before(async () => {
 });
 after(async () => { if (vite) await vite.close(); });
 const base = { market: { last_close: "1000" }, minutePoints: [], auctionPoints: [], trades: [], elapsedMinutes: 0, totalMinutes: 240, gameDay: 0, gameTick: 0 };
+test("真实分时均价按现有全天时间轴绘制，缺成交时不补线", { timeout: 10000 }, () => {
+  const p = MobileIntradayProjection.fromInputs({ ...base, minutePoints: [{ time: 0, value: 10 }, { time: 1, value: 12 }] });
+  const html = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "intradayAverage", averagePoints: [{ time: 0, value: 10 }, { time: 1, value: 11 }], result: { kind: "idle" } }));
+  assert.match(html, /class="intraday-average-line"/);
+  assert.ok(html.includes(`points="16,50 ${intradayChartX({ phase: "continuous", minute: 1 })},25"`));
+  const empty = renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: p, lastClose: "1000", indicator: "intradayAverage", averagePoints: [], result: { kind: "idle" } }));
+  assert.doesNotMatch(empty, /class="intraday-average-line"/);
+});
 function render(inputs = base) {
   return renderToStaticMarkup(createElement(component.DesktopIntradayChart, { projection: MobileIntradayProjection.fromInputs(inputs), lastClose: "1000", indicator: "volume", result: { kind: "idle" } }));
 }
