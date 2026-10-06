@@ -142,7 +142,7 @@ async fn actor_diagnostics_rejects_stale_generation_without_records() {
     assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
     assert!(
         matches!(stale, server::SendCommandError::Rejected(ref reason)
-        if reason == "STALE_SESSION_GENERATION: requested 0; current generation is 1")
+        if reason.contains("fault[1290]") && reason.contains("requested 0") && reason.contains("current is 1"))
     );
 }
 

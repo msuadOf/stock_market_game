@@ -54,7 +54,8 @@ fn ingress_operation<T>(
     operation: impl FnOnce(&mut HashMap<u32, engine::SharedSessionIngress>) -> Result<T, SessionError>,
 ) -> Result<T, SessionError> {
     let mut registry = INGRESS.lock().map_err(|_| {
-        SessionError::ResourceLimit("WASM ingress registry 锁已损坏，请重新启动会话".into())
+        // 1300：WASM ingress registry 锁中毒。
+        SessionError::ResourceLimit(engine::error::ValidationFault::bare(1300))
     })?;
     operation(registry.get_or_insert_with(HashMap::new))
 }
@@ -70,9 +71,8 @@ fn reserve_session_handle(next: &AtomicU32) -> Result<u32, SessionError> {
         },
     )
     .map_err(|_| {
-        SessionError::ResourceLimit(
-            "WASM 会话句柄已耗尽；已有会话仍有效，新建会话须重新启动 Worker".into(),
-        )
+        // 1301：WASM 会话句柄耗尽。
+        SessionError::ResourceLimit(engine::error::ValidationFault::bare(1301))
     })
 }
 
@@ -93,7 +93,10 @@ impl SessionRegistry {
             Entry::Vacant(entry) => {
                 ingress_operation(|registry| {
                     if registry.contains_key(&id) {
-                        return Err(SessionError::ResourceLimit(format!("WASM ingress token {id} 已登记")));
+                        // 1302：ingress token 重复登记；ctx[0]=token。
+                        return Err(SessionError::ResourceLimit(
+                            engine::error::ValidationFault::new(1302, vec![u64::from(id)]),
+                        ));
                     }
                     registry.insert(id, session.shared_ingress());
                     Ok(())
@@ -557,7 +560,11 @@ pub fn ingress_enqueue(token: u32, intent: JsValue) -> Result<(), JsValue> {
     let intent: Intent = serde_wasm_bindgen::from_value(intent)?;
     let service = ingress_operation(|registry| {
         registry.get(&token).cloned().ok_or_else(|| {
-            SessionError::ResourceLimit(format!("WASM ingress token {token} 已关闭或不存在"))
+            // 1303：ingress token 已关闭或不存在；ctx[0]=token。
+            SessionError::ResourceLimit(engine::error::ValidationFault::new(
+                1303,
+                vec![u64::from(token)],
+            ))
         })
     }).map_err(session_error_to_js)?;
     service.enqueue_player_intent(AccountId(0), intent).map_err(session_error_to_js)

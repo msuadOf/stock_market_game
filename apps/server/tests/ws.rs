@@ -206,7 +206,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
         assert!(baseline["Baseline"].get("journal").is_none());
         assert!(baseline["Baseline"].get("npc_information_state").is_none());
         assert_eq!(
-            snap["daily_candles"]["600101"].as_array().map(Vec::len),
+            snap["daily_candles"]["0"].as_array().map(Vec::len),
             Some(360),
             "WS 首帧应同步 Rust 生成的 360 日日 K"
         );
@@ -337,7 +337,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
             "SubmitIntent": {
                 "request_id": 6,
                 "generation": "1",
-                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
+                "intent": { "PlaceLimit": { "code": 0, "side": "Buy", "price": 1000, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();
@@ -353,7 +353,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
             "SubmitIntent": {
                 "request_id": 6,
                 "generation": "1",
-                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
+                "intent": { "PlaceLimit": { "code": 0, "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();
@@ -369,7 +369,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
             "SubmitIntent": {
                 "request_id": 7,
                 "generation": "1",
-                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } }
+                "intent": { "PlaceLimit": { "code": 0, "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();
@@ -665,7 +665,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
             serde_json::json!({ "SubmitIntent": { "request_id": 9, "generation": "1",
-                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
+                "intent": { "PlaceLimit": { "code": 0, "side": "Buy",
                     "price": { "Fixed": "1000" }, "qty": 100 } } } })
             .to_string(),
         ))
@@ -688,7 +688,7 @@ async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
             serde_json::json!({ "SubmitIntent": { "request_id": 8, "generation": "2",
-                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy",
+                "intent": { "PlaceLimit": { "code": 0, "side": "Buy",
                     "price": { "Fixed": "1000" }, "qty": 100 } } } })
             .to_string(),
         ))

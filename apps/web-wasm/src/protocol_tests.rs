@@ -118,8 +118,9 @@ fn exhausted_handles_never_wrap_to_zero_or_replace_live_sessions() {
         assert!(registry.register(session, &next).is_ok());
     }
     let exhausted = ProtocolSession::new(setup, 43).unwrap();
+    // fault1301：WASM 会话句柄耗尽。
     assert!(
-        matches!(registry.register(exhausted, &next), Err(SessionError::ResourceLimit(message)) if message.contains("句柄已耗尽"))
+        matches!(registry.register(exhausted, &next), Err(SessionError::ResourceLimit(fault)) if fault.code == 1301)
     );
     assert_eq!(registry.sessions.len(), 2);
     assert!(!registry.sessions.contains_key(&0));
@@ -281,7 +282,7 @@ fn session_step_fatal_maps_to_the_structured_host_failure_contract() {
 
 #[test]
 fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
-    let error = engine::SessionError::InvalidSave("civil boundary is inconsistent".into());
+    let error = engine::SessionError::InvalidSave(engine::error::ValidationFault::bare(3012));
     let StepUpdateError::Fatal(failure) = civil_error_to_step_update_error(error) else {
         panic!("expected fatal failure")
     };

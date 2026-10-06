@@ -658,7 +658,7 @@ impl SessionHandles {
         })?;
         if generation != ingress.0 {
             return Err(SendCommandError::Rejected(format!(
-                "STALE_SESSION_GENERATION: requested {generation}; current generation is {}",
+                "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
                 ingress.0
             )));
         }
@@ -1071,10 +1071,8 @@ struct SessionActor {
 impl SessionActor {
     fn fatal_rejection(&self) -> Option<SessionError> {
         self.fatal_failure.as_ref().map(|failure| {
-            SessionError::InvalidSave(format!(
-                "session stopped after {}: {}",
-                failure.code, failure.message
-            ))
+            // 1291：宿主致命失败后停机；宿主失败 code/message 在 HostFailure 本体（边界序列化）。
+            SessionError::InvalidSave(engine::error::ValidationFault::bare(1291))
         })
     }
 
@@ -1362,7 +1360,10 @@ impl SessionActor {
             }
             SessionCommand::PlayerWorkingOrders { generation, reply } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                    Err(SendCommandError::Rejected(format!(
+                        "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
+                        self.timeline_generation
+                    )))
                 } else {
                     serde_json::to_value(self.game.player_working_orders())
                         .map(|orders| (self.timeline_generation, orders))
@@ -1380,7 +1381,10 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                    Err(SendCommandError::Rejected(format!(
+                        "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
+                        self.timeline_generation
+                    )))
                 } else {
                     self.game
                         .query_stock_history(AccountId(0), &code)
@@ -1391,7 +1395,10 @@ impl SessionActor {
             }
             SessionCommand::InitialAllocation { generation, reply } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                    Err(SendCommandError::Rejected(format!(
+                        "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
+                        self.timeline_generation
+                    )))
                 } else {
                     self.game.initial_allocation()
                         .map(|data| (self.timeline_generation, data))
@@ -1425,7 +1432,10 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SessionError::InvalidSave(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                        1290,
+                        vec![generation, self.timeline_generation],
+                    )))
                 } else if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else if let Some(key) = candidate.as_ref() {
@@ -1443,8 +1453,9 @@ impl SessionActor {
                     let next_generation = match self.timeline_generation.checked_add(1) {
                         Some(generation) => generation,
                         None => {
+                            // 1292：世代计数耗尽。
                             let _ = reply.send(Err(SessionError::ResourceLimit(
-                                "session generation exhausted; create a new session".to_owned(),
+                                engine::error::ValidationFault::bare(1292),
                             )));
                             return;
                         }
@@ -1452,10 +1463,11 @@ impl SessionActor {
                     let replacement = self
                         .ingress
                         .write()
-                        .map_err(|error| {
-                            SessionError::ResourceLimit(format!(
-                                "session ingress lifecycle lock poisoned: {error}"
-                            ))
+                        .map_err(|_| {
+                            // 1293：ingress 生命周期锁中毒（防御式显式暴露）。
+                            SessionError::ResourceLimit(
+                                engine::error::ValidationFault::bare(1293),
+                            )
                         })
                         .and_then(|mut ingress| {
                             ingress.1.close()?;
@@ -1480,16 +1492,17 @@ impl SessionActor {
             #[cfg(feature = "host-parity")]
             SessionCommand::AdvanceCivilDay { generation, reply } => {
                 let result = if let Some(failure) = &self.fatal_failure {
-                    Err(SessionError::InvalidSave(format!(
-                        "session stopped after {}: {}",
-                        failure.code, failure.message
-                    )))
+                    // 1291：宿主致命失败后停机（同 fatal_rejection）。
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::bare(1291),
+                    ))
                 } else if generation == self.timeline_generation {
                     self.game.end_civil_day_update()
                 } else {
-                    Err(SessionError::InvalidSave(format!(
-                        "stale session generation {generation}; current generation is {}",
-                        self.timeline_generation
+                    // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
+                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                        1290,
+                        vec![generation, self.timeline_generation],
                     )))
                 };
                 if let Ok(report) = &result {
@@ -1507,10 +1520,10 @@ impl SessionActor {
             #[cfg(feature = "host-parity")]
             SessionCommand::Step { generation, reply } => {
                 let result = if let Some(failure) = &self.fatal_failure {
-                    Err(SessionError::InvalidSave(format!(
-                        "session stopped after {}: {}",
-                        failure.code, failure.message
-                    )))
+                    // 1291：宿主致命失败后停机（同 fatal_rejection）。
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::bare(1291),
+                    ))
                 } else if generation == self.timeline_generation {
                     self.game.civil_day_ready().and_then(|ready| {
                         if ready {
@@ -1525,9 +1538,10 @@ impl SessionActor {
                             .map_err(SessionError::from)
                     })
                 } else {
-                    Err(SessionError::InvalidSave(format!(
-                        "stale session generation {generation}; current generation is {}",
-                        self.timeline_generation
+                    // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
+                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                        1290,
+                        vec![generation, self.timeline_generation],
                     )))
                 };
                 if let Ok(events) = &result {
@@ -1555,7 +1569,10 @@ impl SessionActor {
                         self.game.npc_decision_diagnostics(account),
                     ))
                 } else {
-                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                    Err(SendCommandError::Rejected(format!(
+                        "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
+                        self.timeline_generation
+                    )))
                 };
                 let _ = reply.send(result);
             }
@@ -1589,7 +1606,7 @@ impl SessionActor {
                     Ok(())
                 } else {
                     Err(SessionError::InvalidSave(
-                        "stale timeline generation".into(),
+                        engine::error::ValidationFault::bare(1290),
                     ))
                 };
                 let _ = reply.send(result);

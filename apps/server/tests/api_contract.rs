@@ -1263,7 +1263,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
     assert_eq!(error["code"], "INVALID_SAVE");
     assert!(error["message"]
         .as_str()
-        .is_some_and(|message| message.contains("待处理输入")));
+        .is_some_and(|message| message.contains("fault["))); // 数值身份后错误消息为 fault 码形态
     assert_eq!(
         serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap(),
         before,

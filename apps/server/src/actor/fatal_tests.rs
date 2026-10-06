@@ -74,11 +74,11 @@ fn producer_failure_contains_real_location_and_recovery_details() {
 mod fixture;
 
 fn assert_fatal_rejection(error: SessionError) {
-    let message = error.to_string();
-    assert!(
-        message.contains("session stopped after STEP_FATAL"),
-        "{message}"
-    );
+    // fault1291：宿主致命失败后停机（数值码断言，ADR 0041）。
+    assert!(matches!(
+        &error,
+        SessionError::InvalidSave(fault) if fault.code == 1291
+    ));
 }
 
 fn assert_failed_cycle_preserves_business_and_ingress_facts(
@@ -392,7 +392,7 @@ fn step_fatal_maps_to_the_stable_host_code() {
 #[test]
 fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
     let failure = HostFailure::civil(&SessionError::InvalidSave(
-        "civil boundary is inconsistent".into(),
+        engine::error::ValidationFault::bare(3012),
     ));
     assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
     assert_eq!(

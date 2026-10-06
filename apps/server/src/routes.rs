@@ -636,7 +636,7 @@ pub async fn api_npc_decision_diagnostics(
             "session actor gone",
         ),
         Err(SendCommandError::Rejected(reason))
-            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+            if reason.contains("fault[1290]") || reason.starts_with("STALE_SESSION_GENERATION:") =>
         {
             api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
         }
@@ -797,7 +797,7 @@ pub async fn api_player_working_orders(
         )
             .into_response(),
         Err(SendCommandError::Rejected(reason))
-            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+            if reason.contains("fault[1290]") || reason.starts_with("STALE_SESSION_GENERATION:") =>
         {
             api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
         }
@@ -834,7 +834,7 @@ pub async fn api_stock_history(
         )
             .into_response(),
         Err(SendCommandError::Rejected(reason))
-            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+            if reason.contains("fault[1290]") || reason.starts_with("STALE_SESSION_GENERATION:") =>
         {
             api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
         }
@@ -869,7 +869,7 @@ pub async fn api_initial_allocation(
         )
             .into_response(),
         Err(SendCommandError::Rejected(reason))
-            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+            if reason.contains("fault[1290]") || reason.starts_with("STALE_SESSION_GENERATION:") =>
         {
             api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
         }
@@ -916,7 +916,7 @@ pub async fn api_save(
             "ACTOR_GONE",
             "session actor gone",
         ),
-        Err(SendCommandError::Rejected(reason)) if reason.contains("STALE_SESSION_GENERATION:") => {
+        Err(SendCommandError::Rejected(reason)) if reason.contains("fault[1290]") || reason.starts_with("STALE_SESSION_GENERATION:") => {
             api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
         }
         Err(SendCommandError::Rejected(reason)) => {
@@ -959,8 +959,8 @@ pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: B
     };
     let slot = match engine::decode_save_slot(body.slot.get().as_bytes(), &decode_limits) {
         Ok(slot) => slot,
-        Err(engine::SessionError::ResourceLimit(message)) => {
-            return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
+        Err(engine::SessionError::ResourceLimit(fault)) => {
+            return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", fault.to_string());
         }
         Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
     };

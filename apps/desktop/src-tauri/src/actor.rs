@@ -81,8 +81,10 @@ fn diagnostic_generation_response(
     read: impl FnOnce() -> engine::NpcDecisionDiagnostics,
 ) -> Result<GenerationResponse<engine::NpcDecisionDiagnostics>, SessionError> {
     if requested_generation != current_generation {
-        return Err(SessionError::InvalidSave(format!(
-            "stale session generation {requested_generation}; current generation is {current_generation}"
+        // 1310：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
+        return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+            1310,
+            vec![requested_generation, current_generation],
         )));
     }
     Ok(GenerationResponse {
@@ -1022,10 +1024,9 @@ impl<R: Runtime> SessionActor<R> {
             }
             SessionCommand::PlayerWorkingOrders { generation, reply } => {
                 let orders =
-                    serde_json::to_value(self.game.player_working_orders()).map_err(|error| {
-                        SessionError::InvalidSave(format!(
-                            "serialize player working orders: {error}"
-                        ))
+                    serde_json::to_value(self.game.player_working_orders()).map_err(|_| {
+                        // 1312：玩家在途委托序列化失败（边界日志承载细节）。
+                        SessionError::InvalidSave(engine::error::ValidationFault::bare(1312))
                     });
                 let result = self.generation_response(generation, orders);
                 let _ = reply.send(result);
@@ -1038,9 +1039,9 @@ impl<R: Runtime> SessionActor<R> {
                 let result = if generation != self.generation {
                     self.generation_response(
                         generation,
-                        Err(SessionError::InvalidSave(format!(
-                            "stale session generation {generation}; current generation is {}",
-                            self.generation
+                        Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                            1310,
+                            vec![generation, self.generation],
                         ))),
                     )
                 } else {
@@ -1055,9 +1056,9 @@ impl<R: Runtime> SessionActor<R> {
             }
             SessionCommand::QueryBaseline { generation, reply } => {
                 let result = if generation != self.generation {
-                    Err(SessionError::InvalidSave(format!(
-                        "stale session generation {generation}; current generation is {}",
-                        self.generation
+                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                        1310,
+                        vec![generation, self.generation],
                     )))
                 } else {
                     self.game.prepare_public_baseline();
@@ -1203,7 +1204,11 @@ impl<R: Runtime> SessionActor<R> {
     /// 应用新倍速：固定倍率使用精确 Duration；Fastest 切到 CPU 时间片 tight-loop。
     fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
         if !self.pacing.apply_speed(speed, self.game.tick()) {
-            return Err(SessionError::InvalidSave(format!("非法 speed: {speed}")));
+            // 1311：speed 档位非法；ctx[0]=speed 位模式（f64）。
+            return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                1311,
+                vec![speed.to_bits()],
+            )));
         }
         if !self.pacing.is_fastest() {
             self.last_fixed_publish = Instant::now();
@@ -1217,9 +1222,10 @@ impl<R: Runtime> SessionActor<R> {
         value: Result<T, SessionError>,
     ) -> Result<GenerationResponse<T>, SessionError> {
         if generation != self.generation {
-            return Err(SessionError::InvalidSave(format!(
-                "stale session generation {generation}; current generation is {}",
-                self.generation
+            // 1310：世代过期。
+            return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
+                1310,
+                vec![generation, self.generation],
             )));
         }
         value.map(|value| GenerationResponse {
@@ -1236,15 +1242,13 @@ impl<R: Runtime> SessionActor<R> {
         self.generation_response(generation, Ok(()))?;
         let restored = ProtocolSession::restore(&slot)?;
         let next_generation = self.generation.checked_add(1).ok_or_else(|| {
-            SessionError::InvalidSave(
-                "session generation exhausted; create a new session".to_owned(),
-            )
+            // 1313：世代计数耗尽。
+            SessionError::InvalidSave(engine::error::ValidationFault::bare(1313))
         })?;
         {
-            let mut ingress = self.ingress.write().map_err(|error| {
-                SessionError::ResourceLimit(format!(
-                    "session ingress lifecycle lock poisoned: {error}"
-                ))
+            let mut ingress = self.ingress.write().map_err(|_| {
+                // 1314：ingress 生命周期锁中毒。
+                SessionError::ResourceLimit(engine::error::ValidationFault::bare(1314))
             })?;
             ingress.1.close()?;
             *ingress = (next_generation, restored.shared_ingress());
