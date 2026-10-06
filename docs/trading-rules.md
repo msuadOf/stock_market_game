@@ -187,12 +187,52 @@ NPC 请求在上一 tick 的已提交状态上形成，下一 tick 受理；玩�
   `min(应纳税额, 账户真实现金)` 部分扣收，不虚构资金、不叠加历史已收缴税额抬高上限；
   未清税额由后续每次日终继续追缴，并通过 `GameSession::dividend_tax_outstanding_views`
   typed 查询面（ts-rs 正规导出 + Web 严格 parser）显式暴露未划收税额、`needs_funds`
-  与原因（`InsufficientAvailableCash`/`Cleared`）。UI 呈现归后续批次。
+  与原因（`InsufficientAvailableCash`/`Cleared`）。本地 WASM 宿主经 owner 隔离导出
+  （`owner_dividend_tax_outstanding_views`），公司行为面板（CompanyPanel 体系内的
+  DividendTaxPanel）展示本人未清税额并对 `needs_funds` 显式提示；Tauri/远程宿主的
+  税务状态查询留待后续批次，不支持时 UI 显式提示而非静默。
 - **显式不支持**：居民企业、证券投资基金、非居民以及未配置税务身份
   （`TreatmentNotConfigured`）不按个人口径计税，显式拒绝或不产生个人税事实；
   同一账户混合法定限售与流通税股批次的处置显式不支持。
 - **装配期限制**：税账（`configure_cash_dividend_tax_book`）只能在名册尚无历史日结回执
   且无已登记分红时配置；事后配置无法重建 FIFO 税事实并会令日终永久失败，因此显式拒绝。
+
+### 开局税务模式与默认税籍（2026-10-06 产品决策登记）
+
+本节登记新局税务模式选项（`SessionSetup.dividend_tax_mode`）与默认税籍语义，属
+2026-10-06 用户产品决策：「新局默认用户交易都扣税，还可以选择用大A的方式扣税
+（个人扣税、机构/企业另外算……企业部分先留下抽象层接口），还可以配置为不扣税。
+此外，分红要扣税」。
+
+- **模式与持久化**：默认 `IndividualPublicMarket`（大 A 个人差别化），可选 `Exempt`
+  （不扣税）。字段为严格持久化契约——新档必填、无 serde 兼容默认，缺失该字段的旧档
+  在 engine 反序列化与 Web `parseSetup` 两端均被显式拒绝（错误指明
+  `dividend_tax_mode`）；恢复后装配期自动配置与计税语义不变。
+- **默认模式的装配期自动开账**：配置完整股东名册（`GameSession::configure_share_registry`）
+  成功后，引擎在同一候选副本上为每个「个人」身份的账户持有人走既有
+  `configure_cash_dividend_tax_book` 自动配置 `IndividualPublicMarket` 税账；名册或
+  税账任一步失败都不留半配置状态。个人身份分类的权威映射是
+  `taxpayer_identity_of_kind`：玩家（Player）与自然人散户 NPC（Retail）属个人；
+  机构（Inst）与游资（Hot）NPC 属非个人。
+- **机构/游资边界**：非个人身份保持 `TreatmentNotConfigured`，不产生个人税事实；
+  企业/机构计税未实现（显式登记「企业/机构税未实现」，查询视图以
+  `TaxpayerIdentity::NonIndividualPending` 呈现）。
+- **不扣税模式**：引擎装配期不为任何身份自动配置税账（新局默认局 fixture 中
+  `dividend_tax_books` 保持空数组）；宿主显式装配期命令 `configure_dividend_tax_book`
+  仍是既有入口，开局后被拒是正确行为（装配期守卫），错误完整上抛不静默降级。
+- **装配期后进入的股东**：经二级市场净买入在日后进入股东登记的账户不自动补开
+  个人税账（受既有装配期守卫约束），其分红保持 `TreatmentNotConfigured`。这是当前
+  引擎边界，不是税法口径。
+- **企业/机构税抽象层留白**：`DividendTaxProfile` 已含 `ResidentEnterprise` /
+  `SecuritiesFund` / `NonResident` 显式变体；`TaxpayerIdentity::NonIndividualPending`
+  是非个人身份的统一扩展位。实现其计税前不得把非个人身份映射为任何已实现身份
+  （`CashDividendTaxBook::validate` 对非个人身份显式拒绝）。
+- **查询与 UI 入口**：`GameSession::account_dividend_tax_status(account)` 只读返回
+  模式、身份分类与每个已登记证券的税账状态（未知账户显式报错）；本地 WASM 宿主以
+  owner 隔离导出 `owner_dividend_tax_status` / `owner_dividend_tax_outstanding_views` /
+  `configure_dividend_tax_book`。新局创建界面（TaxModeInput，默认勾选大 A 方式）与
+  公司行为面板（DividendTaxPanel）已接线；Tauri/远程宿主的税务状态查询留待后续批次，
+  不支持时 UI 显式提示。
 
 ## 尚未模拟
 
