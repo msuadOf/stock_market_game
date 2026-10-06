@@ -383,6 +383,162 @@ fn standalone_snapshot_deserialization_rejects_invalid_capital() {
 }
 
 #[test]
+fn registry_restore_requires_nullable_issuer_repurchase_account_key() {
+    let registry = registry();
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    wire.as_object_mut()
+        .unwrap()
+        .remove("issuer_repurchase_account");
+
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+}
+
+#[test]
+fn snapshot_restore_requires_nullable_issuer_repurchase_account_key() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("repurchase-account-facts".into(), day("2030-01-01"))
+        .unwrap();
+    let mut wire = serde_json::to_value(snapshot).unwrap();
+    wire.as_object_mut()
+        .unwrap()
+        .remove("issuer_repurchase_account");
+
+    assert!(serde_json::from_value::<RegistrationSnapshot>(wire).is_err());
+}
+
+#[test]
+fn issuer_repurchase_account_fact_is_validated_and_copied_into_registration() {
+    let mut registry = registry();
+    let facts = IssuerRepurchaseAccountFacts {
+        account_reference: "repurchase-account-1".into(),
+        source_evidence: "exchange-confirmation-1".into(),
+        established_on: day("2029-12-31"),
+    };
+    registry
+        .set_issuer_repurchase_account(facts.clone())
+        .unwrap();
+    let snapshot = registry
+        .register("repurchase-facts".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+
+    assert_eq!(snapshot.issuer_repurchase_account(), Some(&facts));
+    registry
+        .set_issuer_repurchase_account(facts.clone())
+        .unwrap();
+    let registry_roundtrip = serde_json::from_value::<ShareRegistry>(
+        serde_json::to_value(&registry).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(registry_roundtrip, registry);
+    let snapshot_roundtrip = serde_json::from_value::<RegistrationSnapshot>(
+        serde_json::to_value(&snapshot).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot_roundtrip, snapshot);
+
+    let mut no_treasury_holding = ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId("issuer-A".into()),
+        100,
+        day("2030-01-01"),
+        vec![ShareHolding {
+            holder: account(1),
+            lots: vec![lot("only-holder", 100, "2029-01-01")],
+        }],
+    )
+    .unwrap();
+    no_treasury_holding
+        .set_issuer_repurchase_account(facts)
+        .unwrap();
+    assert!(no_treasury_holding
+        .issuer_repurchase_account()
+        .is_some());
+}
+
+#[test]
+fn issuer_repurchase_account_fact_cannot_be_future_dated_or_empty() {
+    let mut registry = registry();
+    for facts in [
+        IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2030-01-02"),
+        },
+        IssuerRepurchaseAccountFacts {
+            account_reference: " ".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2029-12-31"),
+        },
+    ] {
+        assert!(registry
+            .set_issuer_repurchase_account(facts)
+            .is_err());
+    }
+}
+
+#[test]
+fn issuer_repurchase_account_facts_cannot_be_backdated_across_registration() {
+    let mut registry = registry();
+    registry
+        .register("before-facts".into(), day("2030-01-01"))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .set_issuer_repurchase_account(IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2029-12-31"),
+        })
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn registry_restore_rejects_snapshot_repurchase_facts_that_diverge_from_history() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("before-facts".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+    registry.close_day(transfer(1)).unwrap();
+    assert!(registry
+        .set_issuer_repurchase_account(IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2030-01-02"),
+        })
+        .is_ok());
+    let later_snapshot = registry
+        .register("after-facts".into(), day("2030-01-02"))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        later_snapshot.issuer_repurchase_account(),
+        registry.issuer_repurchase_account()
+    );
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    assert_eq!(
+        wire["registrations"][0]["issuer_repurchase_account"],
+        serde_json::Value::Null
+    );
+    assert!(wire["registrations"][1]["issuer_repurchase_account"].is_object());
+    wire["registrations"][0]["issuer_repurchase_account"] = serde_json::json!({
+        "account_reference": "forged-account",
+        "source_evidence": "forged-evidence",
+        "established_on": "2030-01-01"
+    });
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    wire["registrations"][1]["issuer_repurchase_account"]["account_reference"] =
+        serde_json::json!("different-account");
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+    assert!(snapshot.issuer_repurchase_account().is_none());
+}
+
+#[test]
 fn nullable_acquisition_is_required_and_nontrading_scope_is_not_ordinary_transfer() {
     let mut registry = registry();
     registry.close_day(transfer(5)).unwrap();

@@ -5,8 +5,9 @@ export type AcquisitionSource = { readonly InitialAllocation: { readonly evidenc
 export type ShareRestriction = "Unrestricted" | { readonly Restricted: { readonly reason: string; readonly release_on: string } }
 export type ShareLot = { readonly id: string; readonly qty: string; readonly acquired_on: string; readonly source: AcquisitionSource; readonly restriction: ShareRestriction }
 export type ShareHolding = { readonly holder: HolderId; readonly lots: readonly ShareLot[] }
-export type RegistrationSnapshot = { readonly event_id: string; readonly stock: string; readonly issuer: string; readonly registered_on: string; readonly issued_shares: string; readonly holdings: readonly ShareHolding[] }
-export type ShareRegistry = { readonly stock: string; readonly issuer: string; readonly issued_shares: string; readonly settled_on: string; readonly holdings: readonly ShareHolding[]; readonly receipts: readonly ShareDayReceipt[]; readonly registrations: readonly RegistrationSnapshot[] }
+export type IssuerRepurchaseAccountFacts = { readonly account_reference: string; readonly source_evidence: string; readonly established_on: string }
+export type RegistrationSnapshot = { readonly event_id: string; readonly stock: string; readonly issuer: string; readonly registered_on: string; readonly issued_shares: string; readonly issuer_repurchase_account: IssuerRepurchaseAccountFacts | null; readonly holdings: readonly ShareHolding[] }
+export type ShareRegistry = { readonly stock: string; readonly issuer: string; readonly issued_shares: string; readonly issuer_repurchase_account: IssuerRepurchaseAccountFacts | null; readonly settled_on: string; readonly holdings: readonly ShareHolding[]; readonly receipts: readonly ShareDayReceipt[]; readonly registrations: readonly RegistrationSnapshot[] }
 export type ShareDayReceipt = { readonly request: ShareDayRequest; readonly disposals: readonly DisposedLot[] }
 export type ShareDayRequest = { readonly event_id: string; readonly day: string; readonly scope: "PublicMarket" | { readonly NonTradingTransfer: { readonly basis: string } }; readonly changes: readonly DayNetChange[] }
 export type DayNetChange = { readonly holder: HolderId; readonly change: string; readonly acquisition: NetAcquisition | null }
@@ -124,19 +125,33 @@ function parseHolding(value: unknown, path: string): { readonly holder: ParsedHo
   return { holder, lots, shares: shares.toString() }
 }
 
+function parseIssuerRepurchaseAccount(value: unknown, path: string, asOf: string): IssuerRepurchaseAccountFacts | null {
+  if (value === null) return null
+  const facts = record(value, path)
+  exact(facts, ["account_reference", "source_evidence", "established_on"], path)
+  const account_reference = string(facts.account_reference, `${path}.account_reference`)
+  const source_evidence = string(facts.source_evidence, `${path}.source_evidence`)
+  const established_on = civilDate(facts.established_on, `${path}.established_on`)
+  const year = Number(established_on.slice(0, 4))
+  if (year < 1900 || year > 2199) throw new SaveSchemaError(`${path}.established_on`, "超出 Engine CivilDate 算法验证范围 1900–2199")
+  if (!account_reference.trim() || !source_evidence.trim() || established_on > asOf) throw new SaveSchemaError(path, "回购专户身份、来源证据不能为空且设立日不得晚于适用日期")
+  return { account_reference, source_evidence, established_on }
+}
+
 function parseSnapshot(value: unknown, path: string): RegistrationSnapshot {
   const snapshot = record(value, path)
-  exact(snapshot, ["event_id", "stock", "issuer", "registered_on", "issued_shares", "holdings"], path)
+  exact(snapshot, ["event_id", "stock", "issuer", "registered_on", "issued_shares", "issuer_repurchase_account", "holdings"], path)
   const event_id = string(snapshot.event_id, `${path}.event_id`)
   const stock = string(snapshot.stock, `${path}.stock`)
   const issuer = string(snapshot.issuer, `${path}.issuer`)
   if (!event_id.trim() || !issuer.trim() || !stock.trim()) throw new SaveSchemaError(path, "登记快照身份不能为空")
   const issued_shares = positiveU64(snapshot.issued_shares, `${path}.issued_shares`)
+  const registered_on = civilDate(snapshot.registered_on, `${path}.registered_on`)
+  const issuer_repurchase_account = parseIssuerRepurchaseAccount(snapshot.issuer_repurchase_account, `${path}.issuer_repurchase_account`, registered_on)
   const holdings = parseHoldings(snapshot.holdings, `${path}.holdings`)
   if (holdings.total !== issued_shares) throw new SaveSchemaError(`${path}.holdings`, "登记快照股份总量与发行股数不守恒")
-  const registered_on = civilDate(snapshot.registered_on, `${path}.registered_on`)
   for (const [index, holding] of holdings.items.entries()) for (const lot of holding.lots) if (lot.acquired_on > registered_on) throw new SaveSchemaError(`${path}.holdings[${index}].lots`, "批次取得日期晚于登记日期")
-  return { event_id, stock, issuer, registered_on, issued_shares, holdings: holdings.items }
+  return { event_id, stock, issuer, registered_on, issued_shares, issuer_repurchase_account, holdings: holdings.items }
 }
 
 function parseHoldings(value: unknown, path: string): { readonly items: readonly ShareHolding[]; readonly total: string; readonly byHolder: ReadonlyMap<string, string> } {
@@ -236,11 +251,12 @@ function addCivilDays(day: string, count: number): string {
 
 function parseRegistry(value: unknown, path: string) {
   const registry = record(value, path)
-  exact(registry, ["stock", "issuer", "issued_shares", "settled_on", "holdings", "receipts", "registrations"], path)
+  exact(registry, ["stock", "issuer", "issued_shares", "issuer_repurchase_account", "settled_on", "holdings", "receipts", "registrations"], path)
   const stock = string(registry.stock, `${path}.stock`), issuer = string(registry.issuer, `${path}.issuer`)
   if (stock.trim() === "" || issuer.trim() === "") throw new SaveSchemaError(path, "证券和发行人身份不能为空")
   const issued_shares = positiveU64(registry.issued_shares, `${path}.issued_shares`)
   const settled_on = civilDate(registry.settled_on, `${path}.settled_on`)
+  const issuer_repurchase_account = parseIssuerRepurchaseAccount(registry.issuer_repurchase_account, `${path}.issuer_repurchase_account`, settled_on)
   const holdings = parseHoldings(registry.holdings, `${path}.holdings`)
   if (holdings.total !== issued_shares) throw new SaveSchemaError(`${path}.holdings`, "持仓股份总量与发行股数不守恒")
   for (const [index, holding] of holdings.items.entries()) for (const lot of holding.lots) if (lot.acquired_on > settled_on) throw new SaveSchemaError(`${path}.holdings[${index}].lots`, "批次取得日期晚于名册结算日期")
@@ -279,9 +295,11 @@ function parseRegistry(value: unknown, path: string) {
   }
   for (const [index, snapshot] of registrations.entries()) {
     if (snapshot.stock !== stock || snapshot.issuer !== issuer || snapshot.issued_shares !== issued_shares || snapshot.registered_on > settled_on) throw new SaveSchemaError(`${path}.registrations[${index}]`, "登记快照与股东名册身份或日期不一致")
+    const expectedFacts = issuer_repurchase_account !== null && issuer_repurchase_account.established_on <= snapshot.registered_on ? issuer_repurchase_account : null
+    if (JSON.stringify(snapshot.issuer_repurchase_account) !== JSON.stringify(expectedFacts)) throw new SaveSchemaError(`${path}.registrations[${index}].issuer_repurchase_account`, "登记快照回购专户事实与名册历史不一致")
   }
   if (receipts.length > 0 && receipts.at(-1)?.request.day !== settled_on) throw new SaveSchemaError(`${path}.receipts`, "最新日结回执日期必须等于股东名册结算日")
-  return { stock, issuer, issued_shares, settled_on, holdings: holdings.items, receipts, registrations, holderShares: holdings.byHolder }
+  return { stock, issuer, issued_shares, issuer_repurchase_account, settled_on, holdings: holdings.items, receipts, registrations, holderShares: holdings.byHolder }
 }
 
 function parseDividend(value: unknown, path: string): CashDividendBook {

@@ -43,6 +43,7 @@ pub mod rng;
 pub mod scheduler;
 mod spec;
 pub mod share_registry;
+pub mod stock_distribution;
 pub mod cash_dividend_tax;
 pub mod cash_dividend;
 pub mod ex_reference_price;

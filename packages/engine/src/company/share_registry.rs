@@ -69,6 +69,15 @@ pub enum ShareRestriction {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// 当前登记事实，不替代真实的回购成交或过户流水证明。
+pub struct IssuerRepurchaseAccountFacts {
+    pub account_reference: String,
+    pub source_evidence: String,
+    pub established_on: CivilDate,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShareLot {
     pub id: String,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
@@ -143,6 +152,8 @@ pub struct RegistrationSnapshot {
     registered_on: CivilDate,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
+    #[serde(deserialize_with = "required_issuer_repurchase_account")]
+    issuer_repurchase_account: Option<IssuerRepurchaseAccountFacts>,
     holdings: Vec<ShareHolding>,
 }
 
@@ -155,6 +166,8 @@ struct SnapshotState {
     registered_on: CivilDate,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
+    #[serde(deserialize_with = "required_issuer_repurchase_account")]
+    issuer_repurchase_account: Option<IssuerRepurchaseAccountFacts>,
     holdings: Vec<ShareHolding>,
 }
 
@@ -168,6 +181,7 @@ impl TryFrom<SnapshotState> for RegistrationSnapshot {
             issuer: state.issuer,
             registered_on: state.registered_on,
             issued_shares: state.issued_shares,
+            issuer_repurchase_account: state.issuer_repurchase_account,
             holdings: state.holdings,
         };
         snapshot.validate()?;
@@ -182,6 +196,8 @@ pub struct ShareRegistry {
     issuer: CompanyId,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
+    #[serde(deserialize_with = "required_issuer_repurchase_account")]
+    issuer_repurchase_account: Option<IssuerRepurchaseAccountFacts>,
     settled_on: CivilDate,
     holdings: Vec<ShareHolding>,
     receipts: Vec<ShareDayReceipt>,
@@ -195,6 +211,8 @@ struct RegistryState {
     issuer: CompanyId,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
+    #[serde(deserialize_with = "required_issuer_repurchase_account")]
+    issuer_repurchase_account: Option<IssuerRepurchaseAccountFacts>,
     settled_on: CivilDate,
     holdings: Vec<ShareHolding>,
     receipts: Vec<ShareDayReceipt>,
@@ -209,6 +227,7 @@ impl TryFrom<RegistryState> for ShareRegistry {
             stock: state.stock,
             issuer: state.issuer,
             issued_shares: state.issued_shares,
+            issuer_repurchase_account: state.issuer_repurchase_account,
             settled_on: state.settled_on,
             holdings: state.holdings,
             receipts: state.receipts,
@@ -247,6 +266,7 @@ impl ShareRegistry {
             stock,
             issuer,
             issued_shares,
+            issuer_repurchase_account: None,
             settled_on,
             holdings,
             receipts: vec![],
@@ -258,6 +278,36 @@ impl ShareRegistry {
 
     pub fn holdings(&self) -> &[ShareHolding] {
         &self.holdings
+    }
+
+    pub fn issuer_repurchase_account(&self) -> Option<&IssuerRepurchaseAccountFacts> {
+        self.issuer_repurchase_account.as_ref()
+    }
+
+    /// 设置回购专户事实；已有登记快照后不得回溯改变当时的资格分类。
+    pub fn set_issuer_repurchase_account(
+        &mut self,
+        facts: IssuerRepurchaseAccountFacts,
+    ) -> Result<(), ShareRegistryError> {
+        if let Some(existing) = &self.issuer_repurchase_account {
+            return if existing == &facts {
+                Ok(())
+            } else {
+                Err(error("issuer repurchase account facts are immutable once set"))
+            };
+        }
+        validate_issuer_repurchase_account(Some(&facts), self.settled_on)?;
+        if self
+            .registrations
+            .iter()
+            .any(|snapshot| snapshot.registered_on >= facts.established_on)
+        {
+            return Err(error(
+                "issuer repurchase account facts cannot be established retroactively across a registration",
+            ));
+        }
+        self.issuer_repurchase_account = Some(facts);
+        Ok(())
     }
 
     pub fn close_day(
@@ -407,6 +457,7 @@ impl ShareRegistry {
             issuer: self.issuer.clone(),
             registered_on,
             issued_shares: self.issued_shares,
+            issuer_repurchase_account: self.issuer_repurchase_account.clone(),
             holdings: self.holdings.clone(),
         });
         self.registrations
@@ -425,6 +476,7 @@ impl ShareRegistry {
             return Err(error("stock and issuer identities are required"));
         }
         validate_holdings(&self.holdings, self.issued_shares, self.settled_on)?;
+        validate_issuer_repurchase_account(self.issuer_repurchase_account.as_ref(), self.settled_on)?;
         let mut identities = BTreeSet::new();
         let mut previous_day = None;
         let mut acquired_ids = BTreeSet::new();
@@ -516,6 +568,15 @@ impl ShareRegistry {
                 snapshot.issued_shares,
                 snapshot.registered_on,
             )?;
+            let expected_facts = self
+                .issuer_repurchase_account
+                .as_ref()
+                .filter(|facts| facts.established_on <= snapshot.registered_on);
+            if snapshot.issuer_repurchase_account.as_ref() != expected_facts {
+                return Err(error(
+                    "registration issuer repurchase account facts do not match registry history",
+                ));
+            }
         }
         Ok(())
     }
@@ -695,6 +756,12 @@ impl RegistrationSnapshot {
             ));
         }
         validate_holdings(&self.holdings, self.issued_shares, self.registered_on)
+            .and_then(|()| {
+                validate_issuer_repurchase_account(
+                    self.issuer_repurchase_account.as_ref(),
+                    self.registered_on,
+                )
+            })
     }
     pub fn holdings(&self) -> &[ShareHolding] {
         &self.holdings
@@ -719,6 +786,24 @@ impl RegistrationSnapshot {
     pub fn issued_shares(&self) -> u64 {
         self.issued_shares
     }
+    pub fn issuer_repurchase_account(&self) -> Option<&IssuerRepurchaseAccountFacts> {
+        self.issuer_repurchase_account.as_ref()
+    }
+}
+
+fn validate_issuer_repurchase_account(
+    facts: Option<&IssuerRepurchaseAccountFacts>,
+    as_of: CivilDate,
+) -> Result<(), ShareRegistryError> {
+    if let Some(facts) = facts {
+        if facts.account_reference.trim().is_empty()
+            || facts.source_evidence.trim().is_empty()
+            || facts.established_on > as_of
+        {
+            return Err(error("invalid issuer repurchase account facts"));
+        }
+    }
+    Ok(())
 }
 
 fn error(detail: &str) -> ShareRegistryError {
@@ -731,6 +816,12 @@ fn required_acquisition<'de, Decoder: serde::Deserializer<'de>>(
     decoder: Decoder,
 ) -> Result<Option<NetAcquisition>, Decoder::Error> {
     Option::<NetAcquisition>::deserialize(decoder)
+}
+
+fn required_issuer_repurchase_account<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<IssuerRepurchaseAccountFacts>, Decoder::Error> {
+    Option::<IssuerRepurchaseAccountFacts>::deserialize(decoder)
 }
 
 #[cfg(test)]
