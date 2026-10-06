@@ -2,7 +2,7 @@
 
 > **范围与状态：** 本文按 2026-10-06 最新 [Q14 公司基本面与经营系统设计蓝图](../remaining-questions-and-features/q14-financial-model-design.md) 重整。目标是 `company/` 薄共同入口及可独立运行的 `SimpleFundamentals`，其财务查询、披露、分红、配股、增发、回购与 `CompanySimulation` 具有相同功能和业务语义。`CompanySimulation` 的经营系统由用户授权后续另开分支；当前不要求先完成客户/行业生产 dispatch。计划不代表实现或验收已完成。
 
-当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。共同股本行为的真实投资者结算仍未接通，`cash_settlement` 如实为 `false`。基础登记、股息税和整数分纯现金除息计算不能扩称为分红、认购或回购已可使用；除息计算的 9 项短测及独立复核见 [除息基础复核](ex-reference-price-review.md)，市场参考价与涨跌幅锚仍待实际接线。
+当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。现金分红候选接线已验证显式名册/法定事实下的真实税前到账、应付清偿和同日合计除息锚，但公告/NPC 获知、股息税实际收缴、宿主/UI 与其他股本行为尚未完成，`cash_settlement` 如实为 `false`。底层接线不能扩称完整分红、认购或回购已可使用；证据与边界见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)及[当前交接](current-handoff.md)。
 
 本批验证只包括短单测、编译、类型检查及构建：Rust 代表短测 85 项、Web 新合同短测 45 项通过；真实存档由 release Engine 生成并验证恢复续行，四周期绑定通过正规 typegen 生成。默认 features 下的 workspace 调用方编译及 WASM／Web 构建通过；旧经营 Session 的特定集团和冲击接线留作后续 Simulation 门禁，不因迁移测试归档而登记为通过。未运行完整回归。
 

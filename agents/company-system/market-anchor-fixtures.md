@@ -16,6 +16,6 @@
 
 九个目标测试文件的短测由 root 执行，63/63 通过，日志见 `.tmp/company-system/session-actions/market-anchor-fixtures-short-web-cwd.log`。app 与 node TypeScript 全量检查通过，日志见 `.tmp/company-system/session-actions/web-tsc-review-final.log`。
 
-共享协议 fixture 补齐后，protocol-parse 与 protocol-runtime-store 定向短测由 root 复核，14/14 通过，日志见 `.tmp/company-system/session-actions/protocol-anchor-verified.log`。两批变更均获非作者 Luna 独立复核通过；协议 fixture 复核对应 `.tmp/company-system/session-actions/protocol-anchor-verified.log`，九文件复核结论已通过审查消息回报 root，无独立落盘审查记录。
+共享协议 fixture 补齐后，protocol-parse 与 protocol-runtime-store 定向短测由 root 复核，14/14 通过，日志见 `.tmp/company-system/session-actions/protocol-anchor-verified.log`。两批变更均获非作者 Luna 独立复核通过：九文件复核由 `market_anchor_fixture_luna_review` 回报；共享协议 fixture 复核由 `review_protocol_market_fixture` 回报，并核对了 `.tmp/company-system/session-actions/protocol-anchor-final.log`。两份复核结论通过审查消息回报 root，没有独立落盘审查记录。
 
 以上仅覆盖指定测试文件、共享协议 fixture 和 app/node 类型检查，不代表完整 Web 或项目回归通过。
