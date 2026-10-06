@@ -176,3 +176,15 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 最终 review 修复后 release 构建绑定 `read-only-start-review-fix-production-build-binding.json`，verify-build 全部通过，binary SHA `eac5e6f2fa225cf0944c757cd31e1097ff3a08f02d7acd010485da968d10b796`。定向短测 read_only_start 5、continuous transaction 19、quote expiry 12、decision resources 11、phase timing 12、hash contract 14、auction transaction 14 全绿；每条命令 9s TERM + 1s KILL，RAYON4/test4 并行。四条正式 3000 tick benchmark 顺序独占：candidate 222.757x/216.501x，相邻稳定 68db9414 baseline 189.914x/189.614x；均值 219.629x 对 189.764x，提升 15.74%，candidate CPU 约 5.98 核。详见 `read-only-start-final-benchmarks.md`。
 
 复核：第一次 review 的有效发现已修复并重新构建/复测；最终全新一次性 gpt-6-luna 只读 reviewer（Codex task `01a10f91-e405-7c51-85d9-1c1aebeda3ed`）结论 PASS、无阻塞语义问题，记录 `read-only-start-final-review.md`。此前 4 次新建 collaboration reviewer 均因平台 `thinking_signature_invalid` 未开始，未复用任何 reviewer。本批准备本地提交 `perf(engine): parallelize read-only continuous start preparation`；1000x 仍未达成，frontend/WASM/HTTP/WS/full workspace/全天验收继续暂停，不调用 goal complete/blocked。
+
+## 追加：read-only start 后的继续排查（2026-10-06）
+
+已提交 `382c1871` 后继续静态审查：`runtime_snapshot`/`tick_batch_delta` 每 tick 各扫描全部 resting orders 但只消费玩家预留；protocol facts 至少在构造和 `Frame.validate` 两次 canonical JSON；`ProtocolSession::step_frame` 为 intraday 额外完整克隆 frame；NPC next-tick queue 在 candidate commit 尾部串行。静态分析见 `read-only-start-post-batch-analysis.md`。
+
+完成一个可撤回小实验：把已提交 frame 与 intraday history 共享同一 `Arc`，公开 owned API 保持一次返回克隆。protocol 47 测绿，candidate 223.040x/217.658x，相邻 382c1871 220.021x/223.969x，均值约 -0.74%，波动内无收益；源码已逐字节回退，详情 `frame-clone-count-findings.md`。主 `.tmp/production-probe-target` release 现在是已撤回实验 SHA `c9b1526aa40f...`，不能代表当前 HEAD；当前稳定 frozen binary 仍为 `.tmp/server-read-only-start-final-candidate`，SHA `eac5e6f2fa225cf0944c757cd31e1097ff3a08f02d7acd010485da968d10b796`。1000x 未达成，frontend 继续暂停。
+
+## 追加：read-only start 后的继续排查（2026-10-06）
+
+已提交 `382c1871` 后继续静态审查：`runtime_snapshot`/`tick_batch_delta` 每 tick 各扫描全部 resting orders 但只消费玩家预留；protocol facts 至少在构造和 `Frame.validate` 两次 canonical JSON；`ProtocolSession::step_frame` 为 intraday 额外完整克隆 frame；NPC next-tick queue 在 candidate commit 尾部串行。静态分析见 `read-only-start-post-batch-analysis.md`。
+
+完成一个可撤回小实验：把已提交 frame 与 intraday history 共享同一 `Arc`，公开 owned API 保持一次返回克隆。protocol 47 测绿，candidate 223.040x/217.658x，相邻 382c1871 220.021x/223.969x，均值约 -0.74%，波动内无收益；源码已逐字节回退，详情 `frame-clone-count-findings.md`。主 `.tmp/production-probe-target` release 现在是已撤回实验 SHA `c9b1526aa40f...`，不能代表当前 HEAD；当前稳定 frozen binary 仍为 `.tmp/server-read-only-start-final-candidate`，SHA `eac5e6f2fa225cf0944c757cd31e1097ff3a08f02d7acd010485da968d10b796`。1000x 未达成，frontend 继续暂停。

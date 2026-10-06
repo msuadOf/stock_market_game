@@ -1,0 +1,30 @@
+diff --git a/packages/engine/src/session/protocol/civil/session.rs b/packages/engine/src/session/protocol/civil/session.rs
+index e3fda870..012fc4b7 100644
+--- a/packages/engine/src/session/protocol/civil/session.rs
++++ b/packages/engine/src/session/protocol/civil/session.rs
+@@ -269,8 +269,10 @@ impl ProtocolSession {
+         };
+         drop(checkpoint);
+         self.state.fact_cursor.append_committed_facts(&frame.facts);
+-        self.state.intraday.push(Arc::new(frame.clone()));
+-        Ok(frame)
++        // 已提交 frame 先进入 append-only 历史；公开 owned API 只保留这一次完整克隆。
++        let shared = Arc::new(frame);
++        self.state.intraday.push(Arc::clone(&shared));
++        Ok((*shared).clone())
+     }
+ 
+     /// 通过普通公共 protocol 路径发布一帧，同时返回
+@@ -299,8 +301,10 @@ impl ProtocolSession {
+         };
+         drop(checkpoint);
+         self.state.fact_cursor.append_committed_facts(&frame.facts);
+-        self.state.intraday.push(Arc::new(frame.clone()));
+-        Ok((frame, evidence))
++        // 已提交 frame 先进入 append-only 历史；公开 owned API 只保留这一次完整克隆。
++        let shared = Arc::new(frame);
++        self.state.intraday.push(Arc::clone(&shared));
++        Ok(((*shared).clone(), evidence))
+     }
+ 
+     fn prepare_frame(&mut self, frame: TickFrame) -> Result<TickFrame, StepFatal> {
