@@ -580,7 +580,7 @@ fn stock(
     initial_price: i64,
 ) -> StockSpec {
     StockSpec {
-        code: StockId(code.to_owned()),
+        code: engine::StockCode(code.to_owned()),
         exchange,
         initial_price: Money::from_cents(initial_price),
         category,

@@ -472,7 +472,14 @@ fn initial_session_with_setup(
     // A declared initial allocation, not a runtime mutation: transfer 1,000
     // already-settled shares per stock from an NPC to the player. Total supply
     // is unchanged. Production restore validates the complete initial slot.
+    let catalog = initial
+        .setup
+        .stock_catalog()
+        .map_err(|error| error.to_string())?;
     for spec in &initial.setup.stocks {
+        let stock = catalog
+            .id(&spec.code.0)
+            .expect("目录由同一批规格构造，必须命中");
         let donor = initial
             .snapshot
             .accounts
@@ -481,7 +488,7 @@ fn initial_session_with_setup(
                 (*id != AccountId(0)
                     && account
                         .positions
-                        .get(&spec.code)
+                        .get(&stock)
                         .is_some_and(|position| position.qty - position.t1_locked >= 1_000))
                 .then_some(*id)
             })
@@ -492,7 +499,7 @@ fn initial_session_with_setup(
             .get_mut(&donor)
             .expect("selected donor")
             .positions
-            .get_mut(&spec.code)
+            .get_mut(&stock)
             .expect("selected position");
         donor_position.qty -= 1_000;
         initial
@@ -502,7 +509,7 @@ fn initial_session_with_setup(
             .ok_or("missing player")?
             .positions
             .insert(
-                spec.code.clone(),
+                stock,
                 PositionSnap {
                     qty: 1_000,
                     t1_locked: 0,
@@ -527,7 +534,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
                     .enqueue_player_intent(
                         AccountId(0),
                         Intent::PlaceLimit {
-                            code: StockId(code.to_owned()),
+                            code: StockId(0),
                             side,
                             price: engine::LimitPrice::Fixed(Money::from_cents(price)),
                             qty,
@@ -541,7 +548,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockId("600999".to_owned()),
+                code: StockId(9),
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
