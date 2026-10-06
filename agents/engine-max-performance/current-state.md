@@ -196,3 +196,7 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 ## 追加：NPC queue 嵌套诊断（2026-10-06）
 
 针对 `npc_queue_next_tick` 再做 5-span 临时插桩。诊断吞吐 161.059x，样本前半段约 5 秒低 CPU 窗口，疑似外部扰动，因此只用于相对定位。结果：`capture_decision_snapshot` wall 2.745s / CPU 0.852s；`stream_npc_decisions` 外层 0.425s / 0.349s；31,011 个 projection callback 0.196s / 0.165s；31,011 个策略 decide 0.262s / 0.210s；11,840 个 `receive_private_intent` 仅 0.034s / 0.023s。结论：串行 receive 不是瓶颈，下一步拆 `capture_decision_snapshot` 内部。首次诊断 build 因生成 FFI 单行语法错误失败，修正后 exit0；4 份源码已原字节恢复、临时 module 删除。详见 `npc-queue-findings.md`。1000x 未达成，frontend 继续暂停。
+
+## 追加：NPC snapshot 内部诊断（2026-10-06）
+
+对 `capture_decision_snapshot` 再做 10-span 插桩，诊断 220.467x，与正常区间接近。主要成本为：`retail_analysis` 0.865s wall / 0.454s CPU；62,022 次 `CapturedExperienceObservation::capture` 合计 0.844s wall / 0.772s CPU。build_market_view、attention mutate、working order capture、behavior market、retail experience install、DecisionSnapshot::new 每项仅约 0.03–0.17s。结论：下一步优先共享/复用 snapshot capture 内的 price paths 与 behavior market（retail_analysis 内部重复捕获 DecisionChainObservation），并优化 experience capture 的 positions/BTreeSet/clone 工作；不是继续调 Rayon 调度。插桩期间有三次诊断脚本语法/scope 错误，最终 build exit0 后采样，源码原字节恢复、git diff 干净。详见 `npc-snapshot-findings.md`。1000x 未达成，frontend 继续暂停。
