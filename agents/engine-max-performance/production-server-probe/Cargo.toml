@@ -1,0 +1,18 @@
+[package]
+name = "production-server-max-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# 独立普通 binary 不加载 server 的 dev-dependencies，避免 verification-harness 污染基准。
+[workspace]
+
+[dependencies]
+server = { path = "../../../apps/server" }
+engine = { path = "../../../packages/engine" }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio = { version = "1.52.3", features = ["full"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 16

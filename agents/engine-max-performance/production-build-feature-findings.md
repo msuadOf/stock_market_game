@@ -1,0 +1,13 @@
+# 真实 server 基准的 Cargo feature 配置纠正（2026-10-06，在途）
+
+复核编译artifact fingerprint发现最新example依赖engine-c35efa09a5f0d801的features为[verification-harness]；server Cargo.toml的dev-dependency engine显式开启该feature。Cargo examples会加载dev依赖并在同dependency graph中统一同一engine的features。因此过去真实SessionActor Fastest/逐帧连续tick的测量路径是真的，但编译配置包含verification工具路径，不能冒充正式server的普通配置。本发现不否定此前已复核的业务等价优化；必须补正式配置基准。
+
+固定默认5股/20007NPC/seed42、Rayon16/Tokio2、16物理核0–15，生产入口SessionManager与SessionActor代码不改。构建agents/engine-max-performance/production-server-probe独立普通binary，依赖正常server/engine/tokio，无任何dev-dependencies；main.rs逐字节复制现有server_max_speed_probe.rs，并保存来源SHA，保证运行入口/参数/时间口径和逐帧校验完全相同。无新依赖品种，版本沿用workspace已有Cargo.lock；Cargo --message-format=json记录实际编译features并检查engine feature list为空。该工作脚手架只放agents主题目录，不进入正式engine/server API或前端。
+
+最新已审查提交10f8d9ae；先前约164x是带verification-harness的actor基准。worker数控制也是该配置：固定16核、Rayon1约160.45x、Rayon4约173.54x、Rayon16约164x；32物理核/Rayon32反而约133.34x。不能把降低worker的诊断当16worker达标。重测正式配置后再决定后端下一热点，1000x仍active、frontend暂停。
+
+独立manifest首次offline解析升级了本地缓存中已有transitive版本，构建71s虽exit0但不满足控制变量，未运行基准。已归档初次lock，复制当前workspace Cargo.lock并运行metadata使Cargo仅剪裁包图，断言所有依赖name/version/source都属于root lock，唯一新增本地probe包；resolved engine features严格为[]。当前以--locked重编受控版本，普通server源码与example探针逻辑不变。
+
+受控正式构建-j16/299s deadline确认exit0（78s），Cargo compiler-artifact逐项engine[]/server[]/Tokio无test-util/普通bin/release opt3通过。永久verifier同时核对源字节、根lock版本/source/checksum和源码/config mtime不晚于binary。正式同SHA5b3d306aa910c778b701f43d3c81663375108c77d9152b2f8eb2700eb9f3ad5e两次159.7196x与163.2210x，最近窗口107.47x/110.23x；probe统计基准仍每次3000真实tick不丢帧。这个正式配置没有带来数量级性能改善，但完成了测量配置纠正。独立普通binary已复制.tmp/server-production-normal-10f8d9ae。未来主基准改用此普通bin；此前example样本明确标注harness配置，不能混用二者binary/基线。
+
+全新一次性Luna high限定范围独立复核通过，报告production-probe-independent-review.md，静态核对加单次verifier运行，不冒充构建/基准重跑。可选建议为更严格限定executable到README target目录，未补；当前artifact executable与正式测量命令一致，作为工具覆盖限制登记。所有build/benchmark handle已确认exit0，无在途任务。

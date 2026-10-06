@@ -106,3 +106,8 @@ c06151ac已经本地提交并通过全新Sol独立审查，真实server约127–
 ## 追加：rebase完整构造证明批次
 
 已审查f0ac8317上发现rebase成功后input门禁重复扫描；完整输入校验和逐变化Envelope.validate保留，成功构造输出后向既有Weak四map EvidenceCache保留证明，后续mutation照常失效。两文件窄diff（ledger生产+19/-6、测试3case）全新一次性Luna high独立审核通过。ledger60/hash14/continuous tick19/auction transaction14短测通过；真实candidate163.98x、同SHA确认164.41x，相邻原版155.04x，CPU约4.22核，1000x仍未达成。frozen binary .tmp/server-rebase-proof-frozen-candidate，SHAa7a2b34cf8eccdb49eb11786e316d0c9385ba3da623aff55e9f71f6f4fc30c31。详情rebase-evidence-proof-findings.md/rebase-proof-independent-review.md。所有handles exit0，frontend暂停；准备聚焦本地提交。下轮可实测已有OrderId identity索引避免cancel的完整簿find，以及expiry生命周期的完整ledger find；不能只凭更少lookup就认定收益。
+
+
+## 追加：正式 server Cargo feature 基准纠正
+
+rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认旧apps/server example因dev-dependency打开engine verification-harness/Tokio test-util：真实actor路径是真的，编译配置含验证工具，不能冒充普通server配置。已建立agents/engine-max-performance/production-server-probe独立普通binary，main.rs与旧探针逐字节相同、依赖版本/source/checksum完全沿用root Cargo.lock，actual compiler artifact engine[]/server[]/Tokio无test-util；verify-build.py阻止旧源码/feature/依赖版本混用。正式baseline两次159.72x/163.22x，SHA5b3d306aa910c778b701f43d3c81663375108c77d9152b2f8eb2700eb9f3ad5e，独立binary .tmp/server-production-normal-10f8d9ae。旧带harness的164x及1/4/32worker诊断如实保留，不混作正式binary基准。首次独立manifest升级transitive的构建已废弃、从未测量；重新复制root lock并--locked构建exit0后才测。全新Luna限定工具review通过，无阻塞；可选executable target-dir限制未补。详细production-build-feature-findings.md/production-probe-independent-review.md。今后真实server主验收走普通binary、保留3000tick与CPU记录，不再用dev example配置替代。1000x依旧active、frontend继续暂停。
