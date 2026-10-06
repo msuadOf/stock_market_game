@@ -182,11 +182,11 @@ where
         return rows.iter().map(validate_row).collect();
     }
 
-    let chunks = rows
-        .par_chunks(ROW_CHUNK_SIZE)
-        .map(|chunk| chunk.iter().map(&validate_row).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    chunks.into_iter().flatten().collect()
+    // IndexedParallelIterator 保留源行顺序，直接写入连续结果，避免每个 chunk 单独分配。
+    rows.par_iter()
+        .with_min_len(ROW_CHUNK_SIZE)
+        .map(&validate_row)
+        .collect()
 }
 
 fn row(envelope: &Envelope, state: &ConservationState) -> Result<ConservationRow, StepFatal> {
