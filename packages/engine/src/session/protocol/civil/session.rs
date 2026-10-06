@@ -912,7 +912,7 @@ mod rollback_tests {
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id, 81);
         assert_eq!(orders[0].remaining_qty, 100);
-        assert_eq!(orders[0].venue, "auction");
+        assert_eq!(orders[0].venue, crate::session::protocol::player_orders::OrderVenue::Auction);
     }
 
     #[test]

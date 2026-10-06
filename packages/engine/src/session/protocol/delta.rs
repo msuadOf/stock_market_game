@@ -108,12 +108,11 @@ fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), 
 
 fn validate_order(order: &PlayerWorkingOrder) -> Result<(), ProtocolError> {
     let frozen = match order.side {
-        Side::Buy => "cash",
-        Side::Sell => "shares",
+        Side::Buy => super::player_orders::FrozenAsset::Cash,
+        Side::Sell => super::player_orders::FrozenAsset::Shares,
     };
     if order.price.cents() <= 0
         || order.remaining_qty == 0
-        || !matches!(order.venue.as_str(), "auction" | "continuous")
         || order.frozen != frozen
     {
         return Err(ProtocolError::RuntimeDeltaMismatch);

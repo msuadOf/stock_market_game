@@ -1,5 +1,21 @@
 use crate::{Money, Side, StockId};
 
+/// 委托所在交易场所（ADR 0041 数值枚举）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum OrderVenue {
+    Auction,
+    Continuous,
+}
+
+/// 委托冻结资产类型（ADR 0041 数值枚举）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum FrozenAsset {
+    Cash,
+    Shares,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export)]
@@ -21,8 +37,8 @@ pub struct PlayerWorkingOrder {
     pub side: Side,
     pub price: Money,
     pub remaining_qty: u32,
-    pub venue: String,
-    pub frozen: String,
+    pub venue: OrderVenue,
+    pub frozen: FrozenAsset,
 }
 
 impl crate::session::GameSession {
@@ -39,13 +55,12 @@ impl crate::session::GameSession {
                     side: order.side,
                     price: order.limit,
                     remaining_qty: order.qty,
-                    venue: "auction".into(),
+                    venue: OrderVenue::Auction,
                     frozen: if order.side == Side::Buy {
-                        "cash"
+                        FrozenAsset::Cash
                     } else {
-                        "shares"
-                    }
-                    .into(),
+                        FrozenAsset::Shares
+                    },
                 });
             }
         }
@@ -60,13 +75,12 @@ impl crate::session::GameSession {
                     side: order.side,
                     price: order.price,
                     remaining_qty: order.qty,
-                    venue: "continuous".into(),
+                    venue: OrderVenue::Continuous,
                     frozen: if order.side == Side::Buy {
-                        "cash"
+                        FrozenAsset::Cash
                     } else {
-                        "shares"
-                    }
-                    .into(),
+                        FrozenAsset::Shares
+                    },
                 });
             }
         }
