@@ -11,6 +11,7 @@
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::Books;
+use num_bigint::{BigInt, Sign};
 
 use super::balance_sheet::BsLine;
 use super::income::IncomeLine;
@@ -117,7 +118,8 @@ fn equity_cross_foot(
 impl ReportSet {
     pub(crate) fn validate_parent_income_source(&self) -> Result<(), ReportError> {
         if matches!(self.scope, ScopeId::Consolidated(_))
-            && self.income.net_income_to_parent.is_none()
+            && (self.income.net_income_to_parent.is_none()
+                || self.income.report_period_net_income_to_parent.is_none())
         {
             return Err(ReportError::MissingParentIncome {
                 scope: self.scope.clone(),
@@ -130,6 +132,7 @@ impl ReportSet {
     /// 结构与勾稽校验（生成器产物必须通过；手工构造物同规则拒绝）。
     pub fn validate(&self) -> Result<(), ReportError> {
         self.validate_parent_income_source()?;
+        self.validate_roe()?;
         let consolidated = matches!(self.scope, ScopeId::Consolidated(_));
         let bs = &self.balance_sheet;
         if bs.total_assets != bs.liabilities_and_equity {
@@ -214,6 +217,173 @@ impl ReportSet {
         }
         Ok(())
     }
+
+    fn validate_roe(&self) -> Result<(), ReportError> {
+        let (expected_window, _) = self.kind.resolve(self.period)?;
+        if self.window != expected_window {
+            return Err(ReportError::InvalidRoe {
+                detail: "ReportSet.window必须与ReportKind及period匹配",
+            });
+        }
+        let report_period_net_income = self
+            .income
+            .report_period
+            .operating_subtotal
+            .add(self.income.report_period.investing_subtotal)?
+            .add(self.income.report_period.financing_subtotal)?
+            .add(self.income.report_period.discontinued_subtotal)?
+            .sub(self.income.report_period.income_tax)?;
+        if self.income.report_period.net_income != report_period_net_income {
+            return Err(ReportError::InvalidRoe {
+                detail: "report_period净利润必须由同窗口利润表小计及所得税得出",
+            });
+        }
+        let report_period_parent_net_income = self
+            .income
+            .report_period_net_income_to_parent
+            .unwrap_or(self.income.report_period.net_income);
+        if self.equity.net_income != report_period_parent_net_income {
+            return Err(ReportError::InvalidRoe {
+                detail: "报告期间归属净利润须与同窗口权益变动表一致",
+            });
+        }
+        match self.kind {
+            super::ReportKind::Quarter if self.income.report_period != self.income.quarter => {
+                return Err(ReportError::InvalidRoe {
+                    detail: "季报report_period必须与自然季度流量一致",
+                });
+            }
+            super::ReportKind::HalfYear | super::ReportKind::Annual
+                if self.income.report_period != self.income.cumulative =>
+            {
+                return Err(ReportError::InvalidRoe {
+                    detail: "半年报及年报report_period必须与对应年初至今流量一致",
+                });
+            }
+            _ => {}
+        }
+        let roe = &self.roe;
+        match roe.basis {
+            super::ReportRoeBasis::Unsupported { reason } => {
+                if matches!(
+                    reason,
+                    super::ReportRoeUnavailable::NonPositiveAverageEquity
+                        | super::ReportRoeUnavailable::MissingNonRecurringIncomeFacts
+                ) {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "指标不可用理由不能冒充ROE口径不支持理由",
+                    });
+                }
+                for value in [
+                    &roe.ordinary_roe,
+                    &roe.adjusted_roe,
+                    &roe.weighted_average_parent_equity_cents,
+                ] {
+                    if !matches!(value, super::ReportRoeValue::Unavailable { reason: actual } if *actual == reason)
+                    {
+                        return Err(ReportError::InvalidRoe {
+                            detail: "unsupported basis必须使全部 ROE 指标带同一不可用原因",
+                        });
+                    }
+                }
+                return Ok(());
+            }
+            super::ReportRoeBasis::AttributableToOrdinaryShareholders => {}
+        }
+        if matches!(self.scope, ScopeId::Consolidated(_)) {
+            return Err(ReportError::InvalidRoe {
+                detail: "合并报告缺少归母权益事件明细，不能提供可用 ROE",
+            });
+        }
+
+        if !matches!(
+            &roe.adjusted_roe,
+            super::ReportRoeValue::Unavailable {
+                reason: super::ReportRoeUnavailable::MissingNonRecurringIncomeFacts
+            }
+        ) {
+            return Err(ReportError::InvalidRoe {
+                detail: "缺少扣非归母净利润事实时，扣非 ROE 必须明确不可用",
+            });
+        }
+
+        let average = match &roe.weighted_average_parent_equity_cents {
+            super::ReportRoeValue::Available(value) => parse_report_rational(value)?,
+            super::ReportRoeValue::Unavailable { .. } => {
+                return Err(ReportError::InvalidRoe {
+                    detail: "可计算的一般公式归母 ROE 必须保留平均权益精确值",
+                });
+            }
+        };
+        let net_income = self
+            .income
+            .report_period_net_income_to_parent
+            .unwrap_or(self.income.report_period.net_income);
+        match (
+            &roe.ordinary_roe,
+            average.0.sign() != Sign::Plus,
+        ) {
+            (
+                super::ReportRoeValue::Unavailable {
+                    reason: super::ReportRoeUnavailable::NonPositiveAverageEquity,
+                },
+                true,
+            ) => {}
+            (super::ReportRoeValue::Available(value), true) => {
+                let _ = parse_report_rational(value)?;
+                return Err(ReportError::InvalidRoe {
+                    detail: "平均权益非正时，普通 ROE 必须不可用",
+                });
+            }
+            (super::ReportRoeValue::Unavailable { .. }, false) => {
+                return Err(ReportError::InvalidRoe {
+                    detail: "平均权益为正时，普通 ROE 不可静默不可用",
+                });
+            }
+            (super::ReportRoeValue::Unavailable { .. }, true) => {
+                return Err(ReportError::InvalidRoe {
+                    detail: "平均权益非正时，普通 ROE 不可使用其他不可用原因",
+                });
+            }
+            (super::ReportRoeValue::Available(value), false) => {
+                let rate = parse_report_rational(value)?;
+                if &rate.0 * &average.0
+                    != BigInt::from(net_income.cents()) * average.1 * rate.1
+                {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "普通 ROE 与同期间归母净利润及平均归母权益不一致",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn parse_report_rational(
+    value: &super::ReportRational,
+) -> Result<(BigInt, BigInt), ReportError> {
+    let numerator = value
+        .numerator
+        .parse::<BigInt>()
+        .map_err(|_| ReportError::InvalidRoe {
+            detail: "ROE 有理数分子必须为规范十进制整数字符串",
+        })?;
+    let denominator = value
+        .denominator
+        .parse::<BigInt>()
+        .map_err(|_| ReportError::InvalidRoe {
+            detail: "ROE 有理数分母必须为规范十进制整数字符串",
+        })?;
+    if numerator.to_string() != value.numerator
+        || denominator.to_string() != value.denominator
+        || denominator.sign() != Sign::Plus
+    {
+        return Err(ReportError::InvalidRoe {
+            detail: "ROE 有理数需使用规范分子、正数分母且分母不得为零",
+        });
+    }
+    Ok((numerator, denominator))
 }
 
 #[cfg(test)]

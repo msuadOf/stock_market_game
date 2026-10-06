@@ -368,6 +368,34 @@ fn consolidated_missing_parent_income_is_rejected_at_report_validation() {
 }
 
 #[test]
+fn consolidated_missing_report_period_parent_income_is_rejected() {
+    let parent = group_parent_books();
+    let sub = group_sub_books();
+    let mut report = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-03").unwrap(),
+        kind: ReportKind::Monthly,
+        source: ReportSource::Consolidated {
+            request: group_request(&parent, &sub),
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .unwrap();
+    report.income.report_period_net_income_to_parent = None;
+
+    let error = report
+        .validate()
+        .expect_err("consolidated report must carry same-window parent income");
+    assert!(error
+        .to_string()
+        .contains("income.report_period_net_income_to_parent"));
+}
+
+#[test]
 fn standalone_parent_income_none_remains_valid() {
     let books = crate::fixture::industrial_fixture();
     let report = generate_report_set(ReportRequest {
@@ -540,4 +568,31 @@ fn consolidated_march_gold() {
         .consolidation_split_items
         .iter()
         .any(|item| item.code == "4001"));
+}
+
+#[test]
+fn consolidated_quarter_validation_uses_report_window_parent_income() {
+    let parent = group_parent_books();
+    let sub = group_sub_books();
+    let set = generate_report_set(ReportRequest {
+        period: AccountingPeriod::from_iso("2030-06").expect("period"),
+        kind: ReportKind::Quarter,
+        source: ReportSource::Consolidated {
+            request: group_request(&parent, &sub),
+        },
+        version: ReportVersion {
+            sequence: 1,
+            supersedes: None,
+            kind: VersionKind::Original,
+        },
+        adjustments: &BTreeMap::new(),
+    })
+    .expect("consolidated quarter must generate");
+
+    assert_ne!(
+        set.income.net_income_to_parent,
+        set.income.report_period_net_income_to_parent
+    );
+    set.validate()
+        .expect("quarterly report validates against same-window parent income");
 }

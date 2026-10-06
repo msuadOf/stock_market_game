@@ -1,15 +1,15 @@
 //! 手工 ReportSet/PublishedReport 构造器（核心抽取层的直测面——不经结账
 //! 机器；字段最小可读，勾稽由真实链路测试覆盖）。
 
-use crate::{d, COMPANY};
+use crate::{COMPANY, d};
+use engine::accounting::AccountingAmount;
+use engine::accounting::AccountingPeriod;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{
     BalanceSheet, BsLine, CashFlowStatement, Comparative, EquityStatement, IncomeColumns,
     IncomeLine, IncomeStatement, Notes, ReportKind, ReportSet, ReportVersion, UnavailableReason,
     VersionKind,
 };
-use engine::accounting::AccountingAmount;
-use engine::accounting::AccountingPeriod;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::{
@@ -125,7 +125,11 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
                     reason: UnavailableReason::NoPriorYearHistory,
                 },
             },
-            income: IncomeStatement {
+        income: IncomeStatement {
+            report_period_net_income_to_parent: spec
+                .ni_to_parent_cents
+                .map(AccountingAmount::from_cents),
+                report_period: income_columns(spec.revenue_cents, spec.ni_total_cents),
                 quarter: IncomeColumns::default(),
                 cumulative: income_columns(spec.revenue_cents, spec.ni_total_cents),
                 prior_year: match spec.prior_revenue_cents {
@@ -136,6 +140,20 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
                 },
                 minority_net_income: minority_ni.map(AccountingAmount::from_cents),
                 net_income_to_parent: spec.ni_to_parent_cents.map(AccountingAmount::from_cents),
+            },
+            roe: engine::accounting::reports::ReportRoe {
+                basis: engine::accounting::reports::ReportRoeBasis::Unsupported {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                ordinary_roe: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                adjusted_roe: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                weighted_average_parent_equity_cents: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
             },
             cash_flow: CashFlowStatement {
                 operating: AccountingAmount::from_cents(spec.operating_cf_cents),

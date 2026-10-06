@@ -71,6 +71,19 @@ pub struct DisclosureRoeInput {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
+pub struct OrdinaryDisclosureRoeInput {
+    pub period: DisclosureReportPeriod,
+    pub scope: ScopeId,
+    pub attribution: DisclosureAttributionBasis,
+    pub opening_parent_equity: AccountingAmount,
+    pub ordinary_parent_net_income: AccountingAmount,
+    pub equity_events: Vec<ActualEquityEvent>,
+    pub equity_event_history_complete: bool,
+    pub same_control_combination: bool,
+    pub comparative_period: bool,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ExactRational {
     pub numerator: BigInt,
     pub denominator: BigInt,
@@ -92,6 +105,13 @@ pub enum DisclosureRoeOutcome {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DisclosureRoeUnavailable {
     NonPositiveAverageEquity,
+    MissingNonRecurringIncomeFacts,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct OrdinaryDisclosureRoeResult {
+    pub ordinary_roe: DisclosureRoeValue,
+    pub weighted_average_parent_equity_cents: ExactRational,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -168,21 +188,68 @@ pub fn calculate_disclosure_roe(
         }
     }
 
+    let ordinary = calculate_ordinary_disclosure_roe(&OrdinaryDisclosureRoeInput {
+        period,
+        scope: input.report.scope.clone(),
+        attribution: input.report.attribution,
+        opening_parent_equity: input.opening_parent_equity.value,
+        ordinary_parent_net_income: input.ordinary_parent_net_income.value,
+        equity_events: input.equity_events.clone(),
+        equity_event_history_complete: input.equity_event_history_complete,
+        same_control_combination: input.same_control_combination,
+        comparative_period: input.comparative_period,
+    })?;
+    let adjusted_profit = BigInt::from(input.adjusted_parent_net_income.value.cents());
     let months = month_index(period.end) - month_index(period.start) + 1;
-    let mut weighted_equity_months = BigInt::from(input.opening_parent_equity.value.cents())
-        * BigInt::from(months);
+    let adjusted_roe = roe_ratio(
+        adjusted_profit,
+        months,
+        ordinary.weighted_average_parent_equity_cents.numerator.clone(),
+    );
+    Ok(DisclosureRoeOutcome::Available(DisclosureRoeResult {
+        ordinary_roe: ordinary.ordinary_roe,
+        adjusted_roe,
+        weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
+    }))
+}
+
+pub fn calculate_ordinary_disclosure_roe(
+    input: &OrdinaryDisclosureRoeInput,
+) -> Result<OrdinaryDisclosureRoeResult, DisclosureRoeError> {
+    let period = input.period;
+    validate_period(period)?;
+    if input.same_control_combination {
+        return Err(DisclosureRoeError::Unsupported(
+            DisclosureRoeUnsupported::SameControlCombination,
+        ));
+    }
+    if input.comparative_period {
+        return Err(DisclosureRoeError::Unsupported(
+            DisclosureRoeUnsupported::ComparativePeriodSpecialTreatment,
+        ));
+    }
+    if !input.equity_event_history_complete {
+        return Err(DisclosureRoeError::IncompleteEquityEventHistory);
+    }
+    if input.attribution != DisclosureAttributionBasis::AttributableToOrdinaryShareholders {
+        return Err(DisclosureRoeError::FactAttributionMismatch { fact: "report" });
+    }
+
+    let months = month_index(period.end) - month_index(period.start) + 1;
+    let mut weighted_equity_months =
+        BigInt::from(input.opening_parent_equity.cents()) * BigInt::from(months);
     for event in &input.equity_events {
         if event.period != period {
             return Err(DisclosureRoeError::FactPeriodMismatch {
                 fact: "equity event",
             });
         }
-        if event.scope != input.report.scope {
+        if event.scope != input.scope {
             return Err(DisclosureRoeError::FactScopeMismatch {
                 fact: "equity event",
             });
         }
-        if event.attribution != input.report.attribution {
+        if event.attribution != input.attribution {
             return Err(DisclosureRoeError::FactAttributionMismatch {
                 fact: "equity event",
             });
@@ -192,10 +259,7 @@ pub fn calculate_disclosure_roe(
         }
         let cents = event.amount.cents();
         match event.kind {
-            EquityEventKind::Increase if cents <= 0 => {
-                return Err(DisclosureRoeError::InvalidEventDirection)
-            }
-            EquityEventKind::Decrease if cents <= 0 => {
+            EquityEventKind::Increase | EquityEventKind::Decrease if cents <= 0 => {
                 return Err(DisclosureRoeError::InvalidEventDirection)
             }
             EquityEventKind::Other if cents == 0 => {
@@ -213,26 +277,21 @@ pub fn calculate_disclosure_roe(
             BigInt::from(signed_cents) * BigInt::from(months_after_effective_month);
     }
 
-    let ordinary_profit = BigInt::from(input.ordinary_parent_net_income.value.cents());
-    let adjusted_profit = BigInt::from(input.adjusted_parent_net_income.value.cents());
-    let weighted_average_equity_numerator =
-        weighted_equity_months * BigInt::from(2) + &ordinary_profit * BigInt::from(months);
-    let weighted_average_equity_denominator = BigInt::from(2 * months);
+    let average_equity_numerator = weighted_equity_months * BigInt::from(2)
+        + BigInt::from(input.ordinary_parent_net_income.cents()) * BigInt::from(months);
     let average_equity = ExactRational {
-        numerator: weighted_average_equity_numerator.clone(),
-        denominator: weighted_average_equity_denominator,
+        numerator: average_equity_numerator.clone(),
+        denominator: BigInt::from(2 * months),
     };
     let ordinary_roe = roe_ratio(
-        ordinary_profit,
+        BigInt::from(input.ordinary_parent_net_income.cents()),
         months,
-        weighted_average_equity_numerator.clone(),
+        average_equity_numerator,
     );
-    let adjusted_roe = roe_ratio(adjusted_profit, months, weighted_average_equity_numerator);
-    Ok(DisclosureRoeOutcome::Available(DisclosureRoeResult {
+    Ok(OrdinaryDisclosureRoeResult {
         ordinary_roe,
-        adjusted_roe,
         weighted_average_parent_equity_cents: average_equity,
-    }))
+    })
 }
 
 fn zero_ratio() -> ExactRational {

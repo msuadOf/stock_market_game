@@ -21,6 +21,7 @@ pub mod equity;
 pub mod income;
 pub mod industrial;
 pub mod notes;
+mod roe;
 
 pub(crate) mod consolidated_window;
 mod error;
@@ -170,9 +171,54 @@ pub struct ReportSet {
     pub version: ReportVersion,
     pub balance_sheet: BalanceSheet,
     pub income: IncomeStatement,
+    pub roe: ReportRoe,
     pub cash_flow: CashFlowStatement,
     pub equity: EquityStatement,
     pub notes: Notes,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRational {
+    pub numerator: String,
+    pub denominator: String,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeUnavailable {
+    NonPositiveAverageEquity,
+    MissingNonRecurringIncomeFacts,
+    IncompleteEquityEventHistory,
+    SameControlCombination,
+    ComparativePeriodSpecialTreatment,
+    UnclassifiedEquityEvent,
+    ConsolidatedAttributionFactsUnavailable,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeValue {
+    Available(ReportRational),
+    Unavailable { reason: ReportRoeUnavailable },
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeBasis {
+    AttributableToOrdinaryShareholders,
+    Unsupported { reason: ReportRoeUnavailable },
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRoe {
+    pub basis: ReportRoeBasis,
+    pub ordinary_roe: ReportRoeValue,
+    pub adjusted_roe: ReportRoeValue,
+    pub weighted_average_parent_equity_cents: ReportRoeValue,
 }
 
 /// 科目表版本 → 行业列报口径。
@@ -192,6 +238,10 @@ fn industry_of_chart(chart: &AccountChart) -> Result<IndustryPresentation, Repor
 pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, ReportError> {
     let ((first, last), prior_window) = request.kind.resolve(request.period)?;
     let restatement = !request.adjustments.is_empty();
+    let roe_books = match &request.source {
+        ReportSource::Standalone { books, .. } => Some(*books),
+        ReportSource::Consolidated { .. } | ReportSource::ConsolidatedRestated { .. } => None,
+    };
     let (scope, windows, classification) = match request.source {
         ReportSource::Standalone {
             id,
@@ -256,6 +306,15 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
     let cash_flow = cash_flow::generate(&windows)?;
     let equity = equity::generate(&windows)?;
     let notes = notes::build_notes(&windows, &classification)?;
+    let roe_period = roe::period_dates(first, last)?;
+    let roe = roe::calculate_report_roe(
+        roe_books,
+        &scope,
+        roe_period,
+        equity.opening_parent,
+        income.report_period.net_income,
+        restatement,
+    )?;
     Ok(ReportSet {
         scope,
         period: request.period,
@@ -264,6 +323,7 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
         version: request.version,
         balance_sheet,
         income,
+        roe,
         cash_flow,
         equity,
         notes,
