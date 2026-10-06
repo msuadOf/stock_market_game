@@ -204,3 +204,5 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 2026-10-06 shared price paths 实验已撤回：行为等价测试通过，但相邻对照 candidate 220.049x vs baseline 221.646x，无收益（约-0.72%）；源码已恢复 HEAD，证据见 shared-price-paths-findings.md。两个既有 NPC 测试 fixture 因覆盖策略丢失 base_observation_probability 在 68db9414 基线同样失败，与性能实验无关。
 
 2026-10-06 experience capture 6-span 诊断完成并撤回：clone/get/positions 等六段合计约0.654s wall、0.469s CPU，最大单段 clone 仅0.144s wall；该路径不是1000x主杠杆。下一步转 continuous_shadow_initialize/borrowed_existing_projection/continuous_input_prepare/seal_total 与 due lifecycle O(n×到期数) 扫描。详见 experience-capture-findings.md。之后独立复核恢复使用 collaboration__spawn_agent 新建一次性 reviewer，不再用 codex_tui。
+
+2026-10-06 due lifecycle 索引化方向已量化否决：零侵入临时 example 诊断（已按 HEAD 原字节回滚）显示 3000 帧中约 904 个 read-only start “未命中”实为 900 个 PreOpen/CallAuction 阶段帧（设计上不可命中）+ 仅 4 个真实到期 miss（Continuous 命中 2096/2100=99.8%，空 ledger 0）；lifecycles 峰值 3428、Continuous 期 Σlen≈460 万次比较≈数毫秒（<0.1%），索引化预期收益远低于 2% 门槛，不做实现实验、无源码改动。注意 cargo test --release --lib 因 test profile 默认 debug-assertions 使引擎热路径放慢 >100 倍（299s 超时两次），性能诊断一律走 release example。详见 due-lifecycle-index-findings.md。下一优先级维持四大 CPU 段（shadow_initialize/borrowed_projection/input_prepare/seal）。
