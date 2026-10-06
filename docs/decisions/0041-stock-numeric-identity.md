@@ -41,3 +41,30 @@ CPU 大头是字符串机械成本：内存分配 ~14.8%、逐字节比较/搬�
 - 测试中需要经 `session.stock_id("600888")` 查目录构造内部键；目录不在场时无法
   凭空构造 `StockId`（除 id 本身），这是有意的显式性约束。
 - 股票中途上市/退市（当前不支持）如未来引入，需要扩展目录生命周期。
+
+## 阶段二扩展（2026-10-07）
+
+阶段二将无字符串化从股票身份扩展到错误契约与协议载荷：
+
+1. **错误结构化**：`ValidationFault { code: u16, context: Vec<u64> }`（`error.rs`）
+   取代 `SessionError` 四个自由文本变体的 `String` 载荷。码段全引擎唯一（分段表
+   见模块文档），上下文槽位语义按码登记。**首错测试从文本 contains 改为码断言**——
+   首错序语义不变，由码的序承载。
+2. **wire 错误契约**（用户确认）：错误序列化 = 数字错误码 + 数值/枚举上下文，
+   整条错误消息在 wire 上无字符串（JSON 字段名除外）。ts_rs 为错误 enum 生成
+   TypeScript 数字 enum；前端显示文本表由前端配置维护，不在引擎。
+3. **枚举载荷**：`PlayerWorkingOrder.venue/frozen` 从 `String` 改为
+   `OrderVenue`/`FrozenAsset` 数值枚举；`MoneyError`/`OrderError` 的字符串
+   原因改结构化枚举。
+4. **三宿主错误码化**：server/desktop/wasm 宿主自有诊断（世代过期/锁中毒/
+   句柄耗尽等）统一 `ValidationFault` 数值码（1290-1314 段）。
+5. **光标数值化**：`InvalidPublicReportCursor.cursor` 从 `String` 改 `u32`。
+6. **web 前端迁移**：摄入层翻译架构（数值 wire → 代码串视图），全部视图逻辑
+   不动；请求层（HTTP/wasm FFI/Tauri）host 内译数值。
+
+## 边界例外（E 节增补）
+
+- 公司名字符串：领域内容数据，保留（待 CompanyId 数值化后经目录翻译显示）。
+- 宿主日志文本：边界格式化允许（fault 码+上下文数值，人话由边界渲染）。
+- verification-harness 的 `ExecutorOrderRecord.identities` 字符串键：测试装置
+  边界，不改（生产不编译）。
