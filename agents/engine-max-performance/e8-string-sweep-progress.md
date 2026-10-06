@@ -136,3 +136,103 @@ stock_auction_adapter_tests 12、pre_open_transaction_tests 12、envelope_projec
 - 证据契约收窄登记：assert_no_json_numbers 放行 ≤2^53 安全整数（动机是 JS 安全整数，u32 id 恒安全；wire 数值是用户契约）。
 - 提交 A：refactor(engine) 股票身份数值化（含 ADR 0041、清点清单、进度档）。
 - 待续：清单 B（结构化错误：数字错误码 + ts_rs 数字 enum + 前端文本表边界）、C（CompanyId/venue/frozen/光标）、D（server wire + web 适配）。
+
+## 阶段二配方：结构化错误（B1 = SessionError 自由文本 321 处）
+
+**类型**（packages/engine/src/error.rs 已建并导出）：`ValidationFault { code: u16, context: Vec<u64> }`；
+ctor `ValidationFault::new(code, vec![...])` / `ValidationFault::bare(code)`；Display 只出码+数值；
+serde/ts_rs 全数值。`SessionError::{InvalidSetup,InvalidSave,InvalidHistoryRead,ResourceLimit}` 的
+String → ValidationFault（原子变更：321 站点一次改完才可编译）。
+
+**站点改法**：`InvalidSetup(format!("...{a}...{b}..."))` → `InvalidSetup(ValidationFault::new(<码>, vec![<a>, <b>]))`：
+- 数量/金额分/tick/分钟/id → `as u64`（i64 负值 `x.unsigned_abs()` 保幅值并注释）。
+- CivilDate → `crate::error::ymd_context(y, m, d)`（`date.ymd()` 取三元组）。
+- 枚举参数 → `as u64`（必要时 enum 加 #[repr(u16)]）。
+- 无参数纯叙述 → `ValidationFault::bare(code)`。
+- **纯文本参数（槽名/hash/代码串）**：以 0 占位 + 站点上方注释
+  `// fault<code>: 槽<i> 待 C 批数值化（原文本 "<原文>"）`，并在报告"待 C 批"列表登记——禁止静默丢信息。
+
+**码段分配**（站点顺序取号 + 站点上方注释 `// fault<code>: <一句话语义>`）：
+session.rs 51 处 1000-1099；initial_allocation.rs 7 处 1100-1149；company_assembly.rs 13 处 1150-1199；
+notices.rs 7 处 1200-1249；persistence.rs 196 处 2000-2199；saved_runtime.rs 26 处 2200-2299；
+protocol/civil/ 21 处 3000-3099。InvalidHistoryRead/ResourceLimit 并入所在文件码段。
+
+**测试断言改法**：`msg.contains("原文")` → 断言 `fault.code == <码>`（结构比较；首错序由哪个码先出现验证）。
+
+**子代理禁止**：跑 cargo/rustfmt/构建；动清单外文件；改码段分配；丢弃原语义信息。
+
+## 阶段二批次记录
+
+- 复核修复已落 eef4f262（P0-1 escrow 双股动态 id+防回归断言；P1 candles 文档/目录重复校验）。
+- B3 已完成首片（主控直做，编译 0 错误）：error.rs（ValidationFault 契约型）+ MoneyError（ParseFailReason/MoneyOp 枚举）+ OrderError（PriceReject/ProjectionMismatchKind+context）+ market/account 溢出站点 + history_reads/shared_ingress（码 1250-1260）。未提交（等 B1 编译收口后合并或分批提交）。
+- B1 分片在途：S1 persistence 222 处、S2 session 装配 78 处；S3 civil 已回（码 3000-3017，两处确认点已采纳：变体各占一码、不可达兜底码登记）。
+- P0-2 web 适配分片在途（摄入层翻译架构：快照/事件/历史响应数值 id→代码串，视图不动；请求侧 host 内转数值）。
+
+- B1 收口：S1+S2+S3 全回，主控补 persistence:1146（1253）后 **lib 0 错误**；all-targets 剩 84 处测试断言，码映射分片在途（money/orderbook 构造类已主控直修）。访问器补充：ScheduledDueId::as_u64 / PublicationId::as_u32（错误上下文用）。
+
+## 阶段二批次记录（续）
+
+- **B1+B3 首批已落 8447ecd6**：321 处自由文本→ValidationFault（三片并行）+ money/orderbook/market 枚举载荷 + 测试码断言改写（映射分片 + 主控修 7 处边角：money display/部分移动/fee 码 2228/eviction 2119/2121/StepFatal fault1004 包装）。**lib 1312 过/8 败 = 基线一致；全部集成二进制与基线逐一对齐；money 29 全绿。**
+- P0-2 web 适配：分片完成 67 处 + 2 新模块（stock-ids.ts / stock-identity.ts，摄入层翻译架构）；主控补类型别名重指（engine.ts Snapshot/Intent/Event/AccountSnap→Coded*、player-orders Event、priceHistorySlice 键、AccountSnap/WireAccountSnap readonly 放宽、save schema 3 处分号）；剩 43 处夹具类型收尾分片在途。
+- 待办：web tsc 0 错后提交 web 批 → C 批（CompanyId/venue/frozen/光标 + fault 占位槽回填）→ A 表余行 → 全量基准（worker=4 口径）。
+
+## 阶段二批次记录（终：B1+B3 已落、P0-2 收尾在途）
+
+- **8447ecd6**（已落）：B1+B3 错误结构化（321 处 ValidationFault + money/orderbook 枚举），lib 1312/8=基线一致。
+- **eef4f262**（已落）：复核 P0-1/P1。
+- **在途未提交（P0-2 web 批 + server/wasm/desktop 宿主错误码）**：
+  - server/desktop/wasm 宿主错误转 fault 码 1290-1314（世代过期 1290、致命停机 1291、句柄耗尽 1291/1301、锁中毒 1293/1300/1314、token 1302/1303、序列化 1312、speed 1311 to_bits）
+  - routes 匹配 fault[1290] || STALE_SESSION_GENERATION: 前缀
+  - ws/publisher/api_contract/auth 测试 fixture 数值 code（600101→0；setup stocks 规格位保留字符串）
+  - server --tests 全绿（仅基线固有 actor_market 一例）
+  - web：stock-ids.ts + stock-identity.ts 摄入翻译；IntradayPanel 补传 activeDailyCandle（均价恢复 8.67 渲染）；移动端 17/17 全绿
+  - **web 剩余失败 25 处**（存档交割单/tax owner/Bank 税务/Browser intake worker/u128 字符串校验等）——多为 fixture 期望字符串键或依赖生成的数值类型，需逐个对照摄入层翻译形态修正
+  - tsc -b --noEmit 0 错误（已验证）
+- 下一步：修完 web 剩余 25 处 → 提交 `refactor(web): 前端契约随数值 id 迁移` + `refactor(server): 宿主错误码化` → C 批（CompanyId/venue/frozen/光标）→ 基准
+
+## 阶段二批次记录（C 批部分 + 交接）
+
+### 已落库
+- **9bf4fe9b** `refactor(engine)`: venue/frozen 枚举化（OrderVenue/FrozenAsset；delta 校验改枚举等值）。lib 1314/8=基线一致，all-targets 0 错误。
+- 顺带移除外来未跟踪测试文件（report_frequency.rs / consolidated_restatement.rs，来自 main 分支、引用本分支不存在的 API）至 `.tmp/e8/foreign-tests/`——非本任务产物，未删除。
+
+### 在途
+- **web 25 处 fixture 分片在途**（子代理运行中：存档交割单/tax owner/Bank 税务/u128 字符串/Browser intake worker）。回来后统一 `npm test` 验收。
+- **未提交工作区文件**（server/wasm/desktop 宿主错误码 + web 摄入层 + IntradayPanel 修复）：web 验收通过后分两笔提交：
+  1. `refactor(server)`: 宿主错误 fault 码化（1290-1314）+ routes 匹配
+  2. `refactor(web)`: 前端契约随数值 id 迁移（摄入层翻译 + Coded* 类型 + IntradayPanel bug 修复）
+
+### CompanyId 数值化设计 spec（下一棒）
+
+**现状**：`CompanyId(pub String)` 209 处非测试引用。运行时构造点：
+- 发行人：`CompanyId(format!("C-{}", stock.code.0))`（company_assembly 436/563/697）——派生自股票代码，StockId 数值化后可用 `CompanyId(stock_id)` 或独立序号
+- 默认表：`id: "C-600101"` 等 5 行静态数据（defaults.rs 139+）
+- 外部对手方：customer_finance 的 "issuer"/"issuer-b"/"company"/"third-company" 等自由命名（非发行人，是债权人/客户身份）
+- 会计/信息/经营域：CompanyId 作为 BTreeMap 键 + 跨域引用（12-13 处/文件）
+
+**设计要点（沿 StockId Catalog 模式）**：
+1. `CompanyId(u32)` + `CompanyCatalog { metas: Vec<CompanyMeta> }`，CompanyMeta { code: String（原字符串身份，如 "C-600101"）, name: String（公司名，领域内容） }
+2. 加载序：按原字符串 id 升序分配（保持 BTreeMap 迭代序 = 展示序）
+3. 发行人派生：`company_catalog.issuer_id(stock_id)` 或装配时建立 StockId→CompanyId 映射
+4. 自由命名的对手方：纳入同一目录（catalog 覆盖全部公司实体，不只是发行人）
+5. 存档 schema：CompanyCatalog 序列化随存档（同 StockCatalog 模式），破坏性变更
+6. 未知 id 显式报错测试（同 stock.rs 的 lookup_roundtrip_and_unknown）
+7. **规模预估**：与 StockId sweep 相当（~200 生成站点 + 调用点机械替换），建议 3-4 分片并行
+8. **注意**：company/query.rs 61 处 String 多为公司显示内容（名称/代码/金额字符串）——数值化 id 键位后这些保留为内容例外（清单 E 节）
+
+### 光标数值化（C 批余项）
+- `InvalidPublicReportCursor { cursor: String, company: String }`（information/mod.rs:91）→ 数值/枚举
+- civil refresh 的 securities 键位已在 fault 占位登记（3001-3017 槽）
+
+### 基准（阶段二完成后）
+- 锚定交错配对、worker=4、占用<10% 核段
+- H = 254c50b0（阶段一末）冻结 binary；C = 全部清零后 HEAD
+- 合并计阶段二全部（错误结构化 + 宿主码化 + venue/frozen + CompanyId + 光标）
+
+## 阶段二批次记录（续终）
+
+- **2b50c6b2** `refactor(server)`：三宿主 fault 码化（1290-1314），server/wasm 测试全绿。
+- **4f44063c** `refactor(web)`：前端数值 id 迁移（摄入层翻译 + IntradayPanel bug 修复）。**npm test 0 失败、tsc 0 错误**。
+- 外来文件处置：main 领先的未跟踪测试/生产文件（引用本分支不存在的 API）全部移至 `.tmp/e8/foreign-web*/` 与 `.tmp/e8/foreign-tests/`，含误移后恢复的 stock-ids.ts/stock-identity.ts/生成枚举（FrozenAsset/OrderVenue 手写补齐，ts_rs 再生成时核对）。
+- **P0-2 完成**：findings 未竟清单可划掉"web 适配"。
+- 待续：CompanyId 数值化（spec 已写在上一节）→ 光标 → 基准（阶段二合并数字）。
