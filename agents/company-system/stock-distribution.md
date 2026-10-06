@@ -27,3 +27,45 @@
 最新统一编译后的 Registry 21/21、送转分配 9/9 短测通过，证据分别为 `.tmp/company-system/session-actions/final-registry.log` 与 `final-allocation.log`；Web 对应严格存档解析 11/11 通过，证据为 `latest-web-registry-green.log`。各组外部 deadline 均为 10000ms，Rust 组内 8 线程、组间并发。修复非法零股本测试 fixture 后，仍验证普通账户持有全部发行股份、没有 `IssuerTreasury` 持仓时可以登记专户事实；非作者增量复核已确认该修复没有弱化断言。
 
 余项：已补查送转 lot 税务期限继承以及沪市限售继承证据，研究明确尚不能确定混合来源的逐 lot 分配。取得规则并形成独立的明确来源分配契约之前，账户级回执继续保持 `SourceLotAttributionPending`，不把上述算法与解析短测表述为实际送转结算完成。
+
+## 实际登记接通（2026-10-06 B1 批次）
+
+本批把账户级碎股分配算法接通为真实股份登记全链路，代码与语义边界如下：
+
+- `stock_distribution.rs` 新增 `StockDistributionEventPlan`（发行人/市场/法定日期；`ex_rights_on` 同时是交易所除权日与中国结算 R+1 入账日，两者按各自法源校验为同一交易日）与 `StockDistributionBook` 状态机（Approved → Announced → Registered → Credited）。R 日 `register` 按登记快照跑既有分配算法并冻结回执；tie-break seed 由事件身份经 FNV-1a + SplitMix64 派生并记录在回执中（官方只要求"系统随机"，可复现是显式游戏输入）。恢复时用同一 seed 重放分配校验回执未被篡改。
+- `holder_credit_lots` 由冻结回执推导 R+1 每户新 lot：原 lots 全部为同一限售类时继承限售属性与 `release_on`（深市指南明文；沪市条文未定位，不跨市场推断）；混合限售来源显式拒绝（`SourceLotAttributionConflict`，整日候选回滚）；原限售截止日早于入账日的按 Unrestricted 登记。送转个税（送股按面值计税）本批明确不支持。
+- `share_registry.rs`：`close_day` 支持 `NonTradingTransfer`（CorporateAction 来源、只增不减、合计必须为正）在公开市场日结之后的同一自然日追加落账，`issued_shares` 守恒累加；恢复按回执连续性（公开市场次自然日、非交易过户同日）校验。登记快照新增必填 `settled_receipts`（冻结时已落账回执数量）：同一天"先登记后入账"与"先入账后登记"都会发生，仅凭日期无法回放区分，历史快照发行股数按回执序号回放核对。
+- `ex_reference_price.rs` 新增送转除权公式，沪市（4.3.1"流通股份变动比例"）与深市（4.4.1"股份变动比例"）分列参数化，公式变体与交易所不匹配显式拒绝；本批只实现送转分量（配股价格分量为零）。除法取整数分使用银行家舍入，登记为游戏简化（官方分位舍入口径未核验）。非正分子/参考价、零比例与溢出显式拒绝。
+- Session 接线：`SessionCorporateActions.stock_distributions` 持久状态 + `process_stock_distributions_on_day_end`（公告→R 日登记并勾稽 Simple 声明事实→R+1 NonTradingTransfer 落账、`Account::credit_position_shares` 真实加股（不动 invested/recovered、不进 T+1）、`IssuerRegistry::record_share_issuance` 更新发行股数、Simple 账面回填 `credited_on`）；事件幂等，失败由日终候选整体回滚（混合限售负例验证整日回滚）。`GameSession::approve_stock_distribution` 以注册资本法定事实整除推导每股面值受理方案（送股受可分配利润上限约束）。
+- 行情锚：`applied_ex_dividend_groups` 推广为 `applied_ex_reference_groups`（`AppliedExReferenceGroup`，现金计划与送转事件同组合计、一证券一除权日一参考价）；同日多起送转事件的合并口径未核实，显式拒绝。恢复链路（`persistence.rs` 与 session 重建）允许发行股数等于 setup 初始股数加名册非交易过户增发回放，其余发行人身份字段仍须与 setup 完全一致。
+- Simple 账面：`SimpleFinanceState.stock_distributions` 只冻结面值口径展示事实（`StockDistributionFinanceFact`），不做借贷过账、不变更注册资本法定事实；转增的资本公积余额/来源类别/法定公积金 25% 留存校验未建模并显式登记。
+- Web：严格 parser 同步（NonTradingTransfer 回执、`settled_receipts` 回放、送转账簿与入账勾稽、锚组新形状），三个存档 fixture 由当前 release Engine 正规重生成，ts-rs 绑定更新（`AppliedExReferenceGroup`、`StockDistributionExRightsFormula`）。
+
+验证证据（均为 10000ms 外部 deadline、组内多线程）：Registry 24/24、送转 18/18（含 Session 全链路与混合限售回滚）、除权公式 15/15、Session Simple 19/19、corporate_actions 7/7、simple finance 65/65；Web corporate-actions schema 16/16、save 消费组合与公司 schema 组全绿；日志在 `.tmp/company-system/stock-distribution/`。基线核对：`cash_dividend_tax` 两项、`retail_analysis` 四项、`persistence` 十三项与 `failure_tests` 三项失败在未含本批改动的 f1fc21f6 基线同样失败（属主工作区另一批股息税修复在飞），本批未触碰对应文件。
+
+## 修复轮（2026-10-06，非作者门禁 findings）
+
+对 fba94e8b 的非作者复核发现六条问题，本批以 TDD 修复（红→绿证据均在 `.tmp/company-system/stock-distribution/fix-round-*.log`，全部 10000ms 外部 deadline）：
+
+- **major-1 面值推导缺陷（路线 a）**：现实语义为面值恒定、送转后注册资本按面值增加。`approve_stock_distribution` 的面值改为「首次送转声明时由法定事实 ÷ 当时发行股数整除推导并固定；已有送转声明后沿用同一面值」，不再用增大后的股数反推；`SimpleFinanceState::record_stock_distribution_credit` 入账时把注册资本法定事实演进为 当前注册资本 + 声明的 `capital_increase`（`source_evidence` 不变、bind-once 入口照旧拒绝改写），历史由各事实 `registered_capital_at_approval` 冻结。配套修正两处随之必须按「批准时点口径」重构的校验：`finance_validation.rs` 的分红声明注册资本等值检查、送转事实批准时点注册资本演进链核对（新增，含篡改负例），以及 Web 严格 parser（`apps/web/src/save/schema/company/simple-finance.ts`）的同构检查。连续两次 10送3 的会话级测试断言面值恒定、注册资本按 T→T+2→T+5 演进、超上限送股按演进后事实被拒；单元测试覆盖法定公积金 50% 免计提门槛按演进后注册资本重新核定（送股上限从 27_000 收紧到 24_300 的场景）。
+- **minor-3 同日第二起拒绝时点**：`approve_stock_distribution` 受理时直接拒绝同发行人同证券同除权日的第二起事件（错误信息指明合并除权口径未核实），不再推迟到 R+1 首 tick `prepare_ex_references` 才 StepFatal。
+- **minor-4 恢复反向勾稽**：`SessionCorporateActions::validate` 补「名册每条 NonTradingTransfer 回执 → Credited 状态送转账簿（事件前缀、入账日、数量合计）」的反向断言（ghost 回执负例）；forward 方向的 `u64::try_from(change.change).unwrap_or(0)` 改为显式校验错误（`sum_nontrading_changes`）。
+- **minor-2 R+1 当日不可用**：不改日终入账管线，在 `docs/trading-rules.md` 送转章节显式登记「公司行为资金/股份均在相关日期日终入账，当日盘中不可用」的游戏简化（覆盖送转与现金分红），并注明与 R+1 上市当日即可流通官方语义的差异留待后续批次。
+- **note-5 吞错误**：`validate_stock_distribution_books` 末段 `.filter_map(...ok())` 改为显式传播 `?`，仅对「该公司确无 finance 状态」的合法缺省走过滤。该路径当前不可由公共行为触发（`stock_distribution_facts` 实际不可失败、发行人必有 finance），属防御式编程修复，无可行红测试，如实登记。
+- **note-6 错过入账日防护对称**：`process_stock_distributions_on_day_end` 与恢复 `validate` 各补「已过 ex_rights_on 仍 Registered 显式失败」检查（两条直接负例：日结处理与恢复校验）。
+- **附带发现（本批修复）**：Web 严格 parser 的 `capital_increase = 面值 × 新增股数` 校验原先多乘 100（从未被真实存档覆盖的潜伏缺陷，引擎 wire 以分为单位）；按引擎权威口径改为两侧均以分核对。
+
+验证（各组均 10000ms 外部 deadline、组内多线程）：finance 送转 4/4、`company::simple` 69/69、Session Simple 24/24、送转基础 13/13、corporate_actions 7/7、Registry 24/24、除权公式 15/15、Web simple-finance 7/7、corporate-actions+system schema 30/30。基线对照：`session::failure` 3 项、`session::persistence` 13 项失败在 stash 本批改动后的 fba94e8b 上同样失败（属主工作区在飞的股息税批次，本批未触碰）。存档 fixture 均不含送转事实或法定事实，无需重生成。
+
+## B1+B2 集成合并（2026-10-06，集成 subagent）
+
+本节登记 B1 送转分支（ceaeda2b）并入已含 B2 新局默认税务的 main（0b96981a）时的合并解法与集成验证。冲突逐文件按两侧门禁复核过的语义合并，未用 ours/theirs 整体覆盖（四份 fixture JSON 除外：真值统一由合并后引擎重生成，占位侧选择不影响最终内容）：
+
+- `session/corporate_actions.rs`：B2 的 `TaxpayerIdentity` 等税类型块与 B1 的 `holder_key`/`sum_nontrading_changes` 辅助函数同位置插入，两块全保留；`SessionCorporateActions` 采用 B1 的超集形状（`stock_distributions` + `applied_ex_reference_groups`，base 的 `AppliedCashExDividendGroup` 被 B1 重命名推广，B2 未触碰这些行）。
+- `docs/trading-rules.md`：个人股息税（含开局税务模式）与送转两章节都保留。
+- Web `schema/corporate-actions.ts`：类型块双保留，`SessionCorporateActions` 取 B1 超集；B2 新增测试的对象字面量按合并后必填字段集适配（`applied_ex_reference_groups` + `stock_distributions`），断言未弱化。
+- `closed-day-fixture-generator.rs` 校验字段列表为两侧字段并集。
+- 四份存档 fixtures 由合并后 release Engine（rustc 直连 rlib，三 producer 并行编译）正规重生成：均携带 `dividend_tax_mode: IndividualPublicMarket` 与合并后 `corporate_actions` 完整七字段（无送转事件时 `stock_distributions`/`applied_ex_reference_groups` 为空数组，如实不伪造）；company slice 为重生成主档 `company_system` 精确投影（每公司 finance 新增空 `stock_distributions` 对象）。producer 内置 restore+resave 深等与场景守卫全过；三档经 Web `parseSaveSlot` 严格解析深度相等。注意：同引擎两次生成的市场轨迹可因并发受理调度不同而合法不同（ADR-0017 修订语义），fixture 以 generator 内置守卫与解析深等为验收，不跨次比较字节。
+- ts-rs：`export_bindings` 147 项通过，生成物含 B1 `AppliedExReferenceGroup`/`StockDistributionExRightsFormula` 与 B2 六个新税类型。
+
+集成验证（各组 10000ms 外部 deadline；编译/typegen 用 300000ms 长验收）：finance 送转 4/4、`company::simple` 69/69、Session Simple 30/30（两批用例合集）、送转基础 13/13、Registry 24/24、除权公式 17/17、`session::corporate_actions` 12/12（B1 时 7 项 + B2 新增 5 个税类型导出）、`dividend_tax_mode_tests` 8/8、`cash_dividend_tax` 16/16、Web corporate-actions schema 19/19、system schema 11/11、simple-finance 7/7、save-contract/save-commands/fixture 消费者 28/28、`cargo check --workspace --all-targets` 通过。基线对照：合并树与合并前 main 在独立 worktree 各跑全量 `cargo test -p engine --lib -- --test-threads=32`，失败集合逐项一致（280 条全同、各自 257 failed；合并树多 23 个通过即 B1 新增用例）；`session::persistence` 13、`session::failure` 3 与文档基线一致；Web 全批在两树均有的失败集一致，`public-financials-render` 的利润表用例经单树隔离复跑确认为 main 既有失败（非合并引入）。日志在 `.tmp/company-system/integration/`。B1 遗留的 15 个 tsc 类型错误（本测试文件 exchange 联合收窄等）由后续独立修复提交处理。

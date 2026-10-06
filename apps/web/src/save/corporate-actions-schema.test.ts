@@ -30,20 +30,20 @@ function validRegistry(issuedShares = "10") {
 }
 
 test("公司行为状态要求全部六个显式数组，空数组表示已配置的空状态", () => {
-  assert.deepEqual(parseSessionCorporateActions({ registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }, emptyContext), {
-    registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [],
+  assert.deepEqual(parseSessionCorporateActions({ registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, emptyContext), {
+    registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [],
   })
   for (const missing of [
-    { dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] },
-    { registries: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] },
-    { registries: [], dividends: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] },
-    { registries: [], dividends: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] },
+    { dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] },
+    { registries: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] },
+    { registries: [], dividends: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] },
+    { registries: [], dividends: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] },
     { registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [] },
-    { registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], applied_ex_dividend_groups: [] },
+    { registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] },
   ]) {
     assert.throws(() => parseSessionCorporateActions(missing, emptyContext), /corporate_actions.*必填/)
   }
-  assert.throws(() => parseSessionCorporateActions({ registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [], extra: [] }, emptyContext), /corporate_actions\.extra/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], extra: [] }, emptyContext), /corporate_actions\.extra/)
 })
 
 test("公司行为状态要求六个显式数组并严格校验股息税账序列", () => {
@@ -53,7 +53,7 @@ test("公司行为状态要求六个显式数组并严格校验股息税账序�
   }
   const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const registry = { ...validRegistry(), holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
-  const actions = { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   const context = { ...registryContext(), snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
   assert.deepEqual(parseSessionCorporateActions(actions, context).dividend_tax_books, [taxBook])
   const { dividend_tax_books: _taxBooks, ...missingTaxBooks } = actions
@@ -65,7 +65,7 @@ test("公司行为状态要求六个显式数组并严格校验股息税账序�
 test("账户分红到账税身份必须与同账户同证券税账配置一致", () => {
   const holder = { Account: "0" }
   const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
-  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-04", issued_shares: "10", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
+  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-04", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
   const registry = { ...validRegistry(), settled_on: "2030-01-08", holdings: [{ holder, lots: [lot] }], registrations: [registration] }
   const payment = { payment_id: "payment-a", paid_on: "2030-01-06", within_six_month_deadline: true, outcomes: [{ Paid: { holder, amount: "10" } }] }
   const dividend = {
@@ -75,7 +75,7 @@ test("账户分红到账税身份必须与同账户同证券税账配置一致",
   const taxLot = { id: "tax-account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, class: "PublicMarket" }
   const taxBook = { operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-08", opening_lots: [taxLot], settled_on: "2030-01-08", lots: [taxLot], days: [], dividends: [], collections: [] }
   const receipt = { payment_id: "payment-a", plan_id: "plan-a", account: "0", paid_on: "2030-01-06", gross: "10", tax_status: "IndividualPublicMarket" }
-  const actions = { registries: [registry], dividends: [dividend], dividend_tax_books: [taxBook], account_gross_receipts: [receipt], external_receipts: [], applied_ex_dividend_groups: [] }
+  const actions = { registries: [registry], dividends: [dividend], dividend_tax_books: [taxBook], account_gross_receipts: [receipt], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   const context = { ...registryContext(), currentDate: "2030-01-08", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
   assert.equal(parseSessionCorporateActions(actions, context).account_gross_receipts[0]?.tax_status, "IndividualPublicMarket")
   assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [] }, context), /税身份与股息税账配置不一致/)
@@ -87,12 +87,12 @@ test("公司行为状态拒绝裸数股数并要求无损 u64 字符串", () => 
     issuer_repurchase_account: null,
     settled_on: "2030-01-01", holdings: [], receipts: [], registrations: [],
   }
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, emptyContext), /issued_shares.*字符串/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, emptyContext), /issued_shares.*字符串/)
 })
 
 test("股东名册保留 u64 字符串并验证身份、FIFO 和股数守恒", () => {
   const maximum = "18446744073709551615"
-  const actions = { registries: [validRegistry(maximum)], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  const actions = { registries: [validRegistry(maximum)], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   assert.equal(parseSessionCorporateActions(actions, registryContext(maximum)).registries[0]?.issued_shares, maximum)
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...validRegistry(), issuer: "C-other" }] }, registryContext()), /身份|发行股数/)
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...validRegistry(), issued_shares: "11" }] }, registryContext()), /发行股数不守恒/)
@@ -105,9 +105,9 @@ test("股东名册保留 u64 字符串并验证身份、FIFO 和股数守恒", (
 })
 
 test("登记快照事件身份必须唯一", () => {
-  const snapshot = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", issuer_repurchase_account: null, holdings: validRegistry().holdings }
+  const snapshot = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: validRegistry().holdings }
   const registry = { ...validRegistry(), registrations: [snapshot, snapshot] }
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /登记快照.*身份重复/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /登记快照.*身份重复/)
 })
 
 test("分红书必须显式保存 required nullable registration 和完整空付款状态", () => {
@@ -116,17 +116,17 @@ test("分红书必须显式保存 required nullable registration 和完整空付
     status: "Approved", registration: null, entitlements: [], paid: [], failures: [], payments: [],
   }
   const registry = { ...validRegistry(), settled_on: "2030-01-03" }
-  assert.equal(parseSessionCorporateActions({ registries: [registry], dividends: [book], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()).dividends[0]?.registration, null)
+  assert.equal(parseSessionCorporateActions({ registries: [registry], dividends: [book], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()).dividends[0]?.registration, null)
   const { registration: _registration, ...missing } = book
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [missing], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /registration.*必填/)
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [{ ...book, status: "Unexpected" }], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /status.*分红状态/)
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [{ ...book, plan: { ...book.plan, exchange: "Shenzhen" } }], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /exchange.*交易所与证券不一致/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [missing], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /registration.*必填/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [{ ...book, status: "Unexpected" }], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /status.*分红状态/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends: [{ ...book, plan: { ...book.plan, exchange: "Shenzhen" } }], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /exchange.*交易所与证券不一致/)
 })
 
 test("External 分红到账回执必须逐项匹配 Paid 金额、持有人、方案和付款日", () => {
   const holder = { External: "holder-a" }
   const lot = { id: "lot-a", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
-  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-04", issued_shares: "10", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
+  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-04", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
   const registry = { stock: "600101", issuer: "C-600101", issued_shares: "10", issuer_repurchase_account: null, settled_on: "2030-01-08", holdings: [{ holder, lots: [lot] }], receipts: [], registrations: [registration] }
   const payment = { payment_id: "payment-a", paid_on: "2030-01-06", within_six_month_deadline: true, outcomes: [{ Paid: { holder, amount: "10" } }] }
   const book = {
@@ -134,7 +134,7 @@ test("External 分红到账回执必须逐项匹配 Paid 金额、持有人、�
     status: "Paid", registration, entitlements: [{ holder, shares: "10", gross: "10" }], paid: [[holder, "10"]], failures: [], payments: [payment],
   }
   const grossReceipt = { payment_id: payment.payment_id, plan_id: "plan-a", holder, paid_on: payment.paid_on, gross: "10", tax_status: "TreatmentNotConfigured" }
-  const actions = { registries: [registry], dividends: [book], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [grossReceipt], applied_ex_dividend_groups: [] }
+  const actions = { registries: [registry], dividends: [book], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [grossReceipt], applied_ex_reference_groups: [], stock_distributions: [] }
   const context = { ...registryContext(), currentDate: "2030-01-08" }
   assert.equal(parseSessionCorporateActions(actions, context).external_receipts[0]?.gross, "10")
   assert.throws(() => parseSessionCorporateActions({ ...actions, external_receipts: [] }, context), /缺少已支付 External/)
@@ -171,17 +171,17 @@ test("MarketSnap 显式保留除息状态、日内活动与 required nullable �
 test("已应用除息组与 MarketSnap 锚点日期、参考价双向匹配", () => {
   const anchor = { ex_date: "2030-01-01", reference_price: "1000" }
   const context = { ...registryContext(), snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: {} } }
-  const group = { date: anchor.ex_date, stock: "600101", plan_ids: ["plan-a"], reference: anchor }
-  const actions = { registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [group] }
-  assert.throws(() => parseSessionCorporateActions(actions, context), /计划.*不一致/)
-  assert.throws(() => parseSessionCorporateActions({ ...actions, applied_ex_dividend_groups: [] }, context), /缺少对应已应用除息组/)
-  assert.throws(() => parseSessionCorporateActions({ ...actions, applied_ex_dividend_groups: [{ ...group, stock: "600101", reference: { ...anchor, reference_price: "1002" } }] }, context), /MarketSnap 锚点不一致/)
+  const group = { date: anchor.ex_date, stock: "600101", cash_plan_ids: ["plan-a"], stock_event_ids: [], reference: anchor }
+  const actions = { registries: [], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [group], stock_distributions: [] }
+  assert.throws(() => parseSessionCorporateActions(actions, context), /除权除息组与登记分红方案或送转事件不一致/)
+  assert.throws(() => parseSessionCorporateActions({ ...actions, applied_ex_reference_groups: [], stock_distributions: [] }, context), /除权除息锚点缺少对应已应用组/)
+  assert.throws(() => parseSessionCorporateActions({ ...actions, applied_ex_reference_groups: [{ ...group, stock: "600101", reference: { ...anchor, reference_price: "1002" } }] }, context), /MarketSnap 锚点不一致/)
 })
 
 test("MarketSnap 除息锚点必须匹配证券最新已应用除息组", () => {
   const holder = { External: "holder-a" }
   const lot = { id: "lot-a", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
-  const registrationA = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-01", issued_shares: "10", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
+  const registrationA = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-01", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
   const registrationB = { ...registrationA, event_id: "plan-b" }
   const registry = { ...validRegistry(), registrations: [registrationA, registrationB] }
   const makeDividend = (plan_id: string, ex_dividend_on: string, registration: typeof registrationA) => ({
@@ -193,29 +193,29 @@ test("MarketSnap 除息锚点必须匹配证券最新已应用除息组", () => 
   const laterReference = { ex_date: "2030-01-03", reference_price: "999" }
   const context = { ...registryContext(), snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: {} } }
   const groups = [
-    { date: anchor.ex_date, stock: "600101", plan_ids: ["plan-a"], reference: anchor },
-    { date: laterReference.ex_date, stock: "600101", plan_ids: ["plan-b"], reference: laterReference },
+    { date: anchor.ex_date, stock: "600101", cash_plan_ids: ["plan-a"], stock_event_ids: [], reference: anchor },
+    { date: laterReference.ex_date, stock: "600101", cash_plan_ids: ["plan-b"], stock_event_ids: [], reference: laterReference },
   ]
-  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends, dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: groups }, context), /锚点必须匹配最新已应用除息组/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [registry], dividends, dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: groups, stock_distributions: [] }, context), /锚点必须匹配最新已应用除权除息组/)
   const currentAnchorContext = { ...context, snapshot: { markets: { "600101": { last_cash_ex_reference: laterReference } }, accounts: {} } }
-  assert.equal(parseSessionCorporateActions({ registries: [registry], dividends, dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: groups }, currentAnchorContext).applied_ex_dividend_groups.length, 2)
+  assert.equal(parseSessionCorporateActions({ registries: [registry], dividends, dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: groups, stock_distributions: [] }, currentAnchorContext).applied_ex_reference_groups.length, 2)
 })
 
 test("股东名册与登记快照必须显式保存 issuer_repurchase_account nullable", () => {
   const registry = validRegistry()
   const { issuer_repurchase_account: _registryFacts, ...missingRegistryFacts } = registry
-  assert.throws(() => parseSessionCorporateActions({ registries: [missingRegistryFacts], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /issuer_repurchase_account.*必填/)
-  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", issuer_repurchase_account: null, holdings: registry.holdings }
+  assert.throws(() => parseSessionCorporateActions({ registries: [missingRegistryFacts], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /issuer_repurchase_account.*必填/)
+  const registration = { event_id: "plan-a", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: registry.holdings }
   const { issuer_repurchase_account: _snapshotFacts, ...missingSnapshotFacts } = registration
-  assert.throws(() => parseSessionCorporateActions({ registries: [{ ...registry, registrations: [missingSnapshotFacts] }], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }, registryContext()), /issuer_repurchase_account.*必填/)
+  assert.throws(() => parseSessionCorporateActions({ registries: [{ ...registry, registrations: [missingSnapshotFacts] }], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }, registryContext()), /issuer_repurchase_account.*必填/)
 })
 
 test("回购专户事实按建立日期绑定到不可变登记快照", () => {
   const facts = { account_reference: "issuer-buyback-1", source_evidence: "exchange-confirmation-1", established_on: "2030-01-02" }
-  const before = { event_id: "before", stock: "600101", issuer: "C-600101", registered_on: "2030-01-01", issued_shares: "10", issuer_repurchase_account: null, holdings: validRegistry().holdings }
+  const before = { event_id: "before", stock: "600101", issuer: "C-600101", registered_on: "2030-01-01", issued_shares: "10", settled_receipts: "0", issuer_repurchase_account: null, holdings: validRegistry().holdings }
   const after = { ...before, event_id: "after", registered_on: "2030-01-03", issuer_repurchase_account: facts }
   const registry = { ...validRegistry(), issuer_repurchase_account: facts, registrations: [before, after] }
-  const actions = { registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  const actions = { registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   assert.deepEqual(parseSessionCorporateActions(actions, registryContext()).registries[0]?.registrations.map(item => item.issuer_repurchase_account), [null, facts])
   const earliestFacts = { ...validRegistry(), registrations: [], issuer_repurchase_account: { ...facts, established_on: "1900-01-01" } }
   assert.doesNotThrow(() => parseSessionCorporateActions({ ...actions, registries: [earliestFacts] }, registryContext()))
@@ -239,7 +239,7 @@ test("税账首个日结必须紧邻开账日下一自然日", () => {
       days: [{ operation_seq: 1, event_id: "day-a", day: firstDay, net_change: "0", acquisition: null, dispositions: [] }],
       dividends: [], collections: [],
     }
-    return { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }
+    return { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   }
   const context = { ...registryContext(), currentDate: "2030-01-05", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
   assert.doesNotThrow(() => parseSessionCorporateActions(makeActions("2030-01-04", "2030-01-04"), context), "紧邻开账日的首个日结必须被接受")
@@ -254,7 +254,7 @@ test("精确税额分数必须完整约简（gcd=1），非仅拒绝可整除", 
   }
   const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const registry = { ...validRegistry(), settled_on: "2030-01-03", holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
-  const actions = { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
   const context = { ...registryContext(), snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
   assert.throws(() => parseSessionCorporateActions(actions, context), /已约简非负分数/)
   const reduced = structuredClone(taxBook)
@@ -275,4 +275,135 @@ test("股息税未划收查询视图按严格 parser 校验余额与原因一致
     parseDividendTaxOutstandingView({ account: "0", stock: "600101", outstanding: { numerator: "0", denominator: "1" }, needs_funds: false, cause: "Cleared" }),
     { account: "0", stock: "600101", outstanding: { numerator: "0", denominator: "1" }, needs_funds: false, cause: "Cleared" },
   )
+})
+
+test("非交易过户送转入账按同日追加回执登记并守恒发行股数", () => {
+  const holder = { Account: "0" }
+  const lot = { id: "account-lot", qty: "6", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const marketDay = {
+    request: { event_id: "session-market:600101:2030-01-02", day: "2030-01-02", scope: "PublicMarket", changes: [] },
+    disposals: [],
+  }
+  const issueDay = {
+    request: {
+      event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
+      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const creditedLot = { ...lot, id: "stock-distribution:distribution-1:account-0", qty: "2", acquired_on: "2030-01-02", source: { CorporateAction: { event: "distribution-1" } } }
+  const registry = {
+    ...validRegistry("12"), settled_on: "2030-01-02",
+    holdings: [{ holder, lots: [lot, creditedLot] }, { holder: { External: "holder-a" }, lots: [{ ...lot, id: "external-lot", qty: "4" }] }],
+    receipts: [marketDay, issueDay], registrations: [],
+  }
+  // setup 初始股数 10，送转入账后名册与发行人身份均为 12。
+  const context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
+    setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 8 } } } } },
+    currentDate: "2030-01-02",
+  }
+  const actions = { registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
+  assert.doesNotThrow(() => parseSessionCorporateActions(actions, context))
+  // 名册当前股数必须等于 setup 初始股数加非交易过户增发合计，不允许无法解释的差额。
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, issued_shares: "13", holdings: [{ holder, lots: [lot, creditedLot] }, { holder: { External: "holder-a" }, lots: [{ ...lot, id: "external-lot", qty: "5" }] }] }] }, { ...context, issuers: { "C-600101": { listed_stock: "600101", issued_shares: "13" } } }), /初始股数加非交易过户增发不一致/)
+  // 非交易过户不得减持、不得使用二级市场来源，也不得凭空造零股。
+  const disposal = JSON.parse(JSON.stringify(issueDay)) as typeof issueDay
+  disposal.request.changes = [{ holder, change: "-1", acquisition: null }]
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, receipts: [marketDay, disposal] }] }, context), /非交易过户不得减持/)
+  const secondary = JSON.parse(JSON.stringify(issueDay)) as typeof issueDay
+  secondary.request.changes[0]!.acquisition!.source = { SecondaryMarket: { settlement: "not-a-corporate-action" } }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, receipts: [marketDay, secondary] }] }, context), /公司行为来源/)
+  const zeroIssue = JSON.parse(JSON.stringify(issueDay)) as typeof issueDay
+  zeroIssue.request.changes = []
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, receipts: [marketDay, zeroIssue] }] }, context), /必须新增正数股份/)
+  // 公开市场回执不能跳日落在非交易过户之后。
+  const jumpDay = { request: { event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket", changes: [] }, disposals: [] }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, settled_on: "2030-01-04", receipts: [marketDay, issueDay, jumpDay] }] }, { ...context, currentDate: "2030-01-04" }), /逐自然日连续/)
+})
+
+test("登记快照发行股数按登记日后的非交易过户增发回放核对", () => {
+  const holder = { External: "holder-a" }
+  const lot = { id: "lot-a", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const marketDay = { request: { event_id: "session-market:600101:2030-01-02", day: "2030-01-02", scope: "PublicMarket", changes: [] }, disposals: [] }
+  const issueDay = {
+    request: {
+      event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
+      changes: [{ holder: { Account: "0" }, change: "2", acquisition: { lot_id: "bonus-a", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const registration = { event_id: "record-1", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", settled_receipts: "1", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
+  const bonusLot = { id: "bonus-a", qty: "2", acquired_on: "2030-01-02", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }
+  const registry = { ...validRegistry("12"), settled_on: "2030-01-02", holdings: [{ holder, lots: [lot] }, { holder: { Account: "0" }, lots: [bonusLot] }], receipts: [marketDay, issueDay], registrations: [registration] }
+  const context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
+    setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 2 } } } } },
+    currentDate: "2030-01-02",
+  }
+  const actions = { registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
+  assert.doesNotThrow(() => parseSessionCorporateActions(actions, context))
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, registrations: [{ ...registration, issued_shares: "12", holdings: [{ holder, lots: [{ ...lot, qty: "12" }] }] }] }] }, context), /按非交易过户回放的发行股数不一致/)
+})
+
+function creditedStockDistributionRegistry() {
+  const holder = { Account: "0" }
+  const lot = { id: "account-lot", qty: "6", acquired_on: "2030-01-02", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const registration = { event_id: "distribution-1", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", settled_receipts: "1", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }, { holder: { External: "holder-a" }, lots: [{ ...lot, id: "external-lot", qty: "4" }] }] }
+  const marketDay = { request: { event_id: "session-market:600101:2030-01-02", day: "2030-01-02", scope: "PublicMarket", changes: [] }, disposals: [] }
+  const marketNextDay = { request: { event_id: "session-market:600101:2030-01-03", day: "2030-01-03", scope: "PublicMarket", changes: [] }, disposals: [] }
+  const issueDay = {
+    request: {
+      event_id: "stock-distribution:distribution-1", day: "2030-01-03", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
+      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const creditedLot = { id: "stock-distribution:distribution-1:account-0", qty: "2", acquired_on: "2030-01-03", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }
+  const registry = {
+    ...validRegistry("12"), settled_on: "2030-01-03",
+    holdings: [{ holder, lots: [lot, creditedLot] }, { holder: { External: "holder-a" }, lots: [{ ...lot, id: "external-lot", qty: "4" }] }],
+    receipts: [marketDay, marketNextDay, issueDay], registrations: [registration],
+  }
+  return { registry, holder, lot, registration }
+}
+
+test("送转账簿严格解析并交叉核对入账非交易过户回执", () => {
+  const { registry, holder, lot, registration } = creditedStockDistributionRegistry()
+  const receipt = {
+    event_id: "distribution-1", approval_reference: "shareholders-resolution-1", registration_event_id: "distribution-1",
+    stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares_before: "10", issuer_treasury_shares_excluded: "0",
+    kind: "BonusShares", shares_per_existing_share_micros: "250000", approved_total_new_shares: "2", tie_break_seed: "12345",
+    source_lot_attribution: "SourceLotAttributionPending",
+    holders: [{ holder, original_shares: "6", whole_shares: "2", fractional_numerator: "500000", original_lots: [lot] }],
+  }
+  const book = {
+    plan: { event_id: "distribution-1", approval_reference: "shareholders-resolution-1", issuer: "C-600101", stock: "600101", exchange: "Shanghai", kind: "BonusShares", approved_on: "2030-01-01", announced_on: "2030-01-02", registered_on: "2030-01-02", ex_rights_on: "2030-01-03", shares_per_existing_share_micros: "250000", approved_total_new_shares: "2" },
+    status: "Credited", registration, receipt, credited_on: "2030-01-03",
+  }
+  const anchor = { ex_date: "2030-01-03", reference_price: "800" }
+  const group = { date: "2030-01-03", stock: "600101", cash_plan_ids: [], stock_event_ids: ["distribution-1"], reference: anchor }
+  const context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
+    setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: { "0": { positions: { "600101": { qty: 8 } } } } },
+    currentDate: "2030-01-03",
+  }
+  const actions = { registries: [registry], dividends: [], account_gross_receipts: [], dividend_tax_books: [], external_receipts: [], applied_ex_reference_groups: [group], stock_distributions: [book] }
+  const parsed = parseSessionCorporateActions(actions, context)
+  assert.equal(parsed.stock_distributions[0]?.status, "Credited")
+  assert.deepEqual(parsed.applied_ex_reference_groups[0]?.stock_event_ids, ["distribution-1"])
+  // 每户整股合计必须等于获批新增股数。
+  assert.throws(() => parseSessionCorporateActions({ ...actions, stock_distributions: [{ ...book, receipt: { ...receipt, approved_total_new_shares: "3" } }] }, context), /整股合计与获批新增股数不一致/)
+  // 未登记就入账、入账日期与 R+1 不一致都要拒绝。
+  assert.throws(() => parseSessionCorporateActions({ ...actions, stock_distributions: [{ ...book, status: "Registered", credited_on: "2030-01-03" }] }, context), /入账事实必须为 Credited 状态/)
+  assert.throws(() => parseSessionCorporateActions({ ...actions, stock_distributions: [{ ...book, credited_on: "2030-01-04" }] }, context), /入账事实必须为 Credited 状态/)
+  // 入账非交易过户回执缺失或股数不符时拒绝。
+  const missingReceipt = JSON.parse(JSON.stringify(actions)) as typeof actions
+  missingReceipt.registries[0]!.receipts = missingReceipt.registries[0]!.receipts.filter(row => row.request.event_id !== "stock-distribution:distribution-1")
+  missingReceipt.registries[0]!.issued_shares = "10"
+  missingReceipt.registries[0]!.holdings[0]!.lots = missingReceipt.registries[0]!.holdings[0]!.lots.filter(lot => lot.id !== "stock-distribution:distribution-1:account-0")
+  assert.throws(() => parseSessionCorporateActions(missingReceipt, { ...context, issuers: { "C-600101": { listed_stock: "600101", issued_shares: "10" } }, snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: { "0": { positions: { "600101": { qty: 6 } } } } } }), /送转入账股数与非交易过户增发合计不一致/)
 })

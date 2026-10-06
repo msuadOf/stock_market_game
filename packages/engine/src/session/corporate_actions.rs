@@ -2,6 +2,7 @@ use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
     ShareRegistry, ShareRestriction,
 };
+use crate::company::stock_distribution::{holder_credit_lots, StockDistributionBook};
 use crate::{account::StockCode, orderbook::AccountId};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -16,21 +17,26 @@ pub struct SessionCorporateActions {
     pub dividends: Vec<crate::company::cash_dividend::CashDividendBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").CashDividendTaxBook[]")]
     pub dividend_tax_books: Vec<crate::company::cash_dividend_tax::CashDividendTaxBook>,
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").StockDistributionBook[]")]
+    pub stock_distributions: Vec<StockDistributionBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").AccountDividendGrossReceipt[]")]
     pub account_gross_receipts: Vec<AccountDividendGrossReceipt>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").ExternalDividendReceipt[]")]
     pub external_receipts: Vec<ExternalDividendReceipt>,
-    #[ts(type = "import(\"../../save/schema/corporate-actions\").AppliedCashExDividendGroup[]")]
-    pub applied_ex_dividend_groups: Vec<AppliedCashExDividendGroup>,
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").AppliedExReferenceGroup[]")]
+    pub applied_ex_reference_groups: Vec<AppliedExReferenceGroup>,
 }
 
+/// 已应用到行情前收锚的除权除息组：同一证券同一除权日只产生一个参考价，
+/// 组合事实同时列出参与合计的现金分红计划与送转事件。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
-pub struct AppliedCashExDividendGroup {
+pub struct AppliedExReferenceGroup {
     pub date: crate::calendar::CivilDate,
     pub stock: StockCode,
-    pub plan_ids: Vec<String>,
+    pub cash_plan_ids: Vec<String>,
+    pub stock_event_ids: Vec<String>,
     pub reference: crate::company::ex_reference_price::ExReferencePrice,
 }
 
@@ -132,6 +138,28 @@ pub struct DividendTaxOutstandingView {
     pub needs_funds: bool,
     /// 未清税额原因。
     pub cause: DividendTaxOutstandingCause,
+}
+
+fn holder_key(holder: &HolderId) -> String {
+    match holder {
+        HolderId::Account(account) => format!("account-{}", account.0),
+        HolderId::External(name) => format!("external-{name}"),
+        HolderId::IssuerTreasury => "issuer-treasury".to_owned(),
+    }
+}
+
+/// 汇总非交易过户回执的股数；负数或超 `u64` 的数量显式报错，不静默取 0。
+fn sum_nontrading_changes(
+    changes: &[DayNetChange],
+) -> Result<u64, SessionCorporateActionsError> {
+    changes.iter().try_fold(0_u64, |total, change| {
+        let qty = u64::try_from(change.change).map_err(|_| {
+            SessionCorporateActionsError::Invalid("非交易过户回执出现负数或溢出股数".into())
+        })?;
+        total.checked_add(qty).ok_or_else(|| {
+            SessionCorporateActionsError::Invalid("非交易过户回执股数合计溢出".into())
+        })
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -369,6 +397,186 @@ impl SessionCorporateActions {
             }
         }
         self.settle_dividend_tax(accounts)?;
+        Ok(())
+    }
+
+    /// 送转事件日结：公告 → R 日按登记快照冻结分配 → R+1 以 NonTradingTransfer
+    /// 落账新股并同步投资者持仓、发行股数与 Simple 账面展示事实。
+    ///
+    /// 事件幂等：重复执行同一日结不重复入账；任何失败向外返回错误，由日终
+    /// 候选事务整体回滚，不留下部分状态。
+    pub(crate) fn process_stock_distributions_on_day_end(
+        &mut self,
+        day: crate::calendar::CivilDate,
+        calendar: &crate::calendar::TradingCalendar,
+        company_system: &mut crate::company::CompanySystem,
+        accounts: &mut super::account_book::AccountBook,
+    ) -> Result<(), SessionCorporateActionsError> {
+        for index in 0..self.stock_distributions.len() {
+            let plan = self.stock_distributions[index].plan().clone();
+            if self.stock_distributions[index].status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Approved
+            {
+                if day > plan.announced_on {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "送转事件 {} 错过公告日",
+                        plan.event_id
+                    )));
+                }
+                if day == plan.announced_on {
+                    self.stock_distributions[index]
+                        .announce(day)
+                        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                }
+            }
+            // 已过入账日仍停留在 Registered 的账簿属于错过入账：显式失败而不是
+            // 静默跳过（Approved/Announced 的错过公告日、登记日已有对称防护）。
+            if self.stock_distributions[index].status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Registered
+                && day > plan.ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "送转事件 {} 错过入账日",
+                    plan.event_id
+                )));
+            }
+            if day == plan.registered_on {
+                if self.stock_distributions[index].status()
+                    != &crate::company::stock_distribution::StockDistributionStatus::Announced
+                {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "送转事件 {} 登记日前未完成公告",
+                        plan.event_id
+                    )));
+                }
+                let registry_index = self
+                    .registries
+                    .iter()
+                    .position(|registry| {
+                        registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
+                    })
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(
+                            "送转登记日缺少匹配股东名册".into(),
+                        )
+                    })?;
+                let snapshot = self.registries[registry_index]
+                    .register(plan.event_id.clone(), day)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                    .clone();
+                self.stock_distributions[index]
+                    .register(snapshot, calendar)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                let approved_shares = self.stock_distributions[index]
+                    .receipt()
+                    .map(|receipt| receipt.approved_total_new_shares)
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(
+                            "送转登记后缺少分配回执".into(),
+                        )
+                    })?;
+                let finance_fact = company_system
+                    .stock_distribution_facts(&plan.issuer)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                    .into_iter()
+                    .find(|fact| fact.event_id == plan.event_id)
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(
+                            "送转登记缺少Simple声明事实".into(),
+                        )
+                    })?;
+                if finance_fact.new_shares != approved_shares {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "送转登记日获批新增股数与Simple声明不一致".into(),
+                    ));
+                }
+            } else if day > plan.registered_on
+                && self.stock_distributions[index].registration().is_none()
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "送转事件 {} 错过登记日",
+                    plan.event_id
+                )));
+            }
+            if day != plan.ex_rights_on
+                || self.stock_distributions[index].status()
+                    != &crate::company::stock_distribution::StockDistributionStatus::Registered
+            {
+                continue;
+            }
+            let receipt = self.stock_distributions[index]
+                .receipt()
+                .cloned()
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid("送转入账缺少冻结分配回执".into())
+                })?;
+            let credit_lots = holder_credit_lots(&receipt, day)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            let mut changes = Vec::with_capacity(credit_lots.len());
+            for lot in &credit_lots {
+                changes.push(DayNetChange {
+                    holder: lot.holder.clone(),
+                    change: i128::try_from(lot.qty).map_err(|_| {
+                        SessionCorporateActionsError::Invalid("送转入账股数超出日结范围".into())
+                    })?,
+                    acquisition: Some(NetAcquisition {
+                        lot_id: format!(
+                            "stock-distribution:{}:{}",
+                            plan.event_id,
+                            holder_key(&lot.holder)
+                        ),
+                        source: AcquisitionSource::CorporateAction {
+                            event: plan.event_id.clone(),
+                        },
+                        restriction: lot.restriction.clone(),
+                    }),
+                });
+            }
+            let registry_index = self
+                .registries
+                .iter()
+                .position(|registry| {
+                    registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
+                })
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid("送转入账缺少匹配股东名册".into())
+                })?;
+            self.registries[registry_index]
+                .close_day(ShareDayRequest {
+                    event_id: format!("stock-distribution:{}", plan.event_id),
+                    day,
+                    scope: MovementScope::NonTradingTransfer {
+                        basis: plan.approval_reference.clone(),
+                    },
+                    changes,
+                })
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            for lot in &credit_lots {
+                let HolderId::Account(account) = &lot.holder else {
+                    continue;
+                };
+                let account = *account;
+                let account_state = accounts.get_mut(&account).ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid(format!(
+                        "送转股东账户 {account:?} 不存在"
+                    ))
+                })?;
+                account_state
+                    .credit_position_shares(plan.stock.clone(), lot.qty)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            }
+            company_system
+                .record_stock_distribution_credit(
+                    &plan.issuer,
+                    &plan.event_id,
+                    day,
+                    receipt.approved_total_new_shares,
+                )
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            self.stock_distributions[index]
+                .mark_credited(day)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -672,19 +880,108 @@ impl SessionCorporateActions {
         company_system
             .validate_cash_dividend_books(&self.dividends)
             .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        for book in &self.stock_distributions {
+            book.validate()
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            if book.plan().approved_on > current_date {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "送转批准日期晚于当前会话日期".into(),
+                ));
+            }
+            // 恢复校验对称防护：已过入账日的 Registered 账簿属于错过入账，显式失败。
+            if book.status() == &crate::company::stock_distribution::StockDistributionStatus::Registered
+                && current_date > book.plan().ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "送转事件 {} 错过入账日",
+                    book.plan().event_id
+                )));
+            }
+            if !self.registries.iter().any(|registry| {
+                registry.stock() == &book.plan().stock && registry.issuer() == &book.plan().issuer
+            }) {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "送转账簿缺少匹配的完整股东名册".into(),
+                ));
+            }
+            if let Some(credited_on) = book.credited_on() {
+                let registry = self
+                    .registries
+                    .iter()
+                    .find(|registry| registry.stock() == &book.plan().stock)
+                    .expect("registry presence was checked above");
+                let expected_event = format!("stock-distribution:{}", book.plan().event_id);
+                let Some(receipt) = registry.receipt_by_event(&expected_event) else {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "送转入账事实与股东名册非交易过户回执不一致".into(),
+                    ));
+                };
+                let credited_total = sum_nontrading_changes(&receipt.request.changes)?;
+                if receipt.request.day != credited_on
+                    || !matches!(
+                        receipt.request.scope,
+                        MovementScope::NonTradingTransfer { .. }
+                    )
+                    || credited_total != book.plan().approved_total_new_shares
+                {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "送转入账事实与股东名册非交易过户回执不一致".into(),
+                    ));
+                }
+            }
+        }
+        // 反向勾稽：名册中每条 NonTradingTransfer 回执必须映射到 Credited 状态的
+        // 送转账簿，且入账日与数量一致；篡改注入无对应账簿的回执必须被拒。
+        let mut credited_books = BTreeMap::new();
+        for book in &self.stock_distributions {
+            if let Some(credited_on) = book.credited_on() {
+                credited_books.insert(
+                    format!("stock-distribution:{}", book.plan().event_id),
+                    (credited_on, book.plan().approved_total_new_shares),
+                );
+            }
+        }
+        for registry in &self.registries {
+            for receipt in registry.receipts() {
+                if !matches!(
+                    receipt.request.scope,
+                    MovementScope::NonTradingTransfer { .. }
+                ) {
+                    continue;
+                }
+                let Some(&(credited_on, total_shares)) =
+                    credited_books.get(&receipt.request.event_id)
+                else {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "名册存在无对应已入账送转账簿的非交易过户回执 {}",
+                        receipt.request.event_id
+                    )));
+                };
+                let receipt_total = sum_nontrading_changes(&receipt.request.changes)?;
+                if receipt.request.day != credited_on || receipt_total != total_shares {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "非交易过户回执 {} 的日期或数量与送转账簿不一致",
+                        receipt.request.event_id
+                    )));
+                }
+            }
+        }
+        company_system
+            .validate_stock_distribution_books(&self.stock_distributions)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
         let mut group_keys = BTreeSet::new();
-        for group in &self.applied_ex_dividend_groups {
+        for group in &self.applied_ex_reference_groups {
             if group.date > current_date
                 || group.reference.ex_date != group.date
                 || group.reference.reference_price.cents() <= 0
                 || !group_keys.insert((group.date, group.stock.clone()))
-                || group.plan_ids.is_empty()
+                || (group.cash_plan_ids.is_empty() && group.stock_event_ids.is_empty())
             {
                 return Err(SessionCorporateActionsError::Invalid(
-                    "已应用除息计划组事实非法或重复".into(),
+                    "已应用除权除息组事实非法或重复".into(),
                 ));
             }
-            let mut expected: Vec<_> = self
+            let mut expected_cash: Vec<_> = self
                 .dividends
                 .iter()
                 .filter(|book| {
@@ -694,12 +991,29 @@ impl SessionCorporateActions {
                 })
                 .map(|book| book.plan().plan_id.clone())
                 .collect();
-            expected.sort();
-            let mut actual = group.plan_ids.clone();
-            actual.sort();
-            if expected != actual || actual.windows(2).any(|pair| pair[0] == pair[1]) {
+            expected_cash.sort();
+            let mut actual_cash = group.cash_plan_ids.clone();
+            actual_cash.sort();
+            let mut expected_stock: Vec<_> = self
+                .stock_distributions
+                .iter()
+                .filter(|book| {
+                    book.plan().stock == group.stock
+                        && book.plan().ex_rights_on == group.date
+                        && book.registration().is_some()
+                })
+                .map(|book| book.plan().event_id.clone())
+                .collect();
+            expected_stock.sort();
+            let mut actual_stock = group.stock_event_ids.clone();
+            actual_stock.sort();
+            if expected_cash != actual_cash
+                || actual_cash.windows(2).any(|pair| pair[0] == pair[1])
+                || expected_stock != actual_stock
+                || actual_stock.windows(2).any(|pair| pair[0] == pair[1])
+            {
                 return Err(SessionCorporateActionsError::Invalid(
-                    "已应用除息计划组与登记分红方案不一致".into(),
+                    "已应用除权除息组与登记分红方案或送转事件不一致".into(),
                 ));
             }
         }
@@ -1325,7 +1639,8 @@ mod tests {
             account_gross_receipts: vec![],
             external_receipts: vec![],
             dividend_tax_books: vec![],
-            applied_ex_dividend_groups: vec![],
+            stock_distributions: vec![],
+            applied_ex_reference_groups: vec![],
         };
         let accounts = BTreeMap::from([(AccountId(1), BTreeMap::from([(code, 6)]))]);
         actions

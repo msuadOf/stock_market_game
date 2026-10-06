@@ -387,3 +387,274 @@ fn serializes_full_width_ratio_and_tie_seed_as_canonical_decimal_strings() {
         .remove("tie_break_seed");
     assert!(serde_json::from_value::<StockDistributionReceipt>(missing_receipt_field).is_err());
 }
+
+mod book {
+    use super::super::{
+        holder_credit_lots, tie_break_seed, HolderDistribution, StockDistributionBook,
+        StockDistributionError, StockDistributionEventPlan, StockDistributionKind,
+        StockDistributionStatus,
+    };
+    use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
+    use crate::company::share_registry::{
+        AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
+    };
+    use crate::company::{CompanyId, StockCode};
+    use crate::orderbook::AccountId;
+
+    fn date(value: &str) -> CivilDate {
+        CivilDate::from_iso(value).unwrap()
+    }
+
+    fn event_plan(ex_rights_on: &str) -> StockDistributionEventPlan {
+        StockDistributionEventPlan {
+            event_id: "distribution-1".into(),
+            approval_reference: "shareholders-resolution-1".into(),
+            issuer: CompanyId("issuer-1".into()),
+            stock: StockCode("600001".into()),
+            exchange: CalendarExchange::Sse,
+            kind: StockDistributionKind::BonusShares,
+            approved_on: date("2030-06-01"),
+            announced_on: date("2030-06-03"),
+            registered_on: date("2030-06-06"),
+            ex_rights_on: date(ex_rights_on),
+            shares_per_existing_share_micros: 500_000,
+            approved_total_new_shares: 3,
+        }
+    }
+
+    fn restricted_lot(id: &str, qty: u64, release_on: &str) -> ShareLot {
+        ShareLot {
+            id: id.into(),
+            qty,
+            acquired_on: date("2030-01-02"),
+            source: AcquisitionSource::InitialAllocation {
+                evidence: format!("opening-{id}"),
+            },
+            restriction: ShareRestriction::Restricted {
+                reason: "nonfloat-lock".into(),
+                release_on: date(release_on),
+            },
+        }
+    }
+
+    fn frozen_snapshot(
+        stock: &StockCode,
+        issuer: &CompanyId,
+        holdings: Vec<ShareHolding>,
+        issued_shares: u64,
+    ) -> crate::company::share_registry::RegistrationSnapshot {
+        let mut registry = ShareRegistry::new(
+            stock.clone(),
+            issuer.clone(),
+            issued_shares,
+            date("2030-06-06"),
+            holdings,
+        )
+        .unwrap();
+        registry
+            .register("distribution-1".to_owned(), date("2030-06-06"))
+            .unwrap()
+            .clone()
+    }
+
+    fn registered_book(calendar: &TradingCalendar) -> StockDistributionBook {
+        let mut book = StockDistributionBook::new(event_plan("2030-06-07")).unwrap();
+        book.announce(date("2030-06-03")).unwrap();
+        let snapshot = frozen_snapshot(
+            &StockCode("600001".into()),
+            &CompanyId("issuer-1".into()),
+            vec![
+                ShareHolding {
+                    holder: HolderId::Account(AccountId(1)),
+                    lots: vec![super::lot("a1", 3)],
+                },
+                ShareHolding {
+                    holder: HolderId::Account(AccountId(2)),
+                    lots: vec![super::lot("a2", 3)],
+                },
+                ShareHolding {
+                    holder: HolderId::IssuerTreasury,
+                    lots: vec![super::lot("treasury", 4)],
+                },
+            ],
+            10,
+        );
+        book.register(snapshot, calendar).unwrap();
+        book
+    }
+
+    #[test]
+    fn event_plan_requires_ordered_dates_and_next_trading_day_ex_date() {
+        let calendar = TradingCalendar::current_default_calendar().unwrap();
+        assert!(event_plan("2030-06-07").validate().is_ok());
+        assert!(event_plan("2030-06-07").validate_calendar(&calendar).is_ok());
+        assert!(matches!(
+            event_plan("2030-06-08").validate_calendar(&calendar),
+            Err(StockDistributionError::InvalidExRightsDate { .. })
+        ));
+        let mut weekend_registration = event_plan("2030-06-10");
+        weekend_registration.registered_on = date("2030-06-09");
+        assert!(matches!(
+            weekend_registration.validate_calendar(&calendar),
+            Err(StockDistributionError::InvalidTradingDate { .. })
+        ));
+        let mut unordered = event_plan("2030-06-07");
+        unordered.announced_on = date("2030-05-31");
+        assert!(matches!(
+            unordered.validate(),
+            Err(StockDistributionError::InvalidPlan { .. })
+        ));
+    }
+
+    #[test]
+    fn book_lifecycle_freezes_allocation_and_records_credit_idempotently() {
+        let calendar = TradingCalendar::current_default_calendar().unwrap();
+        let mut book = registered_book(&calendar);
+        assert_eq!(book.status(), &StockDistributionStatus::Registered);
+        let receipt = book.receipt().unwrap();
+        assert_eq!(receipt.issuer_treasury_shares_excluded, 4);
+        assert_eq!(
+            receipt
+                .holders
+                .iter()
+                .map(|holder| holder.whole_shares)
+                .sum::<u64>(),
+            3
+        );
+        assert_eq!(receipt.tie_break_seed, tie_break_seed("distribution-1"));
+        book.mark_credited(date("2030-06-07")).unwrap();
+        assert_eq!(book.status(), &StockDistributionStatus::Credited);
+        assert_eq!(book.credited_on(), Some(date("2030-06-07")));
+        book.mark_credited(date("2030-06-07")).unwrap();
+        assert!(matches!(
+            book.mark_credited(date("2030-06-10")),
+            Err(StockDistributionError::WrongStage { .. })
+        ));
+        book.validate_with_calendar(&calendar).unwrap();
+        let restored: StockDistributionBook =
+            serde_json::from_value(serde_json::to_value(&book).unwrap()).unwrap();
+        assert_eq!(restored, book);
+    }
+
+    #[test]
+    fn book_register_rejects_wrong_stage_and_foreign_snapshots_and_replays_strictly() {
+        let calendar = TradingCalendar::current_default_calendar().unwrap();
+        let mut book = StockDistributionBook::new(event_plan("2030-06-07")).unwrap();
+        let snapshot = frozen_snapshot(
+            &StockCode("600001".into()),
+            &CompanyId("issuer-1".into()),
+            vec![ShareHolding {
+                holder: HolderId::Account(AccountId(1)),
+                lots: vec![super::lot("a1", 6)],
+            }],
+            6,
+        );
+        assert!(matches!(
+            book.register(snapshot.clone(), &calendar),
+            Err(StockDistributionError::WrongStage {
+                operation: "register",
+                ..
+            })
+        ));
+        book.announce(date("2030-06-03")).unwrap();
+        let foreign = frozen_snapshot(
+            &StockCode("600002".into()),
+            &CompanyId("issuer-1".into()),
+            vec![ShareHolding {
+                holder: HolderId::Account(AccountId(1)),
+                lots: vec![super::lot("a1", 6)],
+            }],
+            6,
+        );
+        assert!(matches!(
+            book.register(foreign, &calendar),
+            Err(StockDistributionError::SnapshotMismatch { .. })
+        ));
+        book.register(snapshot.clone(), &calendar).unwrap();
+        book.register(snapshot, &calendar).unwrap();
+        let mut corrupt = serde_json::to_value(&book).unwrap();
+        corrupt["receipt"]["approved_total_new_shares"] = serde_json::json!("2");
+        assert!(serde_json::from_value::<StockDistributionBook>(corrupt).is_err());
+        let mut bad_seed = serde_json::to_value(&book).unwrap();
+        bad_seed["receipt"]["tie_break_seed"] = serde_json::json!("12345");
+        assert!(serde_json::from_value::<StockDistributionBook>(bad_seed).is_err());
+    }
+
+    #[test]
+    fn holder_credit_lots_inherit_restriction_and_reject_mixed_sources() {
+        let calendar = TradingCalendar::current_default_calendar().unwrap();
+        let book = registered_book(&calendar);
+        let receipt = book.receipt().unwrap().clone();
+        let lots = holder_credit_lots(&receipt, date("2030-06-07")).unwrap();
+        assert_eq!(lots.len(), 2);
+        assert!(lots
+            .iter()
+            .all(|lot| lot.restriction == ShareRestriction::Unrestricted));
+        assert_eq!(
+            lots.iter().map(|lot| lot.qty).sum::<u64>(),
+            receipt.approved_total_new_shares
+        );
+        assert!(matches!(
+            holder_credit_lots(&receipt, date("2030-06-06")),
+            Err(StockDistributionError::InvalidPlan { .. })
+        ));
+
+        let mut mixed = receipt.clone();
+        mixed.holders.push(HolderDistribution {
+            holder: HolderId::External("mixed-holder".into()),
+            original_shares: 2,
+            whole_shares: 1,
+            fractional_numerator: 0,
+            original_lots: vec![restricted_lot("r1", 1, "2030-08-01"), super::lot("u1", 1)],
+        });
+        assert!(matches!(
+            holder_credit_lots(&mixed, date("2030-06-07")),
+            Err(StockDistributionError::SourceLotAttributionConflict { .. })
+        ));
+
+        let mut restricted = receipt.clone();
+        restricted.holders.push(HolderDistribution {
+            holder: HolderId::External("restricted-holder".into()),
+            original_shares: 2,
+            whole_shares: 1,
+            fractional_numerator: 0,
+            original_lots: vec![
+                restricted_lot("r1", 1, "2030-08-01"),
+                restricted_lot("r2", 1, "2030-08-01"),
+            ],
+        });
+        let lots = holder_credit_lots(&restricted, date("2030-06-07")).unwrap();
+        let inherited = lots
+            .iter()
+            .find(|lot| lot.holder == HolderId::External("restricted-holder".into()))
+            .unwrap();
+        assert_eq!(
+            inherited.restriction,
+            ShareRestriction::Restricted {
+                reason: "nonfloat-lock".into(),
+                release_on: date("2030-08-01"),
+            }
+        );
+
+        let mut matured = receipt.clone();
+        matured.holders.push(HolderDistribution {
+            holder: HolderId::External("matured-holder".into()),
+            original_shares: 2,
+            whole_shares: 1,
+            fractional_numerator: 0,
+            original_lots: vec![
+                restricted_lot("r1", 1, "2030-06-01"),
+                restricted_lot("r2", 1, "2030-06-01"),
+            ],
+        });
+        let lots = holder_credit_lots(&matured, date("2030-06-07")).unwrap();
+        let matured_lot = lots
+            .iter()
+            .find(|lot| lot.holder == HolderId::External("matured-holder".into()))
+            .unwrap();
+        assert_eq!(
+            matured_lot.restriction,
+            ShareRestriction::Unrestricted
+        );
+    }
+}

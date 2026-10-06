@@ -5,10 +5,12 @@ export type SessionCorporateActions = {
   dividends: import("../../save/schema/corporate-actions").CashDividendBook[];
   dividend_tax_books:
     import("../../save/schema/corporate-actions").CashDividendTaxBook[];
+  stock_distributions:
+    import("../../save/schema/corporate-actions").StockDistributionBook[];
   account_gross_receipts:
     import("../../save/schema/corporate-actions").AccountDividendGrossReceipt[];
   external_receipts:
     import("../../save/schema/corporate-actions").ExternalDividendReceipt[];
-  applied_ex_dividend_groups:
-    import("../../save/schema/corporate-actions").AppliedCashExDividendGroup[];
+  applied_ex_reference_groups:
+    import("../../save/schema/corporate-actions").AppliedExReferenceGroup[];
 };

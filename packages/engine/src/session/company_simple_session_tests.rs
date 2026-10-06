@@ -444,7 +444,7 @@ fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
     assert!(failed_candidate
         .state
         .corporate_actions
-        .applied_ex_dividend_groups
+        .applied_ex_reference_groups
         .is_empty());
     assert_eq!(
         failed_candidate.state.markets[&stock].last_cash_ex_reference(),
@@ -1452,4 +1452,550 @@ fn disclosure_checkpoint_handles_open_close_and_closed_day_without_relaxing_publ
             assert!(crate::session::protocol::ProtocolSession::restore(&archive).is_ok());
         }
     }
+}
+
+fn session_with_approved_stock_distribution(
+    mixed_restriction: bool,
+) -> (GameSession, crate::company::CompanyId, crate::account::StockCode) {
+    use crate::account::Position;
+    use crate::accounting::AccountingAmount;
+    use crate::company::share_registry::{
+        AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
+    };
+    use crate::company::stock_distribution::{
+        StockDistributionEventPlan, StockDistributionKind,
+    };
+    use crate::orderbook::AccountId;
+
+    let mut setup = simple_setup();
+    setup.ticks_per_day = 1;
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    let approved_on = date("2030-01-02");
+    let announced_on = date("2030-01-03");
+    let registered_on = date("2030-01-04");
+    let ex_rights_on = date("2030-01-07");
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    // 面值 0.01 元：注册资本 = 发行股数 × 1 分，保证整除。
+    let capital = AccountingAmount::from_cents(i128::from(total_shares));
+    session
+        .define_dividend_legal_facts(&issuer, capital, "explicit test legal fact".into())
+        .unwrap();
+    let unrestricted_lot = |id: &str, qty: u64| ShareLot {
+        id: id.into(),
+        qty,
+        acquired_on: approved_on,
+        source: AcquisitionSource::InitialAllocation {
+            evidence: "fixture".into(),
+        },
+        restriction: ShareRestriction::Unrestricted,
+    };
+    let player_lots = if mixed_restriction {
+        vec![
+            ShareLot {
+                id: "player-restricted".into(),
+                qty: 3,
+                acquired_on: approved_on,
+                source: AcquisitionSource::InitialAllocation {
+                    evidence: "fixture".into(),
+                },
+                restriction: ShareRestriction::Restricted {
+                    reason: "nonfloat-lock".into(),
+                    release_on: date("2030-08-01"),
+                },
+            },
+            unrestricted_lot("player-free", 3),
+        ]
+    } else {
+        vec![unrestricted_lot("player-lot", 6)]
+    };
+    session
+        .state
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .fixture_insert_position(stock.clone(), Position::from_restored_parts(6, 0, 1_000, 0));
+    let registry = ShareRegistry::new(
+        stock.clone(),
+        issuer.clone(),
+        total_shares,
+        approved_on,
+        vec![
+            ShareHolding {
+                holder: HolderId::Account(AccountId(0)),
+                lots: player_lots,
+            },
+            ShareHolding {
+                holder: HolderId::External("external-a".into()),
+                lots: vec![unrestricted_lot("external-a-lot", 1)],
+            },
+            ShareHolding {
+                holder: HolderId::External("external-b".into()),
+                lots: vec![unrestricted_lot("external-b-lot", 1)],
+            },
+            ShareHolding {
+                holder: HolderId::IssuerTreasury,
+                lots: vec![unrestricted_lot("treasury-lot", total_shares - 8)],
+            },
+        ],
+    )
+    .unwrap();
+    session.configure_share_registry(registry).unwrap();
+    let plan = StockDistributionEventPlan {
+        event_id: "distribution-1".into(),
+        approval_reference: "shareholders-resolution-1".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: StockDistributionKind::BonusShares,
+        approved_on,
+        announced_on,
+        registered_on,
+        ex_rights_on,
+        shares_per_existing_share_micros: 250_000,
+        approved_total_new_shares: 2,
+    };
+    session.approve_stock_distribution(plan).unwrap();
+    (session, issuer, stock)
+}
+
+#[test]
+fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
+    use crate::orderbook::AccountId;
+
+    let (mut session, issuer, stock) = session_with_approved_stock_distribution(false);
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    // 01-02：批准日无事件推进；01-03：公告；01-04：R 日冻结分配。
+    for _ in 0..3 {
+        for _ in 0..session.state.setup.ticks_per_day {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+    }
+    let book = &session.corporate_actions().stock_distributions[0];
+    assert_eq!(
+        book.status(),
+        &crate::company::stock_distribution::StockDistributionStatus::Registered
+    );
+    let receipt = book.receipt().unwrap();
+    assert_eq!(receipt.approved_total_new_shares, 2);
+    let player_award = receipt
+        .holders
+        .iter()
+        .find(|holder| holder.holder == crate::company::share_registry::HolderId::Account(AccountId(0)))
+        .unwrap()
+        .whole_shares;
+    assert_eq!(player_award, 2);
+    // 周末两个自然日只做日结，不做 tick。
+    session.end_civil_day().unwrap();
+    session.end_civil_day().unwrap();
+    // 01-07（R+1）首个 tick 安装除权参考价：1000 分 / 1.25 = 800 分。
+    session.step().unwrap();
+    assert_eq!(session.state.markets[&stock].last_close(), Money::from_cents(800));
+    let groups = &session.corporate_actions().applied_ex_reference_groups;
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].date, crate::CivilDate::from_iso("2030-01-07").unwrap());
+    assert!(groups[0].cash_plan_ids.is_empty());
+    assert_eq!(groups[0].stock_event_ids, vec!["distribution-1".to_owned()]);
+    assert_eq!(groups[0].reference.reference_price, Money::from_cents(800));
+    // R+1 日终：非交易过户入账、投资者持仓加股、发行股数与账面事实同步。
+    session.end_civil_day().unwrap();
+    let registry = &session.corporate_actions().registries[0];
+    assert_eq!(registry.issued_shares(), total_shares + 2);
+    let credit_receipt = registry
+        .receipt_by_event("stock-distribution:distribution-1")
+        .expect("非交易过户回执必须存在");
+    assert_eq!(credit_receipt.request.day, crate::CivilDate::from_iso("2030-01-07").unwrap());
+    assert!(matches!(
+        credit_receipt.request.scope,
+        crate::company::share_registry::MovementScope::NonTradingTransfer { .. }
+    ));
+    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 8);
+    assert_eq!(session.account(AccountId(0)).unwrap().sellable_qty(&stock), 8);
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .issuers()
+            .get(&issuer)
+            .unwrap()
+            .issued_shares,
+        total_shares + 2
+    );
+    let book = &session.corporate_actions().stock_distributions[0];
+    assert_eq!(
+        book.status(),
+        &crate::company::stock_distribution::StockDistributionStatus::Credited
+    );
+    assert_eq!(book.credited_on(), Some(crate::CivilDate::from_iso("2030-01-07").unwrap()));
+    let fact = session
+        .state
+        .company_system
+        .stock_distribution_facts(&issuer)
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.event_id == "distribution-1")
+        .unwrap();
+    assert_eq!(fact.credited_on, Some(crate::CivilDate::from_iso("2030-01-07").unwrap()));
+    assert_eq!(fact.capital_increase, crate::accounting::AccountingAmount::from_cents(2));
+    // 严格恢复后继续一天不重复入账，锚点事实保持。
+    let save = session.save().unwrap();
+    let mut restored = GameSession::restore(&save).unwrap();
+    assert_eq!(
+        restored.business_state_hash().unwrap(),
+        session.business_state_hash().unwrap()
+    );
+    for _ in 0..restored.state.setup.ticks_per_day {
+        restored.step().unwrap();
+    }
+    restored.end_civil_day().unwrap();
+    assert_eq!(restored.corporate_actions().registries[0].issued_shares(), total_shares + 2);
+    assert_eq!(restored.account(AccountId(0)).unwrap().positions()[&stock].qty(), 8);
+    assert_eq!(restored.corporate_actions().registries.len(), 1);
+}
+
+#[test]
+fn stock_distribution_delivery_rolls_back_whole_day_on_mixed_restriction_sources() {
+    use crate::orderbook::AccountId;
+
+    let (mut session, _issuer, stock) = session_with_approved_stock_distribution(true);
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    for _ in 0..3 {
+        for _ in 0..session.state.setup.ticks_per_day {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    session.end_civil_day().unwrap();
+    session.step().unwrap();
+    let before_failure = session.business_state_hash().unwrap();
+    let failure = session.end_civil_day().unwrap_err();
+    assert!(
+        failure.to_string().contains("mixes restriction sources"),
+        "失败必须显式指向混合限售来源：{failure}"
+    );
+    assert_eq!(session.business_state_hash().unwrap(), before_failure);
+    let registry = &session.corporate_actions().registries[0];
+    assert_eq!(registry.issued_shares(), total_shares);
+    assert!(registry
+        .receipt_by_event("stock-distribution:distribution-1")
+        .is_none());
+    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 6);
+    assert_eq!(
+        session.corporate_actions().stock_distributions[0].status(),
+        &crate::company::stock_distribution::StockDistributionStatus::Registered
+    );
+}
+
+/// 推进 `days` 个自然日（每交易日先走满 tick），返回推进后的会话。
+fn advance_civil_days(session: &mut GameSession, days: u32) {
+    for _ in 0..days {
+        for _ in 0..session.state.setup.ticks_per_day {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+    }
+}
+
+fn account_position_projection(
+    session: &GameSession,
+) -> std::collections::BTreeMap<
+    crate::orderbook::AccountId,
+    std::collections::BTreeMap<crate::account::StockCode, u64>,
+> {
+    session
+        .state
+        .accounts
+        .iter()
+        .map(|(id, account)| {
+            (
+                *id,
+                account
+                    .positions()
+                    .iter()
+                    .map(|(code, position)| (code.clone(), u64::from(position.qty())))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn consecutive_stock_distributions_keep_par_constant_and_evolve_registered_capital() {
+    use crate::company::stock_distribution::{
+        StockDistributionEventPlan, StockDistributionKind,
+    };
+    use crate::orderbook::AccountId;
+
+    let (mut session, issuer, stock) = session_with_approved_stock_distribution(false);
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    // 01-02 批准、01-03 公告、01-04 R 日登记；周末两日后 01-07 R+1 入账。
+    advance_civil_days(&mut session, 3);
+    session.end_civil_day().unwrap();
+    session.end_civil_day().unwrap();
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let fact1 = session
+        .state
+        .company_system
+        .stock_distribution_facts(&issuer)
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.event_id == "distribution-1")
+        .unwrap();
+    assert_eq!(fact1.par_value_per_share, Money::from_cents(1));
+    assert_eq!(
+        fact1.registered_capital_at_approval,
+        crate::accounting::AccountingAmount::from_cents(i128::from(total_shares))
+    );
+    // 入账演进后注册资本 = 初始 + 面值 × 新增股数。
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .dividend_legal_facts(&issuer)
+            .unwrap()
+            .unwrap()
+            .registered_capital,
+        crate::accounting::AccountingAmount::from_cents(i128::from(total_shares) + 2)
+    );
+
+    // 第二次 10 送 3：入账后合格股份 10 × 0.3 = 3 股。旧实现用
+    // 「注册资本 ÷ 增大后的发行股数」重推面值，T/(T+2) 不整除会永久锁死第二次送转。
+    let second = StockDistributionEventPlan {
+        event_id: "distribution-2".into(),
+        approval_reference: "shareholders-resolution-2".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: StockDistributionKind::BonusShares,
+        approved_on: date("2030-01-08"),
+        announced_on: date("2030-01-09"),
+        registered_on: date("2030-01-10"),
+        ex_rights_on: date("2030-01-11"),
+        shares_per_existing_share_micros: 300_000,
+        approved_total_new_shares: 3,
+    };
+    session.approve_stock_distribution(second).unwrap();
+    let fact2 = session
+        .state
+        .company_system
+        .stock_distribution_facts(&issuer)
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.event_id == "distribution-2")
+        .unwrap();
+    // 面值恒定；第二次声明的批准时点注册资本按演进后事实冻结。
+    assert_eq!(fact2.par_value_per_share, fact1.par_value_per_share);
+    assert_eq!(
+        fact2.registered_capital_at_approval,
+        crate::accounting::AccountingAmount::from_cents(i128::from(total_shares) + 2)
+    );
+
+    // 走完第二次全链路：公告 → R 日登记 → R+1 入账。
+    advance_civil_days(&mut session, 3);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let registry = &session.corporate_actions().registries[0];
+    assert_eq!(registry.issued_shares(), total_shares + 5);
+    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 11);
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .issuers()
+            .get(&issuer)
+            .unwrap()
+            .issued_shares,
+        total_shares + 5
+    );
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .dividend_legal_facts(&issuer)
+            .unwrap()
+            .unwrap()
+            .registered_capital,
+        crate::accounting::AccountingAmount::from_cents(i128::from(total_shares) + 5)
+    );
+    let fact2 = session
+        .state
+        .company_system
+        .stock_distribution_facts(&issuer)
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.event_id == "distribution-2")
+        .unwrap();
+    assert_eq!(
+        fact2.credited_on,
+        Some(crate::CivilDate::from_iso("2030-01-11").unwrap())
+    );
+
+    // 可分配利润上限按演进后事实核定：面值总额明显超过上限的第三次送股被显式拒绝。
+    let oversized = StockDistributionEventPlan {
+        event_id: "distribution-oversized".into(),
+        approval_reference: "shareholders-resolution-3".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: StockDistributionKind::BonusShares,
+        approved_on: date("2030-01-12"),
+        announced_on: date("2030-01-13"),
+        registered_on: date("2030-01-14"),
+        ex_rights_on: date("2030-01-15"),
+        shares_per_existing_share_micros: 300_000,
+        approved_total_new_shares: 1_000_000_000,
+    };
+    let rejection = session.approve_stock_distribution(oversized).unwrap_err();
+    assert!(
+        rejection.to_string().contains("送股面值总额"),
+        "超上限送股必须因可分配利润上限被拒：{rejection}"
+    );
+    assert_eq!(session.corporate_actions().stock_distributions.len(), 2);
+}
+
+#[test]
+fn second_stock_distribution_on_same_ex_rights_day_is_rejected_at_approval() {
+    use crate::company::stock_distribution::{
+        StockDistributionEventPlan, StockDistributionKind,
+    };
+
+    let (mut session, _issuer, stock) = session_with_approved_stock_distribution(false);
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let same_day = StockDistributionEventPlan {
+        event_id: "distribution-same-day".into(),
+        approval_reference: "shareholders-resolution-2".into(),
+        issuer,
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: StockDistributionKind::BonusShares,
+        approved_on: date("2030-01-02"),
+        announced_on: date("2030-01-03"),
+        registered_on: date("2030-01-04"),
+        ex_rights_on: date("2030-01-07"),
+        shares_per_existing_share_micros: 100_000,
+        approved_total_new_shares: 1,
+    };
+    // 同 issuer/stock 同 ex_rights_on 的第二起事件必须在受理时被拒，
+    // 不能推迟到 R+1 首 tick 的除权准备才 StepFatal。
+    let rejection = session.approve_stock_distribution(same_day).unwrap_err();
+    assert!(
+        rejection.to_string().contains("同日多起送转"),
+        "同日第二起送转必须在受理时显式拒绝：{rejection}"
+    );
+    assert_eq!(session.corporate_actions().stock_distributions.len(), 1);
+}
+
+#[test]
+fn validate_rejects_nontrading_receipt_without_credited_stock_distribution_book() {
+    use crate::company::share_registry::{
+        AcquisitionSource, DayNetChange, MovementScope, NetAcquisition, ShareDayRequest,
+        ShareRestriction,
+    };
+
+    let (mut session, issuer, _stock) = session_with_approved_stock_distribution(false);
+    advance_civil_days(&mut session, 3);
+    session.end_civil_day().unwrap();
+    session.end_civil_day().unwrap();
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let day = crate::CivilDate::from_iso("2030-01-07").unwrap();
+    // 篡改注入：同日追加一笔没有对应送转账簿的非交易过户回执，并同步发行股数，
+    // 使其只违反「名册回执 → 已入账送转账簿」的反向勾稽方向。
+    session.state.corporate_actions.registries[0]
+        .close_day(ShareDayRequest {
+            event_id: "stock-distribution:ghost-event".into(),
+            day,
+            scope: MovementScope::NonTradingTransfer {
+                basis: "ghost-resolution".into(),
+            },
+            changes: vec![DayNetChange {
+                holder: crate::company::share_registry::HolderId::External("ghost".into()),
+                change: 1,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "stock-distribution:ghost-event:external-ghost".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "ghost-event".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+            }],
+        })
+        .unwrap();
+    std::sync::Arc::make_mut(&mut session.state.company_system)
+        .issuers
+        .record_share_issuance(&issuer, 1)
+        .unwrap();
+    let positions = account_position_projection(&session);
+    let rejection = session
+        .state
+        .corporate_actions
+        .validate(&positions, &session.state.company_system, day)
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("非交易过户回执"),
+        "无对应已入账送转账簿的回执必须被反向勾稽拒绝：{rejection}"
+    );
+}
+
+#[test]
+fn validate_fails_when_registered_book_missed_ex_rights_credit_date() {
+    let (mut session, _issuer, _stock) = session_with_approved_stock_distribution(false);
+    // 推进到 R 日登记完成（01-04 日终，状态 Registered）。
+    advance_civil_days(&mut session, 3);
+    let positions = account_position_projection(&session);
+    // 恢复校验在已过入账日的日期上不得接受仍未入账的 Registered 账簿。
+    let rejection = session
+        .state
+        .corporate_actions
+        .validate(
+            &positions,
+            &session.state.company_system,
+            crate::CivilDate::from_iso("2030-01-08").unwrap(),
+        )
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("错过入账日"),
+        "已过入账日仍 Registered 的送转账簿必须显式失败：{rejection}"
+    );
+}
+
+#[test]
+fn day_end_processing_fails_when_registered_book_missed_ex_rights_date() {
+    let (mut session, _issuer, _stock) = session_with_approved_stock_distribution(false);
+    advance_civil_days(&mut session, 3);
+    // 直接以已过入账日的日期执行送转日结：必须显式失败而不是静默跳过。
+    let failure = session
+        .state
+        .corporate_actions
+        .process_stock_distributions_on_day_end(
+            crate::CivilDate::from_iso("2030-01-08").unwrap(),
+            session.state.civil_clock.calendar(),
+            std::sync::Arc::make_mut(&mut session.state.company_system),
+            &mut session.state.accounts,
+        )
+        .unwrap_err();
+    assert!(
+        failure.to_string().contains("错过入账日"),
+        "已过入账日仍 Registered 的送转事件在日结处理中必须显式失败：{failure}"
+    );
 }

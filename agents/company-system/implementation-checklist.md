@@ -2,7 +2,7 @@
 
 > **范围与状态：** 本文按 2026-10-06 最新 [Q14 公司基本面与经营系统设计蓝图](../remaining-questions-and-features/q14-financial-model-design.md) 重整。目标是 `company/` 薄共同入口及可独立运行的 `SimpleFundamentals`，其财务查询、披露、分红、配股、增发、回购与 `CompanySimulation` 具有相同功能和业务语义。`CompanySimulation` 的经营系统由用户授权后续另开分支；当前不要求先完成客户/行业生产 dispatch。计划不代表实现或验收已完成。
 
-当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。现金分红候选接线已验证显式名册/法定事实下的真实税前到账、应付清偿、同日合计除息锚及公开公告/NPC 本人获知；个人公开市场身份可通过真实 FIFO 卖出触发股息税补缴并严格恢复。宿主/UI 配置入口、其他税务身份与公司行为仍未完成，`cash_settlement` 如实为 `false`。送转已有账户级碎股分配算法及权威回购专户事实，但尚未实际登记新增股份。底层接线不能扩称完整分红、认购或回购已可使用；证据与边界见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)及[当前交接](current-handoff.md)。
+当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。现金分红候选接线已验证显式名册/法定事实下的真实税前到账、应付清偿、同日合计除息锚及公开公告/NPC 本人获知；个人公开市场身份可通过真实 FIFO 卖出触发股息税补缴并严格恢复。送转已接通实际登记全链路（方案→R 日碎股分配→R+1 非交易过户入账、投资者加股、发行股数守恒、沪深分列除权锚），限售继承按同限售类整批继承、混合来源显式拒绝，Simple 侧只做面值展示事实。送转个税、送转公开公告与转增资本公积账面校验仍未完成。宿主/UI 配置入口、其他税务身份与公司行为仍未完成，`cash_settlement` 如实为 `false`。底层接线不能扩称完整分红、认购或回购已可使用；证据与边界见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)、[送转登记记录](stock-distribution.md)及[当前交接](current-handoff.md)。
 
 验证范围只包括短单测、编译、类型检查及构建。前序 Simple 批次的 Rust 代表短测 85 项、Web 新合同短测 45 项通过；后续报告窗口、现金公告、个人信息不足及股份分配基础的定向证据分别登记于[当前交接](current-handoff.md)，不把 85／45 作为所有后续改动的最终证据。真实存档由 release Engine 生成并验证恢复续行，绑定通过正规 typegen 生成。默认 features 下的 workspace 调用方编译及前序 WASM／Web 构建通过；旧经营 Session 的特定集团和冲击接线留作后续 Simulation 门禁，不因迁移测试归档而登记为通过。未运行完整回归。
 

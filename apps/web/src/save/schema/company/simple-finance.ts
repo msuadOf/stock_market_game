@@ -13,6 +13,30 @@ type DividendDeclaration = { readonly plan_id: string; readonly approved_on: str
 type DividendPlan = { readonly declaration: DividendDeclaration; readonly declaration_source: number; readonly reserve: string; readonly reserve_basis_year: number | null; readonly payments: Readonly<Record<string, DividendPayment>> };
 type DividendPosting = { readonly account: string; readonly side: "Debit" | "Credit"; readonly amount: string };
 type DividendLegalFacts = { readonly registered_capital: string; readonly source_evidence: string };
+type StockDistributionKind = "BonusShares" | "CapitalReserveConversion";
+type StockDistributionFact = { readonly event_id: string; readonly approval_reference: string; readonly kind: StockDistributionKind; readonly approved_on: string; readonly new_shares: string; readonly par_value_per_share: string; readonly capital_increase: string; readonly registered_capital_at_approval: string; readonly credited_on: string | null };
+
+function parseStockDistributionFact(value: unknown, path: string): StockDistributionFact {
+  const parsed = record(value, path)
+  exact(parsed, ["event_id", "approval_reference", "kind", "approved_on", "new_shares", "par_value_per_share", "capital_increase", "registered_capital_at_approval", "credited_on"], path)
+  const event_id = string(parsed.event_id, `${path}.event_id`)
+  const approval_reference = string(parsed.approval_reference, `${path}.approval_reference`)
+  const approved_on = civilDate(parsed.approved_on, `${path}.approved_on`)
+  const credited_on = parsed.credited_on === null ? null : civilDate(parsed.credited_on, `${path}.credited_on`)
+  if (!event_id.trim() || !approval_reference.trim()) throw new SaveSchemaError(path, "送转事件身份与批准引用不能为空")
+  const kind = oneOf(parsed.kind, `${path}.kind`, ["BonusShares", "CapitalReserveConversion"] as const)
+  const new_shares = string(parsed.new_shares, `${path}.new_shares`)
+  if (!/^[1-9]\d*$/.test(new_shares)) throw new SaveSchemaError(`${path}.new_shares`, "送转新增股数必须为正 u64 十进制字符串")
+  const par = string(parsed.par_value_per_share, `${path}.par_value_per_share`)
+  if (!/^[1-9]\d*$/.test(par)) throw new SaveSchemaError(`${path}.par_value_per_share`, "每股面值必须为正整数分")
+  const capital_increase = simpleAmount(parsed.capital_increase, `${path}.capital_increase`, true)
+  const registered_capital_at_approval = simpleAmount(parsed.registered_capital_at_approval, `${path}.registered_capital_at_approval`, true)
+  // 股本增加金额 = 每股面值（分）× 新增股数；两侧都以分核对（`Money` wire 为分、
+  // `AccountingAmount` 元字符串换算为分），不再额外乘 100。
+  if (accountingMinorUnits(capital_increase) !== BigInt(par) * BigInt(new_shares)) throw new SaveSchemaError(path, "送转股本增加金额必须等于每股面值乘以新增股数")
+  if (credited_on !== null && credited_on < approved_on) throw new SaveSchemaError(`${path}.credited_on`, "送转入账日期不得早于批准日期")
+  return { event_id, approval_reference, kind, approved_on, new_shares, par_value_per_share: par, capital_increase, registered_capital_at_approval, credited_on }
+}
 const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
@@ -161,7 +185,7 @@ function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string
 
 export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财务状态") {
   const parsed = record(value, path);
-  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "legal_facts"], path);
+  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "legal_facts"], path);
   const kind = oneOf(parsed.kind, `${path}.kind`, ["Industrial", "Bank", "Insurance", "RealEstate"] as const);
   const company = string(parsed.company, `${path}.company`);
   if (company.trim().length === 0) throw new SaveSchemaError(`${path}.company`, "不能为空");
@@ -178,10 +202,24 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
   const dividends = map(parsed.dividends, `${path}.dividends`, stringKey, parseDividendPlan);
   const legalFacts = parseDividendLegalFacts(parsed.legal_facts, `${path}.legal_facts`);
   const registeredCapital = legalFacts?.registered_capital ?? null;
+  const stock_distributions = map(parsed.stock_distributions, `${path}.stock_distributions`, stringKey, parseStockDistributionFact);
+  // 送转入账按 面值×新增股数 演进注册资本法定事实；分红与送转声明冻结的是各自
+  // 批准时点的注册资本。按「当前法定注册资本 − 批准日当天及之后才入账的送转股本
+  // 增加」重构批准时点口径：批准发生在日内、送转入账发生在日终，批准日当天的
+  // 入账也尚未反映在声明口径中。
+  const registeredCapitalMinor = registeredCapital === null ? null : accountingMinorUnits(registeredCapital);
+  const capitalAtApproval = (approvedOn: string): bigint | null => {
+    if (registeredCapitalMinor === null) return null;
+    let capital = registeredCapitalMinor;
+    for (const fact of Object.values(stock_distributions)) {
+      if (fact.credited_on !== null && fact.credited_on >= approvedOn) capital -= accountingMinorUnits(fact.capital_increase);
+    }
+    return capital;
+  };
   let reserved = 0n;
   let unpaid = 0n;
   for (const [planId, plan] of Object.entries(dividends)) {
-    if (planId.trim().length === 0 || plan.declaration.plan_id !== planId || plan.declaration.registered_capital !== registeredCapital) throw new SaveSchemaError(`${path}.dividends.${planId}.declaration`, "方案身份或注册资本与公司绑定事实不一致");
+    if (planId.trim().length === 0 || plan.declaration.plan_id !== planId || accountingMinorUnits(plan.declaration.registered_capital) !== capitalAtApproval(plan.declaration.approved_on)) throw new SaveSchemaError(`${path}.dividends.${planId}.declaration`, "方案身份或注册资本与公司绑定事实不一致");
     if (plan.declaration.approved_on <= openingDate) throw new SaveSchemaError(`${path}.dividends.${planId}.declaration.approved_on`, "批准日期不得早于公司开账日");
     if (plan.reserve_basis_year !== null && (plan.reserve_basis_year < Number(openingDate.slice(0, 4)) || plan.reserve_basis_year > Number(asOf.slice(0, 4)))) throw new SaveSchemaError(`${path}.dividends.${planId}.reserve_basis_year`, "公积金依据年度不得早于开账年度或晚于存档年度");
     reserved += accountingMinorUnits(plan.reserve);
@@ -190,6 +228,11 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
   }
   const dividendCount = Object.keys(dividends).length;
   if (dividendCount > 0 && legalFacts === null) throw new SaveSchemaError(`${path}.legal_facts`, "存在分红方案时必须保存注册资本法定事实及来源证据");
+  for (const [eventId, fact] of Object.entries(stock_distributions)) {
+    if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.event_id`, "送转事实键与事件身份不一致");
+    if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.approved_on`, "送转批准日期不得早于公司开账日");
+    if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.registered_capital_at_approval`, "送转声明的注册资本与公司绑定法定事实不一致");
+  }
   validateDividendBooks(dividends, books, path);
   const ledgerBalances = validateSimpleLedger(books, path);
   const latestJournalSource = books.journal.batches.flat().reduce((latest, entry) => Math.max(latest, entry.source), -1);
@@ -217,5 +260,5 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     return [start, end] as const;
   });
   if (through !== asOf) throw new SaveSchemaError(`${path}.recognized_periods`, "已确认期间必须覆盖开账后至当前财务日期");
-  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, legal_facts: legalFacts };
+  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, legal_facts: legalFacts };
 }

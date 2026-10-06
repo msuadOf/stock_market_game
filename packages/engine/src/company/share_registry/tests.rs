@@ -554,11 +554,164 @@ fn nullable_acquisition_is_required_and_nontrading_scope_is_not_ordinary_transfe
     request.scope = MovementScope::NonTradingTransfer {
         basis: "judicial-transfer-needs-separate-rule".into(),
     };
-    assert!(matches!(
-        fresh.close_day(request),
-        Err(ShareRegistryError::UnsupportedMovementScope { .. })
-    ));
+    // 非交易过户不得伪装普通二级市场过户：来源必须是公司行为。
+    assert!(fresh.close_day(request).is_err());
     assert_eq!(fresh, before);
+}
+
+fn issuance_request(day_text: &str, event_id: &str) -> ShareDayRequest {
+    ShareDayRequest {
+        event_id: event_id.into(),
+        day: day(day_text),
+        scope: MovementScope::NonTradingTransfer {
+            basis: "shareholders-resolution-1".into(),
+        },
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: 30,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "bonus-account-1".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "distribution-1".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+            },
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: 20,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "bonus-external".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "distribution-1".into(),
+                    },
+                    restriction: ShareRestriction::Restricted {
+                        reason: "nonfloat-lock".into(),
+                        release_on: day("2030-06-01"),
+                    },
+                }),
+            },
+        ],
+    }
+}
+
+#[test]
+fn non_trading_transfer_issues_new_shares_on_the_settled_day_and_grows_issued_shares() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let settled = registry.settled_on();
+    let receipt = registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    assert!(receipt.disposals.is_empty());
+    assert_eq!(registry.settled_on(), settled);
+    assert_eq!(registry.issued_shares(), 150);
+    // 幂等：同一事件身份重复提交同一请求直接返回原回执。
+    assert_eq!(
+        registry
+            .close_day(issuance_request("2030-01-02", "issue-1"))
+            .unwrap()
+            .request,
+        receipt.request
+    );
+    assert_eq!(registry.issued_shares(), 150);
+    // 公开市场次日继续推进，恢复仍严格合法。
+    registry
+        .close_day(ShareDayRequest {
+            event_id: "day3-empty".into(),
+            day: day("2030-01-03"),
+            scope: MovementScope::PublicMarket,
+            changes: vec![],
+        })
+        .unwrap();
+    let mut restored = serde_json::from_value::<ShareRegistry>(
+        serde_json::to_value(&registry).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(restored.issued_shares(), 150);
+    restored
+        .register("record-after-issue".into(), restored.settled_on())
+        .unwrap();
+    assert!(restored.validate().is_ok());
+}
+
+#[test]
+fn non_trading_transfer_rejects_disposal_secondary_source_and_zero_total() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let before = registry.clone();
+    let mut disposal = issuance_request("2030-01-02", "issue-disposal");
+    disposal.changes.push(DayNetChange {
+        holder: account(1),
+        change: -1,
+        acquisition: None,
+    });
+    assert!(registry.close_day(disposal).is_err());
+    let mut secondary = issuance_request("2030-01-02", "issue-secondary");
+    if let Some(acquisition) = secondary.changes[0].acquisition.as_mut() {
+        acquisition.source = AcquisitionSource::SecondaryMarket {
+            settlement: "not-a-corporate-action".into(),
+        };
+    }
+    assert!(registry.close_day(secondary).is_err());
+    let mut zero = issuance_request("2030-01-02", "issue-zero");
+    zero.changes.clear();
+    assert!(registry.close_day(zero).is_err());
+    // 非交易过户不能凭空前移到已结算日前一天，也不能跳到未来自然日。
+    assert!(registry
+        .close_day(issuance_request("2030-01-01", "issue-past"))
+        .is_err());
+    assert!(registry
+        .close_day(issuance_request("2030-01-03", "issue-future"))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn registration_snapshots_replay_issued_shares_before_later_non_trading_issuance() {
+    let mut registry = registry();
+    registry
+        .register("record-1".into(), day("2030-01-01"))
+        .unwrap();
+    registry.close_day(transfer(5)).unwrap();
+    // 同日"先登记、后送转入账"：快照冻结在增发前的发行股数上。
+    registry
+        .register("record-2".into(), day("2030-01-02"))
+        .unwrap();
+    assert_eq!(
+        registry.registration("record-2").unwrap().issued_shares(),
+        100
+    );
+    assert_eq!(registry.registration("record-2").unwrap().settled_receipts(), 1);
+    registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    // 同日"先送转入账、再登记"（另一事件）同样合法，快照冻结在增发后。
+    registry
+        .register("record-3".into(), day("2030-01-02"))
+        .unwrap();
+    assert_eq!(
+        registry.registration("record-3").unwrap().issued_shares(),
+        150
+    );
+    assert_eq!(registry.registration("record-3").unwrap().settled_receipts(), 2);
+    registry
+        .close_day(ShareDayRequest {
+            event_id: "day3-empty".into(),
+            day: day("2030-01-03"),
+            scope: MovementScope::PublicMarket,
+            changes: vec![],
+        })
+        .unwrap();
+    assert!(registry.validate().is_ok());
+    assert_eq!(
+        registry.registration("record-1").unwrap().issued_shares(),
+        100
+    );
+    let mut corrupt = serde_json::to_value(&registry).unwrap();
+    corrupt["registrations"][1]["settled_receipts"] = serde_json::json!("2");
+    assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+    let mut forged = serde_json::to_value(&registry).unwrap();
+    forged["registrations"][1]["issued_shares"] = serde_json::json!("150");
+    forged["registrations"][1]["holdings"][0]["lots"][0]["qty"] = serde_json::json!("80");
+    assert!(serde_json::from_value::<ShareRegistry>(forged).is_err());
 }
 
 #[test]

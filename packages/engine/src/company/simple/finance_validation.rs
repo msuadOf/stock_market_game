@@ -73,17 +73,38 @@ impl SimpleFinanceState {
             ));
         }
         for (plan_id, plan) in &self.dividends {
+            // 送转入账会按面值演进注册资本法定事实；分红声明冻结的是其批准时点的
+            // 注册资本。按「当前法定注册资本 − 批准日当天及之后才入账的送转股本
+            // 增加」重构批准时点口径：批准发生在日内、送转入账发生在日终，因此
+            // 批准日当天的入账也尚未反映在声明口径中。
+            let mut later_stock_credits = AccountingAmount::ZERO;
+            for fact in self
+                .stock_distributions
+                .values()
+                .filter(|fact| {
+                    fact.credited_on
+                        .is_some_and(|credited| credited >= plan.declaration.approved_on)
+                })
+            {
+                later_stock_credits = later_stock_credits.add(fact.capital_increase)?;
+            }
+            let capital_at_approval = self
+                .legal_facts
+                .0
+                .as_ref()
+                .ok_or_else(|| {
+                    SimpleFinanceError::DividendInvalid(
+                        "存在分红计划但缺少注册资本法定事实".into(),
+                    )
+                })?
+                .registered_capital
+                .sub(later_stock_credits)?;
             if plan_id.trim().is_empty()
                 || plan.declaration.plan_id != *plan_id
                 || !plan.declaration.total_gross.is_positive()
                 || plan.declaration.registered_capital.is_negative()
                 || plan.declaration.registered_capital.is_zero()
-                || self
-                    .legal_facts
-                    .0
-                    .as_ref()
-                    .map(|facts| facts.registered_capital)
-                    != Some(plan.declaration.registered_capital)
+                || capital_at_approval != plan.declaration.registered_capital
                 || plan.declaration.approved_on <= self.opening_date
                 || plan.reserve.is_negative()
             {
@@ -194,6 +215,39 @@ impl SimpleFinanceState {
             }
             unpaid_dividends = unpaid_dividends.add(plan.declaration.total_gross.sub(paid)?)?;
             reserved_amount = reserved_amount.add(plan.reserve)?;
+        }
+        // 送转声明的 registered_capital_at_approval 冻结各自批准时点口径，按与分红
+        // 声明相同的「当前法定注册资本 − 批准日当天及之后才入账的送转股本增加」
+        // 重构核对；批准在日内、入账在日终，批准日当天的入账尚未反映在声明口径中。
+        for (event_id, fact) in &self.stock_distributions {
+            let mut later_credits = AccountingAmount::ZERO;
+            for other in self
+                .stock_distributions
+                .values()
+                .filter(|other| {
+                    other
+                        .credited_on
+                        .is_some_and(|credited| credited >= fact.approved_on)
+                })
+            {
+                later_credits = later_credits.add(other.capital_increase)?;
+            }
+            let expected = self
+                .legal_facts
+                .0
+                .as_ref()
+                .ok_or_else(|| {
+                    SimpleFinanceError::StockDistributionInvalid(
+                        "存在送转声明但缺少注册资本法定事实".into(),
+                    )
+                })?
+                .registered_capital
+                .sub(later_credits)?;
+            if fact.registered_capital_at_approval != expected {
+                return Err(SimpleFinanceError::StockDistributionInvalid(format!(
+                    "送转声明 {event_id} 的批准时点注册资本与法定事实演进历史不一致"
+                )));
+            }
         }
         let payable = self
             .books

@@ -1,4 +1,7 @@
-use super::{cash_dividend_ex_reference_price, CashDividendFormula, ExReferencePriceError};
+use super::{
+    cash_dividend_ex_reference_price, stock_distribution_ex_rights_reference_price,
+    CashDividendFormula, ExReferencePriceError, StockDistributionExRightsFormula,
+};
 use crate::calendar::{
     CalendarExchange, CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar,
 };
@@ -202,5 +205,128 @@ fn rejects_exchange_approved_adjustment_formula_explicitly() {
     assert!(matches!(
         error,
         ExReferencePriceError::UnsupportedApprovedAdjustment
+    ));
+}
+
+#[test]
+fn stock_distribution_ex_rights_divides_previous_close_by_dilution_factor() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 沪市：10 送 5（ratio = 0.5），前收 1000 分，无现金红利 → 1000 / 1.5 = 666.67 分。
+    let result = stock_distribution_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+            ratio_micros: 500_000,
+        },
+        date("2030-06-06"),
+        Money::from_cents(1_000),
+        Money::ZERO,
+    )
+    .unwrap();
+    assert_eq!(result.ex_date, date("2030-06-07"));
+    assert_eq!(result.reference_price, Money::from_cents(667));
+
+    // 深市：10 转 2 加同日每股现金红利 10 分 → (1000 − 10) / 1.2 = 825 分。
+    let result = stock_distribution_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Szse,
+        StockDistributionExRightsFormula::ShenzhenShareChange {
+            ratio_micros: 200_000,
+        },
+        date("2030-06-06"),
+        Money::from_cents(1_000),
+        Money::from_cents(10),
+    )
+    .unwrap();
+    assert_eq!(result.reference_price, Money::from_cents(825));
+}
+
+#[test]
+fn stock_distribution_ex_rights_uses_bankers_rounding_at_half_cent() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 沪市 10 送 4：700 / 1.4 = 500 整除，无舍入。
+    let exact = stock_distribution_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+            ratio_micros: 400_000,
+        },
+        date("2030-06-06"),
+        Money::from_cents(700),
+        Money::ZERO,
+    )
+    .unwrap();
+    assert_eq!(exact.reference_price, Money::from_cents(500));
+    // 5001 / 1.5 = 3334：无半分情形。
+    let plain = stock_distribution_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+            ratio_micros: 500_000,
+        },
+        date("2030-06-06"),
+        Money::from_cents(5_001),
+        Money::ZERO,
+    )
+    .unwrap();
+    assert_eq!(plain.reference_price, Money::from_cents(3_334));
+}
+
+#[test]
+fn stock_distribution_ex_rights_rejects_cross_market_formula_and_invalid_inputs() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    assert!(matches!(
+        stock_distribution_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Szse,
+            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+                ratio_micros: 500_000
+            },
+            date("2030-06-06"),
+            Money::from_cents(1_000),
+            Money::ZERO,
+        ),
+        Err(ExReferencePriceError::FormulaExchangeMismatch { .. })
+    ));
+    assert!(matches!(
+        stock_distribution_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+                ratio_micros: 0
+            },
+            date("2030-06-06"),
+            Money::from_cents(1_000),
+            Money::ZERO,
+        ),
+        Err(ExReferencePriceError::InvalidShareChangeRatio)
+    ));
+    // 现金红利大到把分子扣成非正数时显式拒绝，不产生零或负参考价。
+    assert!(matches!(
+        stock_distribution_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+                ratio_micros: 500_000
+            },
+            date("2030-06-06"),
+            Money::from_cents(1_000),
+            Money::from_cents(1_000),
+        ),
+        Err(ExReferencePriceError::NonPositiveExRightsNumerator { .. })
+    ));
+    // 超大送转比例把参考价稀释到不足一分时显式拒绝。
+    assert!(matches!(
+        stock_distribution_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
+                ratio_micros: u64::MAX / 2
+            },
+            date("2030-06-06"),
+            Money::from_cents(1),
+            Money::ZERO,
+        ),
+        Err(ExReferencePriceError::NonPositiveReferencePrice { .. })
     ));
 }
