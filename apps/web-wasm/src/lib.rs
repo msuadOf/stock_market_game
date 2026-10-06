@@ -685,6 +685,71 @@ pub fn personal_trade_confirmations(handle: u32, before_receipt: Option<String>)
     })
 }
 
+/// 查询本机玩家（固定 AccountId(0)）的股息税状态：会话税务模式、纳税人身份分类
+/// 与每个已配置完整名册证券上的税账状态。只读汇总，不产生新事实。
+#[wasm_bindgen]
+pub fn owner_dividend_tax_status(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let view = session
+            .account_dividend_tax_status(AccountId(0))
+            .map_err(session_error_to_js)?;
+        to_js(&view)
+    })
+}
+
+/// 查询本机玩家（固定 AccountId(0)）各证券的个人现金分红税未划收税额与资金不足原因；
+/// 消费 `GameSession::dividend_tax_outstanding_views` 并按 owner 过滤，只读不落新事实。
+#[wasm_bindgen]
+pub fn owner_dividend_tax_outstanding_views(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let views = session
+            .dividend_tax_outstanding_views()
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let owner_views: Vec<_> = views
+            .into_iter()
+            .filter(|view| view.account == AccountId(0))
+            .collect();
+        to_js(&owner_views)
+    })
+}
+
+/// 显式配置账户在指定证券下的现金分红税务身份（宿主显式入口）。
+/// 仅限装配期语义：开局后（名册已有历史日结回执或已登记分红）配置会被 engine
+/// 显式拒绝，完整错误信息直接抛给宿主展示，不静默降级。
+#[wasm_bindgen]
+pub fn configure_dividend_tax_book(
+    handle: u32,
+    account: String,
+    stock: String,
+    profile: JsValue,
+) -> Result<(), JsValue> {
+    if account.is_empty()
+        || account.len() > 20
+        || !account.bytes().all(|byte| byte.is_ascii_digit())
+        || (account.len() > 1 && account.starts_with('0'))
+    {
+        return Err(JsValue::from_str("股息税账户必须是规范u64非负十进制字符串"));
+    }
+    let account = account
+        .parse::<u64>()
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    if stock.trim().is_empty() {
+        return Err(JsValue::from_str("股息税证券代码不能为空"));
+    }
+    let profile: engine::company::cash_dividend_tax::DividendTaxProfile =
+        serde_wasm_bindgen::from_value(profile)
+            .map_err(|error| JsValue::from_str(&format!("股息税身份无效：{error}")))?;
+    with_session(handle, |session| {
+        session
+            .configure_cash_dividend_tax_book(
+                AccountId(account),
+                engine::StockCode(stock),
+                profile,
+            )
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    })
+}
+
 #[wasm_bindgen]
 pub fn personal_trade_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
     let request: engine::session::PersonalTradeHistoryRequest = serde_wasm_bindgen::from_value(query)?;
