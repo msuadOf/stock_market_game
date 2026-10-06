@@ -236,3 +236,14 @@ protocol/civil/ 21 处 3000-3099。InvalidHistoryRead/ResourceLimit 并入所在
 - 外来文件处置：main 领先的未跟踪测试/生产文件（引用本分支不存在的 API）全部移至 `.tmp/e8/foreign-web*/` 与 `.tmp/e8/foreign-tests/`，含误移后恢复的 stock-ids.ts/stock-identity.ts/生成枚举（FrozenAsset/OrderVenue 手写补齐，ts_rs 再生成时核对）。
 - **P0-2 完成**：findings 未竟清单可划掉"web 适配"。
 - 待续：CompanyId 数值化（spec 已写在上一节）→ 光标 → 基准（阶段二合并数字）。
+
+## 阶段二合并基准（2026-10-07）
+
+H = 阶段一末（254c50b0，StockId 落地后）冻结 binary；C = 阶段二全部（95e70407，错误结构化+venue/frozen 枚举+光标数值化）。
+锚漂 -2.91%（≤5% 过）；6 对配对 mean +1.89%，区间重叠（H [283.0,298.2] vs C [290.6,298.1]），非全部 >1。
+**判定：性能中性**——错误结构化/枚举化是契约改进，性能收益来自阶段一 StockId（+22.73%）。
+正式口径 ~290x（阶段二无增益亦无回退）。
+
+## CompanyId 数值化：待独立 session
+
+209 处非测试引用、15+ 文件、BTreeMap 迭代序/存档 schema/跨域全牵动——规模与 StockId 相当，需专注 session 执行。设计 spec 已写在上一节。当前已完成至光标数值化（95e70407）。
