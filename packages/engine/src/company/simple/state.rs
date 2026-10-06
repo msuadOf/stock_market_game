@@ -1,16 +1,16 @@
 use super::{
-    finance::SimpleFinanceState,
-    period::{generate_period, PeriodGenerationState},
     SimpleConfig,
+    finance::SimpleFinanceState,
+    period::{PeriodGenerationState, generate_period},
 };
 use crate::{
     accounting::AccountingAmount,
     calendar::CivilDate,
     company::{
+        CompanyId, CompanySystemError,
         api::*,
         identity::IssuerRegistry,
         rng::{OperatingRng, RngStream},
-        CompanyId, CompanySystemError,
     },
 };
 use std::collections::BTreeMap;

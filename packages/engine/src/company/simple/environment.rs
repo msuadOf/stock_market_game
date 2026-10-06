@@ -1,8 +1,8 @@
-use super::period::SettlementCycle;
 use super::SimpleEnvironmentConfig;
+use super::period::SettlementCycle;
 use crate::{
     accounting::AccountingAmount,
-    company::{rng::OperatingRng, CompanySystemError},
+    company::{CompanySystemError, rng::OperatingRng},
 };
 
 pub(super) fn advance_environment(

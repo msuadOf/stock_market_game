@@ -93,15 +93,17 @@ fn duplicate_month_and_invalid_amount_leave_entire_summary_unchanged() {
     let before = serde_json::to_vec(&state).unwrap();
     assert!(state.apply_month(date(1, 31), &amounts).is_err());
     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
-    assert!(state
-        .apply_month(
-            date(2, 28),
-            &PeriodAmounts {
-                revenue: amount(-1),
-                ..amounts
-            }
-        )
-        .is_err());
+    assert!(
+        state
+            .apply_month(
+                date(2, 28),
+                &PeriodAmounts {
+                    revenue: amount(-1),
+                    ..amounts
+                }
+            )
+            .is_err()
+    );
     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
 }
 

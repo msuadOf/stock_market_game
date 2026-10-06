@@ -1,5 +1,5 @@
 use super::*;
-use crate::accounting::reports::{generate_report_set, ReportRequest, ReportSource, VersionKind};
+use crate::accounting::reports::{ReportRequest, ReportSource, VersionKind, generate_report_set};
 
 impl SimpleFinanceState {
     pub(super) fn validate_reports(&self) -> Result<(), SimpleFinanceError> {

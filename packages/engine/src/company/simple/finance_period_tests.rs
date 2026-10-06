@@ -20,17 +20,19 @@ fn actual_quarter_summary_is_not_a_fabricated_march_monthly_report() {
     let report = state.report(period, ReportKind::Quarter).unwrap();
     report.validate().unwrap();
     assert_eq!(report.income.cumulative.net_income, amount(6_750));
-    assert!(state
-        .apply_period(
-            date(2, 1),
-            date(6, 30),
-            &PeriodAmounts {
-                revenue: amount(1),
-                fixed_expense: amount(0),
-                variable_expense: amount(0)
-            }
-        )
-        .is_err());
+    assert!(
+        state
+            .apply_period(
+                date(2, 1),
+                date(6, 30),
+                &PeriodAmounts {
+                    revenue: amount(1),
+                    fixed_expense: amount(0),
+                    variable_expense: amount(0)
+                }
+            )
+            .is_err()
+    );
 }
 
 #[test]

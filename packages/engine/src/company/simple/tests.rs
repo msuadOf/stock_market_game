@@ -11,8 +11,8 @@ use crate::{
     },
     calendar::CivilDate,
     company::{
-        api::CompanyCommand, config::CompanySystemConfig, CompanyId, CompanyKind, CompanySpec,
-        CompanySystem, CompanySystemError, IndustryId,
+        CompanyId, CompanyKind, CompanySpec, CompanySystem, CompanySystemError, IndustryId,
+        api::CompanyCommand, config::CompanySystemConfig,
     },
 };
 
@@ -158,13 +158,15 @@ fn explicit_config_kind_is_required_and_must_match_issuer() {
     assert!(serde_json::from_value::<SimpleConfig>(saved).is_err());
     let mut cfg = config();
     cfg.companies[0].kind = CompanyKind::Bank;
-    assert!(CompanySystem::create(
-        vec![spec()],
-        CompanySystemConfig::Simple(cfg),
-        date("2030-01-01"),
-        19,
-    )
-    .is_err());
+    assert!(
+        CompanySystem::create(
+            vec![spec()],
+            CompanySystemConfig::Simple(cfg),
+            date("2030-01-01"),
+            19,
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -205,10 +207,12 @@ fn simple_creates_dated_summary_prehistory_with_expense_derived_loss() {
 fn simple_month_end_generates_facts_without_owning_publication_schedule() {
     let mut state = create(config());
     for day in 1..31 {
-        assert!(state
-            .advance_day(CivilDate::from_ymd(2030, 1, day).unwrap())
-            .unwrap()
-            .is_empty());
+        assert!(
+            state
+                .advance_day(CivilDate::from_ymd(2030, 1, day).unwrap())
+                .unwrap()
+                .is_empty()
+        );
     }
     let generated = state.advance_day(date("2030-01-31")).unwrap();
     assert_eq!(generated.len(), 1);
@@ -233,13 +237,15 @@ fn simple_zero_revenue_needs_explicit_restart_without_investor_funding() {
             .unwrap();
     }
     assert_eq!(state.history()[0].amounts.revenue, amount(0));
-    assert!(state
-        .submit_command(CompanyCommand::RestartRevenue {
-            company: spec().id,
-            revenue: amount(1000),
-            source: "".into()
-        })
-        .is_err());
+    assert!(
+        state
+            .submit_command(CompanyCommand::RestartRevenue {
+                company: spec().id,
+                revenue: amount(1000),
+                source: "".into()
+            })
+            .is_err()
+    );
     state
         .submit_command(CompanyCommand::RestartRevenue {
             company: spec().id,
@@ -286,13 +292,15 @@ fn simple_invalid_growth_and_simulation_are_not_fallbacks() {
     cfg.companies[0].generation.revenue_trend = AnnualTrendConfig::Fixed {
         annual_growth_bp: -10_001,
     };
-    assert!(CompanySystem::create(
-        vec![spec()],
-        CompanySystemConfig::Simple(cfg),
-        date("2030-01-01"),
-        1
-    )
-    .is_err());
+    assert!(
+        CompanySystem::create(
+            vec![spec()],
+            CompanySystemConfig::Simple(cfg),
+            date("2030-01-01"),
+            1
+        )
+        .is_err()
+    );
     assert!(matches!(
         CompanySystem::create(
             vec![spec()],

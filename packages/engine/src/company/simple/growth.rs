@@ -41,8 +41,11 @@ impl GrowthFactor {
         self.0
     }
     pub(crate) fn with_basis_point_noise(self, noise: i32) -> Result<Self, CompanySystemError> {
-        let factor = i128::from(self.0) + i128::from(noise) * i128::from(GROWTH_FACTOR_SCALE / 10_000);
-        u64::try_from(factor).map(Self).map_err(|_| CompanySystemError::Invalid("期间扰动造成负增长因子或超出范围".into()))
+        let factor =
+            i128::from(self.0) + i128::from(noise) * i128::from(GROWTH_FACTOR_SCALE / 10_000);
+        u64::try_from(factor)
+            .map(Self)
+            .map_err(|_| CompanySystemError::Invalid("期间扰动造成负增长因子或超出范围".into()))
     }
     pub fn compose(self, next: Self) -> Result<Self, CompanySystemError> {
         let product = u128::from(self.0) * u128::from(next.0);
