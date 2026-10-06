@@ -226,8 +226,8 @@ impl Market {
             .checked_mul(i128::from(self.tick.cents()))
             .and_then(|value| i64::try_from(value).ok())
             .ok_or_else(|| MoneyError::Overflow {
-                op: "positive_half_up_price_bound",
-                operand: format!("{} * {ratio_bps} / 10000", reference.cents()),
+                op: crate::money::MoneyOp::PositiveHalfUpBound,
+                operand: reference.cents(),
             })?;
         let mut bound = Money::from_cents(rounded_cents.max(self.tick.cents()));
         if upward && bound <= reference {
@@ -374,7 +374,8 @@ impl Market {
     ) -> Result<MarketDelta, MarketError> {
         if self.last_close != before_last_close {
             return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
-                reason: "continuous stock round changed yesterday's close".to_owned(),
+                reason: crate::orderbook::ProjectionMismatchKind::YesterdayCloseChanged,
+                context: Vec::new(),
             }));
         }
         Ok(MarketDelta {
@@ -392,7 +393,8 @@ impl Market {
             || self.last_close != delta.last_close
         {
             return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
-                reason: "candidate market version differs from stock worker".to_owned(),
+                reason: crate::orderbook::ProjectionMismatchKind::MarketVersionDiffers,
+                context: Vec::new(),
             }));
         }
         self.book.apply_changes(delta.book)?;

@@ -505,48 +505,54 @@ fn event_and_setup_construct() {
 fn formal_session_setup_enforces_a_share_baseline_and_category_limits() {
     let mut setup = sample_setup();
     setup.t1_enabled = false;
+    // 数值断言替代原文本断言 "T+1"（fault1012：正式 A 股局必须启用 T+1 结算）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("T+1")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1012
     ));
 
     let mut setup = sample_setup();
     setup.stocks[0].tick = Money::from_cents(2);
+    // 数值断言替代原文本断言 "0.01"（fault1017：最小价位必须为 A 股 0.01 元）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("0.01")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1017
     ));
 
     let mut setup = sample_setup();
     setup.config.stamp_tax_rate = 0.001;
+    // 数值断言替代原文本断言 "0.0005"（fault1013：卖出印花税率必须为 0.0005）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("0.0005")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1013
     ));
 
     let mut setup = sample_setup();
     setup.config.st_limit = 0.05;
+    // 数值断言替代原文本断言 "st_limit=10%"（fault1014：主板/风险警示涨跌幅限制必须均为 10%）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("st_limit=10%")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1014
     ));
 
     let mut setup = sample_setup();
     setup.stocks[0].code = StockCode("300101".to_string());
     setup.stocks[0].exchange = StockExchange::Shenzhen;
     setup.stocks[0].category = SecurityCategory::ChiNext;
+    // 数值断言替代原文本断言 "20%"（fault1023：涨跌幅与类别要求不符）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("20%")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1023
     ));
     setup.stocks[0].limit_pct = 0.20;
     assert!(setup.validate().is_ok());
 
     setup.stocks[0].code = StockCode("000101".to_string());
     setup.stocks[0].category = SecurityCategory::StMainBoard;
+    // 数值断言替代原文本断言 "10%"（fault1023：涨跌幅与类别要求不符）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message)) if message.contains("10%")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1023
     ));
 }
 
@@ -899,9 +905,11 @@ fn current_save_rejects_invalid_rules_and_derived_snapshot_fields() {
         .expect("healthy save");
     invalid_rules.setup.config.st_limit = 0.05;
     invalid_rules.setup.stocks[0].limit_pct = 0.05;
+    // 数值断言替代原文本断言 "10%"（setup 校验失败被压平为 fault2002：
+    // setup schema 校验失败透传包装，内层 fault1014 被压平）。
     assert!(matches!(
         GameSession::restore(&invalid_rules),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("10%")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2002
     ));
 
     let save = serde_json::to_value(
@@ -942,9 +950,10 @@ fn current_save_rejects_non_player_pending_intents() {
             account_ordinal: 0,
             stock_ordinal: 0,
         });
+    // 数值断言替代原文本断言 "player account"（fault2067：pending 玩家意图不属于玩家账户）。
     assert!(matches!(
         GameSession::restore(&npc_pending),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("player account")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2067
     ));
 }
 
@@ -956,9 +965,10 @@ fn current_save_requires_complete_active_candles_only_after_continuous_trading_s
     session.step().expect("healthy step");
     let mut missing = session.save().expect("healthy save");
     missing.snapshot.active_daily_candles.clear();
+    // 数值断言替代原文本断言 "active-candle"（fault2076：活跃日 K 市场集合与当前交易 tick 不符）。
     assert!(matches!(
         GameSession::restore(&missing),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("active-candle")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2076
     ));
 
     let mut unexpected = GameSession::new(sample_setup(), 42)
@@ -977,9 +987,10 @@ fn current_save_requires_complete_active_candles_only_after_continuous_trading_s
             trade_stats: Some(engine::DailyTradeStats::default()),
         },
     );
+    // 数值断言替代原文本断言 "active-candle"（fault2076：活跃日 K 市场集合与当前交易 tick 不符）。
     assert!(matches!(
         GameSession::restore(&unexpected),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("active-candle")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2076
     ));
 }
 #[test]
@@ -1104,9 +1115,10 @@ fn restore_rejects_mismatched_npc_strategy_state_identity() {
         ),
     );
 
+    // 数值断言替代原文本断言 "strategy identity"（fault2208：策略状态改变确定性策略身份）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("strategy identity")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2208
     ));
 }
 
@@ -1144,9 +1156,10 @@ fn restore_rejects_missing_or_extra_npc_strategy_states() {
         .expect("healthy save");
     let mut missing = save.clone();
     missing.runtime_state.strategy_states.remove(&AccountId(1));
+    // 数值断言替代原文本断言 "StrategyState account set"（fault2205：策略状态账户集合与 NPC 账户不精确一致）。
     assert!(matches!(
         GameSession::restore(&missing),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("StrategyState account set")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2205
     ));
 
     let mut extra = save;
@@ -1156,9 +1169,10 @@ fn restore_rejects_missing_or_extra_npc_strategy_states() {
             engine::MomentumStrategy::new(3, 0.02, 100).unwrap(),
         ),
     );
+    // 数值断言替代原文本断言 "StrategyState account set"（fault2205：策略状态账户集合与 NPC 账户不精确一致）。
     assert!(matches!(
         GameSession::restore(&extra),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("StrategyState account set")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2205
     ));
 }
 
@@ -1189,16 +1203,18 @@ fn restore_rejects_missing_deterministic_state() {
 
     let mut missing_history = save.clone();
     missing_history.price_history.clear();
+    // 数值断言替代原文本断言 "price-history"（fault2008：价格历史市场集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&missing_history),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("price-history")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2008
     ));
 
     let mut missing_candles = save;
     missing_candles.snapshot.daily_candles.clear();
+    // 数值断言替代原文本断言 "daily-candle"（fault2061：日 K 市场集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&missing_candles),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("daily-candle")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2061
     ));
 
     let mut continuous_setup = sample_setup();
@@ -1211,9 +1227,10 @@ fn restore_rejects_missing_deterministic_state() {
         .get_mut(&sid())
         .unwrap()
         .pop();
+    // 数值断言替代原文本断言 "price history"（fault2010：价格历史长度或价格非法）。
     assert!(matches!(
         GameSession::restore(&truncated),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("price history")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2010
     ));
 
     let mut truncated_candles = advanced.save().expect("healthy save");
@@ -1223,9 +1240,10 @@ fn restore_rejects_missing_deterministic_state() {
         .get_mut(&sid())
         .unwrap()
         .pop();
+    // 数值断言替代原文本断言 "expected 360"（fault2064：日 K 长度与期望不符）。
     assert!(matches!(
         GameSession::restore(&truncated_candles),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("expected 360")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2064
     ));
 
     for _ in 1..10 {
@@ -1239,9 +1257,11 @@ fn restore_rejects_missing_deterministic_state() {
         .unwrap();
     assert_eq!(candles.len(), 361);
     candles[180].time += 1;
+    // 数值断言替代原文本断言 "daily candle 180" + "expected"
+    // （fault2066：日 K 时间与日历期望不符；ctx[0]=下标 180）。
     assert!(matches!(
         GameSession::restore(&wrong_candle_time),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("daily candle 180") && message.contains("expected")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2066
     ));
 }
 
@@ -1250,10 +1270,10 @@ fn setup_rejects_an_exchange_that_conflicts_with_the_stock_code() {
     let mut setup = sample_setup();
     setup.stocks[0].exchange = StockExchange::Shenzhen;
 
+    // 数值断言替代原文本断言 "code belongs"（fault1021：配置交易所与代码所属板块不一致）。
     assert!(matches!(
         setup.validate(),
-        Err(engine::SessionError::InvalidSetup(message))
-            if message.contains("code belongs")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1021
     ));
 }
 
@@ -1267,7 +1287,11 @@ fn session_rejects_auction_that_consumes_the_whole_day() {
         Err(error) => error,
     };
 
-    assert!(error.to_string().contains("auction_ticks"));
+    // 数值断言替代原文本断言 "auction_ticks"（fault1008：auction_ticks 必须 < ticks_per_day）。
+    assert!(matches!(
+        error,
+        engine::SessionError::InvalidSetup(fault) if fault.code == 1008
+    ));
 }
 
 #[test]
@@ -1903,10 +1927,11 @@ fn session_rejects_a_float_larger_than_total_shares() {
     let mut setup = sample_setup();
     setup.stocks[0].total_shares = 99;
     setup.stocks[0].float_shares = 100;
+    // 数值断言替代原文本断言 "float_shares"+"total_shares"
+    // （fault1019：流通盘不得超过总股本）。
     assert!(matches!(
         GameSession::new(setup, 42),
-        Err(engine::SessionError::InvalidSetup(reason))
-            if reason.contains("float_shares") && reason.contains("total_shares")
+        Err(engine::SessionError::InvalidSetup(fault)) if fault.code == 1019
     ));
 }
 
@@ -2038,8 +2063,9 @@ fn restore_rejects_relative_history_seconds_and_wrong_active_civil_date() {
         .get_mut(&code)
         .unwrap()[0]
         .time = -360 * 86_400;
+    // 数值断言替代原文本断言 "expected"（fault2066：日 K 时间与日历期望不符）。
     assert!(
-        matches!(GameSession::restore(&old_relative_history), Err(engine::session::SessionError::InvalidSave(message)) if message.contains("expected"))
+        matches!(GameSession::restore(&old_relative_history), Err(engine::session::SessionError::InvalidSave(fault)) if fault.code == 2066)
     );
     let mut wrong_active_date = save;
     wrong_active_date
@@ -2048,8 +2074,9 @@ fn restore_rejects_relative_history_seconds_and_wrong_active_civil_date() {
         .get_mut(&code)
         .unwrap()
         .time += 86_400;
+    // 数值断言替代原文本断言 "current civil date"（fault2078：活跃日 K 与当前自然日不符）。
     assert!(
-        matches!(GameSession::restore(&wrong_active_date), Err(engine::session::SessionError::InvalidSave(message)) if message.contains("current civil date"))
+        matches!(GameSession::restore(&wrong_active_date), Err(engine::session::SessionError::InvalidSave(fault)) if fault.code == 2078)
     );
 }
 
@@ -2100,10 +2127,10 @@ fn restore_rejects_inconsistent_authoritative_daily_trade_statistics() {
     candle.volume = 100;
     candle.trade_stats = Some(engine::DailyTradeStats::default());
 
+    // 数值断言替代原文本断言 "trade statistics"（fault2153：蜡烛成交统计不一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("trade statistics")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2153
     ));
 }
 
@@ -2123,10 +2150,10 @@ fn restore_rejects_daily_turnover_above_the_ohlc_volume_bound() {
         trade_count: 1,
     });
 
+    // 数值断言替代原文本断言 "trade statistics"（fault2153：蜡烛成交统计不一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("trade statistics")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2153
     ));
 }
 
@@ -2143,10 +2170,10 @@ fn restore_rejects_missing_daily_statistics_for_positive_volume() {
     candle.volume = 100;
     candle.trade_stats = None;
 
+    // 数值断言替代原文本断言 "trade statistics"（fault2153：蜡烛成交统计不一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("trade statistics")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2153
     ));
 }
 
@@ -2170,10 +2197,10 @@ fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
         trade_count: 1,
     });
 
+    // 数值断言替代原文本断言 "trade statistics"（fault2153：蜡烛成交统计不一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("trade statistics")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2153
     ));
 }
 
@@ -2582,7 +2609,11 @@ fn audit_zero_npc_does_not_relax_invalid_allocation_parameter_guard() {
             engine::WithinKindDistribution::Random,
         );
         let error = setup.validate().unwrap_err();
-        assert!(error.to_string().contains("finite >=0"), "{error}");
+        // 数值断言替代原文本断言 "finite >=0"（fault1024：类间流通盘比例必须为有限非负 f64）。
+        assert!(
+            matches!(&error, engine::SessionError::InvalidSetup(fault) if fault.code == 1024),
+            "{error}"
+        );
     }
 }
 
@@ -2865,7 +2896,12 @@ fn seed_float_percentage_rejects_zero_weight_for_every_existing_kind() {
     let error = GameSession::new(setup, 42)
         .err()
         .expect("全零有效权重必须失败");
-    assert!(error.to_string().contains("existing NPC kinds"));
+    // 数值断言替代原文本断言 "existing NPC kinds"
+    // （fault1025：存在 NPC 类别时类间比例之和必须为有限正数）。
+    assert!(matches!(
+        error,
+        engine::SessionError::InvalidSetup(fault) if fault.code == 1025
+    ));
 }
 
 #[test]
@@ -2885,7 +2921,12 @@ fn seed_float_percentage_rejects_weight_assigned_only_to_an_absent_kind() {
     let error = GameSession::new(setup, 42)
         .err()
         .expect("只给缺失类别权重必须失败");
-    assert!(error.to_string().contains("existing NPC kinds"));
+    // 数值断言替代原文本断言 "existing NPC kinds"
+    // （fault1025：存在 NPC 类别时类间比例之和必须为有限正数）。
+    assert!(matches!(
+        error,
+        engine::SessionError::InvalidSetup(fault) if fault.code == 1025
+    ));
 }
 
 #[test]
@@ -2903,7 +2944,12 @@ fn seed_float_percentage_rejects_a_non_finite_sum_of_individually_finite_weights
     let error = GameSession::new(setup, 42)
         .err()
         .expect("有限大权重的溢出和必须失败");
-    assert!(error.to_string().contains("finite sum"));
+    // 数值断言替代原文本断言 "finite sum"
+    // （fault1025：存在 NPC 类别时类间比例之和必须为有限正数）。
+    assert!(matches!(
+        error,
+        engine::SessionError::InvalidSetup(fault) if fault.code == 1025
+    ));
 }
 
 #[test]
@@ -2974,7 +3020,11 @@ fn formal_session_rejects_zero_total_shares_even_when_float_is_zero() {
     setup.stocks[0].float_shares = 0;
 
     let error = GameSession::new(setup, 42).err().expect("零总股本必须失败");
-    assert!(error.to_string().contains("total_shares must be > 0"));
+    // 数值断言替代原文本断言 "total_shares must be > 0"（fault1018：总股本必须为正）。
+    assert!(matches!(
+        error,
+        engine::SessionError::InvalidSetup(fault) if fault.code == 1018
+    ));
 }
 
 // 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
@@ -4284,9 +4334,11 @@ fn restore_rejects_crossed_orders_instead_of_matching_while_loading() {
         .unwrap();
     let mut save = source.save().unwrap();
     save.resting_orders.get_mut(&code).unwrap()[1].side = Side::Buy;
+    // 数值断言替代原文本断言 "cross during restore"
+    // （fault1038：恢复连续竞价挂单失败，内层 ProjectionMismatch::CrossDuringRestore 被压平）。
     assert!(
-        matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(message))
-        if message.contains("cross during restore"))
+        matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(fault))
+        if fault.code == 1038)
     );
 }
 
@@ -4304,9 +4356,11 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
         .book_next_sequences
         .insert(engine::StockId(99), 0);
     for save in [missing, unknown] {
+        // 数值断言替代原文本断言 "book sequence market set"
+        // （fault2004：簿序号市场集合与 setup 不完全一致）。
         assert!(
-            matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(message))
-            if message.contains("book sequence market set"))
+            matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(fault))
+            if fault.code == 2004)
         );
     }
     let mut nonadvancing = saved;
@@ -4316,9 +4370,11 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
         nonadvancing
             .book_next_sequences
             .insert(code.clone(), cursor);
+        // 数值断言替代原文本断言 "below cursor"
+        // （fault1038：恢复连续竞价挂单失败，内层 ProjectionMismatch::UnsafeSeq 被压平）。
         assert!(
-            matches!(GameSession::restore(&nonadvancing), Err(engine::SessionError::InvalidSave(message))
-            if message.contains("below cursor"))
+            matches!(GameSession::restore(&nonadvancing), Err(engine::SessionError::InvalidSave(fault))
+            if fault.code == 1038)
         );
     }
     let mut duplicate = TestOrderSaveFixture::with_resting_sellers(2, 10_000_000)
@@ -4332,13 +4388,11 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
     let repeated = orders[0].seq;
     orders[1].seq = repeated;
     assert!(duplicate.book_next_sequences[&code] > repeated);
-    let expected = format!(
-        "cannot restore resting orders for {}: stock book projection mismatch: duplicate saved book sequence {repeated}",
-        code.0
-    );
+    // 数值断言替代原文本等值断言 "…duplicate saved book sequence {repeated}"
+    // （fault1038：恢复连续竞价挂单失败，内层 ProjectionMismatch::DuplicateSeq 被压平）。
     assert!(
-        matches!(GameSession::restore(&duplicate), Err(engine::SessionError::InvalidSave(message))
-        if message == expected)
+        matches!(GameSession::restore(&duplicate), Err(engine::SessionError::InvalidSave(fault))
+        if fault.code == 1038)
     );
 }
 
@@ -4656,9 +4710,10 @@ fn restore_rejects_missing_invalid_or_future_market_minute_history() {
 
     let mut missing = save.clone();
     missing.market_minute_closes.clear();
+    // 数值断言替代原文本断言 "market-minute"（fault2011：市场分钟收盘市场集合与 setup 不完全一致）。
     assert!(matches!(
         engine::GameSession::restore(&missing),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("market-minute")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2011
     ));
 
     let mut duplicate = save.clone();
@@ -4668,16 +4723,18 @@ fn restore_rejects_missing_invalid_or_future_market_minute_history() {
         .get_mut(&code)
         .unwrap()
         .push(sample);
+    // 数值断言替代原文本断言 "strictly increasing"（fault2015：市场分钟历史键非严格递增）。
     assert!(matches!(
         engine::GameSession::restore(&duplicate),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("strictly increasing")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2015
     ));
 
     let mut non_positive = save.clone();
     non_positive.market_minute_closes.get_mut(&code).unwrap()[0].close = Money::ZERO;
+    // 数值断言替代原文本断言 "positive"（fault2016：市场分钟历史含非正收盘价）。
     assert!(matches!(
         engine::GameSession::restore(&non_positive),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("positive")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2016
     ));
 
     let mut future = save;
@@ -4688,9 +4745,10 @@ fn restore_rejects_missing_invalid_or_future_market_minute_history() {
         .last_mut()
         .unwrap()
         .absolute_trading_minute = 24;
+    // 数值断言替代原文本断言 "future"（fault2017：市场分钟历史含缺失或未来分钟）。
     assert!(matches!(
         engine::GameSession::restore(&future),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("future")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2017
     ));
 }
 
@@ -4701,9 +4759,10 @@ fn restore_rejects_missing_invalid_or_stale_npc_attention_state() {
 
     let mut missing = save.clone();
     missing.npc_attention.remove(&AccountId(1));
+    // 数值断言替代原文本断言 "attention account set"（fault2021：NPC 关注账户集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&missing),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("attention account set")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2021
     ));
 
     let mut invalid_probability = save.clone();
@@ -4712,9 +4771,10 @@ fn restore_rejects_missing_invalid_or_stale_npc_attention_state() {
         .get_mut(&AccountId(1))
         .unwrap()
         .base_probability = f64::NAN;
+    // 数值断言替代原文本断言 "attention probability"（fault2023：NPC 关注概率非有限或不在 (0,1]）。
     assert!(matches!(
         GameSession::restore(&invalid_probability),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("attention probability")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2023
     ));
 
     let mut changed_profile = save.clone();
@@ -4723,9 +4783,11 @@ fn restore_rejects_missing_invalid_or_stale_npc_attention_state() {
         .get_mut(&AccountId(1))
         .unwrap();
     profile.base_probability = (profile.base_probability + 0.01).min(1.0);
+    // 数值断言替代原文本断言 "deterministic profile"
+    // （fault1041：恢复的 NPC 注意力基础概率与确定性重建值不符）。
     assert!(matches!(
         GameSession::restore(&changed_profile),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("deterministic profile")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 1041
     ));
 
     let mut advanced = GameSession::new(sample_setup(), 42).unwrap();
@@ -4736,9 +4798,11 @@ fn restore_rejects_missing_invalid_or_stale_npc_attention_state() {
         .get_mut(&AccountId(1))
         .unwrap()
         .next_attention_candidate_tick = 0;
+    // 数值断言替代原文本断言 "precedes snapshot tick"
+    // （fault2024：NPC 下次关注候选 tick 早于快照 tick）。
     assert!(matches!(
         GameSession::restore(&stale),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("precedes snapshot tick")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2024
     ));
 }
 
@@ -4750,20 +4814,21 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
 
     let mut missing = save.clone();
     missing.retail_experience.remove(&retail);
+    // 数值断言替代原文本断言 "experience account set"（fault2025：散户经历账户集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&missing),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("experience account set")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2025
     ));
 
     let mut invalid_equity = save.clone();
     let experience = invalid_equity.retail_experience.get_mut(&retail).unwrap();
     experience.reference_equity = Some(Money::from_cents(10));
     experience.peak_equity = Some(Money::from_cents(9));
+    // 数值断言替代原文本断言 "equity experience references"
+    // （fault2037：散户账户权益经历基准/峰值引用非法）。
     assert!(matches!(
         GameSession::restore(&invalid_equity),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("equity experience references")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2037
     ));
 
     let held_code = save.snapshot.accounts[&retail]
@@ -4779,10 +4844,11 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
             .unwrap()
             .stocks
             .remove(&code);
+        // 数值断言替代原文本断言 "missing experience for a held stock"
+        // （fault2038：持仓股票缺少经历条目）。
         assert!(matches!(
             GameSession::restore(&missing_holding),
-            Err(engine::SessionError::InvalidSave(message))
-                if message.contains("missing experience for a held stock")
+            Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2038
         ));
 
         let mut invalid_order = session.save().expect("healthy save");
@@ -4796,10 +4862,11 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
                 ..engine::RetailStockExperience::default()
             },
         );
+        // 数值断言替代原文本断言 "invalid last buy order id"
+        // （fault2044：最近买/卖委托 id 非法，order_id >= next_order_id）。
         assert!(matches!(
             GameSession::restore(&invalid_order),
-            Err(engine::SessionError::InvalidSave(message))
-                if message.contains("invalid last buy order id")
+            Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2044
         ));
     }
 }
@@ -4821,10 +4888,11 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         .get_mut(&code)
         .unwrap()
         .adverse_move_recorded = true;
+    // 数值断言替代原文本断言 "adversity without a buy identity"
+    // （fault2046：记录逆境但缺买入身份）。
     assert!(matches!(
         GameSession::restore(&adverse_without_buy),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("adversity without a buy identity")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2046
     ));
 
     let mut peak_below_latest_buy = held_session.save().expect("healthy save");
@@ -4837,10 +4905,11 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         .unwrap();
     stock.last_buy_price = Some(Money::from_cents(1_100));
     stock.last_buy_order_id = Some(1);
+    // 数值断言替代原文本断言 "peak below its latest buy"
+    // （fault2050：峰值低于最近买入价）。
     assert!(matches!(
         GameSession::restore(&peak_below_latest_buy),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("peak below its latest buy")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2050
     ));
 
     let mut held_without_entry = held_session.save().expect("healthy save");
@@ -4852,10 +4921,11 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         .get_mut(&code)
         .unwrap()
         .entry_reference_price = None;
+    // 数值断言替代原文本断言 "invalid active experience"
+    // （fault2047：持仓活跃经历字段非法）。
     assert!(matches!(
         GameSession::restore(&held_without_entry),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("invalid active experience")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2047
     ));
 
     let empty_session = GameSession::new(sample_setup(), 42).unwrap();
@@ -4872,10 +4942,11 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
                 ..engine::RetailStockExperience::default()
             },
         );
+    // 数值断言替代原文本断言 "inconsistent post-exit state"
+    // （fault2054：退出后状态字段不一致）。
     assert!(matches!(
         GameSession::restore(&cooldown_without_sell),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("inconsistent post-exit state")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2054
     ));
 
     let mut observation_with_trade_fields = empty_session.save().expect("healthy save");
@@ -4896,8 +4967,10 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         Ok(_) => panic!("observation-only state with a buy identity must be rejected"),
         Err(error) => error,
     };
+    // 数值断言替代原文本断言 "invalid observation-only state"
+    // （fault2051：未持仓观察态字段非法）。
     assert!(
-        matches!(error, engine::SessionError::InvalidSave(ref message) if message.contains("invalid observation-only state")),
+        matches!(error, engine::SessionError::InvalidSave(ref fault) if fault.code == 2051),
         "unexpected restore error: {error}"
     );
 }
@@ -4936,8 +5009,9 @@ fn restore_rejects_continuous_orders_during_call_auction() {
     let error = GameSession::restore(&save)
         .err()
         .expect("continuous orders in call auction must be rejected");
+    // 数值断言替代原文本断言 "call-auction"（fault2155：集合竞价存档不得含连续撮合挂单）。
     assert!(
-        matches!(&error, engine::SessionError::InvalidSave(message) if message.contains("call-auction")),
+        matches!(&error, engine::SessionError::InvalidSave(fault) if fault.code == 2155),
         "unexpected restore error: {error}"
     );
 }
@@ -4965,10 +5039,12 @@ fn restore_rejects_unreachable_t1_locks() {
                 recovered_cents: 0,
             },
         );
+    // 数值断言替代原文本断言 "formal A-share sessions require T+1 settlement"
+    // （存档 setup 的 t1_enabled=false 被 setup 校验拒绝，压平为 fault2002；
+    // 内层 fault1012 码被压平）。
     assert!(matches!(
         GameSession::restore(&t0_save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("formal A-share sessions require T+1 settlement")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2002
     ));
 
     let mut auction_setup = sample_setup();
@@ -4991,10 +5067,10 @@ fn restore_rejects_unreachable_t1_locks() {
                 recovered_cents: 0,
             },
         );
+    // 数值断言替代原文本断言 "unreachable T+1"（fault2060：当前相位下 T+1 锁定不可达）。
     assert!(matches!(
         GameSession::restore(&auction_save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("unreachable T+1")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2060
     ));
 }
 
@@ -5034,10 +5110,10 @@ fn restore_rejects_split_odd_lot_sell_orders() {
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     save.book_next_sequences.insert(code.clone(), 3);
 
+    // 数值断言替代原文本断言 "odd-lot"（fault2179：卖出数量拆分零股尾差违规）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("odd-lot")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2179
     ));
 }
 
@@ -5194,10 +5270,11 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     save.book_next_sequences.insert(code.clone(), 2);
 
+    // 数值断言替代原文本断言 "invalid saved resting order"
+    // （fault2164：存档挂单字段非法，成交金额与数量进度不自洽）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("invalid saved resting order")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2164
     ));
 }
 
@@ -5224,10 +5301,10 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     buy_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     buy_save.book_next_sequences.insert(code.clone(), 2);
+    // 数值断言替代原文本断言 "filled value"（fault2176：已成交金额超出价格界限乘积）。
     assert!(matches!(
         GameSession::restore(&buy_save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("filled value")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2176
     ));
 
     let sell_session = player_session_with_position(200, 10_000_000);
@@ -5249,10 +5326,10 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     sell_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     sell_save.book_next_sequences.insert(code.clone(), 2);
+    // 数值断言替代原文本断言 "filled value"（fault2176：已成交金额超出价格界限乘积）。
     assert!(matches!(
         GameSession::restore(&sell_save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("filled value")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2176
     ));
 }
 

@@ -58,7 +58,8 @@ impl BookState {
                 let key = (Reverse(order.price), order.seq);
                 if self.bids.contains_key(&key) {
                     return Err(OrderError::ProjectionMismatch {
-                        reason: "bid price-time key already exists".to_owned(),
+                        reason: crate::orderbook::ProjectionMismatchKind::BidKeyExists,
+                        context: Vec::new(),
                     });
                 }
                 Arc::make_mut(&mut self.bids).insert(key, order);
@@ -68,7 +69,8 @@ impl BookState {
                 let key = (order.price, order.seq);
                 if self.asks.contains_key(&key) {
                     return Err(OrderError::ProjectionMismatch {
-                        reason: "ask price-time key already exists".to_owned(),
+                        reason: crate::orderbook::ProjectionMismatchKind::AskKeyExists,
+                        context: Vec::new(),
                     });
                 }
                 Arc::make_mut(&mut self.asks).insert(key, order);
@@ -86,7 +88,8 @@ impl BookState {
                 RestingKey::Ask(price, seq) => Arc::make_mut(&mut self.asks).remove(&(price, seq)),
             };
             return order.ok_or_else(|| OrderError::ProjectionMismatch {
-                reason: format!("live order index points at an absent order: {id:?}"),
+                reason: crate::orderbook::ProjectionMismatchKind::AbsentLiveOrder,
+                context: vec![id.0],
             });
         }
         if self.filled_orders.owner(id).is_some() {
@@ -183,7 +186,8 @@ impl BookState {
                 || (change.after.is_some() && change.filled_owner.is_some())
             {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: format!("candidate order differs from stock worker: {:?}", change.id),
+                    reason: crate::orderbook::ProjectionMismatchKind::CandidateDiffers,
+                    context: vec![change.id.0],
                 });
             }
         }

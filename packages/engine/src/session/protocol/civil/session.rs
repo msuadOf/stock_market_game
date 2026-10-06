@@ -1,4 +1,5 @@
 use super::{CivilUpdate, TickBatch, TickFrame};
+use crate::error::{ValidationFault, ymd_context};
 use crate::experience::AppendOnlyHistory;
 use crate::session::{GameSession, SessionError, SessionSetup, StepFatal};
 use std::cell::RefCell;
@@ -130,15 +131,15 @@ impl ProtocolSession {
         let sessions_through_settled_date = sessions_through_current_date
             .checked_sub(u32::from(current_date_trades))
             .ok_or_else(|| {
-                SessionError::InvalidSave("自然日时钟的已完成交易会话计数不合法".into())
+                // fault3012: 自然日时钟的已完成交易会话计数不合法（当前日内会话数超过时钟计数）。
+                SessionError::InvalidSave(ValidationFault::bare(3012))
             })?;
         let completed = slot.civil_clock.settled_through.is_some()
             && slot.snapshot.tick.is_multiple_of(slot.setup.ticks_per_day)
             && game.day() == sessions_through_settled_date;
         if !completed {
-            return Err(SessionError::InvalidSave(
-                "公共日级档必须来自完整的自然日日终结算".into(),
-            ));
+            // fault3013: 公共日级档必须来自完整的自然日日终结算。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3013)));
         }
         if slot
             .resting_orders
@@ -157,9 +158,8 @@ impl ProtocolSession {
                 .as_ref()
                 .is_some_and(|batch| !batch.intents.is_empty())
         {
-            return Err(SessionError::InvalidSave(
-                "公共日级档不能包含日内活动委托或待处理输入".into(),
-            ));
+            // fault3014: 公共日级档不能包含日内活动委托或待处理输入。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3014)));
         }
         Ok(Self::from_game(game, Some(Arc::new(slot.clone()))))
     }
@@ -208,7 +208,8 @@ impl ProtocolSession {
             .as_ref()
             .map(|slot| slot.as_ref().clone())
             .ok_or_else(|| {
-                SessionError::InvalidSave("尚未完成首次自然日日结，没有可用日终存档".into())
+                // fault3015: 尚未完成首次自然日日结，没有可用日终存档。
+                SessionError::InvalidSave(ValidationFault::bare(3015))
             })
     }
 
@@ -227,15 +228,17 @@ impl ProtocolSession {
                     .filter(|slot| slot.snapshot.seq == key.seq)
             })
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "日终候选 {} / {} 已失效或不存在",
-                    key.settled_date, key.seq
+                // fault3016: 日终候选已失效或不存在；ctx[0]=请求的自然日 yyyymmdd，ctx[1]=请求的 seq
+                // （原文本 "日终候选 {settled_date} / {seq} 已失效或不存在"）。
+                let (year, month, day) = key.settled_date.ymd();
+                SessionError::InvalidSave(ValidationFault::new(
+                    3016,
+                    vec![ymd_context(year, month, day), key.seq],
                 ))
             })?;
         if candidate.civil_clock.settled_through != Some(key.settled_date) {
-            return Err(SessionError::InvalidSave(
-                "日终候选自然日与请求不一致".into(),
-            ));
+            // fault3017: 日终候选自然日与请求不一致（候选档 settled_through ≠ SaveCandidateKey.settled_date）。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3017)));
         }
         let captured = candidate.as_ref().clone();
         pending.remove(&key.seq);

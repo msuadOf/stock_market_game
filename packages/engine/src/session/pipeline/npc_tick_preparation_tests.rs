@@ -46,8 +46,10 @@ fn missing_npc_batch_is_valid_only_at_a_day_boundary() {
     session.step().unwrap();
     let mut intraday = session.save().unwrap();
     intraday.pending_npc = None;
+    // 数值断言替代原文本断言 "pending NPC observation tick"
+    // （fault2071：pending NPC 观察 tick 与快照市场 tick 不一致）。
     assert!(matches!(GameSession::restore(&intraday),
-        Err(crate::SessionError::InvalidSave(message)) if message.contains("pending NPC observation tick")));
+        Err(crate::SessionError::InvalidSave(fault)) if fault.code == 2071));
     session.state.pending_npc = None;
     assert!(
         matches!(session.step(), Err(StepFatal::InvariantViolation { description, .. })
@@ -204,9 +206,11 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
     // A cancellation may legitimately target an order that is already gone.
     GameSession::restore(&save).unwrap();
     save.pending_npc.as_mut().unwrap().dependencies = vec![(0, 2)];
+    // 数值断言替代原文本断言 "pending NPC dependency"
+    // （fault2068：pending NPC 依赖表校验失败，内层 validate_dependencies 文本被压平）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(crate::SessionError::InvalidSave(message)) if message.contains("pending NPC dependency")
+        Err(crate::SessionError::InvalidSave(fault)) if fault.code == 2068
     ));
     session.state.pending_npc = save.pending_npc;
     assert!(matches!(
@@ -256,10 +260,11 @@ fn restore_rejects_npc_dependency_that_reverses_stock_receipt_order() {
     save.pending_npc.as_mut().unwrap().intents[0].stock_ordinal = 1;
     save.pending_npc.as_mut().unwrap().intents[1].stock_ordinal = 0;
 
+    // 数值断言替代原文本断言 "precedence contains a cycle"
+    // （fault2084：回执先序图含环）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(crate::SessionError::InvalidSave(message))
-            if message.contains("precedence contains a cycle")
+        Err(crate::SessionError::InvalidSave(fault)) if fault.code == 2084
     ));
 }
 
@@ -296,7 +301,11 @@ fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
         .step()
         .expect_err("NPC receipt overflow must fail the tick");
 
-    assert!(format!("{error:?}").contains("ingress ordinal overflow"));
+    // fault1004：股票入场序号溢出（session 装配码段；经 ResourceLimit/StepFatal 上抛）。
+    assert!(
+        format!("{error:?}").contains("fault[1004]"),
+        "实际错误: {error:?}"
+    );
     assert_eq!(session.business_state_hash().unwrap(), before);
     assert_eq!(session.state.tick, tick_before);
     assert_eq!(

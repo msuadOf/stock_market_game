@@ -49,7 +49,7 @@ fn real_parallel_ledger_reports_early_total_overflow_before_later_row_failure() 
             assert!(
                 matches!(error, super::StepFatal::InvariantViolation { description, location }
                 if location == "pipeline::ResVec"
-                    && if shares { description == "shares add" } else { description.contains("overflow in add") })
+                    && if shares { description == "shares add" } else { description.contains("overflow in CashAdd") })
             );
             assert_eq!(ledger, before);
         }

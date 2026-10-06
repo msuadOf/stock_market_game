@@ -293,8 +293,10 @@ fn restore_rejects_cross_lane_receipt_cycle() {
     save.pending_player[0].stock_ordinal = 1;
     save.pending_player[1].stock_ordinal = 0;
 
+    // 数值断言替代原文本断言 "precedence contains a cycle"
+    // （fault2084：回执先序图含环）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(SessionError::InvalidSave(message)) if message.contains("precedence contains a cycle")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2084
     ));
 }

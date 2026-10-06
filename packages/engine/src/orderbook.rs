@@ -79,6 +79,43 @@ pub(crate) mod js_safe_u64 {
 }
 
 /// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
+/// 委托价格被拒原因（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[repr(u16)]
+pub enum PriceReject {
+    #[error("non-positive")]
+    NonPositive,
+    #[error("not a multiple of tick")]
+    NotTickMultiple,
+}
+
+/// 存档投影不一致类别（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[repr(u16)]
+pub enum ProjectionMismatchKind {
+    #[error("duplicate saved book sequence")]
+    DuplicateSeq,
+    #[error("saved book sequence not JavaScript-safe or above cursor")]
+    UnsafeSeq,
+    #[error("saved resting orders cross during restore")]
+    CrossDuringRestore,
+    #[error("candidate book time sequence differs from stock worker")]
+    TimeSeqDiffers,
+    #[error("bid price-time key already exists")]
+    BidKeyExists,
+    #[error("ask price-time key already exists")]
+    AskKeyExists,
+    #[error("live order index points at an absent order")]
+    AbsentLiveOrder,
+    #[error("candidate order differs from stock worker")]
+    CandidateDiffers,
+    #[error("continuous stock round changed yesterday close")]
+    YesterdayCloseChanged,
+    #[error("candidate market version differs from stock worker")]
+    MarketVersionDiffers,
+}
+
+/// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
 pub enum OrderError {
     /// 价格非法：为负 / 非 tick 整数倍 / 超范围。
@@ -88,8 +125,8 @@ pub enum OrderError {
         price: Money,
         /// 当前簿的最小变动单位（用于诊断「非整数倍」）。
         tick: Money,
-        /// 失败原因（如 "negative" / "not a multiple of tick"）。
-        reason: String,
+        /// 失败原因（数值枚举，ADR 0041）。
+        reason: PriceReject,
     },
     /// 数量非法：qty == 0。
     #[error("invalid qty: {0} (must be > 0)")]
@@ -111,7 +148,11 @@ pub enum OrderError {
     DuplicateOrderId(OrderId),
     /// A tick-private stock result cannot be applied to the expected book version.
     #[error("stock book projection mismatch: {reason}")]
-    ProjectionMismatch { reason: String },
+    /// 投影不一致（数值枚举 + 数值上下文，ADR 0041）。
+    ProjectionMismatch {
+        reason: ProjectionMismatchKind,
+        context: Vec<u64>,
+    },
     #[error("order book time sequence exhausted")]
     SequenceOverflow,
     /// 撤单时 id 不存在。
@@ -360,9 +401,9 @@ impl OrderBook {
                 price: order.price,
                 tick: self.tick,
                 reason: if order.price.cents() <= 0 {
-                    "non-positive".to_string()
+                    PriceReject::NonPositive
                 } else {
-                    "not a multiple of tick".to_string()
+                    PriceReject::NotTickMultiple
                 },
             });
         }
@@ -550,7 +591,8 @@ impl OrderBook {
         for pair in ordered.windows(2) {
             if pair[0].seq == pair[1].seq {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: format!("duplicate saved book sequence {}", pair[0].seq),
+                    reason: ProjectionMismatchKind::DuplicateSeq,
+                    context: vec![pair[0].seq],
                 });
             }
         }
@@ -558,17 +600,16 @@ impl OrderBook {
         for order in ordered {
             if order.seq >= next_seq || order.seq > js_safe_u64::MAX {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: format!(
-                        "saved book sequence {} must be JavaScript-safe and below cursor {next_seq}",
-                        order.seq
-                    ),
+                    reason: ProjectionMismatchKind::UnsafeSeq,
+                    context: vec![order.seq, next_seq],
                 });
             }
             candidate.next_seq = order.seq;
             let result = candidate.place(order.clone())?;
             if !result.trades.is_empty() || result.resting.as_ref() != Some(order) {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: "saved resting orders cross during restore".to_owned(),
+                    reason: ProjectionMismatchKind::CrossDuringRestore,
+                    context: Vec::new(),
                 });
             }
         }
@@ -593,7 +634,8 @@ impl OrderBook {
     pub(crate) fn apply_changes(&mut self, delta: OrderBookDelta) -> Result<(), OrderError> {
         if self.next_seq != delta.expected_next_seq {
             return Err(OrderError::ProjectionMismatch {
-                reason: "candidate book time sequence differs from stock worker".to_owned(),
+                reason: ProjectionMismatchKind::TimeSeqDiffers,
+                context: Vec::new(),
             });
         }
         self.state.apply_changes(delta.changes)?;

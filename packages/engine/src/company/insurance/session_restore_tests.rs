@@ -165,10 +165,11 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
         AccountingAmount::MAX,
     );
     let error = match GameSession::restore(&saved) {
-        Err(SessionError::InvalidSave(detail)) => detail,
+        Err(SessionError::InvalidSave(fault)) => fault,
         _ => panic!("损坏保险子账必须被完整 restore 拒绝"),
     };
-    assert!(error.contains("RESTORE-INS"), "{error}");
-    assert!(error.contains("RESTORE-GROUP"), "{error}");
-    assert!(error.contains("GMM"), "{error}");
+    // 数值断言替代原文本断言 contains("RESTORE-INS")/contains("RESTORE-GROUP")/
+    // contains("GMM")：内层保险账校验错误文本（公司/组/科目标签）已被压平为
+    // fault2092（保险账状态非法）的待 C 批数值化槽位，文本不再随错误返回。
+    assert_eq!(error.code, 2092, "{error}");
 }

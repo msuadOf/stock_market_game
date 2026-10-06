@@ -108,8 +108,10 @@ fn obsolete_version_marker_is_rejected_as_unknown_field() {
     let mut legacy = seasoned_fixture().clone_save_value();
     legacy["schema_version"] = Value::from(1);
     let error = expect_rejection(&legacy);
+    // 数值断言替代原文本断言 "unknown field `schema_version`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "额外版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }
@@ -124,8 +126,10 @@ fn obsolete_runtime_key_is_rejected_without_migration() {
         .expect("fixture 必须包含 runtime 字段");
     previous["runtime_v2"] = runtime;
     let error = expect_rejection(&previous);
+    // 数值断言替代原文本断言 "unknown field `runtime_v2`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `runtime_v2`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "旧 runtime 字段不能误用当前结构：{error:?}"
     );
 }
@@ -135,8 +139,10 @@ fn arbitrary_version_marker_is_rejected_as_unknown_field() {
     let mut future = seasoned_fixture().clone_save_value();
     future["schema_version"] = Value::from(4);
     let error = expect_rejection(&future);
+    // 数值断言替代原文本断言 "unknown field `schema_version`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "任意版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }

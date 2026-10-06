@@ -763,9 +763,10 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
 
     let mut incomplete = complete;
     incomplete.snapshot.active_daily_candles.remove(&idle_code);
+    // 数值断言替代原文本断言 "active-candle"（fault2076：活跃日 K 市场集合与当前交易 tick 不符）。
     assert!(matches!(
         GameSession::restore(&incomplete),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("active-candle")
+        Err(engine::SessionError::InvalidSave(fault)) if fault.code == 2076
     ));
 }
 

@@ -620,8 +620,8 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         assert!(matches!(
             run(threads, &game),
             StepFatal::InvariantViolation { description, location }
-                if (description.contains("mul_shares")
-                    || description.contains("overflow in add"))
+                if (description.contains("MulShares")
+                    || description.contains("overflow in CashAdd"))
                     && location == "pipeline::decision_resources"
         ));
     }
@@ -641,7 +641,7 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
     assert!(matches!(
         &second,
         StepFatal::InvariantViolation { description, location }
-            if description.contains("overflow in add")
+            if description.contains("overflow in CashAdd")
                 && location == "pipeline::decision_resources"
     ));
 }

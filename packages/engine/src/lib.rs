@@ -37,6 +37,9 @@ pub use strategy::{
     StrategyProfile, TargetPolicy, ZiNoiseStrategy,
 };
 
+pub mod error;
+pub use error::{ymd_context, ValidationFault};
+
 pub mod stock;
 pub use stock::{StockCatalog, StockCatalogError, StockId, StockMeta};
 

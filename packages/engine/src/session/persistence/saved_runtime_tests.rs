@@ -135,9 +135,10 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
     let institution_key = institution.0.to_string();
     wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0);
     let wrong_owner: SaveSlot = serde_json::from_value(wrong_owner).expect("typed edited save");
+    // 数值断言替代原文本断言 "belief book owner"（fault2124：信念账 owner 与键不一致）。
     assert!(matches!(
         GameSession::restore(&wrong_owner),
-        Err(SessionError::InvalidSave(message)) if message.contains("belief book owner")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2124
     ));
 
     let mut wrong_kind = serde_json::to_value(&resaved).expect("save serializes");
@@ -146,9 +147,11 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
     )
     .expect("retail profile serializes");
     let wrong_kind: SaveSlot = serde_json::from_value(wrong_kind).expect("typed edited save");
+    // 数值断言替代原文本断言 "belief profile conflicts with account kind"
+    // （fault2125：信念画像与账户类别冲突）。
     assert!(matches!(
         GameSession::restore(&wrong_kind),
-        Err(SessionError::InvalidSave(message)) if message.contains("belief profile conflicts with account kind")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2125
     ));
 }
 
@@ -214,9 +217,11 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
         .unwrap();
     plan.active_child_order_id = Some(player_order);
 
+    // 数值断言替代原文本断言 "active child does not match a live order"
+    // （fault2172：母单活跃子委托未匹配唯一在场委托）。
     assert!(matches!(
         GameSession::restore(&forged),
-        Err(SessionError::InvalidSave(reason)) if reason.contains("active child does not match a live order")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2172
     ));
 }
 
@@ -476,11 +481,12 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
     key
 }
 
-fn assert_invalid_save(error: SessionError, message: &str) {
+/// 断言解压/解码层拒绝为指定数字错误码（数值断言替代原文本 contains 助手）。
+fn assert_invalid_save(error: SessionError, code: u16) {
     match error {
-        SessionError::InvalidSave(description) => assert!(
-            description.contains(message),
-            "expected {message:?} in {description:?}"
+        SessionError::InvalidSave(fault) => assert!(
+            fault.code == code,
+            "expected fault {code} in {fault:?}"
         ),
         other => panic!("corrupt persisted input must be InvalidSave, got {other}"),
     }
@@ -513,9 +519,11 @@ fn save_decoder_accepts_current_structure_and_rejects_version_markers() {
             .unwrap()
             .insert("schema_version".to_owned(), marker);
         let json = serde_json::to_vec(&value).unwrap();
+        // 数值断言替代原文本断言 "schema_version"
+        // （fault2080：存档 JSON 不可解码，schema_version 版本标记被严格结构拒绝）。
         assert_invalid_save(
             decode_save_slot(&json, &SaveDecodeLimits::default()).unwrap_err(),
-            "schema_version",
+            2080,
         );
     }
 }
@@ -534,9 +542,11 @@ fn new_session_rejects_legacy_and_unknown_simulation_policies() {
             Err(error) => error,
         };
         match error {
-            SessionError::InvalidSetup(description) => assert!(
-                description.contains(SIMULATION_POLICY_ID),
-                "policy rejection must name the supported policy: {description}"
+            // 数值断言替代原文本断言 contains(SIMULATION_POLICY_ID)
+            // （fault1006：模拟政策身份不匹配；期望/实际政策 id 槽位待 C 批数值化）。
+            SessionError::InvalidSetup(fault) => assert!(
+                fault.code == 1006,
+                "policy rejection must be the simulation policy identity fault: {fault:?}"
             ),
             other => panic!("unsupported policy must be InvalidSetup, got {other}"),
         }
@@ -881,7 +891,8 @@ fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
         .get_mut(&key.stock)
         .expect("saved seller must hold the sold stock")
         .qty = 1;
-    assert_invalid_save(restore_error(&assets_tampered), "over-reserve shares");
+    // fault2168：存档卖单股份预留超可卖（数值断言替代原文本 "over-reserve shares"）。
+    assert_invalid_save(restore_error(&assets_tampered), 2168);
 }
 
 #[test]
@@ -1154,9 +1165,10 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
 
+    // fault2225：费用审计含负分量（数值断言替代原文本 "negative component"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "negative component",
+        2225,
     );
 }
 
@@ -1167,9 +1179,10 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
 
+    // fault2228：信封累计收费审计不一致（数值断言替代原文本 "inconsistent cumulative charged fee audit"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
+        2228,
     );
 }
 
@@ -1195,7 +1208,7 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
 
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
+        2228,
     );
 }
 
@@ -1205,9 +1218,10 @@ fn receipt_gap_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.next_receipt_base = 1;
 
+    // fault2202：散户投影回执前缀重建失败（数值断言替代原文本 "receipt prefix"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "receipt prefix",
+        2202,
     );
 }
 
@@ -1224,9 +1238,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .account = AccountId(999);
+    // fault2212：回执引用未知账户（数值断言替代原文本 "unknown account"）。
     assert_invalid_save(
         validate_runtime_state(&session, &unknown_account).unwrap_err(),
-        "unknown account",
+        2212,
     );
 
     let mut unknown_stock = state.clone();
@@ -1235,9 +1250,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .stock = StockId(9);
+    // fault2213：回执引用未知股票（数值断言替代原文本 "unknown stock"）。
     assert_invalid_save(
         validate_runtime_state(&session, &unknown_stock).unwrap_err(),
-        "unknown stock",
+        2213,
     );
 
     let mut zero_order = state.clone();
@@ -1246,9 +1262,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .order = OrderId(0);
+    // fault2214：回执订单 id 越界（数值断言替代原文本 "invalid order"，order id = 0）。
     assert_invalid_save(
         validate_runtime_state(&session, &zero_order).unwrap_err(),
-        "invalid order",
+        2214,
     );
 
     let mut future_order = state;
@@ -1257,9 +1274,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .order = OrderId(session.state.next_order_id);
+    // fault2214：回执订单 id 越界（数值断言替代原文本 "invalid order"，order id ≥ next_order_id）。
     assert_invalid_save(
         validate_runtime_state(&session, &future_order).unwrap_err(),
-        "invalid order",
+        2214,
     );
 }
 
@@ -1270,9 +1288,10 @@ fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes.push(state.live_envelopes[0].clone());
 
+    // fault2217：活跃信封非规范键严格序（数值断言替代原文本 "strict canonical key order"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "strict canonical key order",
+        2217,
     );
 }
 
@@ -1286,9 +1305,10 @@ fn live_envelope_tampering_is_rejected_without_partial_restore() {
     let mut target = session_with_runtime_state();
     install_live_buy(&mut target);
     let before = capture_runtime_state(&target).unwrap();
+    // fault2228：信封累计收费审计不一致（数值断言替代原文本 "inconsistent cumulative charged fee audit"）。
     assert_invalid_save(
         restore_runtime_state(&mut target, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
+        2228,
     );
     assert_eq!(capture_runtime_state(&target).unwrap(), before);
 }
@@ -1298,9 +1318,10 @@ fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
     let session = session_with_runtime_state();
     let mut state = capture_runtime_state(&session).unwrap();
     state.poisoned = true;
+    // fault2200：runtime_state 显式拒绝 poisoned 会话状态（数值断言替代原文本 "poisoned"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "poisoned",
+        2200,
     );
 
     let mut encoded = serde_json::to_value(capture_runtime_state(&session).unwrap()).unwrap();
@@ -1336,7 +1357,8 @@ fn decode_rejects_unknown_nested_strategy_state_fields() {
 
     let error = decode_save_slot(&bytes, &SaveDecodeLimits::default())
         .expect_err("unknown nested strategy state fields must fail closed");
-    assert_invalid_save(error, "unknown field");
+    // fault2080：存档 JSON 不可解码（数值断言替代原文本 "unknown field"）。
+    assert_invalid_save(error, 2080);
 }
 
 #[test]
@@ -1363,7 +1385,8 @@ fn decode_rejects_noncanonical_strategy_float_bit_strings() {
 
         let error = decode_save_slot(&bytes, &SaveDecodeLimits::default())
             .expect_err("noncanonical exact-float strings must fail closed");
-        assert_invalid_save(error, "16 lowercase hexadecimal digits");
+        // fault2080：存档 JSON 不可解码（数值断言替代原文本 "16 lowercase hexadecimal digits"）。
+        assert_invalid_save(error, 2080);
     }
 }
 
@@ -1401,7 +1424,8 @@ fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
         &SaveDecodeLimits::default(),
     )
     .expect_err("unsafe Momentum integer in a save must be rejected");
-    assert_invalid_save(save_error, "JavaScript safe integer range");
+    // fault2080：存档 JSON 不可解码（数值断言替代原文本 "JavaScript safe integer range"）。
+    assert_invalid_save(save_error, 2080);
 
     let state_error = serde_json::from_slice::<crate::strategy::StrategyState>(
         &serde_json::to_vec(&hot_json).unwrap(),
@@ -1439,7 +1463,9 @@ fn restore_rejects_strategy_attention_probability_drift() {
         .expect("canonical same-profile StrategyState must decode");
 
     let error = restore_error(&decoded);
-    assert_invalid_save(error, "disagrees with NPC attention probability");
+    // fault2210：基础观察概率与 NPC 关注概率不一致（数值断言替代原文本
+    // "disagrees with NPC attention probability"）。
+    assert_invalid_save(error, 2210);
 }
 
 #[test]
@@ -1453,9 +1479,10 @@ fn strategy_state_identity_tampering_is_rejected() {
         ),
     );
 
+    // fault2208：策略状态改变确定性策略身份（数值断言替代原文本 "deterministic strategy identity"）。
     assert_invalid_save(
         validate_runtime_state(&session, &state).unwrap_err(),
-        "deterministic strategy identity",
+        2208,
     );
 }
 
@@ -1532,10 +1559,8 @@ fn cumulative_fee_audit_zero_and_negative_gross_keep_existing_boundaries() {
             filled_value: Money::from_cents(-1),
             charged: SavedFeeComponents::default(),
         };
-        assert_invalid_save(
-            negative.nominal(&config).unwrap_err(),
-            "saved filled value cannot be negative",
-        );
+        // fault2229：已成交金额不可为负（数值断言替代原文本 "saved filled value cannot be negative"）。
+        assert_invalid_save(negative.nominal(&config).unwrap_err(), 2229);
     }
 }
 

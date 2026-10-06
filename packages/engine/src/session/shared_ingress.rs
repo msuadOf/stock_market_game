@@ -28,7 +28,8 @@ pub(super) struct IngressBinding {
 impl SharedSessionIngress {
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
         self.inner.lock().map_err(|error| {
-            SessionError::ResourceLimit(format!("session ingress metadata lock poisoned: {error}"))
+            // 1250：ingress 元数据锁中毒（防御式显式暴露）。
+            SessionError::ResourceLimit(crate::error::ValidationFault::bare(1250))
         })
     }
 
@@ -39,9 +40,8 @@ impl SharedSessionIngress {
     ) -> Result<(), SessionError> {
         let mut state = self.lock()?;
         if state.closed {
-            return Err(SessionError::ResourceLimit(
-                "session ingress generation is closed".to_owned(),
-            ));
+            // 1251：ingress 世代已关闭。
+            return Err(SessionError::ResourceLimit(crate::error::ValidationFault::bare(1251)));
         }
         match state.accounts.get(&account) {
             None => return Err(SessionError::UnknownPlayer(account)),
@@ -50,7 +50,8 @@ impl SharedSessionIngress {
         }
         let input = state.next_input;
         let next = input.checked_add(1).ok_or_else(|| {
-            SessionError::ResourceLimit("session ingress input cursor overflow".to_owned())
+            // 1252：输入游标溢出。
+            SessionError::ResourceLimit(crate::error::ValidationFault::bare(1252))
         })?;
         let receipt = state.receipts.receive(account, intent)?;
         state.next_input = next;
@@ -70,9 +71,8 @@ impl SharedSessionIngress {
     ) -> Result<ReceiptBearingIntent, SessionError> {
         let mut state = self.lock()?;
         if state.closed {
-            return Err(SessionError::ResourceLimit(
-                "session ingress generation is closed".to_owned(),
-            ));
+            // 1251：ingress 世代已关闭。
+            return Err(SessionError::ResourceLimit(crate::error::ValidationFault::bare(1251)));
         }
         state.receipts.receive(account, intent)
     }

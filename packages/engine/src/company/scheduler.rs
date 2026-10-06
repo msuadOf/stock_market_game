@@ -23,6 +23,13 @@ use thiserror::Error;
 pub struct ScheduledDueId(u64);
 
 impl ScheduledDueId {
+    /// 数值访问（错误上下文用，ADR 0041）。
+    pub(crate) fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl ScheduledDueId {
     pub fn value(self) -> u64 {
         self.0
     }

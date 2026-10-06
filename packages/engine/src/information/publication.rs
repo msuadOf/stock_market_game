@@ -47,6 +47,13 @@ pub const DISCLOSURE_PHASE_SECOND: u32 = 18 * 3600;
 pub struct PublicationId(u32);
 
 impl PublicationId {
+    /// 数值访问（错误上下文用，ADR 0041）。
+    pub(crate) fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+impl PublicationId {
     /// 测试/恢复边界构造（生产路径由库单调分配）。
     pub const fn new(value: u32) -> Self {
         Self(value)

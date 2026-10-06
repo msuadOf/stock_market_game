@@ -39,7 +39,8 @@ impl GameSession {
             .get_mut(&account)
             .ok_or(SessionError::UnknownHistoryAccount(account))?
             .record(code, market_minute)
-            .map_err(|error| SessionError::InvalidHistoryRead(error.to_string()))?;
+            // 1260：个人历史读记录失败（数值原因由下层枚举承载，此处统一码）。
+            .map_err(|_| SessionError::InvalidHistoryRead(crate::error::ValidationFault::bare(1260)))?;
         Ok(result)
     }
 }

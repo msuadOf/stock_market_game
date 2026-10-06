@@ -7,15 +7,47 @@
 use thiserror::Error;
 
 /// money 操作失败。绝不静默吞掉（铁律二）。
+/// Money 解析失败原因（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum ParseFailReason {
+    /// 超过 2 位小数。
+    TooManyDecimals,
+    /// 非数字。
+    NotANumber,
+    /// 空串。
+    Empty,
+    /// 多个小数点。
+    MultipleDots,
+}
+
+/// Money 整数运算位置（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum MoneyOp {
+    PositionQtyAdd,
+    T1LockedAdd,
+    InvestedCentsAdd,
+    RecoveredCentsAdd,
+    CashAdd,
+    CashSub,
+    MulShares,
+    ApplyRate,
+    Cents,
+    PositiveHalfUpBound,
+    TradeBatchQtyAdd,
+    Other,
+}
+
 #[derive(Debug, Error)]
 pub enum MoneyError {
-    /// 字符串解析失败：非法精度（超过 2 位小数）/ 非数字 / 空串 / 多个小数点。
-    #[error("parse failed: input {input:?}: {reason}")]
-    ParseFailed { input: String, reason: String },
+    /// 字符串解析失败（数值原因枚举；原输入文本由边界日志保留，ADR 0041）。
+    #[error("parse failed: {reason:?}")]
+    ParseFailed { reason: ParseFailReason },
 
     /// 整数运算溢出（i64 分，理论上游戏不会触达，但按防御式原则显式暴露）。
-    #[error("overflow in {op} with operand {operand}")]
-    Overflow { op: &'static str, operand: String },
+    #[error("overflow in {op:?} near {operand}")]
+    Overflow { op: MoneyOp, operand: i64 },
 
     /// apply_rate 收到非有限比率（NaN / +Inf / -Inf）。
     #[error("invalid rate: {rate}")]
@@ -134,8 +166,8 @@ impl Money {
             .checked_add(other.0)
             .map(Money)
             .ok_or_else(|| MoneyError::Overflow {
-                op: "add",
-                operand: format!("{} + {}", self.0, other.0),
+                op: MoneyOp::CashAdd,
+                operand: self.0,
             })
     }
 
@@ -146,8 +178,8 @@ impl Money {
             .checked_sub(other.0)
             .map(Money)
             .ok_or_else(|| MoneyError::Overflow {
-                op: "sub",
-                operand: format!("{} - {}", self.0, other.0),
+                op: MoneyOp::CashSub,
+                operand: self.0,
             })
     }
 
@@ -157,8 +189,8 @@ impl Money {
             .checked_mul(i64::from(shares))
             .map(Money)
             .ok_or_else(|| MoneyError::Overflow {
-                op: "mul_shares",
-                operand: format!("{} * {}", self.0, shares),
+                op: MoneyOp::MulShares,
+                operand: self.0,
             })
     }
 
@@ -169,8 +201,7 @@ impl Money {
         let trimmed = s.trim();
         if trimmed.is_empty() {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "empty input".to_string(),
+                reason: ParseFailReason::Empty,
             });
         }
 
@@ -182,8 +213,7 @@ impl Money {
         };
         if digits.is_empty() {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "sign without digits".to_string(),
+                reason: ParseFailReason::NotANumber,
             });
         }
 
@@ -192,8 +222,7 @@ impl Money {
             Some((i, f)) => {
                 if f.contains('.') {
                     return Err(MoneyError::ParseFailed {
-                        input: s.to_string(),
-                        reason: "multiple decimal points".to_string(),
+                        reason: ParseFailReason::MultipleDots,
                     });
                 }
                 (i, f)
@@ -203,31 +232,27 @@ impl Money {
 
         if int_part.is_empty() && frac_part.is_empty() {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "decimal point without digits".to_string(),
+                reason: ParseFailReason::NotANumber,
             });
         }
 
         // 小数部分最多 2 位
         if frac_part.len() > 2 {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: format!("too many fractional digits: {}", frac_part.len()),
+                reason: ParseFailReason::TooManyDecimals,
             });
         }
 
         // 整数部分必须全数字（允许空，如 ".5"）
         if !int_part.is_empty() && !int_part.bytes().all(|b| b.is_ascii_digit()) {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "non-digit in integer part".to_string(),
+                reason: ParseFailReason::NotANumber,
             });
         }
         // 小数部分必须全数字
         if !frac_part.is_empty() && !frac_part.bytes().all(|b| b.is_ascii_digit()) {
             return Err(MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "non-digit in fractional part".to_string(),
+                reason: ParseFailReason::NotANumber,
             });
         }
 
@@ -238,8 +263,7 @@ impl Money {
             int_part
                 .parse::<i128>()
                 .map_err(|_| MoneyError::ParseFailed {
-                    input: s.to_string(),
-                    reason: "integer part out of range".to_string(),
+                    reason: ParseFailReason::NotANumber,
                 })?
         };
         let frac_padded = match frac_part.len() {
@@ -260,8 +284,8 @@ impl Money {
             .checked_mul(100)
             .and_then(|c| c.checked_add(frac_padded))
             .ok_or_else(|| MoneyError::Overflow {
-                op: "from_yuan_str",
-                operand: s.to_string(),
+                op: MoneyOp::Other,
+                operand: 0,
             })?;
         let signed_total = if neg {
             absolute_total.checked_neg()
@@ -269,12 +293,12 @@ impl Money {
             Some(absolute_total)
         }
         .ok_or_else(|| MoneyError::Overflow {
-            op: "from_yuan_str",
-            operand: s.to_string(),
+            op: MoneyOp::Cents,
+            operand: 0,
         })?;
         let total = i64::try_from(signed_total).map_err(|_| MoneyError::Overflow {
-            op: "from_yuan_str",
-            operand: s.to_string(),
+            op: MoneyOp::Cents,
+            operand: 0,
         })?;
         Ok(Money(total))
     }
@@ -293,8 +317,8 @@ impl Money {
         let scaled = (self.0 as f64) * rate;
         if !scaled.is_finite() || scaled >= i64::MAX as f64 || scaled < i64::MIN as f64 {
             return Err(MoneyError::Overflow {
-                op: "apply_rate",
-                operand: format!("{} * {rate}", self.0),
+                op: MoneyOp::ApplyRate,
+                operand: self.0,
             });
         }
         Ok(Money(round_half_to_even(scaled)))

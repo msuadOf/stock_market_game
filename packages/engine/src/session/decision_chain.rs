@@ -1737,7 +1737,11 @@ mod chain_restructure_tests {
         let error = GameSession::restore(&excessive)
             .err()
             .expect("nine unprotected memories must fail");
-        assert!(error.to_string().contains("eviction bound"));
+        // fault2121：价格记忆超 held+8 驱逐界。
+        assert!(matches!(
+            &error,
+            SessionError::InvalidSave(fault) if fault.code == 2121
+        ));
     }
 
     #[test]
@@ -1759,11 +1763,11 @@ mod chain_restructure_tests {
                 .record_attention(code, 0, 0)
                 .unwrap();
         }
-        assert!(GameSession::restore(&watched)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("eviction bound"));
+        // fault2119：关注表超 held+8 驱逐界。
+        assert!(matches!(
+            GameSession::restore(&watched).err().unwrap(),
+            SessionError::InvalidSave(fault) if fault.code == 2119
+        ));
     }
 
     #[test]

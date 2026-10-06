@@ -72,9 +72,11 @@ fn restore_rejects_deleted_account_state_without_mutating_the_source_session() {
         serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     save.retail_experience.remove(&AccountId(10_000));
 
+    // 数值断言替代原文本断言 "retail experience account set"
+    // （fault2025：散户经历账户集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(SessionError::InvalidSave(message)) if message.contains("retail experience account set")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2025
     ));
     assert_eq!(
         serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
@@ -138,9 +140,11 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
     let bytes = serde_json::to_vec(&value).expect("tampered JSON serializes");
     let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default()).expect("shape decodes");
 
+    // 数值断言替代原文本断言 "missing from the library"
+    // （fault2115：引用的披露不在公开库）。
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(SessionError::InvalidSave(message)) if message.contains("missing from the library")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2115
     ));
     assert_eq!(
         serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
@@ -156,9 +160,10 @@ fn decode_rejects_configured_body_limit_without_constructing_a_partial_save() {
         max_total_bytes: bytes.len() - 1,
     };
 
+    // 数值断言替代原文本断言 "decode limit"（fault1253：存档解码超字节上限）。
     assert!(matches!(
         decode_save_slot(&bytes, &limit),
-        Err(SessionError::ResourceLimit(message)) if message.contains("decode limit")
+        Err(SessionError::ResourceLimit(fault)) if fault.code == 1253
     ));
 }
 
@@ -196,10 +201,11 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
         .expect("company count alone must not prevent decoding");
     // The collection is structurally decodable, but these companies deliberately
     // share one listed stock. Removing the quota must preserve this actual error.
+    // 数值断言替代原文本断言 "share count or mapping conflicts with setup stock"
+    // （fault2098：公司股本或映射与 setup 股票冲突）。
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(SessionError::InvalidSave(message))
-            if message.contains("share count or mapping conflicts with setup stock")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2098
     ));
 }
 
@@ -238,12 +244,10 @@ fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let error = GameSession::restore(&save)
         .err()
         .expect("duplicate order id must be rejected");
-    let expected = format!(
-        "cannot restore resting orders for {}: duplicate order id: {duplicate_id:?}",
-        code.0
-    );
+    // 数值断言替代原文本等值断言 "…duplicate order id: {duplicate_id:?}"
+    // （fault1038：恢复连续竞价挂单失败，内层 OrderError::DuplicateOrderId 被压平）。
     assert!(
-        matches!(&error, SessionError::InvalidSave(message) if message == &expected),
+        matches!(&error, SessionError::InvalidSave(fault) if fault.code == 1038),
         "unexpected duplicate-order rejection: {error:?}"
     );
     assert_eq!(

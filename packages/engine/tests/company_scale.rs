@@ -135,16 +135,18 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
     let original = serde_json::to_value(&save).expect("save value serializes");
 
     // 保持 PlanBook 本身可解码，只破坏计划对会话权威账户/股票的引用。
-    for (field, value, expected_error) in [
+    // 数值断言替代原文本断言 "unknown account"/"unknown stock"
+    // （fault2142：计划属于未知账户；fault2143：计划指向未知股票）。
+    for (field, value, expected_code) in [
         (
             "account",
             serde_json::to_value(engine::AccountId(999_999)).unwrap(),
-            "unknown account",
+            2142_u16,
         ),
         (
             "code",
             serde_json::to_value(StockCode("600999".to_string())).unwrap(),
-            "unknown stock",
+            2143_u16,
         ),
     ] {
         let mut tampered = original.clone();
@@ -153,8 +155,8 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())
             .expect("plan reference tampering remains structurally decodable");
         assert!(
-            matches!(GameSession::restore(&decoded), Err(engine::session::SessionError::InvalidSave(message)) if message.contains(expected_error)),
-            "restore must reject plan {field} reference tampering as {expected_error}"
+            matches!(GameSession::restore(&decoded), Err(engine::session::SessionError::InvalidSave(fault)) if fault.code == expected_code),
+            "restore must reject plan {field} reference tampering as fault {expected_code}"
         );
     }
     assert_eq!(

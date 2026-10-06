@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::error::ValidationFault;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -193,15 +194,12 @@ pub fn validate_runtime_state(
     state: &SavedRuntimeState,
 ) -> Result<(), SessionError> {
     if state.poisoned {
-        return Err(SessionError::InvalidSave(
-            "runtime_state 明确拒绝 poisoned session 状态".to_owned(),
-        ));
+        // fault2200：runtime_state 显式拒绝 poisoned 会话状态。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2200)));
     }
     if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
-        return Err(SessionError::InvalidSave(format!(
-            "当前存档要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
-            session.state.setup.simulation_policy_id
-        )));
+        // fault2201：simulation_policy_id 与引擎政策不符；ctx[0] 待 C 批数值化（原文本 "{:?}" 策略 id）。
+        return Err(SessionError::InvalidSave(ValidationFault::new(2201, vec![0])));
     }
 
     let ledger = state.build_ledger(session)?;
@@ -218,24 +216,27 @@ pub fn validate_runtime_state(
                 .map(|key| (identity.index, key))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // fault2202：散户投影回执前缀重建失败；ctx[0] 待 C 批数值化
+    // （原文 "saved retail projection receipt prefix is invalid: {error}"）。
     let seen = pipeline::RetailProjectionSeen::from_authoritative_identities(
         identities,
         state.next_receipt_base,
     )
-    .map_err(|error| invalid_save("saved retail projection receipt prefix", error))?;
+    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2202, vec![0])))?;
+    // fault2203：散户投影规范身份转换失败；ctx[0] 待 C 批数值化
+    // （原文 "saved retail projection canonical identity is invalid: {error}"）。
     let canonical = seen
         .authoritative_identities()
         .into_iter()
         .map(|(index, local_key)| {
             SavedReceiptLocalKey::from_runtime(&local_key)
                 .map(|local_key| SavedRetailReceiptIdentity { index, local_key })
-                .map_err(|error| invalid_save("saved retail projection canonical identity", error))
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2203, vec![0])))
         })
         .collect::<Result<Vec<_>, _>>()?;
     if canonical.as_slice() != state.retail_projection_seen.as_slice() {
-        return Err(SessionError::InvalidSave(
-            "saved retail projection identities are not canonical".to_owned(),
-        ));
+        // fault2204：散户投影身份非规范序。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2204)));
     }
 
     let expected_strategy_accounts: BTreeSet<_> = session
@@ -246,9 +247,8 @@ pub fn validate_runtime_state(
         .collect();
     let saved_strategy_accounts: BTreeSet<_> = state.strategy_states.keys().copied().collect();
     if saved_strategy_accounts != expected_strategy_accounts {
-        return Err(SessionError::InvalidSave(
-            "saved StrategyState account set does not exactly match NPC accounts".to_owned(),
-        ));
+        // fault2205：策略状态账户集合与 NPC 账户不精确一致。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2205)));
     }
     for (account, saved_state) in &state.strategy_states {
         let expected_profile = session
@@ -256,23 +256,20 @@ pub fn validate_runtime_state(
             .accounts
             .get(account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to missing account {}",
-                    account.0
-                ))
+                // fault2206：策略状态引用缺失账户；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2206, vec![account.0]))
             })?
             .strategy()
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to strategy-free account {}",
-                    account.0
-                ))
+                // fault2207：策略状态引用无策略账户；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2207, vec![account.0]))
             })?
             .profile();
         if saved_state.profile() != expected_profile {
-            return Err(SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} changes its deterministic strategy identity",
-                account.0
+            // fault2208：策略状态改变确定性策略身份；ctx[0]=AccountId。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2208,
+                vec![account.0],
             )));
         }
         let attention_probability = session
@@ -280,25 +277,25 @@ pub fn validate_runtime_state(
             .npc_attention
             .get(account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState for account {} has no NPC attention state",
-                    account.0
-                ))
+                // fault2209：策略状态账户无 NPC 关注状态；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2209, vec![account.0]))
             })?
             .base_probability;
         if saved_state.base_observation_probability().to_bits() != attention_probability.to_bits() {
-            return Err(SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} base observation probability {} disagrees with NPC attention probability {}",
-                account.0,
-                saved_state.base_observation_probability(),
-                attention_probability
+            // fault2210：基础观察概率与 NPC 关注概率不一致；ctx[0]=AccountId，
+            // ctx[1]/ctx[2]=两侧概率 IEEE754 位模式。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2210,
+                vec![
+                    account.0,
+                    saved_state.base_observation_probability().to_bits(),
+                    attention_probability.to_bits(),
+                ],
             )));
         }
-        saved_state.clone().into_strategy().map_err(|error| {
-            SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} is invalid: {error}",
-                account.0
-            ))
+        // fault2211：策略状态重建失败；ctx[0]=AccountId，ctx[1] 待 C 批数值化（原文本 "{error}"）。
+        saved_state.clone().into_strategy().map_err(|_| {
+            SessionError::InvalidSave(ValidationFault::new(2211, vec![account.0, 0]))
         })?;
     }
     Ok(())
@@ -310,21 +307,24 @@ fn validate_receipt_identity_domain(
 ) -> Result<(), SessionError> {
     let envelope = &identity.local_key.transition.envelope;
     if !session.state.accounts.contains_key(&envelope.account) {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} refers to unknown account {}",
-            identity.index, envelope.account.0
+        // fault2212：回执引用未知账户；ctx[0]=回执 index，ctx[1]=AccountId。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2212,
+            vec![identity.index, envelope.account.0],
         )));
     }
     if !session.state.markets.contains_key(&envelope.stock) {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} refers to unknown stock {:?}",
-            identity.index, envelope.stock
+        // fault2213：回执引用未知股票；ctx[0]=回执 index，ctx[1]=StockId。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2213,
+            vec![identity.index, u64::from(envelope.stock.0)],
         )));
     }
     if envelope.order.0 == 0 || envelope.order.0 >= session.state.next_order_id {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} has invalid order {}; expected 1..{}",
-            identity.index, envelope.order.0, session.state.next_order_id
+        // fault2214：回执订单 id 越界；ctx[0]=回执 index，ctx[1]=订单 id，ctx[2]=next_order_id 上界。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2214,
+            vec![identity.index, envelope.order.0, session.state.next_order_id],
         )));
     }
     Ok(())
@@ -347,11 +347,12 @@ pub fn restore_runtime_state(
                 .map(|key| (identity.index, key))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // fault2202：散户投影回执前缀重建失败（同码复用）；ctx[0] 待 C 批数值化。
     let seen = pipeline::RetailProjectionSeen::from_authoritative_identities(
         identities,
         state.next_receipt_base,
     )
-    .map_err(|error| invalid_save("saved retail projection receipt prefix", error))?;
+    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2202, vec![0])))?;
     let strategies = state
         .strategy_states
         .iter()
@@ -361,11 +362,9 @@ pub fn restore_runtime_state(
                 .into_strategy()
                 .map(crate::account::StoredStrategy::production)
                 .map(|strategy| (*account, strategy))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "saved StrategyState for account {} is invalid: {error}",
-                        account.0
-                    ))
+                // fault2211：策略状态重建失败（同码复用）；ctx[0]=AccountId，ctx[1] 待 C 批数值化。
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2211, vec![account.0, 0]))
                 })
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
@@ -378,11 +377,9 @@ pub fn restore_runtime_state(
             value
                 .clone_for_shadow()
                 .map(|value| (*account, value))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot prepare account {} for atomic strategy restore: {error}",
-                        account.0
-                    ))
+                // fault2215：账户影子克隆失败，无法原子恢复策略；ctx[0]=AccountId，ctx[1] 待 C 批数值化（原文本 "{error}"）。
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2215, vec![account.0, 0]))
                 })
         })
         .collect::<Result<AccountBook, _>>()?;
@@ -390,10 +387,8 @@ pub fn restore_runtime_state(
         accounts
             .get_mut(&account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to missing account {}",
-                    account.0
-                ))
+                // fault2206：策略状态引用缺失账户（同码复用）；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2206, vec![account.0]))
             })?
             .restore_strategy(Some(strategy));
     }
@@ -409,9 +404,11 @@ impl SavedRuntimeState {
         &self,
         session: &GameSession,
     ) -> Result<pipeline::EnvelopeLedger, SessionError> {
+        // fault2216：活跃委托投影子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live order projection is invalid: {error}"）。
         let projected = session
             .project_live_envelopes()
-            .map_err(|error| invalid_save("saved live order projection", error))?
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2216, vec![0])))?
             .into_iter()
             .map(|envelope| (SavedEnvelopeKey::from_runtime(envelope.key()), envelope))
             .collect::<BTreeMap<_, _>>();
@@ -419,24 +416,34 @@ impl SavedRuntimeState {
         let mut envelopes = Vec::with_capacity(self.live_envelopes.len());
         for saved in &self.live_envelopes {
             if previous.as_ref().is_some_and(|key| key >= &saved.key) {
-                return Err(SessionError::InvalidSave(
-                    "saved live envelopes are not in strict canonical key order".to_owned(),
-                ));
+                // fault2217：活跃信封非规范键严格序。
+                return Err(SessionError::InvalidSave(ValidationFault::bare(2217)));
             }
             previous = Some(saved.key.clone());
             let order_envelope = projected.get(&saved.key).ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved live envelope {:?} has no matching active order",
-                    saved.key
+                // fault2218：活跃信封无匹配在场委托；ctx[0]=AccountId，ctx[1]=StockId，
+                // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+                SessionError::InvalidSave(ValidationFault::new(
+                    2218,
+                    vec![
+                        saved.key.account.0,
+                        u64::from(saved.key.stock.0),
+                        saved.key.order.0,
+                        side_rank(saved.key.side),
+                    ],
                 ))
             })?;
             envelopes.push(saved.to_envelope(order_envelope)?);
         }
+        // fault2219：信封账本重建子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope ledger is invalid: {error}"）。
         let ledger = pipeline::EnvelopeLedger::new(self.next_receipt_base, envelopes)
-            .map_err(|error| invalid_save("saved live envelope ledger", error))?;
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2219, vec![0])))?;
+        // fault2220：信封账本完整证据校验子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope ledger evidence is invalid: {error}"）。
         ledger
             .validate_complete_evidence()
-            .map_err(|error| invalid_save("saved live envelope ledger evidence", error))?;
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2220, vec![0])))?;
         Ok(ledger)
     }
 }
@@ -454,9 +461,16 @@ impl SavedLiveEnvelope {
         projected: &pipeline::Envelope,
     ) -> Result<pipeline::Envelope, SessionError> {
         if projected.key() != &self.key.to_runtime() {
-            return Err(SessionError::InvalidSave(format!(
-                "saved envelope {:?} disagrees with its active order identity",
-                self.key
+            // fault2221：信封与在场委托身份不一致；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2221,
+                vec![
+                    self.key.account.0,
+                    u64::from(self.key.stock.0),
+                    self.key.order.0,
+                    side_rank(self.key.side),
+                ],
             )));
         }
         let mut audit = projected.audit();
@@ -467,13 +481,23 @@ impl SavedLiveEnvelope {
             projected.live().shares,
             audit,
         );
+        // fault2222：活跃信封校验子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope is invalid: {error}"）。
         envelope
             .validate()
-            .map_err(|error| invalid_save("saved live envelope", error))?;
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2222, vec![0])))?;
         if envelope.live() == pipeline::ResVec::ZERO {
-            return Err(SessionError::InvalidSave(format!(
-                "saved live envelope {:?} has no live resources",
-                envelope.key()
+            // fault2223：活跃信封无在途资源；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            let key = envelope.key();
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2223,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
             )));
         }
         Ok(envelope)
@@ -545,19 +569,23 @@ impl SavedFeeComponents {
     }
 
     fn total(self) -> Result<Money, SessionError> {
+        // fault2224：费用审计合计子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved fee audit total is invalid: {error}"）。
         self.commission
             .add(self.stamp_tax)
             .and_then(|subtotal| subtotal.add(self.transfer_fee))
-            .map_err(|error| invalid_save("saved fee audit total", error))
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2224, vec![0])))
     }
 
-    fn validate_nonnegative(self, label: &str) -> Result<(), SessionError> {
+    fn validate_nonnegative(self, _label: &str) -> Result<(), SessionError> {
         if [self.commission, self.stamp_tax, self.transfer_fee]
             .into_iter()
             .any(|amount| amount.cents() < 0)
         {
-            return Err(SessionError::InvalidSave(format!(
-                "saved {label} fee audit contains a negative component"
+            // fault2225：费用审计含负分量；ctx[0] 待 C 批数值化（原文本 "{label}"：nominal/charged）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2225,
+                vec![0],
             )));
         }
         Ok(())
@@ -569,9 +597,10 @@ fn validate_live_envelopes_against_orders(
     state: &SavedRuntimeState,
     ledger: &pipeline::EnvelopeLedger,
 ) -> Result<(), SessionError> {
+    // fault2216：活跃委托投影子错误压平（同码复用）；ctx[0] 待 C 批数值化。
     let expected = session
         .project_live_envelopes()
-        .map_err(|error| invalid_save("saved live order projection", error))?
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2216, vec![0])))?
         .into_iter()
         .map(|envelope| (envelope.key().clone(), envelope))
         .collect::<BTreeMap<_, _>>();
@@ -580,13 +609,22 @@ fn validate_live_envelopes_against_orders(
         .map(|(key, envelope)| (key.clone(), envelope))
         .collect::<BTreeMap<_, _>>();
     if actual.len() != state.live_envelopes.len() || actual.len() != expected.len() {
-        return Err(SessionError::InvalidSave(
-            "saved live envelope set does not exactly match live order ownership".to_owned(),
-        ));
+        // fault2226：活跃信封集合与在场委托所有权不精确一致。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2226)));
     }
     for key in expected.keys() {
         let saved = actual.get(key).ok_or_else(|| {
-            SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
+            // fault2227：在场委托无已存信封；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            SessionError::InvalidSave(ValidationFault::new(
+                2227,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
+            ))
         })?;
         let saved_audit = saved.audit();
         let audit = CumulativeFeeAudit {
@@ -595,8 +633,16 @@ fn validate_live_envelopes_against_orders(
             charged: SavedFeeComponents::from_runtime(saved_audit.charged),
         };
         if !audit.validate(&session.state.setup.config)? {
-            return Err(SessionError::InvalidSave(format!(
-                "saved envelope {key:?} has inconsistent cumulative charged fee audit"
+            // fault2228：信封累计收费审计不一致；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2228,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
             )));
         }
     }
@@ -614,26 +660,31 @@ pub(super) struct CumulativeFeeAudit {
 impl CumulativeFeeAudit {
     pub(super) fn nominal(&self, config: &GameConfig) -> Result<SavedFeeComponents, SessionError> {
         if self.filled_value.cents() < 0 {
-            return Err(SessionError::InvalidSave(
-                "saved filled value cannot be negative".to_owned(),
-            ));
+            // fault2229：已成交金额不可为负。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(2229)));
         }
         if self.filled_value == Money::ZERO {
             return Ok(SavedFeeComponents::default());
         }
         Ok(SavedFeeComponents {
+            // fault2230：累计佣金计算子错误压平；ctx[0] 待 C 批数值化
+            // （原文 "saved cumulative commission is invalid: {error}"）。
             commission: config
                 .commission(self.filled_value)
-                .map_err(|error| invalid_save("saved cumulative commission", error))?,
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2230, vec![0])))?,
             stamp_tax: match self.side {
                 Side::Buy => Money::ZERO,
+                // fault2231：累计印花税计算子错误压平；ctx[0] 待 C 批数值化
+                // （原文 "saved cumulative stamp tax is invalid: {error}"）。
                 Side::Sell => config
                     .stamp_tax(self.filled_value)
-                    .map_err(|error| invalid_save("saved cumulative stamp tax", error))?,
+                    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2231, vec![0])))?,
             },
+            // fault2232：累计过户费计算子错误压平；ctx[0] 待 C 批数值化
+            // （原文 "saved cumulative transfer fee is invalid: {error}"）。
             transfer_fee: config
                 .transfer_fee(self.filled_value)
-                .map_err(|error| invalid_save("saved cumulative transfer fee", error))?,
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2232, vec![0])))?,
         })
     }
 
@@ -690,7 +741,9 @@ impl SavedReceiptLocalKey {
                 ordinal: self.transition.ordinal,
             },
         )
-        .map_err(|error| invalid_save("saved receipt local key", error))
+        // fault2233：回执本地键重建子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved receipt local key is invalid: {error}"）。
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2233, vec![0])))
     }
 }
 
@@ -746,6 +799,10 @@ fn session_error_as_invariant(error: SessionError) -> StepFatal {
     invariant(error.to_string())
 }
 
-fn invalid_save(context: &str, error: impl std::fmt::Display) -> SessionError {
-    SessionError::InvalidSave(format!("{context} is invalid: {error}"))
+/// 信封方向数值化：Buy=0/Sell=1（与 SavedEnvelopeKey::Ord 的 side_rank 序一致）。
+fn side_rank(side: Side) -> u64 {
+    match side {
+        Side::Buy => 0,
+        Side::Sell => 1,
+    }
 }

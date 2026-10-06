@@ -36,6 +36,7 @@ use crate::company::{
     CounterpartyId, CounterpartyKind, CreditLine, ExternalCounterparty, IndustryId, OpeningLine,
     OperatingBudget,
 };
+use crate::error::ValidationFault;
 use crate::information::{assemble_seeded_prehistory, SeededPrehistory};
 
 /// 公司域种子标签（FNV-1a("company-operations")）：与策略/注意力/决策种子的
@@ -66,8 +67,10 @@ pub(super) fn assemble_companies(
     }
     // 前史首日 = 开局年 − 2 的 1 月 1 日；账套 as_of = 前史首日前一天
     // （generate_history 的调用方契约）。
-    let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31)
-        .map_err(|error| SessionError::InvalidSetup(format!("company as_of invalid: {error}")))?;
+    let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31).map_err(|_error| {
+        // fault1150: 前史账套 as_of 日期非法。槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1150, vec![0]))
+    })?;
     let mut registry_configs = Vec::with_capacity(setup.stocks.len());
     let mut operating_configs = Vec::with_capacity(setup.stocks.len());
     let defaults = default_companies(as_of).map_err(company_error("default companies"))?;
@@ -88,7 +91,10 @@ pub(super) fn assemble_companies(
         .collect();
     registry
         .validate_issuer_mapping(&issuer_pairs)
-        .map_err(|error| SessionError::InvalidSetup(format!("issuer mapping invalid: {error}")))?;
+        .map_err(|_error| {
+            // fault1151: 发行人映射校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1151, vec![0]))
+        })?;
     let mut shock_params = ShockParams::current_default_parameters();
     scale_shock_params(&mut shock_params, event_multiplier_bp)?;
     let operations_config = CompanyOperationsConfig {
@@ -97,8 +103,9 @@ pub(super) fn assemble_companies(
         companies: operating_configs,
     };
     let prehistory =
-        assemble_seeded_prehistory(operations_config, setup.start_date).map_err(|error| {
-            SessionError::InvalidSetup(format!("seeded prehistory failed: {error}"))
+        assemble_seeded_prehistory(operations_config, setup.start_date).map_err(|_error| {
+            // fault1152: 经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1152, vec![0]))
         })?;
     Ok(CompanyAssembly {
         registry,
@@ -111,8 +118,10 @@ fn assemble_custom_companies(
     mut config: CompanyOperationsConfig,
     event_multiplier_bp: u16,
 ) -> Result<CompanyAssembly, SessionError> {
-    let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31)
-        .map_err(|error| SessionError::InvalidSetup(format!("company as_of invalid: {error}")))?;
+    let as_of = CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31).map_err(|_error| {
+        // fault1153: 自定义公司前史账套 as_of 日期非法。槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1153, vec![0]))
+    })?;
     let mut registry_configs = Vec::new();
     for company in &config.companies {
         let books = company.books.books();
@@ -121,9 +130,15 @@ fn assemble_custom_companies(
             || entries[0].date != as_of
             || entries[0].kind != crate::accounting::BusinessKind::OpeningBalance
         {
-            return Err(SessionError::InvalidSetup(format!(
-                "company {} custom opening must contain exactly one OpeningBalance at {as_of}",
-                company.spec.id.0
+            // fault1154: 自定义公司开局分录必须恰为一条 OpeningBalance 且日期为 as_of。
+            // 槽0 待 C 批数值化（原文本为公司 id "{}"，company.spec.id.0——公司域字符串身份）；
+            // 槽1 = as_of 日期 ymd_context。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1154,
+                vec![0, {
+                    let (y, m, d) = as_of.ymd();
+                    crate::error::ymd_context(y, m, d)
+                }],
             )));
         }
         registry_configs.push(CompanyConfig {
@@ -158,11 +173,15 @@ fn assemble_custom_companies(
         )
         .map_err(company_error("custom issuer mapping"))?;
     scale_shock_params(&mut config.shock_params, event_multiplier_bp)?;
-    let mut prehistory = assemble_seeded_prehistory(config, setup.start_date).map_err(|error| {
-        SessionError::InvalidSetup(format!("custom seeded prehistory failed: {error}"))
+    let mut prehistory = assemble_seeded_prehistory(config, setup.start_date).map_err(|_error| {
+        // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1155, vec![0]))
     })?;
     super::company_groups::seed_groups(&setup.groups, &mut prehistory, setup.start_date).map_err(
-        |error| SessionError::InvalidSetup(format!("custom group prehistory failed: {error}")),
+        |_error| {
+            // fault1156: 自定义公司分组前史播种失败。槽0 待 C 批数值化（原文本为内层播种错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1156, vec![0]))
+        },
     )?;
     Ok(CompanyAssembly {
         registry,
@@ -171,10 +190,14 @@ fn assemble_custom_companies(
 }
 
 fn scale_shock_params(params: &mut ShockParams, multiplier_bp: u16) -> Result<(), SessionError> {
-    let scale = |name: &str, value: i32| -> Result<i32, SessionError> {
+    let scale = |_name: &str, value: i32| -> Result<i32, SessionError> {
         let scaled = i64::from(value) * i64::from(multiplier_bp) / 10_000;
-        i32::try_from(scaled)
-            .map_err(|_| SessionError::InvalidSetup(format!("{name} multiplier overflow")))
+        i32::try_from(scaled).map_err(|_| {
+            // fault1157: 冲击参数乘 bp 倍率溢出 i32。槽0 待 C 批数值化
+            // （原文本为参数名 "{_name}"，取值 market/industry/company_candidate_bp、
+            // market_demand/industry_cost/company_demand_band_bp、credit_deterioration_add_bp）。
+            SessionError::InvalidSetup(ValidationFault::new(1157, vec![0]))
+        })
     };
     params.market_candidate_bp = scale("market_candidate_bp", params.market_candidate_bp)?;
     params.industry_candidate_bp = scale("industry_candidate_bp", params.industry_candidate_bp)?;
@@ -186,13 +209,20 @@ fn scale_shock_params(params: &mut ShockParams, multiplier_bp: u16) -> Result<()
         "credit_deterioration_add_bp",
         params.credit_deterioration_add_bp,
     )?;
-    params.validate().map_err(|error| {
-        SessionError::InvalidSetup(format!("scaled shock parameters invalid: {error}"))
+    params.validate().map_err(|_error| {
+        // fault1158: 缩放后的冲击参数未通过自身校验。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1158, vec![0]))
     })
 }
 
-fn company_error(stage: &'static str) -> impl Fn(crate::company::CompanyError) -> SessionError {
-    move |error| SessionError::InvalidSetup(format!("{stage} failed: {error}"))
+fn company_error(_stage: &'static str) -> impl Fn(crate::company::CompanyError) -> SessionError {
+    move |_error| {
+        // fault1159: 公司域装配某阶段失败。槽0 待 C 批数值化（原阶段名 "{_stage}"，
+        // 取值 "default companies"/"registry"/"custom operating budget"/"custom registry"/
+        // "custom issuer mapping"/"company spec"/"operating budget"）；
+        // 槽1 待 C 批数值化（原文本为内层 CompanyError 文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1159, vec![0, 0]))
+    }
 }
 
 /// 开局数字（元）：借 = 现金 + 应收 + 固定资产；贷 = 实收资本 + 短期借款。
@@ -450,8 +480,10 @@ fn assemble_listed_company(
 
     // 经营配置包含工业科目表（AccountChart::version()=2）、子账种子与经营流参数。
     // 开局行只包含金额为正的科目（过账守卫拒绝非正行金额；通用推导的应收为 0）。
-    let debt_maturity = CivilDate::from_ymd(as_of.year() + 2, 12, 31)
-        .map_err(|error| SessionError::InvalidSetup(format!("debt maturity invalid: {error}")))?;
+    let debt_maturity = CivilDate::from_ymd(as_of.year() + 2, 12, 31).map_err(|_error| {
+        // fault1160: 开局短期借款到期日非法。槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1160, vec![0]))
+    })?;
     let opening_debt = (figures.short_term_debt > 0).then(|| OpeningDebtTerms {
         lender: lender_id.clone(),
         principal: yuan(figures.short_term_debt),
@@ -493,8 +525,10 @@ fn assemble_listed_company(
         .map_err(company_error("operating budget"))?,
         tax_policy: listed_tax_policy(),
     };
-    let books = IndustrialBooks::new(industrial)
-        .map_err(|error| SessionError::InvalidSetup(format!("industrial books failed: {error}")))?;
+    let books = IndustrialBooks::new(industrial).map_err(|_error| {
+        // fault1161: 工业账套构造失败。槽0 待 C 批数值化（原文本为内层构造错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1161, vec![0]))
+    })?;
     let operating = OperatingCompanyConfig {
         spec,
         books: crate::company::operations::IndustryBooks::Industrial(books),
@@ -682,7 +716,8 @@ mod tests {
         stock.total_shares = 0;
         stock.float_shares = 0;
         let result = assemble_listed_company(&stock, OpeningFigures::from_total_shares(0), as_of);
-        assert!(matches!(result, Err(SessionError::InvalidSetup(message))
-            if message.starts_with("company spec failed:") && message.contains("zero issued shares")));
+        // 数值断言替代原文本断言（"company spec failed:" 前缀 + "zero issued shares"）：
+        // 两者同出 fault1159（company_error 阶段包装）；内层 CompanyError 文本待 C 批数值化。
+        assert!(matches!(result, Err(SessionError::InvalidSetup(fault)) if fault.code == 1159));
     }
 }

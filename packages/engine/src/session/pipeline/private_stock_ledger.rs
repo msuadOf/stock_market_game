@@ -473,7 +473,7 @@ mod tests {
         for (envelopes, expected_description) in [
             (
                 &cash_overflow[..],
-                "overflow in add with operand 9223372036854775807 + 1",
+                "overflow in CashAdd near 9223372036854775807",
             ),
             (&share_overflow[..], "shares add"),
         ] {

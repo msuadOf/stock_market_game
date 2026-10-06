@@ -103,6 +103,7 @@ pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, StockCode};
+use crate::error::ValidationFault;
 use crate::stock::StockCatalog;
 #[cfg(test)]
 use crate::behavior::BehaviorMarketObservation;
@@ -834,11 +835,13 @@ impl IngressReceiptCursors {
         };
         let account_ordinal = self.next_account_ordinal.get(&owner).copied().unwrap_or(0);
         let account_next = account_ordinal.checked_add(1).ok_or_else(|| {
-            SessionError::ResourceLimit(format!("account {owner:?} ingress ordinal overflow"))
+            // fault1003: 账户受理回执序号 u64 溢出。ctx[0] = AccountId。
+            SessionError::ResourceLimit(ValidationFault::new(1003, vec![owner.0]))
         })?;
         let stock_ordinal = self.next_stock_ordinal.get(&code).copied().unwrap_or(0);
         let stock_next = stock_ordinal.checked_add(1).ok_or_else(|| {
-            SessionError::ResourceLimit(format!("stock {code:?} ingress ordinal overflow"))
+            // fault1004: 股票受理回执序号 u64 溢出。ctx[0] = StockId。
+            SessionError::ResourceLimit(ValidationFault::new(1004, vec![u64::from(code.0)]))
         })?;
         self.next_account_ordinal.insert(owner, account_next);
         self.next_stock_ordinal.insert(code, stock_next);
@@ -907,9 +910,9 @@ struct WorkingOrderSlices<'a> {
 pub enum SessionError {
     #[error(transparent)]
     Step(#[from] StepFatal),
-    /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。
+    /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。数值码+数值上下文（ADR 0041）。
     #[error("invalid setup: {0}")]
-    InvalidSetup(String),
+    InvalidSetup(crate::error::ValidationFault),
     /// 入队意图时玩家 id 不存在。
     #[error("unknown player: {0:?}")]
     UnknownPlayer(AccountId),
@@ -921,9 +924,9 @@ pub enum SessionError {
     #[error("unknown stock for history request: {0:?}")]
     UnknownHistoryStock(StockId),
     #[error("history read could not be recorded: {0}")]
-    InvalidHistoryRead(String),
+    InvalidHistoryRead(crate::error::ValidationFault),
     #[error("session resource limit exceeded: {0}")]
-    ResourceLimit(String),
+    ResourceLimit(crate::error::ValidationFault),
     /// 透传 market 错误。
     #[error(transparent)]
     Market(#[from] MarketError),
@@ -942,9 +945,9 @@ pub enum SessionError {
     /// 透传游戏配置错误。
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// 存档 schema 或领域不变量不合法。
+    /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
-    InvalidSave(String),
+    InvalidSave(crate::error::ValidationFault),
     /// 透传交易日历错误（冻结日历与双时钟 开局日期门等）。
     #[error(transparent)]
     Calendar(#[from] crate::calendar::CalendarError),
@@ -1215,16 +1218,18 @@ impl SessionSetup {
                 .map(|spec| crate::stock::StockMeta::new(spec.code.0.clone()))
                 .collect(),
         )
-        .map_err(|error| SessionError::InvalidSetup(format!("股票目录构造失败: {error}")))
+        .map_err(|_| SessionError::InvalidSetup(ValidationFault::new(1001, vec![0])))
     }
 
     /// 全部股票 id（按代码序）。构造/装配路径的便捷视图。
     pub fn stock_ids(&self, catalog: &StockCatalog) -> Result<Vec<StockId>, SessionError> {
         self.stocks
             .iter()
-            .map(|spec| {
+            .enumerate()
+            .map(|(spec_index, spec)| {
                 catalog.id(&spec.code.0).ok_or_else(|| {
-                    SessionError::InvalidSetup(format!("股票代码未入目录: {}", spec.code.0))
+                    // 1002：规格代码未入目录；ctx[0]=规格下标。
+                    SessionError::InvalidSetup(ValidationFault::new(1002, vec![spec_index as u64]))
                 })
             })
             .collect()
@@ -1233,27 +1238,28 @@ impl SessionSetup {
     /// 都必须从这里进入，验证成功后才构造权威状态。
     pub fn validate(&self) -> Result<(), SessionError> {
         if self.stocks.is_empty() {
-            return Err(SessionError::InvalidSetup(
-                "stocks must be non-empty".to_string(),
-            ));
+            // fault1005: 股票规格列表为空。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1005)));
         }
         if self.simulation_policy_id != SIMULATION_POLICY_ID {
-            return Err(SessionError::InvalidSetup(format!(
-                "simulation_policy_id 必须为当前政策 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
-                self.simulation_policy_id
+            // fault1006: 模拟政策身份不匹配。槽0/槽1 待 C 批数值化
+            // （原文本为期望政策 id "{SIMULATION_POLICY_ID}" 与实际政策 id "{:?}"）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1006,
+                vec![0, 0],
             )));
         }
         // 冻结日历与双时钟 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
         TradingCalendar::current_default_calendar()?.validate_runtime_start(self.start_date)?;
         if self.ticks_per_day == 0 {
-            return Err(SessionError::InvalidSetup(
-                "ticks_per_day must be > 0".to_string(),
-            ));
+            // fault1007: ticks_per_day 必须为正。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1007)));
         }
         if self.auction_ticks >= self.ticks_per_day {
-            return Err(SessionError::InvalidSetup(format!(
-                "auction_ticks ({}) must be < ticks_per_day ({})",
-                self.auction_ticks, self.ticks_per_day
+            // fault1008: auction_ticks 必须 < ticks_per_day。ctx = [auction_ticks, ticks_per_day]。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1008,
+                vec![self.auction_ticks, self.ticks_per_day],
             )));
         }
         if self
@@ -1261,39 +1267,43 @@ impl SessionSetup {
             .checked_add(self.closing_auction_ticks)
             .is_none_or(|total| total >= self.ticks_per_day)
         {
-            return Err(SessionError::InvalidSetup(format!(
-                "auction_ticks ({}) + closing_auction_ticks ({}) must be < ticks_per_day ({})",
-                self.auction_ticks, self.closing_auction_ticks, self.ticks_per_day
+            // fault1009: auction_ticks + closing_auction_ticks 必须 < ticks_per_day。
+            // ctx = [auction_ticks, closing_auction_ticks, ticks_per_day]。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1009,
+                vec![
+                    self.auction_ticks,
+                    self.closing_auction_ticks,
+                    self.ticks_per_day,
+                ],
             )));
         }
         if self.history_len == 0 {
-            return Err(SessionError::InvalidSetup(
-                "history_len must be > 0".to_string(),
-            ));
+            // fault1010: history_len 必须为正。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1010)));
         }
         if self.npcs.retail_cash_median.cents() < 0 {
-            return Err(SessionError::InvalidSetup(
-                "retail_cash_median must be >= 0".to_string(),
-            ));
+            // fault1011: 散户现金中位数必须非负（i64 分负值，幅值由配置侧自证）。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1011)));
         }
         self.config.validate()?;
         if !self.t1_enabled {
-            return Err(SessionError::InvalidSetup(
-                "formal A-share sessions require T+1 settlement".to_string(),
-            ));
+            // fault1012: 正式 A 股局必须启用 T+1 结算。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1012)));
         }
         if (self.config.stamp_tax_rate - 0.0005).abs() > f64::EPSILON {
-            return Err(SessionError::InvalidSetup(format!(
-                "formal A-share sessions require sell stamp_tax_rate=0.0005, got {}",
-                self.config.stamp_tax_rate
+            // fault1013: 卖出印花税率必须为 0.0005。ctx[0] = 实际税率 f64 的 IEEE-754 位模式
+            // （C 批可改定点点表示）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1013,
+                vec![self.config.stamp_tax_rate.to_bits()],
             )));
         }
         if (self.config.default_limit - 0.10).abs() > f64::EPSILON
             || (self.config.st_limit - 0.10).abs() > f64::EPSILON
         {
-            return Err(SessionError::InvalidSetup(
-                "formal A-share sessions require default_limit=10% and st_limit=10%".to_string(),
-            ));
+            // fault1014: 主板/风险警示涨跌幅限制必须均为 10%。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1014)));
         }
         self.strategy_params.validate()?;
         let lot_size = self.config.lot_size;
@@ -1315,58 +1325,72 @@ impl SessionSetup {
             ),
         ] {
             if active && quantity % lot_size != 0 {
-                return Err(SessionError::InvalidSetup(format!(
-                    "{name}={quantity} must be a multiple of A-share lot_size={lot_size}"
+                // fault1015: 活跃类别下单均值必须是 A 股 lot_size 的整数倍。
+                // 槽0 待 C 批数值化（原文本为参数名 "{name}"，取值
+                // "strategy_params.retail.order_size_mean"/"strategy_params.inst.order_size"/
+                // "strategy_params.hot.order_size"）；ctx[1] = 下单均值，ctx[2] = lot_size。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1015,
+                    vec![0, u64::from(quantity), u64::from(lot_size)],
                 )));
             }
         }
         let mut codes = BTreeSet::new();
         for stock in &self.stocks {
             if !codes.insert(stock.code.clone()) {
-                return Err(SessionError::InvalidSetup(format!(
-                    "duplicate stock code: {}",
-                    stock.code.0
-                )));
+                // fault1016: 股票代码重复。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(1016, vec![0])));
             }
             if stock.tick != Money::from_cents(1) {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} must use the A-share 0.01 yuan tick",
-                    stock.code.0
-                )));
+                // fault1017: 最小价位必须为 A 股 0.01 元。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(1017, vec![0])));
             }
             if stock.total_shares == 0 {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} total_shares must be > 0",
-                    stock.code.0
-                )));
+                // fault1018: 总股本必须为正。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(1018, vec![0])));
             }
             if u64::from(stock.float_shares) > stock.total_shares {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} float_shares={} must not exceed total_shares={}",
-                    stock.code.0, stock.float_shares, stock.total_shares
+                // fault1019: 流通盘不得超过总股本。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = float_shares，ctx[2] = total_shares。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1019,
+                    vec![0, u64::from(stock.float_shares), stock.total_shares],
                 )));
             }
-            let inferred_exchange = StockExchange::from_a_share_code(&stock.code)
-                .map_err(SessionError::InvalidSetup)?;
+            // fault1020: 代码不是受支持的六位沪深 A 股代码（前缀识别失败）。
+            // 槽0 待 C 批数值化（原文本为内层 String 错误，含代码串）。
+            let inferred_exchange = StockExchange::from_a_share_code(&stock.code).map_err(|_| {
+                SessionError::InvalidSetup(ValidationFault::new(1020, vec![0]))
+            })?;
             if stock.exchange != inferred_exchange {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} is assigned to {:?}, but its code belongs to {:?}",
-                    stock.code.0, stock.exchange, inferred_exchange
+                // fault1021: 配置交易所与代码所属板块不一致。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = 配置交易所（StockExchange 判别值 0=Shanghai/1=Shenzhen），
+                // ctx[2] = 代码推导交易所。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1021,
+                    vec![
+                        0,
+                        stock.exchange as u64,
+                        inferred_exchange as u64,
+                    ],
                 )));
             }
             let is_chinext_code = matches!(&stock.code.0[..3], "300" | "301");
             if (stock.category == SecurityCategory::ChiNext) != is_chinext_code {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} category {:?} conflicts with its board code",
-                    stock.code.0, stock.category
+                // fault1022: 证券类别与代码板块冲突。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = SecurityCategory 判别值（0=MainBoard/1=StMainBoard/2=ChiNext）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1022,
+                    vec![0, stock.category as u64],
                 )));
             }
             if (stock.limit_pct - stock.category.limit_pct()).abs() > f64::EPSILON {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} category {:?} requires a {} price limit",
-                    stock.code.0,
-                    stock.category,
-                    stock.category.display_limit()
+                // fault1023: 涨跌幅与类别要求不符。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = SecurityCategory 判别值；类别对应涨跌幅（"10%"/"20%"）由 ctx[1] 唯一决定，
+                // 原文本第三个参数无数值化必要。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1023,
+                    vec![0, stock.category as u64],
                 )));
             }
         }
@@ -1375,8 +1399,12 @@ impl SessionSetup {
         {
             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
                 if !value.is_finite() || value < 0.0 {
-                    return Err(SessionError::InvalidSetup(format!(
-                        "float_allocation between_kinds Percentage {name}={value} invalid (must be finite >=0)"
+                    // fault1024: 类间流通盘比例必须为有限非负 f64。槽0 待 C 批数值化
+                    // （原文本为类别名 "{name}"，取值 "retail"/"inst"/"hot"）；
+                    // ctx[1] = 比例值 f64 的 IEEE-754 位模式（C 批可改定点点表示）。
+                    return Err(SessionError::InvalidSetup(ValidationFault::new(
+                        1024,
+                        vec![0, value.to_bits()],
                     )));
                 }
             }
@@ -1395,10 +1423,8 @@ impl SessionSetup {
                 .map(|(_, weight)| weight)
                 .sum::<f64>();
                 if !effective_weight.is_finite() || effective_weight <= 0.0 {
-                    return Err(SessionError::InvalidSetup(
-                        "float_allocation between_kinds Percentage weights for existing NPC kinds must have a finite sum > 0"
-                            .to_string(),
-                    ));
+                    // fault1025: 存在 NPC 类别时类间比例之和必须为有限正数。
+                    return Err(SessionError::InvalidSetup(ValidationFault::bare(1025)));
                 }
             }
         }
@@ -1567,9 +1593,11 @@ fn sample_npc_cash(
     let wealth_factor = (normal * log_std_dev).exp().clamp(0.05, 20.0);
     let cents = retail_cash_median.cents() as f64 * kind_multiplier * wealth_factor;
     if !cents.is_finite() || cents > i64::MAX as f64 {
-        return Err(SessionError::InvalidSetup(format!(
-            "initial cash overflow for {kind:?} account {}",
-            account.0
+        // fault1026: NPC 初始现金采样超出 i64 分表示范围。
+        // ctx[0] = AccountKind 判别值（0=Retail/1=Inst/2=Hot/3=Player），ctx[1] = AccountId。
+        return Err(SessionError::InvalidSetup(ValidationFault::new(
+            1026,
+            vec![kind as u64, account.0],
         )));
     }
     Ok(Money::from_cents(cents.round() as i64))
@@ -1654,8 +1682,10 @@ impl GameSession {
         event_multiplier_bp: u16,
     ) -> Result<GameSession, SessionError> {
         if !matches!(event_multiplier_bp, 5_000 | 10_000 | 20_000) {
-            return Err(SessionError::InvalidSetup(format!(
-                "company event multiplier must be 5000, 10000, or 20000 bp, got {event_multiplier_bp}"
+            // fault1027: 公司事件倍率只允许 5000/10000/20000 bp。ctx[0] = 实际倍率（bp）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1027,
+                vec![u64::from(event_multiplier_bp)],
             )));
         }
         setup.validate()?;
@@ -1665,11 +1695,12 @@ impl GameSession {
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
         let mut market_minute_closes = BTreeMap::new();
-        for s in &setup.stocks {
+        for (spec_index, s) in setup.stocks.iter().enumerate() {
             // 边界代码 → 数值 id；目录刚由同一批 specs 构造，查不到即内部不变量破损。
-            let id = stocks
-                .id(&s.code.0)
-                .ok_or_else(|| SessionError::InvalidSetup(format!("股票代码未入目录: {}", s.code.0)))?;
+            // 1002：规格代码未入目录；ctx[0]=规格下标。
+            let id = stocks.id(&s.code.0).ok_or_else(|| {
+                SessionError::InvalidSetup(ValidationFault::new(1002, vec![spec_index as u64]))
+            })?;
             markets.insert(
                 id,
                 Market::new(id, s.initial_price, s.limit_pct, s.tick)?,
@@ -1709,8 +1740,9 @@ impl GameSession {
             library,
             ..
         } = prehistory;
-        company_groups::validate_groups(&setup.groups, &ops).map_err(|error| {
-            SessionError::InvalidSetup(format!("company groups invalid: {error}"))
+        company_groups::validate_groups(&setup.groups, &ops).map_err(|_error| {
+            // fault1028: 公司分组配置校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1028, vec![0]))
         })?;
         let mut civil_clock = civil_clock;
         let mut ops_wiring = CompanyOperationsClockWiring::new();
@@ -1922,9 +1954,11 @@ impl GameSession {
                         .institutional_fees_paid
                         .is_none()
                     {
-                        return Err(SessionError::InvalidSave(format!(
-                            "institution account {} held stock {} has unknown fee history",
-                            account_id.0, code.0
+                        // fault1029: 机构持仓缺乏费用史（institutional_fees_paid 缺失）。
+                        // ctx[0] = AccountId，ctx[1] = StockId。
+                        return Err(SessionError::InvalidSave(ValidationFault::new(
+                            1029,
+                            vec![account_id.0, u64::from(code.0)],
                         )));
                     }
                 } else {
@@ -2169,7 +2203,8 @@ impl GameSession {
             .next_back()
             .map_or(1, |id| id.0 + 1);
         let end_id = first_id.checked_add(u64::from(count)).ok_or_else(|| {
-            SessionError::InvalidSetup("NPC account id range overflow".to_string())
+            // fault1030: NPC 账户 id 区间 u64 溢出。
+            SessionError::InvalidSetup(ValidationFault::bare(1030))
         })?;
         for (ordinal, next_id) in (first_id..end_id).enumerate() {
             let id = AccountId(next_id);
@@ -2185,7 +2220,8 @@ impl GameSession {
                 &self.state.setup.strategy_params,
                 self.state.setup.ticks_per_day,
                 u32::try_from(ordinal).map_err(|_| {
-                    SessionError::InvalidSetup("NPC ordinal exceeds u32".to_string())
+                    // fault1031: NPC 序号超出 u32。
+                    SessionError::InvalidSetup(ValidationFault::bare(1031))
                 })?,
                 &mut self.state.rng,
             )? {
@@ -2200,16 +2236,14 @@ impl GameSession {
                     }));
                 }
                 let mut strategy_state = crate::strategy::StrategyState::from_strategy(s.as_ref())
-                    .map_err(|error| {
-                        SessionError::InvalidSetup(format!(
-                            "generated NPC strategy state is invalid: {error}"
-                        ))
+                    .map_err(|_error| {
+                        // fault1032: 生成的 NPC 策略状态非法。槽0 待 C 批数值化（原文本为内层错误文本）。
+                        SessionError::InvalidSetup(ValidationFault::new(1032, vec![0]))
                     })?;
                 strategy_state.set_base_observation_probability(base_probability);
-                let s = strategy_state.into_strategy().map_err(|error| {
-                    SessionError::InvalidSetup(format!(
-                        "canonical NPC strategy state is invalid: {error}"
-                    ))
+                let s = strategy_state.into_strategy().map_err(|_error| {
+                    // fault1033: 规范化 NPC 策略状态非法。槽0 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSetup(ValidationFault::new(1033, vec![0]))
                 })?;
                 acc.set_strategy(s);
                 // 计划型机构的决策链状态：分析档案 + 信念簿 +
@@ -2444,8 +2478,9 @@ impl GameSession {
                 },
             ));
         }
-        let checkpoint = self.clone_for_tick_shadow().map_err(|error| {
-            SessionError::InvalidSave(format!("cannot create civil day-end checkpoint: {error}"))
+        let checkpoint = self.clone_for_tick_shadow().map_err(|_error| {
+            // fault1034: 自然日日终检查点克隆失败。槽0 待 C 批数值化（原文本为内层 StepFatal 文本）。
+            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
         })?;
         match self.end_civil_day_after_session_check() {
             Ok(report) => Ok(report),
@@ -2556,8 +2591,9 @@ impl GameSession {
         }
         let year_end = settled.month() == 12;
         let period = crate::accounting::AccountingPeriod::from_ymd(settled.year(), settled.month())
-            .map_err(|error| {
-                SessionError::InvalidSetup(format!("closing period invalid: {error}"))
+            .map_err(|_error| {
+                // fault1035: 封账期间（年/月）构造非法。槽0 待 C 批数值化（原文本为内层错误文本）。
+                SessionError::InvalidSetup(ValidationFault::new(1035, vec![0]))
             })?;
         let targets: Vec<(
             crate::company::CompanyId,
@@ -2600,7 +2636,10 @@ impl GameSession {
             std::sync::Arc::make_mut(&mut self.state.closing),
             period,
         )
-        .map_err(|error| SessionError::InvalidSetup(format!("group closing failed: {error}")))?;
+        .map_err(|_error| {
+            // fault1036: 分组封账登记失败。槽0 待 C 批数值化（原文本为内层错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1036, vec![0]))
+        })?;
         Ok(())
     }
 
@@ -3115,7 +3154,10 @@ impl GameSession {
     pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
         save.urgency_policy
             .validate()
-            .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
+            .map_err(|_error| {
+                // fault1037: 存档 urgency_policy 校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+                SessionError::InvalidSave(ValidationFault::new(1037, vec![0]))
+            })?;
         validate_save_slot(save)?;
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
         sess.fresh_initial_allocation = false;
@@ -3172,10 +3214,12 @@ impl GameSession {
                 .unwrap_or(&[]);
             market
                 .restore_resting_orders(orders, save.book_next_sequences[code])
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot restore resting orders for {}: {error}",
-                        code.0
+                .map_err(|_error| {
+                    // fault1038: 恢复连续竞价挂单失败。ctx[0] = StockId；
+                    // 槽1 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1038,
+                        vec![u64::from(code.0), 0],
                     ))
                 })?;
         }
@@ -3185,17 +3229,21 @@ impl GameSession {
                 .get_mut(code)
                 .expect("validated filled-order market must exist")
                 .restore_filled_orders(filled.iter().map(|order| (order.id, order.owner)))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot restore filled orders for {}: {error}",
-                        code.0
+                .map_err(|_error| {
+                    // fault1039: 恢复已成交委托记录失败。ctx[0] = StockId；
+                    // 槽1 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1039,
+                        vec![u64::from(code.0), 0],
                     ))
                 })?;
         }
         // 恢复进度
         sess.state.tick = save.snapshot.tick;
-        sess.state.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
-            .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
+        sess.state.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day).map_err(|_| {
+            // fault1040: 存档交易日序号超出 u32。
+            SessionError::InvalidSave(ValidationFault::bare(1040))
+        })?;
         sess.state.seq = save.snapshot.seq;
         // 恢复自然日时钟；全量校验其自洽性，并使用随存档冻结的政策。
         sess.state.civil_clock = CivilClock::from_parts(
@@ -3240,9 +3288,16 @@ impl GameSession {
                 (reconstructed.base_probability - saved_state.base_probability).abs()
                     > probability_scale * f64::EPSILON * 4.0;
             if differs_beyond_json_roundtrip {
-                return Err(SessionError::InvalidSave(format!(
-                    "NPC {} attention probability {} does not match its deterministic profile {}",
-                    id.0, saved_state.base_probability, reconstructed.base_probability
+                // fault1041: 恢复的 NPC 注意力基础概率与确定性重建值不符（超出 JSON 往返容差）。
+                // ctx[0] = AccountId；ctx[1] = 存档值 f64 位模式，ctx[2] = 重建值 f64 位模式
+                // （f64 以 IEEE-754 位模式入槽，C 批可改定点点表示）。
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1041,
+                    vec![
+                        id.0,
+                        saved_state.base_probability.to_bits(),
+                        reconstructed.base_probability.to_bits(),
+                    ],
                 )));
             }
             // 基础概率来自账户的确定性行为档案，不是随时间演进的状态。JSON 数字
@@ -3310,9 +3365,11 @@ impl GameSession {
                     )
                     .collect::<Vec<_>>();
                 let [remaining_qty] = active_quantities.as_slice() else {
-                    return Err(SessionError::InvalidSave(format!(
-                        "parent-order account {} stock {} active child cannot be uniquely rebuilt",
-                        account.0, code.0
+                    // fault1042: 父订单活跃子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
+                    // ctx[0] = AccountId，ctx[1] = StockId。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        1042,
+                        vec![account.0, u64::from(code.0)],
                     )));
                 };
                 plan.restore_active_child_remaining_qty(Some(*remaining_qty));
@@ -3333,16 +3390,15 @@ impl GameSession {
         let saved_issuers: BTreeSet<&crate::company::CompanyId> =
             save.company_operations.companies.keys().collect();
         if expected_issuers != saved_issuers {
-            return Err(SessionError::InvalidSave(
-                "saved company set does not exactly match the issuers rebuilt from setup"
-                    .to_string(),
-            ));
+            // fault1043: 存档公司集合与 setup 重建的发行人集合不一致。
+            // 槽0/槽1 待 C 批数值化（原文本为两个 CompanyId 集合的 Debug 文本——公司域字符串身份）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(1043, vec![0, 0])));
         }
         for (id, company) in &save.company_operations.companies {
             if company.spec() != sess.state.operations.companies[id].spec() {
-                return Err(SessionError::InvalidSave(format!(
-                    "saved company {id:?} spec differs from setup"
-                )));
+                // fault1044: 存档公司规格与 setup 重建不一致。
+                // 槽0 待 C 批数值化（原文本为公司 id "{id:?}"——公司域字符串身份）。
+                return Err(SessionError::InvalidSave(ValidationFault::new(1044, vec![0])));
             }
         }
         // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
@@ -3352,10 +3408,9 @@ impl GameSession {
         let saved_belief_accounts: BTreeSet<AccountId> =
             save.belief_books.keys().copied().collect();
         if expected_belief_accounts != saved_belief_accounts {
-            return Err(SessionError::InvalidSave(format!(
-                "saved personal-state account set {saved_belief_accounts:?} does not match the \
-                 reconstructed belief accounts {expected_belief_accounts:?}"
-            )));
+            // fault1045: 存档个人状态账户集合与确定性重建集合不一致。
+            // 槽0/槽1 待 C 批数值化（原文本为两个 AccountId 集合的 Debug 文本——集合差异无数值槽）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(1045, vec![0, 0])));
         }
         sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
         sess.state.groups = save.groups.clone();
@@ -3401,11 +3456,14 @@ impl GameSession {
 /// `NpcAttentionState` 会进入存档；若运行时直接保留原始计算结果，JSON 数字格式的
 /// 舍入可能让恢复后静态概率的最低有效位不同，从而破坏后续确定性重放。
 fn json_canonical_f64(value: f64) -> Result<f64, SessionError> {
-    let encoded = serde_json::to_string(&value).map_err(|error| {
-        SessionError::InvalidSetup(format!("cannot encode finite f64: {error}"))
+    let encoded = serde_json::to_string(&value).map_err(|_error| {
+        // fault1046: f64 JSON 编码失败。槽0 待 C 批数值化（原文本为内层 serde 错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1046, vec![0]))
     })?;
-    serde_json::from_str(&encoded)
-        .map_err(|error| SessionError::InvalidSetup(format!("cannot decode finite f64: {error}")))
+    serde_json::from_str(&encoded).map_err(|_error| {
+        // fault1047: f64 JSON 解码失败。槽0 待 C 批数值化（原文本为内层 serde 错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1047, vec![0]))
+    })
 }
 
 /// A 股日内成交通常在开盘和尾盘更活跃。集合竞价分配 5% 的日量预期，连续竞价
@@ -3885,6 +3943,12 @@ mod npc_working_quote_tests {
         }
     }
 
+    // 下列断言的 fault 产生于 persistence 分片（码段 2000-2199）。码值已按
+    // persistence.rs 实际站点注释核对回填（S2 预测值 2132/2133/2134 整体偏移 +1）。
+    const FAULT_FUTURE_EXPERIENCE_CLOCKS: u16 = 2131;
+    const FAULT_INVALID_FAILURE_EXPERIENCE: u16 = 2132;
+    const FAULT_INVALID_TRADE_EXPERIENCE: u16 = 2133;
+
     #[test]
     fn saved_institution_feedback_rejects_future_clocks_and_invalid_failure_references() {
         let session = GameSession::new(quote_setup(0), 42).unwrap();
@@ -3914,7 +3978,8 @@ mod npc_working_quote_tests {
             });
         assert!(matches!(
             persistence::validate_save_slot(&invalid_reference),
-            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")
+            // 数值断言替代原文本断言 "invalid failure experience"。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_FAILURE_EXPERIENCE
         ));
 
         let mut future = save;
@@ -3938,8 +4003,10 @@ mod npc_working_quote_tests {
             });
         assert!(matches!(
             persistence::validate_save_slot(&future),
-            Err(SessionError::InvalidSave(message)) if message.contains("future experience clocks")
-                || message.contains("invalid failure experience")
+            // 数值断言替代原文本断言 "future experience clocks" || "invalid failure experience"
+            // （首错序由哪个码先出现验证）。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_FUTURE_EXPERIENCE_CLOCKS
+                || fault.code == FAULT_INVALID_FAILURE_EXPERIENCE
         ));
     }
 
@@ -3968,7 +4035,8 @@ mod npc_working_quote_tests {
                 moment,
             });
         assert!(matches!(GameSession::restore(&save),
-            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")));
+            // 数值断言替代原文本断言 "invalid failure experience"。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_FAILURE_EXPERIENCE));
     }
 
     #[test]
@@ -4000,7 +4068,8 @@ mod npc_working_quote_tests {
                 );
             assert!(
                 matches!(GameSession::restore(&invalid),
-                Err(SessionError::InvalidSave(message)) if message.contains("invalid trade experience")),
+                // 数值断言替代原文本断言 "invalid trade experience"。
+                Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_TRADE_EXPERIENCE),
                 "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected"
             );
         }

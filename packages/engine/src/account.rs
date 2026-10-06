@@ -350,15 +350,15 @@ impl Account {
             current_qty
                 .checked_add(settlement.qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "position_qty_add",
-                    operand: format!("{current_qty} + {}", settlement.qty),
+                    op: crate::money::MoneyOp::PositionQtyAdd,
+                    operand: current_qty as i64,
                 })?;
         let new_locked = if t1_enabled {
             current_locked
                 .checked_add(settlement.qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "t1_locked_add",
-                    operand: format!("{current_locked} + {}", settlement.qty),
+                    op: crate::money::MoneyOp::T1LockedAdd,
+                    operand: current_locked as i64,
                 })?
         } else {
             current_locked
@@ -366,8 +366,8 @@ impl Account {
         let new_invested = current_invested
             .checked_add(settlement.gross.cents())
             .ok_or_else(|| MoneyError::Overflow {
-                op: "invested_cents_add",
-                operand: format!("{current_invested} + {}", settlement.gross.cents()),
+                op: crate::money::MoneyOp::InvestedCentsAdd,
+                operand: current_invested,
             })?;
         let state = Arc::make_mut(&mut self.state);
         state.cash = new_cash;
@@ -468,8 +468,8 @@ impl Account {
             .recovered_cents
             .checked_add(settlement.gross.cents())
             .ok_or_else(|| MoneyError::Overflow {
-                op: "recovered_cents_add",
-                operand: format!("{} + {}", pos.recovered_cents, settlement.gross.cents()),
+                op: crate::money::MoneyOp::RecoveredCentsAdd,
+                operand: pos.recovered_cents,
             })?;
         let new_qty = pos
             .qty
@@ -562,8 +562,8 @@ impl Account {
             total_qty = total_qty
                 .checked_add(*qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "trade_batch_qty_add",
-                    operand: format!("{total_qty} + {qty}"),
+                    op: crate::money::MoneyOp::TradeBatchQtyAdd,
+                    operand: total_qty as i64,
                 })?;
         }
         match side {
