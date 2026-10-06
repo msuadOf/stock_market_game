@@ -2361,7 +2361,7 @@ impl GameSession {
     /// 以 SimpleFinanceState 的已结算财务与显式注册资本事实受理现金分红决议。
     pub fn approve_cash_dividend(
         &mut self,
-        declaration: crate::company::simple::DividendDeclaration,
+        declaration: crate::company::DividendDeclaration,
         plan: crate::company::cash_dividend::CashDividendPlan,
     ) -> Result<(), SessionCorporateActionsError> {
         if declaration.plan_id != plan.plan_id

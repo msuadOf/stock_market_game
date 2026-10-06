@@ -62,7 +62,7 @@ impl CompanySystem {
     pub fn distributable_profit(
         &self,
         company: &CompanyId,
-    ) -> Result<super::simple::DistributableProfit, CompanySystemError> {
+    ) -> Result<super::dividend::DistributableProfit, CompanySystemError> {
         Ok(self.finance(company)?.distributable_profit()?)
     }
 
@@ -73,7 +73,7 @@ impl CompanySystem {
         source_evidence: String,
     ) -> Result<(), CompanySystemError> {
         self.finance_mut(company)?.define_dividend_legal_facts(
-            super::simple::DividendLegalFacts {
+            super::dividend::DividendLegalFacts {
                 registered_capital,
                 source_evidence,
             },
@@ -85,8 +85,8 @@ impl CompanySystem {
     pub fn declare_dividend(
         &mut self,
         company: &CompanyId,
-        declaration: super::simple::DividendDeclaration,
-    ) -> Result<super::simple::DividendPlanReceipt, CompanySystemError> {
+        declaration: super::dividend::DividendDeclaration,
+    ) -> Result<super::dividend::DividendPlanReceipt, CompanySystemError> {
         let result = self.finance_mut(company)?.declare_dividend(declaration)?;
         self.hash_cache = CompanySystemHashCache::default();
         Ok(result)
@@ -99,7 +99,7 @@ impl CompanySystem {
         payment_id: &str,
         paid_on: CivilDate,
         amount: crate::accounting::AccountingAmount,
-    ) -> Result<super::simple::DividendPaymentReceipt, CompanySystemError> {
+    ) -> Result<super::dividend::DividendPaymentReceipt, CompanySystemError> {
         let result = self
             .finance_mut(company)?
             .pay_dividend(plan_id, payment_id, paid_on, amount)?;
@@ -110,7 +110,7 @@ impl CompanySystem {
     pub fn dividend_plan_facts(
         &self,
         company: &CompanyId,
-    ) -> Result<Vec<super::simple::DividendPlanFact>, CompanySystemError> {
+    ) -> Result<Vec<super::dividend::DividendPlanFact>, CompanySystemError> {
         Ok(self.finance(company)?.dividend_plan_facts()?)
     }
 
@@ -118,7 +118,7 @@ impl CompanySystem {
         &self,
         company: &CompanyId,
         plan_id: &str,
-    ) -> Result<Option<Vec<super::simple::DividendPaymentFact>>, CompanySystemError> {
+    ) -> Result<Option<Vec<super::dividend::DividendPaymentFact>>, CompanySystemError> {
         Ok(self.finance(company)?.dividend_payment_facts(plan_id))
     }
 

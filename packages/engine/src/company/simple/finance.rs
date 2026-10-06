@@ -8,6 +8,10 @@ use crate::accounting::{
 };
 use crate::calendar::CivilDate;
 use crate::company::api::PeriodAmounts;
+use crate::company::dividend::{
+    DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
+    DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
+};
 use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
 use crate::company::{CompanyId, CompanyKind};
 #[path = "finance_dividend.rs"]
@@ -51,22 +55,6 @@ pub enum SimpleFinanceError {
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DividendDeclaration {
-    pub plan_id: String,
-    pub approved_on: CivilDate,
-    pub total_gross: AccountingAmount,
-    pub registered_capital: AccountingAmount,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DividendLegalFacts {
-    pub registered_capital: AccountingAmount,
-    pub source_evidence: String,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DividendPlanState {
     declaration: DividendDeclaration,
     declaration_source: BusinessEventId,
@@ -82,52 +70,6 @@ struct DividendPaymentState {
     source: BusinessEventId,
     paid_on: CivilDate,
     amount: AccountingAmount,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct DistributableProfit {
-    pub accumulated_after_loss: AccountingAmount,
-    pub statutory_reserve: AccountingAmount,
-    pub available_for_distribution: AccountingAmount,
-    pub reserve_basis_year: Option<i32>,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct DividendPlanReceipt {
-    pub plan_id: String,
-    pub amount: AccountingAmount,
-    pub statutory_reserve: AccountingAmount,
-    pub already_declared: bool,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct DividendPaymentReceipt {
-    pub plan_id: String,
-    pub payment_id: String,
-    pub amount: AccountingAmount,
-    pub paid_on: CivilDate,
-    pub already_paid: bool,
-    pub simple_display_only: bool,
-    pub within_six_month_deadline: bool,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct DividendPaymentFact {
-    pub payment_id: String,
-    pub paid_on: CivilDate,
-    pub amount: AccountingAmount,
-    pub source: BusinessEventId,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct DividendPlanFact {
-    pub plan_id: String,
-    pub approved_on: CivilDate,
-    pub total_gross: AccountingAmount,
-    pub registered_capital: AccountingAmount,
-    pub registered_capital_source_evidence: String,
-    pub declaration_source: BusinessEventId,
-    pub payments: Vec<DividendPaymentFact>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]

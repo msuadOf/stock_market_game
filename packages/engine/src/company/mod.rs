@@ -47,6 +47,13 @@ pub mod stock_distribution;
 pub mod cash_dividend_tax;
 pub mod cash_dividend;
 pub mod ex_reference_price;
+#[cfg(test)]
+mod dividend_contract_tests;
+mod dividend;
+pub use dividend::{
+    DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
+    DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
+};
 
 pub use contracts::{
     ContractBook, ContractId, ContractRole, CreditLine, DayCountBasis, OperatingBudget,

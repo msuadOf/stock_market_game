@@ -77,7 +77,7 @@ fn session_with_approved_cash_dividend() -> (GameSession, crate::company::Compan
         CashDividendFormula::StandardCashOnly, approved_on, announced_on, registered_on, ex_date, payable_on,
         Money::from_cents(1), Money::from_cents(2), session.state.civil_clock.calendar(),
     ).unwrap();
-    session.approve_cash_dividend(crate::company::simple::DividendDeclaration {
+    session.approve_cash_dividend(crate::company::DividendDeclaration {
         plan_id: plan.plan_id.clone(), approved_on,
         total_gross: AccountingAmount::from_cents(2), registered_capital: capital,
     }, plan).unwrap();
@@ -214,7 +214,7 @@ fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
             approved_on, announced_on, registered_on, ex_date, payable_on,
             Money::from_cents(cents), Money::from_cents(cents * 2), &calendar,
         ).unwrap();
-        session.approve_cash_dividend(crate::company::simple::DividendDeclaration {
+        session.approve_cash_dividend(crate::company::DividendDeclaration {
             plan_id: plan_id.into(), approved_on,
             total_gross: AccountingAmount::from_cents(i128::from(cents) * 2), registered_capital: capital,
         }, plan).unwrap();
@@ -279,7 +279,7 @@ fn future_approved_date_cash_dividend_is_rejected_atomically() {
         date("2030-01-02"), date("2030-01-02"), date("2030-01-03"), date("2030-01-04"), date("2030-01-07"),
         Money::from_cents(1), Money::from_cents(1), session.state.civil_clock.calendar(),
     ).unwrap();
-    let declaration = crate::company::simple::DividendDeclaration {
+    let declaration = crate::company::DividendDeclaration {
         plan_id: "future-plan".into(), approved_on: date("2030-01-02"),
         total_gross: crate::accounting::AccountingAmount::from_cents(1),
         registered_capital: crate::accounting::AccountingAmount::from_cents(1),
