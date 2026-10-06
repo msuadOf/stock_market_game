@@ -12,6 +12,7 @@ use crate::{
     AccountId, GameConfig, Market, MarketError, Money, OrderId, RejectionReason, Side, StockCode,
     Trade, TradingPhase,
 };
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "incremental_continuous_stock_shadow.rs"]
@@ -876,62 +877,101 @@ pub(super) fn validate_private_market_ledger(
     ledger: &PrivateStockLedger,
     config: &GameConfig,
 ) -> Result<(), StepFatal> {
+    validate_private_market_with_observer(market, ledger, config, || {})
+}
+
+pub(super) fn validate_private_market_with_observer(
+    market: &Market,
+    ledger: &PrivateStockLedger,
+    config: &GameConfig,
+    observe_row: impl Fn() + Sync,
+) -> Result<(), StepFatal> {
     let mut matched = 0_usize;
-    // 该校验只处理一个 market，stock 字符串可在全部查询中复用。
-    let mut key = EnvelopeKey {
+    let make_key = || EnvelopeKey {
         account: AccountId(0),
         stock: market.code().clone(),
         order: OrderId(0),
         side: Side::Buy,
     };
-    for order in market.resting_order_refs() {
-        key.account = order.owner;
-        key.order = order.id;
-        key.side = order.side;
-        let envelope = ledger
-            .get(&key)
-            .map_err(|_| invariant("stock round left a resting order without a live envelope"))?;
-        let audit = envelope.audit();
-        if envelope.pending_price().is_some()
-            || audit.limit != order.price
-            || audit.remaining_qty != order.qty
-            || audit.filled_qty != order.filled_qty
-            || audit.filled_value != order.filled_value
-        {
-            return Err(invariant(
-                "stock round left an order and its live envelope out of sync",
-            ));
+    if market.resting_order_count() >= 512 {
+        let orders = market.resting_order_refs().collect::<Vec<_>>();
+        let checked = orders
+            .par_iter()
+            .with_min_len(128)
+            .map_init(make_key, |key, order| {
+                validate_private_order(ledger, config, order, key, &observe_row)
+            })
+            .collect::<Vec<_>>();
+        // 独立行检查可以并行；checked 数量汇总与首错仍在原簿序逐项执行。
+        for result in checked {
+            result?;
+            matched = matched
+                .checked_add(1)
+                .ok_or_else(|| invariant("stock round live order count overflow"))?;
         }
-        match order.side {
-            Side::Buy => {
-                let expected = crate::session::buy_order_reservation(
-                    config,
-                    order.price,
-                    order.qty,
-                    order.filled_value,
-                )
-                .map_err(|error| invariant(&error.to_string()))?;
-                if envelope.live() != ResVec::new(expected, 0) {
-                    return Err(invariant(
-                        "resting buy envelope disagrees with its exact reservation",
-                    ));
-                }
-            }
-            Side::Sell if envelope.live() != ResVec::new(Money::ZERO, order.qty) => {
-                return Err(invariant(
-                    "resting sell envelope disagrees with its quantity",
-                ));
-            }
-            Side::Sell => {}
+    } else {
+        let mut key = make_key();
+        for order in market.resting_order_refs() {
+            validate_private_order(ledger, config, order, &mut key, &observe_row)?;
+            matched = matched
+                .checked_add(1)
+                .ok_or_else(|| invariant("stock round live order count overflow"))?;
         }
-        matched = matched
-            .checked_add(1)
-            .ok_or_else(|| invariant("stock round live order count overflow"))?;
     }
     if matched != ledger.iter().count() {
         return Err(invariant(
             "stock round left a live envelope without a resting order",
         ));
+    }
+    Ok(())
+}
+
+fn validate_private_order(
+    ledger: &PrivateStockLedger,
+    config: &GameConfig,
+    order: &crate::Order,
+    key: &mut EnvelopeKey,
+    observe_row: &(impl Fn() + Sync),
+) -> Result<(), StepFatal> {
+    observe_row();
+    key.account = order.owner;
+    key.order = order.id;
+    key.side = order.side;
+    let envelope = ledger
+        .get(key)
+        .map_err(|_| invariant("stock round left a resting order without a live envelope"))?;
+    let audit = envelope.audit();
+    if envelope.pending_price().is_some()
+        || audit.limit != order.price
+        || audit.remaining_qty != order.qty
+        || audit.filled_qty != order.filled_qty
+        || audit.filled_value != order.filled_value
+    {
+        return Err(invariant(
+            "stock round left an order and its live envelope out of sync",
+        ));
+    }
+    match order.side {
+        Side::Buy => {
+            let expected = crate::session::buy_order_reservation(
+                config,
+                order.price,
+                order.qty,
+                order.filled_value,
+            )
+            .map_err(|error| invariant(&error.to_string()))?;
+            if envelope.live() != ResVec::new(expected, 0) {
+                return Err(invariant(
+                    "resting buy envelope disagrees with its exact reservation",
+                ));
+            }
+        }
+        Side::Sell if envelope.live() != ResVec::new(Money::ZERO, order.qty) => {
+            return Err(invariant(
+                "resting sell envelope disagrees with its quantity",
+            ));
+        }
+        Side::Sell => {}
     }
     Ok(())
 }

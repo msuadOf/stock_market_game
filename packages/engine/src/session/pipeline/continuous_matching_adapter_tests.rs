@@ -364,3 +364,119 @@ fn adapter_validates_order_resources_without_materializing_an_extra_projection_e
         game.state.envelope_ledger.get(envelope.key()).unwrap()
     );
 }
+
+#[test]
+fn one_dense_stock_input_validates_on_multiple_workers_and_keeps_the_authoritative_payload() {
+    use std::sync::Mutex;
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let code = StockCode("600888".to_owned());
+    for index in 0..1024 {
+        game.state
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .place(resting_buy(OrderId(1000 + index), AccountId(1)))
+            .unwrap();
+    }
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let before = game.session_state_hash().unwrap();
+    let workers = Mutex::new(std::collections::BTreeSet::new());
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    let inputs = pool
+        .install(|| {
+            super::continuous_matching_adapter::prepare_inputs_with_observer(&game, || {
+                workers
+                    .lock()
+                    .unwrap()
+                    .insert(rayon::current_thread_index().unwrap());
+            })
+        })
+        .unwrap();
+    assert!(
+        workers.into_inner().unwrap().len() > 1,
+        "单股 dense input 的独立行校验必须使用多个 worker，而不只靠多股并行"
+    );
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].envelopes.len(), 1024);
+    for snapshot in &inputs[0].envelopes {
+        assert_eq!(
+            &snapshot.envelope,
+            game.state
+                .envelope_ledger
+                .get(snapshot.envelope.key())
+                .unwrap()
+        );
+        assert_eq!(snapshot.audit, snapshot.envelope.audit());
+    }
+    assert_eq!(game.session_state_hash().unwrap(), before);
+}
+
+#[test]
+fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order() {
+    for count in [511, 512, 513] {
+        let mut source =
+            GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+        let code = StockCode("600888".to_owned());
+        for index in 0..count {
+            source
+                .state
+                .markets
+                .get_mut(&code)
+                .unwrap()
+                .place(resting_buy(OrderId(5000 - index), AccountId(1)))
+                .unwrap();
+        }
+        source.hydrate_or_validate_envelope_ledger().unwrap();
+        let first = EnvelopeKey {
+            account: AccountId(1),
+            stock: code.clone(),
+            order: OrderId(5000),
+            side: Side::Buy,
+        };
+        let last = EnvelopeKey {
+            order: OrderId(5001 - count),
+            ..first.clone()
+        };
+        for first_missing in [false, true] {
+            let mut game = source.clone_for_tick_shadow().unwrap();
+            let (missing, underfunded) = if first_missing {
+                (&first, &last)
+            } else {
+                (&last, &first)
+            };
+            let audit = game.state.envelope_ledger.get(underfunded).unwrap().audit();
+            game.state.envelope_ledger.envelopes.insert(
+                underfunded.clone(),
+                Envelope::tick_start_existing(underfunded.clone(), Money::from_cents(1), 0, audit),
+            );
+            game.state.envelope_ledger.envelopes.remove(missing);
+            let before = game.state.envelope_ledger.clone();
+            for threads in [1, 4] {
+                let error = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap()
+                    .install(|| prepare_incremental_continuous_inputs(&game))
+                    .unwrap_err();
+                assert_eq!(
+                    error,
+                    StepFatal::InvariantViolation {
+                        description: if first_missing {
+                            "continuous order books contain an unledgered order"
+                        } else {
+                            "continuous order books disagree with live envelope resources"
+                        }
+                        .to_owned(),
+                        location: "pipeline::continuous_matching_adapter".to_owned(),
+                    },
+                    "{count}行/{threads}worker应按book序选择首错"
+                );
+                assert_eq!(game.state.envelope_ledger, before);
+            }
+        }
+    }
+}

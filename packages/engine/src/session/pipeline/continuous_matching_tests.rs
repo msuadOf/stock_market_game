@@ -1799,3 +1799,142 @@ fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
     }
     validate_worker_receipts(&initial, &output);
 }
+
+#[test]
+fn dense_private_market_validation_uses_multiple_workers_without_mutating_the_book_or_ledger() {
+    use std::sync::Mutex;
+    let code = StockCode("600888".to_owned());
+    let mut market = empty_market(&code);
+    let rows: Vec<_> = (0..1024)
+        .map(|index| {
+            add_resting_snapshot(
+                &mut market,
+                &code,
+                AccountId(1),
+                OrderId(1000 + index),
+                Side::Buy,
+                Money::from_cents(900),
+                100,
+            )
+            .envelope
+        })
+        .collect();
+    let ledger = super::private_stock_ledger::PrivateStockLedger::new(rows).unwrap();
+    let before_market = market.resting_orders();
+    let before_ledger: Vec<_> = ledger
+        .iter()
+        .map(|(_, envelope)| envelope.clone())
+        .collect();
+    let workers = Mutex::new(std::collections::BTreeSet::new());
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap()
+        .install(|| {
+            validate_private_market_with_observer(
+                &market,
+                &ledger,
+                &GameConfig::proposed_defaults(),
+                || {
+                    workers
+                        .lock()
+                        .unwrap()
+                        .insert(rayon::current_thread_index().unwrap());
+                },
+            )
+        })
+        .unwrap();
+    assert!(
+        workers.into_inner().unwrap().len() > 1,
+        "dense 同股 final validation 的独立行必须在多worker上执行"
+    );
+    assert_eq!(market.resting_orders(), before_market);
+    assert_eq!(
+        ledger
+            .iter()
+            .map(|(_, envelope)| envelope.clone())
+            .collect::<Vec<_>>(),
+        before_ledger
+    );
+}
+
+#[test]
+fn dense_private_market_errors_follow_book_order_across_parallel_threshold() {
+    for count in [511, 512, 513] {
+        let code = StockCode("600888".to_owned());
+        let mut market = empty_market(&code);
+        let rows: Vec<_> = (0..count)
+            .map(|index| {
+                add_resting_snapshot(
+                    &mut market,
+                    &code,
+                    AccountId(1),
+                    OrderId(5000 - index),
+                    Side::Buy,
+                    Money::from_cents(900),
+                    100,
+                )
+                .envelope
+            })
+            .collect();
+        for first_missing in [false, true] {
+            let missing = if first_missing { 0 } else { rows.len() - 1 };
+            let underfunded = if first_missing { rows.len() - 1 } else { 0 };
+            let invalid = rows.iter().enumerate().filter_map(|(index, envelope)| {
+                if index == missing {
+                    None
+                } else if index == underfunded {
+                    Some(Envelope::tick_start_existing(
+                        envelope.key().clone(),
+                        Money::from_cents(1),
+                        0,
+                        envelope.audit(),
+                    ))
+                } else {
+                    Some(envelope.clone())
+                }
+            });
+            let ledger = super::private_stock_ledger::PrivateStockLedger::new(invalid).unwrap();
+            let before: Vec<_> = ledger
+                .iter()
+                .map(|(_, envelope)| envelope.clone())
+                .collect();
+            let before_market = market.resting_orders();
+            for threads in [1, 4] {
+                let error = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap()
+                    .install(|| {
+                        validate_private_market_ledger(
+                            &market,
+                            &ledger,
+                            &GameConfig::proposed_defaults(),
+                        )
+                    })
+                    .unwrap_err();
+                assert_eq!(
+                    error,
+                    StepFatal::InvariantViolation {
+                        description: if first_missing {
+                            "stock round left a resting order without a live envelope"
+                        } else {
+                            "resting buy envelope disagrees with its exact reservation"
+                        }
+                        .to_owned(),
+                        location: "pipeline::continuous_matching".to_owned(),
+                    },
+                    "{count}行/{threads}worker应按book序选择首错"
+                );
+                assert_eq!(
+                    ledger
+                        .iter()
+                        .map(|(_, envelope)| envelope.clone())
+                        .collect::<Vec<_>>(),
+                    before
+                );
+                assert_eq!(market.resting_orders(), before_market);
+            }
+        }
+    }
+}
