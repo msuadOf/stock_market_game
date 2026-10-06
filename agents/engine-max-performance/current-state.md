@@ -230,3 +230,7 @@ commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367
 ## 追加：E7-X1 跨 tick 投机预计算本周期不实现（2026-10-06）
 
 三前提（rebase 重排等价、rebase 后投机 prepare 2084/2084 等价、尾部窗口 1133µs≥prepare 1020µs）均已实证，但真实现卡在借用死结：投机 prepare 需与 queue_npc 同时持有同一 GameSession 的 & 与 &mut，绕行方案（scope/protocol 外层提前/回调写缓冲/分支拆分）全部不可行或降级至 ~+10% 以下。前置条件=专门的 NPC 决策管线借用解耦重构（queue_npc 读写集显式化为字段组参数 + capture/stream 全链路签名收窄 + AccountBook 页 COW 并发断言），重构与投机实现各需一个完整周期，语义红线沿 E5 教训。详见 speculative-precompute-findings.md。
+
+## 追加：E8 股票数值身份落地（2026-10-07）
+
+用户决策（ADR 0041）：引擎核心以 StockId(u32) 为股票唯一身份，字符串只留边界。本批落地股票项并全量验证：c79f051c（引擎 230 文件）+ c6cd8761（harness）+ 7720a62d（三宿主 wire + ts_rs 再生成）。正式锚定交错配对（worker=4 默认口径，H=dde740c5 冻结 binary，锚漂 1.87%，6/6 全胜，区间完全分离 232-242 vs 286-300）**mean +22.73%，正式口径 ~236x→~290x**——主线迄今最大单笔。测试全部与基线逐一对照无新增失败（company_* 两例为基线编译破损掩盖的既有失败；desktop generate_context! 为既有环境问题）。清点与配方见 string-free-inventory.md / e8-string-sweep-progress.md / stockid-sweep-findings.md。清单未竟：B 结构化错误（数字错误码 wire 契约已定）、C CompanyId/venue/frozen/光标、其余 A 表行。
