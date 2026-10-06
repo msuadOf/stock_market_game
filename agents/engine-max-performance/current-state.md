@@ -200,3 +200,5 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 ## 追加：NPC snapshot 内部诊断（2026-10-06）
 
 对 `capture_decision_snapshot` 再做 10-span 插桩，诊断 220.467x，与正常区间接近。主要成本为：`retail_analysis` 0.865s wall / 0.454s CPU；62,022 次 `CapturedExperienceObservation::capture` 合计 0.844s wall / 0.772s CPU。build_market_view、attention mutate、working order capture、behavior market、retail experience install、DecisionSnapshot::new 每项仅约 0.03–0.17s。结论：下一步优先共享/复用 snapshot capture 内的 price paths 与 behavior market（retail_analysis 内部重复捕获 DecisionChainObservation），并优化 experience capture 的 positions/BTreeSet/clone 工作；不是继续调 Rayon 调度。插桩期间有三次诊断脚本语法/scope 错误，最终 build exit0 后采样，源码原字节恢复、git diff 干净。详见 `npc-snapshot-findings.md`。1000x 未达成，frontend 继续暂停。
+
+2026-10-06 shared price paths 实验已撤回：行为等价测试通过，但相邻对照 candidate 220.049x vs baseline 221.646x，无收益（约-0.72%）；源码已恢复 HEAD，证据见 shared-price-paths-findings.md。两个既有 NPC 测试 fixture 因覆盖策略丢失 base_observation_probability 在 68db9414 基线同样失败，与性能实验无关。

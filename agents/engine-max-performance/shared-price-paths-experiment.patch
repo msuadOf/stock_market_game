@@ -1,0 +1,211 @@
+diff --git a/packages/engine/src/session/decision_chain.rs b/packages/engine/src/session/decision_chain.rs
+index 17277a9d..46e3b759 100644
+--- a/packages/engine/src/session/decision_chain.rs
++++ b/packages/engine/src/session/decision_chain.rs
+@@ -71,16 +71,16 @@ pub(in crate::session) struct DecisionChainObservation {
+ }
+ 
+ impl DecisionChainObservation {
+-    fn capture_for_roots(session: &GameSession, market: MarketView) -> Result<Self, StepFatal> {
++    /// paths 由调用方在同一不可变 tick 起点捕获；本函数只补齐技术与披露观察。
++    fn capture_for_roots_with_paths(
++        session: &GameSession,
++        market: MarketView,
++        paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
++    ) -> Result<Self, StepFatal> {
+         let now = session.observation_civil_instant();
+         Ok(Self {
+             market,
+-            paths: session.market_price_path_observations().map_err(|error| {
+-                StepFatal::InvariantViolation {
+-                    description: error.to_string(),
+-                    location: "decision_chain::capture_decision_chain_roots_with_market".to_owned(),
+-                }
+-            })?,
++            paths,
+             technical: Self::build_technical(session)?,
+             now,
+             exposed: Self::exposed_stocks(session, now),
+@@ -623,9 +623,13 @@ impl GameSession {
+                 .account(*id)
+                 .map_err(|error| invariant(error.to_string()))?;
+         }
+-        self.capture_decision_chain_roots_with_market(accepted_due_npc_ids, || {
+-            snapshot.market().clone()
+-        })
++        self.capture_decision_chain_roots_with_market(
++            accepted_due_npc_ids,
++            || snapshot.market().clone(),
++            snapshot
++                .behavior_market()
++                .map(|behavior| behavior.price_paths.clone()),
++        )
+     }
+ 
+     pub(in crate::session) fn capture_ready_decision_chain_roots(
+@@ -654,7 +658,7 @@ impl GameSession {
+             }
+         }
+         let ready = ready.into_iter().collect::<Vec<_>>();
+-        self.capture_decision_chain_roots_with_market(&ready, || self.build_market_view())
++        self.capture_decision_chain_roots_with_market(&ready, || self.build_market_view(), None)
+     }
+ 
+     fn plan_review_facts(
+@@ -746,6 +750,7 @@ impl GameSession {
+         &self,
+         observed_accounts: &[AccountId],
+         market: impl FnOnce() -> MarketView,
++        shared_paths: Option<BTreeMap<StockCode, crate::observation::PricePathObservation>>,
+     ) -> Result<PlanChainOperationBatch, StepFatal> {
+         let invariant = |description: String| StepFatal::InvariantViolation {
+             description,
+@@ -770,9 +775,13 @@ impl GameSession {
+         if accounts.is_empty() {
+             return Ok(PlanChainOperationBatch::empty());
+         }
++        let paths = shared_paths.unwrap_or_else(|| {
++            self.market_price_path_observations()
++                .unwrap_or_else(|error| panic!("decision chain price paths failed: {error}"))
++        });
+         Ok(PlanChainOperationBatch::from_observation(
+             accounts,
+-            DecisionChainObservation::capture_for_roots(self, market())?,
++            DecisionChainObservation::capture_for_roots_with_paths(self, market(), paths)?,
+         ))
+     }
+ 
+@@ -2514,14 +2523,12 @@ mod chain_restructure_tests {
+             .belief_participants
+             .get_mut(&account)
+             .expect("institution belief exists")
+-            .belief_mut() = crate::strategy::BeliefBook::new(
+-            account,
+-            cognition.clone(),
+-            analysis,
+-            &mut rng,
+-        );
++            .belief_mut() =
++            crate::strategy::BeliefBook::new(account, cognition.clone(), analysis, &mut rng);
+         assert_eq!(
+-            session.state.belief_participants[&account].belief().profile(),
++            session.state.belief_participants[&account]
++                .belief()
++                .profile(),
+             &cognition
+         );
+         observe_account_root_for_latch(&mut session, account);
+@@ -4518,9 +4525,20 @@ mod chain_restructure_tests {
+         setup.npcs.inst_count = 2;
+         let mut forward = GameSession::new(setup.clone(), 42).unwrap();
+         let mut reverse = GameSession::new(setup, 42).unwrap();
+-        let observations =
+-            DecisionChainObservation::capture_for_roots(&forward, forward.build_market_view())
+-                .unwrap();
++        let observations = forward
++            .market_price_path_observations()
++            .map_err(|error| StepFatal::InvariantViolation {
++                description: error.to_string(),
++                location: "decision_chain::capture_decision_chain_roots_with_market".to_owned(),
++            })
++            .and_then(|paths| {
++                DecisionChainObservation::capture_for_roots_with_paths(
++                    &forward,
++                    forward.build_market_view(),
++                    paths,
++                )
++            })
++            .unwrap();
+         let context = RootReadContext::capture(&forward).unwrap();
+         let expected_equities =
+             [AccountId(1), AccountId(2)].map(|id| forward.account_equity(id).unwrap());
+diff --git a/packages/engine/src/session/decision_chain/retail_analysis.rs b/packages/engine/src/session/decision_chain/retail_analysis.rs
+index 97c3bee8..72d65546 100644
+--- a/packages/engine/src/session/decision_chain/retail_analysis.rs
++++ b/packages/engine/src/session/decision_chain/retail_analysis.rs
+@@ -10,6 +10,16 @@ impl GameSession {
+         &mut self,
+         observed: &[AccountId],
+         market: &MarketView,
++    ) -> Result<BTreeMap<AccountId, BTreeMap<StockCode, CandidateAssessment>>, StepFatal> {
++        self.capture_retail_analysis_with_shared_paths(observed, market, None)
++    }
++
++    /// 共享 paths 为 `Some` 时复用同一 tick 已捕获的权威价格路径，避免重复扫描历史。
++    pub(in crate::session) fn capture_retail_analysis_with_shared_paths(
++        &mut self,
++        observed: &[AccountId],
++        market: &MarketView,
++        shared_paths: Option<&BTreeMap<StockCode, crate::observation::PricePathObservation>>,
+     ) -> Result<BTreeMap<AccountId, BTreeMap<StockCode, CandidateAssessment>>, StepFatal> {
+         let accounts = observed
+             .iter()
+@@ -24,7 +34,21 @@ impl GameSession {
+         if accounts.is_empty() {
+             return Ok(BTreeMap::new());
+         }
+-        let observation = DecisionChainObservation::capture_for_roots(self, market.clone())?;
++        // 无共享输入时，零售分析必须与既有生产观察保持同一 error contract。
++        let owned_paths = match shared_paths {
++            Some(paths) => paths.clone(),
++            None => self.market_price_path_observations().map_err(|error| {
++                StepFatal::InvariantViolation {
++                    description: error.to_string(),
++                    location: "decision_chain::capture_decision_chain_roots_with_market".to_owned(),
++                }
++            })?,
++        };
++        let observation = DecisionChainObservation::capture_for_roots_with_paths(
++            self,
++            market.clone(),
++            owned_paths,
++        )?;
+         let returns = observation
+             .paths
+             .iter()
+@@ -657,6 +681,24 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn sharing_behavior_price_paths_preserves_retail_analysis_results() {
++        let mut independent = session();
++        let mut shared = session();
++        let id = AccountId(1);
++        let market = independent.build_market_view();
++        let price_paths = shared.market_price_path_observations().unwrap();
++        let independent_result = independent.capture_retail_analysis(&[id], &market).unwrap();
++        let shared_result = shared
++            .capture_retail_analysis_with_shared_paths(&[id], &market, Some(&price_paths))
++            .unwrap();
++        assert_eq!(independent_result, shared_result);
++        assert_eq!(
++            independent.session_state_hash().unwrap(),
++            shared.session_state_hash().unwrap()
++        );
++    }
++
+     #[test]
+     fn retail_zero_fundamental_weight_does_not_gain_a_valuation_method() {
+         let mut session = session();
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+index 7ededb39..8eff0a71 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+@@ -233,8 +233,15 @@ fn capture_decision_snapshot_in_place(
+         .retail_experience
+         .replace_existing_shared_parallel(experience_updates)
+         .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
++    let retail_paths = behavior_market
++        .as_ref()
++        .map(|behavior| behavior.price_paths.clone());
+     let mut retail_analysis = shadow
+-        .capture_retail_analysis(&accepted_due_npc_ids, &market)
++        .capture_retail_analysis_with_shared_paths(
++            &accepted_due_npc_ids,
++            &market,
++            retail_paths.as_ref(),
++        )
+         .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
+     let accounts = accounts
+         .into_iter()
