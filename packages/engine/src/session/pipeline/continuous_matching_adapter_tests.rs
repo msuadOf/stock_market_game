@@ -480,3 +480,58 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
         }
     }
 }
+
+#[test]
+fn dense_descending_books_emit_ascending_envelope_keys() {
+    // 1024 单按 id 降序挂入同一价位，簿序为降序；输出必须仍按完整 EnvelopeKey 升序，
+    // 供下游 PrivateStockLedger / 校验按序消费。融合排序方案不得改变这一契约。
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let code = StockCode("600888".to_owned());
+    for index in 0..1024 {
+        game.state
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .place(resting_buy(OrderId(9000 - index), AccountId(1)))
+            .unwrap();
+    }
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
+    let envelopes = &inputs[0].envelopes;
+    assert_eq!(envelopes.len(), 1024);
+    for pair in envelopes.windows(2) {
+        assert!(
+            pair[0].envelope.key() < pair[1].envelope.key(),
+            "adapter 输出必须保持 envelope key 升序"
+        );
+    }
+}
+
+#[test]
+fn prepare_stock_input_stops_using_incremental_identity_set() {
+    use super::continuous_matching_adapter::IDENTITY_SET_INSERTS;
+    use std::sync::atomic::Ordering;
+    // 回归防线：本测试在融合排序重构前以 1024 次 BTreeSet 增量插入亮过真实红灯（红→绿证据）；
+    // 重构后 IDENTITY_SET_INSERTS 不再有递增点，若查重被改回增量插入并重新接线计数，此处会再次亮红。
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let code = StockCode("600888".to_owned());
+    for index in 0..1024 {
+        game.state
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .place(resting_buy(OrderId(7000 + index), AccountId(1)))
+            .unwrap();
+    }
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let before = IDENTITY_SET_INSERTS.load(Ordering::SeqCst);
+    let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
+    assert_eq!(inputs[0].envelopes.len(), 1024);
+    let delta = IDENTITY_SET_INSERTS.load(Ordering::SeqCst) - before;
+    assert_eq!(
+        delta, 0,
+        "查重应由一次排序的相邻比较承担，而不是 O(n log n) 的 BTreeSet 增量插入"
+    );
+}
