@@ -1,14 +1,21 @@
 //! 无报价到期的 Continuous tick：独立准备读取相同不可变起点，结果在原阶段消费。
+use super::continuous_matching::IncrementalContinuousStockCoordinator;
 use super::{
     continuous_matching::ContinuousStockInput,
-    continuous_matching_adapter::prepare_incremental_continuous_inputs, DecisionResourceSnapshot,
-    GameSession, StepFatal,
+    continuous_matching_adapter::prepare_incremental_continuous_inputs,
+    stock_stream::continuous_shards, DecisionResourceSnapshot, GameSession, StepFatal,
 };
+use crate::StockCode;
+use std::collections::BTreeMap;
 
 pub(super) struct ReadOnlyStart {
     pub(super) hydration: Result<(), StepFatal>,
     pub(super) resources: Result<DecisionResourceSnapshot, StepFatal>,
+    /// 捕获错误照旧延迟到原 stock input 消费点传播；成功时输入所有权已移入 stock_shards。
     pub(super) stock_inputs: Result<Vec<ContinuousStockInput>, StepFatal>,
+    /// 输入就绪后立刻初始化的逐股 coordinator；仅消费输入本身，可安全提前到准备阶段。
+    pub(super) stock_shards:
+        Option<Result<BTreeMap<StockCode, IncrementalContinuousStockCoordinator>, StepFatal>>,
 }
 
 #[derive(Clone, Copy)]
@@ -37,7 +44,7 @@ fn prepare_with_observer(
     observe: impl Fn(StartWork) + Sync,
 ) -> ReadOnlyStart {
     // 计算均只读；不在 worker 按完成先后选择错误，各 Result 留给原消费阶段。
-    let (hydration, (resources, stock_inputs)) = rayon::join(
+    let (hydration, (resources, (stock_inputs, stock_shards))) = rayon::join(
         || {
             session.validate_existing_live_projection_with_observer(|| {
                 observe(StartWork::ProjectedRow)
@@ -52,7 +59,13 @@ fn prepare_with_observer(
                 || {
                     let result = prepare_incremental_continuous_inputs(session);
                     observe(StartWork::CapturedInputs);
-                    result
+                    // 捕获完成后立刻在同一分支初始化逐股 coordinator，消除与
+                    // StockProcessing 相位之间的屏障；from_post_expiry 只消费
+                    // 已脱离的输入，不读取 session，提前执行不改变任何结果。
+                    match result {
+                        Ok(inputs) => (Ok(Vec::new()), Some(continuous_shards(inputs))),
+                        Err(error) => (Err(error), None),
+                    }
                 },
             )
         },
@@ -61,6 +74,7 @@ fn prepare_with_observer(
         hydration,
         resources,
         stock_inputs,
+        stock_shards,
     }
 }
 
@@ -121,7 +135,11 @@ mod tests {
             });
         work.hydration.unwrap();
         work.resources.unwrap();
-        assert_eq!(work.stock_inputs.unwrap()[0].envelopes.len(), 1);
+        assert!(work.stock_inputs.unwrap().is_empty());
+        assert_eq!(
+            work.stock_shards.as_ref().unwrap().as_ref().unwrap().len(),
+            1
+        );
         assert!(
             overlaps.load(Ordering::Acquire),
             "只读 stock 输入不应等待 hydration 计算结束才启动"
@@ -307,6 +325,26 @@ mod tests {
     }
 
     #[test]
+    fn read_only_prepare_initializes_stock_shards_before_transaction() {
+        let game = fixture();
+        let expected = game.state.markets.len();
+        let counter =
+            &super::super::continuous_matching::incremental_continuous_stock_shadow::FROM_POST_EXPIRY_CALLS;
+        // 进程级计数器会被并行测试污染；只要求本测试自身贡献足够增量，
+        // 延迟初始化的实现下 prepare 不产生任何增量，仍会触发红灯。
+        let before = counter.load(std::sync::atomic::Ordering::SeqCst);
+        let prepared = prepare(&game);
+        prepared.hydration.unwrap();
+        prepared.resources.unwrap();
+        prepared.stock_inputs.unwrap();
+        let calls = counter.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            calls.saturating_sub(before) >= expected,
+            "read-only 准备应在交易事务前完成每股 coordinator 初始化，而不是延迟到 StockProcessing 相位"
+        );
+    }
+
+    #[test]
     fn one_and_four_workers_preserve_resources_and_complete_stock_inputs() {
         let game = fixture();
         for threads in [1, 4] {
@@ -320,27 +358,53 @@ mod tests {
                 prepared.resources.unwrap(),
                 DecisionResourceSnapshot::seal(&game).unwrap()
             );
-            let stocks = prepared.stock_inputs.unwrap();
-            let original = prepare_incremental_continuous_inputs(&game).unwrap();
-            assert_eq!(stocks.len(), original.len());
-            for (stock, reference) in stocks.iter().zip(&original) {
-                assert_eq!(stock.envelopes, reference.envelopes);
-                assert_eq!(
-                    stock.market.resting_orders(),
-                    reference.market.resting_orders()
-                );
-                assert_eq!(
-                    serde_json::to_vec(&stock.market.hash_projection()).unwrap(),
-                    serde_json::to_vec(&reference.market.hash_projection()).unwrap(),
-                    "Market 全部权威字段与 OrderBook 索引/游标/已成交身份必须一致"
-                );
-                assert_eq!(stock.phase, reference.phase);
-                assert_eq!(
-                    serde_json::to_vec(&stock.config).unwrap(),
-                    serde_json::to_vec(&reference.config).unwrap()
-                );
-                assert!(stock.operations.is_empty());
-            }
+            assert!(prepared.stock_inputs.unwrap().is_empty());
+            let shards = prepared.stock_shards.unwrap().unwrap();
+            let reference =
+                continuous_shards(prepare_incremental_continuous_inputs(&game).unwrap()).unwrap();
+            assert_eq!(shards.len(), reference.len());
+            assert_eq!(
+                format!("{shards:?}"),
+                format!("{reference:?}"),
+                "并行初始化的逐股 coordinator 必须与串行参考完全一致"
+            );
         }
+    }
+
+    #[test]
+    fn precomputed_shards_tick_matches_inline_path() {
+        let run = |keep_precomputed: bool| -> String {
+            let mut game = fixture();
+            game.state.tick = 1;
+            game.state.pending_npc = Some(crate::session::PendingNpcBatch {
+                observed_tick: game.state.tick,
+                observed_accounts: Vec::new(),
+                intents: Vec::new(),
+                dependencies: Vec::new(),
+            });
+            let before = game.business_state_hash().unwrap();
+            let mut plan =
+                super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+            if !keep_precomputed {
+                plan.precomputed_stock_shards = None;
+                plan.precomputed_stock_inputs = None;
+            }
+            let output =
+                super::super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(
+                    &mut plan,
+                )
+                .unwrap();
+            assert_eq!(game.business_state_hash().unwrap(), before);
+            format!(
+                "{:?}|{:?}",
+                plan.state.envelope_ledger().unwrap(),
+                (output.events.len(), output.receipts.len())
+            )
+        };
+        assert_eq!(
+            run(true),
+            run(false),
+            "预计算 shards 的 tick 与内联初始化路径必须产出一致的 ledger 与事件"
+        );
     }
 }

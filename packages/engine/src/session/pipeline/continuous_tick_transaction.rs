@@ -26,12 +26,13 @@ use super::{
     AccountValidatorDriver, CandidateValidationOutcome, EnvelopeReceipt, IntentCandidateBatch,
     PhaseInput, StepFatal, TickShadowPlan,
 };
+use super::continuous_matching::IncrementalContinuousStockCoordinator;
 #[cfg(test)]
-use super::{continuous_matching::IncrementalContinuousStockCoordinator, AccountValidationOutput};
+use super::AccountValidationOutput;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
-use crate::{Event, GameSession};
+use crate::{Event, GameSession, StockCode};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ContinuousTransactionError {
@@ -163,6 +164,7 @@ fn apply_tick_shadow_continuous_transaction_with_roots(
         roots_override,
         &preceding_receipts,
         plan.precomputed_stock_inputs.take(),
+        plan.precomputed_stock_shards.take(),
     )?;
     plan.state.restore_success(candidate)?;
     plan.receipt_keys.extend(
@@ -184,6 +186,12 @@ fn apply_session_continuous_transaction(
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[EnvelopeReceipt],
     precomputed_stock_inputs: Option<Result<Vec<ContinuousStockInput>, StepFatal>>,
+    precomputed_stock_shards: Option<
+        Result<
+            std::collections::BTreeMap<StockCode, IncrementalContinuousStockCoordinator>,
+            StepFatal,
+        >,
+    >,
 ) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     let sources = ReadyIngress::capture_sources(candidate)?;
@@ -211,7 +219,12 @@ fn apply_session_continuous_transaction(
         || -> Result<_, StepFatal> {
             let validator =
                 AccountValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
-            let stock_execution = continuous_shards(stock_inputs)?;
+            // 预计算 shards 由 read-only 准备提供，错误在此处（validator 之后）传播，
+            // 与原 continuous_shards 首错位置一致；未预计算时照旧内联初始化。
+            let stock_execution = match precomputed_stock_shards {
+                Some(prepared) => prepared?,
+                None => continuous_shards(stock_inputs)?,
+            };
             Ok((validator, stock_execution))
         },
     );

@@ -35,14 +35,16 @@ mod executor_perturbation_tests;
 mod institutional_experience_projection;
 mod intent_candidates;
 mod ledger;
-mod ledger_paged_map;
-mod private_stock_ledger;
-mod ledger_rows;
 mod ledger_candidate;
 mod ledger_conservation;
+mod ledger_paged_map;
+mod ledger_rows;
 mod ledger_validation;
 mod live_reservations;
-pub(in crate::session) use live_reservations::{LiveReservations, ReservationPage, RESERVATION_PAGE_SHIFT};
+mod private_stock_ledger;
+pub(in crate::session) use live_reservations::{
+    LiveReservations, ReservationPage, RESERVATION_PAGE_SHIFT,
+};
 mod local_admission;
 mod npc_decisions;
 mod npc_state_projection;
@@ -81,8 +83,8 @@ pub use commit_evidence::{AuctionFinalizerExecution, CommitEnvelopeChain, TickCo
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
 pub use decision_snapshot::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
-pub use envelope::{Envelope, EnvelopeAudit, EnvelopeOrigin};
 pub(in crate::session) use envelope::BorrowedTickStartEnvelope;
+pub use envelope::{Envelope, EnvelopeAudit, EnvelopeOrigin};
 pub use event_key::*;
 #[cfg(any(test, feature = "verification-harness"))]
 pub use executor_perturbation::{
@@ -210,6 +212,15 @@ pub struct TickShadowPlan {
     decision_resources: Option<DecisionResourceSnapshot>,
     precomputed_stock_inputs:
         Option<Result<Vec<continuous_matching::ContinuousStockInput>, StepFatal>>,
+    precomputed_stock_shards: Option<
+        Result<
+            std::collections::BTreeMap<
+                crate::StockCode,
+                continuous_matching::IncrementalContinuousStockCoordinator,
+            >,
+            StepFatal,
+        >,
+    >,
 }
 
 impl TickShadowPlan {
@@ -257,6 +268,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         expiry_applied: false,
         decision_resources: None,
         precomputed_stock_inputs: None,
+        precomputed_stock_shards: None,
     };
     shadow.state.execute(|game| {
         if game
@@ -285,6 +297,9 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         shadow.decision_resources = Some(prepared.resources?);
         // 输入错误延迟到原 DecisionShadow 捕获位置，保留入口/context 的首错优先级。
         shadow.precomputed_stock_inputs = Some(prepared.stock_inputs);
+        // 输入成功时 coordinator 已在准备分支完成初始化；其错误仍延迟到原
+        // StockProcessing 相位（validator 之后）传播，保持首错顺序不变。
+        shadow.precomputed_stock_shards = prepared.stock_shards;
     } else {
         shadow.expiry = quote_expiry::plan_expiry(&mut shadow)?;
         crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);

@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "incremental_continuous_stock_shadow.rs"]
-mod incremental_continuous_stock_shadow;
+pub(in crate::session::pipeline) mod incremental_continuous_stock_shadow;
 
 pub(super) use incremental_continuous_stock_shadow::{
     ContinuousExecutionRound, IncrementalContinuousStockCoordinator,

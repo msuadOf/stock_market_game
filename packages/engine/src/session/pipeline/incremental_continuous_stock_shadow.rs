@@ -21,6 +21,14 @@ use crate::session::pipeline::{
 use crate::{GameConfig, Market, Money, StockCode, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
+
+/// 测试专用：统计 from_post_expiry 真实执行次数，用于验证初始化时机，不进入生产逻辑。
+#[cfg(test)]
+pub(in crate::session::pipeline) static FROM_POST_EXPIRY_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
@@ -113,6 +121,8 @@ impl IncrementalContinuousStockCoordinator {
     pub(in crate::session::pipeline) fn from_post_expiry(
         inputs: Vec<ContinuousStockInput>,
     ) -> Result<Self, StepFatal> {
+        #[cfg(test)]
+        FROM_POST_EXPIRY_CALLS.fetch_add(1, Ordering::SeqCst);
         let phase = inputs.first().map(|input| input.phase);
         if inputs.iter().any(|input| Some(input.phase) != phase) {
             return Err(invariant(
