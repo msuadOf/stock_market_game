@@ -70,6 +70,8 @@ pub struct EnvelopeLedger {
     pub(super) next_receipt_index: u64,
     #[serde(skip)]
     evidence_cache: Arc<Mutex<Option<EvidenceCache>>>,
+    #[serde(skip)]
+    reservation_cache: Arc<Mutex<super::live_reservations::ReservationCache>>,
 }
 
 #[derive(Debug)]
@@ -142,7 +144,14 @@ impl EnvelopeLedger {
             seen_local_keys: BTreeSet::new(),
             next_receipt_index,
             evidence_cache: Arc::default(),
+            reservation_cache: Arc::default(),
         })
+    }
+
+    pub(in crate::session) fn live_reservations(&self) -> Result<super::LiveReservations, StepFatal> {
+        let mut cache = self.reservation_cache.lock().map_err(|error|
+            ledger_validation::invariant(&format!("ledger 预留投影缓存锁失败：{error}")))?;
+        cache.project(&self.envelopes)
     }
 
     pub fn apply(&mut self, receipts: &mut [EnvelopeReceipt]) -> Result<(), StepFatal> {

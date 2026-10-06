@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const PAGE_SHIFT: u32 = 5;
+const PAGE_SHIFT: u32 = super::pipeline::RESERVATION_PAGE_SHIFT;
 const GROUP_SHIFT: u32 = 4;
 #[cfg(test)]
 thread_local! {
@@ -34,8 +34,7 @@ struct AccountPage {
 
 struct ResourceValidationCache {
     prices: Arc<BTreeMap<crate::StockCode, crate::Money>>,
-    cash: Vec<(AccountId, crate::Money)>,
-    sell: Vec<(AccountId, BTreeMap<crate::StockCode, u32>)>,
+    reservations: Option<Arc<super::pipeline::ReservationPage>>,
 }
 
 impl Clone for AccountPage {
@@ -89,8 +88,7 @@ impl AccountBook {
     pub(super) fn validate_resources(
         &self,
         prices: &BTreeMap<crate::StockCode, crate::Money>,
-        cash: &BTreeMap<AccountId, crate::Money>,
-        sell: &BTreeMap<AccountId, BTreeMap<crate::StockCode, u32>>,
+        reservations: &super::pipeline::LiveReservations,
         validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
     ) -> Result<(), super::StepFatal> {
         let prices = Arc::new(prices.clone());
@@ -100,10 +98,7 @@ impl AccountBook {
             .collect::<Vec<_>>()
             .into_par_iter()
             .try_for_each(|(page_id, page)| {
-                let start = AccountId(page_id << PAGE_SHIFT);
-                let end = AccountId((page_id << PAGE_SHIFT) | ((1 << PAGE_SHIFT) - 1));
-                let cash_rows = || cash.range(start..=end).map(|(id, value)| (*id, *value));
-                let sell_rows = || sell.range(start..=end).map(|(id, value)| (*id, value));
+                let projection = reservations.page(*page_id);
                 let mut cache = page.resource_validation.lock().map_err(|error| {
                     super::StepFatal::InvariantViolation {
                         description: format!("账户资源校验缓存锁失败：{error}"),
@@ -112,12 +107,13 @@ impl AccountBook {
                 })?;
                 if cache.as_ref().is_some_and(|cached| {
                     cached.prices.as_ref() == prices.as_ref()
-                        && cached.cash.iter().copied().eq(cash_rows())
-                        && cached
-                            .sell
-                            .iter()
-                            .map(|(id, value)| (*id, value))
-                            .eq(sell_rows())
+                        && match (&cached.reservations, projection) {
+                            (None, None) => true,
+                            (Some(old), Some(current)) => {
+                                Arc::ptr_eq(old, current) || old == current
+                            }
+                            _ => false,
+                        }
                 }) {
                     return Ok(());
                 }
@@ -126,8 +122,7 @@ impl AccountBook {
                 }
                 *cache = Some(ResourceValidationCache {
                     prices: prices.clone(),
-                    cash: cash_rows().collect(),
-                    sell: sell_rows().map(|(id, value)| (id, value.clone())).collect(),
+                    reservations: projection.cloned(),
                 });
                 Ok(())
             })
@@ -348,11 +343,19 @@ mod tests {
         let mut cash = BTreeMap::new();
         let mut sell = BTreeMap::new();
         accounts
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         let mut shadow = accounts.clone_for_shadow().unwrap();
         shadow
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 2, "未变化的页不应重复计算");
         shadow
@@ -360,17 +363,29 @@ mod tests {
             .unwrap()
             .fixture_set_cash(Money::from_cents(90));
         shadow
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
         prices.insert(StockCode("600000".to_owned()), Money::from_cents(101));
         shadow
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
         cash.insert(AccountId(32), Money::from_cents(5));
         shadow
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
         sell.insert(
@@ -378,14 +393,20 @@ mod tests {
             BTreeMap::from([(StockCode("600000".to_owned()), 100)]),
         );
         shadow
-            .validate_resources(&prices, &cash, &sell, &validate)
+            .validate_resources(
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
         accounts
             .validate_resources(
                 &BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]),
-                &BTreeMap::new(),
-                &BTreeMap::new(),
+                &super::super::pipeline::LiveReservations::fixture(
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                ),
                 &validate,
             )
             .unwrap();
@@ -394,6 +415,41 @@ mod tests {
             8,
             "shadow 的预留缓存不得错误适用于旧 authority"
         );
+    }
+
+    #[test]
+    fn failed_resource_validation_is_not_cached_as_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut accounts = AccountBook::default();
+        accounts.insert(
+            AccountId(0),
+            Account::new(AccountId(0), AccountKind::Player, Money::ZERO),
+        );
+        let prices = BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]);
+        let reservations =
+            super::super::pipeline::LiveReservations::fixture(&BTreeMap::new(), &BTreeMap::new());
+        let calls = AtomicUsize::new(0);
+        let error = super::super::StepFatal::InvariantViolation {
+            description: "资源校验必须重复报告同一个错误".to_owned(),
+            location: "test::resource_validation".to_owned(),
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                accounts.validate_resources(&prices, &reservations, |_, _| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Err(error.clone())
+                }),
+                Err(error.clone())
+            );
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert!(accounts
+            .page_arc(0)
+            .unwrap()
+            .resource_validation
+            .lock()
+            .unwrap()
+            .is_none());
     }
 
     #[test]

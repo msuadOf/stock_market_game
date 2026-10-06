@@ -41,6 +41,8 @@ mod ledger_rows;
 mod ledger_candidate;
 mod ledger_conservation;
 mod ledger_validation;
+mod live_reservations;
+pub(in crate::session) use live_reservations::{LiveReservations, ReservationPage, RESERVATION_PAGE_SHIFT};
 mod local_admission;
 mod npc_decisions;
 mod npc_state_projection;

@@ -8,8 +8,7 @@ use std::collections::BTreeMap;
 pub struct DecisionResourceSnapshot {
     accounts: AccountBook,
     configured_stocks: BTreeMap<StockCode, Money>,
-    reserved_cash: BTreeMap<AccountId, Money>,
-    reserved_sell: BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
+    reservations: super::LiveReservations,
 }
 
 impl std::fmt::Debug for DecisionResourceSnapshot {
@@ -18,8 +17,7 @@ impl std::fmt::Debug for DecisionResourceSnapshot {
             .debug_struct("DecisionResourceSnapshot")
             .field("account_count", &self.accounts.len())
             .field("configured_stocks", &self.configured_stocks)
-            .field("reserved_cash", &self.reserved_cash)
-            .field("reserved_sell", &self.reserved_sell)
+            .field("reservations", &self.reservations)
             .finish()
     }
 }
@@ -27,8 +25,7 @@ impl std::fmt::Debug for DecisionResourceSnapshot {
 impl PartialEq for DecisionResourceSnapshot {
     fn eq(&self, other: &Self) -> bool {
         self.configured_stocks == other.configured_stocks
-            && self.reserved_cash == other.reserved_cash
-            && self.reserved_sell == other.reserved_sell
+            && self.reservations == other.reservations
             && self.accounts.len() == other.accounts.len()
             && self.accounts.iter().zip(other.accounts.iter()).all(
                 |((left_id, left), (right_id, right))| {
@@ -106,32 +103,14 @@ impl DecisionResourceSnapshot {
             })
             .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;
 
-        let mut reserved_cash = BTreeMap::<AccountId, Money>::new();
-        let mut reserved_sell = BTreeMap::<AccountId, BTreeMap<StockCode, u32>>::new();
-        for (key, envelope) in session.state.envelope_ledger.iter() {
-            let live = envelope.live();
-            let cash = reserved_cash.entry(key.account).or_insert(Money::ZERO);
-            *cash = cash.add(live.cash).map_err(allocation_money)?;
-            let shares = reserved_sell
-                .entry(key.account)
-                .or_default()
-                .entry(key.stock.clone())
-                .or_insert(0);
-            *shares = shares
-                .checked_add(live.shares)
-                .ok_or_else(|| allocation_invariant("live sell reservation overflow"))?;
-        }
+        let reservations = session.state.envelope_ledger.live_reservations()?;
 
         session.state.accounts.validate_resources(
             &configured_stocks,
-            &reserved_cash,
-            &reserved_sell,
+            &reservations,
             |account_id, account| {
                 (|| {
-                    let reserved = reserved_cash
-                        .get(&account_id)
-                        .copied()
-                        .unwrap_or(Money::ZERO);
+                    let reserved = reservations.cash(account_id);
                     let available_cash = account.cash().sub(reserved).map_err(allocation_money)?;
                     if available_cash.cents() < 0 {
                         return Err(allocation_invariant(
@@ -140,7 +119,7 @@ impl DecisionResourceSnapshot {
                     }
 
                     let mut equity = account.cash();
-                    let reserved_for_account = reserved_sell.get(&account_id);
+                    let reserved_for_account = reservations.get(account_id).map(|row| &row.sell);
                     for (stock, position) in account.positions() {
                         let Some(price) = configured_stocks.get(stock) else {
                             continue;
@@ -180,19 +159,19 @@ impl DecisionResourceSnapshot {
                 })()
             },
         )?;
-        if reserved_cash
-            .keys()
-            .any(|account| !session.state.accounts.contains_key(account))
+        if reservations
+            .iter()
+            .any(|row| !session.state.accounts.contains_key(&row.account))
         {
             return Err(allocation_invariant(
                 "envelope ledger references an unknown account",
             ));
         }
-        if reserved_sell.iter().any(|(account, stocks)| {
-            !session.state.accounts.contains_key(account)
-                || stocks
-                    .keys()
-                    .any(|stock| !configured_stocks.contains_key(stock))
+        // 上面已核对每个账户，包括零现金/零股份的行；此处继续按原顺序核对 StockCode。
+        if reservations.iter().any(|row| {
+            row.sell
+                .keys()
+                .any(|stock| !configured_stocks.contains_key(stock))
         }) {
             return Err(allocation_invariant(
                 "envelope ledger references an unknown account or stock",
@@ -201,8 +180,7 @@ impl DecisionResourceSnapshot {
         Ok(Self {
             accounts: session.state.accounts.clone(),
             configured_stocks,
-            reserved_cash,
-            reserved_sell,
+            reservations,
         })
     }
 
@@ -213,7 +191,7 @@ impl DecisionResourceSnapshot {
     pub fn available_cash(&self, account: AccountId) -> Result<Money, StepFatal> {
         self.account(account)?
             .cash()
-            .sub(*self.reserved_cash.get(&account).unwrap_or(&Money::ZERO))
+            .sub(self.reservations.cash(account))
             .map_err(allocation_money)
     }
 
@@ -296,9 +274,9 @@ impl DecisionResourceSnapshot {
         };
         let sellable_before_reservation = account.sellable_qty(stock);
         let reserved_shares = self
-            .reserved_sell
-            .get(&account_id)
-            .and_then(|shares| shares.get(stock))
+            .reservations
+            .get(account_id)
+            .and_then(|row| row.sell.get(stock))
             .copied()
             .unwrap_or(0);
         let available_sell_qty = sellable_before_reservation
@@ -313,14 +291,14 @@ impl DecisionResourceSnapshot {
     }
 }
 
-fn allocation_money(error: crate::MoneyError) -> StepFatal {
+pub(super) fn allocation_money(error: crate::MoneyError) -> StepFatal {
     StepFatal::InvariantViolation {
         description: error.to_string(),
         location: "pipeline::decision_resources::allocation".to_owned(),
     }
 }
 
-fn allocation_invariant(description: &str) -> StepFatal {
+pub(super) fn allocation_invariant(description: &str) -> StepFatal {
     StepFatal::InvariantViolation {
         description: description.to_owned(),
         location: "pipeline::decision_resources::allocation".to_owned(),

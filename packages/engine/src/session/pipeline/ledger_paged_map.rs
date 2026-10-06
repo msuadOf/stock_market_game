@@ -4,7 +4,7 @@ use serde::ser::SerializeMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-const PAGE_SHIFT: u32 = 5;
+const PAGE_SHIFT: u32 = super::live_reservations::RESERVATION_PAGE_SHIFT;
 const GROUP_SHIFT: u32 = 4;
 const ACCOUNTS_PER_GROUP_SHIFT: u32 = PAGE_SHIFT + GROUP_SHIFT;
 const PAGES_PER_GROUP: u64 = 1 << GROUP_SHIFT;
@@ -99,6 +99,11 @@ impl<V> LedgerPagedMap<V> {
     pub(super) fn clear(&mut self) {
         self.groups.clear();
         self.len = 0;
+    }
+
+    pub(super) fn pages(&self) -> impl Iterator<Item = (u64, &Arc<Page<V>>)> {
+        self.groups.iter().flat_map(|(group, pages)| pages.iter()
+            .map(move |(page, rows)| ((group << GROUP_SHIFT) | page, rows)))
     }
 
     pub(super) fn iter(&self) -> impl DoubleEndedIterator<Item = (&EnvelopeKey, &V)> {
