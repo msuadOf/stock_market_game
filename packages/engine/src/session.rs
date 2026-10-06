@@ -2546,9 +2546,12 @@ impl GameSession {
 
     /// 以 SimpleFinanceState 的显式注册资本面值事实受理送转方案（显式计划入口）。
     ///
-    /// 每股面值由已绑定注册资本法定事实与当前发行股数推导，二者必须整除；
-    /// 送股（股票股利）额外受可分配利润上限约束（Simple 账面只做面值展示登记，
-    /// 不做借贷过账，不产生投资者现金）。
+    /// 面值口径遵循现实语义：每股面值恒定，送转入账后注册资本按 面值×新增股数
+    /// 演进（见 `SimpleFinanceState::record_stock_distribution_credit`）。首次送转
+    /// 声明的面值由「已绑定注册资本法定事实 ÷ 名册当前已发行股数」整除推导并就此
+    /// 固定；同一发行人后续送转必须沿用同一面值，不得用增大后的发行股数反推缩小
+    /// 面值。送股（股票股利）额外受可分配利润上限约束（Simple 账面只做面值展示
+    /// 登记，不做借贷过账，不产生投资者现金）。
     pub fn approve_stock_distribution(
         &mut self,
         plan: crate::company::stock_distribution::StockDistributionEventPlan,
@@ -2558,6 +2561,26 @@ impl GameSession {
         if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
             return Err(SessionCorporateActionsError::Invalid(
                 "送转方案的批准日期或公告日期与当前会话日期不一致".into(),
+            ));
+        }
+        // 同一发行人同证券同除权日的第二起送转事件在受理时直接拒绝：同日多起送转
+        // 的合并除权口径（比例相加还是复合）未在官方材料核实，不能推迟到 R+1 首
+        // tick 的除权准备才以致命错误暴露。
+        if self
+            .state
+            .corporate_actions
+            .stock_distributions
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在送转事件；同日多起送转的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
             ));
         }
         let registry = self
@@ -2586,7 +2609,6 @@ impl GameSession {
                 "送转计划证券与发行人不匹配".into(),
             ));
         }
-        let issued_shares = registry.issued_shares();
         let legal_facts = candidate_system
             .dividend_legal_facts(&plan.issuer)
             .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
@@ -2595,19 +2617,40 @@ impl GameSession {
                     "送转面值推导需要先显式绑定公司注册资本法定事实".into(),
                 )
             })?;
-        let registered_capital_cents = legal_facts
-            .registered_capital
-            .to_money()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            .cents();
-        let capital_cents_i128 = i128::from(registered_capital_cents);
-        let shares_i128 = i128::from(issued_shares);
-        if capital_cents_i128 % shares_i128 != 0 {
-            return Err(SessionCorporateActionsError::Invalid(
-                "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
-            ));
-        }
-        let par_cents = capital_cents_i128 / shares_i128;
+        let prior_facts = candidate_system
+            .stock_distribution_facts(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let par_cents = match prior_facts.first() {
+            Some(first) => {
+                // 已有送转声明：面值在首次声明时固定，后续送转必须沿用同一面值。
+                if prior_facts
+                    .iter()
+                    .any(|fact| fact.par_value_per_share != first.par_value_per_share)
+                {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "既有送转声明的每股面值不一致，无法确定后续送转沿用面值".into(),
+                    ));
+                }
+                i128::from(first.par_value_per_share.cents())
+            }
+            None => {
+                // 首次送转声明：由注册资本法定事实与当前发行股数整除推导面值。
+                let issued_shares = registry.issued_shares();
+                let registered_capital_cents = legal_facts
+                    .registered_capital
+                    .to_money()
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                    .cents();
+                let capital_cents_i128 = i128::from(registered_capital_cents);
+                let shares_i128 = i128::from(issued_shares);
+                if capital_cents_i128 % shares_i128 != 0 {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
+                    ));
+                }
+                capital_cents_i128 / shares_i128
+            }
+        };
         let par_value_per_share = Money::from_cents(
             i64::try_from(par_cents)
                 .map_err(|_| SessionCorporateActionsError::Invalid("每股面值溢出".into()))?,

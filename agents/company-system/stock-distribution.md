@@ -42,3 +42,17 @@
 - Web：严格 parser 同步（NonTradingTransfer 回执、`settled_receipts` 回放、送转账簿与入账勾稽、锚组新形状），三个存档 fixture 由当前 release Engine 正规重生成，ts-rs 绑定更新（`AppliedExReferenceGroup`、`StockDistributionExRightsFormula`）。
 
 验证证据（均为 10000ms 外部 deadline、组内多线程）：Registry 24/24、送转 18/18（含 Session 全链路与混合限售回滚）、除权公式 15/15、Session Simple 19/19、corporate_actions 7/7、simple finance 65/65；Web corporate-actions schema 16/16、save 消费组合与公司 schema 组全绿；日志在 `.tmp/company-system/stock-distribution/`。基线核对：`cash_dividend_tax` 两项、`retail_analysis` 四项、`persistence` 十三项与 `failure_tests` 三项失败在未含本批改动的 f1fc21f6 基线同样失败（属主工作区另一批股息税修复在飞），本批未触碰对应文件。
+
+## 修复轮（2026-10-06，非作者门禁 findings）
+
+对 fba94e8b 的非作者复核发现六条问题，本批以 TDD 修复（红→绿证据均在 `.tmp/company-system/stock-distribution/fix-round-*.log`，全部 10000ms 外部 deadline）：
+
+- **major-1 面值推导缺陷（路线 a）**：现实语义为面值恒定、送转后注册资本按面值增加。`approve_stock_distribution` 的面值改为「首次送转声明时由法定事实 ÷ 当时发行股数整除推导并固定；已有送转声明后沿用同一面值」，不再用增大后的股数反推；`SimpleFinanceState::record_stock_distribution_credit` 入账时把注册资本法定事实演进为 当前注册资本 + 声明的 `capital_increase`（`source_evidence` 不变、bind-once 入口照旧拒绝改写），历史由各事实 `registered_capital_at_approval` 冻结。配套修正两处随之必须按「批准时点口径」重构的校验：`finance_validation.rs` 的分红声明注册资本等值检查、送转事实批准时点注册资本演进链核对（新增，含篡改负例），以及 Web 严格 parser（`apps/web/src/save/schema/company/simple-finance.ts`）的同构检查。连续两次 10送3 的会话级测试断言面值恒定、注册资本按 T→T+2→T+5 演进、超上限送股按演进后事实被拒；单元测试覆盖法定公积金 50% 免计提门槛按演进后注册资本重新核定（送股上限从 27_000 收紧到 24_300 的场景）。
+- **minor-3 同日第二起拒绝时点**：`approve_stock_distribution` 受理时直接拒绝同发行人同证券同除权日的第二起事件（错误信息指明合并除权口径未核实），不再推迟到 R+1 首 tick `prepare_ex_references` 才 StepFatal。
+- **minor-4 恢复反向勾稽**：`SessionCorporateActions::validate` 补「名册每条 NonTradingTransfer 回执 → Credited 状态送转账簿（事件前缀、入账日、数量合计）」的反向断言（ghost 回执负例）；forward 方向的 `u64::try_from(change.change).unwrap_or(0)` 改为显式校验错误（`sum_nontrading_changes`）。
+- **minor-2 R+1 当日不可用**：不改日终入账管线，在 `docs/trading-rules.md` 送转章节显式登记「公司行为资金/股份均在相关日期日终入账，当日盘中不可用」的游戏简化（覆盖送转与现金分红），并注明与 R+1 上市当日即可流通官方语义的差异留待后续批次。
+- **note-5 吞错误**：`validate_stock_distribution_books` 末段 `.filter_map(...ok())` 改为显式传播 `?`，仅对「该公司确无 finance 状态」的合法缺省走过滤。该路径当前不可由公共行为触发（`stock_distribution_facts` 实际不可失败、发行人必有 finance），属防御式编程修复，无可行红测试，如实登记。
+- **note-6 错过入账日防护对称**：`process_stock_distributions_on_day_end` 与恢复 `validate` 各补「已过 ex_rights_on 仍 Registered 显式失败」检查（两条直接负例：日结处理与恢复校验）。
+- **附带发现（本批修复）**：Web 严格 parser 的 `capital_increase = 面值 × 新增股数` 校验原先多乘 100（从未被真实存档覆盖的潜伏缺陷，引擎 wire 以分为单位）；按引擎权威口径改为两侧均以分核对。
+
+验证（各组均 10000ms 外部 deadline、组内多线程）：finance 送转 4/4、`company::simple` 69/69、Session Simple 24/24、送转基础 13/13、corporate_actions 7/7、Registry 24/24、除权公式 15/15、Web simple-finance 7/7、corporate-actions+system schema 30/30。基线对照：`session::failure` 3 项、`session::persistence` 13 项失败在 stash 本批改动后的 fba94e8b 上同样失败（属主工作区在飞的股息税批次，本批未触碰）。存档 fixture 均不含送转事实或法定事实，无需重生成。

@@ -1,9 +1,11 @@
 //! Simple 账面送转展示登记。
 //!
-//! 本批 Simple 账面未建模资本公积科目与来源类别，也不变更注册资本法定事实，
-//! 因此送转在这里只冻结面值口径的展示事实（`StockDistributionFinanceFact`），
-//! 不做借贷过账、不产生公司现金或投资者现金；真实股份入账由 Session 侧的
-//! 股东名册与账户结算完成。发行股数事实由 `IssuerRegistry` 在真实入账时更新。
+//! 本批 Simple 账面未建模资本公积科目与来源类别，因此送转在这里只冻结面值口径的
+//! 展示事实（`StockDistributionFinanceFact`），不做借贷过账、不产生公司现金或
+//! 投资者现金；真实股份入账由 Session 侧的股东名册与账户结算完成。现实语义为
+//! 每股面值恒定、送转入账后注册资本按 面值×新增股数 演进：入账回填时同步演进
+//! 注册资本法定事实（历史由各事实的 `registered_capital_at_approval` 冻结保留），
+//! 发行股数事实由 `IssuerRegistry` 在真实入账时更新。
 
 use super::*;
 
@@ -109,6 +111,11 @@ impl SimpleFinanceState {
     }
 
     /// 真实新股入账后回填账面事实；同一事件只允许回填一次。
+    ///
+    /// 现实语义为每股面值恒定、送转后注册资本按面值增加：入账时把注册资本法定
+    /// 事实演进为「当前注册资本 + 面值×新增股数」（即声明的 `capital_increase`），
+    /// `source_evidence` 不变；显式 bind-once 入口仍拒绝直接改写注册资本。历史由
+    /// 各 `StockDistributionFinanceFact.registered_capital_at_approval` 冻结保留。
     pub fn record_stock_distribution_credit(
         &mut self,
         event_id: &str,
@@ -136,12 +143,27 @@ impl SimpleFinanceState {
                 "送转入账日期早于批准日期".into(),
             ));
         }
+        let capital_increase = fact.capital_increase;
         let mut candidate = self.clone();
         let fact = candidate
             .stock_distributions
             .get_mut(event_id)
             .expect("fact existence was checked above");
         fact.credited_on = Some(credited_on);
+        let evolved = candidate
+            .legal_facts
+            .0
+            .as_ref()
+            .ok_or_else(|| {
+                SimpleFinanceError::StockDistributionInvalid(
+                    "送转入账演进注册资本缺少已绑定的法定事实".into(),
+                )
+            })?
+            .registered_capital
+            .add(capital_increase)?;
+        if let Some(facts) = candidate.legal_facts.0.as_mut() {
+            facts.registered_capital = evolved;
+        }
         candidate.validate()?;
         *self = candidate;
         Ok(false)

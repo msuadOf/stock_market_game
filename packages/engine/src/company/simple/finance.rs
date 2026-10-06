@@ -29,6 +29,9 @@ mod report_validation;
 mod state;
 #[path = "finance_stock_distribution.rs"]
 mod stock_distribution;
+#[cfg(test)]
+#[path = "finance_stock_distribution_tests.rs"]
+mod stock_distribution_tests;
 #[path = "finance_validation.rs"]
 mod validation;
 

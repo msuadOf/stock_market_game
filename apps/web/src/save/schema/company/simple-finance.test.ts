@@ -101,3 +101,29 @@ test("Simple 分红计划 wire 要保留完整决议、公积年度与付款批�
   const overdrawThenRestore = { batches: [...journal.batches, [{ source: 4, date: "2030-02-03", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "4103", side: "Debit", amount: "5.00" }, { account: "1001", side: "Credit", amount: "5.00" }] }], [{ source: 5, date: "2030-02-04", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "1001", side: "Debit", amount: "5.00" }, { account: "4103", side: "Credit", amount: "5.00" }] }]], closed: [] };
   assert.throws(() => parseSimpleFinanceState({ ...value, next_event_id: "6", books: { ...dividendBooks, journal: overdrawThenRestore } }), /现金科目/);
 });
+
+test("送转入账演进注册资本后，事实按批准时点口径核对而不是当前法定事实", { timeout: 10000 }, () => {
+  const base = { company: "C-600101", kind: "Industrial", config, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "1", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
+  const credited = { event_id: "dist-1", approval_reference: "股东大会决议", kind: "BonusShares", approved_on: "2030-02-01", new_shares: "3", par_value_per_share: "1", capital_increase: "0.03", registered_capital_at_approval: "1000.00", credited_on: "2030-02-10" };
+  const value = { ...base, stock_distributions: { "dist-1": credited } };
+  // 送转入账按 面值×新增股数 演进注册资本（1000.00 → 1000.03）；事实冻结批准时点注册资本。
+  assert.deepEqual(parseSimpleFinanceState(value), value);
+  // 批准时点口径对不上的送转声明仍被拒（1001.00 不是任何历史时点的注册资本）。
+  assert.throws(() => parseSimpleFinanceState({ ...value, stock_distributions: { "dist-1": { ...credited, registered_capital_at_approval: "1001.00" } } }), /registered_capital_at_approval|注册资本/);
+});
+
+test("送转入账演进注册资本后，既有分红声明按其批准时点注册资本核对", { timeout: 10000 }, () => {
+  const declaration = { plan_id: "dividend-plan-1", approved_on: "2030-02-01", total_gross: "100.00", registered_capital: "1000.00" };
+  const plan = { declaration, declaration_source: 2, reserve: "10.00", reserve_basis_year: 2029, payments: { "payment-1": { source: 3, paid_on: "2030-02-02", amount: "30.00" } } };
+  const journal = { batches: [[
+    { source: 2, date: "2030-02-01", kind: "CompanyDividendDeclaration", cash_flow: "NonCash", lines: [{ account: "4103", side: "Debit", amount: "110.00" }, { account: "simple_statutory_reserve", side: "Credit", amount: "10.00" }, { account: "simple_dividend_payable", side: "Credit", amount: "100.00" }] },
+    { source: 3, date: "2030-02-02", kind: "CompanyDividendPayment", cash_flow: "NonCash", lines: [{ account: "simple_dividend_payable", side: "Debit", amount: "30.00" }, { account: "simple_dividend_settlement_asset", side: "Credit", amount: "30.00" }] },
+  ]], closed: [] };
+  const dividendBooks = { ...books, chart: simpleAccountChart("Industrial"), journal };
+  const credited = { event_id: "dist-1", approval_reference: "股东大会决议", kind: "BonusShares", approved_on: "2030-02-01", new_shares: "3", par_value_per_share: "1", capital_increase: "0.03", registered_capital_at_approval: "1000.00", credited_on: "2030-02-10" };
+  const value = { company: "C-600101", kind: "Industrial", config, books: dividendBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "4", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: { "dividend-plan-1": plan }, stock_distributions: { "dist-1": credited }, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
+  // 分红声明（2030-02-01）早于送转入账（2030-02-10）：按批准时点 1000.00 核对。
+  assert.deepEqual(parseSimpleFinanceState(value), value);
+  // 对不上任何历史时点注册资本的分红声明仍被拒。
+  assert.throws(() => parseSimpleFinanceState({ ...value, dividends: { "dividend-plan-1": { ...plan, declaration: { ...declaration, registered_capital: "1001.00" } } } }), /注册资本/);
+});

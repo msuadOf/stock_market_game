@@ -219,15 +219,16 @@ impl CompanySystem {
                 }
             }
         }
-        let declared: BTreeMap<_, _> = self
-            .issuers
-            .iter()
-            .filter_map(|(company, _)| {
-                self.stock_distribution_facts(company)
-                    .ok()
-                    .map(|facts| (company.clone(), facts))
-            })
-            .collect();
+        let mut declared = BTreeMap::new();
+        for (company, _) in self.issuers.iter() {
+            // 仅对「该公司确无 finance 状态」的合法缺省走过滤；读取送转事实的
+            // 其他错误显式传播，不静默吞掉。
+            let Ok(finance) = self.finance(company) else {
+                continue;
+            };
+            let facts = finance.stock_distribution_facts()?;
+            declared.insert(company.clone(), facts);
+        }
         let mut bound_events = BTreeSet::new();
         for book in books {
             bound_events.insert(book.plan().event_id.clone());

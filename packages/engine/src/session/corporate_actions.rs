@@ -55,6 +55,20 @@ fn holder_key(holder: &HolderId) -> String {
     }
 }
 
+/// 汇总非交易过户回执的股数；负数或超 `u64` 的数量显式报错，不静默取 0。
+fn sum_nontrading_changes(
+    changes: &[DayNetChange],
+) -> Result<u64, SessionCorporateActionsError> {
+    changes.iter().try_fold(0_u64, |total, change| {
+        let qty = u64::try_from(change.change).map_err(|_| {
+            SessionCorporateActionsError::Invalid("非交易过户回执出现负数或溢出股数".into())
+        })?;
+        total.checked_add(qty).ok_or_else(|| {
+            SessionCorporateActionsError::Invalid("非交易过户回执股数合计溢出".into())
+        })
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -321,6 +335,17 @@ impl SessionCorporateActions {
                         .announce(day)
                         .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
                 }
+            }
+            // 已过入账日仍停留在 Registered 的账簿属于错过入账：显式失败而不是
+            // 静默跳过（Approved/Announced 的错过公告日、登记日已有对称防护）。
+            if self.stock_distributions[index].status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Registered
+                && day > plan.ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "送转事件 {} 错过入账日",
+                    plan.event_id
+                )));
             }
             if day == plan.registered_on {
                 if self.stock_distributions[index].status()
@@ -770,6 +795,15 @@ impl SessionCorporateActions {
                     "送转批准日期晚于当前会话日期".into(),
                 ));
             }
+            // 恢复校验对称防护：已过入账日的 Registered 账簿属于错过入账，显式失败。
+            if book.status() == &crate::company::stock_distribution::StockDistributionStatus::Registered
+                && current_date > book.plan().ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "送转事件 {} 错过入账日",
+                    book.plan().event_id
+                )));
+            }
             if !self.registries.iter().any(|registry| {
                 registry.stock() == &book.plan().stock && registry.issuer() == &book.plan().issuer
             }) {
@@ -784,24 +818,58 @@ impl SessionCorporateActions {
                     .find(|registry| registry.stock() == &book.plan().stock)
                     .expect("registry presence was checked above");
                 let expected_event = format!("stock-distribution:{}", book.plan().event_id);
-                let matches = registry
-                    .receipt_by_event(&expected_event)
-                    .is_some_and(|receipt| {
-                        receipt.request.day == credited_on
-                            && matches!(
-                                receipt.request.scope,
-                                MovementScope::NonTradingTransfer { .. }
-                            )
-                            && receipt.request.changes.iter().try_fold(0_u64, |total, change| {
-                                total.checked_add(
-                                    u64::try_from(change.change).unwrap_or(0),
-                                )
-                            }) == Some(book.plan().approved_total_new_shares)
-                    });
-                if !matches {
+                let Some(receipt) = registry.receipt_by_event(&expected_event) else {
                     return Err(SessionCorporateActionsError::Invalid(
                         "送转入账事实与股东名册非交易过户回执不一致".into(),
                     ));
+                };
+                let credited_total = sum_nontrading_changes(&receipt.request.changes)?;
+                if receipt.request.day != credited_on
+                    || !matches!(
+                        receipt.request.scope,
+                        MovementScope::NonTradingTransfer { .. }
+                    )
+                    || credited_total != book.plan().approved_total_new_shares
+                {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "送转入账事实与股东名册非交易过户回执不一致".into(),
+                    ));
+                }
+            }
+        }
+        // 反向勾稽：名册中每条 NonTradingTransfer 回执必须映射到 Credited 状态的
+        // 送转账簿，且入账日与数量一致；篡改注入无对应账簿的回执必须被拒。
+        let mut credited_books = BTreeMap::new();
+        for book in &self.stock_distributions {
+            if let Some(credited_on) = book.credited_on() {
+                credited_books.insert(
+                    format!("stock-distribution:{}", book.plan().event_id),
+                    (credited_on, book.plan().approved_total_new_shares),
+                );
+            }
+        }
+        for registry in &self.registries {
+            for receipt in registry.receipts() {
+                if !matches!(
+                    receipt.request.scope,
+                    MovementScope::NonTradingTransfer { .. }
+                ) {
+                    continue;
+                }
+                let Some(&(credited_on, total_shares)) =
+                    credited_books.get(&receipt.request.event_id)
+                else {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "名册存在无对应已入账送转账簿的非交易过户回执 {}",
+                        receipt.request.event_id
+                    )));
+                };
+                let receipt_total = sum_nontrading_changes(&receipt.request.changes)?;
+                if receipt.request.day != credited_on || receipt_total != total_shares {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "非交易过户回执 {} 的日期或数量与送转账簿不一致",
+                        receipt.request.event_id
+                    )));
                 }
             }
         }

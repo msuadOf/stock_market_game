@@ -1,7 +1,7 @@
 use super::tests::{amount, date, fixture};
 use super::*;
 
-fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLine {
+pub(super) fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLine {
     JournalLine {
         account: LedgerAccountId(account.into()),
         side,
@@ -9,7 +9,7 @@ fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLi
     }
 }
 
-fn bind_capital(state: &mut SimpleFinanceState) {
+pub(super) fn bind_capital(state: &mut SimpleFinanceState) {
     state.define_dividend_legal_facts(legal_facts()).unwrap();
 }
 
@@ -42,7 +42,7 @@ fn registered_capital_requires_one_explicit_immutable_source_fact() {
     assert!(serde_json::from_value::<SimpleFinanceState>(saved).is_err());
 }
 
-fn profitable_annual_fixture() -> SimpleFinanceState {
+pub(super) fn profitable_annual_fixture() -> SimpleFinanceState {
     let mut state = fixture();
     for month in 1..=12 {
         let end = if month == 12 {
