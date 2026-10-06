@@ -6,7 +6,7 @@ use thiserror::Error;
 use super::CompanyId;
 use crate::{account::StockCode, calendar::CivilDate, orderbook::AccountId};
 
-mod canonical_i128_decimal {
+pub(crate) mod canonical_i128_decimal {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
@@ -280,6 +280,10 @@ impl ShareRegistry {
         &self.holdings
     }
 
+    pub fn receipts(&self) -> &[ShareDayReceipt] {
+        &self.receipts
+    }
+
     pub fn issuer_repurchase_account(&self) -> Option<&IssuerRepurchaseAccountFacts> {
         self.issuer_repurchase_account.as_ref()
     }
@@ -293,7 +297,9 @@ impl ShareRegistry {
             return if existing == &facts {
                 Ok(())
             } else {
-                Err(error("issuer repurchase account facts are immutable once set"))
+                Err(error(
+                    "issuer repurchase account facts are immutable once set",
+                ))
             };
         }
         validate_issuer_repurchase_account(Some(&facts), self.settled_on)?;
@@ -476,7 +482,10 @@ impl ShareRegistry {
             return Err(error("stock and issuer identities are required"));
         }
         validate_holdings(&self.holdings, self.issued_shares, self.settled_on)?;
-        validate_issuer_repurchase_account(self.issuer_repurchase_account.as_ref(), self.settled_on)?;
+        validate_issuer_repurchase_account(
+            self.issuer_repurchase_account.as_ref(),
+            self.settled_on,
+        )?;
         let mut identities = BTreeSet::new();
         let mut previous_day = None;
         let mut acquired_ids = BTreeSet::new();
@@ -592,6 +601,12 @@ impl ShareRegistry {
     }
     pub fn settled_on(&self) -> CivilDate {
         self.settled_on
+    }
+
+    pub fn receipt_by_event(&self, event_id: &str) -> Option<&ShareDayReceipt> {
+        self.receipts
+            .iter()
+            .find(|receipt| receipt.request.event_id == event_id)
     }
 
     fn has_lot_id(&self, id: &str) -> bool {
@@ -755,13 +770,12 @@ impl RegistrationSnapshot {
                 "registration event, stock and issuer identities are required",
             ));
         }
-        validate_holdings(&self.holdings, self.issued_shares, self.registered_on)
-            .and_then(|()| {
-                validate_issuer_repurchase_account(
-                    self.issuer_repurchase_account.as_ref(),
-                    self.registered_on,
-                )
-            })
+        validate_holdings(&self.holdings, self.issued_shares, self.registered_on).and_then(|()| {
+            validate_issuer_repurchase_account(
+                self.issuer_repurchase_account.as_ref(),
+                self.registered_on,
+            )
+        })
     }
     pub fn holdings(&self) -> &[ShareHolding] {
         &self.holdings

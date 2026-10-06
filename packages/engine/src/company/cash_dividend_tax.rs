@@ -44,6 +44,7 @@ pub enum TaxAcquisitionSource {
 #[serde(deny_unknown_fields)]
 pub struct DividendTaxLot {
     pub id: String,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub qty: u64,
     pub acquired_on: CivilDate,
     pub source: TaxAcquisitionSource,
@@ -187,10 +188,12 @@ struct TaxDisposition {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TaxDayReceipt {
+pub struct TaxDayReceipt {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     operation_seq: u64,
     event_id: String,
     day: CivilDate,
+    #[serde(with = "crate::company::share_registry::canonical_i128_decimal")]
     net_change: i128,
     #[serde(deserialize_with = "required_lot")]
     acquisition: Option<DividendTaxLot>,
@@ -199,7 +202,8 @@ struct TaxDayReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DividendCashReceipt {
+pub struct DividendCashReceipt {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     operation_seq: u64,
     payment_id: String,
     paid_on: CivilDate,
@@ -209,7 +213,8 @@ struct DividendCashReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RegisteredTaxDividend {
+pub struct RegisteredTaxDividend {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     operation_seq: u64,
     event_id: String,
     registered_on: CivilDate,
@@ -221,6 +226,7 @@ struct RegisteredTaxDividend {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxCollectionReceipt {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     pub operation_seq: u64,
     pub event_id: String,
     pub day: CivilDate,
@@ -234,6 +240,7 @@ pub struct TaxCollectionReceipt {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "TaxBookState")]
 pub struct CashDividendTaxBook {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     operation_seq: u64,
     account: AccountId,
     stock: StockCode,
@@ -481,7 +488,7 @@ impl CashDividendTaxBook {
             .iter()
             .find(|receipt| receipt.event_id == event_id)
         {
-            if existing.day == day && existing.available_cash == available_cash {
+            if existing.day == day && existing.remaining_cash == available_cash {
                 return Ok(existing.clone());
             }
             return Err(invalid(
@@ -521,6 +528,28 @@ impl CashDividendTaxBook {
     }
     pub fn lots(&self) -> &[DividendTaxLot] {
         &self.lots
+    }
+    pub fn outstanding_tax(&self) -> Result<ExactDividendTaxAmount, DividendTaxError> {
+        self.outstanding()
+    }
+    pub fn collections(&self) -> &[TaxCollectionReceipt] {
+        &self.collections
+    }
+    pub(crate) fn receipt_by_event(&self, event_id: &str) -> Option<&TaxDayReceipt> {
+        self.days
+            .iter()
+            .find(|receipt| receipt.event_id == event_id)
+    }
+    pub(crate) fn dividend_event_by_id(&self, event_id: &str) -> Option<&RegisteredTaxDividend> {
+        self.dividends
+            .iter()
+            .find(|dividend| dividend.event_id == event_id)
+    }
+    pub(crate) fn payment_by_id(&self, payment_id: &str) -> Option<&DividendCashReceipt> {
+        self.dividends
+            .iter()
+            .flat_map(|dividend| &dividend.payments)
+            .find(|payment| payment.payment_id == payment_id)
     }
     pub fn account(&self) -> AccountId {
         self.account
@@ -842,6 +871,46 @@ impl CashDividendTaxBook {
             .checked_add(1)
             .ok_or_else(|| overflow("operation sequence"))?;
         Ok(self.operation_seq)
+    }
+}
+
+pub(crate) fn convert_tax_source(
+    source: &crate::company::share_registry::AcquisitionSource,
+) -> crate::company::cash_dividend_tax::TaxAcquisitionSource {
+    match source {
+        crate::company::share_registry::AcquisitionSource::InitialAllocation { evidence } => {
+            crate::company::cash_dividend_tax::TaxAcquisitionSource::InitialAllocation {
+                evidence: evidence.clone(),
+            }
+        }
+        crate::company::share_registry::AcquisitionSource::SecondaryMarket { settlement } => {
+            crate::company::cash_dividend_tax::TaxAcquisitionSource::SecondaryMarket {
+                settlement: settlement.clone(),
+            }
+        }
+        crate::company::share_registry::AcquisitionSource::CorporateAction { event } => {
+            crate::company::cash_dividend_tax::TaxAcquisitionSource::CorporateAction {
+                event: event.clone(),
+            }
+        }
+    }
+}
+
+pub(crate) fn convert_tax_class(
+    restriction: &crate::company::share_registry::ShareRestriction,
+) -> crate::company::cash_dividend_tax::TaxShareClass {
+    match restriction {
+        crate::company::share_registry::ShareRestriction::Unrestricted => {
+            crate::company::cash_dividend_tax::TaxShareClass::PublicMarket
+        }
+        crate::company::share_registry::ShareRestriction::Restricted { reason, release_on } => {
+            crate::company::cash_dividend_tax::TaxShareClass::StatutoryRestricted {
+                release_on: *release_on,
+                basis:
+                    crate::company::cash_dividend_tax::StatutoryRestrictedBasis::FinanceTax2009167,
+                qualification_evidence: reason.to_string(),
+            }
+        }
     }
 }
 

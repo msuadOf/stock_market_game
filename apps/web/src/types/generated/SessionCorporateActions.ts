@@ -3,6 +3,8 @@
 export type SessionCorporateActions = {
   registries: import("../../save/schema/corporate-actions").ShareRegistry[];
   dividends: import("../../save/schema/corporate-actions").CashDividendBook[];
+  dividend_tax_books:
+    import("../../save/schema/corporate-actions").CashDividendTaxBook[];
   account_gross_receipts:
     import("../../save/schema/corporate-actions").AccountDividendGrossReceipt[];
   external_receipts:

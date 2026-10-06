@@ -1,4 +1,4 @@
-import { accountId, array, boolean, civilDate, decimal, exact, money, oneOf, record, SaveSchemaError, string } from "./primitives.ts"
+import { accountId, array, boolean, civilDate, decimal, exact, integer, money, oneOf, record, SaveSchemaError, string } from "./primitives.ts"
 
 export type HolderId = { readonly Account: string } | { readonly External: string } | "IssuerTreasury"
 export type AcquisitionSource = { readonly InitialAllocation: { readonly evidence: string } } | { readonly SecondaryMarket: { readonly settlement: string } } | { readonly CorporateAction: { readonly event: string } }
@@ -20,10 +20,20 @@ export type HolderPaymentOutcome = { readonly Paid: { readonly holder: HolderId;
 export type CashDividendPaymentReceipt = { readonly payment_id: string; readonly paid_on: string; readonly within_six_month_deadline: boolean; readonly outcomes: readonly HolderPaymentOutcome[] }
 export type CashDividendStatus = "Approved" | "Announced" | "Registered" | "Payable" | "PartiallyPaid" | "Paid"
 export type CashDividendBook = { readonly plan: CashDividendPlan; readonly status: CashDividendStatus; readonly registration: RegistrationSnapshot | null; readonly entitlements: readonly CashDividendEntitlement[]; readonly paid: readonly (readonly [HolderId, string])[]; readonly failures: readonly (readonly [HolderId, string])[]; readonly payments: readonly CashDividendPaymentReceipt[] }
-export type DividendTaxStatus = "TreatmentNotConfigured"
+export type DividendTaxStatus = "IndividualPublicMarket" | "TreatmentNotConfigured"
+export type TaxAcquisitionSource = { readonly InitialAllocation: { readonly evidence: string } } | { readonly SecondaryMarket: { readonly settlement: string } } | { readonly CorporateAction: { readonly event: string } }
+export type TaxShareClass = "PublicMarket" | { readonly StatutoryRestricted: { readonly release_on: string; readonly basis: "FinanceTax2009167" | "FinanceTax201070"; readonly qualification_evidence: string } }
+export type DividendTaxLot = { readonly id: string; readonly qty: string; readonly acquired_on: string; readonly source: TaxAcquisitionSource; readonly class: TaxShareClass }
+export type ExactDividendTaxAmount = { readonly numerator: string; readonly denominator: string }
+export type TaxDayReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly net_change: string; readonly acquisition: DividendTaxLot | null; readonly dispositions: readonly { readonly lot: DividendTaxLot; readonly disposed_on: string }[] }
+export type DividendCashReceipt = { readonly operation_seq: number; readonly payment_id: string; readonly paid_on: string; readonly received_gross: string; readonly evidence: string }
+export type RegisteredTaxDividend = { readonly operation_seq: number; readonly event_id: string; readonly registered_on: string; readonly per_share: ExactDividendTaxAmount; readonly lots: readonly DividendTaxLot[]; readonly payments: readonly DividendCashReceipt[] }
+export type TaxCollectionReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly available_cash: string; readonly collected: string; readonly remaining_cash: string; readonly outstanding: ExactDividendTaxAmount; readonly needs_funds: boolean }
+export type DividendTaxProfile = "IndividualPublicMarket" | "ResidentEnterprise" | "SecuritiesFund" | "NonResident"
+export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[] }
 export type AccountDividendGrossReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type ExternalDividendReceipt = { readonly payment_id: string; readonly plan_id: string; readonly holder: { readonly External: string }; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
-export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_dividend_groups: readonly AppliedCashExDividendGroup[] }
+export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_dividend_groups: readonly AppliedCashExDividendGroup[] }
 export type AppliedCashExDividendGroup = { readonly date: string; readonly stock: string; readonly plan_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
 
 type Context = {
@@ -49,6 +59,12 @@ function signedI128(value: unknown, path: string): string {
   if (!/^(0|-?[1-9]\d*)$/.test(parsed)) throw new SaveSchemaError(path, "必须为规范有符号 i128 十进制字符串")
   const integer = BigInt(parsed)
   if (integer < I128_MIN || integer > I128_MAX) throw new SaveSchemaError(path, "超出 i128 范围")
+  return parsed
+}
+
+function signedI128Fraction(value: unknown, path: string): string {
+  const parsed = string(value, path)
+  if (!/^(0|-?[1-9]\d*)$/.test(parsed)) throw new SaveSchemaError(path, "必须为规范有符号 i128 十进制字符串")
   return parsed
 }
 
@@ -362,6 +378,190 @@ function parseDividend(value: unknown, path: string): CashDividendBook {
   return result
 }
 
+function parseTaxSource(value: unknown, path: string): TaxAcquisitionSource {
+  return parseSource(value, path)
+}
+
+function parseTaxClass(value: unknown, path: string): TaxShareClass {
+  if (value === "PublicMarket") return value
+  const tagged = record(value, path)
+  exact(tagged, ["StatutoryRestricted"], path)
+  const restricted = record(tagged.StatutoryRestricted, `${path}.StatutoryRestricted`)
+  exact(restricted, ["release_on", "basis", "qualification_evidence"], `${path}.StatutoryRestricted`)
+  return {
+    StatutoryRestricted: {
+      release_on: civilDate(restricted.release_on, `${path}.StatutoryRestricted.release_on`),
+      basis: oneOf(restricted.basis, `${path}.StatutoryRestricted.basis`, ["FinanceTax2009167", "FinanceTax201070"] as const),
+      qualification_evidence: string(restricted.qualification_evidence, `${path}.StatutoryRestricted.qualification_evidence`),
+    },
+  }
+}
+
+function parseTaxLot(value: unknown, path: string): DividendTaxLot {
+  const lot = record(value, path)
+  exact(lot, ["id", "qty", "acquired_on", "source", "class"], path)
+  const id = string(lot.id, `${path}.id`)
+  if (id.trim() === "") throw new SaveSchemaError(`${path}.id`, "税股批次身份不能为空")
+  return {
+    id,
+    qty: positiveU64(lot.qty, `${path}.qty`),
+    acquired_on: civilDate(lot.acquired_on, `${path}.acquired_on`),
+    source: parseTaxSource(lot.source, `${path}.source`),
+    class: parseTaxClass(lot.class, `${path}.class`),
+  }
+}
+
+function parseExactAmount(value: unknown, path: string): ExactDividendTaxAmount {
+  const amount = record(value, path)
+  exact(amount, ["numerator", "denominator"], path)
+  const numerator = signedI128Fraction(amount.numerator, `${path}.numerator`)
+  const denominator = decimal(amount.denominator, `${path}.denominator`)
+  if (denominator === "0" || BigInt(numerator) < 0n || (BigInt(numerator) % BigInt(denominator) === 0n && BigInt(denominator) !== 1n)) throw new SaveSchemaError(path, "精确税额必须为已约简非负分数")
+  return { numerator, denominator }
+}
+
+function parseTaxBook(value: unknown, path: string): CashDividendTaxBook {
+  const book = record(value, path)
+  exact(book, ["operation_seq", "account", "stock", "profile", "opened_on", "opening_lots", "settled_on", "lots", "days", "dividends", "collections"], path)
+  const profile = oneOf(book.profile, `${path}.profile`, ["IndividualPublicMarket", "ResidentEnterprise", "SecuritiesFund", "NonResident"] as const)
+  if (profile !== "IndividualPublicMarket") throw new SaveSchemaError(`${path}.profile`, "当前仅实现个人公开市场现金分红税")
+  const account = accountId(book.account, `${path}.account`)
+  const stock = string(book.stock, `${path}.stock`)
+  if (stock.trim() === "") throw new SaveSchemaError(`${path}.stock`, "税股代码不能为空")
+  const opened_on = civilDate(book.opened_on, `${path}.opened_on`)
+  const settled_on = civilDate(book.settled_on, `${path}.settled_on`)
+  if (settled_on < opened_on) throw new SaveSchemaError(`${path}.settled_on`, "税账结算日早于开账日")
+  const days: TaxDayReceipt[] = array(book.days, `${path}.days`).map((item, index) => {
+    const dayPath = `${path}.days[${index}]`, receipt = record(item, dayPath)
+    exact(receipt, ["operation_seq", "event_id", "day", "net_change", "acquisition", "dispositions"], dayPath)
+    const event_id = string(receipt.event_id, `${dayPath}.event_id`)
+    if (event_id.trim() === "") throw new SaveSchemaError(`${dayPath}.event_id`, "税账日结事件身份不能为空")
+    return {
+      operation_seq: integer(receipt.operation_seq, `${dayPath}.operation_seq`, 1),
+      event_id,
+      day: civilDate(receipt.day, `${dayPath}.day`),
+      net_change: signedI128(receipt.net_change, `${dayPath}.net_change`),
+      acquisition: receipt.acquisition === null ? null : parseTaxLot(receipt.acquisition, `${dayPath}.acquisition`),
+      dispositions: array(receipt.dispositions, `${dayPath}.dispositions`).map((entry, entryIndex) => {
+        const dispositionPath = `${dayPath}.dispositions[${entryIndex}]`, disposition = record(entry, dispositionPath)
+        exact(disposition, ["lot", "disposed_on"], dispositionPath)
+        return { lot: parseTaxLot(disposition.lot, `${dispositionPath}.lot`), disposed_on: civilDate(disposition.disposed_on, `${dispositionPath}.disposed_on`) }
+      }),
+    }
+  })
+  const dividends: RegisteredTaxDividend[] = array(book.dividends, `${path}.dividends`).map((item, index) => {
+    const dividendPath = `${path}.dividends[${index}]`, dividend = record(item, dividendPath)
+    exact(dividend, ["operation_seq", "event_id", "registered_on", "per_share", "lots", "payments"], dividendPath)
+    const event_id = string(dividend.event_id, `${dividendPath}.event_id`)
+    if (event_id.trim() === "") throw new SaveSchemaError(`${dividendPath}.event_id`, "税账分红事件身份不能为空")
+    return {
+      operation_seq: integer(dividend.operation_seq, `${dividendPath}.operation_seq`, 1),
+      event_id,
+      registered_on: civilDate(dividend.registered_on, `${dividendPath}.registered_on`),
+      per_share: parseExactAmount(dividend.per_share, `${dividendPath}.per_share`),
+      lots: array(dividend.lots, `${dividendPath}.lots`).map((lot, lotIndex) => parseTaxLot(lot, `${dividendPath}.lots[${lotIndex}]`)),
+      payments: array(dividend.payments, `${dividendPath}.payments`).map((payment, paymentIndex) => {
+        const paymentPath = `${dividendPath}.payments[${paymentIndex}]`, receipt = record(payment, paymentPath)
+        exact(receipt, ["operation_seq", "payment_id", "paid_on", "received_gross", "evidence"], paymentPath)
+        const payment_id = string(receipt.payment_id, `${paymentPath}.payment_id`)
+        const received_gross = money(receipt.received_gross, `${paymentPath}.received_gross`)
+        const evidence = string(receipt.evidence, `${paymentPath}.evidence`)
+        if (!payment_id.trim() || !evidence.trim() || BigInt(received_gross) <= 0n) throw new SaveSchemaError(paymentPath, "税账分红到账身份、证据或金额非法")
+        return {
+          operation_seq: integer(receipt.operation_seq, `${paymentPath}.operation_seq`, 1),
+          payment_id,
+          paid_on: civilDate(receipt.paid_on, `${paymentPath}.paid_on`),
+          received_gross,
+          evidence,
+        }
+      }),
+    }
+  })
+  const collections: TaxCollectionReceipt[] = array(book.collections, `${path}.collections`).map((item, index) => {
+    const collectionPath = `${path}.collections[${index}]`, receipt = record(item, collectionPath)
+    exact(receipt, ["operation_seq", "event_id", "day", "available_cash", "collected", "remaining_cash", "outstanding", "needs_funds"], collectionPath)
+    const event_id = string(receipt.event_id, `${collectionPath}.event_id`)
+    if (event_id.trim() === "") throw new SaveSchemaError(`${collectionPath}.event_id`, "税账收缴事件身份不能为空")
+    return {
+      operation_seq: integer(receipt.operation_seq, `${collectionPath}.operation_seq`, 1),
+      event_id,
+      day: civilDate(receipt.day, `${collectionPath}.day`),
+      available_cash: money(receipt.available_cash, `${collectionPath}.available_cash`),
+      collected: money(receipt.collected, `${collectionPath}.collected`),
+      remaining_cash: money(receipt.remaining_cash, `${collectionPath}.remaining_cash`),
+      outstanding: parseExactAmount(receipt.outstanding, `${collectionPath}.outstanding`),
+      needs_funds: boolean(receipt.needs_funds, `${collectionPath}.needs_funds`),
+    }
+  })
+  const opening_lots = array(book.opening_lots, `${path}.opening_lots`).map((lot, index) => parseTaxLot(lot, `${path}.opening_lots[${index}]`))
+  const lots = array(book.lots, `${path}.lots`).map((lot, index) => parseTaxLot(lot, `${path}.lots[${index}]`))
+  const parsed: CashDividendTaxBook = { operation_seq: integer(book.operation_seq, `${path}.operation_seq`, 0), account, stock, profile, opened_on, opening_lots, settled_on, lots, days, dividends, collections }
+  validateTaxBookReplay(parsed, path)
+  return parsed
+}
+
+function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
+  const operations = [
+    ...book.days.map(receipt => ({ operation_seq: receipt.operation_seq, path: "days", day: receipt.day })),
+    ...book.dividends.flatMap(dividend => [
+      { operation_seq: dividend.operation_seq, path: "dividends", day: dividend.registered_on },
+      ...dividend.payments.map(payment => ({ operation_seq: payment.operation_seq, path: "dividends payments", day: payment.paid_on })),
+    ]),
+    ...book.collections.map(receipt => ({ operation_seq: receipt.operation_seq, path: "collections", day: receipt.day })),
+  ].sort((left, right) => left.operation_seq - right.operation_seq)
+  if (book.operation_seq !== operations.length) throw new SaveSchemaError(`${path}.operation_seq`, "税账操作序列与事实数量不一致")
+  let previousDay = book.opened_on
+  for (const [index, operation] of operations.entries()) {
+    if (operation.operation_seq !== index + 1) throw new SaveSchemaError(`${path}.${operation.path.replaceAll(" ", ".")}[${index}]`, "税账操作序列必须从 1 连续递增")
+    if (operation.day < previousDay || operation.day > book.settled_on) throw new SaveSchemaError(`${path}.${operation.path.replaceAll(" ", ".")}[${index}]`, "税账事实日期不在前序事实与结算日之间")
+    previousDay = operation.day
+  }
+  const eventIds = new Set<string>()
+  const paymentIds = new Set<string>()
+  for (const fact of [...book.days, ...book.dividends, ...book.collections]) {
+    if (eventIds.has(fact.event_id)) throw new SaveSchemaError(path, "税账事件身份重复")
+    eventIds.add(fact.event_id)
+  }
+  for (const dividend of book.dividends) {
+    for (const payment of dividend.payments) {
+      if (paymentIds.has(payment.payment_id)) throw new SaveSchemaError(path, "税账付款身份重复")
+      paymentIds.add(payment.payment_id)
+      if (payment.paid_on < dividend.registered_on) throw new SaveSchemaError(path, "税账付款早于分红登记")
+    }
+  }
+  let dayCursor = book.opened_on
+  for (const [index, day] of book.days.entries()) {
+    const dayPath = `${path}.days[${index}]`
+    if (day.day <= dayCursor || (index > 0 && addCivilDays(dayCursor, 1) !== day.day)) throw new SaveSchemaError(`${dayPath}.day`, "税账日结必须按自然日连续递增")
+    if ((BigInt(day.net_change) > 0n) !== (day.acquisition !== null)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账日净变动与新增批次不一致")
+    if (day.acquisition !== null && (day.acquisition.acquired_on !== day.day || day.acquisition.qty !== day.net_change)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账新增批次日期或数量不一致")
+    let disposed = 0n
+    for (const disposition of day.dispositions) {
+      if (disposition.disposed_on !== day.day) throw new SaveSchemaError(`${dayPath}.dispositions`, "税账处置日期与日结日期不一致")
+      disposed += BigInt(disposition.lot.qty)
+    }
+    if (disposed !== -BigInt(day.net_change)) throw new SaveSchemaError(`${dayPath}.dispositions`, "税账处置数量与日净减持不一致")
+    dayCursor = day.day
+  }
+  const replayed = book.opening_lots.map(lot => ({ ...lot }))
+  for (const day of book.days) {
+    if (day.acquisition !== null) replayed.push({ ...day.acquisition })
+    for (const disposition of day.dispositions) {
+      const index = replayed.findIndex(lot => lot.id === disposition.lot.id)
+      if (index === -1 || BigInt(replayed[index]!.qty) < BigInt(disposition.lot.qty)) throw new SaveSchemaError(path, "税账处置引用不存在的批次或数量")
+      const remaining = BigInt(replayed[index]!.qty) - BigInt(disposition.lot.qty)
+      if (remaining === 0n) replayed.splice(index, 1)
+      else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
+    }
+  }
+  if (JSON.stringify(replayed) !== JSON.stringify(book.lots)) throw new SaveSchemaError(`${path}.lots`, "税账当前批次与开账批次及日结 replay 不一致")
+  for (const [index, collection] of book.collections.entries()) {
+    const collectionPath = `${path}.collections[${index}]`
+    if (BigInt(collection.available_cash) !== BigInt(collection.collected) + BigInt(collection.remaining_cash)) throw new SaveSchemaError(collectionPath, "税账收缴前后现金不守恒")
+    if (collection.needs_funds !== BigInt(collection.outstanding.numerator) > 0n) throw new SaveSchemaError(`${collectionPath}.needs_funds`, "税账资金不足标志与剩余税额不一致")
+  }
+}
+
 function expectedEligible(registration: RegistrationSnapshot) {
   return registration.holdings.filter(holding => holding.holder !== "IssuerTreasury" && holding.lots.length > 0)
 }
@@ -473,14 +673,15 @@ function parsePayment(value: unknown, path: string): CashDividendPaymentReceipt 
 
 export function parseSessionCorporateActions(value: unknown, context: Context, path = "corporate_actions") {
   const root = record(value, path)
-  exact(root, ["registries", "dividends", "account_gross_receipts", "external_receipts", "applied_ex_dividend_groups"], path)
+  exact(root, ["registries", "dividends", "dividend_tax_books", "account_gross_receipts", "external_receipts", "applied_ex_dividend_groups"], path)
   const registries = array(root.registries, `${path}.registries`).map((item, index) => parseRegistry(item, `${path}.registries[${index}]`))
   const dividends = array(root.dividends, `${path}.dividends`).map((item, index) => parseDividend(item, `${path}.dividends[${index}]`))
+  const dividend_tax_books = array(root.dividend_tax_books, `${path}.dividend_tax_books`).map((item, index) => parseTaxBook(item, `${path}.dividend_tax_books[${index}]`))
   const account_gross_receipts: AccountDividendGrossReceipt[] = array(root.account_gross_receipts, `${path}.account_gross_receipts`).map((item, index) => {
     const itemPath = `${path}.account_gross_receipts[${index}]`, receipt = record(item, itemPath)
     exact(receipt, ["payment_id", "plan_id", "account", "paid_on", "gross", "tax_status"], itemPath)
     const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), account = accountId(receipt.account, `${itemPath}.account`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`)
-    const tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["TreatmentNotConfigured"] as const)
+    const tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["IndividualPublicMarket", "TreatmentNotConfigured"] as const)
     if (!payment_id.trim() || !plan_id.trim() || BigInt(gross) <= 0n) throw new SaveSchemaError(itemPath, "账户到账身份或金额非法")
     if (paid_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.paid_on`, "实际到账日期晚于存档日")
     if (!Object.hasOwn(context.snapshot.accounts, account)) throw new SaveSchemaError(`${itemPath}.account`, "到账账户不存在")
@@ -491,7 +692,7 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     exact(receipt, ["payment_id", "plan_id", "holder", "paid_on", "gross", "tax_status"], itemPath)
     const holder = parseHolder(receipt.holder, `${itemPath}.holder`)
     if (holder.kind !== "External") throw new SaveSchemaError(`${itemPath}.holder`, "外部付款回执必须属于 External 持有人")
-    const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`), tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["TreatmentNotConfigured"] as const)
+    const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`), tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["IndividualPublicMarket", "TreatmentNotConfigured"] as const)
     if (!payment_id.trim() || !plan_id.trim() || BigInt(gross) <= 0n) throw new SaveSchemaError(itemPath, "外部收款身份或金额非法")
     if (paid_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.paid_on`, "实际到账日期晚于存档日")
     return { payment_id, plan_id, holder: { External: holder.id }, paid_on, gross, tax_status }
@@ -604,5 +805,23 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     const anchor = market.last_cash_ex_reference
     if (anchor !== null && !groupKeys.has(`${anchor.ex_date}\0${stock}`)) throw new SaveSchemaError(`${path}.applied_ex_dividend_groups`, `MarketSnap ${stock} 的除息锚点缺少对应已应用除息组`)
   }
-  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, account_gross_receipts, external_receipts, applied_ex_dividend_groups }
+  const taxBookKeys = new Set<string>()
+  const configuredTaxAccounts = new Set<string>()
+  for (const [index, taxBook] of dividend_tax_books.entries()) {
+    const itemPath = `${path}.dividend_tax_books[${index}]`
+    const key = `${taxBook.account}\0${taxBook.stock}`
+    if (taxBookKeys.has(key)) throw new SaveSchemaError(itemPath, "同一账户证券存在重复股息税账")
+    taxBookKeys.add(key)
+    configuredTaxAccounts.add(`${taxBook.account}\0${taxBook.stock}`)
+    if (!Object.hasOwn(context.snapshot.accounts, taxBook.account)) throw new SaveSchemaError(`${itemPath}.account`, "股息税账引用不存在的账户")
+    const registry = registryByStock.get(taxBook.stock)
+    if (registry === undefined || !registry.holdings.some(holding => typeof holding.holder === "object" && "Account" in holding.holder && holding.holder.Account === taxBook.account)) throw new SaveSchemaError(itemPath, "股息税账缺少对应股东名册持有人")
+    if (taxBook.settled_on !== registry.settled_on) throw new SaveSchemaError(`${itemPath}.settled_on`, "股息税账结算日与股东名册不一致")
+  }
+  for (const [index, receipt] of account_gross_receipts.entries()) {
+    const plan = dividends.find(dividend => dividend.plan.plan_id === receipt.plan_id)
+    const expectedStatus = plan !== undefined && configuredTaxAccounts.has(`${receipt.account}\0${plan.plan.stock}`) ? "IndividualPublicMarket" : "TreatmentNotConfigured"
+    if (receipt.tax_status !== expectedStatus) throw new SaveSchemaError(`${path}.account_gross_receipts[${index}].tax_status`, "账户分红税身份与股息税账配置不一致")
+  }
+  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, dividend_tax_books, account_gross_receipts, external_receipts, applied_ex_dividend_groups }
 }

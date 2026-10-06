@@ -14,6 +14,8 @@ pub struct SessionCorporateActions {
     pub registries: Vec<ShareRegistry>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").CashDividendBook[]")]
     pub dividends: Vec<crate::company::cash_dividend::CashDividendBook>,
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").CashDividendTaxBook[]")]
+    pub dividend_tax_books: Vec<crate::company::cash_dividend_tax::CashDividendTaxBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").AccountDividendGrossReceipt[]")]
     pub account_gross_receipts: Vec<AccountDividendGrossReceipt>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").ExternalDividendReceipt[]")]
@@ -35,6 +37,7 @@ pub struct AppliedCashExDividendGroup {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum DividendTaxStatus {
+    IndividualPublicMarket,
     TreatmentNotConfigured,
 }
 
@@ -206,7 +209,14 @@ impl SessionCorporateActions {
                                         account: *account,
                                         paid_on: day,
                                         gross: entitlement.gross,
-                                        tax_status: DividendTaxStatus::TreatmentNotConfigured,
+                                        tax_status: if self.dividend_tax_books.iter().any(|book| {
+                                            book.account() == *account
+                                                && book.stock() == &plan.stock
+                                        }) {
+                                            DividendTaxStatus::IndividualPublicMarket
+                                        } else {
+                                            DividendTaxStatus::TreatmentNotConfigured
+                                        },
                                     });
                             }
                             Err(error) => outcomes.push(
@@ -265,6 +275,7 @@ impl SessionCorporateActions {
                 }
             }
         }
+        self.settle_dividend_tax(accounts)?;
         Ok(())
     }
 
@@ -392,6 +403,80 @@ impl SessionCorporateActions {
                 }
             }
         }
+        self.sync_dividend_tax_days()?;
+        Ok(())
+    }
+
+    fn sync_dividend_tax_days(&mut self) -> Result<(), SessionCorporateActionsError> {
+        let receipts: Vec<(StockCode, crate::company::share_registry::ShareDayReceipt)> = self
+            .registries
+            .iter()
+            .flat_map(|registry| {
+                let stock = registry.stock().clone();
+                registry
+                    .receipts()
+                    .iter()
+                    .map(move |receipt| (stock.clone(), receipt.clone()))
+            })
+            .collect();
+        let tax_book_keys: Vec<_> = self
+            .dividend_tax_books
+            .iter()
+            .map(|book| (book.account(), book.stock().clone()))
+            .collect();
+        for (account, stock) in tax_book_keys {
+            for (receipt_stock, receipt) in receipts.iter().filter(|(known, _)| known == &stock) {
+                let event_id = format!(
+                    "session-market:{}:{}:{}",
+                    receipt_stock.0, account.0, receipt.request.day
+                );
+                let existing_day = self
+                    .dividend_tax_books
+                    .iter()
+                    .find(|book| book.account() == account && book.stock() == receipt_stock)
+                    .and_then(|book| book.receipt_by_event(&event_id))
+                    .is_some();
+                if existing_day {
+                    continue;
+                }
+                let Some(change) = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .find(|change| change.holder == HolderId::Account(account))
+                else {
+                    continue;
+                };
+                let acquisition = change.acquisition.as_ref().map(|acquisition| {
+                    crate::company::cash_dividend_tax::DividendTaxLot {
+                        id: format!("tax:{}", acquisition.lot_id),
+                        qty: change
+                            .change
+                            .unsigned_abs()
+                            .try_into()
+                            .expect("positive change fits u64"),
+                        acquired_on: receipt.request.day,
+                        source: crate::company::cash_dividend_tax::convert_tax_source(
+                            &acquisition.source,
+                        ),
+                        class: crate::company::cash_dividend_tax::convert_tax_class(
+                            &acquisition.restriction,
+                        ),
+                    }
+                });
+                let book = self
+                    .dividend_tax_books
+                    .iter_mut()
+                    .find(|book| book.account() == account && book.stock() == receipt_stock)
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(format!(
+                            "账户 {account:?} 缺少 {receipt_stock:?} 的股息税账"
+                        ))
+                    })?;
+                book.record_net_day(event_id, receipt.request.day, change.change, acquisition)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            }
+        }
         Ok(())
     }
 
@@ -402,6 +487,27 @@ impl SessionCorporateActions {
         current_date: crate::calendar::CivilDate,
     ) -> Result<(), SessionCorporateActionsError> {
         let issuers = company_system.issuers();
+        for tax_book in &self.dividend_tax_books {
+            tax_book
+                .validate()
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            if !accounts.contains_key(&tax_book.account()) {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "股息税账引用了不存在的账户".into(),
+                ));
+            }
+            if !self.registries.iter().any(|registry| {
+                registry.stock() == tax_book.stock()
+                    && registry
+                        .holdings()
+                        .iter()
+                        .any(|holding| holding.holder == HolderId::Account(tax_book.account()))
+            }) {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "股息税账缺少对应的股东登记持有人".into(),
+                ));
+            }
+        }
         let mut seen = BTreeSet::new();
         for registry in &self.registries {
             if !seen.insert(registry.stock().clone()) {
@@ -515,7 +621,6 @@ impl SessionCorporateActions {
             if receipt.payment_id.trim().is_empty()
                 || receipt.plan_id.trim().is_empty()
                 || receipt.gross.cents() <= 0
-                || receipt.tax_status != DividendTaxStatus::TreatmentNotConfigured
                 || !accounts.contains_key(&receipt.account)
                 || !account_receipt_keys.insert((receipt.payment_id.clone(), receipt.account))
             {
@@ -530,6 +635,18 @@ impl SessionCorporateActions {
                 .ok_or_else(|| {
                     SessionCorporateActionsError::Invalid("账户 gross 到账凭证缺少分红计划".into())
                 })?;
+            let tax_status = if self.dividend_tax_books.iter().any(|tax_book| {
+                tax_book.account() == receipt.account && tax_book.stock() == &book.plan().stock
+            }) {
+                DividendTaxStatus::IndividualPublicMarket
+            } else {
+                DividendTaxStatus::TreatmentNotConfigured
+            };
+            if receipt.tax_status != tax_status {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "账户股息税状态与显式税账配置不一致".into(),
+                ));
+            }
             let matches_payment = book.payments().iter().any(|payment| {
                 payment.payment_id() == receipt.payment_id && payment.paid_on() == receipt.paid_on
                     && payment.outcomes().iter().any(|outcome| matches!(outcome,
@@ -594,13 +711,20 @@ impl SessionCorporateActions {
                         amount,
                     } = outcome
                     {
+                        let tax_status = if self.dividend_tax_books.iter().any(|tax_book| {
+                            tax_book.account() == *account && tax_book.stock() == &book.plan().stock
+                        }) {
+                            DividendTaxStatus::IndividualPublicMarket
+                        } else {
+                            DividendTaxStatus::TreatmentNotConfigured
+                        };
                         if !self.account_gross_receipts.iter().any(|receipt| {
                             receipt.plan_id == book.plan().plan_id
                                 && receipt.payment_id == payment.payment_id()
                                 && receipt.paid_on == payment.paid_on()
                                 && &receipt.account == account
                                 && &receipt.gross == amount
-                                && receipt.tax_status == DividendTaxStatus::TreatmentNotConfigured
+                                && receipt.tax_status == tax_status
                         }) {
                             return Err(SessionCorporateActionsError::Invalid(
                                 "已到账 Account holder 缺少 gross 到账凭证或 tax未配置标记".into(),
@@ -649,6 +773,65 @@ impl SessionCorporateActions {
         self.registries.push(registry);
         self.registries
             .sort_by(|left, right| left.stock().cmp(right.stock()));
+        Ok(())
+    }
+
+    pub(crate) fn configure_cash_dividend_tax_book(
+        &mut self,
+        account: crate::orderbook::AccountId,
+        stock: crate::account::StockCode,
+        profile: crate::company::cash_dividend_tax::DividendTaxProfile,
+    ) -> Result<(), SessionCorporateActionsError> {
+        let registry = self
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &stock)
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(format!(
+                    "配置股息税前必须先提供 {stock:?} 的完整股东名册"
+                ))
+            })?;
+        let holding = registry
+            .holdings()
+            .iter()
+            .find(|holding| holding.holder == HolderId::Account(account))
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(format!(
+                    "账户 {account:?} 不是 {stock:?} 的登记股东，不能配置股息税"
+                ))
+            })?;
+        if self
+            .dividend_tax_books
+            .iter()
+            .any(|book| book.account() == account && book.stock() == &stock)
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一账户证券已配置股息税身份".into(),
+            ));
+        }
+        let lots = holding
+            .lots
+            .iter()
+            .map(|lot| crate::company::cash_dividend_tax::DividendTaxLot {
+                id: format!("tax:{}", lot.id),
+                qty: lot.qty,
+                acquired_on: lot.acquired_on,
+                source: crate::company::cash_dividend_tax::convert_tax_source(&lot.source),
+                class: crate::company::cash_dividend_tax::convert_tax_class(&lot.restriction),
+            })
+            .collect();
+        let book = crate::company::cash_dividend_tax::CashDividendTaxBook::new(
+            account,
+            stock,
+            profile,
+            registry.settled_on(),
+            lots,
+        )
+        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        self.dividend_tax_books.push(book);
+        self.dividend_tax_books.sort_by(|left, right| {
+            (left.account(), left.stock()).cmp(&(right.account(), right.stock()))
+        });
         Ok(())
     }
 
@@ -709,6 +892,162 @@ impl SessionCorporateActions {
         }
         Ok(())
     }
+
+    fn settle_dividend_tax(
+        &mut self,
+        accounts: &mut super::account_book::AccountBook,
+    ) -> Result<(), SessionCorporateActionsError> {
+        let book_keys: Vec<_> = self
+            .dividend_tax_books
+            .iter()
+            .map(|book| (book.account(), book.stock().clone()))
+            .collect();
+        for (account, stock) in book_keys {
+            let tax_index = self
+                .dividend_tax_books
+                .iter()
+                .position(|item| item.account() == account && *item.stock() == stock)
+                .expect("tax book key came from the same collection");
+            let collected_tax = self.dividend_tax_books[tax_index]
+                .collections()
+                .iter()
+                .try_fold(crate::money::Money::ZERO, |total, receipt| {
+                    total.add(receipt.collected)
+                })
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            for dividend_book in &self.dividends {
+                if dividend_book.plan().stock != stock {
+                    continue;
+                }
+                let Some(snapshot) = dividend_book.registration() else {
+                    continue;
+                };
+                if !snapshot
+                    .holdings()
+                    .iter()
+                    .any(|holding| holding.holder == HolderId::Account(account))
+                {
+                    continue;
+                }
+                let index = tax_index;
+                let event_id = format!("dividend-tax:{}", snapshot.event_id());
+                let settled_on = self.dividend_tax_books[index].settled_on();
+                if settled_on < snapshot.registered_on() {
+                    continue;
+                }
+                if self.dividend_tax_books[index]
+                    .dividend_event_by_id(&event_id)
+                    .is_none()
+                {
+                    self.dividend_tax_books[index]
+                        .register_dividend(
+                            event_id,
+                            snapshot.registered_on(),
+                            crate::company::cash_dividend_tax::ExactDividendTaxAmount::new(
+                                i128::from(
+                                    dividend_book
+                                        .entitlements()
+                                        .map_err(|error| {
+                                            SessionCorporateActionsError::Invalid(error.to_string())
+                                        })?
+                                        .iter()
+                                        .find(|entitlement| {
+                                            entitlement.holder == HolderId::Account(account)
+                                        })
+                                        .map(|entitlement| entitlement.gross.cents())
+                                        .unwrap_or(0),
+                                ),
+                                snapshot
+                                    .holdings()
+                                    .iter()
+                                    .find(|holding| holding.holder == HolderId::Account(account))
+                                    .and_then(|holding| {
+                                        holding.lots.iter().try_fold(0_u64, |total, lot| {
+                                            total.checked_add(lot.qty)
+                                        })
+                                    })
+                                    .unwrap_or(0),
+                            )
+                            .map_err(|error| {
+                                SessionCorporateActionsError::Invalid(error.to_string())
+                            })?,
+                        )
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
+                }
+            }
+
+            let payment_keys: Vec<_> = self
+                .dividends
+                .iter()
+                .flat_map(|book| {
+                    book.payments().iter().map(move |payment| {
+                        (book.plan().plan_id.clone(), payment.payment_id().to_owned())
+                    })
+                })
+                .collect();
+            for (plan_id, payment_id) in payment_keys {
+                let Some(receipt) = self.account_gross_receipts.iter().find(|receipt| {
+                    receipt.account == account
+                        && receipt.plan_id == plan_id
+                        && receipt.payment_id == payment_id
+                }) else {
+                    continue;
+                };
+                let index = tax_index;
+                let registration_event_id = format!("dividend-tax:{}", plan_id);
+                let settled_on = self.dividend_tax_books[index].settled_on();
+                if settled_on < receipt.paid_on {
+                    continue;
+                }
+                if self.dividend_tax_books[index]
+                    .payment_by_id(&payment_id)
+                    .is_none()
+                    && self.dividend_tax_books[index]
+                        .dividend_event_by_id(&registration_event_id)
+                        .is_some()
+                {
+                    self.dividend_tax_books[index]
+                        .record_payment(
+                            &registration_event_id,
+                            payment_id.clone(),
+                            receipt.paid_on,
+                            receipt.gross,
+                            format!("account-gross:{payment_id}"),
+                        )
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
+                }
+            }
+
+            let index = tax_index;
+            let settled_on = self.dividend_tax_books[index].settled_on();
+            let available_cash = accounts
+                .get(&account)
+                .map(|account| account.cash())
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid(format!("股息税账户 {account:?} 不存在"))
+                })?;
+            let collection_id =
+                format!("dividend-tax-collect:{account:?}:{}:{settled_on}", stock.0);
+            let base_available_cash = available_cash
+                .add(collected_tax)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            let collection = self.dividend_tax_books[index]
+                .collect_due(collection_id, settled_on, base_available_cash)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            if collection.collected.cents() > 0 {
+                accounts
+                    .get_mut(&account)
+                    .expect("the account existence was checked above")
+                    .debit_cash(collection.collected)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -718,8 +1057,8 @@ mod tests {
         account::StockCode,
         calendar::CivilDate,
         company::{
-            CompanyId, CompanyKind, CompanySpec, IndustryId,
             share_registry::{AcquisitionSource, ShareHolding, ShareLot, ShareRestriction},
+            CompanyId, CompanyKind, CompanySpec, IndustryId,
         },
     };
 
@@ -776,15 +1115,13 @@ mod tests {
         )
         .unwrap();
         let mut actions = SessionCorporateActions::default();
-        assert!(
-            actions
-                .configure_registry(
-                    registry.clone(),
-                    &BTreeMap::from([(AccountId(1), BTreeMap::from([(code.clone(), 5)]))]),
-                    &issuers
-                )
-                .is_err()
-        );
+        assert!(actions
+            .configure_registry(
+                registry.clone(),
+                &BTreeMap::from([(AccountId(1), BTreeMap::from([(code.clone(), 5)]))]),
+                &issuers
+            )
+            .is_err());
         assert!(actions.registries.is_empty());
         actions
             .configure_registry(
@@ -848,6 +1185,7 @@ mod tests {
             dividends: vec![],
             account_gross_receipts: vec![],
             external_receipts: vec![],
+            dividend_tax_books: vec![],
             applied_ex_dividend_groups: vec![],
         };
         let accounts = BTreeMap::from([(AccountId(1), BTreeMap::from([(code, 6)]))]);
@@ -864,9 +1202,11 @@ mod tests {
                 .sum::<u64>(),
             10
         );
-        assert!(
-            SessionCorporateActions::validate_registry(&actions.registries[0], &accounts, &issuers)
-                .is_ok()
-        );
+        assert!(SessionCorporateActions::validate_registry(
+            &actions.registries[0],
+            &accounts,
+            &issuers
+        )
+        .is_ok());
     }
 }
