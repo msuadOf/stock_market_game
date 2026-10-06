@@ -10,7 +10,7 @@ use crate::observation::{
 use crate::strategy::{
     MarketView, MomentumStrategy, SelfView, StockView, StrategyState, ZiNoiseStrategy,
 };
-use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockCode, TradingPhase};
+use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -44,7 +44,9 @@ fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
     setup.npcs.inst_count = 2;
     let mut session = crate::GameSession::new(setup, 42).unwrap();
     let source = session.shared_ingress();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     let baseline = session
         .state
         .ingress_receipt_cursors
@@ -142,7 +144,7 @@ fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_
                 .receive(
                     completed.account,
                     Intent::PlaceLimit {
-                        code: StockCode("600000".to_owned()),
+                        code: StockId(0),
                         side: crate::Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                         qty: 100,
@@ -293,7 +295,7 @@ fn unavailable_horizon() -> HorizonReturn {
 
 fn retail_risk_snapshot(locked: bool, style: &str) -> Arc<DecisionSnapshot> {
     let base = retail_snapshot();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut strategy = serde_json::to_value(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()).unwrap();
     strategy["retail_style"] = serde_json::json!(style);
     let risk = AccountRiskObservation {
@@ -402,7 +404,7 @@ fn urgency_retail_source_uses_frozen_drawdown_policy() {
 }
 
 fn retail_snapshot() -> Arc<DecisionSnapshot> {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let market = MarketView {
         stocks: [(
             code.clone(),
@@ -486,7 +488,7 @@ fn retail_snapshot() -> Arc<DecisionSnapshot> {
 #[test]
 fn retail_personal_analysis_controls_direction_without_institution_execution() {
     let base = retail_snapshot();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     for score in [-8_000, 8_000] {
         let account = AccountId(1);
         let input = base
@@ -542,7 +544,7 @@ fn retail_personal_analysis_cannot_override_account_risk_or_t1_lock() {
             .unwrap()
             .clone()
             .with_retail_analysis(Some(BTreeMap::from([(
-                StockCode("600888".to_owned()),
+                StockId(0),
                 crate::plans::CandidateAssessment::Scored {
                     score: crate::plans::SignalScore::new(10_000).unwrap(),
                     used_weight_bp: 10_000,
@@ -587,7 +589,7 @@ fn retail_analysis_rejects_unknown_market_stock_before_deciding() {
         .unwrap()
         .clone()
         .with_retail_analysis(Some(BTreeMap::from([(
-            StockCode("missing".to_owned()),
+            StockId(9),
             crate::plans::CandidateAssessment::InsufficientInformation {
                 excluded: Vec::new(),
             },
@@ -621,7 +623,7 @@ fn retail_analysis_insufficient_information_does_not_create_buy_orders() {
         .unwrap()
         .clone()
         .with_retail_analysis(Some(BTreeMap::from([(
-            StockCode("600888".to_owned()),
+            StockId(0),
             crate::plans::CandidateAssessment::InsufficientInformation {
                 excluded: Vec::new(),
             },
@@ -666,7 +668,7 @@ fn retail_analysis_consumes_dated_failure_influence_without_erasing_history() {
     )
     .with_failure_influence(0)
     .with_retail_analysis(Some(BTreeMap::from([(
-        StockCode("600888".to_owned()),
+        StockId(0),
         crate::plans::CandidateAssessment::Scored {
             score: crate::plans::SignalScore::new(8_000).unwrap(),
             used_weight_bp: 10_000,
@@ -715,7 +717,7 @@ fn retail_negative_personal_analysis_reduces_a_real_sellable_holding() {
         original.retail_experience().cloned(),
     )
     .with_retail_analysis(Some(BTreeMap::from([(
-        StockCode("600888".to_owned()),
+        StockId(0),
         crate::plans::CandidateAssessment::Scored {
             score: crate::plans::SignalScore::new(-8_000).unwrap(),
             used_weight_bp: 10_000,
@@ -766,7 +768,7 @@ fn retail_personal_analysis_cannot_create_an_order_without_random_arrival() {
         original.retail_experience().cloned(),
     )
     .with_retail_analysis(Some(BTreeMap::from([(
-        StockCode("600888".to_owned()),
+        StockId(0),
         crate::plans::CandidateAssessment::Scored {
             score: crate::plans::SignalScore::new(8_000).unwrap(),
             used_weight_bp: 10_000,
@@ -799,11 +801,11 @@ fn retail_personal_analysis_cannot_create_an_order_without_random_arrival() {
 
 fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
     let market = MarketView {
-        stocks: ["600001", "600002"]
+        stocks: [0_u32, 1]
             .into_iter()
-            .map(|code| {
+            .map(|rank| {
                 (
-                    StockCode(code.to_owned()),
+                    StockId(rank),
                     StockView {
                         best_bid: Some(Money::from_cents(1_049)),
                         best_ask: Some(Money::from_cents(1_051)),

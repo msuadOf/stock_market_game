@@ -80,7 +80,7 @@ fn incremental_auction_does_not_order_stocks_by_sealed_identity() {
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
-    let cancel = |code: StockCode, key, index| ValidatedOperation::Cancel {
+    let cancel = |code: StockId, key, index| ValidatedOperation::Cancel {
         candidate_key: IntentCandidateKey::player(key),
         sealed_index: index,
         account: AccountId(0),
@@ -116,7 +116,7 @@ fn incremental_auction_unknown_stock_cancels_do_not_create_stock_order() {
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
-    let unknown = StockCode("999999".to_owned());
+    let unknown = StockId(9);
     for (key, index) in [(0, 2), (1, 1)] {
         let round = coordinator
             .apply_round(vec![ValidatedOperation::Cancel {
@@ -169,7 +169,7 @@ fn incremental_auction_worker_failure_keeps_stock_and_detached_facts_retryable()
         candidate_key: IntentCandidateKey::player(2),
         sealed_index: 2,
         account: AccountId(0),
-        code: StockCode("unknown".to_owned()),
+        code: StockId(9),
         order_id: OrderId(77),
     });
     let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
@@ -217,7 +217,7 @@ fn incremental_auction_worker_failure_keeps_stock_and_detached_facts_retryable()
             code,
             reason: RejectionReason::UnknownStock,
             ..
-        } if code.0 == "unknown"
+        } if code.0 == 9
     )));
     assert_eq!(coordinator.detached_event_facts.len(), 1);
     assert_eq!(coordinator.detached_lifecycle_facts.len(), 1);
@@ -302,7 +302,7 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
     ] {
         assert!(records.iter().any(|record| {
             record.boundary == boundary
-                && record.identities == [codes[1].0.clone(), codes[0].0.clone()]
+                && record.identities == [codes[1].to_string(), codes[0].to_string()]
         }));
     }
     assert_eq!(coordinator.applied_operation_count, 0);

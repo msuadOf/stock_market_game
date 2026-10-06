@@ -6,7 +6,7 @@ use super::*;
 ///
 /// 关键修正（修复「只有一只股票有成交」）：散户**从全部股票中均匀随机选一只**下单，
 /// 而非恒取 `first_key_value()`（那会让全部散户 NPC 的订单集中在字典序最小的那只股票——
-/// BTreeMap<StockCode> 按 string 排序，首键固定——其余股票毫无散户流动性、无人撮合、价格不动）。
+/// BTreeMap<StockId> 按 string 排序，首键固定——其余股票毫无散户流动性、无人撮合、价格不动）。
 /// 随机选股经注入 RNG，保持确定性（同种子同输出，铁律三）。
 pub(super) fn decide_retail(
     strategy: &StrategyData,
@@ -87,7 +87,7 @@ pub(super) fn decide_retail(
         Side::Sell
     };
     let (code, sv) = if side == Side::Sell {
-        let sellable_codes: Vec<&StockCode> = market
+        let sellable_codes: Vec<&StockId> = market
             .stocks
             .keys()
             .filter(|candidate| {
@@ -137,7 +137,7 @@ pub(super) fn decide_retail(
 
 /// 单次追势判断中同一股票的行情与本人持仓事实，不进入存档。
 struct RetailDecisionContext<'a> {
-    code: StockCode,
+    code: StockId,
     stock_view: &'a StockView,
     minute_change: f64,
     position: Option<&'a PositionView>,
@@ -159,7 +159,7 @@ enum RetailSignal {
 impl<'a> RetailDecisionContext<'a> {
     fn from_selected_stock(
         strategy: &StrategyData,
-        code: StockCode,
+        code: StockId,
         stock_view: &'a StockView,
         own: &'a SelfView,
     ) -> Self {
@@ -268,7 +268,7 @@ mod decision_context_tests {
         }
     }
 
-    fn own(code: &StockCode, cost: Option<i64>, sellable: u32) -> SelfView {
+    fn own(code: &StockId, cost: Option<i64>, sellable: u32) -> SelfView {
         SelfView {
             cash: Money::from_cents(1_000_000),
             positions: [(
@@ -291,7 +291,7 @@ mod decision_context_tests {
         floats: &[f64],
         expected: Option<(Side, u32)>,
     ) {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let market = MarketView {
             stocks: [(code.clone(), stock)].into(),
             tick: 0,
@@ -390,8 +390,8 @@ mod decision_context_tests {
 
     #[test]
     fn noise_sell_reselects_its_own_stock_view_and_position() {
-        let first = StockCode("600101".to_owned());
-        let second = StockCode("600102".to_owned());
+        let first = StockId(0);
+        let second = StockId(1);
         let market = MarketView {
             stocks: [
                 (first, stock(1000, &[], 0.0)),

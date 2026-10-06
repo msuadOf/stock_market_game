@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 pub struct ExpiryRelease {
     pub receipt_index: u64,
     pub account: crate::AccountId,
-    pub stock: crate::StockCode,
+    pub stock: crate::StockId,
     pub order_id: crate::OrderId,
     pub side: crate::Side,
     pub resources: ResVec,
@@ -50,7 +50,7 @@ impl<'a> NpcOrderLifecycleBook<'a> {
     pub(in crate::session) fn remove(
         &mut self,
         account: crate::AccountId,
-        code: &crate::StockCode,
+        code: &crate::StockId,
         order: crate::OrderId,
     ) {
         self.lifecycles.retain(|lifecycle| {
@@ -279,13 +279,13 @@ mod ownership_tests {
 
     fn lifecycle(
         account: u64,
-        code: &str,
+        code: crate::StockId,
         order: u64,
         expires: u64,
     ) -> crate::session::NpcOrderLifecycle {
         crate::session::NpcOrderLifecycle {
             account: crate::AccountId(account),
-            code: crate::StockCode(code.to_owned()),
+            code,
             order_id: crate::OrderId(order),
             placed_market_minute: 1,
             expires_market_minute: expires,
@@ -295,9 +295,9 @@ mod ownership_tests {
     #[test]
     fn lifecycle_book_removal_uses_all_three_identity_fields_and_due_keeps_order() {
         let mut values = vec![
-            lifecycle(1, "600888", 1, 5),
-            lifecycle(2, "600888", 1, 4),
-            lifecycle(1, "600999", 1, 6),
+            lifecycle(1, crate::StockId(0), 1, 5),
+            lifecycle(2, crate::StockId(0), 1, 4),
+            lifecycle(1, crate::StockId(1), 1, 6),
         ];
         let mut book = NpcOrderLifecycleBook::new(&mut values);
         assert_eq!(
@@ -308,12 +308,12 @@ mod ownership_tests {
         );
         book.remove(
             crate::AccountId(1),
-            &crate::StockCode("600888".to_owned()),
+            &crate::StockId(0),
             crate::OrderId(1),
         );
         book.remove(
             crate::AccountId(99),
-            &crate::StockCode("600888".to_owned()),
+            &crate::StockId(0),
             crate::OrderId(1),
         );
         assert_eq!(
@@ -329,7 +329,7 @@ mod ownership_tests {
     #[test]
     #[should_panic(expected = "NPC quote lifecycle already exists for order 1")]
     fn lifecycle_book_duplicate_order_is_global_across_account_and_stock() {
-        let mut values = vec![lifecycle(1, "600888", 1, 5)];
+        let mut values = vec![lifecycle(1, crate::StockId(0), 1, 5)];
         NpcOrderLifecycleBook::new(&mut values).ensure_order_absent(crate::OrderId(1));
     }
 
@@ -337,7 +337,7 @@ mod ownership_tests {
         ExpiryRelease {
             receipt_index: 0,
             account: crate::AccountId(account),
-            stock: crate::StockCode("600888".to_owned()),
+            stock: crate::StockId(0),
             order_id: crate::OrderId(1),
             side: crate::Side::Buy,
             resources: ResVec::new(crate::Money::from_cents(cash), shares),

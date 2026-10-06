@@ -4,7 +4,7 @@ use crate::session::pipeline::stock_auction::{
     AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
 };
 use crate::session::pipeline::{Envelope, EnvelopeAudit, EnvelopeKey, FeeComponents, ReceiptKind};
-use crate::{AccountId, Event, GameConfig, Market, Money, OrderId, Side, StockCode, StockExchange};
+use crate::{AccountId, Event, GameConfig, Market, Money, OrderId, Side, StockId, StockExchange};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -36,8 +36,8 @@ impl FinishGate {
 #[test]
 fn independent_stock_auction_finishes_overlap_and_clear_each_book_once() {
     let inputs = [
-        auction_input("600001", StockExchange::Shanghai, 1),
-        auction_input("000001", StockExchange::Shenzhen, 3),
+        auction_input(StockId(1), StockExchange::Shanghai, 1),
+        auction_input(StockId(0), StockExchange::Shenzhen, 3),
     ];
     let mut shards = auction_shards(inputs.into()).unwrap();
     let gate = Arc::new(FinishGate::default());
@@ -57,7 +57,7 @@ fn independent_stock_auction_finishes_overlap_and_clear_each_book_once() {
     assert!(finished.detached_event_facts.is_empty());
     assert!(finished.detached_lifecycle_facts.is_empty());
     for (code, worker) in &finished.workers {
-        let buy_id = if code.0 == "600001" {
+        let buy_id = if code.0 == 1 {
             OrderId(1)
         } else {
             OrderId(3)
@@ -121,8 +121,10 @@ fn independent_stock_auction_finishes_overlap_and_clear_each_book_once() {
 fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
     let first = "600001";
     let second = "600002";
-    let errors = [first, second].map(|code| {
-        let input = failing_auction_input(code);
+    let first_id = StockId(0);
+    let second_id = StockId(1);
+    let errors = [(first, first_id), (second, second_id)].map(|(code, id)| {
+        let input = failing_auction_input(code, id);
         let shard = auction_shards(vec![input]).unwrap().pop_first().unwrap().1;
         shard.finish(600, true, false).err().unwrap()
     });
@@ -133,8 +135,8 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
     assert!(errors[1].to_string().contains("duplicate order id"));
     let shards = || {
         auction_shards(vec![
-            failing_auction_input(first),
-            failing_auction_input(second),
+            failing_auction_input(first, first_id),
+            failing_auction_input(second, second_id),
         ])
         .unwrap()
     };
@@ -176,18 +178,18 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
     assert_eq!(error, errors[0]);
     assert_eq!(
         *completion.0.lock().unwrap(),
-        [StockCode(second.to_owned()), StockCode(first.to_owned())]
+        [second_id, first_id]
     );
 }
 
 struct FinishReturned {
-    code: StockCode,
-    completion: Arc<(Mutex<Vec<StockCode>>, Condvar)>,
+    code: StockId,
+    completion: Arc<(Mutex<Vec<StockId>>, Condvar)>,
 }
 
 impl FinishReturned {
     fn wait_for_second_stock_if_first(&self) {
-        if self.code.0 == "600001" {
+        if self.code.0 == 0 {
             let state = self.completion.0.lock().unwrap();
             // 分派提前停止时 timeout 仍释放 worker；完成顺序断言明确报告遗漏依赖。
             drop(
@@ -209,9 +211,9 @@ impl Drop for FinishReturned {
     }
 }
 
-fn failing_auction_input(code: &str) -> AuctionStockInput {
+fn failing_auction_input(code: &str, id: StockId) -> AuctionStockInput {
     let first_order_id = if code == "600001" { 1 } else { 3 };
-    let mut input = auction_input(code, StockExchange::Shanghai, first_order_id);
+    let mut input = auction_input(id, StockExchange::Shanghai, first_order_id);
     if code == "600001" {
         input.completion.price_tick = Money::ZERO;
     } else {
@@ -223,8 +225,7 @@ fn failing_auction_input(code: &str) -> AuctionStockInput {
     input
 }
 
-fn auction_input(code: &str, exchange: StockExchange, first_order_id: u64) -> AuctionStockInput {
-    let code = StockCode(code.to_owned());
+fn auction_input(code: StockId, exchange: StockExchange, first_order_id: u64) -> AuctionStockInput {
     let price = Money::from_cents(1_000);
     let config = GameConfig::proposed_defaults();
     let phase = AuctionPhase::Opening {

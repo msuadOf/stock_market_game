@@ -14,7 +14,7 @@ mod gold;
 use engine::plans::quote_policy::{ActiveQuote, BookTop, QuoteDecisionInputs};
 use engine::plans::urgency::{PatienceStyle, PauseAssessment, UrgencyInputs};
 use engine::plans::PlanOpen;
-use engine::{AccountId, Money, OpinionSource, PlanOpinion, Side, StockCode, Urgency};
+use engine::{AccountId, Money, OpinionSource, PlanOpinion, Side, StockId, Urgency};
 
 pub(crate) fn money(cents: i64) -> Money {
     Money::from_cents(cents)
@@ -74,7 +74,7 @@ pub(crate) fn active_quote(price: i64) -> ActiveQuote {
 pub(crate) fn bullish_buy_open() -> PlanOpen {
     PlanOpen {
         account: AccountId(7),
-        code: StockCode("600101".into()),
+        code: StockId(0),
         direction: Side::Buy,
         target: engine::PlanTarget::ShareCount(1000),
         opinion: PlanOpinion {

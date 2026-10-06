@@ -3,9 +3,10 @@ use super::*;
 fn decision_resources_fixture(
     side: crate::Side,
     expires: bool,
-) -> (GameSession, crate::AccountId, crate::StockCode) {
+) -> (GameSession, crate::AccountId, crate::StockId) {
     let account = crate::AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -187,7 +188,7 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
     assert!(sell_plan
         .decision_resources()
         .unwrap()
-        .available_sell_qty(sell_account, &crate::StockCode("999999".to_owned()))
+        .available_sell_qty(sell_account, &crate::StockId(9))
         .is_err());
 }
 
@@ -208,7 +209,8 @@ fn decision_resources_sell_reservation_uses_account_book_key() {
 
 #[test]
 fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let seller = crate::AccountId(1);
     let player = crate::AccountId(0);
     let mut game =
@@ -274,8 +276,9 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
 
 #[test]
 fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
-    let held = crate::StockCode("600888".to_owned());
-    let unheld = crate::StockCode("600889".to_owned());
+    // 数值身份后无字符串可断言：two_stock_quote_setup 目录按代码序 rank 取 0/1。
+    let held = crate::StockId(0);
+    let unheld = crate::StockId(1);
     let account = crate::AccountId(1);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
@@ -387,14 +390,15 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
     );
     assert!(resources.raw_cash(crate::AccountId(999)).is_err());
     assert!(resources
-        .total_held_qty(account, &crate::StockCode("999999".to_owned()))
+        .total_held_qty(account, &crate::StockId(9))
         .is_err());
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
 
 #[test]
 fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -463,7 +467,8 @@ fn account_resources_are_identical_with_one_or_four_workers() {
 
 #[test]
 fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -509,7 +514,8 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.state.setup.stocks[0].code.clone();
+    // 数值身份后无字符串可断言：spec.code 是边界 StockCode，作内部键须经 rank 翻译（单股目录=0）。
+    let code = crate::StockId(0);
     let seller = crate::AccountId(1);
     let buyer = crate::AccountId(2);
     game.state
@@ -576,7 +582,8 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
 
 #[test]
 fn decision_resources_parallel_equity_failures_reject_overflow() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let player = crate::AccountId(0);
     let npc = crate::AccountId(1);
     let mut game =

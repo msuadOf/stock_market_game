@@ -12,7 +12,7 @@ use super::{
     AccountValidatorDriver, CandidateValidationOutcome, IntentCandidate, IntentCandidateKey,
     StepFatal, ValidatedOperation,
 };
-use crate::{GameSession, StockCode};
+use crate::{GameSession, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct ReadyStockStream<'a> {
@@ -122,7 +122,7 @@ impl<'a> ReadyStockStream<'a> {
 
     fn take_completed<'b>(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         keys: impl Iterator<Item = &'b IntentCandidateKey>,
     ) -> Result<Vec<CandidateValidationOutcome>, StepFatal> {
         let mut outcomes = Vec::new();

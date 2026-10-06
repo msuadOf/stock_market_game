@@ -73,7 +73,7 @@ impl ProtocolSession {
     pub fn query_stock_history(
         &mut self,
         account: crate::AccountId,
-        code: &crate::StockCode,
+        code: &crate::StockId,
     ) -> Result<crate::session::HistoricalStockData, SessionError> {
         self.state.game.query_stock_history(account, code)
     }
@@ -592,7 +592,7 @@ mod rollback_tests {
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
         let steps = setup.ticks_per_day;
-        let code = setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let mut session = ProtocolSession::new(setup, 79).unwrap();
         for _ in 0..steps {
             session.step_frame().unwrap();
@@ -619,7 +619,7 @@ mod rollback_tests {
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
-        let code = setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let intent = || crate::Intent::PlaceLimit {
             code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
         };
@@ -668,7 +668,7 @@ mod rollback_tests {
         let saved = session.save().unwrap();
         let mut candidate = saved.clone();
         candidate.resting_orders.insert(
-            crate::StockCode("600000".into()),
+            crate::StockId(9),
             vec![crate::Order {
                 id: crate::OrderId(1),
                 side: crate::Side::Buy,
@@ -688,7 +688,7 @@ mod rollback_tests {
 
         let mut candidate = saved.clone();
         candidate.auction_orders.insert(
-            crate::StockCode("600000".into()),
+            crate::StockId(9),
             vec![crate::AuctionOrderSnap {
                 owner: crate::AccountId(0),
                 side: crate::Side::Buy,
@@ -709,7 +709,7 @@ mod rollback_tests {
             .push(crate::SavedLiveEnvelope {
                 key: crate::SavedEnvelopeKey {
                     account: crate::AccountId(0),
-                    stock: crate::StockCode("600000".into()),
+                    stock: crate::StockId(9),
                     order: crate::OrderId(1),
                     side: crate::Side::Buy,
                 },
@@ -729,7 +729,7 @@ mod rollback_tests {
             .npc_order_lifecycles
             .push(crate::session::NpcOrderLifecycle {
                 account: crate::AccountId(0),
-                code: crate::StockCode("600000".into()),
+                code: crate::StockId(9),
                 order_id: crate::OrderId(1),
                 placed_market_minute: 0,
                 expires_market_minute: 1,
@@ -740,7 +740,7 @@ mod rollback_tests {
         ));
 
         let intent = crate::Intent::PlaceLimit {
-            code: crate::StockCode("600000".into()),
+            code: crate::StockId(9),
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(1000)),
             qty: 100,
@@ -792,7 +792,7 @@ mod rollback_tests {
         let mut session = ProtocolSession::new(setup, 80).unwrap();
         session.end_civil_day_update().unwrap();
         let mut candidate = session.save().unwrap();
-        let code = crate::StockCode("600101".into());
+        let code = crate::StockId(0);
         assert!(candidate.resting_orders.values().all(Vec::is_empty));
         candidate
             .parent_orders
@@ -882,11 +882,11 @@ mod rollback_tests {
 
     #[test]
     fn player_working_orders_reads_live_auction_without_a_save() {
-        use crate::{Money, Side, StockCode};
+        use crate::{Money, Side, StockId};
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 75).unwrap();
         session.state.game.state.auction_orders.insert(
-            StockCode("600101".into()),
+            StockId(0),
             vec![
                 crate::AuctionOrderSnap {
                     owner: crate::AccountId(0),
@@ -1038,7 +1038,7 @@ mod rollback_tests {
             serde_json::to_value(restored.save().unwrap()).unwrap(),
             frozen
         );
-        let code = slot.setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let buy = crate::Intent::PlaceLimit {
             code,
             side: crate::Side::Buy,
@@ -1244,7 +1244,7 @@ mod rollback_tests {
         session.state.game.state.last_retail_order_events.push(
             crate::session::RetailOrderDiagnosticEvent::Rejected {
                 account: crate::AccountId(1),
-                code: crate::StockCode("600101".into()),
+                code: crate::StockId(0),
                 reason: crate::RejectionReason::InsufficientCash,
             },
         );

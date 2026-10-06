@@ -1,7 +1,7 @@
 use engine::{
     AccountId, AuctionOrderSnap, Event, FloatAllocation, GameConfig, GameSession, HotParams,
     InstParams, Intent, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, Side,
-    StockCode, StockExchange, StockSpec, StrategyParams, TradingPhase,
+    StockCode, StockExchange, StockId, StockSpec, StrategyParams, TradingPhase,
 };
 
 /// 场景配置与 seed 由 fixture 拥有；运行中的 Session 和断言仍归各测试。
@@ -146,8 +146,10 @@ impl AuctionFixture {
         orders: Vec<AuctionOrderSnap>,
         previous_close: i64,
     ) -> engine::SaveSlot {
-        let code = self.setup.stocks[0].code.clone();
         let mut save = self.start_session().save().expect("healthy save");
+        let code = save
+            .stock_id(&self.setup.stocks[0].code.0)
+            .expect("fixture stock must be in the catalog");
         let market = save
             .snapshot
             .markets
@@ -206,7 +208,7 @@ fn auction_fixture_preserves_exchange_identity_and_order_envelope_keys() {
         ],
         10_100,
     );
-    let code = StockCode("000001".to_string());
+    let code = StockId(0);
     assert_eq!(
         save.snapshot.markets[&code].last_close,
         Money::from_cents(10_100)
@@ -252,7 +254,7 @@ fn closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day() {
 
 #[test]
 fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_day_end() {
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     let mut fixture = AuctionFixture::quiet(0, 2);
     fixture.setup.closing_auction_ticks = 2;
     let mut session = fixture.start_session();
@@ -319,6 +321,9 @@ fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
     fixture.retain_stock(&target);
     let ticks_per_day = fixture.setup.ticks_per_day;
     let mut session = fixture.start_session();
+    let target = session
+        .stock_id("002156")
+        .expect("target stock must be in the catalog");
     let mut completed_volumes = Vec::new();
 
     for _ in 0..(ticks_per_day * 3) {
@@ -350,15 +355,19 @@ fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
 #[test]
 fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
     let fixture = AuctionFixture::representative(42);
+    let ticks_per_day = fixture.setup.ticks_per_day;
+    let auction_ticks = fixture.setup.auction_ticks;
+    let mut session = fixture.start_session();
     let codes = fixture
         .setup
         .stocks
         .iter()
-        .map(|stock| stock.code.clone())
+        .map(|stock| {
+            session
+                .stock_id(&stock.code.0)
+                .expect("fixture stock must be in the catalog")
+        })
         .collect::<std::collections::BTreeSet<_>>();
-    let ticks_per_day = fixture.setup.ticks_per_day;
-    let auction_ticks = fixture.setup.auction_ticks;
-    let mut session = fixture.start_session();
     let mut completed_volumes = Vec::new();
     let mut zero_volume_completions = 0;
 
@@ -675,7 +684,7 @@ fn auction_only_trades_once_on_its_last_tick() {
 
 #[test]
 fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     let mut session = AuctionFixture::quiet(1, 99).restore_with_orders(
         vec![
             order(0, Side::Buy, 10_300, 500, 1),
@@ -707,11 +716,12 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
 
 #[test]
 fn preopen_save_requires_every_market_candle_after_auction_completion() {
-    let code = StockCode("600000".to_string());
-    let idle_code = StockCode("000001".to_string());
+    // 两股目录按代码升序："000001"=0、"600000"=1。
+    let code = StockId(1);
+    let idle_code = StockId(0);
     let mut fixture = AuctionFixture::quiet(3, 99);
     let mut idle_stock = fixture.setup.stocks[0].clone();
-    idle_stock.code = idle_code.clone();
+    idle_stock.code = StockCode("000001".to_string());
     idle_stock.exchange = StockExchange::Shenzhen;
     fixture.setup.stocks.push(idle_stock);
     let save = fixture.save_with_orders(
@@ -761,7 +771,7 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
 
 #[test]
 fn restoring_mid_auction_preserves_deterministic_completion() {
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     let mut uninterrupted = AuctionFixture::quiet(3, 123).start_session();
     uninterrupted
         .enqueue_player_intent(
@@ -805,7 +815,7 @@ fn auction_is_deterministic_for_the_same_seed_and_intents() {
     let mut first = AuctionFixture::quiet(2, 456).start_session();
     let mut second = AuctionFixture::quiet(2, 456).start_session();
     let intent = Intent::PlaceLimit {
-        code: StockCode("600000".to_string()),
+        code: StockId(0),
         side: Side::Buy,
         price: engine::LimitPrice::Fixed(Money::from_cents(10_100)),
         qty: 200,
@@ -829,7 +839,7 @@ fn auction_event_json_matches_frontend_contract() {
         seq: 4,
         tick: 2,
         phase: TradingPhase::CallAuction,
-        code: StockCode("600000".to_string()),
+        code: StockId(0),
         indicative_price: Some(Money::from_cents(10_123)),
         matched_volume: 50,
         imbalance: 7,
@@ -839,7 +849,7 @@ fn auction_event_json_matches_frontend_contract() {
     let body = &json["AuctionTick"];
     assert_eq!(body["seq"], 4);
     assert_eq!(body["tick"], 2);
-    assert_eq!(body["code"], "600000");
+    assert_eq!(body["code"], 0);
     assert_eq!(body["indicative_price"], "10123");
     assert_eq!(body["matched_volume"], 50);
     assert_eq!(body["imbalance"], 7);
@@ -849,8 +859,10 @@ fn auction_event_json_matches_frontend_contract() {
 fn auction_reserves_cash_across_multiple_orders() {
     let mut fixture = AuctionFixture::quiet(2, 9);
     fixture.setup.config.starting_cash = Money::from_cents(1_000_510);
-    let code = fixture.setup.stocks[0].code.clone();
     let mut session = fixture.start_session();
+    let code = session
+        .stock_id("600000")
+        .expect("fixture stock must be in the catalog");
     for _ in 0..2 {
         session
             .enqueue_player_intent(
@@ -885,7 +897,7 @@ fn auction_reserves_cash_across_multiple_orders() {
 
 #[test]
 fn auction_reserves_sellable_shares_across_orders_and_restore() {
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     let session = AuctionFixture::quiet(3, 9).start_session();
     let mut save = session.save().expect("healthy save");
     save.snapshot
@@ -973,7 +985,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
 #[test]
 fn cancel_during_auction_is_explicitly_rejected() {
     let mut session = AuctionFixture::quiet(2, 9).start_session();
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -998,7 +1010,7 @@ fn cancel_during_auction_is_explicitly_rejected() {
 #[test]
 fn auction_order_can_be_canceled_during_the_first_third() {
     let mut session = AuctionFixture::quiet(6, 9).start_session();
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -1061,7 +1073,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
 #[test]
 fn same_tick_auction_place_and_cancel_releases_the_order() {
     let mut session = AuctionFixture::quiet(6, 9).start_session();
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -1111,7 +1123,7 @@ fn same_tick_auction_place_and_cancel_releases_the_order() {
 #[test]
 fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
     let mut session = AuctionFixture::quiet(3, 9).start_session();
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
 
     session.step().expect("healthy step");
     session.step().expect("healthy step");
@@ -1145,7 +1157,7 @@ fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
 
 #[test]
 fn unmatched_auction_limit_order_enters_the_continuous_book() {
-    let code = StockCode("600000".to_string());
+    let code = StockId(0);
     let mut session = AuctionFixture::quiet(3, 99)
         .restore_with_orders(vec![order(0, Side::Buy, 9_900, 100, 1)], 10_000);
 
@@ -1177,7 +1189,7 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
 
 #[test]
 fn symbolic_highest_opening_quote_keeps_its_resolved_price_after_restore_and_rollover() {
-    let code = StockCode("600000".to_owned());
+    let code = StockId(0);
     let mut session = AuctionFixture::quiet(3, 401).start_session();
     session
         .enqueue_player_intent(
@@ -1214,7 +1226,7 @@ fn symbolic_highest_opening_quote_keeps_its_resolved_price_after_restore_and_rol
 
 #[test]
 fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
-    let code = StockCode("600000".to_owned());
+    let code = StockId(0);
     let mut fixture = AuctionFixture::quiet(0, 402);
     fixture.setup.closing_auction_ticks = 2;
     let mut session = fixture.start_session();

@@ -215,7 +215,7 @@ pub struct TickShadowPlan {
     precomputed_stock_shards: Option<
         Result<
             std::collections::BTreeMap<
-                crate::StockCode,
+                crate::StockId,
                 continuous_matching::IncrementalContinuousStockCoordinator,
             >,
             StepFatal,

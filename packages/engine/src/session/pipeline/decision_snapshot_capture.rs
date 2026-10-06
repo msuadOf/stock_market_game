@@ -12,7 +12,7 @@ use crate::observation::{
 use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
 use crate::strategy::{PositionView, SelfView, StrategyStateError};
 use crate::{
-    AccountId, AccountKind, ExperienceError, Money, MoneyError, RetailExperienceState, StockCode,
+    AccountId, AccountKind, ExperienceError, Money, MoneyError, RetailExperienceState, StockId,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,7 +55,7 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
     #[error("DecisionShadow 决策快照 {location} 缺少股票 {code:?} 的市场数据")]
     MissingMarketData {
         location: &'static str,
-        code: StockCode,
+        code: StockId,
     },
     #[error("DecisionShadow 决策快照 {location} 的账户 {account:?} 金额计算失败：{source}")]
     Money {
@@ -302,8 +302,8 @@ enum CapturedExperienceObservation {
     NoExperience,
     Captured {
         experience: Arc<RetailExperienceState>,
-        risk_positions: Option<BTreeMap<StockCode, RiskPositionInput>>,
-        self_positions: BTreeMap<StockCode, PositionView>,
+        risk_positions: Option<BTreeMap<StockId, RiskPositionInput>>,
+        self_positions: BTreeMap<StockId, PositionView>,
     },
 }
 
@@ -422,7 +422,7 @@ impl CapturedExperienceObservation {
         kind: AccountKind,
         cash: Money,
         build_self_view: impl FnOnce(
-            Option<BTreeMap<StockCode, PositionView>>,
+            Option<BTreeMap<StockId, PositionView>>,
         ) -> Result<SelfView, DecisionSnapshotCaptureError>,
     ) -> Result<CapturedAccountObservation, DecisionSnapshotCaptureError> {
         match self {
@@ -498,7 +498,7 @@ fn build_self_view_for(
     phase: crate::TradingPhase,
     continuous: &super::super::ContinuousOrdersByAccount,
     auction: &super::super::AuctionOrdersByAccount,
-    self_positions: Option<BTreeMap<StockCode, PositionView>>,
+    self_positions: Option<BTreeMap<StockId, PositionView>>,
 ) -> Result<SelfView, DecisionSnapshotCaptureError> {
     let auction_cancelable = phase == crate::TradingPhase::CallAuction
         && session.state.tick % session.state.setup.ticks_per_day

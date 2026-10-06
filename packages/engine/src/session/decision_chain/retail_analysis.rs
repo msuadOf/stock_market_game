@@ -10,7 +10,7 @@ impl GameSession {
         &mut self,
         observed: &[AccountId],
         market: &MarketView,
-    ) -> Result<BTreeMap<AccountId, BTreeMap<StockCode, CandidateAssessment>>, StepFatal> {
+    ) -> Result<BTreeMap<AccountId, BTreeMap<StockId, CandidateAssessment>>, StepFatal> {
         let accounts = observed
             .iter()
             .copied()
@@ -69,7 +69,7 @@ impl GameSession {
         personal: &mut PlanPersonalState,
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<BTreeMap<StockCode, CandidateAssessment>, StepFatal> {
+    ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
         let invariant = |description: String| StepFatal::InvariantViolation {
             description,
             location: "decision_chain::retail_analysis".to_owned(),
@@ -100,7 +100,7 @@ impl GameSession {
             discovered,
         );
         let day = u64::from(self.state.day);
-        let mut reports: BTreeMap<StockCode, PublicationId> = BTreeMap::new();
+        let mut reports: BTreeMap<StockId, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         let checks_information = personal.attention.information_check_due(observation.now);
@@ -112,7 +112,7 @@ impl GameSession {
                 .price_memory
                 .observe_price(code, stock.last_price, minute)
                 .map_err(|error| invariant(error.to_string()))?;
-            let Some(company) = self.state.company_registry.issuer_of(code) else {
+            let Some(company) = self.state.issuer_of_stock(*code) else {
                 continue;
             };
             if !checks_information {
@@ -172,7 +172,7 @@ impl GameSession {
         )
         .map_err(|error| invariant(error.to_string()))?;
         for code in &candidates {
-            let Some(company) = self.state.company_registry.issuer_of(code) else {
+            let Some(company) = self.state.issuer_of_stock(*code) else {
                 continue;
             };
             let spec = self
@@ -275,7 +275,7 @@ impl GameSession {
     fn retail_candidate_signals(
         &self,
         id: AccountId,
-        code: &StockCode,
+        code: &StockId,
         personal: &PlanPersonalState,
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
@@ -343,7 +343,7 @@ impl GameSession {
     fn retail_cost_signal(
         &self,
         id: AccountId,
-        code: &StockCode,
+        code: &StockId,
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<SignalContribution, String> {

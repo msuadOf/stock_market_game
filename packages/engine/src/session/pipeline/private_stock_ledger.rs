@@ -341,7 +341,7 @@ mod tests {
         let middle_key = ledger_tests::second_key();
         let last_key = EnvelopeKey {
             account: crate::AccountId(2),
-            stock: crate::StockCode("600003".to_owned()),
+            stock: crate::StockId(2),
             order: crate::OrderId(3),
             side: crate::Side::Buy,
         };
@@ -372,7 +372,7 @@ mod tests {
 
         let duplicate_key = EnvelopeKey {
             account: crate::AccountId(2),
-            stock: crate::StockCode("600003".to_owned()),
+            stock: crate::StockId(2),
             order: crate::OrderId(3),
             side: crate::Side::Buy,
         };
@@ -408,7 +408,7 @@ mod tests {
 
         let prefix_key = EnvelopeKey {
             account: crate::AccountId(2),
-            stock: crate::StockCode("600003".to_owned()),
+            stock: crate::StockId(2),
             order: crate::OrderId(3),
             side: crate::Side::Buy,
         };
@@ -460,7 +460,7 @@ mod tests {
             Envelope::tick_start_existing(
                 EnvelopeKey {
                     account: crate::AccountId(2),
-                    stock: crate::StockCode("600003".to_owned()),
+                    stock: crate::StockId(2),
                     order: crate::OrderId(3),
                     side: crate::Side::Sell,
                 },
@@ -479,7 +479,7 @@ mod tests {
         ] {
             let later_key = EnvelopeKey {
                 account: crate::AccountId(3),
-                stock: crate::StockCode("600003".to_owned()),
+                stock: crate::StockId(2),
                 order: crate::OrderId(4),
                 side: crate::Side::Buy,
             };

@@ -82,9 +82,9 @@ pub(in crate::session) struct QuotePlans {
     pub market: MarketView,
     pub plans: VecDeque<PlanId>,
     pub grants: Option<crate::plans::AllocationResult>,
-    pub sellable: BTreeMap<StockCode, u32>,
-    pub one_minute_bp: BTreeMap<StockCode, Option<i32>>,
-    pub thirty_minute_bp: BTreeMap<StockCode, Option<i32>>,
+    pub sellable: BTreeMap<StockId, u32>,
+    pub one_minute_bp: BTreeMap<StockId, Option<i32>>,
+    pub thirty_minute_bp: BTreeMap<StockId, Option<i32>>,
 }
 
 pub(in crate::session) struct PlanChainOperationBatch {
@@ -106,9 +106,9 @@ fn route_invariant(description: &str) -> StepFatal {
 /// 三类延迟事实独立消费，生命周期复核优先时仍保留报价重试上下文。
 #[derive(Default)]
 struct StockRouteCoordination {
-    pending: BTreeMap<(AccountId, StockCode), (u64, Box<PlanExecutionRoute>)>,
-    reconsideration: BTreeMap<(AccountId, StockCode), (CandidateAssessment, MarketView)>,
-    retry_market: BTreeMap<(AccountId, StockCode), MarketView>,
+    pending: BTreeMap<(AccountId, StockId), (u64, Box<PlanExecutionRoute>)>,
+    reconsideration: BTreeMap<(AccountId, StockId), (CandidateAssessment, MarketView)>,
+    retry_market: BTreeMap<(AccountId, StockId), MarketView>,
 }
 
 impl StockRouteCoordination {
@@ -120,14 +120,14 @@ impl StockRouteCoordination {
     }
     fn is_blocked(
         &self,
-        resource: &(AccountId, StockCode),
-        unfinished: &BTreeSet<(AccountId, StockCode)>,
+        resource: &(AccountId, StockId),
+        unfinished: &BTreeSet<(AccountId, StockId)>,
     ) -> bool {
         self.pending.contains_key(resource) || unfinished.contains(resource)
     }
     fn install_pending(
         &mut self,
-        resource: (AccountId, StockCode),
+        resource: (AccountId, StockId),
         generation: u64,
         route: Box<PlanExecutionRoute>,
     ) {
@@ -138,7 +138,7 @@ impl StockRouteCoordination {
     }
     fn pending_for_outcome(
         &self,
-        resource: &(AccountId, StockCode),
+        resource: &(AccountId, StockId),
         generation: u64,
     ) -> Result<&PlanExecutionRoute, StepFatal> {
         let (index, route) = self
@@ -154,7 +154,7 @@ impl StockRouteCoordination {
     }
     fn take_pending(
         &mut self,
-        resource: &(AccountId, StockCode),
+        resource: &(AccountId, StockId),
         generation: u64,
     ) -> Result<Box<PlanExecutionRoute>, StepFatal> {
         self.pending_for_outcome(resource, generation)?;
@@ -164,12 +164,12 @@ impl StockRouteCoordination {
             .expect("checked pending route exists")
             .1)
     }
-    fn remember_retry(&mut self, resource: (AccountId, StockCode), market: MarketView) {
+    fn remember_retry(&mut self, resource: (AccountId, StockId), market: MarketView) {
         self.retry_market.insert(resource, market);
     }
     fn remember_reconsideration(
         &mut self,
-        resource: (AccountId, StockCode),
+        resource: (AccountId, StockId),
         assessment: CandidateAssessment,
         market: MarketView,
     ) {
@@ -177,7 +177,7 @@ impl StockRouteCoordination {
     }
     fn take_follow_up(
         &mut self,
-        (account, code): (AccountId, StockCode),
+        (account, code): (AccountId, StockId),
     ) -> Option<PlanChainOperation> {
         if let Some((assessment, market)) = self.reconsideration.remove(&(account, code.clone())) {
             Some(PlanChainOperation::Lifecycle {
@@ -231,7 +231,7 @@ enum PlanChainOperation {
     QuotePlans(QuotePlans),
     Lifecycle {
         account: AccountId,
-        assessments: BTreeMap<StockCode, CandidateAssessment>,
+        assessments: BTreeMap<StockId, CandidateAssessment>,
         market: MarketView,
     },
     Restructure {
@@ -409,10 +409,10 @@ impl PlanChainOperationBatch {
     pub(in crate::session) fn accounts(
         accounts: Vec<AccountId>,
         market: MarketView,
-        paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
-        technical: BTreeMap<StockCode, crate::observation::TechnicalObservation>,
+        paths: BTreeMap<StockId, crate::observation::PricePathObservation>,
+        technical: BTreeMap<StockId, crate::observation::TechnicalObservation>,
         now: crate::calendar::CivilInstant,
-        exposed: BTreeSet<StockCode>,
+        exposed: BTreeSet<StockId>,
     ) -> Self {
         Self::from_observation(
             accounts,
@@ -485,7 +485,7 @@ impl PlanChainOperationBatch {
     pub(in crate::session) fn push_lifecycle(
         &mut self,
         account: AccountId,
-        assessments: BTreeMap<StockCode, CandidateAssessment>,
+        assessments: BTreeMap<StockId, CandidateAssessment>,
         market: MarketView,
     ) {
         self.operations.push_back(PlanChainOperation::Lifecycle {
@@ -499,7 +499,7 @@ impl PlanChainOperationBatch {
         &mut self,
         _account: AccountId,
         plan_id: PlanId,
-        _code: StockCode,
+        _code: StockId,
         child_order_id: Option<OrderId>,
         terminating: bool,
         revision: PlanRevision,

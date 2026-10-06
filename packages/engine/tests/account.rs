@@ -12,7 +12,7 @@ fn intent_and_marketview_construct() {
 
     let mut stocks = BTreeMap::new();
     stocks.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         StockView {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1001)),
@@ -34,7 +34,7 @@ fn intent_and_marketview_construct() {
     assert_eq!(mv.stocks.len(), 1);
 
     let i = Intent::PlaceLimit {
-        code: StockCode("600101".to_string()),
+        code: engine::StockId(0),
         side: Side::Buy,
         price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
@@ -69,8 +69,9 @@ fn account_error_and_kind_basics() {
         have: Money::from_cents(1000),
     };
     assert!(insufficient_cash_error.to_string().contains("cash"));
-    let missing_position_error = AccountError::NoPosition(StockCode("600101".to_string()));
-    assert!(missing_position_error.to_string().contains("600101"));
+    let missing_position_error = AccountError::NoPosition(engine::StockId(0));
+    // 数值身份后错误文本携带 id 数值（ADR 0041）；边界显示经目录翻译。
+    assert!(missing_position_error.to_string().contains("0"));
     assert_ne!(AccountKind::Retail, AccountKind::Player);
 }
 
@@ -132,8 +133,8 @@ fn account_new_player_has_no_strategy() {
     assert_eq!(a.cash().cents(), 10_000_000);
     assert!(a.positions().is_empty());
     assert!(!a.has_strategy()); // 玩家 None
-    assert_eq!(a.cost_price(&StockCode("600101".to_string())), None); // 无持仓
-    assert_eq!(a.sellable_qty(&StockCode("600101".to_string())), 0);
+    assert_eq!(a.cost_price(&engine::StockId(0)), None); // 无持仓
+    assert_eq!(a.sellable_qty(&engine::StockId(0)), 0);
 }
 
 use engine::config::GameConfig;
@@ -150,7 +151,7 @@ fn apply_buy_debits_cash_and_adds_position() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     // 买 10.00 × 100 = 1000 元 = 100000 分；佣金 max(100000*0.00025=25, 500)=500 分
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap();
@@ -171,7 +172,7 @@ fn apply_buy_batch_charges_minimum_commission_once_across_fills() {
         AccountKind::Player,
         Money::from_cents(200_502),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
 
     account
         .apply_trade_batch(
@@ -198,7 +199,7 @@ fn apply_buy_weighted_cost_price() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap(); // 10.00×100
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1200), 100, false)
@@ -212,7 +213,7 @@ fn apply_buy_weighted_cost_price() {
 #[test]
 fn apply_buy_insufficient_cash_rejected_and_unchanged() {
     let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1000)); // 只有 10 元
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     // 买 10.00×100 需 1000 元，现金仅 10 元 → 拒绝
     let err = a
         .apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
@@ -229,7 +230,7 @@ fn public_trade_boundary_rejects_zero_quantity_and_non_positive_price() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     assert!(matches!(
         account.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 0, true),
         Err(AccountError::InvalidTrade { .. })
@@ -248,7 +249,7 @@ fn buy_position_overflow_is_rejected_without_debiting_cash() {
         AccountKind::Player,
         Money::from_cents(i64::MAX),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     account
         .grant_position(code.clone(), u32::MAX, Money::ZERO)
         .unwrap();
@@ -268,7 +269,7 @@ fn apply_buy_t1_locks_sellable() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, true)
         .unwrap(); // t1_enabled
     assert_eq!(a.positions().get(&code).unwrap().t1_locked(), 100);
@@ -282,7 +283,7 @@ fn apply_sell_credits_net_and_clears_position() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap(); // 持 100 股
     let cash_before = a.cash().cents();
@@ -296,7 +297,7 @@ fn apply_sell_credits_net_and_clears_position() {
 #[test]
 fn apply_sell_rejects_when_fees_would_make_cash_negative_and_is_atomic() {
     let mut account = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     account
         .grant_position(code.clone(), 50, Money::from_cents(1))
         .unwrap();
@@ -311,7 +312,7 @@ fn apply_sell_rejects_when_fees_would_make_cash_negative_and_is_atomic() {
         AccountError::InsufficientCashForFees { .. }
     ));
     assert_eq!(account.cash(), Money::ZERO);
-    let position_after = &account.positions()[&StockCode("600101".to_string())];
+    let position_after = &account.positions()[&engine::StockId(0)];
     assert_eq!(position_after.qty(), position_before.qty());
     assert_eq!(position_after.t1_locked(), position_before.t1_locked());
     assert_eq!(
@@ -331,7 +332,7 @@ fn apply_sell_rejects_oversell() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap(); // 可卖 100
     let err = a
@@ -351,7 +352,7 @@ fn apply_sell_rejects_oversell() {
 #[test]
 fn apply_trade_batch_rejects_oversell_without_mutation() {
     let mut account = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000));
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     account
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
@@ -382,7 +383,7 @@ fn apply_sell_no_position_rejects() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     let err = a
         .apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 1)
         .unwrap_err();
@@ -399,7 +400,7 @@ fn apply_sell_partial_updates_recovered() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap();
     a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1200), 50)
@@ -416,7 +417,7 @@ fn apply_trade_dispatches_buy_and_sell() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_trade(
         &cfg_t0(),
         Side::Buy,
@@ -446,7 +447,7 @@ fn market_value_and_unrealized_pnl() {
         AccountKind::Player,
         Money::from_cents(10_000_000),
     );
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
         .unwrap(); // 成本 10.00
                    // 现价 11.00：市值=11.00×100=110000 分；未实现盈亏=(1100-1000)×100=10000 分
@@ -476,12 +477,12 @@ fn grant_position_sets_cost_basis() {
         Money::from_cents(1_000_000),
     );
     a.grant_position(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         1000,
         Money::from_cents(1000),
     )
     .unwrap();
-    let p = a.positions().get(&StockCode("600101".to_string())).unwrap();
+    let p = a.positions().get(&engine::StockId(0)).unwrap();
     assert_eq!(p.qty(), 1000);
     assert_eq!(p.invested_cents(), 1_000_000); // 1000 × 1000
     assert_eq!(p.recovered_cents(), 0);
@@ -492,7 +493,7 @@ fn grant_position_sets_cost_basis() {
 #[test]
 fn derived_values_and_grants_report_overflow() {
     let mut account = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
-    let code = StockCode("600101".to_string());
+    let code = engine::StockId(0);
     assert!(account
         .grant_position(code.clone(), 2, Money::from_cents(i64::MAX))
         .is_err());
@@ -511,7 +512,7 @@ fn derived_values_and_grants_report_overflow() {
 #[test]
 fn reexport_from_crate_root() {
     use engine::strategy::StrategyProfile;
-    use engine::{Account, AccountError, AccountKind, Position, StockCode};
+    use engine::{Account, AccountError, AccountKind, Position, StockId};
     use engine::{Intent, MarketView, Strategy, StrategyFamily, ZiNoiseStrategy};
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
@@ -524,9 +525,9 @@ fn reexport_from_crate_root() {
 
     let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
     let _: Position = Position::from_restored_parts(0, 0, 0, 0);
-    let _: AccountError = AccountError::NoPosition(StockCode("x".to_string()));
+    let _: AccountError = AccountError::NoPosition(engine::StockId(7));
     let _: Intent = Intent::PlaceMarket {
-        code: StockCode("x".to_string()),
+        code: engine::StockId(7),
         side: engine::Side::Buy,
         qty: 1,
     };

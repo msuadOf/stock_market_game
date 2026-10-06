@@ -156,10 +156,10 @@ fn stock_discovery_weight(view: &StockView, announcement_exposed: bool) -> f64 {
 /// 按权重从候选池抽样（BTreeMap 确定性顺序；恰好一次 `next_f64` 抽样）。
 fn pick_weighted(
     market: &MarketView,
-    candidates: &[&StockCode],
-    announcement_exposed: &BTreeSet<StockCode>,
+    candidates: &[&StockId],
+    announcement_exposed: &BTreeSet<StockId>,
     rng: &mut dyn Rng,
-) -> Option<StockCode> {
+) -> Option<StockId> {
     if candidates.is_empty() {
         return None;
     }
@@ -189,12 +189,12 @@ fn pick_weighted(
 /// 一次选择抽样，仅选择抽样由 `next_range_u32` 换成一次加权 `next_f64`。
 fn select_discovery_stock(
     market: &MarketView,
-    held: &BTreeSet<StockCode>,
+    held: &BTreeSet<StockId>,
     watchlist: &PersonalWatchlist,
-    announcement_exposed: &BTreeSet<StockCode>,
+    announcement_exposed: &BTreeSet<StockId>,
     rng: &mut dyn Rng,
-) -> Option<StockCode> {
-    let held_in_market: Vec<&StockCode> = held
+) -> Option<StockId> {
+    let held_in_market: Vec<&StockId> = held
         .iter()
         .filter(|code| market.stocks.contains_key(*code))
         .collect();
@@ -202,7 +202,7 @@ fn select_discovery_stock(
         let index = rng.next_range_u32(0, held_in_market.len() as u32) as usize;
         return Some(held_in_market[index].clone());
     }
-    let watched_in_market: Vec<&StockCode> = watchlist
+    let watched_in_market: Vec<&StockId> = watchlist
         .stocks
         .keys()
         .filter(|code| market.stocks.contains_key(*code))
@@ -213,7 +213,7 @@ fn select_discovery_stock(
     if market.stocks.is_empty() {
         return None;
     }
-    let all: Vec<&StockCode> = market.stocks.keys().collect();
+    let all: Vec<&StockId> = market.stocks.keys().collect();
     pick_weighted(market, &all, announcement_exposed, rng)
 }
 
@@ -224,8 +224,8 @@ impl NpcAttentionState {
     /// 接口派生；公司与股票映射、曝光新鲜度窗口由 GameSession 负责。
     pub fn discovery_weights(
         market: &MarketView,
-        announcement_exposed: &BTreeSet<StockCode>,
-    ) -> BTreeMap<StockCode, f64> {
+        announcement_exposed: &BTreeSet<StockId>,
+    ) -> BTreeMap<StockId, f64> {
         market
             .stocks
             .iter()
@@ -248,10 +248,10 @@ impl NpcAttentionState {
     pub fn sample_discovery_stock(
         &mut self,
         market: &MarketView,
-        held: &BTreeSet<StockCode>,
+        held: &BTreeSet<StockId>,
         watchlist: &PersonalWatchlist,
-        announcement_exposed: &BTreeSet<StockCode>,
-    ) -> Option<StockCode> {
+        announcement_exposed: &BTreeSet<StockId>,
+    ) -> Option<StockId> {
         let mut rng = SplitMix64::new(self.rng_state);
         let picked =
             select_discovery_stock(market, held, watchlist, announcement_exposed, &mut rng);
@@ -377,7 +377,7 @@ mod attention_tests {
             tick: 7,
             market_minute: 0,
             stocks: [(
-                StockCode("600888".to_string()),
+                StockId(0),
                 StockView {
                     best_bid: Some(Money::from_cents(last - 1)),
                     best_ask: Some(Money::from_cents(last + 1)),

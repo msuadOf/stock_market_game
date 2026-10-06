@@ -13,7 +13,7 @@ pub(in crate::session) enum WorkingOrderDecision {
     },
     Cancel {
         order_id: OrderId,
-        code: StockCode,
+        code: StockId,
     },
     Replace {
         old_order_id: OrderId,
@@ -29,7 +29,7 @@ impl GameSession {
         scope: ReconcileScope,
         working: WorkingOrderSlices<'_>,
     ) -> ReconciliationPlan {
-        let in_scope = |code: &StockCode| match &scope {
+        let in_scope = |code: &StockId| match &scope {
             ReconcileScope::AllWorkingOrders => true,
             ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
         };
@@ -101,7 +101,7 @@ impl GameSession {
     }
 }
 
-fn intent_stock_side(intent: &Intent) -> Option<(StockCode, Side)> {
+fn intent_stock_side(intent: &Intent) -> Option<(StockId, Side)> {
     match intent {
         Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
             Some((code.clone(), *side))
@@ -110,13 +110,13 @@ fn intent_stock_side(intent: &Intent) -> Option<(StockCode, Side)> {
     }
 }
 
-fn same_side(intent: &Intent, code: &StockCode, side: Side) -> bool {
+fn same_side(intent: &Intent, code: &StockId, side: Side) -> bool {
     matches!(intent, Intent::PlaceLimit { code: target, side: target_side, .. } if target == code && *target_side == side)
 }
 
 fn take_exact(
     desired: &mut Vec<Intent>,
-    code: &StockCode,
+    code: &StockId,
     side: Side,
     price: Money,
     qty: u32,
@@ -128,7 +128,7 @@ fn take_exact(
 
 fn crosses(
     intent: &Intent,
-    code: &StockCode,
+    code: &StockId,
     resting_side: Side,
     resting_price: Money,
     market: &Market,
@@ -162,7 +162,7 @@ fn crosses(
 
 fn suppress_noncancelable(
     desired: &mut Vec<Intent>,
-    code: &StockCode,
+    code: &StockId,
     side: Side,
     price: Money,
     scope: &ReconcileScope,

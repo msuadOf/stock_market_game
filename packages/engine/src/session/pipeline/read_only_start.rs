@@ -5,7 +5,7 @@ use super::{
     continuous_matching_adapter::prepare_incremental_continuous_inputs,
     stock_stream::continuous_shards, DecisionResourceSnapshot, GameSession, StepFatal,
 };
-use crate::StockCode;
+use crate::StockId;
 use std::collections::BTreeMap;
 
 pub(super) struct ReadOnlyStart {
@@ -15,7 +15,7 @@ pub(super) struct ReadOnlyStart {
     pub(super) stock_inputs: Result<Vec<ContinuousStockInput>, StepFatal>,
     /// 输入就绪后立刻初始化的逐股 coordinator；仅消费输入本身，可安全提前到准备阶段。
     pub(super) stock_shards:
-        Option<Result<BTreeMap<StockCode, IncrementalContinuousStockCoordinator>, StepFatal>>,
+        Option<Result<BTreeMap<StockId, IncrementalContinuousStockCoordinator>, StepFatal>>,
 }
 
 #[derive(Clone, Copy)]
@@ -81,7 +81,7 @@ fn prepare_with_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AccountId, Money, Order, OrderId, Side, StockCode};
+    use crate::{AccountId, Money, Order, OrderId, Side, StockId};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
@@ -90,7 +90,7 @@ mod tests {
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         game.state
             .markets
-            .get_mut(&StockCode("600888".to_owned()))
+            .get_mut(&StockId(0))
             .unwrap()
             .place(Order {
                 id: OrderId(91),
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn eligibility_excludes_hydration_writes_and_exactly_due_quotes() {
         let mut game = fixture();
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let now = game.current_market_minute();
         game.state
             .npc_order_lifecycles
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn hydration_then_resource_failures_keep_original_priority_and_authority() {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         for corrupt_hydration in [true, false] {
             let mut game = fixture();
             game.state
@@ -227,11 +227,11 @@ mod tests {
     #[test]
     fn delayed_stock_input_error_stays_after_ingress_failure() {
         let mut game = fixture();
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         game.state.markets.remove(&code).unwrap();
         // map key 不一致只由 stock adapter 检查；投影与资源仍读取原 map key。
         let mut wrong_market = crate::Market::new(
-            StockCode("600889".to_owned()),
+            StockId(1),
             Money::from_cents(1000),
             0.1,
             Money::from_cents(1),

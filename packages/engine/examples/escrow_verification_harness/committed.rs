@@ -211,7 +211,7 @@ pub(super) fn capture_short_restore_runtime(seed: u64) -> Result<RuntimeCapture,
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600101".to_owned()),
+                code: StockId("600101".to_owned()),
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(1_008)),
                 qty: 100,
@@ -527,7 +527,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
                     .enqueue_player_intent(
                         AccountId(0),
                         Intent::PlaceLimit {
-                            code: StockCode(code.to_owned()),
+                            code: StockId(code.to_owned()),
                             side,
                             price: engine::LimitPrice::Fixed(Money::from_cents(price)),
                             qty,
@@ -541,7 +541,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600999".to_owned()),
+                code: StockId("600999".to_owned()),
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,

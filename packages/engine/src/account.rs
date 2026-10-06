@@ -7,6 +7,7 @@
 use crate::config::{ConfigError, GameConfig};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, Side};
+pub use crate::stock::StockId;
 use crate::strategy::ProductionStrategy;
 mod strategy;
 use std::collections::BTreeMap;
@@ -56,13 +57,13 @@ pub enum AccountError {
     /// 卖出超卖：qty > 可卖持仓（持仓 − T+1锁定）。
     #[error("insufficient shares for {code:?}: needed {needed}, sellable {have}")]
     InsufficientShares {
-        code: StockCode,
+        code: StockId,
         needed: u32,
         have: u32,
     },
     /// 卖出/查询时无持仓。
     #[error("no position for {0:?}")]
-    NoPosition(StockCode),
+    NoPosition(StockId),
     /// 结算边界只接受正股数和正成交价。
     #[error("invalid trade: price {price:?}, qty {qty} (both must be positive)")]
     InvalidTrade { price: Money, qty: u32 },
@@ -106,7 +107,7 @@ struct AccountState {
     /// 现金（分）。全程 Money/i64，绝不存 f64（money 模块铁律）。
     cash: Money,
     /// 持仓表：股票代码 → Position。BTreeMap 保有序，便于聚合/快照。
-    positions: BTreeMap<StockCode, Position>,
+    positions: BTreeMap<StockId, Position>,
     /// 策略：NPC 注入算法，玩家为 None（UI 动作直接产 Intent）。
     strategy: Option<StoredStrategy>,
 }
@@ -129,11 +130,11 @@ impl Account {
         self.state.strategy.as_ref()
     }
 
-    pub fn positions(&self) -> &BTreeMap<StockCode, Position> {
+    pub fn positions(&self) -> &BTreeMap<StockId, Position> {
         &self.state.positions
     }
 
-    pub fn position(&self, code: &StockCode) -> Option<&Position> {
+    pub fn position(&self, code: &StockId) -> Option<&Position> {
         self.state.positions.get(code)
     }
 
@@ -141,7 +142,7 @@ impl Account {
     pub(crate) fn restore_balances(
         &mut self,
         cash: Money,
-        positions: BTreeMap<StockCode, Position>,
+        positions: BTreeMap<StockId, Position>,
     ) {
         let state = Arc::make_mut(&mut self.state);
         state.cash = cash;
@@ -169,12 +170,12 @@ impl Account {
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_set_positions(&mut self, positions: BTreeMap<StockCode, Position>) {
+    pub(crate) fn fixture_set_positions(&mut self, positions: BTreeMap<StockId, Position>) {
         Arc::make_mut(&mut self.state).positions = positions;
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_insert_position(&mut self, code: StockCode, position: Position) {
+    pub(crate) fn fixture_insert_position(&mut self, code: StockId, position: Position) {
         Arc::make_mut(&mut self.state)
             .positions
             .insert(code, position);
@@ -186,7 +187,7 @@ impl Account {
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_remove_position(&mut self, code: &StockCode) -> Option<Position> {
+    pub(crate) fn fixture_remove_position(&mut self, code: &StockId) -> Option<Position> {
         Arc::make_mut(&mut self.state).positions.remove(code)
     }
 
@@ -239,7 +240,7 @@ impl Account {
     }
 
     /// 可卖股数（持仓 − T+1 锁定）；无持仓返回 0。
-    pub fn sellable_qty(&self, code: &StockCode) -> u32 {
+    pub fn sellable_qty(&self, code: &StockId) -> u32 {
         self.state
             .positions
             .get(code)
@@ -248,7 +249,7 @@ impl Account {
     }
 
     /// 派生只读成本价（分/股）；无持仓返回 None。
-    pub fn cost_price(&self, code: &StockCode) -> Option<Money> {
+    pub fn cost_price(&self, code: &StockId) -> Option<Money> {
         self.state.positions.get(code).and_then(|p| p.cost_price())
     }
 
@@ -257,7 +258,7 @@ impl Account {
     /// 通用方法：新游戏随机分配 + 加载存档精确仓位 都走它。
     pub fn grant_position(
         &mut self,
-        code: StockCode,
+        code: StockId,
         qty: u32,
         cost_price: Money,
     ) -> Result<(), AccountError> {
@@ -287,7 +288,7 @@ impl Account {
     pub fn apply_buy(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         t1_enabled: bool,
@@ -303,7 +304,7 @@ impl Account {
     fn apply_buy_total(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         cost: Money,
         qty: u32,
         t1_enabled: bool,
@@ -325,7 +326,7 @@ impl Account {
 
     fn apply_buy_settlement(
         &mut self,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -398,7 +399,7 @@ impl Account {
     pub fn apply_sell(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
     ) -> Result<(), AccountError> {
@@ -413,7 +414,7 @@ impl Account {
     fn apply_sell_total(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         proceeds: Money,
         qty: u32,
     ) -> Result<(), AccountError> {
@@ -434,7 +435,7 @@ impl Account {
 
     fn apply_sell_settlement(
         &mut self,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
     ) -> Result<(), AccountError> {
         let sellable = self.sellable_qty(&code);
@@ -494,7 +495,7 @@ impl Account {
     pub(crate) fn apply_settlement(
         &mut self,
         side: Side,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -520,7 +521,7 @@ impl Account {
         &mut self,
         config: &GameConfig,
         side: Side,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         t1_enabled: bool,
@@ -537,7 +538,7 @@ impl Account {
         &mut self,
         config: &GameConfig,
         side: Side,
-        code: StockCode,
+        code: StockId,
         fills: &[(Money, u32)],
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -574,7 +575,7 @@ impl Account {
     /// 持仓市值 = 现价 × 总持仓(qty)。无持仓返回 None。
     pub fn market_value(
         &self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
     ) -> Result<Option<Money>, MoneyError> {
         self.state
@@ -587,7 +588,7 @@ impl Account {
     /// 未实现盈亏 = (现价 − 成本价) × 总持仓。无持仓返回 None。
     pub fn unrealized_pnl(
         &self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
     ) -> Result<Option<Money>, MoneyError> {
         let Some(position) = self.state.positions.get(code) else {
@@ -697,7 +698,7 @@ mod shadow_tests {
 
     #[test]
     fn quiet_shadow_shares_account_until_its_own_state_changes() {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
@@ -720,7 +721,7 @@ mod shadow_tests {
 
     #[test]
     fn restored_balances_and_t1_unlock_leave_shared_authority_unchanged() {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
@@ -751,7 +752,7 @@ mod shadow_tests {
         let error = shadow
             .apply_settlement(
                 Side::Buy,
-                StockCode("600888".to_owned()),
+                StockId(0),
                 SettlementTotals {
                     gross: Money::from_cents(100),
                     qty: 1,

@@ -78,8 +78,9 @@ mod parallel_index_tests {
             0x5EED,
         )
         .unwrap();
-        for (stock_index, code) in ["600888", "600889"].into_iter().enumerate() {
-            let code = StockCode(code.to_owned());
+        // 目录按代码升序分配 id："600888"=0、"600889"=1，与枚举下标一致。
+        for (stock_index, _code) in ["600888", "600889"].into_iter().enumerate() {
+            let code = StockId(stock_index as u32);
             for (owner, offset) in [(AccountId(0), 0_u64), (AccountId(1), 1_u64)] {
                 let seq = stock_index as u64 * 10 + offset;
                 session
@@ -133,16 +134,16 @@ mod parallel_index_tests {
             assert_eq!(
                 one.0[&owner]
                     .iter()
-                    .map(|(code, order)| (code.0.as_str(), order.seq))
+                    .map(|(code, order)| (code.0, order.seq))
                     .collect::<Vec<_>>(),
-                vec![("600888", owner.0), ("600889", owner.0)]
+                vec![(0, owner.0), (1, owner.0)]
             );
             assert_eq!(
                 one.1[&owner]
                     .iter()
-                    .map(|(code, order)| (code.0.as_str(), order.order_id))
+                    .map(|(code, order)| (code.0, order.order_id))
                     .collect::<Vec<_>>(),
-                vec![("600888", owner.0), ("600889", 10 + owner.0)]
+                vec![(0, owner.0), (1, 10 + owner.0)]
             );
         }
     }

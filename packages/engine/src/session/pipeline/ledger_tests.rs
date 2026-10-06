@@ -3,12 +3,12 @@ use super::{
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
-use crate::{AccountId, Money, OrderId, Side, StockCode};
+use crate::{AccountId, Money, OrderId, Side, StockId};
 
 pub(super) fn key() -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(1),
         side: Side::Buy,
     }
@@ -16,7 +16,7 @@ pub(super) fn key() -> EnvelopeKey {
 pub(super) fn second_key() -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600002".to_owned()),
+        stock: StockId(1),
         order: OrderId(2),
         side: Side::Sell,
     }
@@ -44,7 +44,7 @@ pub(super) fn extra() -> Envelope {
     existing(
         EnvelopeKey {
             account: AccountId(2),
-            stock: StockCode("600003".to_owned()),
+            stock: StockId(2),
             order: OrderId(3),
             side: Side::Buy,
         },

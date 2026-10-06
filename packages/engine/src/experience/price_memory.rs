@@ -9,7 +9,7 @@
 //!
 //! 记忆上限复用持仓 + 8 个未持仓股票（[`MAX_UNHELD_WATCHLIST_STOCKS`]）。
 //! 驱逐按最后实际接触时间（本人观察与本人历史读取取较晚者）排序，同分钟按
-//! StockCode 稳定破同分（与 `RetailExperienceState::prune_watchlist` 的
+//! StockId 稳定破同分（与 `RetailExperienceState::prune_watchlist` 的
 //! 降序 `(minute, code)` 约定一致）。受保护集合（持仓 ∪ 活跃计划股票）由
 //! 调用方传入；会话按持仓和活跃计划组合集合，本模块只消费该集合。
 //!
@@ -21,7 +21,7 @@ use super::{
     history_reads::PersonalHistoryReadLedger, retention::RetentionCandidates,
     MAX_UNHELD_WATCHLIST_STOCKS,
 };
-use crate::{Money, StockCode};
+use crate::{Money, StockId};
 
 /// 个人价格记忆失败。绝不静默吞掉（铁律二）。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -35,7 +35,7 @@ pub enum PriceMemoryError {
     #[error(
         "stock {code} has never been personally observed; a public-history read cannot create memory"
     )]
-    UnobservedStock { code: String },
+    UnobservedStock { code: StockId },
     #[error("public-history read could not be recorded: {0}")]
     HistoryRead(String),
 }
@@ -90,7 +90,7 @@ impl StockPriceMemory {
 
     fn record_public_history_read(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         market_minute: u64,
         reads: &mut PersonalHistoryReadLedger,
     ) -> Result<(), PriceMemoryError> {
@@ -118,12 +118,12 @@ impl StockPriceMemory {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct PersonalPriceMemory {
-    pub stocks: BTreeMap<StockCode, StockPriceMemory>,
+    pub stocks: BTreeMap<StockId, StockPriceMemory>,
 }
 
 impl PersonalPriceMemory {
     /// 查询单股记忆，供候选评分聚合个人判断输入。
-    pub fn stock(&self, code: &StockCode) -> Option<&StockPriceMemory> {
+    pub fn stock(&self, code: &StockId) -> Option<&StockPriceMemory> {
         self.stocks.get(code)
     }
 
@@ -138,7 +138,7 @@ impl PersonalPriceMemory {
     /// 更新高低。时间不允许回拨（相对该条目的最后接触分钟）。
     pub fn observe_price(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         market_minute: u64,
     ) -> Result<(), PriceMemoryError> {
@@ -166,7 +166,7 @@ impl PersonalPriceMemory {
     /// 时间；从未本人观察过的股票没有记忆条目，读取不能凭空创造亲历。
     pub fn record_public_history_read(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         market_minute: u64,
         reads: &mut PersonalHistoryReadLedger,
     ) -> Result<(), PriceMemoryError> {
@@ -174,7 +174,7 @@ impl PersonalPriceMemory {
             .stocks
             .get_mut(code)
             .ok_or_else(|| PriceMemoryError::UnobservedStock {
-                code: code.0.clone(),
+                code: *code,
             })?;
         entry.record_public_history_read(code, market_minute, reads)
     }
@@ -182,9 +182,9 @@ impl PersonalPriceMemory {
     /// 按最近接触时间驱逐未受保护股票，最多保留 8 个。
     ///
     /// `protected` = 持仓 ∪ 活跃计划股票（由调用方组合）。
-    /// 未受保护股票按 `(last_touched_minute, StockCode)` 降序保留前
+    /// 未受保护股票按 `(last_touched_minute, StockId)` 降序保留前
     /// [`MAX_UNHELD_WATCHLIST_STOCKS`] 个：同分钟时代码较大者保留。
-    pub fn prune(&mut self, protected: &BTreeSet<StockCode>) {
+    pub fn prune(&mut self, protected: &BTreeSet<StockId>) {
         let kept = RetentionCandidates::from_contacts(
             self.stocks
                 .iter()
@@ -204,7 +204,7 @@ mod protection_tests {
 
     #[test]
     fn price_memory_read_uses_separate_ledger_and_preserves_observation_anchors() {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let mut memory = PersonalPriceMemory::default();
         let mut reads = PersonalHistoryReadLedger::default();
         assert!(memory.record_public_history_read(&code, 1, &mut reads).is_err());

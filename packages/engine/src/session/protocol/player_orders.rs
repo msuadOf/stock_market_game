@@ -1,4 +1,4 @@
-use crate::{Money, Side, StockCode};
+use crate::{Money, Side, StockId};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -17,7 +17,7 @@ pub struct PlayerWorkingOrder {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub id: u64,
-    pub code: StockCode,
+    pub code: StockId,
     pub side: Side,
     pub price: Money,
     pub remaining_qty: u32,

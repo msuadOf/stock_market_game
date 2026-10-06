@@ -5,7 +5,7 @@ use super::*;
 fn production_account_validation_context_uses_configured_category_and_authoritative_stops() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     game.state.setup.stocks[0].category = crate::SecurityCategory::StMainBoard;
     let market = &game.state.markets[&code];
     let business_before = game.business_state_hash().unwrap();
@@ -31,8 +31,8 @@ fn production_account_validation_context_preserves_each_stocks_configured_catego
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.stocks[1].category = crate::SecurityCategory::StMainBoard;
     let game = GameSession::new(setup, 42).unwrap();
-    let first = crate::StockCode("600888".to_owned());
-    let second = crate::StockCode("600889".to_owned());
+    let first = crate::StockId(0);
+    let second = crate::StockId(1);
 
     let facts = collect_account_validation_context_facts(&game).unwrap();
 

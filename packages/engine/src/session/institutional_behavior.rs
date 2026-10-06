@@ -3,7 +3,7 @@ use crate::plans::{
     experience_cost_signal, PauseReason, SignalContribution, SignalUnavailableReason,
 };
 use crate::strategy::{InstitutionExperiencePolicy, InstitutionLossResponse};
-use crate::{Money, StockCode};
+use crate::{Money, StockId};
 
 pub(super) fn observe_institution_account_risk(
     belief: &mut crate::strategy::BeliefBook,
@@ -15,7 +15,7 @@ pub(super) fn observe_institution_account_risk(
 
 pub(super) fn observe_institution_position(
     experience: &mut RetailExperienceState,
-    code: &StockCode,
+    code: &StockId,
     price: Money,
     moment: ExperienceMoment,
     policy: &InstitutionExperiencePolicy,
@@ -33,7 +33,7 @@ impl crate::GameSession {
         &self,
         account: crate::AccountId,
         belief: &crate::strategy::BeliefBook,
-        code: &StockCode,
+        code: &StockId,
         view: &crate::strategy::MarketView,
         paused: Option<PauseReason>,
     ) -> InstitutionBehavior {
@@ -75,7 +75,7 @@ pub(super) struct InstitutionBehavior {
 pub(in crate::session) fn assess_institution_behavior(
     policy: &InstitutionExperiencePolicy,
     experience: &RetailExperienceState,
-    code: &StockCode,
+    code: &StockId,
     cost: Option<Money>,
     price: Money,
     moment: ExperienceMoment,
@@ -158,7 +158,7 @@ pub(in crate::session) fn assess_institution_behavior(
 mod tests {
     use crate::plans::{PauseReason, SignalScore};
     use crate::strategy::{InstitutionExperiencePolicy, InstitutionLossResponse};
-    use crate::{Money, RetailExperienceState, StockCode};
+    use crate::{Money, RetailExperienceState, StockId};
 
     fn policy(response: InstitutionLossResponse) -> InstitutionExperiencePolicy {
         InstitutionExperiencePolicy::new(1, response, 800, 1200, 3000, 1500, 3, 500).unwrap()
@@ -200,7 +200,7 @@ mod tests {
         paused: Option<PauseReason>,
         real_buy: bool,
     ) -> super::InstitutionBehavior {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let mut experience = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
         if real_buy {
             experience.stocks.insert(
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn institution_risk_counts_real_failures_and_decays_without_deleting_facts() {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let mut experience = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
         for order in 1..=3 {
             experience
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn institution_position_observation_uses_individual_adverse_threshold_once() {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let mut experience = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
         experience.stocks.insert(
             code.clone(),

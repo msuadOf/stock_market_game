@@ -1,11 +1,17 @@
 use super::continuous_matching::{ContinuousPlaceFact, ContinuousTradeFact};
 use super::continuous_projection_transaction::collect_continuous_transaction_events;
 use super::stock_execution_transaction::StockExecutionOutput;
-use crate::{AccountId, Event, Market, Money, OrderId, Side, StockCode, Trade};
+use crate::{AccountId, Event, Market, Money, OrderId, Side, StockId, Trade};
 use std::collections::BTreeMap;
 
-fn stock_output(code: &str, sealed_index: u64) -> (StockCode, StockExecutionOutput) {
-    let code = StockCode(code.to_owned());
+fn stock_output(code: &str, sealed_index: u64) -> (StockId, StockExecutionOutput) {
+    // 数值身份后无字符串可断言：按代码升序 rank 映射（"600001"=0，"600002"=1），
+    // 保持 canonical 收集顺序断言（alpha 600001 先于 beta 600002）不变。
+    let code = match code {
+        "600001" => StockId(0),
+        "600002" => StockId(1),
+        other => panic!("未登记的 fixture 代码 rank 映射: {other}"),
+    };
     let market = Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -32,7 +38,7 @@ fn stock_output(code: &str, sealed_index: u64) -> (StockCode, StockExecutionOutp
     )
 }
 
-fn stock_output_with_trade(code: &str) -> (StockCode, StockExecutionOutput) {
+fn stock_output_with_trade(code: &str) -> (StockId, StockExecutionOutput) {
     let (code, mut output) = stock_output(code, 7);
     output.place_facts.clear();
     output.trades.push(ContinuousTradeFact {
@@ -75,7 +81,7 @@ fn same_local_identity_on_two_stocks_collects_canonically_and_advances_seq() {
                 code: second_code,
                 ..
             }
-        ] if first_code == &alpha_code && second_code == &StockCode("600002".to_owned())
+        ] if first_code == &alpha_code && second_code == &StockId(1)
     ));
 }
 

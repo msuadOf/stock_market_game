@@ -2,7 +2,7 @@ use super::{
     continuous_matching::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
     EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
-use crate::{GameSession, Market, Order, StockCode, TradingPhase};
+use crate::{GameSession, Market, Order, StockId, TradingPhase};
 use rayon::prelude::*;
 
 /// 结构性测试计数器：记录 prepare_stock_input 内 BTreeSet 增量插入查重的次数。
@@ -80,7 +80,7 @@ pub(super) fn prepare_inputs_with_observer(
 
 fn prepare_stock_input(
     session: &GameSession,
-    code: &StockCode,
+    code: &StockId,
     market: &Market,
     observe_row: &(impl Fn() + Sync),
 ) -> Result<(usize, ContinuousStockInput), StepFatal> {
@@ -190,7 +190,7 @@ fn order_identity(order: &Order) -> (crate::AccountId, crate::OrderId, u8) {
 
 fn capture_order(
     session: &GameSession,
-    code: &StockCode,
+    code: &StockId,
     order: &Order,
     duplicate: bool,
     key: &mut EnvelopeKey,

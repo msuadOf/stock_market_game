@@ -172,7 +172,7 @@ impl GameSession {
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
                 for code in &codes {
-                    let Some(company) = self.state.company_registry.issuer_of(code) else {
+                    let Some(company) = self.state.issuer_of_stock(*code) else {
                         continue;
                     };
                     let mut new_reports = false;
@@ -350,13 +350,8 @@ mod tests {
             setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
             let mut session = GameSession::new(setup, 42).unwrap();
             let account = AccountId(1);
-            let code = session.state.setup.stocks[0].code.clone();
-            let company = session
-                .state
-                .company_registry
-                .issuer_of(&code)
-                .unwrap()
-                .clone();
+            let code = StockId(0);
+            let company = session.state.issuer_of_stock(code).unwrap().clone();
             session
                 .state
                 .belief_participants
@@ -527,7 +522,7 @@ mod tests {
         setup.npcs.inst_count = 2;
         let mut session = GameSession::new(setup, 42).unwrap();
         let id = AccountId(1);
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         session
             .state
             .belief_participants
@@ -556,7 +551,7 @@ mod tests {
         let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
         setup.npcs.retail_count = 2;
         let mut session = GameSession::new(setup, 41).unwrap();
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = StockId(0);
         let now = session.observation_civil_instant();
         let tomorrow = crate::CivilInstant::new(now.date().next().unwrap(), 18 * 3600).unwrap();
         for id in [AccountId(1), AccountId(2)] {
@@ -663,7 +658,7 @@ mod tests {
         let mut session =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         let id = AccountId(1);
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = StockId(0);
         session
             .state
             .belief_participants
@@ -736,13 +731,8 @@ mod tests {
         setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         let id = AccountId(1);
-        let code = session.state.setup.stocks[0].code.clone();
-        let company = session
-            .state
-            .company_registry
-            .issuer_of(&code)
-            .unwrap()
-            .clone();
+        let code = StockId(0);
+        let company = session.state.issuer_of_stock(code).unwrap().clone();
         session
             .state
             .belief_participants
@@ -796,7 +786,7 @@ mod tests {
         setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         let id = AccountId(1);
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = StockId(0);
         session
             .state
             .belief_participants
@@ -826,8 +816,8 @@ mod tests {
         let session =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         let id = AccountId(1);
-        let code = session.state.setup.stocks[0].code.clone();
-        let company = session.state.company_registry.issuer_of(&code).unwrap();
+        let code = StockId(0);
+        let company = session.state.issuer_of_stock(code).unwrap();
         let now = session.observation_civil_instant();
         let older = session
             .state

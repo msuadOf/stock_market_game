@@ -5,7 +5,7 @@ use super::{
     ResVec,
 };
 use crate::session::account_book::AccountBook;
-use crate::{Account, AccountId, AccountKind, Money, OrderId, Side, StockCode};
+use crate::{Account, AccountId, AccountKind, Money, OrderId, Side, StockId};
 use std::collections::BTreeMap;
 
 #[test]
@@ -62,8 +62,8 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
     assert_eq!(accounts[&AccountId(2)].cash(), Money::from_cents(200_000));
 }
 
-fn stock() -> StockCode {
-    StockCode("600001".to_owned())
+fn stock() -> StockId {
+    StockId(0)
 }
 
 fn fill(
@@ -193,7 +193,7 @@ fn assert_validated_terminal_receipt_with_audit(receipt: EnvelopeReceipt, audit:
     ledger.remove_terminal(&[key]).unwrap();
 }
 
-type PositionState = (StockCode, u32, u32, i64, i64);
+type PositionState = (StockId, u32, u32, i64, i64);
 type AccountState = BTreeMap<AccountId, (Money, Vec<PositionState>)>;
 
 fn account_state(accounts: &AccountBook) -> AccountState {

@@ -58,7 +58,7 @@ pub use technical::{
 pub use value::{BeliefInstitutionStrategy, TargetPolicy};
 pub use zi_noise::ZiNoiseStrategy;
 
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::behavior::{BehaviorMarketObservation, PositionDecision};
 use crate::config::GameConfig;
 use crate::experience::RetailExperienceState;
@@ -97,7 +97,7 @@ pub struct StockView {
 /// 整个市场快照（多股）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MarketView {
-    pub stocks: BTreeMap<StockCode, StockView>,
+    pub stocks: BTreeMap<StockId, StockView>,
     /// 当前权威游戏 tick；用于逐 tick 的注意力等采样。
     pub tick: u64,
     /// 从开局累计的已完成标准交易分钟；用于依赖市场时间的策略（例如 DriftUp）。
@@ -110,7 +110,7 @@ pub struct SelfView {
     /// 当前决策可用现金：账户现金扣除不可撤换委托的冻结额；本观察点会原子撤换的
     /// NPC 工作单冻结额可继续用于同一轮目标报价。
     pub cash: Money,
-    pub positions: BTreeMap<StockCode, PositionView>,
+    pub positions: BTreeMap<StockId, PositionView>,
 }
 
 /// 单只股票的持仓视图。
@@ -136,7 +136,7 @@ pub enum LimitPrice {
 pub enum Intent {
     /// 限价单：Fixed 指定价格；Highest/Lowest 在权威受理时解析为当前合法边界。
     PlaceLimit {
-        code: StockCode,
+        code: StockId,
         side: Side,
         price: LimitPrice,
         qty: u32,
@@ -144,12 +144,12 @@ pub enum Intent {
     /// 市价意图：以当日涨跌停价作保护，逐档即时成交，未成交余量撤销。
     /// 当前统一处理沪深市场，具体市价申报类型的差异见 docs/trading-rules.md 的游戏简化。
     PlaceMarket {
-        code: StockCode,
+        code: StockId,
         side: Side,
         qty: u32,
     },
     /// 撤单。
-    Cancel { code: StockCode, id: OrderId },
+    Cancel { code: StockId, id: OrderId },
 }
 
 /// 一次策略评估的委托与工作单对齐范围。
@@ -159,7 +159,7 @@ pub enum Intent {
 #[derive(Clone, Debug, Default)]
 pub struct StrategyDecision {
     pub intents: Vec<Intent>,
-    pub reviewed_stocks: BTreeSet<StockCode>,
+    pub reviewed_stocks: BTreeSet<StockId>,
     /// 仅散户目标仓位与经历调整路径提供目标仓位解释。Session 将其作为非权威诊断样本读取；
     /// 它不参与存档、撮合或下一 tick 的决策。
     pub position_decision: Option<PositionDecision>,

@@ -27,7 +27,7 @@ pub use watchlist::{PersonalWatchlist, WatchedStock, WatchlistError};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::calendar::CivilDate;
-use crate::{Money, Side, StockCode};
+use crate::{Money, Side, StockId};
 use position_transition::PositionExperienceTransition;
 
 pub const POST_EXIT_COOLDOWN_MINUTES: u64 = 120;
@@ -66,9 +66,9 @@ pub enum ExperienceError {
         latest: feedback::ExperienceMoment,
     },
     #[error("stock {code} already has an active holding epoch; its exit lifecycle is missing")]
-    ActiveEntryAlreadyExists { code: String },
+    ActiveEntryAlreadyExists { code: StockId },
     #[error("stock {code} has no active holding epoch; its entry lifecycle is missing")]
-    NoActiveEntry { code: String },
+    NoActiveEntry { code: StockId },
     #[error("inconsistent experience feedback state: {detail}")]
     InconsistentFeedback { detail: String },
 }
@@ -107,7 +107,7 @@ pub struct RetailExperienceState {
     pub reference_equity: Option<Money>,
     pub peak_equity: Option<Money>,
     pub consecutive_failed_buys: u16,
-    pub stocks: BTreeMap<StockCode, RetailStockExperience>,
+    pub stocks: BTreeMap<StockId, RetailStockExperience>,
     /// 经历反馈事实：受挫事件日期、持仓生命周期、退出/冷静期
     /// 历史。默认空表示新账户或尚未登记双时钟事件，序列化时省略空反馈；
     /// 衰减只作用于读取档位，不删除这里登记的任何事实。
@@ -149,7 +149,7 @@ impl RetailExperienceState {
     /// 为开局已分配的真实持仓建立参照；它不是一笔游戏内成交，不产生买入成败。
     pub fn initialize_holding(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         entry_reference_price: Option<Money>,
         current_price: Money,
         market_minute: u64,
@@ -172,7 +172,7 @@ impl RetailExperienceState {
 
     pub fn observe_position(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         market_minute: u64,
     ) -> Result<(), ExperienceError> {
@@ -183,7 +183,7 @@ impl RetailExperienceState {
     }
 
     /// 记录一次真实的个股查看。未持仓时只更新关注列表，不凭空生成成交经历。
-    pub fn observe_stock(&mut self, code: &StockCode, market_minute: u64) {
+    pub fn observe_stock(&mut self, code: &StockId, market_minute: u64) {
         self.stocks
             .entry(code.clone())
             .or_default()
@@ -193,7 +193,7 @@ impl RetailExperienceState {
     #[allow(clippy::too_many_arguments)]
     pub fn record_fill(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         before_qty: u32,
@@ -217,7 +217,7 @@ impl RetailExperienceState {
     #[allow(clippy::too_many_arguments)]
     pub fn record_fill_with_order(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         before_qty: u32,
@@ -256,14 +256,14 @@ impl RetailExperienceState {
         Ok(())
     }
 
-    pub fn is_in_post_exit_cooldown(&self, code: &StockCode, market_minute: u64) -> bool {
+    pub fn is_in_post_exit_cooldown(&self, code: &StockId, market_minute: u64) -> bool {
         self.stocks
             .get(code)
             .and_then(|stock| stock.cooldown_until_market_minute)
             .is_some_and(|until| market_minute < until)
     }
 
-    pub fn prune_watchlist(&mut self, held: &BTreeSet<StockCode>) {
+    pub fn prune_watchlist(&mut self, held: &BTreeSet<StockId>) {
         let mut unheld: Vec<_> = self
             .stocks
             .iter()

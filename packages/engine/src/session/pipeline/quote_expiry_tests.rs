@@ -4,11 +4,11 @@ fn expiring_npc_order(
     side: crate::Side,
 ) -> (
     GameSession,
-    crate::StockCode,
+    crate::StockId,
     crate::AccountId,
     crate::OrderId,
 ) {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -45,11 +45,11 @@ fn expiring_npc_order(
 
 fn expiring_retail_order() -> (
     GameSession,
-    crate::StockCode,
+    crate::StockId,
     crate::AccountId,
     crate::OrderId,
 ) {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::retail_quote_setup(),
@@ -236,7 +236,7 @@ fn discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagno
 
 #[test]
 fn quote_expiry_leaves_auction_and_player_orders_unaffected() {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let player = crate::AccountId(0);
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(2);
     setup.ticks_per_day = 10;
@@ -293,12 +293,12 @@ fn quote_expiry_releases_sell_shares_with_zero_cash() {
 
 #[test]
 fn quote_expiry_assigns_deterministic_global_receipt_indices() {
-    let first = crate::StockCode("600888".to_owned());
-    let second = crate::StockCode("600889".to_owned());
+    let first = crate::StockId(0);
+    let second = crate::StockId(1);
     let account = crate::AccountId(1);
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     let mut second_spec = setup.stocks[0].clone();
-    second_spec.code = second.clone();
+    second_spec.code = crate::StockCode("600889".to_owned());
     setup.stocks.push(second_spec);
     let mut game = GameSession::new(setup, 42).unwrap();
     game.state.attention_scheduler.clear();
@@ -331,7 +331,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
 
 #[test]
 fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
     let mut game = GameSession::new(setup, 42).unwrap();

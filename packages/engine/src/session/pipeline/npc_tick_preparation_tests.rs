@@ -96,8 +96,8 @@ fn no_due_npc_queues_an_empty_batch_without_building_a_market_view() {
 
 #[test]
 fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
-    let a = crate::StockCode("600001".to_owned());
-    let b = crate::StockCode("000001".to_owned());
+    let a = crate::StockId(0);
+    let b = crate::StockId(1);
     let place = |code| Intent::PlaceLimit {
         code,
         side: Side::Buy,
@@ -164,7 +164,9 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
 #[test]
 fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
     let (mut session, npc) = due_retail(41, 100);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     let mut save = session.save().unwrap();
     save.ingress_receipt_cursors
         .next_account_ordinal
@@ -217,7 +219,9 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
 #[test]
 fn restore_rejects_npc_dependency_that_reverses_stock_receipt_order() {
     let (mut session, npc) = due_retail(42, 100);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     let cancel = session
         .state
         .ingress_receipt_cursors
@@ -276,7 +280,9 @@ fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
 fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
     let (mut session, npc) = due_retail(8, 100);
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     session
         .state
         .ingress_receipt_cursors
@@ -298,8 +304,7 @@ fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
         pending_before
     );
     assert_eq!(
-        session.state.ingress_receipt_cursors.next_stock_ordinal
-            [&session.state.setup.stocks[0].code],
+        session.state.ingress_receipt_cursors.next_stock_ordinal[&code],
         u64::MAX
     );
 }
@@ -510,7 +515,9 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .get_mut(&npc)
         .unwrap()
         .fixture_set_kind(crate::AccountKind::Player);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     for price in [900, 901] {
         session.seed_order_for_test(
             npc,
@@ -654,7 +661,9 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
 #[test]
 fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     let (mut session, npc) = due_retail(41, 100);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
@@ -693,7 +702,9 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
 #[test]
 fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     let (mut session, npc) = due_retail(8, 100);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
@@ -732,7 +743,9 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
     let mut session = GameSession::new(setup, 8).unwrap();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     for npc in [AccountId(2), AccountId(1)] {
         session
             .state

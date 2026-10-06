@@ -5,7 +5,7 @@
 use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
 use crate::account::SettlementTotals;
 use crate::session::account_book::AccountBook;
-use crate::{Account, AccountId, Money, Side, StockCode};
+use crate::{Account, AccountId, Money, Side, StockId};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
@@ -38,7 +38,7 @@ pub(super) fn apply_receipt_settlements(
 /// 本批实际 charged 收据的临时结算计划；权威 AccountBook 由 caller 持有。
 #[derive(Debug, Default)]
 pub(super) struct ReceiptSettlementPlan {
-    totals_by_account_stock: BTreeMap<(AccountId, StockCode), SideTotals>,
+    totals_by_account_stock: BTreeMap<(AccountId, StockId), SideTotals>,
     application: SettlementApplication,
 }
 
@@ -98,7 +98,7 @@ impl ReceiptSettlementPlan {
         accounts: &AccountBook,
         t1_enabled: bool,
     ) -> Result<(BTreeMap<AccountId, Account>, SettlementApplication), StepFatal> {
-        let mut grouped: BTreeMap<AccountId, Vec<(StockCode, SideTotals)>> = BTreeMap::new();
+        let mut grouped: BTreeMap<AccountId, Vec<(StockId, SideTotals)>> = BTreeMap::new();
         for ((account_id, stock), totals) in self.totals_by_account_stock {
             grouped.entry(account_id).or_default().push((stock, totals));
         }

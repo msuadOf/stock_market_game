@@ -1,13 +1,13 @@
 use super::{GameSession, StepFatal, TickShadowPlan};
 use crate::session::account_book::AccountBook;
-use crate::{AccountId, Money, StockCode};
+use crate::{AccountId, Money, StockId};
 use std::collections::BTreeMap;
 
 /// DecisionShadow 观察、AccountValidation 预留的资源均来自报价过期后的事实；每个账户只准备一次。
 #[derive(Clone)]
 pub struct DecisionResourceSnapshot {
     accounts: AccountBook,
-    configured_stocks: BTreeMap<StockCode, Money>,
+    configured_stocks: BTreeMap<StockId, Money>,
     reservations: super::LiveReservations,
 }
 
@@ -93,13 +93,18 @@ impl DecisionResourceSnapshot {
             .stocks
             .iter()
             .map(|stock| {
+                let id = session
+                    .state
+                    .stocks
+                    .id(&stock.code.0)
+                    .expect("配置股票必须已入目录");
                 let price = session
                     .state
                     .markets
-                    .get(&stock.code)
+                    .get(&id)
                     .ok_or_else(|| invariant("configured stock has no market"))?
                     .last_price();
-                Ok((stock.code.clone(), price))
+                Ok((id, price))
             })
             .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;
 
@@ -167,7 +172,7 @@ impl DecisionResourceSnapshot {
                 "envelope ledger references an unknown account",
             ));
         }
-        // 上面已核对每个账户，包括零现金/零股份的行；此处继续按原顺序核对 StockCode。
+        // 上面已核对每个账户，包括零现金/零股份的行；此处继续按原顺序核对 StockId。
         if reservations.iter().any(|row| {
             row.sell
                 .keys()
@@ -216,14 +221,14 @@ impl DecisionResourceSnapshot {
             })
     }
 
-    pub fn total_held_qty(&self, account: AccountId, stock: &StockCode) -> Result<u32, StepFatal> {
+    pub fn total_held_qty(&self, account: AccountId, stock: &StockId) -> Result<u32, StepFatal> {
         Ok(self.position(account, stock)?.total_qty)
     }
 
     pub fn sellable_before_reservation(
         &self,
         account: AccountId,
-        stock: &StockCode,
+        stock: &StockId,
     ) -> Result<u32, StepFatal> {
         Ok(self.position(account, stock)?.sellable_before_reservation)
     }
@@ -231,7 +236,7 @@ impl DecisionResourceSnapshot {
     pub fn available_sell_qty(
         &self,
         account: AccountId,
-        stock: &StockCode,
+        stock: &StockId,
     ) -> Result<u32, StepFatal> {
         Ok(self.position(account, stock)?.available_sell_qty)
     }
@@ -239,7 +244,7 @@ impl DecisionResourceSnapshot {
     pub fn reserved_sell_qty(
         &self,
         account: AccountId,
-        stock: &StockCode,
+        stock: &StockId,
     ) -> Result<u32, StepFatal> {
         self.sellable_before_reservation(account, stock)?
             .checked_sub(self.available_sell_qty(account, stock)?)
@@ -249,7 +254,7 @@ impl DecisionResourceSnapshot {
     pub fn cost_price(
         &self,
         account: AccountId,
-        stock: &StockCode,
+        stock: &StockId,
     ) -> Result<Option<Money>, StepFatal> {
         Ok(self.position(account, stock)?.cost_price)
     }
@@ -263,7 +268,7 @@ impl DecisionResourceSnapshot {
     fn position(
         &self,
         account_id: AccountId,
-        stock: &StockCode,
+        stock: &StockId,
     ) -> Result<DecisionPositionResources, StepFatal> {
         let account = self.account(account_id)?;
         if !self.configured_stocks.contains_key(stock) {

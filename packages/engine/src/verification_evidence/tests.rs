@@ -15,13 +15,27 @@ use crate::{
         StockExchange, StockSpec,
     },
     CivilDate, CivilInstant, DailyCandle, DailyTradeStats, DayStatus, Event, GameConfig, HotParams,
-    InstParams, MarketSnap, Money, RejectionReason, RetailParams, StrategyParams, TradingPhase,
+    InstParams, MarketSnap, Money, RejectionReason, RetailParams, StockCode, StrategyParams,
+    TradingPhase,
 };
 
 fn assert_no_json_numbers(value: &Value) {
     fn visit(value: &Value, path: &str) {
         match value {
-            Value::Number(number) => panic!("integer leaked as a JSON number at {path}: {number}"),
+            // 契约动机是防超出 JS 安全整数范围的 u64/i64（seq/tick/金额分）泄漏为数值；
+            // ADR 0041 后 Event.code 等 u32 身份在 wire 上按用户契约以数值承载，
+            // 恒在安全整数域内，允许数值形态。
+            Value::Number(number) => {
+                let safe = number
+                    .as_u64()
+                    .is_some_and(|value| value <= 9_007_199_254_740_991)
+                    || number.as_i64().is_some_and(|value| {
+                        value.unsigned_abs() <= 9_007_199_254_740_991
+                    });
+                if !safe {
+                    panic!("integer leaked as a JSON number at {path}: {number}");
+                }
+            }
             Value::Array(values) => {
                 for (index, value) in values.iter().enumerate() {
                     visit(value, &format!("{path}[{index}]"));
@@ -108,7 +122,7 @@ fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
 fn key(side: Side, order: u64) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(order),
         side,
     }
@@ -164,7 +178,7 @@ fn account_snap() -> SaveAccountSnap {
     SaveAccountSnap {
         cash: Money::from_cents(50_000),
         positions: BTreeMap::from([(
-            StockCode("600001".to_owned()),
+            StockId(0),
             PositionSnap {
                 qty: 100,
                 t1_locked: 20,
@@ -531,7 +545,7 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
     let mut overflow = account_snap();
     overflow
         .positions
-        .get_mut(&StockCode("600001".to_owned()))
+        .get_mut(&StockId(0))
         .unwrap()
         .t1_locked = 101;
     assert!(matches!(
@@ -590,14 +604,14 @@ fn account_identity_frame(indices: &[u64]) -> TickFrame {
                 Event::IntentRejected {
                     seq,
                     account: AccountId(3),
-                    code: StockCode("600001".to_owned()),
+                    code: StockId(0),
                     reason: RejectionReason::InsufficientCash,
                 }
             } else {
                 Event::OrderCanceled {
                     seq,
                     account: AccountId(3),
-                    code: StockCode("600001".to_owned()),
+                    code: StockId(0),
                     id: OrderId(seq),
                     remaining_qty: 100,
                 }
@@ -653,7 +667,7 @@ fn account_sealed_identity_rejects_unsafe_and_non_cancel_reserved_indices() {
 fn stock_event_identity_still_requires_zero_based_contiguous_indices() {
     let event = Event::Trade {
         seq: 1,
-        code: StockCode("600001".to_owned()),
+        code: StockId(0),
         price: Money::from_cents(1_000),
         qty: 100,
         maker: AccountId(3),
@@ -700,7 +714,7 @@ fn projects_event_identity_by_variant_entity_scope_not_seq_or_array_position() {
         Event::OrderAccepted {
             seq: 1,
             account: AccountId(1),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             id: OrderId(9),
             side: Side::Buy,
             price: Money::from_cents(1_000),
@@ -709,7 +723,7 @@ fn projects_event_identity_by_variant_entity_scope_not_seq_or_array_position() {
         Event::PriceTick {
             seq: 2,
             tick: 5,
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             last_price: Money::from_cents(1_000),
             daily_candle: candle(),
             bids: vec![],
@@ -718,7 +732,7 @@ fn projects_event_identity_by_variant_entity_scope_not_seq_or_array_position() {
         Event::OrderAccepted {
             seq: 3,
             account: AccountId(1),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             id: OrderId(10),
             side: Side::Buy,
             price: Money::from_cents(999),
@@ -739,7 +753,7 @@ fn projects_event_identity_by_variant_entity_scope_not_seq_or_array_position() {
     assert_eq!(projected.events[0].comparison_event_key.3, "0");
     assert_eq!(projected.events[1].comparison_event_key.0, "5");
     assert_eq!(projected.events[1].comparison_event_key.1, "4:PriceTick");
-    assert_eq!(projected.events[1].comparison_event_key.2, "Stock:600001");
+    assert_eq!(projected.events[1].comparison_event_key.2, "Stock:0");
     assert_eq!(projected.events[1].comparison_event_key.3, "0");
     assert_eq!(projected.events[2].comparison_event_key.0, "5");
     assert_eq!(
@@ -756,7 +770,7 @@ fn event_comparison_tags_keep_phase_four_five_and_six_distinct() {
         Event::OrderAccepted {
             seq: 1,
             account: AccountId(1),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             id: OrderId(9),
             side: Side::Buy,
             price: Money::from_cents(1_000),
@@ -900,7 +914,7 @@ fn real_civil_update_projects_validated_session_lifecycle_shared_ordinals() {
     assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
 }
 
-fn tick_before_civil(stock: &StockCode) -> TickFrame {
+fn tick_before_civil(stock: &StockId) -> TickFrame {
     let events = vec![
         Event::IntentRejected {
             seq: 1,
@@ -983,7 +997,7 @@ fn civil_with_continued_session_lifecycle_ordinals() -> CivilUpdate {
 
 #[test]
 fn full_update_stream_projection_shares_same_tick_session_lifecycle_ordinals() {
-    let stock = StockCode("600001".to_owned());
+    let stock = StockId(0);
     let tick = tick_before_civil(&stock);
     let civil = civil_with_continued_session_lifecycle_ordinals();
 
@@ -1004,7 +1018,7 @@ fn full_update_stream_projection_shares_same_tick_session_lifecycle_ordinals() {
 
 #[test]
 fn stateful_update_stream_projection_matches_batch_and_rejects_cross_update_reset() {
-    let stock = StockCode("600001".to_owned());
+    let stock = StockId(0);
     let tick = tick_before_civil(&stock);
     let reset = civil_after_tick(false);
     let civil = civil_with_continued_session_lifecycle_ordinals();
@@ -1036,7 +1050,7 @@ fn stateful_update_stream_projection_matches_batch_and_rejects_cross_update_rese
 
 #[test]
 fn update_stream_failure_does_not_consume_sequence_or_identity_state() {
-    let stock = StockCode("600001".to_owned());
+    let stock = StockId(0);
     let tick = tick_before_civil(&stock);
     let civil = civil_with_continued_session_lifecycle_ordinals();
     let mut sequence_gap = civil.clone();
@@ -1112,7 +1126,7 @@ fn batch_update_stream_projection_rejects_empty_and_duplicate_identity_streams()
         }
     );
 
-    let stock = StockCode("600001".to_owned());
+    let stock = StockId(0);
     let tick = tick_before_civil(&stock);
     let duplicate = civil_after_tick(true);
     assert_eq!(
@@ -1132,7 +1146,7 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
     let events = vec![
         Event::Trade {
             seq: 1,
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             price: Money::from_cents(1_000),
             qty: 100,
             maker: AccountId(1),
@@ -1140,7 +1154,7 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
         },
         Event::Trade {
             seq: 2,
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             price: Money::from_cents(999),
             qty: 100,
             maker: AccountId(1),
@@ -1155,7 +1169,7 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
     let event = Event::OrderAccepted {
         seq: 1,
         account: AccountId(1),
-        code: StockCode("600001".to_owned()),
+        code: StockId(0),
         id: OrderId(9),
         side: Side::Buy,
         price: Money::from_cents(1_000),
@@ -1180,7 +1194,7 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
 
 #[test]
 fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
-    let code = StockCode("600001".to_owned());
+    let code = StockId(0);
     let date = CivilDate::from_ymd(2199, 12, 31).unwrap();
     let instant = CivilInstant::new(date, 86_399).unwrap();
     let extreme_candle = DailyCandle {
@@ -1387,11 +1401,11 @@ fn observation_input<'a>(
 
 fn coverage_snapshot(
     tick: u64,
-    code: &str,
+    code: u32,
     order: u64,
     fill_quantities: &[u32],
 ) -> ConservationSnapshot {
-    let stock = StockCode(code.to_owned());
+    let stock = StockId(code);
     let envelope_key = EnvelopeKey {
         account: AccountId(1),
         stock: stock.clone(),
@@ -1509,8 +1523,8 @@ fn observation_requires_real_save_and_two_restore_byte_chains() {
 #[test]
 fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
     let conservation = vec![
-        coverage_snapshot(12, "600001", 9, &[30, 70]),
-        coverage_snapshot(13, "000001", 10, &[100]),
+        coverage_snapshot(12, 1, 9, &[30, 70]),
+        coverage_snapshot(13, 0, 10, &[100]),
     ];
     let accounts = vec!["account:1".to_owned(), "account:2".to_owned()];
     let stocks = vec!["stock:000001".to_owned(), "stock:600001".to_owned()];
@@ -1545,7 +1559,7 @@ fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
     assert_eq!(projected.execution_coverage.tick_to, 13);
     assert_eq!(
         projected.execution_coverage.stock_codes,
-        ["000001".to_owned(), "600001".to_owned()]
+        [StockId(0), StockId(1)]
     );
     assert_eq!(projected.execution_coverage.multi_leg_order_ids, ["9"]);
     assert_eq!(projected.repeat, u32::MAX);
@@ -1562,8 +1576,8 @@ fn observation_projects_real_multi_stock_multi_leg_and_finalizer_coverage() {
 #[test]
 fn observation_rejects_restore_byte_mismatch_but_allows_independent_continuations() {
     let conservation = vec![
-        coverage_snapshot(12, "600001", 9, &[30, 70]),
-        coverage_snapshot(13, "000001", 10, &[100]),
+        coverage_snapshot(12, 1, 9, &[30, 70]),
+        coverage_snapshot(13, 0, 10, &[100]),
     ];
     let accounts = vec!["account:1".to_owned(), "account:2".to_owned()];
     let stocks = vec!["stock:000001".to_owned(), "stock:600001".to_owned()];

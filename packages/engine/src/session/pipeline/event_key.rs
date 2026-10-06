@@ -1,5 +1,5 @@
 use super::super::Event;
-use crate::{AccountId, StockCode};
+use crate::{AccountId, StockId};
 use std::cmp::Ordering;
 
 #[cfg(test)]
@@ -53,7 +53,7 @@ pub(crate) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EntityTag {
     Session,
-    Stock(StockCode),
+    Stock(StockId),
     Account(AccountId),
 }
 

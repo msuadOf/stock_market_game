@@ -1,4 +1,5 @@
 use super::*;
+use engine::StockId;
 
 #[test]
 fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
@@ -20,7 +21,8 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     }
     let mut fresh_save = fresh.save().expect("healthy save");
     let account = *fresh_save.retail_experience.keys().next().unwrap();
-    let stock = code("600101");
+    // truncate(1) 后仅剩 "600101"，目录 rank 恒为 0。
+    let stock = StockId(0);
     let closes = fresh_save.market_minute_closes.get_mut(&stock).unwrap();
     closes.clear();
     for minute in 0..38_u64 {

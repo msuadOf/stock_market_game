@@ -42,7 +42,7 @@ impl Rng for SeqRng {
 fn one_stock_view(last: i64) -> MarketView {
     let mut stocks = BTreeMap::new();
     stocks.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         StockView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
@@ -123,7 +123,7 @@ fn zi_noise_arrival_rate_one_acts_on_some_stock() {
 #[test]
 fn noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices() {
     let market = one_stock_view(1_000);
-    let code = StockCode("600101".into());
+    let code = engine::StockId(0);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: [(
@@ -161,7 +161,7 @@ fn active_noise_buy_checks_cash_at_its_submitted_limit_including_fees() {
     let mut market = one_stock_view(1_000);
     market
         .stocks
-        .get_mut(&StockCode("600101".into()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .max_buy_price = Money::from_cents(1_020);
     // The observed cage is 10.20 yuan, but it may widen before acceptance.
@@ -233,7 +233,7 @@ fn retail_random_sell_without_sellable_shares_is_a_noop() {
 
 #[test]
 fn retail_random_sell_selects_an_actually_sellable_holding() {
-    let held = StockCode("600102".to_string());
+    let held = engine::StockId(1);
     let mut stocks = one_stock_view(1_000).stocks;
     stocks.insert(
         held.clone(),
@@ -298,7 +298,7 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
     let mv = {
         let mut stocks = BTreeMap::new();
         stocks.insert(
-            StockCode("600101".to_string()),
+            engine::StockId(0),
             StockView {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
@@ -379,7 +379,7 @@ fn retail_ignores_a_tick_only_price_move_when_evaluating_trend() {
     let mut market = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     market
         .stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .recent_market_minute_prices = vec![
         Money::from_cents(1_000),
@@ -407,7 +407,7 @@ fn retail_sells_at_the_lowest_legal_price_after_its_dip_buy_keeps_losing() {
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -443,7 +443,7 @@ fn retail_cannot_panic_sell_a_same_day_dip_buy() {
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 0,
@@ -474,7 +474,7 @@ fn retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip() {
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -507,12 +507,12 @@ fn ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss() {
     let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mut mv = stock_with_history("600101", vec![1_040, 1_020, 1_000]);
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .order_book_imbalance = -1.0;
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -544,7 +544,7 @@ fn retail_requires_volume_confirmation_to_chase_a_rebound() {
     let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .relative_volume = 0.20;
     let own = SelfView {
@@ -562,7 +562,7 @@ fn retail_requires_volume_confirmation_to_chase_a_rebound() {
         .is_empty());
 
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .relative_volume = 1.0;
     assert!(matches!(
@@ -586,7 +586,7 @@ fn retail_takes_profit_into_a_rising_market() {
     let mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -680,7 +680,7 @@ fn value_buys_when_undervalued() {
 fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_stale() {
     let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
     let mut mv = one_stock_view(1_100);
-    let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
+    let stock = mv.stocks.get_mut(&engine::StockId(0)).unwrap();
     stock.best_ask = Some(Money::from_cents(940));
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -709,7 +709,7 @@ fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_sta
 fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
     let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
     let mut mv = one_stock_view(1_100);
-    let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
+    let stock = mv.stocks.get_mut(&engine::StockId(0)).unwrap();
     stock.best_ask = Some(Money::from_cents(850));
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -739,7 +739,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
     let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
     let mut mv = one_stock_view(900);
     mv.stocks.insert(
-        StockCode("600102".to_string()),
+        engine::StockId(1),
         StockView {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
@@ -755,7 +755,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
     );
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 3_000,
             sellable_qty: 3_000,
@@ -783,7 +783,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
             side: Side::Buy,
             price,
             qty: 100,
-        }] if code == &StockCode("600101".to_string()) && *price == LimitPrice::Fixed(Money::from_cents(901))
+        }] if code == &engine::StockId(0) && *price == LimitPrice::Fixed(Money::from_cents(901))
     ));
 }
 
@@ -841,7 +841,7 @@ fn value_strategy_does_not_submit_a_partial_sub_lot_sell() {
     let mv = one_stock_view(1_100);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 1_000,
             sellable_qty: 1_000,
@@ -871,7 +871,7 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
         ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 150).unwrap();
     let mut large_position = BTreeMap::new();
     large_position.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 1_000,
             sellable_qty: 1_000,
@@ -900,7 +900,7 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
         ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 150).unwrap();
     let mut odd_lot_position = BTreeMap::new();
     odd_lot_position.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 150,
             sellable_qty: 150,
@@ -932,7 +932,7 @@ fn value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remain
     let mv = one_stock_view(1_100);
     let mut positions = BTreeMap::new();
     positions.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 250,
             sellable_qty: 250,
@@ -970,7 +970,7 @@ fn value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan() 
                     .unwrap();
             let mut positions = BTreeMap::new();
             positions.insert(
-                StockCode("600101".to_string()),
+                engine::StockId(0),
                 PositionView {
                     qty: sellable,
                     sellable_qty: sellable,
@@ -1032,7 +1032,7 @@ fn value_sells_when_overvalued_and_has_position() {
     let mv = one_stock_view(1100); // last=1100>1050 → 卖
     let mut pos = BTreeMap::new();
     pos.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -1269,7 +1269,7 @@ fn drift_up_saturates_max_market_minute() {
             side: Side::Buy,
             price: LimitPrice::Fixed(price),
             qty: 100,
-        }] if code == &StockCode("600101".to_string()) && *price == Money::from_cents(1_006)
+        }] if code == &engine::StockId(0) && *price == Money::from_cents(1_006)
     ));
 }
 
@@ -1289,11 +1289,12 @@ fn zi_noise_rejects_invalid_params() {
 use engine::strategy::MomentumStrategy;
 
 /// 构造单股 MarketView，其 recent_prices = hist（用于游资动量趋势检测）。
-fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
+fn stock_with_history(_code: &str, hist: Vec<i64>) -> MarketView {
     let mut stocks = BTreeMap::new();
     let last = *hist.last().unwrap_or(&1000);
+    // 单股视图 fixture：数值 id 恒为 0（目录按代码序分配）。
     stocks.insert(
-        StockCode(code.to_string()),
+        engine::StockId(0),
         StockView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
@@ -1343,7 +1344,7 @@ fn momentum_buys_on_uptrend() {
 fn momentum_symbolic_buy_requires_cash_for_the_daily_upper_limit() {
     let mut strategy = MomentumStrategy::new(3, 0.02, 100).unwrap();
     let mut market = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
-    let stock = market.stocks.get_mut(&StockCode("600101".into())).unwrap();
+    let stock = market.stocks.get_mut(&engine::StockId(0)).unwrap();
     stock.max_buy_price = Money::from_cents(1_070);
     stock.daily_upper_limit = Money::from_cents(1_155);
     let own = SelfView {
@@ -1367,7 +1368,7 @@ fn momentum_uses_completed_market_minutes_instead_of_tick_samples() {
     // 宿主的 tick 密度误当作市场时间并据此追涨。
     let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .recent_market_minute_prices = vec![
         Money::from_cents(1_000),
@@ -1394,7 +1395,7 @@ fn momentum_waits_for_volume_before_chasing_an_uptrend() {
     let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
     let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .relative_volume = 0.20;
     let own = SelfView {
@@ -1417,7 +1418,7 @@ fn momentum_does_not_chase_into_a_heavily_ask_skewed_book() {
     let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
     let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     mv.stocks
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&engine::StockId(0))
         .unwrap()
         .order_book_imbalance = -0.80;
     let own = SelfView {
@@ -1442,7 +1443,7 @@ fn momentum_sells_on_downtrend_with_position() {
     let mv = stock_with_history("600101", vec![1050, 1020, 1000]);
     let mut pos = BTreeMap::new();
     pos.insert(
-        StockCode("600101".to_string()),
+        engine::StockId(0),
         PositionView {
             qty: 100,
             sellable_qty: 100,
@@ -1937,7 +1938,7 @@ fn deeper_fall_triggers_more_retail_stop_losses() {
     let position = |last_cost| {
         let mut positions = BTreeMap::new();
         positions.insert(
-            StockCode("600101".to_string()),
+            engine::StockId(0),
             PositionView {
                 qty: 100,
                 sellable_qty: 100,
@@ -2174,7 +2175,7 @@ fn reexport_from_crate_root() {
     // 工厂 + 参数 + 目标价策略 + 错误类型可见。
     let _: StrategyParams = sample_params();
     let _: Intent = Intent::PlaceMarket {
-        code: StockCode("x".to_string()),
+        code: engine::StockId(0),
         side: engine::Side::Buy,
         qty: 1,
     };
@@ -2398,9 +2399,13 @@ fn retail_covers_all_stocks_not_just_first() {
 
     // 5 只股票的 MarketView（code 故意涵盖各种前缀，首键字典序为 000812）。
     let mut stocks = BTreeMap::new();
-    for code in ["000812", "002156", "300260", "600101", "600610"] {
+    // 五股 fixture：id 按代码升序（000812=0, 002156=1, 300260=2, 600101=3, 600610=4）。
+    for (index, _code) in ["000812", "002156", "300260", "600101", "600610"]
+        .into_iter()
+        .enumerate()
+    {
         stocks.insert(
-            StockCode(code.to_string()),
+            engine::StockId(index as u32),
             StockView {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
@@ -2449,7 +2454,7 @@ fn retail_covers_all_stocks_not_just_first() {
     // 用种子化确定性 RNG 跑 2000 轮：5 只股票每只期望 ~400 次，远超 0。
     // 确定性 → 失败可复现（铁律三）。
     let mut rng = engine::session::SplitMix64::new(0xC1A0DE570C11);
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<engine::StockId> = HashSet::new();
     for _ in 0..2000 {
         for it in s.decide(
             &mv,
@@ -2458,13 +2463,13 @@ fn retail_covers_all_stocks_not_just_first() {
             &engine::GameConfig::proposed_defaults(),
         ) {
             if let Intent::PlaceLimit { code, .. } = it {
-                seen.insert(code.0);
+                seen.insert(code);
             }
         }
     }
-    let all: HashSet<String> = ["000812", "002156", "300260", "600101", "600610"]
-        .iter()
-        .map(|s| s.to_string())
+    let all: HashSet<engine::StockId> = [0_u32, 1, 2, 3, 4]
+        .into_iter()
+        .map(engine::StockId)
         .collect();
     assert_eq!(
         seen, all,

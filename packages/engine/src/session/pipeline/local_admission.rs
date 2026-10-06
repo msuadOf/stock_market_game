@@ -1,7 +1,7 @@
 //! 就绪请求进入股票 gate；来源与身份仅定位事实，不作为交易优先级。
 
 use super::{IntentCandidate, StepFatal};
-use crate::{AccountId, Intent, Side, StockCode};
+use crate::{AccountId, Intent, Side, StockId};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -10,7 +10,7 @@ use std::sync::Mutex;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResourceLane {
     Cash(AccountId),
-    Shares(AccountId, StockCode),
+    Shares(AccountId, StockId),
 }
 
 /// receipt 只在同账户的资源 lane 内可比；阶段表示就绪时间。
@@ -84,7 +84,7 @@ struct ReadyAdmissionPlan {
     candidates: Vec<IntentCandidate>,
     successors: Vec<Vec<usize>>,
     incoming: Vec<usize>,
-    stock_gates: BTreeMap<StockCode, Mutex<Vec<usize>>>,
+    stock_gates: BTreeMap<StockId, Mutex<Vec<usize>>>,
 }
 
 impl ReadyAdmissionPlan {
@@ -94,7 +94,7 @@ impl ReadyAdmissionPlan {
         has_dependencies: bool,
     ) -> Result<(Self, bool), StepFatal> {
         let mut resource_groups = HashMap::<ResourceLane, Vec<(usize, AccountReceipt)>>::new();
-        let mut stock_receipts = BTreeMap::<StockCode, Vec<(usize, Option<u64>)>>::new();
+        let mut stock_receipts = BTreeMap::<StockId, Vec<(usize, Option<u64>)>>::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let receipt = receipts.observe(candidate)?;
             let owner = candidate.owner();
@@ -340,7 +340,7 @@ impl ReadyAdmissionPlan {
 struct StockAdmission<'a> {
     candidates: &'a [IntentCandidate],
     successors: &'a [Vec<usize>],
-    stock_gates: &'a BTreeMap<StockCode, Mutex<Vec<usize>>>,
+    stock_gates: &'a BTreeMap<StockId, Mutex<Vec<usize>>>,
     remaining: Vec<AtomicUsize>,
     registered: AtomicUsize,
     poisoned: AtomicBool,
@@ -385,7 +385,7 @@ impl StockAdmission<'_> {
     }
 }
 
-fn code(intent: &Intent) -> &StockCode {
+fn code(intent: &Intent) -> &StockId {
     match intent {
         Intent::PlaceLimit { code, .. }
         | Intent::PlaceMarket { code, .. }
@@ -406,8 +406,13 @@ mod tests {
     use crate::session::pipeline::IntentCandidateKey;
     use crate::{Money, OrderId};
 
-    fn quote_request(index: u64, account: u64, stock: &str, cancel: bool) -> IntentCandidate {
-        let code = StockCode(stock.to_owned());
+    fn quote_request(
+        index: u64,
+        account: u64,
+        stock: StockId,
+        cancel: bool,
+    ) -> IntentCandidate {
+        let code = stock;
         let intent = if cancel {
             Intent::Cancel {
                 code,
@@ -434,16 +439,16 @@ mod tests {
         let first = IntentCandidateKey::player(0);
         let second = IntentCandidateKey::player(1);
         let candidates = vec![
-            quote_request(0, 1, "600001", true),
-            quote_request(1, 1, "600001", true),
-            quote_request(2, 1, "600001", false)
+            quote_request(0, 1, StockId(0), true),
+            quote_request(1, 1, StockId(0), true),
+            quote_request(2, 1, StockId(0), false)
                 .with_predecessors(vec![first.clone(), second.clone()]),
             // 最后撤单完成后两个方向均就绪；买单另有异股现金 lane 后继。
             IntentCandidate::new(
                 IntentCandidateKey::player(3),
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: StockCode("600001".to_owned()),
+                    code: StockId(0),
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(110)),
                     qty: 100,
@@ -451,8 +456,8 @@ mod tests {
             )
             .with_ingress_order(3, 3)
             .with_predecessors(vec![first, second]),
-            quote_request(4, 1, "600002", false),
-            quote_request(5, 2, "600001", false),
+            quote_request(4, 1, StockId(1), false),
+            quote_request(5, 2, StockId(0), false),
         ];
         for threads in [1, 4] {
             rayon::ThreadPoolBuilder::new()
@@ -491,22 +496,22 @@ mod tests {
 
     #[test]
     fn quote_dependency_rejects_missing_reversed_or_unrelated_predecessors() {
-        let cancel = quote_request(0, 1, "600001", true);
+        let cancel = quote_request(0, 1, StockId(0), true);
         let place =
-            quote_request(1, 1, "600001", false).with_predecessors(vec![cancel.key().clone()]);
+            quote_request(1, 1, StockId(0), false).with_predecessors(vec![cancel.key().clone()]);
         let cases = [
             vec![place.clone()],
             vec![place.clone(), cancel.clone()],
-            vec![quote_request(0, 2, "600001", true), place.clone()],
-            vec![quote_request(0, 1, "600002", true), place.clone()],
-            vec![quote_request(0, 1, "600001", false), place.clone()],
+            vec![quote_request(0, 2, StockId(0), true), place.clone()],
+            vec![quote_request(0, 1, StockId(1), true), place.clone()],
+            vec![quote_request(0, 1, StockId(0), false), place.clone()],
             vec![
                 cancel.clone(),
-                quote_request(1, 1, "600001", true).with_predecessors(vec![cancel.key().clone()]),
+                quote_request(1, 1, StockId(0), true).with_predecessors(vec![cancel.key().clone()]),
             ],
             vec![
                 cancel.clone(),
-                quote_request(1, 1, "600001", false)
+                quote_request(1, 1, StockId(0), false)
                     .with_predecessors(vec![cancel.key().clone(), cancel.key().clone()]),
             ],
             vec![cancel.clone(), cancel, place],
@@ -521,8 +526,8 @@ mod tests {
 
     #[test]
     fn crossed_account_stock_requests_keep_each_account_receipt_order() {
-        let x = StockCode("600001".to_owned());
-        let y = StockCode("600002".to_owned());
+        let x = StockId(0);
+        let y = StockId(1);
         let requests = [
             (AccountId(1), x.clone()),
             (AccountId(1), y.clone()),
@@ -563,7 +568,7 @@ mod tests {
 
     #[test]
     fn same_account_sells_keep_share_receipt_order_and_cancel_is_admitted() {
-        let stock = StockCode("600001".to_owned());
+        let stock = StockId(0);
         let candidates = vec![
             IntentCandidate::new(
                 IntentCandidateKey::npc(AccountId(1), 0),
@@ -642,13 +647,13 @@ mod tests {
     #[test]
     fn cash_and_different_stock_share_lanes_have_independent_roots() {
         let owner = AccountId(1);
-        let buy = quote_request(0, 1, "600001", false);
+        let buy = quote_request(0, 1, StockId(0), false);
         let sell = |index| {
             IntentCandidate::new(
                 IntentCandidateKey::player(index),
                 owner,
                 Intent::PlaceLimit {
-                    code: StockCode("600002".to_owned()),
+                    code: StockId(1),
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
@@ -657,7 +662,7 @@ mod tests {
             .with_ingress_order(index, index)
         };
         let (plan, conflicts) = ReadyAdmissionPlan::prepare(
-            vec![buy, sell(1), quote_request(2, 1, "600003", false), sell(3)],
+            vec![buy, sell(1), quote_request(2, 1, StockId(2), false), sell(3)],
             &mut AccountReceipts::default(),
             false,
         )
@@ -671,8 +676,8 @@ mod tests {
     fn damaged_dependency_cycle_is_reported_by_gates_and_layout() {
         let plan = || ReadyAdmissionPlan {
             candidates: vec![
-                quote_request(0, 1, "600001", false),
-                quote_request(1, 1, "600002", false),
+                quote_request(0, 1, StockId(0), false),
+                quote_request(1, 1, StockId(1), false),
             ],
             successors: vec![vec![1], vec![0]],
             incoming: vec![1, 1],
@@ -693,8 +698,8 @@ mod tests {
     #[test]
     fn damaged_atomic_dependency_count_is_reported() {
         let candidates = vec![
-            quote_request(0, 1, "600001", false),
-            quote_request(1, 1, "600002", false),
+            quote_request(0, 1, StockId(0), false),
+            quote_request(1, 1, StockId(1), false),
         ];
         let successors = vec![vec![1], vec![]];
         let stock_gates = BTreeMap::new();
@@ -715,12 +720,12 @@ mod tests {
     #[test]
     fn mixed_request_phases_keep_cash_receipts_when_layout_is_reversed() {
         let owner = AccountId(1);
-        let make = |key, stock: &str, account_ordinal, stock_ordinal| {
+        let make = |key, stock: StockId, account_ordinal, stock_ordinal| {
             IntentCandidate::new(
                 key,
                 owner,
                 Intent::PlaceLimit {
-                    code: StockCode(stock.to_owned()),
+                    code: stock,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
@@ -729,9 +734,9 @@ mod tests {
             .with_ingress_order(account_ordinal, stock_ordinal)
         };
         let candidates = vec![
-            make(IntentCandidateKey::plan_chain(7), "600003", 2, 2),
-            make(IntentCandidateKey::player(5), "600002", 1, 1),
-            make(IntentCandidateKey::npc(owner, 9), "600001", 0, 0),
+            make(IntentCandidateKey::plan_chain(7), StockId(2), 2, 2),
+            make(IntentCandidateKey::player(5), StockId(1), 1, 1),
+            make(IntentCandidateKey::npc(owner, 9), StockId(0), 0, 0),
         ];
         let admitted = admit_ready_batch(candidates, &mut AccountReceipts::default()).unwrap();
         assert_eq!(
@@ -752,7 +757,7 @@ mod tests {
         let missing = IntentCandidate::new(
             IntentCandidateKey::player(0),
             AccountId(0),
-            quote_request(0, 0, "600001", false).intent().clone(),
+            quote_request(0, 0, StockId(0), false).intent().clone(),
         );
         let missing_error =
             admit_ready_batch(vec![missing], &mut AccountReceipts::default()).unwrap_err();
@@ -763,7 +768,7 @@ mod tests {
         let wrong_owner = IntentCandidate::new(
             IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(2),
-            quote_request(0, 2, "600001", false).intent().clone(),
+            quote_request(0, 2, StockId(0), false).intent().clone(),
         )
         .with_ingress_order(0, 0);
         let owner_error =
@@ -779,7 +784,7 @@ mod tests {
         let plan = IntentCandidate::new(
             IntentCandidateKey::plan_chain(0),
             owner,
-            quote_request(0, 1, "600001", false).intent().clone(),
+            quote_request(0, 1, StockId(0), false).intent().clone(),
         )
         .with_predecessors(vec![IntentCandidateKey::player(99)]);
         let mut receipts = AccountReceipts::default();
@@ -798,8 +803,8 @@ mod tests {
 
     #[test]
     fn account_cash_conflict_uses_receipt_instead_of_candidate_layout() {
-        let first = quote_request(0, 1, "600001", false);
-        let second = quote_request(1, 1, "600002", false);
+        let first = quote_request(0, 1, StockId(0), false);
+        let second = quote_request(1, 1, StockId(1), false);
         let admitted =
             admit_ready_batch(vec![second, first], &mut AccountReceipts::default()).unwrap();
         assert_eq!(admitted[0].key(), &IntentCandidateKey::player(0));

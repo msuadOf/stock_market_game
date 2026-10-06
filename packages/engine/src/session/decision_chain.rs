@@ -64,10 +64,10 @@ pub(in crate::session) use roots::{InstitutionDecisionRoot, RootReadContext};
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
 pub(in crate::session) struct DecisionChainObservation {
     pub(in crate::session) market: MarketView,
-    pub(in crate::session) paths: BTreeMap<StockCode, crate::observation::PricePathObservation>,
-    pub(in crate::session) technical: BTreeMap<StockCode, TechnicalObservation>,
+    pub(in crate::session) paths: BTreeMap<StockId, crate::observation::PricePathObservation>,
+    pub(in crate::session) technical: BTreeMap<StockId, TechnicalObservation>,
     pub(in crate::session) now: crate::calendar::CivilInstant,
-    pub(in crate::session) exposed: BTreeSet<StockCode>,
+    pub(in crate::session) exposed: BTreeSet<StockId>,
 }
 
 impl DecisionChainObservation {
@@ -88,7 +88,7 @@ impl DecisionChainObservation {
     }
     fn build_technical(
         session: &GameSession,
-    ) -> Result<BTreeMap<StockCode, TechnicalObservation>, StepFatal> {
+    ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
         let stocks = session
             .state
             .candle_book
@@ -123,7 +123,7 @@ impl DecisionChainObservation {
                 (code.clone(), observation)
             })
             .collect::<Vec<_>>();
-        // 股票任务完成顺序可不同；仍按 StockCode 选择首个错误并构造规范结果 map。
+        // 股票任务完成顺序可不同；仍按 StockId 选择首个错误并构造规范结果 map。
         prepared
             .into_iter()
             .map(|(code, result)| Ok((code, result?)))
@@ -132,7 +132,7 @@ impl DecisionChainObservation {
     fn exposed_stocks(
         session: &GameSession,
         now: crate::calendar::CivilInstant,
-    ) -> BTreeSet<StockCode> {
+    ) -> BTreeSet<StockId> {
         let mut threshold = now.date();
         for _ in 0..EXPOSURE_FRESHNESS_DAYS {
             threshold = threshold
@@ -157,7 +157,13 @@ impl DecisionChainObservation {
                     .iter()
                     .any(|announcement| announcement.published_at.date() >= threshold);
             if fresh {
-                exposed.insert(stock.code.clone());
+                exposed.insert(
+                    session
+                        .state
+                        .stocks
+                        .id(&stock.code.0)
+                        .expect("配置股票必须已入目录"),
+                );
             }
         }
         exposed
@@ -240,8 +246,8 @@ fn apply_personal_experience_feedback(
 #[cfg(feature = "simulation-diagnostics")]
 pub(in crate::session) struct PlanRootDiagnostics {
     facts: Vec<crate::diagnostics::causal::CausalFactKind>,
-    reports: Vec<(StockCode, PublicationId)>,
-    candidates: BTreeSet<StockCode>,
+    reports: Vec<(StockId, PublicationId)>,
+    candidates: BTreeSet<StockId>,
 }
 
 #[cfg(not(feature = "simulation-diagnostics"))]
@@ -266,11 +272,11 @@ const EXPOSURE_FRESHNESS_DAYS: u32 = 2;
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct DecisionChainDiagnostics {
     pub plan_count: usize,
-    pub plans_per_stock: BTreeMap<StockCode, usize>,
+    pub plans_per_stock: BTreeMap<StockId, usize>,
     pub belief_accounts: usize,
     pub acquired_publications: usize,
     pub library_publications: usize,
-    pub available_valuation_entries: BTreeMap<StockCode, usize>,
+    pub available_valuation_entries: BTreeMap<StockId, usize>,
 }
 
 /// 信念条目概览（诊断/测试面）。
@@ -306,11 +312,11 @@ fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u3
 
 fn root_candidate_codes(
     account: AccountId,
-    held: &BTreeSet<StockCode>,
+    held: &BTreeSet<StockId>,
     watchlist: &crate::experience::PersonalWatchlist,
     plans: &PlanBook,
-    discovered: Option<StockCode>,
-) -> BTreeSet<StockCode> {
+    discovered: Option<StockId>,
+) -> BTreeSet<StockId> {
     let mut candidates = held.clone();
     candidates.extend(watchlist.stocks.keys().cloned());
     candidates.extend(plans.active_codes(account).cloned());
@@ -357,7 +363,7 @@ pub(in crate::session) enum PlanLifecycleAction {
     },
     Terminate {
         plan_id: PlanId,
-        code: StockCode,
+        code: StockId,
         child_order_id: Option<OrderId>,
         reason: TerminationReason,
         trading_day: u64,
@@ -373,7 +379,7 @@ pub(in crate::session) enum PlanLifecycleAction {
     Restructure {
         account: AccountId,
         plan_id: PlanId,
-        code: StockCode,
+        code: StockId,
         child_order_id: Option<OrderId>,
         terminating: bool,
         revision: PlanRevision,
@@ -524,7 +530,7 @@ impl GameSession {
         account: AccountId,
         plans: &PlanBook,
     ) {
-        let protected: BTreeSet<StockCode> = self.state.accounts[&account]
+        let protected: BTreeSet<StockId> = self.state.accounts[&account]
             .positions()
             .keys()
             .cloned()
@@ -537,7 +543,7 @@ impl GameSession {
             .unwrap_or_else(|| {
                 panic!("plan account {account:?} has no personal state for memory retention")
             });
-        let unprotected = |codes: &mut dyn Iterator<Item = &StockCode>| {
+        let unprotected = |codes: &mut dyn Iterator<Item = &StockId>| {
             codes
                 .filter(|code| !protected.contains(*code))
                 .take(crate::MAX_UNHELD_WATCHLIST_STOCKS + 1)
@@ -576,7 +582,7 @@ impl GameSession {
     fn plan_review_resources(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> crate::plans::ReviewResources {
         let own = &self.state.accounts[&account];
         let position = own.positions().get(code);
@@ -660,7 +666,7 @@ impl GameSession {
     fn plan_review_facts(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         market: &MarketView,
     ) -> (crate::Money, u32) {
         let price = market
@@ -670,8 +676,7 @@ impl GameSession {
             .last_price;
         let acquired = self
             .state
-            .company_registry
-            .issuer_of(code)
+            .issuer_of_stock(*code)
             .and_then(|company| {
                 self.state
                     .belief_participants
@@ -724,8 +729,7 @@ impl GameSession {
                 }
                 let known = self
                     .state
-                    .company_registry
-                    .issuer_of(plan.code())
+                    .issuer_of_stock(*plan.code())
                     .and_then(|company| {
                         self.state
                             .belief_participants
@@ -826,7 +830,7 @@ impl GameSession {
     /// 保留；指标只依赖最后 60 个有成交样本，不随多年历史重复扫描。
     fn build_chain_technical_observations(
         &self,
-    ) -> Result<BTreeMap<StockCode, TechnicalObservation>, StepFatal> {
+    ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
         DecisionChainObservation::build_technical(self)
     }
 
@@ -838,7 +842,7 @@ impl GameSession {
     /// 曝光股票集合：公布或公告落在新鲜度窗口内的发行人股票（发现
     /// 权重的公告加成输入；公司 ↔ 股票映射 = 发行人注册表）。
     #[cfg(test)]
-    fn chain_exposed_stocks(&self, now: crate::calendar::CivilInstant) -> BTreeSet<StockCode> {
+    fn chain_exposed_stocks(&self, now: crate::calendar::CivilInstant) -> BTreeSet<StockId> {
         DecisionChainObservation::exposed_stocks(self, now)
     }
 
@@ -866,8 +870,8 @@ impl GameSession {
     fn record_npc_decision_trace(
         &mut self,
         account: AccountId,
-        reports: &[(StockCode, PublicationId)],
-        candidates: &BTreeSet<StockCode>,
+        reports: &[(StockId, PublicationId)],
+        candidates: &BTreeSet<StockId>,
         plans: &PlanBook,
         events: &[Event],
     ) {
@@ -971,7 +975,7 @@ impl GameSession {
     pub(in crate::session) fn collect_plan_lifecycle_actions(
         &self,
         id: AccountId,
-        assessments: &BTreeMap<StockCode, CandidateAssessment>,
+        assessments: &BTreeMap<StockId, CandidateAssessment>,
         market_view: &MarketView,
         plans: &PlanBook,
     ) -> Vec<PlanLifecycleAction> {
@@ -1040,7 +1044,7 @@ impl GameSession {
         let chain_params = self.chain_strategy_params(id);
         // 账户事实先取局部值，供此账户的预算与报价游标共用。
         let account_cash = self.state.accounts[&id].cash();
-        let sellable_by_code: BTreeMap<StockCode, u32> = self.state.accounts[&id]
+        let sellable_by_code: BTreeMap<StockId, u32> = self.state.accounts[&id]
             .positions()
             .keys()
             .map(|code| (code.clone(), self.state.accounts[&id].sellable_qty(code)))
@@ -1060,14 +1064,19 @@ impl GameSession {
                 let remaining = plan.remaining_share_qty()?;
                 match plan.direction() {
                     Side::Buy => {
+                        let plan_code = self
+                            .state
+                            .stocks
+                            .code(*plan.code())
+                            .expect("plan stock must be cataloged");
                         let stock = self
                             .state
                             .setup
                             .stocks
                             .iter()
-                            .find(|stock| &stock.code == plan.code())
+                            .find(|stock| stock.code.0 == *plan_code)
                             .unwrap_or_else(|| {
-                                panic!("plan stock {:?} must have a spec", plan.code())
+                                panic!("plan stock {:?} must have a spec", plan_code)
                             });
                         // Quotes may move to any legal buy limit up to the daily upper band.
                         // Reserve against that upper bound, but only for the next routable child;
@@ -1097,14 +1106,19 @@ impl GameSession {
                     }
                     Side::Sell => {
                         let sellable = sellable_by_code.get(plan.code()).copied().unwrap_or(0);
+                        let plan_code = self
+                            .state
+                            .stocks
+                            .code(*plan.code())
+                            .expect("plan stock must be cataloged");
                         let stock = self
                             .state
                             .setup
                             .stocks
                             .iter()
-                            .find(|stock| &stock.code == plan.code())
+                            .find(|stock| stock.code.0 == *plan_code)
                             .unwrap_or_else(|| {
-                                panic!("plan stock {:?} must have a spec", plan.code())
+                                panic!("plan stock {:?} must have a spec", plan_code)
                             });
                         let qty = next_routable_sell_qty(
                             remaining,
@@ -1151,13 +1165,13 @@ impl GameSession {
             )
         };
         // 报价游标逐计划使用这些预算；真实路由由候选批协调。
-        let one_minute_bp: BTreeMap<StockCode, Option<i32>> = self
+        let one_minute_bp: BTreeMap<StockId, Option<i32>> = self
             .market_price_path_observations()
             .expect("price paths must build for urgency inputs")
             .iter()
             .map(|(code, path)| (code.clone(), ratio_to_bp(path.one_minute.return_ratio)))
             .collect();
-        let thirty_minute_bp: BTreeMap<StockCode, Option<i32>> = self
+        let thirty_minute_bp: BTreeMap<StockId, Option<i32>> = self
             .market_price_path_observations()
             .expect("price paths must build for urgency inputs")
             .iter()
@@ -1187,7 +1201,7 @@ impl GameSession {
     }
 
     /// 集合竞价委托快照（诊断/测试）：(side, price_cents, qty, owner) 列表。
-    pub fn auction_orders_debug(&self, code: &StockCode) -> Vec<(Side, i64, u32, AccountId)> {
+    pub fn auction_orders_debug(&self, code: &StockId) -> Vec<(Side, i64, u32, AccountId)> {
         self.state
             .auction_orders
             .get(code)
@@ -1204,7 +1218,7 @@ impl GameSession {
     pub fn assessment_debug(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> Result<Option<String>, String> {
         let market_view = self.build_market_view();
         let price_paths = self
@@ -1257,7 +1271,7 @@ impl GameSession {
 
     /// 单账户信念条目概览（诊断/测试）：(method, per_share_pessimistic_cents,
     /// per_share_optimistic_cents, confidence_bp, unavailable_reason)。
-    pub fn belief_debug(&self, account: AccountId, code: &StockCode) -> Option<BeliefDebugSummary> {
+    pub fn belief_debug(&self, account: AccountId, code: &StockId) -> Option<BeliefDebugSummary> {
         let belief = self
             .state
             .belief_participants
@@ -1283,7 +1297,7 @@ impl GameSession {
     }
 
     /// 计划概览（诊断/测试）：(account, code, direction, target, filled, status) 列表。
-    pub fn plans_debug(&self) -> Vec<(AccountId, String, Side, u32, u32, String)> {
+    pub fn plans_debug(&self) -> Vec<(AccountId, StockId, Side, u32, u32, String)> {
         self.state
             .plans
             .plan_ids()
@@ -1291,7 +1305,7 @@ impl GameSession {
                 let plan = self.state.plans.plan(plan_id).ok()?;
                 Some((
                     plan.account(),
-                    plan.code().0.clone(),
+                    *plan.code(),
                     plan.direction(),
                     match plan.target() {
                         crate::plans::PlanTarget::ShareCount(qty) => qty,
@@ -1307,7 +1321,7 @@ impl GameSession {
     /// 决策链诊断（只读；验收测试与离线对账用——不泄露任何隐藏市场信息，
     /// 共同 V 已不存在，这里只有链自身的状态计数与个人估值概览）。
     pub fn decision_chain_diagnostics(&self) -> DecisionChainDiagnostics {
-        let mut per_stock: BTreeMap<StockCode, usize> = BTreeMap::new();
+        let mut per_stock: BTreeMap<StockId, usize> = BTreeMap::new();
         let mut plan_count = 0_usize;
         for plan_id in self.state.plans.plan_ids() {
             if let Ok(plan) = self.state.plans.plan(plan_id) {
@@ -1315,7 +1329,7 @@ impl GameSession {
                 *per_stock.entry(plan.code().clone()).or_default() += 1;
             }
         }
-        let available_valuations: BTreeMap<StockCode, usize> = self
+        let available_valuations: BTreeMap<StockId, usize> = self
             .state
             .belief_participants
             .values()
@@ -1343,7 +1357,7 @@ impl GameSession {
     }
 
     /// 个人每股估值区间（无条目/不可用 ⇒ None）。
-    fn belief_per_share(&self, id: AccountId, code: &StockCode) -> Option<PerShareRange> {
+    fn belief_per_share(&self, id: AccountId, code: &StockId) -> Option<PerShareRange> {
         let entry = self
             .state
             .belief_participants
@@ -1369,7 +1383,7 @@ impl GameSession {
 fn buy_allocation_request(
     config: &crate::config::GameConfig,
     plan_id: PlanId,
-    code: StockCode,
+    code: StockId,
     confidence_bp: u32,
     reservation_price: Money,
     remaining: u32,
@@ -1445,7 +1459,7 @@ mod chain_restructure_tests {
     fn trace_links_a_real_cancellation_and_its_plan_transition() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plans = session.state.plans.clone();
         session.record_npc_decision_trace(account, &[], &BTreeSet::from([code]), &plans, &[]);
         let events = drive_once(&mut session, &reversal_assessment(-8_000));
@@ -1499,7 +1513,9 @@ mod chain_restructure_tests {
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
         observe_account_root_for_latch(&mut session, account);
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session
+            .stock_id(&session.state.setup.stocks[0].code.0)
+            .unwrap();
         let participant = &session.state.belief_participants[&account];
         let entry = participant.belief().entry(&code).unwrap();
         assert_eq!(entry.used_report_ids.len(), 2);
@@ -1603,7 +1619,9 @@ mod chain_restructure_tests {
         } else {
             observe_account_root_for_latch(&mut session, account);
         }
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session
+            .stock_id(&session.state.setup.stocks[0].code.0)
+            .unwrap();
         let before = session.state.belief_participants[&account]
             .belief()
             .entry(&code)
@@ -1688,7 +1706,7 @@ mod chain_restructure_tests {
         );
     }
 
-    fn personal_memory_boundary_session() -> (GameSession, Vec<StockCode>) {
+    fn personal_memory_boundary_session() -> (GameSession, Vec<StockId>) {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         let template = setup.stocks[0].clone();
         setup.stocks = (0..9)
@@ -1915,8 +1933,7 @@ mod chain_restructure_tests {
             .clone();
         let company = session
             .state
-            .company_registry
-            .issuer_of(&faded)
+            .issuer_of_stock(faded)
             .unwrap()
             .clone();
         let date = session.civil_date().prev().unwrap();
@@ -2088,7 +2105,7 @@ mod chain_restructure_tests {
     fn institution_active_buy_withdraws_when_its_positive_opinion_ends() {
         for score in [0, -1_000] {
             let mut session = seeded_buy_plan_with_child();
-            let code = StockCode("000812".to_owned());
+            let code = session.stock_id("000812").unwrap();
             let before = session
                 .state
                 .plans
@@ -2115,7 +2132,7 @@ mod chain_restructure_tests {
     #[test]
     fn institution_small_signal_changes_do_not_revise_a_quiet_plan() {
         let mut session = seeded_buy_plan_with_child();
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let id = session
             .state
             .plans
@@ -2131,7 +2148,7 @@ mod chain_restructure_tests {
         let plan = session
             .state
             .plans
-            .active_plan(AccountId(1), &StockCode("000812".to_owned()))
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .unwrap();
         let score = plan.opinion().signal_score_bp - 1;
         assert!(score >= session.state.plans.policy().reverse_revision_threshold_bp);
@@ -2174,7 +2191,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &StockCode("000812".to_owned()))
+            .active_plan(account, &session.stock_id("000812").unwrap())
             .unwrap()
             .plan_id();
         let equity = session.account_equity(account).unwrap();
@@ -2216,7 +2233,7 @@ mod chain_restructure_tests {
     fn institution_risk_pressure_cancels_buy_and_recovers_only_after_own_review() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let before = session
             .state
             .plans
@@ -2281,7 +2298,7 @@ mod chain_restructure_tests {
     fn institution_existing_reduction_uses_its_own_observed_drawdown() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let equity = session.account_equity(account).unwrap();
         session
             .state
@@ -2376,7 +2393,7 @@ mod chain_restructure_tests {
     fn institution_net_profitable_exit_updates_confidence_once_on_own_review() {
         let session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let mut belief = session.state.belief_participants[&account].belief().clone();
         let before = belief.entry(&code).unwrap().clone();
         belief
@@ -2412,7 +2429,7 @@ mod chain_restructure_tests {
     fn institution_new_direction_requires_the_confirmed_signal_threshold() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let style = crate::strategy::InstitutionStyle::ActiveTrader;
         session
             .state
@@ -2470,7 +2487,7 @@ mod chain_restructure_tests {
     fn institution_initial_plan_records_its_personal_execution_urgency() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let original = session
             .state
             .plans
@@ -2525,7 +2542,9 @@ mod chain_restructure_tests {
             &cognition
         );
         observe_account_root_for_latch(&mut session, account);
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session
+            .stock_id(&session.state.setup.stocks[0].code.0)
+            .unwrap();
         let belief = session.state.belief_participants[&account].belief();
         let entry = belief
             .entry(&code)
@@ -2544,7 +2563,7 @@ mod chain_restructure_tests {
     fn institution_frozen_policy_and_historical_review_resources_survive_restore() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let policy = crate::strategy::InstitutionExperiencePolicy::new(
             1,
             crate::strategy::InstitutionLossResponse::PauseAndReview,
@@ -2627,7 +2646,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &StockCode("000812".to_owned()))
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .unwrap()
             .plan_id();
         let child_id = session
@@ -2667,9 +2686,9 @@ mod chain_restructure_tests {
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
         let other = AccountId(2);
-        let original_code = StockCode("000812".to_owned());
-        let next_code = StockCode("000813".to_owned());
-        let sell_code = StockCode("000814".to_owned());
+        let original_code = session.stock_id("000812").unwrap();
+        let next_code = session.stock_id("000813").unwrap();
+        let sell_code = session.stock_id("000814").unwrap();
         let peak = Money::from_cents(1_000_000);
         session
             .state
@@ -2800,7 +2819,7 @@ mod chain_restructure_tests {
     fn open_account_latch_plan(
         session: &mut GameSession,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         direction: Side,
     ) -> PlanId {
         session
@@ -2870,7 +2889,7 @@ mod chain_restructure_tests {
         ] {
             let (mut session, plan_id, _) = paused_buy_ready_for_recovery_review();
             let account = AccountId(1);
-            let code = StockCode("000812".to_owned());
+            let code = session.stock_id("000812").unwrap();
             let mut encoded = serde_json::to_value(&session.state.plans).unwrap();
             encoded["plans"][plan_id.0.to_string()]["status"] =
                 serde_json::json!({ "Paused": { "reason": original_reason } });
@@ -2967,7 +2986,7 @@ mod chain_restructure_tests {
     fn institution_boundary_buy_quote_shrinks_to_actual_fee_budget() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         session
             .state
             .accounts
@@ -3041,7 +3060,7 @@ mod chain_restructure_tests {
     fn institution_boundary_existing_child_keeps_priority_without_reusing_frozen_cash() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let child = session.state.parent_orders[&account][&code].clone();
         let frozen = session.reserved_cash_for_account(account).unwrap();
         session
@@ -3118,7 +3137,7 @@ mod chain_restructure_tests {
     fn assert_patient_buy_sizes_at_actual_quote(order_size: u32) {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let price = Money::from_cents(285);
         let cash =
             buy_order_reservation(&session.state.setup.config, price, 100, Money::ZERO).unwrap();
@@ -3204,7 +3223,7 @@ mod chain_restructure_tests {
     fn assert_recovery_review_withdraws_stale_buy(score_bp: i32) {
         let (mut session, plan_id, child_id) = paused_buy_ready_for_recovery_review();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let filled = session.state.plans.plan(plan_id).unwrap().filled_qty();
         let position =
             serde_json::to_value(session.state.accounts[&account].positions().get(&code)).unwrap();
@@ -3295,7 +3314,7 @@ mod chain_restructure_tests {
         let plan_id = plans
             .create(PlanOpen {
                 account: AccountId(1),
-                code: StockCode("000812".to_owned()),
+                code: StockId(0),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -3347,7 +3366,7 @@ mod chain_restructure_tests {
         session.state.pending_npc = None;
         let end = session.current_market_minute();
         session.state.market_minute_closes.insert(
-            StockCode("000812".to_owned()),
+            session.stock_id("000812").unwrap(),
             (0..end)
                 .map(|minute| MarketMinuteClose {
                     absolute_trading_minute: minute,
@@ -3366,7 +3385,7 @@ mod chain_restructure_tests {
     fn urgency_acceleration_pauses_live_plan_and_routes_real_cancel() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -3402,7 +3421,7 @@ mod chain_restructure_tests {
     fn urgency_paused_plan_requires_own_observation_and_reaffirmed_signal() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -3462,7 +3481,7 @@ mod chain_restructure_tests {
     fn urgency_paused_child_in_no_cancel_window_stays_pending_without_releasing_resources() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -3527,7 +3546,7 @@ mod chain_restructure_tests {
             .experience_mut();
         experience.reference_equity = None;
         experience.peak_equity = None;
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -3612,7 +3631,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: AccountId(1),
-                code: StockCode("000812".to_owned()),
+                code: StockId(0),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -3667,7 +3686,7 @@ mod chain_restructure_tests {
                 session.state.setup.auction_ticks = auction_ticks;
                 session.state.setup.config.price_cage_enabled = cage_enabled;
                 let owner = AccountId(1);
-                let code = StockCode("000812".to_string());
+                let code = session.stock_id("000812").unwrap();
                 let account = session.state.accounts.get_mut(&owner).unwrap();
                 account.fixture_set_cash(Money::from_cents(1_000_000));
                 account.fixture_clear_positions();
@@ -3719,7 +3738,7 @@ mod chain_restructure_tests {
     fn plan_wake_uses_strategy_cadence_and_its_own_price_threshold() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -3794,7 +3813,7 @@ mod chain_restructure_tests {
     fn active_trader_creates_only_a_same_day_plan_after_the_opening_auction() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let style = crate::strategy::InstitutionStyle::ActiveTrader;
         session
             .state
@@ -3909,7 +3928,7 @@ mod chain_restructure_tests {
     fn sub_board_lot_buy_plan_does_not_submit_or_advance_a_parent() {
         let mut session = probe_session();
         let owner = AccountId(1);
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         session
             .state
             .accounts
@@ -3988,7 +4007,7 @@ mod chain_restructure_tests {
         let request = buy_allocation_request(
             &config,
             PlanId(0),
-            StockCode("000812".to_string()),
+            StockId(0),
             8_000,
             Money::from_cents(2_000),
             1_000_000,
@@ -4043,7 +4062,7 @@ mod chain_restructure_tests {
     fn unfinished_buy_plan_with_less_cash_than_its_fee_receives_zero_budget() {
         let mut session = probe_session();
         let owner = AccountId(1);
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         let plan_id = session
             .state
             .plans
@@ -4092,7 +4111,7 @@ mod chain_restructure_tests {
     fn unaffordable_parent_target_routes_its_affordable_next_buy_child() {
         let mut session = probe_session();
         let owner = AccountId(1);
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         // Enter the call auction: an empty book is explicitly represented as a two-sided
         // protected quote, so the test exercises the actual submit route rather than a wait.
         session.state.setup.auction_ticks = 10;
@@ -4107,12 +4126,17 @@ mod chain_restructure_tests {
         owner_account.fixture_clear_positions();
         assert!(owner_account.positions().is_empty());
         let parent_qty = 1_000_000;
+        let code_str = session
+            .state
+            .stocks
+            .code(code)
+            .expect("fixture stock must be cataloged");
         let stock = session
             .state
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == code)
+            .find(|stock| stock.code.0 == *code_str)
             .expect("fixture stock must exist");
         let child_qty = next_routable_buy_qty(
             parent_qty,
@@ -4276,7 +4300,7 @@ mod chain_restructure_tests {
         session.seed_order_for_test(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("000812".to_string()),
+                code: session.stock_id("000812").unwrap(),
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(280)),
                 qty: 100,
@@ -4310,7 +4334,7 @@ mod chain_restructure_tests {
     fn generation_preserves_pending_plan_facts_when_a_child_fill_is_waiting() {
         let mut session = seeded_buy_plan_with_child();
         let parent =
-            session.state.parent_orders[&AccountId(1)][&StockCode("000812".to_string())].clone();
+            session.state.parent_orders[&AccountId(1)][&session.stock_id("000812").unwrap()].clone();
         session
             .state
             .pending_plan_events
@@ -4422,7 +4446,7 @@ mod chain_restructure_tests {
     fn live_plan_without_position_or_belief_still_enters_root_observation() {
         let mut session = probe_session();
         let account = AccountId(1);
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         session
             .state
             .accounts
@@ -4615,7 +4639,7 @@ mod chain_restructure_tests {
         session.seed_order_for_test(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("000812".to_string()),
+                code: session.stock_id("000812").unwrap(),
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(280)),
                 qty: 100,
@@ -4629,7 +4653,7 @@ mod chain_restructure_tests {
         let plans = session.plans_debug();
         assert!(
             plans.iter().any(|(account, code, direction, ..)| {
-                account == &AccountId(1) && code == "000812" && direction == &Side::Buy
+                account == &AccountId(1) && *code == session.stock_id("000812").unwrap() && direction == &Side::Buy
             }),
             "seed scenario must produce the institution buy plan: {plans:?}"
         );
@@ -4638,7 +4662,7 @@ mod chain_restructure_tests {
                 .state
                 .parent_orders
                 .get(&AccountId(1))
-                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
                 .and_then(|parent| parent.active_child_order_id())
                 .is_some(),
             "seed scenario must leave an in-flight child order"
@@ -4646,11 +4670,11 @@ mod chain_restructure_tests {
         (session, events)
     }
 
-    fn reversal_assessment(score_bp: i32) -> BTreeMap<StockCode, CandidateAssessment> {
+    fn reversal_assessment(score_bp: i32) -> BTreeMap<StockId, CandidateAssessment> {
         let score = crate::plans::SignalScore::new(score_bp)
             .expect("test scores stay within the -10000..=10000 contract");
         BTreeMap::from([(
-            StockCode("000812".to_string()),
+            StockId(0),
             CandidateAssessment::Scored {
                 score,
                 used_weight_bp: 10_000,
@@ -4663,7 +4687,7 @@ mod chain_restructure_tests {
     fn shrinking_a_live_child_below_its_remaining_exposure_requests_cancellation() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan = session.state.plans.active_plan(account, &code).unwrap();
         let parent = &session.state.parent_orders[&account][&code];
         let child_id = parent.active_child_order_id().unwrap();
@@ -4714,7 +4738,7 @@ mod chain_restructure_tests {
     fn filled_child_cancel_failure_reconsiders_the_live_plan() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
-        let code = StockCode("000812".to_owned());
+        let code = session.stock_id("000812").unwrap();
         let plan = session.state.plans.active_plan(account, &code).unwrap();
         let parent = &session.state.parent_orders[&account][&code];
         let child_id = parent.active_child_order_id().unwrap();
@@ -4831,7 +4855,7 @@ mod chain_restructure_tests {
 
     fn drive_once(
         session: &mut GameSession,
-        assessments: &BTreeMap<StockCode, CandidateAssessment>,
+        assessments: &BTreeMap<StockId, CandidateAssessment>,
     ) -> Vec<Event> {
         observe_account_risk_for_review(session, AccountId(1));
         let mut plans = std::mem::take(&mut session.state.plans);
@@ -4886,7 +4910,7 @@ mod chain_restructure_tests {
             .state
             .parent_orders
             .get(&AccountId(1))
-            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
             .and_then(|parent| parent.active_child_order_id())
             .expect("child must be in flight");
 
@@ -4911,7 +4935,7 @@ mod chain_restructure_tests {
                 .state
                 .parent_orders
                 .get(&AccountId(1))
-                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
                 .map(|parent| parent.active_child_order_id().is_none())
                 .unwrap_or(true),
             "the linked parent must no longer carry the canceled child"
@@ -4925,7 +4949,7 @@ mod chain_restructure_tests {
             .state
             .parent_orders
             .get(&AccountId(1))
-            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
             .and_then(|parent| parent.active_child_order_id())
             .expect("child must be in flight");
         // 手工推进计划进度（计划簿事件路径）：filled 500_000 / target 599_300；
@@ -4976,7 +5000,7 @@ mod chain_restructure_tests {
                 .state
                 .parent_orders
                 .get(&AccountId(1))
-                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
                 .is_none(),
             "the dead linked parent entry must be removed"
         );
@@ -4986,7 +5010,7 @@ mod chain_restructure_tests {
     fn mid_day_termination_removes_a_linked_parent_without_an_active_child() {
         // Given: a plan-linked parent whose child has already resolved but whose plan remains active.
         let mut session = seeded_buy_plan_with_child();
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         let parent = session
             .state
             .parent_orders
@@ -5045,7 +5069,7 @@ mod chain_restructure_tests {
             .state
             .parent_orders
             .get(&AccountId(1))
-            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
             .and_then(|parent| parent.active_child_order_id())
             .expect("child must be in flight");
         // ticks_per_day=100、closing_auction_ticks=10 ⇒ tick ≥ 90 为收盘集合
@@ -5076,7 +5100,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .markets
-                .get(&StockCode("000812".to_string()))
+                .get(&session.stock_id("000812").unwrap())
                 .map(|market| market.resting_order_count() > 0)
                 .unwrap_or(false),
             "the resting child must stay in the book"
@@ -5086,7 +5110,7 @@ mod chain_restructure_tests {
                 .state
                 .parent_orders
                 .get(&AccountId(1))
-                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
                 .and_then(|parent| parent.active_child_order_id()),
             Some(child_id),
             "the linked parent must still reference its child"
@@ -5148,7 +5172,7 @@ mod chain_restructure_tests {
     fn route_sell_plan(holding_qty: u32, target_qty: u32) -> Vec<Event> {
         let mut session = probe_session();
         let owner = AccountId(1);
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         session.state.setup.auction_ticks = 10;
         session
             .state
@@ -5207,7 +5231,7 @@ mod chain_restructure_tests {
     #[test]
     fn restructure_rejection_preserves_old_plan_parent_order_and_reservation() {
         let mut session = seeded_buy_plan_with_child();
-        let code = StockCode("000812".to_string());
+        let code = session.stock_id("000812").unwrap();
         let owner = AccountId(1);
         let old = session
             .state

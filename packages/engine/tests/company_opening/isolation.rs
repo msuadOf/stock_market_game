@@ -55,8 +55,8 @@ fn trading_session() -> GameSession {
     GameSession::new(setup, 42).expect("compact default-stock session must be valid")
 }
 
-/// 逐户快照：账户 id、现金与全部持仓（代码/数量/T+1 锁定/投入/回收）。
-type AccountStates = Vec<(u64, Money, Vec<(String, u32, u32, i64, i64)>)>;
+/// 逐户快照：账户 id、现金与全部持仓（股票 id/数量/T+1 锁定/投入/回收）。
+type AccountStates = Vec<(u64, Money, Vec<(u32, u32, u32, i64, i64)>)>;
 
 fn account_states(session: &GameSession) -> AccountStates {
     (0..u64::try_from(session.account_count()).expect("account count fits u64"))

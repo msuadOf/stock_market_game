@@ -2,14 +2,14 @@
 //! 无按账户身份授予的信息面。共同 V 及其演化接口已删除。
 use engine::{
     create_backend, decide_data, ComputeBackend, ComputeError, ComputeMode, CpuBackend, MarketView,
-    Money, SelfView, StockCode, StockView, StrategyData, StrategyError, TargetPolicy,
+    Money, SelfView, StockId, StockView, StrategyData, StrategyError, TargetPolicy,
 };
 use std::collections::BTreeMap;
 
 fn view(last: i64) -> MarketView {
     MarketView {
         stocks: BTreeMap::from([(
-            StockCode("600101".to_string()),
+            StockId(0),
             StockView {
                 best_bid: Some(Money::from_cents(last - 1)),
                 best_ask: Some(Money::from_cents(last + 1)),

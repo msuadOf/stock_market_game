@@ -126,7 +126,7 @@ impl GameSession {
     /// 该函数不消耗 RNG、不改变会话，也不读取宿主墙钟或 UI/Publisher 状态。
     pub fn market_price_path_observations(
         &self,
-    ) -> Result<BTreeMap<StockCode, PricePathObservation>, ObservationError> {
+    ) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> {
         let codes = self.state.markets.keys().collect::<Vec<_>>();
         let results = codes
             .par_iter()
@@ -256,7 +256,7 @@ mod tests {
             setup.config.price_cage_enabled = cage_enabled;
             let session = GameSession::new(setup, 42).unwrap();
             let view = session.build_market_view();
-            let stock = &view.stocks[&StockCode("600888".into())];
+            let stock = &view.stocks[&StockId(0)];
             assert_eq!(stock.max_buy_price, Money::from_cents(expected_buy));
             assert_eq!(stock.min_sell_price, Money::from_cents(expected_sell));
         }

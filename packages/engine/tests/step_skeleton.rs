@@ -67,7 +67,8 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
             let snapshot = game.snapshot();
             assert_eq!(snapshot.tick, expected_tick);
             assert_eq!(
-                snapshot.markets[&StockCode("600001".to_owned())].last_price,
+                snapshot.markets[&game.stock_id("600001").expect("夹具股票必须在目录中")]
+                    .last_price,
                 Money::from_cents(1000)
             );
         }

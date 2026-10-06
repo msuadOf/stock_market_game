@@ -40,6 +40,7 @@ mod views;
 pub use failure::StepFatal;
 pub use hash::StateHash;
 pub use history_reads::HistoricalStockData;
+pub use crate::stock::StockId;
 pub use initial_allocation::{
     InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
 };
@@ -102,6 +103,7 @@ pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, StockCode};
+use crate::stock::StockCatalog;
 #[cfg(test)]
 use crate::behavior::BehaviorMarketObservation;
 use crate::behavior::PositionDecision;
@@ -220,7 +222,7 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         maker: AccountId,
@@ -236,7 +238,7 @@ pub enum Event {
         tick: u64,
         /// `CallAuction`（开盘）或 `ClosingAuction`（收盘）；消费者不得按事件名猜测时段。
         phase: TradingPhase,
-        code: StockCode,
+        code: StockId,
         indicative_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
@@ -255,7 +257,7 @@ pub enum Event {
         tick: u64,
         /// 完成这一笔集合竞价的交易阶段。
         phase: TradingPhase,
-        code: StockCode,
+        code: StockId,
         clearing_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
@@ -270,7 +272,7 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         tick: u64,
-        code: StockCode,
+        code: StockId,
         last_price: Money,
         /// Rust 聚合的权威当日日 K；宿主只同步，不再自行重算 OHLCV。
         daily_candle: DailyCandle,
@@ -290,7 +292,7 @@ pub enum Event {
         seq: u64,
         day: u32,
         /// 刚刚收盘的每股日 K，供增量客户端提交历史而无需拉取 360 日全量快照。
-        closed_daily_candles: BTreeMap<StockCode, DailyCandle>,
+        closed_daily_candles: BTreeMap<StockId, DailyCandle>,
     },
     /// 权威自然日已完成日结并前进；休市日同样产生，不能由交易事件替代。
     CivilDateAdvanced {
@@ -317,7 +319,7 @@ pub enum Event {
         #[ts(type = "number")]
         seq: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: RejectionReason,
     },
     /// 结算失败（账户侧异常，透传 AccountError 文案）。
@@ -326,7 +328,7 @@ pub enum Event {
         #[ts(type = "number")]
         seq: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: String,
     },
 
@@ -336,7 +338,7 @@ pub enum Event {
         #[ts(type = "number")]
         seq: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         id: OrderId,
         remaining_qty: u32,
     },
@@ -346,7 +348,7 @@ pub enum Event {
         #[ts(type = "number")]
         seq: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         id: OrderId,
         side: Side,
         price: Money,
@@ -430,21 +432,21 @@ pub struct SaveSlot {
     pub seed: u64,
     pub snapshot: SaveSnapshot,
     /// 日内存档恢复集合竞价所需的完整委托队列。
-    pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
+    pub auction_orders: BTreeMap<StockId, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
-    pub resting_orders: BTreeMap<StockCode, Vec<Order>>,
+    pub resting_orders: BTreeMap<StockId, Vec<Order>>,
     /// 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
     /// 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
     #[serde(with = "book_sequence_map")]
     #[ts(type = "Record<string, string>")]
-    pub book_next_sequences: BTreeMap<StockCode, u64>,
+    pub book_next_sequences: BTreeMap<StockId, u64>,
     /// 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
-    pub filled_orders: BTreeMap<StockCode, Vec<FilledOrderSnap>>,
+    pub filled_orders: BTreeMap<StockId, Vec<FilledOrderSnap>>,
     /// 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
-    pub price_history: BTreeMap<StockCode, Vec<Money>>,
+    pub price_history: BTreeMap<StockId, Vec<Money>>,
     /// 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
     /// 到日界后清空，跨日窗口读取已经完成的日 K。
-    pub market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
+    pub market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     /// 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -455,7 +457,7 @@ pub struct SaveSlot {
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
     /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
-    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, SaveParentOrderPlan>>,
+    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockId, SaveParentOrderPlan>>,
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
@@ -506,11 +508,21 @@ pub struct SaveSlot {
     pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
 }
 
+impl SaveSlot {
+    /// 边界便捷：按代码查 id（目录由 setup 构造）。未知代码返回 None。
+    pub fn stock_id(&self, code: &str) -> Option<StockId> {
+        self.setup
+            .stock_catalog()
+            .ok()
+            .and_then(|catalog| catalog.id(code))
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveParentOrderPlan {
-    pub code: StockCode,
+    pub code: StockId,
     pub side: Side,
     pub target_qty: u32,
     pub filled_qty: u32,
@@ -568,7 +580,7 @@ impl From<SaveParentOrderPlan> for ParentOrderPlan {
 #[ts(export)]
 pub struct NpcOrderLifecycle {
     pub account: AccountId,
-    pub code: StockCode,
+    pub code: StockId,
     pub order_id: OrderId,
     /// 委托进入连续竞价簿时的绝对标准交易分钟。
     pub placed_market_minute: u64,
@@ -626,14 +638,14 @@ mod canonical_u64_decimal {
 }
 
 mod book_sequence_map {
-    use super::{u64_decimal, StockCode};
+    use super::{u64_decimal, StockId};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;
 
     #[derive(Serialize, Deserialize)]
     struct Cursor(#[serde(with = "u64_decimal")] u64);
 
-    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<StockId, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -644,11 +656,11 @@ mod book_sequence_map {
             .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockId, u64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+        Ok(BTreeMap::<StockId, Cursor>::deserialize(deserializer)?
             .into_iter()
             .map(|(code, cursor)| (code, cursor.0))
             .collect())
@@ -686,14 +698,14 @@ mod account_ordinal_map {
 }
 
 mod stock_ordinal_map {
-    use super::{canonical_u64_decimal, StockCode};
+    use super::{canonical_u64_decimal, StockId};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;
 
     #[derive(Serialize, Deserialize)]
     struct Cursor(#[serde(with = "canonical_u64_decimal")] u64);
 
-    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<StockId, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -704,11 +716,11 @@ mod stock_ordinal_map {
             .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockId, u64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+        Ok(BTreeMap::<StockId, Cursor>::deserialize(deserializer)?
             .into_iter()
             .map(|(code, cursor)| (code, cursor.0))
             .collect())
@@ -806,7 +818,7 @@ pub struct IngressReceiptCursors {
     pub next_account_ordinal: BTreeMap<AccountId, u64>,
     #[serde(with = "stock_ordinal_map")]
     #[ts(type = "Record<string, string>")]
-    pub next_stock_ordinal: BTreeMap<StockCode, u64>,
+    pub next_stock_ordinal: BTreeMap<StockId, u64>,
 }
 
 impl IngressReceiptCursors {
@@ -876,18 +888,18 @@ impl PendingNpcBatch {
     }
 }
 
-type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockCode, Order)>>;
-type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockCode, AuctionOrderSnap)>>;
+type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, Order)>>;
+type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, AuctionOrderSnap)>>;
 
 enum ReconcileScope {
     AllWorkingOrders,
-    ReviewedStocks(BTreeSet<StockCode>),
+    ReviewedStocks(BTreeSet<StockId>),
 }
 
 #[derive(Clone, Copy)]
 struct WorkingOrderSlices<'a> {
-    continuous: &'a [(StockCode, Order)],
-    auction: &'a [(StockCode, AuctionOrderSnap)],
+    continuous: &'a [(StockId, Order)],
+    auction: &'a [(StockId, AuctionOrderSnap)],
 }
 
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
@@ -907,7 +919,7 @@ pub enum SessionError {
     #[error("unknown account for history request: {0:?}")]
     UnknownHistoryAccount(AccountId),
     #[error("unknown stock for history request: {0:?}")]
-    UnknownHistoryStock(StockCode),
+    UnknownHistoryStock(StockId),
     #[error("history read could not be recorded: {0}")]
     InvalidHistoryRead(String),
     #[error("session resource limit exceeded: {0}")]
@@ -1194,6 +1206,29 @@ pub struct SessionSetup {
 }
 
 impl SessionSetup {
+    /// 由规格构造股票目录（ADR 0041）：按代码升序分配 id，id 序即代码序。
+    /// `GameSession::new` 与读档路径共用，保证两端 id 分配一致。
+    pub fn stock_catalog(&self) -> Result<StockCatalog, SessionError> {
+        StockCatalog::from_metas(
+            self.stocks
+                .iter()
+                .map(|spec| crate::stock::StockMeta::new(spec.code.0.clone()))
+                .collect(),
+        )
+        .map_err(|error| SessionError::InvalidSetup(format!("股票目录构造失败: {error}")))
+    }
+
+    /// 全部股票 id（按代码序）。构造/装配路径的便捷视图。
+    pub fn stock_ids(&self, catalog: &StockCatalog) -> Result<Vec<StockId>, SessionError> {
+        self.stocks
+            .iter()
+            .map(|spec| {
+                catalog.id(&spec.code.0).ok_or_else(|| {
+                    SessionError::InvalidSetup(format!("股票代码未入目录: {}", spec.code.0))
+                })
+            })
+            .collect()
+    }
     /// 校验所有启动期外部输入。serde 可绕过各子类型构造器，因此 session 创建和恢复
     /// 都必须从这里进入，验证成功后才构造权威状态。
     pub fn validate(&self) -> Result<(), SessionError> {
@@ -1390,21 +1425,23 @@ pub struct GameSession {
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
     setup: SessionSetup,
+    /// 股票目录（ADR 0041）：id ↔ 代码/显示名的唯一翻译层，构造后不可变。
+    stocks: StockCatalog,
     rng: SplitMix64,
     seed: u64,
-    markets: BTreeMap<StockCode, Market>,
+    markets: BTreeMap<StockId, Market>,
     accounts: AccountBook,
     history_reads: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
-    price_history: BTreeMap<StockCode, VecDeque<Money>>,
-    market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
+    price_history: BTreeMap<StockId, VecDeque<Money>>,
+    market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     candle_book: SessionCandleBook,
-    auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
+    auction_orders: BTreeMap<StockId, Vec<AuctionOrderSnap>>,
     pending_player: Vec<ReceiptBearingIntent>,
     pending_npc: Option<PendingNpcBatch>,
     ingress_receipt_cursors: IngressReceiptCursors,
     npc_attention: AccountPagedMap<NpcAttentionState>,
     retail_experience: AccountPagedMap<RetailExperienceState>,
-    parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    parent_orders: BTreeMap<AccountId, BTreeMap<StockId, ParentOrderPlan>>,
     pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 上一 tick 中实际观察并判断目标仓位与经历调整的散户目标仓位样本。
@@ -1464,34 +1501,34 @@ pub struct RetailDecisionTrace {
 pub enum RetailOrderDiagnosticEvent {
     Submitted {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         side: Side,
         order_id: OrderId,
         qty: u32,
     },
     Filled {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         side: Side,
         order_id: OrderId,
         qty: u32,
     },
     Canceled {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     },
     /// 集合竞价原子提交失败后未写入连续订单簿的剩余委托；它不是“仍在簿中”。
     Aborted {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     },
     Rejected {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: RejectionReason,
     },
 }
@@ -1622,18 +1659,25 @@ impl GameSession {
             )));
         }
         setup.validate()?;
+        // 股票目录（ADR 0041）：按代码升序分配 id，id 序即代码序；
+        // 重复代码在此显式报错，绝不静默去重。
+        let stocks = setup.stock_catalog()?;
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
         let mut market_minute_closes = BTreeMap::new();
         for s in &setup.stocks {
+            // 边界代码 → 数值 id；目录刚由同一批 specs 构造，查不到即内部不变量破损。
+            let id = stocks
+                .id(&s.code.0)
+                .ok_or_else(|| SessionError::InvalidSetup(format!("股票代码未入目录: {}", s.code.0)))?;
             markets.insert(
-                s.code.clone(),
-                Market::new(s.code.clone(), s.initial_price, s.limit_pct, s.tick)?,
+                id,
+                Market::new(id, s.initial_price, s.limit_pct, s.tick)?,
             );
-            price_history.insert(s.code.clone(), VecDeque::new());
-            market_minute_closes.insert(s.code.clone(), Vec::new());
+            price_history.insert(id, VecDeque::new());
+            market_minute_closes.insert(id, Vec::new());
         }
-        let daily_candles = generate_preset_daily_candles(&setup, seed)?;
+        let daily_candles = generate_preset_daily_candles(&setup, &stocks, seed)?;
         let mut accounts = AccountBook::default();
         accounts.insert(
             AccountId(0),
@@ -1688,6 +1732,7 @@ impl GameSession {
                 causal: crate::diagnostics::causal::CausalCollector::default(),
                 groups: setup.groups.clone(),
                 setup,
+                stocks,
                 rng,
                 seed,
                 markets,
@@ -1953,14 +1998,18 @@ impl GameSession {
             if spec.float_shares == 0 {
                 continue;
             }
-            let code = spec.code.clone();
+            let code = self
+                .state
+                .stocks
+                .id(&spec.code.0)
+                .expect("流通盘分配的股票必须已入目录");
             let price = spec.initial_price;
             let allocation = self.state.setup.float_allocation.clone();
             let alloc = self.split_float(spec.float_shares, &npc_ids, &allocation);
             for (id, qty) in alloc {
                 if qty > 0 {
                     if let Some(acc) = self.state.accounts.get_mut(&id) {
-                        acc.grant_position(code.clone(), qty, price)?;
+                        acc.grant_position(code, qty, price)?;
                     }
                 }
             }
@@ -2599,7 +2648,7 @@ impl GameSession {
     fn record_retail_order_canceled(
         &mut self,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     ) {
@@ -2673,10 +2722,20 @@ impl GameSession {
             })
     }
 
+    /// 股票目录（ADR 0041）只读访问：id ↔ 代码/显示名翻译的权威来源。
+    pub fn stock_catalog(&self) -> &StockCatalog {
+        &self.state.stocks
+    }
+
+    /// 边界便捷：按代码查 id。未知代码返回 None，由调用方显式处理。
+    pub fn stock_id(&self, code: &str) -> Option<StockId> {
+        self.state.stocks.id(code)
+    }
+
     fn register_npc_order_lifecycle_at_quote(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
         last_price: Money,
         best_bid: Option<Money>,
@@ -2719,7 +2778,7 @@ impl GameSession {
     fn npc_quote_lifetime_minutes(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
     ) -> u64 {
         let market = self
@@ -2742,7 +2801,7 @@ impl GameSession {
     fn npc_quote_lifetime_minutes_at_quote(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
         last_price: Money,
         best_bid: Option<Money>,
@@ -2760,12 +2819,17 @@ impl GameSession {
             AccountKind::Hot => 8_u64,
             AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
         };
+        let code_str = self
+            .state
+            .stocks
+            .code(*code)
+            .expect("lifecycle registration only accepts a cataloged stock");
         let tick_cents = self
             .state
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == *code)
+            .find(|stock| stock.code.0 == *code_str)
             .expect("lifecycle registration only accepts a configured stock")
             .tick
             .cents();
@@ -2792,10 +2856,18 @@ impl GameSession {
                 }
             })
             .unwrap_or(0);
+        // 抖动种子按代码字符串派生（保持既有数值路径不变，ADR 0041）。
+        let jitter_code = StockCode(
+            self.state
+                .stocks
+                .code(*code)
+                .expect("lifecycle registration only accepts a cataloged stock")
+                .to_string(),
+        );
         let deterministic_jitter = self.state.seed
             ^ account.0.rotate_left(17)
             ^ order.id.0.rotate_left(31)
-            ^ stock_code_hash(code);
+            ^ stock_code_hash(&jitter_code);
         let jitter = deterministic_jitter % (base / 2 + 1);
         base.saturating_add(u64::try_from(spread_ticks).unwrap_or(u64::MAX).min(8))
             .saturating_add(quote_distance_ticks.min(12))
@@ -2811,7 +2883,7 @@ impl GameSession {
     fn is_active_parent_child(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) -> bool {
         self.state
@@ -2824,7 +2896,7 @@ impl GameSession {
     fn remove_npc_order_lifecycle(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) {
         pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
@@ -3372,7 +3444,7 @@ mod candle_open_tests {
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
-                code: StockCode("600999".to_string()),
+                code: StockCode("600102".to_owned()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
@@ -3417,7 +3489,7 @@ mod candle_open_tests {
 
     #[test]
     fn first_auction_trade_replaces_provisional_previous_close_on_gap_up_days() {
-        let code = StockCode("600999".to_string());
+        let code = StockId(1);
         let mut session = GameSession::new(gap_stock_setup(), 7).unwrap();
         let mut previous_close = Money::from_cents(1_000);
 
@@ -3445,7 +3517,7 @@ mod candle_open_tests {
 
     #[test]
     fn first_auction_trade_replaces_provisional_previous_close_on_gap_down_days() {
-        let code = StockCode("600999".to_string());
+        let code = StockId(1);
         let mut session = GameSession::new(gap_stock_setup(), 11).unwrap();
         let mut previous_close = Money::from_cents(1_000);
 
@@ -3675,12 +3747,11 @@ mod npc_working_quote_tests {
     use crate::{HotParams, InstParams, RetailParams};
 
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
-        let code = StockCode("600888".to_string());
         SessionSetup {
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
-                code: code.clone(),
+                code: StockCode("600888".to_owned()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
@@ -3728,7 +3799,7 @@ mod npc_working_quote_tests {
         let session = GameSession::new(quote_setup(0), 42).unwrap();
         let mut save = session.save().unwrap();
         let account_id = *save.belief_books.keys().next().unwrap();
-        let code = save.setup.stocks[0].code.clone();
+        let code = StockId(0);
         save.snapshot
             .accounts
             .get_mut(&account_id)
@@ -3819,7 +3890,7 @@ mod npc_working_quote_tests {
         let session = GameSession::new(quote_setup(0), 42).unwrap();
         let save = session.save().unwrap();
         let account_id = *save.belief_books.keys().next().unwrap();
-        let code = save.setup.stocks[0].code.clone();
+        let code = StockId(0);
         let current = crate::experience::ExperienceMoment {
             civil_date: save.civil_clock.current_date,
             market_minute: 0,
@@ -3837,7 +3908,7 @@ mod npc_working_quote_tests {
         feedback
             .failure_events
             .push(crate::experience::FailureEventRecord {
-                code: StockCode("999999".to_owned()),
+                code: StockId(9),
                 order_id: Some(0),
                 moment: current,
             });
@@ -3892,7 +3963,7 @@ mod npc_working_quote_tests {
         feedback
             .failure_events
             .push(crate::experience::FailureEventRecord {
-                code: save.setup.stocks[0].code.clone(),
+                code: StockId(0),
                 order_id: None,
                 moment,
             });
@@ -3919,7 +3990,7 @@ mod npc_working_quote_tests {
                 .experience_mut()
                 .stocks
                 .insert(
-                    save.setup.stocks[0].code.clone(),
+                    StockId(0),
                     crate::experience::RetailStockExperience {
                         last_buy_price: price,
                         last_buy_order_id: order,
@@ -3942,7 +4013,7 @@ mod npc_working_quote_tests {
         setup
     }
 
-    fn buy(code: &StockCode, price: i64) -> Intent {
+    fn buy(code: &StockId, price: i64) -> Intent {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
@@ -3953,7 +4024,7 @@ mod npc_working_quote_tests {
 
     pub(super) fn two_stock_quote_setup() -> SessionSetup {
         let mut setup = quote_setup(0);
-        let second = StockCode("600889".to_string());
+        let second = StockCode("600889".to_owned());
         let mut spec = setup.stocks[0].clone();
         spec.code = second;
         setup.stocks.push(spec);
@@ -3973,7 +4044,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn accepted_retail_observation_persists_an_unheld_watchlist_stock() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let retail = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 124).unwrap();
         force_attention_candidate(&mut session, retail, 0);
@@ -3995,7 +4066,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let institution = AccountId(1);
         let mut session = GameSession::new(quote_setup(0), 992).unwrap();
         session
@@ -4040,7 +4111,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn institution_symbolic_intent_bypasses_parent_order_and_supersedes_old_target() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let institution = AccountId(1);
         let mut session = GameSession::new(quote_setup(0), 994).unwrap();
         let empty_working = WorkingOrderSlices {
@@ -4079,7 +4150,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn mixed_fixed_and_symbolic_intents_survive_with_or_without_an_old_parent() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let institution = AccountId(1);
         let empty_working = WorkingOrderSlices {
             continuous: &[],
@@ -4145,7 +4216,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let institution = AccountId(1);
         let mut setup = quote_setup(0);
         setup.ticks_per_day = 100;
@@ -4203,7 +4274,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn closing_auction_restores_a_parent_child_that_remains_in_continuous_book() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let institution = AccountId(1);
         let mut setup = quote_setup(0);
         setup.ticks_per_day = 2;
@@ -4260,7 +4331,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn market_view_keeps_tick_samples_separate_from_completed_market_minutes() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 1_001).unwrap();
         session.state.price_history.insert(
             code.clone(),
@@ -4295,7 +4366,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn behavior_observation_remains_bounded_after_six_thousand_completed_days() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
         let template = session.state.candle_book.histories()[&code][0].clone();
         session.state.candle_book.replace_history(
@@ -4342,7 +4413,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn closing_day_keeps_history_beyond_the_preset_window() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
         let first = session.state.candle_book.histories()[&code][0].clone();
         let previous = session.state.candle_book.histories()[&code].len();
@@ -4374,7 +4445,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn realized_profit_can_make_cost_return_unavailable_without_breaking_observation() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let account = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 121).unwrap();
         let config = session.state.setup.config.clone();
@@ -4413,9 +4484,17 @@ mod npc_working_quote_tests {
 }
 
 impl CommittableSessionState {
+    /// 按数值 id 查发行人公司（公司域仍以 StockCode 关联，翻译在会话侧完成；
+    /// 公司域数值化后此助手消亡——见 string-free-inventory.md A 表）。
+    fn issuer_of_stock(&self, id: StockId) -> Option<&crate::company::CompanyId> {
+        let code = self.stocks.code(id)?;
+        self.company_registry
+            .issuer_of(&crate::account::StockCode(code.to_string()))
+    }
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {
             setup,
+            stocks,
             rng,
             seed,
             markets,
@@ -4468,6 +4547,7 @@ impl CommittableSessionState {
                 })?;
         Ok(Self {
             setup: setup.clone(),
+            stocks: stocks.clone(),
             rng: rng.clone(),
             seed: *seed,
             markets: markets.clone(),
@@ -4516,6 +4596,7 @@ impl CommittableSessionState {
     fn commit_from(&mut self, shadow: Self) {
         let Self {
             setup,
+            stocks,
             rng,
             seed,
             markets,
@@ -4561,6 +4642,7 @@ impl CommittableSessionState {
         } = shadow;
         self.urgency_policy = urgency_policy;
         self.setup = setup;
+        self.stocks = stocks;
         self.rng = rng;
         self.seed = seed;
         self.markets = markets;
@@ -4626,7 +4708,7 @@ mod committable_state_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::Cancel {
-                    code: StockCode("600888".to_owned()),
+                    code: StockId(0),
                     id: OrderId(101),
                 },
             )
@@ -4658,7 +4740,7 @@ mod committable_state_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::Cancel {
-                    code: StockCode("600888".to_owned()),
+                    code: StockId(0),
                     id: OrderId(102),
                 },
             )
@@ -4669,7 +4751,7 @@ mod committable_state_tests {
             .last_retail_order_events
             .push(RetailOrderDiagnosticEvent::Canceled {
                 account: AccountId(1),
-                code: StockCode("600888".to_owned()),
+                code: StockId(0),
                 order_id: OrderId(103),
                 remaining_qty: 100,
             });

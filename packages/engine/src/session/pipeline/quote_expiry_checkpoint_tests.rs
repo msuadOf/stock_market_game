@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let npc = crate::AccountId(1);
     let player = crate::AccountId(0);
     let mut game =

@@ -71,7 +71,7 @@ pub(super) fn use_buy_imbalance_analysis(session: &mut GameSession, account: Acc
 fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping() {
     let account = AccountId(1);
     let intent = crate::Intent::PlaceLimit {
-        code: crate::StockCode("600888".to_owned()),
+        code: crate::StockId(0),
         side: crate::Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
@@ -90,7 +90,7 @@ fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping()
 #[test]
 fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
     let account = AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let raw_intent = crate::Intent::PlaceLimit {
         code: code.clone(),
         side: crate::Side::Buy,
@@ -366,7 +366,9 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
 #[test]
 fn projection_exposes_working_decisions_before_residuals_without_canceling_the_book() {
     let (mut shadow, account) = due_retail(41);
-    let code = shadow.state.setup.stocks[0].code.clone();
+    let code = shadow
+        .stock_id(&shadow.state.setup.stocks[0].code.0)
+        .unwrap();
     let mut setup_events = Vec::new();
     shadow.seed_order_for_test(
         account,
@@ -453,7 +455,9 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
 fn production_source_does_not_fabricate_the_currently_unreachable_parent_capability() {
     let account = AccountId(1);
     let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 991).unwrap();
-    let code = shadow.state.setup.stocks[0].code.clone();
+    let code = shadow
+        .stock_id(&shadow.state.setup.stocks[0].code.0)
+        .unwrap();
     let existing = crate::session::ParentOrderPlan::from_facts(
         code.clone(),
         crate::Side::Buy,

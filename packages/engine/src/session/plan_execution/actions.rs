@@ -180,7 +180,7 @@ impl GameSession {
     pub(super) fn require_active_child(
         &self,
         plan_id: PlanId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) -> Result<(), PlanExecutionError> {
         let active = self

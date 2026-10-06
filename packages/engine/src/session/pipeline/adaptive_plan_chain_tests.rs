@@ -164,7 +164,7 @@ fn execute(
 }
 
 fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     session
         .state
         .accounts
@@ -856,8 +856,8 @@ fn run_independent_stock_round(
     let mut roots = PlanChainOperationBatch::empty();
     let mut plan_ids = Vec::new();
     for (account, code) in [
-        (AccountId(1), StockCode("600888".to_owned())),
-        (second_account, StockCode("600889".to_owned())),
+        (AccountId(1), StockId(0)),
+        (second_account, StockId(1)),
     ] {
         let plan_id = session
             .state
@@ -949,10 +949,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
         .get_mut(&owner)
         .unwrap()
         .fixture_set_cash(Money::from_cents(10_000_000));
-    let codes = [
-        StockCode("600888".to_owned()),
-        StockCode("600889".to_owned()),
-    ];
+    let codes = [StockId(0), StockId(1)];
     let plan_ids = codes
         .iter()
         .map(|code| {
@@ -1029,7 +1026,7 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
             outcome: ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
                 sealed_index,
                 account: AccountId(0),
-                code: StockCode("600888".to_owned()),
+                code: StockId(0),
                 order_id: OrderId(1),
                 reason: ContinuousCancelRejection::OrderNotFound,
             }),
@@ -1071,7 +1068,7 @@ fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
                 candidate_key,
                 sealed_index,
                 account: AccountId(0),
-                code: StockCode("600888".to_owned()),
+                code: StockId(0),
                 order_id: None,
                 reason: RejectionReason::OrderNotFound,
             },
@@ -1137,7 +1134,7 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
 fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full_fill_requirement()
 {
     let (mut session, _) = fixture();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     session
         .state
         .accounts
@@ -1190,7 +1187,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
 #[test]
 fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_stream() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
-    setup.stocks[0].code = StockCode("000812".to_owned());
+    setup.stocks[0].code = crate::StockCode("000812".to_owned());
     setup.stocks[0].exchange = crate::StockExchange::Shenzhen;
     setup.stocks[0].initial_price = Money::from_cents(285);
     setup.stocks[0].category = crate::SecurityCategory::StMainBoard;
@@ -1248,7 +1245,7 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: StockCode("000812".to_owned()),
+            code: StockId(0),
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(280)),
             qty: 100,

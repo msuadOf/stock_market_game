@@ -6,7 +6,7 @@ use engine::{
     session::protocol::{ProtocolSession, TickFrame},
     verification_evidence::{RuntimeUpdateRef, UpdateProjection},
     AccountId, CivilDate, Event, FloatAllocation, GameConfig, HotParams, InstParams, Intent, Money,
-    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockCode,
+    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockId,
     StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID,
 };
 use serde::Serialize;
@@ -580,7 +580,7 @@ fn stock(
     initial_price: i64,
 ) -> StockSpec {
     StockSpec {
-        code: StockCode(code.to_owned()),
+        code: StockId(code.to_owned()),
         exchange,
         initial_price: Money::from_cents(initial_price),
         category,

@@ -61,7 +61,7 @@ impl BeliefParticipantState {
     }
     pub(in crate::session) fn prune_memory(
         &mut self,
-        protected: &std::collections::BTreeSet<crate::StockCode>,
+        protected: &std::collections::BTreeSet<crate::StockId>,
     ) {
         self.watchlist.prune(protected);
         self.price_memory.prune(protected);
@@ -147,7 +147,7 @@ impl PlanPersonalState {
 #[cfg(test)]
 mod participant_owner_tests {
     use super::*;
-    use crate::{Money, StockCode};
+    use crate::{Money, StockId};
 
     fn four_fields(participant: &BeliefParticipantState) -> serde_json::Value {
         serde_json::to_value((
@@ -177,7 +177,7 @@ mod participant_owner_tests {
         let mut personal = PlanPersonalState::take(&mut shadow, first);
         assert!(!shadow.state.belief_participants.contains_key(&first));
         assert!(!shadow.state.npc_attention.contains_key(&first));
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         personal.watchlist.record_attention(&code, 1, 1).unwrap();
         personal
             .price_memory
@@ -298,7 +298,7 @@ mod duplicate_install_state_tests {
         ))
         .unwrap();
         let mut personal = PlanPersonalState::take(&mut session, account);
-        let code = crate::StockCode("600888".to_owned());
+        let code = crate::StockId(0);
         personal.watchlist.record_attention(&code, 1, 1).unwrap();
         personal
             .price_memory

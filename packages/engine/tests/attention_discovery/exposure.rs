@@ -24,12 +24,12 @@ use engine::information::{
 };
 use engine::session::NpcAttentionState;
 use engine::strategy::MarketView;
-use engine::StockCode;
+use engine::StockId;
 
 use super::{attention, code, market_of, view};
 
 /// 公司 id ↔ 股票代码映射由会话接线持有；测试用固定映射。
-pub(crate) fn company_of(code: &StockCode) -> CompanyId {
+pub(crate) fn company_of(code: &StockId) -> CompanyId {
     CompanyId(format!("C-{}", code.0))
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn post_undisclosed_fact(books: &mut Books, source: u64) {
 pub(crate) struct AnnouncementExposureFixture {
     library: PublicLibrary,
     pub(crate) published: CivilInstant,
-    codes: Vec<StockCode>,
+    codes: Vec<StockId>,
     market: MarketView,
 }
 
@@ -130,7 +130,7 @@ impl AnnouncementExposureFixture {
         }
     }
 
-    pub(crate) fn exposed_at(&self, as_of: CivilInstant) -> BTreeSet<StockCode> {
+    pub(crate) fn exposed_at(&self, as_of: CivilInstant) -> BTreeSet<StockId> {
         self.codes
             .iter()
             .filter(|code| {
@@ -143,7 +143,7 @@ impl AnnouncementExposureFixture {
     pub(crate) fn market(&self) -> &MarketView {
         &self.market
     }
-    pub(crate) fn codes(&self) -> &[StockCode] {
+    pub(crate) fn codes(&self) -> &[StockId] {
         &self.codes
     }
 }
@@ -161,7 +161,7 @@ fn announcement_exposure_enters_weights_only_through_the_public_surface() {
 
     // 公布后：公告所属公司股票进入曝光集合 ⇒ 发现权重 +2.0；其他股票不变。
     let after = fixture.exposed_at(fixture.published);
-    let expected_exposed: BTreeSet<StockCode> = [code("600101")].into_iter().collect();
+    let expected_exposed: BTreeSet<StockId> = [code("600101")].into_iter().collect();
     assert_eq!(after, expected_exposed, "只有公告所属股票曝光");
     let weights = NpcAttentionState::discovery_weights(fixture.market(), &after);
     assert_eq!(weights[&code("600101")], 3.0, "公告曝光 +2.0");
@@ -182,7 +182,7 @@ fn one_public_announcement_never_synchronizes_all_npc_candidates() {
     let draws_per_npc = 25usize;
     let mut exposed_count = 0usize;
     let mut quiet_count = 0usize;
-    let mut first_run: Vec<Option<StockCode>> = Vec::new();
+    let mut first_run: Vec<Option<StockId>> = Vec::new();
     for npc in 1..=npcs {
         let mut state = attention(0x5EED_0000 ^ npc.wrapping_mul(0x6A09_E667_F3BC_C908));
         for _ in 0..draws_per_npc {
@@ -213,7 +213,7 @@ fn one_public_announcement_never_synchronizes_all_npc_candidates() {
 
     // 确定性：个体流可重放（同派生种子 ⇒ 同序列）。
     let mut replay = attention(0x5EED_0000 ^ 1u64.wrapping_mul(0x6A09_E667_F3BC_C908));
-    let second_run: Vec<Option<StockCode>> = (0..draws_per_npc)
+    let second_run: Vec<Option<StockId>> = (0..draws_per_npc)
         .map(|_| replay.sample_discovery_stock(fixture.market(), &held, &watchlist, &exposed))
         .collect();
     assert_eq!(first_run, second_run, "同种子个体序列逐次一致");

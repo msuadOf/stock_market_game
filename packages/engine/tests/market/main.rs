@@ -1,7 +1,7 @@
 //! engine market 模块集成测试（TDD 红绿循环）。
 //! 验证 Market 的涨跌停、价格笼子与撮合语义；成交价由实际撮合产生。
 //! 涨跌停与价格笼子用例在 `price_limits.rs` 中验证（`--test market` 不变）。
-use engine::account::StockCode;
+use engine::StockId;
 use engine::market::{Market, MarketError};
 use engine::Money;
 
@@ -10,12 +10,13 @@ mod price_limits;
 #[test]
 fn market_error_basics() {
     let e = MarketError::LimitExceeded {
-        code: StockCode("600101".to_string()),
+        code: StockId(0),
         price: Money::from_cents(1101),
         down: Money::from_cents(900),
         up: Money::from_cents(1100),
     };
-    assert!(e.to_string().contains("600101"));
+    // StockId 数值身份后，错误文本携带数值代号而非代码字符串。
+    assert!(e.to_string().contains("StockId(0)"));
     let invalid_params_error = MarketError::InvalidParams {
         reason: "bad".to_string(),
     };
@@ -25,7 +26,7 @@ fn market_error_basics() {
 fn mk_market() -> Market {
     // last_close=last_price=10.00，limit=0.10，tick=0.01
     Market::new(
-        StockCode("600101".to_string()),
+        StockId(0),
         Money::from_cents(1000),
         0.10,
         Money::from_cents(1),
@@ -46,14 +47,14 @@ fn market_new_and_limit_stops() {
 fn market_new_rejects_invalid() {
     // limit_pct ∉ (0,1)
     assert!(Market::new(
-        StockCode("x".to_string()),
+        StockId(0),
         Money::from_cents(1000),
         1.5,
         Money::from_cents(1)
     )
     .is_err());
     assert!(Market::new(
-        StockCode("x".to_string()),
+        StockId(0),
         Money::from_cents(1000),
         0.0,
         Money::from_cents(1)
@@ -61,7 +62,7 @@ fn market_new_rejects_invalid() {
     .is_err());
     // initial_price ≤ 0
     assert!(Market::new(
-        StockCode("x".to_string()),
+        StockId(0),
         Money::ZERO,
         0.10,
         Money::from_cents(1)
@@ -142,7 +143,7 @@ fn depth_passes_through_book() {
 fn reexport_from_crate_root() {
     use engine::{Market, MarketError};
     let _ = Market::new(
-        StockCode("x".to_string()),
+        StockId(0),
         Money::from_cents(1000),
         0.10,
         Money::from_cents(1),

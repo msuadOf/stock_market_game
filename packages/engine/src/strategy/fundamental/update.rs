@@ -2,7 +2,7 @@
 //! 更新只由显式 [`BeliefCause`] 驱动——信念模块不存在任何 per-tick /
 //! per-observation 变更路径。
 
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::accounting::reports::ReportKind;
 use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
@@ -109,7 +109,7 @@ impl BeliefBook {
     /// 不动；同一订单只更新一次（重复触发幂等——字节不变）。
     pub(crate) fn apply_experience(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         order: OrderId,
         delta_bp: i32,
@@ -134,7 +134,7 @@ impl BeliefBook {
     /// `direct = true`（更正）直接重估，丢弃旧预测并重置信心。
     pub(crate) fn apply_material(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -209,7 +209,7 @@ impl BeliefBook {
 
     fn apply_interim_material(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -272,7 +272,7 @@ impl BeliefBook {
     /// 信用违约：公告须属本公司；以本人已知**最新年报**直接重估。
     pub(crate) fn apply_credit_default(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         announcement_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -296,7 +296,7 @@ impl BeliefBook {
     /// 到期：同事实重估（预测/信心不动），锚推进到当前日。
     pub(crate) fn apply_horizon_expiry(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         inputs: &BeliefInputs<'_, impl Sized>,
     ) -> Result<(), BeliefError> {
@@ -347,7 +347,7 @@ impl BeliefBook {
     /// 信心、按初始规则重来；否则 λ 修订且信心保持。
     fn write_derived_entry(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         facts: AnnualFacts,

@@ -13,7 +13,10 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
         .setup
         .stocks
         .iter()
-        .map(|stock| stock.code.clone())
+        .map(|stock| {
+            game.stock_id(&stock.code.0)
+                .expect("配置股票必须已入目录")
+        })
         .collect::<Vec<_>>();
     for code in &codes {
         game.state
@@ -60,7 +63,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
 #[test]
 fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
@@ -103,8 +106,8 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
 #[test]
 fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids() {
     let account = crate::AccountId(0);
-    let first = crate::StockCode("600888".to_owned());
-    let second = crate::StockCode("600889".to_owned());
+    let first = crate::StockId(0);
+    let second = crate::StockId(1);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
         42,
@@ -172,7 +175,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
 #[test]
 fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -269,7 +272,7 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
 #[test]
 fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
@@ -327,7 +330,7 @@ fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_ret
 #[test]
 fn account_validation_driver_preserves_key_regression_and_rejects_replayed_identity_atomically() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
@@ -390,8 +393,8 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
 #[test]
 fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
     let account = crate::AccountId(0);
-    let known = crate::StockCode("600888".to_owned());
-    let unknown = crate::StockCode("600999".to_owned());
+    let known = crate::StockId(0);
+    let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -457,8 +460,8 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
 #[test]
 fn account_validation_driver_round_uses_two_pass_identity_allocation() {
     let account = crate::AccountId(0);
-    let known = crate::StockCode("600888".to_owned());
-    let unknown = crate::StockCode("600999".to_owned());
+    let known = crate::StockId(0);
+    let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let validation = StockValidation::new(
@@ -548,7 +551,7 @@ fn account_validation_driver_round_uses_two_pass_identity_allocation() {
 #[test]
 fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_round() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
@@ -593,7 +596,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
 #[test]
 fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -669,7 +672,7 @@ fn driver(
 fn limit_candidate(
     chain_generation_index: u64,
     account: crate::AccountId,
-    code: crate::StockCode,
+    code: crate::StockId,
     side: crate::Side,
     qty: u32,
 ) -> IntentCandidate {

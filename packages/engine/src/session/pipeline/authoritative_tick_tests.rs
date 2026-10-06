@@ -122,6 +122,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
     setup.npcs.retail_count = 2;
     let code = setup.stocks[0].code.clone();
     let mut session = GameSession::new(setup, 8).unwrap();
+    let code = session.stock_id(&code.0).unwrap();
     let first = AccountId(1);
     let second = AccountId(2);
     let player = AccountId(0);

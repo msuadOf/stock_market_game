@@ -8,7 +8,7 @@ use super::{
     event_collection::OwnedEventFact, CandidateValidationResult, EventStableKey, IntentCandidate,
     IntentCandidateBatch, IntentCandidateKey, StepFatal,
 };
-use crate::{Event, Intent, StockCode};
+use crate::{Event, Intent, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// 把普通 AccountValidation 拒绝转换为 Projection 拥有的事件事实。
@@ -111,7 +111,7 @@ fn validate_account_validation_result_contract(
     Ok(())
 }
 
-fn candidate_code(candidate: &IntentCandidate) -> Result<&StockCode, StepFatal> {
+fn candidate_code(candidate: &IntentCandidate) -> Result<&StockId, StepFatal> {
     match candidate.intent() {
         Intent::PlaceLimit { code, .. }
         | Intent::PlaceMarket { code, .. }

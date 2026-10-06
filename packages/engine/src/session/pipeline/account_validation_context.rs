@@ -1,5 +1,5 @@
 use super::{AccountValidationContext, StepFatal, StockValidation};
-use crate::{GameSession, SecurityCategory, StockCode};
+use crate::{GameSession, SecurityCategory, StockId};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ pub(super) struct StockValidationFacts {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct AccountValidationFacts {
-    pub(super) stocks: BTreeMap<StockCode, StockValidationFacts>,
+    pub(super) stocks: BTreeMap<StockId, StockValidationFacts>,
 }
 
 /// 捕获 AccountValidation 消费的真实报价过期后事实。
@@ -43,7 +43,12 @@ pub(super) fn collect_account_validation_context_facts(
     }
     let mut specifications = BTreeMap::new();
     for stock in &session.state.setup.stocks {
-        if specifications.insert(&stock.code, stock.category).is_some() {
+        let id = session
+            .state
+            .stocks
+            .id(&stock.code.0)
+            .expect("配置股票必须已入目录");
+        if specifications.insert(id, stock.category).is_some() {
             return Err(invariant("AccountValidation 上下文中 StockSpec 重复"));
         }
     }

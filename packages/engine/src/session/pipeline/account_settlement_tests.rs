@@ -12,7 +12,7 @@ use super::{
 use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
-    Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockCode,
+    Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockId,
 };
 use std::collections::BTreeMap;
 
@@ -28,8 +28,8 @@ fn retail_session(cash: i64) -> crate::GameSession {
     game
 }
 
-fn stock() -> StockCode {
-    StockCode("600001".to_owned())
+fn stock() -> StockId {
+    StockId(0)
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_histo
         Some(Money::from_cents(101))
     );
     let mut missing = serde_json::to_value(&experience).unwrap();
-    missing["feedback"]["stocks"]["600001"]
+    missing["feedback"]["stocks"][code.0.to_string()]
         .as_object_mut()
         .unwrap()
         .remove("institutional_fees_paid");
@@ -611,11 +611,11 @@ fn settlement_without_new_fills_prepares_no_account_or_retail_state_patch() {
 fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
-    for index in 0..9 {
+    for index in 0..9u64 {
         experience
             .get_mut(&AccountId(1))
             .unwrap()
-            .observe_stock(&StockCode(format!("6000{index:02}")), index);
+            .observe_stock(&StockId(index as u32), index);
     }
     let mut seen = RetailProjectionSeen::default();
     let prepared =
@@ -630,7 +630,8 @@ fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement
     setup.stocks = (0..9)
         .map(|index| {
             let mut stock = template.clone();
-            stock.code = StockCode(format!("6000{index:02}"));
+            // 规格位保持 StockCode 边界；目录按升序分配 id 0..8，与上方观察的 id 一致。
+            stock.code = crate::account::StockCode(format!("6000{index:02}"));
             stock
         })
         .collect();
@@ -654,7 +655,8 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     let mut experience = retail();
     let state = experience.get_mut(&AccountId(1)).unwrap();
     for index in 0..8 {
-        state.observe_stock(&StockCode(format!("6010{index:02}")), index);
+        // 纯 fixture：持股市 stock()=StockId(0)，观察列表用 id 1..8 保持互异。
+        state.observe_stock(&StockId(index as u32 + 1), index);
     }
     state
         .initialize_holding_dated(
@@ -686,7 +688,7 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
     assert!(!experience[&AccountId(1)]
         .stocks
-        .contains_key(&StockCode("601000".to_owned())));
+        .contains_key(&StockId(1)));
 }
 
 #[test]

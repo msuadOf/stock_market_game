@@ -2,9 +2,9 @@ use super::candidate_composition::{compose_projected_candidates, CandidateCompos
 use super::*;
 use crate::session::player_candidates::PlayerCandidateBatch;
 use crate::session::ReceiptBearingIntent;
-use crate::{AccountId, Intent, Money, Side, StockCode};
+use crate::{AccountId, Intent, Money, Side, StockId};
 
-fn place(code: &StockCode) -> Intent {
+fn place(code: &StockId) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -15,7 +15,8 @@ fn place(code: &StockCode) -> Intent {
 
 #[test]
 fn projected_npc_and_queued_player_keep_their_request_identities() {
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+    let code = StockId(0);
     let npc = IntentCandidateBatch::new(vec![
         IntentCandidate::new(
             IntentCandidateKey::npc(AccountId(9), 0),
@@ -59,7 +60,8 @@ fn projected_npc_and_queued_player_keep_their_request_identities() {
 
 #[test]
 fn projected_npc_rejects_wrong_source_or_owner() {
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+    let code = StockId(0);
     let wrong_source = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         AccountId(1),

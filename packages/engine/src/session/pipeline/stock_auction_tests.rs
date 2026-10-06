@@ -7,11 +7,11 @@ use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank, ReceiptKind,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec,
 };
-use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, StockCode, StockExchange};
+use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, StockId, StockExchange};
 
 #[test]
 fn opening_cancel_reports_committed_full_fill_to_the_owner() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let owner = AccountId(1);
     let id = OrderId(9);
     let mut market = Market::new(
@@ -50,7 +50,7 @@ fn opening_cancel_reports_committed_full_fill_to_the_owner() {
 
 #[test]
 fn closed_auction_window_still_reports_a_filled_order_precisely() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let owner = AccountId(1);
     let id = OrderId(9);
     let mut market = Market::new(
@@ -593,7 +593,7 @@ fn closing_day_end_source_domain_includes_continuous_and_auction_remainders() {
     let auction_key = auction.envelope.key().clone();
     let continuous_key = EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(10),
         side: Side::Buy,
     };
@@ -624,7 +624,7 @@ fn buyer_fee_audit_drift_is_a_typed_fatal_before_auction_receipts_escape() {
     let limit = Money::from_cents(1_100);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(1),
         side: Side::Buy,
     };
@@ -687,7 +687,7 @@ fn opening_phase() -> AuctionPhase {
 }
 
 fn auction_state(orders: impl IntoIterator<Item = AuctionOrder>) -> StockAuctionState {
-    let mut state = StockAuctionState::new(StockCode("600001".to_owned()));
+    let mut state = StockAuctionState::new(StockId(0));
     for order in orders {
         let result = state
             .apply_operation(
@@ -714,7 +714,7 @@ fn live_order(
     let limit = Money::from_cents(limit_cents);
     let key = EnvelopeKey {
         account: AccountId(account),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(order_id),
         side,
     };

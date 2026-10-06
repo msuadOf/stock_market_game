@@ -111,8 +111,7 @@ fn validate_order(order: &PlayerWorkingOrder) -> Result<(), ProtocolError> {
         Side::Buy => "cash",
         Side::Sell => "shares",
     };
-    if order.code.0.is_empty()
-        || order.price.cents() <= 0
+    if order.price.cents() <= 0
         || order.remaining_qty == 0
         || !matches!(order.venue.as_str(), "auction" | "continuous")
         || order.frozen != frozen

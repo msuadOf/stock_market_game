@@ -116,7 +116,7 @@ fn diagnostic_cache_changes_session_hash_but_not_business_hash() {
         .last_retail_order_events
         .push(RetailOrderDiagnosticEvent::Rejected {
             account: AccountId(1),
-            code: StockCode("600888".to_owned()),
+            code: StockId(0),
             reason: RejectionReason::InsufficientCash,
         });
 
@@ -170,7 +170,7 @@ fn retail_projection_cursor_changes_business_hash() {
             pipeline::ReceiptTransition {
                 envelope: pipeline::EnvelopeKey {
                     account: AccountId(1),
-                    stock: StockCode("600888".to_owned()),
+                    stock: StockId(0),
                     order: OrderId(9),
                     side: Side::Buy,
                 },
@@ -365,7 +365,7 @@ fn tick_shadow_commit_preserves_retail_projection_cursor() {
             pipeline::ReceiptTransition {
                 envelope: pipeline::EnvelopeKey {
                     account: AccountId(1),
-                    stock: StockCode("600888".to_owned()),
+                    stock: StockId(0),
                     order: OrderId(12),
                     side: Side::Sell,
                 },

@@ -8,13 +8,13 @@ use super::{
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
-use crate::{AccountId, GameSession, Money, OrderId, SaveDecodeLimits, Side, StockCode};
+use crate::{AccountId, GameSession, Money, OrderId, SaveDecodeLimits, Side, StockId};
 
 fn receipt(index: u64, order: u64) -> EnvelopeReceipt {
-    receipt_for_stock(index, order, StockCode("600001".to_owned()))
+    receipt_for_stock(index, order, StockId(0))
 }
 
-fn receipt_for_stock(index: u64, order: u64, stock: StockCode) -> EnvelopeReceipt {
+fn receipt_for_stock(index: u64, order: u64, stock: StockId) -> EnvelopeReceipt {
     let envelope = EnvelopeKey {
         account: AccountId(1),
         stock,
@@ -148,7 +148,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         44,
     )
     .expect("runtime_state retail fixture must be valid");
-    let code = source.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let old = receipt_for_stock(0, 1, code.clone());
     source.state.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
         [(old.index, old.local_key.clone())],

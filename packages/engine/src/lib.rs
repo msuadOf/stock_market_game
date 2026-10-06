@@ -37,6 +37,9 @@ pub use strategy::{
     StrategyProfile, TargetPolicy, ZiNoiseStrategy,
 };
 
+pub mod stock;
+pub use stock::{StockCatalog, StockCatalogError, StockId, StockMeta};
+
 pub mod account;
 pub use account::{Account, AccountError, AccountKind, Position, StockCode};
 

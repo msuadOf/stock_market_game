@@ -244,12 +244,12 @@ impl<'a, V> IntoIterator for &'a LedgerPagedMap<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AccountId, OrderId, Side, StockCode};
+    use crate::{AccountId, OrderId, Side, StockId};
 
-    fn key(account: u64, stock: &str, order: u64, side: Side) -> EnvelopeKey {
+    fn key(account: u64, stock: u32, order: u64, side: Side) -> EnvelopeKey {
         EnvelopeKey {
             account: AccountId(account),
-            stock: StockCode(stock.to_owned()),
+            stock: StockId(stock),
             order: OrderId(order),
             side,
         }
@@ -258,14 +258,14 @@ mod tests {
     #[test]
     fn shared_mutation_detaches_only_the_target_group_and_page() {
         let rows = LedgerPagedMap::from(BTreeMap::from([
-            (key(1, "AAA", 1, Side::Buy), 10),
-            (key(40, "AAA", 1, Side::Buy), 20),
-            (key(600, "AAA", 1, Side::Buy), 30),
+            (key(1, 0, 1, Side::Buy), 10),
+            (key(40, 0, 1, Side::Buy), 20),
+            (key(600, 0, 1, Side::Buy), 30),
         ]));
         let mut candidate = rows.clone();
-        let target = key(1, "AAA", 1, Side::Buy);
-        let other_page_same_group = key(40, "AAA", 1, Side::Buy);
-        let other_group = key(600, "AAA", 1, Side::Buy);
+        let target = key(1, 0, 1, Side::Buy);
+        let other_page_same_group = key(40, 0, 1, Side::Buy);
+        let other_group = key(600, 0, 1, Side::Buy);
 
         assert!(rows.same_group_allocation(&candidate, &target));
         assert!(rows.same_page_allocation(&candidate, &target));
@@ -285,14 +285,14 @@ mod tests {
     fn ordering_and_hash_projection_serde_match_btreemap_for_account_and_key_boundaries() {
         let mut expected = BTreeMap::new();
         for (account, stock, order, side, value) in [
-            (u64::MAX, "ZZZ", 9, Side::Sell, 5),
-            (u64::MAX, "AAA", 8, Side::Buy, 4),
-            ((1_u64 << 53) - 1, "ZZZ", 9, Side::Sell, 7),
-            (512, "AAA", 8, Side::Buy, 8),
-            (15, "BBB", 1, Side::Buy, 6),
-            (15, "AAA", 2, Side::Sell, 3),
-            (15, "AAA", 2, Side::Buy, 2),
-            (15, "AAA", 1, Side::Buy, 1),
+            (u64::MAX, 2, 9, Side::Sell, 5),
+            (u64::MAX, 0, 8, Side::Buy, 4),
+            ((1_u64 << 53) - 1, 2, 9, Side::Sell, 7),
+            (512, 0, 8, Side::Buy, 8),
+            (15, 1, 1, Side::Buy, 6),
+            (15, 0, 2, Side::Sell, 3),
+            (15, 0, 2, Side::Buy, 2),
+            (15, 0, 1, Side::Buy, 1),
         ] {
             expected.insert(key(account, stock, order, side), value);
         }
@@ -333,9 +333,9 @@ mod tests {
 
     #[test]
     fn insert_remove_retain_and_clear_keep_length_and_page_boundaries() {
-        let first = key(0, "AAA", 1, Side::Buy);
-        let last_in_page = key(15, "AAA", 1, Side::Buy);
-        let first_next_page = key(32, "AAA", 1, Side::Buy);
+        let first = key(0, 0, 1, Side::Buy);
+        let last_in_page = key(15, 0, 1, Side::Buy);
+        let first_next_page = key(32, 0, 1, Side::Buy);
         let mut rows = LedgerPagedMap::default();
         assert_eq!(rows.insert(first.clone(), 1), None);
         assert_eq!(rows.insert(first.clone(), 2), Some(1));
@@ -365,10 +365,10 @@ mod tests {
     #[test]
     fn retain_can_remove_multiple_rows_from_the_last_page_and_group() {
         let mut rows = LedgerPagedMap::from(BTreeMap::from([
-            (key(0, "600000", 1, Side::Buy), 1),
-            (key(1, "600000", 2, Side::Buy), 2),
-            (key(512, "600000", 3, Side::Buy), 3),
-            (key(513, "600000", 4, Side::Buy), 4),
+            (key(0, 0, 1, Side::Buy), 1),
+            (key(1, 0, 2, Side::Buy), 2),
+            (key(512, 0, 3, Side::Buy), 3),
+            (key(513, 0, 4, Side::Buy), 4),
         ]));
         let authority = rows.clone();
         rows.retain(|_, _| false);

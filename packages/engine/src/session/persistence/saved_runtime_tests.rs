@@ -163,7 +163,7 @@ fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
 #[test]
 fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     let mut session = session_with_runtime_state();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let institution = AccountId(1);
     let mut events = Vec::new();
     session.seed_order_for_test(
@@ -236,7 +236,7 @@ fn gross_capped_fee_session() -> GameSession {
 }
 
 fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -294,7 +294,7 @@ fn install_receipt_prefix(session: &mut GameSession, envelope: EnvelopeKey) {
 }
 
 fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -365,7 +365,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -436,7 +436,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -627,7 +627,7 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
 #[test]
 fn parent_plan_save_omits_rebuilt_child_quantity_and_rejects_injected_legacy_field() {
     let plan = crate::session::SaveParentOrderPlan {
-        code: StockCode("600888".to_owned()),
+        code: StockId(0),
         side: Side::Buy,
         target_qty: 200,
         filled_qty: 0,
@@ -657,7 +657,7 @@ fn runtime_envelope_rejects_injected_derived_fields() {
         "nominal",
     ] {
         let mut encoded = serde_json::json!({
-            "key": { "account": 1, "stock": "600888", "order": 1, "side": "Sell" },
+            "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
             "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" }
         });
         serde_json::from_value::<SavedLiveEnvelope>(encoded.clone())
@@ -697,7 +697,7 @@ fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history()
     let saved = source.save().expect("partially filled parent must save");
     let encoded = serde_json::to_value(&saved).unwrap();
     assert!(
-        encoded["parent_orders"][key.account.0.to_string()][&key.stock.0]
+        encoded["parent_orders"][key.account.0.to_string()][key.stock.0.to_string()]
             .get("active_child_remaining_qty")
             .is_none()
     );
@@ -750,7 +750,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     setup.config.commission_min = Money::ZERO;
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
-    let code = source.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -891,7 +891,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(10_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 42).expect("runtime_state fixture 必须有效");
     session
         .state
@@ -992,7 +992,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 43).expect("runtime_state fixture 必须有效");
     session
         .state
@@ -1077,7 +1077,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
     session
         .state
@@ -1234,7 +1234,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .local_key
         .transition
         .envelope
-        .stock = StockCode("600999".to_owned());
+        .stock = StockId(9);
     assert_invalid_save(
         validate_runtime_state(&session, &unknown_stock).unwrap_err(),
         "unknown stock",

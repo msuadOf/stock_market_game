@@ -42,7 +42,7 @@ impl ZiNoiseStrategy {
     pub(crate) fn apply_personal_analysis(
         &self,
         decision: &mut StrategyDecision,
-        assessments: &BTreeMap<StockCode, crate::plans::CandidateAssessment>,
+        assessments: &BTreeMap<StockId, crate::plans::CandidateAssessment>,
         market: &MarketView,
         own: &SelfView,
         risk: &AccountRiskObservation,

@@ -1,12 +1,12 @@
 //! 个人交易计划的权威状态类型：账户+股票唯一、可跨日、只以真实成交计进度。
 //!
-//! 复用既有身份类型（AccountId/StockCode/Side/OrderId），不建立平行体系；
+//! 复用既有身份类型（AccountId/StockId/Side/OrderId），不建立平行体系；
 //! 对母单执行子状态仅持可选订单 id 引用，不复制订单/冻结逻辑。
 //! 事件转移（观察/接受/成交/修订/暂停/恢复/到期/日终）见 [`super::revision`]。
 
 use super::validation::{validate_open, PlanError};
 use super::PlanPolicy;
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
 
 /// 计划稳定 id：由 [`super::PlanBook`] 单调分配，永不复用。
@@ -148,7 +148,7 @@ fn deserialize_review_resources<'de, Decoder: serde::Deserializer<'de>>(
 #[ts(export)]
 pub struct PlanOpen {
     pub account: AccountId,
-    pub code: StockCode,
+    pub code: StockId,
     pub direction: Side,
     pub target: PlanTarget,
     pub opinion: PlanOpinion,
@@ -167,7 +167,7 @@ pub struct PlanOpen {
 pub struct TradingPlan {
     pub(in crate::plans) plan_id: PlanId,
     pub(in crate::plans) account: AccountId,
-    pub(in crate::plans) code: StockCode,
+    pub(in crate::plans) code: StockId,
     pub(in crate::plans) direction: Side,
     pub(in crate::plans) target: PlanTarget,
     /// 累计真实成交（按当前方向计；反向修订开新进度，旧腿真实成交留在账户里）。
@@ -191,7 +191,7 @@ pub struct TradingPlan {
 }
 
 impl TradingPlan {
-    pub fn code(&self) -> &StockCode {
+    pub fn code(&self) -> &StockId {
         &self.code
     }
 
@@ -379,7 +379,7 @@ impl<'de> serde::Deserialize<'de> for TradingPlan {
         struct Raw {
             plan_id: PlanId,
             account: AccountId,
-            code: StockCode,
+            code: StockId,
             direction: Side,
             target: PlanTarget,
             filled_qty: u32,
@@ -432,7 +432,7 @@ mod owner_tests {
             PlanId(7),
             PlanOpen {
                 account: AccountId(1),
-                code: StockCode("600101".to_owned()),
+                code: StockId(0),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {

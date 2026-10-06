@@ -13,7 +13,7 @@ use engine::session::{
     StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
-use engine::CivilDate;
+use engine::{CivilDate, StockCode};
 
 use crate::exposure::{post_undisclosed_fact, private_books, AnnouncementExposureFixture};
 use crate::{attention, code};
@@ -24,7 +24,7 @@ fn discovery_setup() -> SessionSetup {
         groups: Vec::new(),
         stocks: vec![
             StockSpec {
-                code: code("600101"),
+                code: StockCode("600101".to_string()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1000),
                 category: SecurityCategory::MainBoard,
@@ -34,7 +34,7 @@ fn discovery_setup() -> SessionSetup {
                 float_shares: 0,
             },
             StockSpec {
-                code: code("600102"),
+                code: StockCode("600102".to_string()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1000),
                 category: SecurityCategory::MainBoard,

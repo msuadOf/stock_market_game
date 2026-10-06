@@ -352,7 +352,7 @@ mod tests {
         OrderOrigin {
             order: OrderId(order),
             account: AccountId(order),
-            code: StockCode("600101".to_owned()),
+            code: StockId("600101".to_owned()),
             company: None,
             plan: None,
             decision: None,
@@ -374,7 +374,7 @@ mod tests {
     }
 
     fn bilateral_fill_facts() -> Vec<CausalFact> {
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         let quote = Quote {
             code: code.clone(),
             bid_cents: Some(990),
@@ -469,7 +469,7 @@ mod tests {
                 CausalFactKind::Terminated {
                     order: OrderId(1),
                     account: AccountId(1),
-                    code: StockCode("600101".to_owned()),
+                    code: StockId("600101".to_owned()),
                     qty: 100,
                     reason: Termination::DayEnd,
                 },

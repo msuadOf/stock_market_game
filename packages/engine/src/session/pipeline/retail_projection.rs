@@ -2,7 +2,7 @@
 
 use super::{EnvelopeReceipt, FeeComponents, ReceiptKind, ReceiptLocalKey};
 use crate::{
-    AccountId, ExperienceError, Money, OrderId, Position, RetailExperienceState, Side, StockCode,
+    AccountId, ExperienceError, Money, OrderId, Position, RetailExperienceState, Side, StockId,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +17,7 @@ pub(super) struct RetailReceiptIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct RetailOrderIdentity {
     pub(super) account: AccountId,
-    pub(super) stock: StockCode,
+    pub(super) stock: StockId,
     pub(super) side_rank: u8,
     pub(super) order: OrderId,
 }
@@ -247,8 +247,8 @@ pub(super) struct RetailProjectionInput<'a> {
     /// Settlement derives this from authoritative `AccountKind::Retail`; experience
     /// storage must never be used to infer an account's kind.
     pub(super) retail_accounts: &'a BTreeSet<AccountId>,
-    pub(super) positions_before: &'a BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    pub(super) positions_after: &'a BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
+    pub(super) positions_before: &'a BTreeMap<AccountId, BTreeMap<StockId, Position>>,
+    pub(super) positions_after: &'a BTreeMap<AccountId, BTreeMap<StockId, Position>>,
     pub(super) seen: &'a RetailProjectionSeen,
     pub(super) market_minute: u64,
     pub(super) receipts: &'a [EnvelopeReceipt],
@@ -258,7 +258,7 @@ pub(super) struct RetailProjectionInput<'a> {
 pub(super) enum RetailReceiptEvent {
     Filled {
         account: AccountId,
-        stock: StockCode,
+        stock: StockId,
         side: Side,
         order: OrderId,
         qty: u32,
@@ -462,10 +462,10 @@ struct AccountFillProjection<'a> {
     state: Option<RetailExperienceState>,
     #[cfg(test)]
     market_minute: u64,
-    positions_before: Option<&'a BTreeMap<StockCode, Position>>,
-    positions_after: Option<&'a BTreeMap<StockCode, Position>>,
-    running_qty: BTreeMap<StockCode, u32>,
-    running_positions: BTreeMap<StockCode, Position>,
+    positions_before: Option<&'a BTreeMap<StockId, Position>>,
+    positions_after: Option<&'a BTreeMap<StockId, Position>>,
+    running_qty: BTreeMap<StockId, u32>,
+    running_positions: BTreeMap<StockId, Position>,
     events: Vec<RetailReceiptEvent>,
 }
 

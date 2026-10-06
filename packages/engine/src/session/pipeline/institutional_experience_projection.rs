@@ -3,7 +3,7 @@ use super::retail_projection::{
     RetailProjectionSeen,
 };
 use crate::session::account_paged_map::AccountPagedMap;
-use crate::{Account, AccountId, AccountKind, Position, StockCode};
+use crate::{Account, AccountId, AccountKind, Position, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_institutional_experience(
@@ -11,8 +11,8 @@ pub(super) fn project_institutional_experience(
     belief_participants: &AccountPagedMap<
         crate::session::decision_chain::personal_state::BeliefParticipantState,
     >,
-    positions_before: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    positions_after: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
+    positions_before: &BTreeMap<AccountId, BTreeMap<StockId, Position>>,
+    positions_after: &BTreeMap<AccountId, BTreeMap<StockId, Position>>,
     seen: &RetailProjectionSeen,
     moment: crate::experience::ExperienceMoment,
     receipts: &[super::EnvelopeReceipt],

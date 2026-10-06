@@ -10,7 +10,7 @@ fn real_parallel_ledger_reports_early_total_overflow_before_later_row_failure() 
             Envelope::tick_start_existing(
                 EnvelopeKey {
                     account: crate::AccountId(index),
-                    stock: crate::StockCode("600000".to_owned()),
+                    stock: crate::StockId(0),
                     order: crate::OrderId(index),
                     side: if shares {
                         crate::Side::Sell
@@ -148,7 +148,7 @@ fn conservation_rows_execute_on_multiple_rayon_workers() {
         Envelope::tick_start_existing(
             EnvelopeKey {
                 account: crate::AccountId(index),
-                stock: crate::StockCode(format!("{:06}", index % 1_000_000)),
+                stock: crate::StockId((index % 1_000_000) as u32),
                 order: crate::OrderId(index),
                 side: crate::Side::Buy,
             },

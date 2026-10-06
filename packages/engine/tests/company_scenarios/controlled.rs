@@ -3,10 +3,11 @@ use engine::company::CompanyId;
 use engine::company::CompanyKind;
 use engine::information::{NpcObservationContext, PublicationId};
 use engine::strategy::{BeliefCause, BeliefInputs};
-use engine::AccountId;
+use engine::{AccountId, StockId};
 
-fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
-    let stock = code("600101");
+fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32) {
+    // 聚焦夹具只保留 "600101" 一只股票，目录 rank 恒为 0。
+    let stock = StockId(0);
     let company = CompanyId("C-600101".into());
     // The company domain has its own seed stream. Read the actual disclosure
     // offset from published history instead of deriving it from the game seed.

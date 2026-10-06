@@ -2,7 +2,7 @@ use super::*;
 
 fn place_limit(price_cents: i64) -> crate::Intent {
     crate::Intent::PlaceLimit {
-        code: crate::StockCode("600888".to_owned()),
+        code: crate::StockId(0),
         side: crate::Side::Buy,
         price: crate::LimitPrice::Fixed(crate::Money::from_cents(price_cents)),
         qty: 100,
@@ -141,7 +141,7 @@ fn intent_candidate_batch_round_trips_serialized_transfer_equality() {
             cancel_key,
             owner,
             crate::Intent::Cancel {
-                code: crate::StockCode("600888".to_owned()),
+                code: crate::StockId(0),
                 id: crate::OrderId(9),
             },
         ),

@@ -16,13 +16,13 @@ use super::{
     EnvelopeLedger, EnvelopeReceipt, StepFatal,
 };
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
-use crate::{Account, AccountId, Market, RetailExperienceState, StockCode};
+use crate::{Account, AccountId, Market, RetailExperienceState, StockId};
 use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum StockExecutionTransactionError {
     #[error("StockProcessing 为股票 {code:?} 产生了多个 Continuous worker 输出")]
-    DuplicateStockWorker { code: StockCode },
+    DuplicateStockWorker { code: StockId },
     #[error("ReceiptAggregation receipt 事务失败：{0}")]
     ReceiptAggregation(#[source] StepFatal),
     #[error("SettlementShadow 结算事务失败：{0}")]
@@ -47,7 +47,7 @@ pub(super) struct StockExecutionTransactionOutput {
     pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
     pub(super) belief_patch: BTreeMap<AccountId, crate::strategy::BeliefBook>,
     pub(super) seen: RetailProjectionSeen,
-    pub(super) stocks: BTreeMap<StockCode, StockExecutionOutput>,
+    pub(super) stocks: BTreeMap<StockId, StockExecutionOutput>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     pub(super) settlement: SettlementTransactionOutput,
 }

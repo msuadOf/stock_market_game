@@ -1,7 +1,7 @@
 //! Committed tick transport. Sequence bounds use the half-open cursor interval
 //! `(seq_from, seq_to]`; an empty frame has equal cursors.
 
-use super::{DailyCandle, Event, Snapshot, StockCode, TradingPhase};
+use super::{DailyCandle, Event, Snapshot, StockId, TradingPhase};
 use std::collections::{BTreeMap, BTreeSet};
 mod civil;
 mod commit;
@@ -22,11 +22,11 @@ pub use replay::*;
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct TickTimeseriesPayload {
-    pub markets: BTreeMap<StockCode, super::MarketSnap>,
-    pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
-    pub closed_daily_candles: BTreeMap<StockCode, DailyCandle>,
-    pub auction_points: BTreeMap<StockCode, Vec<AuctionPoint>>,
-    pub continuous_points: BTreeMap<StockCode, ContinuousPoint>,
+    pub markets: BTreeMap<StockId, super::MarketSnap>,
+    pub active_daily_candles: BTreeMap<StockId, DailyCandle>,
+    pub closed_daily_candles: BTreeMap<StockId, DailyCandle>,
+    pub auction_points: BTreeMap<StockId, Vec<AuctionPoint>>,
+    pub continuous_points: BTreeMap<StockId, ContinuousPoint>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]

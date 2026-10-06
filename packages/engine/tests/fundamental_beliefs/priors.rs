@@ -10,7 +10,7 @@
 //! 独立金样（分）：甲 510,943,419 → 470,564,325；乙 18,798,881 → 74,108,614。
 
 use crate::{assumptions_rng, hour_after, market, scenario, ISSUED_SHARES};
-use engine::account::StockCode;
+use engine::StockId;
 use engine::company::CompanyKind;
 use engine::information::{NpcInformationState, NpcObservationContext};
 use engine::orderbook::{AccountId, OrderId};
@@ -19,8 +19,8 @@ use engine::strategy::{
     ForecastBasis, FundamentalMethod, RetailStyle, StrategyProfile, ValuationOutcome,
 };
 
-pub(crate) fn stock_code() -> StockCode {
-    StockCode("600101".to_string())
+pub(crate) fn stock_code() -> StockId {
+    StockId(0)
 }
 
 pub(crate) fn cash_flow_analysis() -> AnalysisProfile {

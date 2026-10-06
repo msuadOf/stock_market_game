@@ -5,7 +5,7 @@ use super::*;
 use crate::session::RetailOrderDiagnosticEvent;
 use crate::{
     Account, AccountId, AccountKind, Event, Intent, Money, Order, OrderId, RetailExperienceState,
-    Side, StockCode,
+    Side, StockId,
 };
 
 const PLAYER: AccountId = AccountId(0);
@@ -422,7 +422,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     assert_eq!(committed.receipt.next_receipt_base(), 2);
 }
 
-fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockCode) {
+fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockId) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
     // 本用例的现金断言以 10 万元开局；不跟随产品默认开局资金变化。
@@ -469,7 +469,7 @@ fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, S
     (game, code)
 }
 
-fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
+fn enqueue_crossing_buy(game: &mut GameSession, code: &StockId) {
     game.enqueue_player_intent(
         PLAYER,
         Intent::PlaceLimit {
@@ -482,7 +482,7 @@ fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
     .unwrap();
 }
 
-fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
     let charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::ZERO,
@@ -521,7 +521,7 @@ fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
     assert_eq!(receipt.deliver_cash, Money::ZERO);
 }
 
-fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
     let charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::from_cents(50),

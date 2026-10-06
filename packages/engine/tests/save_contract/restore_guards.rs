@@ -1,6 +1,6 @@
 use engine::plans::PlanOpen;
 use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits};
-use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockCode, Urgency};
+use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
 fn baseline() -> serde_json::Value {
     static BASELINE: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
@@ -12,7 +12,7 @@ fn baseline() -> serde_json::Value {
             save.plans
                 .create(PlanOpen {
                     account: AccountId(1),
-                    code: StockCode("600101".into()),
+                    code: StockId(0),
                     direction: Side::Buy,
                     target: PlanTarget::ShareCount(100),
                     opinion: PlanOpinion {

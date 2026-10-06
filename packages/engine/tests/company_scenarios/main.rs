@@ -10,6 +10,7 @@ use engine::session::{
     StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+use engine::WithinKindDistribution;
 use serde::Deserialize;
 
 mod controlled;

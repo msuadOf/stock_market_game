@@ -1,9 +1,9 @@
 use super::session_fact_producers::adapt_account_validation_rejection_facts;
 use super::*;
-use crate::{AccountId, Event, Intent, Money, OrderId, RejectionReason, Side, StockCode};
+use crate::{AccountId, Event, Intent, Money, OrderId, RejectionReason, Side, StockId};
 
-fn code(value: &str) -> StockCode {
-    StockCode(value.to_owned())
+fn code(value: u32) -> StockId {
+    StockId(value)
 }
 
 fn candidate(key: IntentCandidateKey, account: u64, intent: Intent) -> IntentCandidate {
@@ -12,8 +12,8 @@ fn candidate(key: IntentCandidateKey, account: u64, intent: Intent) -> IntentCan
 
 #[test]
 fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
-    let alpha = code("600001");
-    let beta = code("600002");
+    let alpha = code(0);
+    let beta = code(1);
     let candidates = IntentCandidateBatch::new(vec![
         candidate(
             IntentCandidateKey::npc(AccountId(4), 0),
@@ -89,7 +89,7 @@ fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_seal
 #[test]
 fn account_validation_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output(
 ) {
-    let alpha = code("600001");
+    let alpha = code(0);
     let candidates = IntentCandidateBatch::new(vec![candidate(
         IntentCandidateKey::player(0),
         7,
@@ -127,7 +127,7 @@ fn account_validation_rejection_adapter_rejects_duplicate_or_missing_candidate_c
 
 #[test]
 fn account_validation_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
-    let alpha = code("600001");
+    let alpha = code(0);
     let candidates = IntentCandidateBatch::new(vec![
         candidate(
             IntentCandidateKey::player(0),

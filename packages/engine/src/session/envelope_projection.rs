@@ -6,7 +6,7 @@ thread_local! {
 }
 
 struct LiveOrderProjection<'a> {
-    code: &'a StockCode,
+    code: &'a StockId,
     owner: AccountId,
     id: OrderId,
     side: Side,
@@ -106,7 +106,7 @@ impl GameSession {
         }
         let mut key = pipeline::EnvelopeKey {
             account: AccountId(0),
-            stock: StockCode(String::new()),
+            stock: StockId(u32::MAX),
             order: OrderId(0),
             side: Side::Buy,
         };
@@ -132,7 +132,7 @@ impl GameSession {
 
     pub(in crate::session) fn project_continuous_envelope(
         &self,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
     ) -> Result<pipeline::Envelope, StepFatal> {
         self.project_envelope(LiveOrderProjection {
@@ -149,7 +149,7 @@ impl GameSession {
 
     pub(in crate::session) fn project_continuous_envelope_facts<'a>(
         &self,
-        code: &'a StockCode,
+        code: &'a StockId,
         order: &Order,
     ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
         self.project_borrowed_envelope(LiveOrderProjection {
@@ -166,7 +166,7 @@ impl GameSession {
 
     fn project_auction_envelope(
         &self,
-        code: &StockCode,
+        code: &StockId,
         order: &AuctionOrderSnap,
     ) -> Result<pipeline::Envelope, StepFatal> {
         self.project_envelope(LiveOrderProjection {

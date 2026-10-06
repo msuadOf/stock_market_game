@@ -32,7 +32,7 @@ use super::AccountValidationOutput;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
-use crate::{Event, GameSession, StockCode};
+use crate::{Event, GameSession, StockId};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ContinuousTransactionError {
@@ -188,7 +188,7 @@ fn apply_session_continuous_transaction(
     precomputed_stock_inputs: Option<Result<Vec<ContinuousStockInput>, StepFatal>>,
     precomputed_stock_shards: Option<
         Result<
-            std::collections::BTreeMap<StockCode, IncrementalContinuousStockCoordinator>,
+            std::collections::BTreeMap<StockId, IncrementalContinuousStockCoordinator>,
             StepFatal,
         >,
     >,

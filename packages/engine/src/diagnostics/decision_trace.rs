@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::{AccountId, OrderId, PlanId, StockCode};
+use crate::{AccountId, OrderId, PlanId, StockId};
 
 pub const MAX_NPC_DECISION_TRACE_RECORDS: usize = 128;
 
@@ -15,7 +15,7 @@ pub struct NpcDecisionTraceRecord {
     pub plan_changes: Vec<String>,
     pub budget_constraints: Vec<String>,
     pub order_ids: Vec<OrderId>,
-    pub codes: Vec<StockCode>,
+    pub codes: Vec<StockId>,
 }
 
 #[derive(Clone, Default, serde::Serialize)]

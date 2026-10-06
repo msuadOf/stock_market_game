@@ -1,4 +1,4 @@
-use crate::{Money, PlanId, Side, StockCode};
+use crate::{Money, PlanId, Side, StockId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AllocationFunds {
@@ -22,7 +22,7 @@ pub enum AllocationClass {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AllocationRequest {
     pub plan_id: PlanId,
-    pub code: StockCode,
+    pub code: StockId,
     pub side: Side,
     pub class: AllocationClass,
     pub confidence_bp: u32,
@@ -44,7 +44,7 @@ pub enum AllocationConstraint {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AllocationGrant {
     pub plan_id: PlanId,
-    pub code: StockCode,
+    pub code: StockId,
     pub allocated_cash: Money,
     pub constraint: Option<AllocationConstraint>,
 }

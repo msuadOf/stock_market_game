@@ -1,7 +1,7 @@
 //! 从不可变 live ledger 页投影资源预留；终结证据不进入下一密封批的预留。
 use super::decision_resources::{allocation_invariant, allocation_money};
 use super::{ledger_paged_map::LedgerPagedMap, Envelope, EnvelopeKey, StepFatal};
-use crate::{AccountId, Money, StockCode};
+use crate::{AccountId, Money, StockId};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
@@ -12,7 +12,7 @@ pub(in crate::session) const RESERVATION_PAGE_SHIFT: u32 = 5;
 pub(in crate::session) struct AccountReservation {
     pub(in crate::session) account: AccountId,
     pub(in crate::session) cash: Money,
-    pub(in crate::session) sell: BTreeMap<StockCode, u32>,
+    pub(in crate::session) sell: BTreeMap<StockId, u32>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl LiveReservations {
     #[cfg(test)]
     pub(in crate::session) fn fixture(
         cash: &BTreeMap<AccountId, Money>,
-        sell: &BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
+        sell: &BTreeMap<AccountId, BTreeMap<StockId, u32>>,
     ) -> Self {
         let ids = cash
             .keys()
@@ -151,7 +151,7 @@ impl ReservationCache {
                         .expect("当前 envelope 已安装 account 预留行");
                     let live = envelope.live();
                     row.cash = row.cash.add(live.cash).map_err(allocation_money)?;
-                    // 保留零股份条目：未知 StockCode 即使 Buy shares=0 也须显式拒绝。
+                    // 保留零股份条目：未知 StockId 即使 Buy shares=0 也须显式拒绝。
                     let shares = row.sell.entry(key.stock.clone()).or_insert(0);
                     *shares = shares
                         .checked_add(live.shares)
@@ -200,7 +200,7 @@ mod tests {
         for account in 0..64 {
             let key = EnvelopeKey {
                 account: AccountId(account),
-                stock: StockCode("600000".to_owned()),
+                stock: StockId(0),
                 order: OrderId(account),
                 side: Side::Buy,
             };
@@ -263,17 +263,17 @@ mod tests {
     fn project_matches_canonical_sequential_fold_and_keeps_zero_share_stock_keys() {
         let mut source = LedgerPagedMap::default();
         let entries = [
-            (0, "600001", 1, Side::Buy, 31, 0),
-            (0, "600001", 6, Side::Buy, 5, 0),
-            (0, "600002", 2, Side::Sell, 0, 4),
-            (0, "600002", 3, Side::Sell, 0, 7),
-            (u64::MAX, "600001", 4, Side::Sell, 0, 19),
-            (u64::MAX, "600001", 5, Side::Buy, 23, 0),
+            (0, StockId(0), 1, Side::Buy, 31, 0),
+            (0, StockId(0), 6, Side::Buy, 5, 0),
+            (0, StockId(1), 2, Side::Sell, 0, 4),
+            (0, StockId(1), 3, Side::Sell, 0, 7),
+            (u64::MAX, StockId(0), 4, Side::Sell, 0, 19),
+            (u64::MAX, StockId(0), 5, Side::Buy, 23, 0),
         ];
         for (account, stock, order, side, cash, shares) in entries {
             let key = EnvelopeKey {
                 account: AccountId(account),
-                stock: StockCode(stock.to_owned()),
+                stock,
                 order: OrderId(order),
                 side,
             };
@@ -318,18 +318,18 @@ mod tests {
                 .get(AccountId(0))
                 .unwrap()
                 .sell
-                .get(&StockCode("600001".to_owned())),
+                .get(&StockId(0)),
             Some(&0),
-            "Buy shares=0 仍须保留 StockCode 条目"
+            "Buy shares=0 仍须保留 StockId 条目"
         );
         assert_eq!(
             projected
                 .get(AccountId(0))
                 .unwrap()
                 .sell
-                .get(&StockCode("600002".to_owned())),
+                .get(&StockId(1)),
             Some(&11),
-            "同一 StockCode 的多笔委托股份应 checked 汇总"
+            "同一 StockId 的多笔委托股份应 checked 汇总"
         );
         assert_eq!(projected.cash(AccountId(0)), Money::from_cents(36));
         assert_eq!(projected.cash(AccountId(u64::MAX)), Money::from_cents(23));
@@ -341,7 +341,7 @@ mod tests {
         for (order, cash) in [(1, i64::MAX), (2, 1)] {
             let key = EnvelopeKey {
                 account: AccountId(3),
-                stock: StockCode("600001".to_owned()),
+                stock: StockId(0),
                 order: OrderId(order),
                 side: Side::Buy,
             };
@@ -365,7 +365,7 @@ mod tests {
         for (order, shares) in [(1, u32::MAX), (2, 1)] {
             let key = EnvelopeKey {
                 account: AccountId(3),
-                stock: StockCode("600001".to_owned()),
+                stock: StockId(0),
                 order: OrderId(order),
                 side: Side::Sell,
             };
@@ -389,7 +389,7 @@ mod tests {
         ] {
             let key = EnvelopeKey {
                 account: AccountId(account),
-                stock: StockCode("600001".to_owned()),
+                stock: StockId(0),
                 order: OrderId(order),
                 side,
             };
@@ -407,7 +407,7 @@ mod tests {
         for index in 0..512 {
             let key = EnvelopeKey {
                 account: AccountId(128 + index),
-                stock: StockCode("600001".to_owned()),
+                stock: StockId(0),
                 order: OrderId(1000 + index),
                 side: Side::Buy,
             };
@@ -437,7 +437,7 @@ mod tests {
         for (account, shares) in [(3, u32::MAX), (4, 1)] {
             let key = EnvelopeKey {
                 account: AccountId(account),
-                stock: StockCode("600001".to_owned()),
+                stock: StockId(0),
                 order: OrderId(account),
                 side: Side::Sell,
             };
@@ -511,7 +511,7 @@ mod tests {
 
         let new_key = EnvelopeKey {
             account: key.account,
-            stock: StockCode("600002".to_owned()),
+            stock: StockId(1),
             order: OrderId(2),
             side: Side::Buy,
         };
@@ -552,7 +552,8 @@ mod tests {
                 .unwrap();
         let unknown_stock = EnvelopeKey {
             account: AccountId(0),
-            stock: StockCode("unknown".to_owned()),
+            // 目录仅含 quote_setup 的单只股票（StockId(0)）；9 作为未知 StockId 哨兵。
+            stock: StockId(9),
             order: OrderId(1),
             side: Side::Buy,
         };
@@ -570,12 +571,14 @@ mod tests {
             assert_eq!(
                 super::super::DecisionResourceSnapshot::seal(&session),
                 Err(expected_stock_error.clone()),
-                "相同不可变页的cache命中也不能吞掉未知StockCode，即使shares=0"
+                "相同不可变页的cache命中也不能吞掉未知StockId，即使shares=0"
             );
         }
         let unknown_account = EnvelopeKey {
             account: AccountId(999),
-            stock: session.state.setup.stocks[0].code.clone(),
+            stock: session
+                .stock_id(&session.state.setup.stocks[0].code.0)
+                .unwrap(),
             order: OrderId(2),
             side: Side::Buy,
         };
@@ -691,7 +694,9 @@ mod tests {
         let mut session =
             crate::GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42)
                 .unwrap();
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session
+            .stock_id(&session.state.setup.stocks[0].code.0)
+            .unwrap();
         session.seed_order_for_test(
             AccountId(0),
             crate::Intent::PlaceLimit {

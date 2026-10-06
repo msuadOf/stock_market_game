@@ -26,7 +26,7 @@ fn fixture_with_target(
     let plan_id = plans
         .create(PlanOpen {
             account: AccountId(0),
-            code: StockCode("600888".into()),
+            code: StockId(0),
             direction: Side::Buy,
             target: PlanTarget::ShareCount(target_qty),
             opinion: PlanOpinion {
@@ -701,8 +701,8 @@ fn plan_working_orders_reads_only_the_target_stock_and_account() {
     .unwrap();
     let owner = AccountId(1);
     let other = AccountId(0);
-    let target = StockCode("600888".into());
-    let second = StockCode("600889".into());
+    let target = StockId(0);
+    let second = StockId(1);
     for (code, id, account, price, seq) in [
         (&target, 40, owner, 903, 4),
         (&target, 2, other, 901, 2),
@@ -770,7 +770,7 @@ fn owned_plan_sync_late_failure_keeps_pending_and_parent_unchanged() {
     let second_id = plans
         .create(PlanOpen {
             account: first.account(),
-            code: StockCode("600889".into()),
+            code: StockId(1),
             direction: first.direction(),
             target: first.target(),
             opinion: first.opinion(),

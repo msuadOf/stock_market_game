@@ -28,7 +28,7 @@ use crate::plans::PlanEvent;
 use crate::session::{PendingPlanEvent, RetailOrderDiagnosticEvent};
 use crate::{
     AuctionOrderSnap, Event, GameSession, Market, MarketError, Money, Order, OrderId,
-    RejectionReason, StockCode, TradingPhase,
+    RejectionReason, StockId, TradingPhase,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,7 +41,7 @@ pub(in crate::session::pipeline) enum AuctionDayEndError {
     Adapter(#[source] StepFatal),
     #[error("Auction/DayEnd tick 的股票 {code:?} worker 失败：{source}")]
     Worker {
-        code: StockCode,
+        code: StockId,
         #[source]
         source: StepFatal,
     },
@@ -74,7 +74,7 @@ pub(in crate::session::pipeline) enum AuctionLifecycleFact {
         candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         side: crate::Side,
         qty: u32,
@@ -83,7 +83,7 @@ pub(in crate::session::pipeline) enum AuctionLifecycleFact {
         candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     },
@@ -91,7 +91,7 @@ pub(in crate::session::pipeline) enum AuctionLifecycleFact {
         candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: Option<OrderId>,
         reason: RejectionReason,
     },
@@ -117,7 +117,7 @@ impl AuctionLifecycleFact {
 
 /// 脱离权威状态的股票局部结果；由 Main 与其他 stock_processing 结果组合后统一结算。
 pub(in crate::session::pipeline) struct AuctionStockOutput {
-    pub(in crate::session::pipeline) code: StockCode,
+    pub(in crate::session::pipeline) code: StockId,
     pub(in crate::session::pipeline) market: Market,
     pub(in crate::session::pipeline) auction_orders: Vec<AuctionOrderSnap>,
     pub(in crate::session::pipeline) created_envelopes: Vec<Envelope>,
@@ -161,11 +161,11 @@ pub(in crate::session::pipeline) struct AuctionStockProjection {
 pub(in crate::session::pipeline) struct AuctionExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<AuctionExecutionFact>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
-    pub(in crate::session::pipeline) projections: BTreeMap<StockCode, AuctionStockProjection>,
+    pub(in crate::session::pipeline) projections: BTreeMap<StockId, AuctionStockProjection>,
 }
 
 pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
-    pub(in crate::session::pipeline) workers: BTreeMap<StockCode, AuctionStockOutput>,
+    pub(in crate::session::pipeline) workers: BTreeMap<StockId, AuctionStockOutput>,
     pub(in crate::session::pipeline) detached_event_facts: Vec<OwnedEventFact>,
     pub(in crate::session::pipeline) detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
 }
@@ -173,7 +173,7 @@ pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
 /// tick 私有股票竞价状态；从 post-ExpiryShadow 初始化一次，跨 continuation 保存，consuming finish 执行尾部。
 #[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
-    stocks: BTreeMap<StockCode, AuctionStockShadow>,
+    stocks: BTreeMap<StockId, AuctionStockShadow>,
     detached_event_facts: Vec<OwnedEventFact>,
     detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
     seen_candidate_keys: BTreeSet<IntentCandidateKey>,
@@ -198,7 +198,7 @@ impl std::fmt::Debug for AuctionFinishProbe {
 
 #[derive(Clone, Debug)]
 struct AuctionStockShadow {
-    code: StockCode,
+    code: StockId,
     market: Market,
     completion: super::AuctionCompletionInput,
     continuous_envelopes: Vec<Envelope>,
@@ -211,7 +211,7 @@ struct AuctionStockShadow {
 }
 
 struct AuctionStockRoundResult {
-    code: StockCode,
+    code: StockId,
     shadow: AuctionStockShadow,
     facts: Vec<AuctionExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
@@ -307,7 +307,7 @@ impl IncrementalAuctionStockCoordinator {
             .applied_operation_count
             .checked_add(operations.len())
             .ok_or_else(|| invariant("incremental auction operation count overflow"))?;
-        let mut grouped = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
+        let mut grouped = BTreeMap::<StockId, Vec<ValidatedOperation>>::new();
         let mut detached_facts = Vec::new();
         let mut detached_events = Vec::new();
         let mut detached_lifecycle = Vec::new();
@@ -373,7 +373,7 @@ impl IncrementalAuctionStockCoordinator {
             crate::session::pipeline::executor_perturbation::reorder(
                 crate::session::pipeline::ExecutorBoundary::AuctionStockShards,
                 &mut work,
-                |(code, _, operations)| (code.0.clone(), operations.len()),
+                |(code, _, operations)| (code.to_string(), operations.len()),
             );
             work
         };
@@ -393,7 +393,7 @@ impl IncrementalAuctionStockCoordinator {
                 &mut results,
                 |(code, result)| {
                     (
-                        code.0.clone(),
+                        code.to_string(),
                         result.as_ref().map_or(0, |result| result.facts.len()),
                     )
                 },
@@ -764,7 +764,7 @@ fn validate_auction_round_identities(
     Ok(())
 }
 
-fn operation_code(operation: &ValidatedOperation) -> &StockCode {
+fn operation_code(operation: &ValidatedOperation) -> &StockId {
     match operation {
         ValidatedOperation::Place(draft) => draft.code(),
         ValidatedOperation::Cancel { code, .. } => code,
@@ -806,7 +806,7 @@ fn apply_candidate(
     coordinator
         .apply_round(validation.operations().to_vec())
         .map_err(|source| AuctionDayEndError::Worker {
-            code: StockCode("<incremental>".to_owned()),
+            code: StockId(u32::MAX),
             source,
         })?;
     let finish = coordinator
@@ -816,7 +816,7 @@ fn apply_candidate(
             boundary.finish_day(),
         )
         .map_err(|source| AuctionDayEndError::Worker {
-            code: StockCode("<incremental>".to_owned()),
+            code: StockId(u32::MAX),
             source,
         })?;
     apply_finished_candidate(
@@ -930,7 +930,7 @@ pub(in crate::session::pipeline) fn finish_incremental_auction_coordinator(
             boundary.finish_day(),
         )
         .map_err(|source| AuctionDayEndError::Worker {
-            code: StockCode("<incremental>".to_owned()),
+            code: StockId(u32::MAX),
             source,
         })
 }
@@ -1642,7 +1642,7 @@ fn apply_local(
 
 fn operation_fact_event(
     fact: AuctionOperationFact,
-    code: StockCode,
+    code: StockId,
     sealed_index: u64,
 ) -> Result<OwnedEventFact, StepFatal> {
     let event = match fact {
@@ -1684,7 +1684,7 @@ fn cancel_rejection(reason: AuctionCancelRejection) -> RejectionReason {
 }
 
 fn match_events(
-    code: &StockCode,
+    code: &StockId,
     matches: &[AuctionMatch],
 ) -> Result<Vec<OwnedEventFact>, StepFatal> {
     matches
@@ -1731,7 +1731,7 @@ fn trading_phase(phase: super::AuctionPhase) -> TradingPhase {
 }
 
 fn validate_worker_finalizers(
-    workers: &BTreeMap<StockCode, AuctionStockOutput>,
+    workers: &BTreeMap<StockId, AuctionStockOutput>,
     finish_auction: bool,
     finish_day: bool,
 ) -> Result<(AuctionFinalizerAudit, Vec<AuctionFinalizerExecution>), AuctionDayEndError> {
@@ -1781,7 +1781,7 @@ fn validate_worker_finalizers(
 
 /// 暂存 parent、plan 与 retail 投影；所有 lifecycle 检查成功后统一安装。
 struct AuctionLifecycleProjector {
-    parents: BTreeMap<crate::AccountId, BTreeMap<StockCode, crate::session::ParentOrderPlan>>,
+    parents: BTreeMap<crate::AccountId, BTreeMap<StockId, crate::session::ParentOrderPlan>>,
     pending: Vec<PendingPlanEvent>,
     retail_events: Vec<RetailOrderDiagnosticEvent>,
 }
@@ -2065,7 +2065,7 @@ impl AuctionLifecycleProjector {
     fn clear_child(
         &mut self,
         account: crate::AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
         remaining_qty: u32,
     ) -> Result<(), StepFatal> {

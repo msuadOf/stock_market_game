@@ -1,12 +1,12 @@
 use engine::session::protocol::*;
-use engine::{AccountId, Event, Money, StockCode, TradingPhase};
+use engine::{AccountId, Event, Money, StockId, TradingPhase};
 
 fn events() -> Vec<Event> {
     (1..=3)
         .map(|seq| Event::IntentRejected {
             seq,
             account: AccountId(0),
-            code: StockCode("600001".into()),
+            code: StockId(0),
             reason: engine::RejectionReason::UnknownStock,
         })
         .collect()
@@ -53,7 +53,7 @@ fn optional_imbalance_rejects_unsafe_wire_values() {
         seq: 1,
         tick: 1,
         phase: TradingPhase::CallAuction,
-        code: StockCode("600001".into()),
+        code: StockId(0),
         indicative_price: Some(Money::from_cents(1000)),
         matched_volume: 100,
         imbalance: 0,
@@ -111,7 +111,7 @@ fn fact_correspondence_preserves_multiplicity_and_rejects_substitutions() {
                     &Event::IntentRejected {
                         seq: 1,
                         account: AccountId(99),
-                        code: StockCode("600001".into()),
+                        code: StockId(0),
                         reason: engine::RejectionReason::UnknownStock,
                     },
                     0,
@@ -141,7 +141,7 @@ fn coherent_mutation_is_replay_mismatch_not_identity_failure() {
     );
     let mut changed = original;
     if let Event::IntentRejected { code, .. } = &mut changed.events[0] {
-        *code = StockCode("600002".into());
+        *code = StockId(1);
     }
     changed.facts = attach_facts(&changed.events).unwrap();
     changed.validate().unwrap();

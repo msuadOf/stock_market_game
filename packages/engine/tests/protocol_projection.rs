@@ -1,5 +1,5 @@
 use engine::session::protocol::{attach_facts, project_timeseries, AuctionPointKind};
-use engine::{Event, Money, Snapshot, StockCode, TradingPhase};
+use engine::{Event, Money, Snapshot, StockId, TradingPhase};
 
 fn snapshot() -> Snapshot {
     Snapshot {
@@ -16,7 +16,7 @@ fn snapshot() -> Snapshot {
 
 #[test]
 fn multiple_indications_and_completion_survive_permutation() {
-    let code = StockCode("600001".into());
+    let code = StockId(0);
     let events = vec![
         Event::AuctionTick {
             seq: 1,

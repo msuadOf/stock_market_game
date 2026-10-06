@@ -4,7 +4,7 @@
 //! 只做单股状态：涨跌停拒单、last_price 记录、日终重置。
 //! 不碰 account 结算、不碰全 tick 编排（session/simulator）。
 
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{
     AccountId, MatchResult, Order, OrderBook, OrderBookDelta, OrderError, OrderId, Side,
@@ -19,7 +19,7 @@ pub enum MarketError {
     /// 下单价超出涨跌停范围 [down_stop, up_stop]。
     #[error("limit exceeded for {code:?}: price {price:?} not in [{down:?}, {up:?}]")]
     LimitExceeded {
-        code: StockCode,
+        code: StockId,
         price: Money,
         down: Money,
         up: Money,
@@ -49,7 +49,7 @@ pub enum MarketError {
 #[derive(Clone, Debug)]
 pub struct Market {
     /// 股票代码。
-    code: StockCode,
+    code: StockId,
     /// 委托其撮合的订单簿。
     book: OrderBook,
     /// 最新成交价（成交驱动更新；首日 = initial_price）。
@@ -66,7 +66,7 @@ pub struct Market {
 /// Order identities locate rows; they do not assign trading priority.
 #[derive(Clone, Debug)]
 pub(crate) struct MarketDelta {
-    code: StockCode,
+    code: StockId,
     before_last_price: Money,
     after_last_price: Money,
     last_close: Money,
@@ -91,7 +91,7 @@ impl Market {
     /// 绝不静默 clamp 到默认值。tick 非法透传 [`OrderBook::new`] 的
     /// [`MarketError::OrderBook`]。
     pub fn new(
-        code: StockCode,
+        code: StockId,
         initial_price: Money,
         limit_pct: f64,
         tick: Money,
@@ -249,7 +249,7 @@ impl Market {
     }
 
     /// 股票代码（只读引用）。
-    pub fn code(&self) -> &StockCode {
+    pub fn code(&self) -> &StockId {
         &self.code
     }
 
@@ -477,7 +477,7 @@ mod price_limit_state_tests {
     fn mk_market() -> Market {
         // last_close=last_price=10.00，limit=0.10，tick=0.01
         Market::new(
-            StockCode("600101".to_string()),
+            StockId(0),
             Money::from_cents(1000),
             0.10,
             Money::from_cents(1),
@@ -552,7 +552,7 @@ mod price_limit_state_tests {
     #[test]
     fn legal_limit_order_prices_keep_the_wider_ten_tick_cage_and_propagate_errors() {
         let mut market = Market::new(
-            StockCode("LOW_PRICE".to_string()),
+            StockId(0),
             Money::from_cents(285),
             0.10,
             Money::from_cents(1),

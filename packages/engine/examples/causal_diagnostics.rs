@@ -3,7 +3,7 @@ mod fixture;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut setup = fixture::setup();
-    setup.stocks[0].code = engine::StockCode("000812".to_owned());
+    setup.stocks[0].code = engine::StockId("000812".to_owned());
     setup.stocks[0].exchange = engine::StockExchange::Shenzhen;
     setup.stocks[0].initial_price = engine::Money::from_cents(285);
     setup.stocks[0].total_shares = 1_000_000;

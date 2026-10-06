@@ -87,7 +87,7 @@ fn full_evidence_parallel_threshold_and_mixed_terminal_rows_preserve_first_error
             Envelope::tick_start_existing(
                 EnvelopeKey {
                     account: crate::AccountId(index),
-                    stock: crate::StockCode("600000".to_owned()),
+                    stock: crate::StockId(0),
                     order: crate::OrderId(index),
                     side: crate::Side::Buy,
                 },
@@ -118,7 +118,7 @@ fn full_evidence_parallel_threshold_and_mixed_terminal_rows_preserve_first_error
         );
         let extra_key = EnvelopeKey {
             account: crate::AccountId(count + 1),
-            stock: crate::StockCode("600000".to_owned()),
+            stock: crate::StockId(0),
             order: crate::OrderId(count + 1),
             side: crate::Side::Buy,
         };
@@ -814,7 +814,7 @@ fn seller_fill_receipt(
 fn third_key() -> EnvelopeKey {
     EnvelopeKey {
         account: crate::AccountId(2),
-        stock: crate::StockCode("600003".to_owned()),
+        stock: crate::StockId(2),
         order: crate::OrderId(3),
         side: crate::Side::Buy,
     }
@@ -923,7 +923,7 @@ fn borrowed_projection_gate_preserves_owned_gate_errors_and_map_key_checks() {
 fn active_tick_rebase_carries_complete_evidence_proof_into_the_next_read_only_gate() {
     let first = existing(key(), Money::from_cents(100));
     let mut untouched_key = key();
-    untouched_key.stock = crate::StockCode("600003".to_owned());
+    untouched_key.stock = crate::StockId(2);
     untouched_key.order = crate::OrderId(3);
     let untouched = existing(untouched_key, Money::from_cents(200));
     let mut ledger = EnvelopeLedger::new(41, [first.clone(), untouched.clone()]).unwrap();

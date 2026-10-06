@@ -6,7 +6,7 @@ use super::{
     ExperienceError, ExperienceMoment, HoldingEpoch, OwnObservation, RetailStockExperience,
     POST_EXIT_COOLDOWN_MINUTES,
 };
-use crate::{Money, Side, StockCode};
+use crate::{Money, Side, StockId};
 
 pub(super) struct PositionExperienceTransition<'a> {
     legacy: &'a mut RetailStockExperience,
@@ -23,9 +23,9 @@ impl<'a> PositionExperienceTransition<'a> {
 
     // caller 完成原守卫后才能建立借用；缺 legacy 行仍沿用原 entry.or_default 接受集。
     pub(super) fn from_maps(
-        stocks: &'a mut BTreeMap<StockCode, RetailStockExperience>,
-        epochs: &'a mut BTreeMap<StockCode, HoldingEpoch>,
-        code: &StockCode,
+        stocks: &'a mut BTreeMap<StockId, RetailStockExperience>,
+        epochs: &'a mut BTreeMap<StockId, HoldingEpoch>,
+        code: &StockId,
     ) -> Self {
         Self::new(
             stocks.entry(code.clone()).or_default(),

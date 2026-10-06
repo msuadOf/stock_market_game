@@ -12,7 +12,7 @@ use crate::{
     Side,
 };
 
-fn apply_projection(market: &mut Market, round: &ContinuousExecutionRound, code: &StockCode) {
+fn apply_projection(market: &mut Market, round: &ContinuousExecutionRound, code: &StockId) {
     market
         .apply_changed_orders(
             round.projections[code]
@@ -540,8 +540,8 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
 
 #[test]
 fn equal_stock_local_indices_are_isolated_by_full_candidate_and_stock_identity() {
-    let first_code = stock("600888");
-    let second_code = stock("000001");
+    let first_code = StockId(1);
+    let second_code = StockId(0);
     let mut first_market = empty_market(&first_code);
     let mut second_market = empty_market(&second_code);
     let first_maker = add_resting(
@@ -715,8 +715,8 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
 
 #[test]
 fn independent_stocks_accept_operations_without_a_global_sealed_order() {
-    let first_code = stock("600888");
-    let second_code = stock("000001");
+    let first_code = StockId(1);
+    let second_code = StockId(0);
     let config = GameConfig::proposed_defaults();
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![
         stock_input(empty_market(&first_code), vec![], config.clone()),
@@ -788,8 +788,8 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
 
 #[test]
 fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
-    let first_code = stock("600888");
-    let second_code = stock("000001");
+    let first_code = StockId(1);
+    let second_code = StockId(0);
     let mut first_market = empty_market(&first_code);
     let mut second_market = empty_market(&second_code);
     let first_maker = add_resting(
@@ -856,8 +856,8 @@ fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
 
 #[test]
 fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
-    let first_code = stock("000001");
-    let second_code = stock("600888");
+    let first_code = StockId(0);
+    let second_code = StockId(1);
     let mut first_market = empty_market(&first_code);
     let mut second_market = empty_market(&second_code);
     let first_maker = add_resting(
@@ -930,11 +930,11 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
     assert_eq!(result.unwrap_err(), first_error);
     assert!(records.iter().any(|record| {
         record.boundary == ExecutorBoundary::ContinuousWorkerResults
-            && record.identities == [second_code.0.clone(), first_code.0.clone()]
+            && record.identities == [second_code.0.to_string(), first_code.0.to_string()]
     }));
     assert!(records.iter().any(|record| {
         record.boundary == ExecutorBoundary::ContinuousStockShards
-            && record.identities == [second_code.0.clone(), first_code.0.clone()]
+            && record.identities == [second_code.0.to_string(), first_code.0.to_string()]
     }));
     assert!(coordinator.failed);
     assert_eq!(coordinator.applied_operation_count, 0);
@@ -1118,7 +1118,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
 }
 
 fn validated_operations(
-    code: &StockCode,
+    code: &StockId,
     build: impl FnOnce(u64) -> Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig, OrderId) {
     let account = AccountId(0);
@@ -1164,7 +1164,7 @@ fn validated_operations(
 }
 
 fn validated_operations_for_stocks(
-    codes: &[StockCode],
+    codes: &[StockId],
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
@@ -1210,7 +1210,7 @@ fn validated_operations_for_stocks(
     (output.operations().to_vec(), config)
 }
 
-fn validated_sell_operations(code: &StockCode) -> (Vec<ValidatedOperation>, GameConfig) {
+fn validated_sell_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1294,7 +1294,7 @@ fn cancel_operation(
     candidate_key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
-    code: &StockCode,
+    code: &StockId,
 ) -> ValidatedOperation {
     ValidatedOperation::Cancel {
         candidate_key,
@@ -1307,7 +1307,7 @@ fn cancel_operation(
 
 fn add_resting(
     market: &mut Market,
-    code: &StockCode,
+    code: &StockId,
     owner: AccountId,
     order_id: OrderId,
     side: Side,
@@ -1361,7 +1361,7 @@ fn add_resting(
     }
 }
 
-fn empty_market(code: &StockCode) -> Market {
+fn empty_market(code: &StockId) -> Market {
     Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -1371,8 +1371,16 @@ fn empty_market(code: &StockCode) -> Market {
     .unwrap()
 }
 
-fn stock(value: &str) -> StockCode {
-    StockCode(value.to_owned())
+fn stock(value: &str) -> StockId {
+    // session fixture 的目录 rank：quote_setup 单股 "600888"=0；
+    // two_stock_quote_setup 追加 "600889"=1；"999999" 为目录外未知哨兵。
+    // 不经 session 的 standalone 双代码测试请直接用 StockId(0/1) 保持相对次序。
+    match value {
+        "600888" => StockId(0),
+        "600889" => StockId(1),
+        "999999" => StockId(9),
+        other => panic!("未登记的 fixture 代码 rank 映射: {other}"),
+    }
 }
 
 #[test]

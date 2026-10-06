@@ -28,7 +28,7 @@ impl PlanCancelCause {
 pub(in crate::session) enum PlanRouteCommand {
     Cancel {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         // The cause is read by the diagnostic projection; routing still carries it in all builds.
         #[cfg_attr(
@@ -42,7 +42,7 @@ pub(in crate::session) enum PlanRouteCommand {
     },
     SubmitLimit {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         side: Side,
         price: Money,
         qty: u32,

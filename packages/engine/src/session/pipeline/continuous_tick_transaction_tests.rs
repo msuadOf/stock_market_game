@@ -10,7 +10,7 @@ use super::*;
 use crate::session::{ParentOrderPlan, PlanExecutionDisposition, RetailOrderDiagnosticEvent};
 use crate::{
     AccountId, Event, Intent, Money, Order, OrderId, RejectionReason, RetailExperienceState, Side,
-    StockCode,
+    StockId,
 };
 
 fn player_only_session() -> GameSession {
@@ -366,7 +366,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
 fn live_buy_plan_case(
     seller_shares: u32,
     seller_holding: u32,
-) -> (GameSession, crate::plans::PlanId, StockCode) {
+) -> (GameSession, crate::plans::PlanId, StockId) {
     use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
     use crate::plans::{AllocationGrant, PlanBook, PlanOpen, PlanOpinion, PlanTarget, Urgency};
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
@@ -374,7 +374,8 @@ fn live_buy_plan_case(
 
     let mut authority =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 47).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     let seller = AccountId(0);
     authority
         .state
@@ -412,7 +413,7 @@ fn live_buy_plan_case(
     // This fixture injects execution directly instead of opening the plan through
     // the lifecycle. Record that opening observation as the real lifecycle does,
     // so the next fill-only tick does not request an initial strategy review.
-    let issuer = authority.state.company_registry.issuer_of(&code).unwrap();
+    let issuer = authority.state.issuer_of_stock(code).unwrap();
     let acquired_count = authority.state.belief_participants[&AccountId(1)]
         .information()
         .records_for_company(issuer)
@@ -744,7 +745,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             qty: 1,
         },
         Intent::Cancel {
-            code: StockCode("999999".to_owned()),
+            code: StockId(9),
             id: OrderId(123),
         },
         Intent::PlaceLimit {
@@ -793,7 +794,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             code: canceled_code,
             order_id: OrderId(123),
             ..
-        }) if canceled_code == &StockCode("999999".to_owned())
+        }) if canceled_code == &StockId(9)
     ));
     assert!(matches!(
         result_for(2),
@@ -846,7 +847,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
         Event::IntentRejected {
             account: AccountId(0), code: rejected,
             reason: RejectionReason::UnknownStock, ..
-        } if rejected == &StockCode("999999".to_owned())
+        } if rejected == &StockId(9)
     )));
     let acceptance = player_events
         .iter()
@@ -1093,7 +1094,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     assert!(failed.state.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), before);
     assert_eq!(
-        authority.state.markets[&StockCode("600888".to_owned())].resting_order_count(),
+        authority.state.markets[&StockId(0)].resting_order_count(),
         2
     );
 
@@ -1119,10 +1120,8 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
     .unwrap();
     let (_, template) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let mut requests = Vec::new();
-    for code in [
-        StockCode("600888".to_owned()),
-        StockCode("600889".to_owned()),
-    ] {
+    // 数值身份后无字符串可断言：two_stock_quote_setup 目录按代码序 rank 取 0/1。
+    for code in [StockId(0), StockId(1)] {
         let plan_id = authority
             .state
             .plans
@@ -1733,7 +1732,7 @@ fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousE
     (outcomes, round)
 }
 
-fn limit_candidate(key: IntentCandidateKey, code: StockCode, price_cents: i64) -> IntentCandidate {
+fn limit_candidate(key: IntentCandidateKey, code: StockId, price_cents: i64) -> IntentCandidate {
     IntentCandidate::new(
         key,
         AccountId(0),

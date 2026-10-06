@@ -25,7 +25,7 @@ use crate::session::{
     OrderFillSettlement, PlanExecutionReport,
 };
 use crate::{
-    AccountId, GameSession, Intent, LimitPrice, Money, OrderId, RejectionReason, Side, StockCode,
+    AccountId, GameSession, Intent, LimitPrice, Money, OrderId, RejectionReason, Side, StockId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -160,7 +160,7 @@ pub(super) struct AdaptivePlanChainCoordinator {
     roots: PlanChainOperationBatch,
     observation: Option<FrozenPlanChainObservation>,
     pending: Vec<IntentCandidate>,
-    unfinished_routes: BTreeSet<(AccountId, StockCode)>,
+    unfinished_routes: BTreeSet<(AccountId, StockId)>,
     #[cfg(feature = "simulation-diagnostics")]
     pending_cancel_causes: BTreeMap<IntentCandidateKey, PlanCancelCause>,
     consumed: PlanChainFactConsumption,
@@ -168,7 +168,7 @@ pub(super) struct AdaptivePlanChainCoordinator {
     failed: bool,
 }
 
-fn intent_code(intent: &Intent) -> &StockCode {
+fn intent_code(intent: &Intent) -> &StockId {
     match intent {
         Intent::PlaceLimit { code, .. }
         | Intent::PlaceMarket { code, .. }
@@ -231,7 +231,7 @@ impl AdaptivePlanChainCoordinator {
         self.unfinished_routes.clear();
     }
 
-    pub(super) fn replace_unfinished_routes(&mut self, routes: BTreeSet<(AccountId, StockCode)>) {
+    pub(super) fn replace_unfinished_routes(&mut self, routes: BTreeSet<(AccountId, StockId)>) {
         self.unfinished_routes = routes;
     }
 
@@ -1186,7 +1186,7 @@ fn project_continuous_causal_end(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn causal_quote(
-    code: &StockCode,
+    code: &StockId,
     snapshot: &super::continuous_matching::ContinuousQuoteSnapshot,
 ) -> crate::diagnostics::causal::Quote {
     crate::diagnostics::causal::Quote {
@@ -1483,7 +1483,7 @@ fn validate_fact_identity(fact: &ContinuousExecutionFact) -> Result<(), StepFata
     }
 }
 
-fn place_identity(fact: &ContinuousPlaceFact) -> (AccountId, &StockCode, OrderId) {
+fn place_identity(fact: &ContinuousPlaceFact) -> (AccountId, &StockId, OrderId) {
     match fact {
         ContinuousPlaceFact::Resting {
             account,
@@ -1506,7 +1506,7 @@ fn place_identity(fact: &ContinuousPlaceFact) -> (AccountId, &StockCode, OrderId
     }
 }
 
-fn cancel_identity(fact: &ContinuousCancelFact) -> (AccountId, &StockCode, OrderId) {
+fn cancel_identity(fact: &ContinuousCancelFact) -> (AccountId, &StockId, OrderId) {
     match fact {
         ContinuousCancelFact::Canceled {
             account,
@@ -1564,7 +1564,7 @@ fn synchronize_projected_plans(session: &mut GameSession) -> Result<(), StepFata
 fn validate_parent_acceptance(
     session: &GameSession,
     account: AccountId,
-    code: &StockCode,
+    code: &StockId,
     side: Side,
     qty: u32,
 ) -> Result<(), StepFatal> {
@@ -1677,7 +1677,7 @@ mod consumption_tests {
                 outcome: ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
                     sealed_index: inner_index,
                     account: AccountId(1),
-                    code: StockCode("600888".to_owned()),
+                    code: StockId(0),
                     order_id: OrderId(1),
                     reason: ContinuousCancelRejection::OrderNotFound,
                 }),

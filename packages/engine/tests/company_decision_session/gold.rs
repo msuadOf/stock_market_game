@@ -120,7 +120,8 @@ fn all_five_institution_styles_and_hot_styles_are_active() {
 fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
     // ComputeBackend 会话执行契约：纯批量输入 + 稳定顺序输出。
     use engine::{
-        create_backend, ComputeMode, MarketView, SelfView, StockView, StrategyData, TargetPolicy,
+        create_backend, ComputeMode, MarketView, SelfView, StockId, StockView, StrategyData,
+        TargetPolicy,
     };
     let backend = create_backend(&ComputeMode::Cpu).expect("cpu backend must be available");
     let strategies = [
@@ -130,7 +131,7 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
     ];
     let market = MarketView {
         stocks: [(
-            StockCode("600101".to_string()),
+            StockId(0),
             StockView {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1_001)),
@@ -191,9 +192,10 @@ fn per_share_valuations_stay_in_price_dimension_not_total_equity() {
     let mut checked = 0;
     for account in 13u64..23 {
         for stock in ["600101", "002156", "300260", "600610", "000812"] {
-            if let Some(summary) =
-                session.belief_debug(engine::AccountId(account), &StockCode(stock.to_string()))
-            {
+            let id = session
+                .stock_id(stock)
+                .expect("fixture stock must be in the catalog");
+            if let Some(summary) = session.belief_debug(engine::AccountId(account), &id) {
                 if summary.unavailable_reason.is_some() {
                     continue;
                 }

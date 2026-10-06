@@ -14,7 +14,7 @@ impl GameSession {
     pub(in crate::session) fn plan_working_orders(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> Vec<WorkingPlanOrder> {
         self.state
             .markets

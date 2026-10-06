@@ -3,7 +3,7 @@ use engine::company::CompanyId;
 use engine::information::PublicationId;
 use engine::session::CompanyDisclosureKind;
 use engine::{
-    AccountId, CivilDate, DailyCandle, Event, Money, OrderId, RejectionReason, Side, StockCode,
+    AccountId, CivilDate, DailyCandle, Event, Money, OrderId, RejectionReason, Side, StockId,
     TradingPhase,
 };
 
@@ -36,7 +36,7 @@ pub fn adr_mapping(event: &Event) -> (&'static str, u8, String, u8) {
 }
 
 pub fn events() -> Vec<Event> {
-    let code = StockCode("600519".into());
+    let code = StockId(0);
     let account = AccountId(73);
     let date = CivilDate::from_iso("2030-01-02").unwrap();
     let price = Money::from_cents(1234);

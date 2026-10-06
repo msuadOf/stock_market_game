@@ -2,12 +2,13 @@ use super::continuous_matching::*;
 use super::*;
 use crate::{
     AccountId, GameConfig, Intent, LimitPrice, Market, Money, Order, OrderId, RejectionReason,
-    SecurityCategory, Side, StockCode, Trade, TradingPhase,
+    SecurityCategory, Side, StockId, Trade, TradingPhase,
 };
 
 #[test]
 fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation() {
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：本文件纯 fixture 单股按目录 rank 恒取 StockId(0)。
+    let code = StockId(0);
     let market = empty_market(&code);
     let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
@@ -250,7 +251,7 @@ fn same_tick_account_validation_envelope_can_be_canceled_and_released() {
 
 #[test]
 fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let key = envelope_key(&code, OrderId(7));
     let start_audit = audit(100, 0, Money::ZERO);
     let start =
@@ -348,7 +349,7 @@ fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
 
 #[test]
 fn seller_cancel_after_partial_fill_preserves_nonzero_nominal_and_charged_audit() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let config = GameConfig::proposed_defaults();
     let transition = transition::FillTransition::sell(transition::SellFillInput {
         config: &config,
@@ -455,7 +456,8 @@ fn cancellation_fails_closed_for_missing_duplicate_or_drifted_snapshots() {
 #[test]
 fn cancellation_with_another_stock_code_is_an_explicit_unknown_stock_rejection() {
     let fixture = CancelFixture::tick_start(7, 100, 0, Money::ZERO, Money::from_cents(99_500));
-    let unknown = StockCode("600999".to_owned());
+    // 数值身份后无字符串可断言：目录外未知股票哨兵取 StockId(9)。
+    let unknown = StockId(9);
     let output = cancel_continuous_order(ContinuousCancelInput {
         market: fixture.market,
         envelopes: vec![fixture.snapshot],
@@ -484,7 +486,7 @@ fn cancellation_with_another_stock_code_is_an_explicit_unknown_stock_rejection()
 
 #[test]
 fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
             code: code.clone(),
@@ -527,7 +529,7 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
 
 #[test]
 fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -569,7 +571,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
 
 #[test]
 fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -611,7 +613,7 @@ fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
 
 #[test]
 fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -686,7 +688,7 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
 
 #[test]
 fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let maker = add_resting_snapshot(
         &mut market,
@@ -734,7 +736,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
 
 #[test]
 fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
         code: code.clone(),
         side: Side::Buy,
@@ -771,7 +773,7 @@ fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
 
 #[test]
 fn continuous_market_without_liquidity_releases_the_draft_and_reports_zero_filled() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
         code: code.clone(),
         side: Side::Buy,
@@ -821,7 +823,7 @@ fn continuous_market_without_liquidity_releases_the_draft_and_reports_zero_fille
 
 #[test]
 fn continuous_market_partial_fill_releases_remainder_with_the_next_ordinal() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let maker = add_resting_snapshot(
         &mut market,
@@ -893,7 +895,7 @@ fn continuous_market_partial_fill_releases_remainder_with_the_next_ordinal() {
 
 #[test]
 fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let first = add_resting_snapshot(
         &mut market,
@@ -1008,7 +1010,7 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
 
 #[test]
 fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let maker = add_resting_snapshot(
         &mut market,
@@ -1103,7 +1105,7 @@ fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
 
 #[test]
 fn same_stock_competing_limits_fill_in_received_order_with_descending_identities() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let maker = add_resting_snapshot(
         &mut market,
@@ -1158,7 +1160,7 @@ fn same_stock_competing_limits_fill_in_received_order_with_descending_identities
 
 #[test]
 fn trade_fact_identity_spans_multiple_sealed_operations_legs_and_makers() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let makers = [
         add_resting_snapshot(
@@ -1260,7 +1262,7 @@ fn trade_fact_identity_spans_multiple_sealed_operations_legs_and_makers() {
 
 #[test]
 fn account_facts_use_the_triggering_sealed_operation_as_identity() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let existing = add_resting_snapshot(
         &mut market,
@@ -1325,8 +1327,9 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
 #[test]
 fn each_stock_worker_numbers_trade_facts_from_zero() {
     for code in [
-        StockCode("600888".to_owned()),
-        StockCode("000001".to_owned()),
+        StockId(0),
+        // 数值身份后无字符串可断言：双股循环按 rank 取 0/1。
+        StockId(1),
     ] {
         let mut market = empty_market(&code);
         let maker = add_resting_snapshot(
@@ -1367,7 +1370,7 @@ fn each_stock_worker_numbers_trade_facts_from_zero() {
 
 #[test]
 fn trade_fact_index_overflow_is_atomic() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let trade = Trade {
         price: Money::from_cents(1_000),
         qty: 100,
@@ -1396,7 +1399,7 @@ fn trade_fact_index_overflow_is_atomic() {
 
 #[test]
 fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let seller = add_resting_snapshot(
         &mut market,
@@ -1446,7 +1449,7 @@ fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
 }
 
 struct CancelFixture {
-    code: StockCode,
+    code: StockId,
     market: Market,
     snapshot: ContinuousEnvelopeSnapshot,
 }
@@ -1481,7 +1484,7 @@ impl CancelFixture {
         live_cash: Money,
         created_at_validation: bool,
     ) -> Self {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let order = Order {
             id: OrderId(order_id),
             side: Side::Buy,
@@ -1530,7 +1533,7 @@ impl CancelFixture {
     }
 }
 
-fn resting_market(code: &StockCode, order: Order) -> Market {
+fn resting_market(code: &StockId, order: Order) -> Market {
     let mut market = Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -1544,7 +1547,7 @@ fn resting_market(code: &StockCode, order: Order) -> Market {
     market
 }
 
-fn envelope_key(code: &StockCode, order: OrderId) -> EnvelopeKey {
+fn envelope_key(code: &StockId, order: OrderId) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -1573,12 +1576,12 @@ fn assert_unchanged_resting_order(market: &Market, id: OrderId, owner: AccountId
 }
 
 fn validated_operations(intents: Vec<Intent>) -> (Vec<ValidatedOperation>, GameConfig) {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     validated_operations_for_stock(&code, intents)
 }
 
 fn validated_operations_for_stock(
-    code: &StockCode,
+    code: &StockId,
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let game =
@@ -1588,7 +1591,7 @@ fn validated_operations_for_stock(
 
 fn validated_operations_in_session(
     game: &GameSession,
-    code: &StockCode,
+    code: &StockId,
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
@@ -1637,7 +1640,7 @@ fn place_draft(operation: &ValidatedOperation) -> &EnvelopeDraft {
     }
 }
 
-fn empty_market(code: &StockCode) -> Market {
+fn empty_market(code: &StockId) -> Market {
     Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -1649,7 +1652,7 @@ fn empty_market(code: &StockCode) -> Market {
 
 fn add_resting_snapshot(
     market: &mut Market,
-    code: &StockCode,
+    code: &StockId,
     owner: AccountId,
     order_id: OrderId,
     side: Side,
@@ -1735,7 +1738,7 @@ fn validate_worker_receipts(
 
 #[test]
 fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let initial = (0..2)
         .map(|index| {
@@ -1803,7 +1806,7 @@ fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
 #[test]
 fn dense_private_market_validation_uses_multiple_workers_without_mutating_the_book_or_ledger() {
     use std::sync::Mutex;
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut market = empty_market(&code);
     let rows: Vec<_> = (0..1024)
         .map(|index| {
@@ -1861,7 +1864,7 @@ fn dense_private_market_validation_uses_multiple_workers_without_mutating_the_bo
 #[test]
 fn dense_private_market_errors_follow_book_order_across_parallel_threshold() {
     for count in [511, 512, 513] {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut market = empty_market(&code);
         let rows: Vec<_> = (0..count)
             .map(|index| {

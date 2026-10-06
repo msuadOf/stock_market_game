@@ -5,7 +5,7 @@ use super::{
     Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, ResVec, StepFatal, ValidatedOperation,
 };
 use crate::orderbook::js_safe_u64;
-use crate::{GameSession, Market, OrderId, StockCode, TradingPhase};
+use crate::{GameSession, Market, OrderId, StockId, TradingPhase};
 use std::collections::BTreeMap;
 
 /// 在 AccountValidation/StockProcessing 边界装配股票拥有的只读 Auction worker 输入。
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 /// worker 先应用 operations，再完成 Auction。
 #[derive(Debug)]
 pub(super) struct AuctionStockInput {
-    pub(super) code: StockCode,
+    pub(super) code: StockId,
     pub(super) market: Market,
     pub(super) completion: AuctionCompletionInput,
     pub(super) continuous_envelopes: Vec<Envelope>,
@@ -116,13 +116,22 @@ fn auction_phase(session: &GameSession) -> Result<AuctionPhase, StepFatal> {
 
 fn validate_market_and_spec_identity(
     session: &GameSession,
-) -> Result<BTreeMap<StockCode, &crate::StockSpec>, StepFatal> {
+) -> Result<BTreeMap<StockId, &crate::StockSpec>, StepFatal> {
     let specs = session
         .state
         .setup
         .stocks
         .iter()
-        .map(|spec| (spec.code.clone(), spec))
+        .map(|spec| {
+            (
+                session
+                    .state
+                    .stocks
+                    .id(&spec.code.0)
+                    .expect("配置股票必须已入目录"),
+                spec,
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     if specs.len() != session.state.setup.stocks.len() {
         return Err(invariant("stock specifications contain duplicate codes"));

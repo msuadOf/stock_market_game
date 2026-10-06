@@ -7,7 +7,7 @@ use crate::RejectionReason;
 
 #[test]
 fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_price() {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -54,7 +54,7 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
 
 #[test]
 fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let setup = crate::session::npc_working_quote_tests::quote_setup(0);
     let probe = GameSession::new(setup.clone(), 42).unwrap();
     let up = probe.state.markets[&code].up_stop().unwrap();
@@ -111,7 +111,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
 #[test]
 fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     let account = crate::AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -190,7 +190,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
 #[test]
 fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts() {
     let account = crate::AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -221,7 +221,7 @@ fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts(
 #[test]
 fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
     let account = crate::AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -254,7 +254,7 @@ fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
 #[test]
 fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
     let account = crate::AccountId(1);
-    let unknown = crate::StockCode("600999".to_owned());
+    let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -299,8 +299,8 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
 #[test]
 fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
     let account = crate::AccountId(0);
-    let known = crate::StockCode("600888".to_owned());
-    let unknown = crate::StockCode("600999".to_owned());
+    let known = crate::StockId(0);
+    let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -394,7 +394,7 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
 #[test]
 fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -513,9 +513,9 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
 #[test]
 fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
     let account = crate::AccountId(0);
-    let main = crate::StockCode("600888".to_owned());
-    let chinext = crate::StockCode("300888".to_owned());
-    let unknown = crate::StockCode("600999".to_owned());
+    let main = crate::StockId(0);
+    let chinext = crate::StockId(1);
+    let unknown = crate::StockId(9);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -639,8 +639,8 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
 #[test]
 fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_order() {
     let account = crate::AccountId(0);
-    let first = crate::StockCode("600888".to_owned());
-    let second = crate::StockCode("600889".to_owned());
+    let first = crate::StockId(0);
+    let second = crate::StockId(1);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
         42,
@@ -698,7 +698,7 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
 #[test]
 fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
@@ -740,8 +740,8 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
 #[test]
 fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
     let account = crate::AccountId(0);
-    let main = crate::StockCode("600888".to_owned());
-    let chinext = crate::StockCode("300888".to_owned());
+    let main = crate::StockId(0);
+    let chinext = crate::StockId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -872,7 +872,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
 #[test]
 fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_budget() {
     let account = crate::AccountId(0);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state
@@ -931,7 +931,7 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
 }
 
 fn context(
-    stocks: impl IntoIterator<Item = (crate::StockCode, StockValidation)>,
+    stocks: impl IntoIterator<Item = (crate::StockId, StockValidation)>,
 ) -> AccountValidationContext {
     AccountValidationContext::new(stocks).unwrap()
 }
@@ -939,7 +939,7 @@ fn context(
 fn limit(
     player_queue_index: u64,
     account: crate::AccountId,
-    code: crate::StockCode,
+    code: crate::StockId,
     side: crate::Side,
     qty: u32,
 ) -> IntentCandidate {

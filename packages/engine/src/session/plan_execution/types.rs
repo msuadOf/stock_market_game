@@ -69,7 +69,7 @@ pub enum PlanExecutionError {
     #[error("plan {plan_id:?} references unknown account {account:?}")]
     UnknownAccount { plan_id: PlanId, account: AccountId },
     #[error("plan {plan_id:?} references unknown stock {code:?}")]
-    UnknownStock { plan_id: PlanId, code: StockCode },
+    UnknownStock { plan_id: PlanId, code: StockId },
     #[error(
         "plan {plan_id:?} cannot execute on session day {session_day} using day {request_day}"
     )]
@@ -84,7 +84,7 @@ pub enum PlanExecutionError {
     AllocationMismatch {
         plan_id: PlanId,
         allocation_plan_id: PlanId,
-        allocation_code: StockCode,
+        allocation_code: StockId,
     },
     #[error("plan {plan_id:?} has a position-fraction target that was not converted to shares")]
     UnconvertedFractionTarget { plan_id: PlanId },

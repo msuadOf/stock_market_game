@@ -3,14 +3,16 @@ use crate::session::pipeline::continuous_tick_transaction::prepare_continuous_ti
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountKind, Money};
 
-fn npc_session() -> (GameSession, AccountId, StockCode) {
+fn npc_session() -> (GameSession, AccountId, StockId) {
     let mut session = GameSession::new(
         crate::session::npc_working_quote_tests::retail_quote_setup(),
         8,
     )
     .unwrap();
     let account = AccountId(1);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     session
         .state
         .accounts
@@ -231,11 +233,13 @@ fn npc_partial_resting_fill_registers_once_and_immediate_full_fill_does_not_regi
     let (partial, order_id) = project_npc_limit_against_player_ask(200);
     assert_eq!(partial.state.npc_order_lifecycles.len(), 1);
     assert_eq!(partial.state.npc_order_lifecycles[0].order_id, order_id);
-    let code = &partial.state.setup.stocks[0].code;
-    assert_eq!(partial.state.markets[code].resting_orders()[0].qty, 100);
+    let code = partial
+        .stock_id(&partial.state.setup.stocks[0].code.0)
+        .unwrap();
+    assert_eq!(partial.state.markets[&code].resting_orders()[0].qty, 100);
     let (filled, _) = project_npc_limit_against_player_ask(100);
     assert!(filled.state.npc_order_lifecycles.is_empty());
-    assert!(filled.state.markets[code].resting_orders().is_empty());
+    assert!(filled.state.markets[&code].resting_orders().is_empty());
 }
 
 #[test]

@@ -10,7 +10,7 @@ use super::IntentCandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
 use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
 use crate::strategy::Intent;
-use crate::{AccountId, AccountKind, LimitPrice, OrderId, StockCode};
+use crate::{AccountId, AccountKind, LimitPrice, OrderId, StockId};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
@@ -52,7 +52,7 @@ pub(in crate::session) enum NpcReconciliationDecision {
     Cancel {
         account: AccountId,
         order_id: OrderId,
-        code: StockCode,
+        code: StockId,
     },
     Replace {
         account: AccountId,
@@ -65,7 +65,7 @@ impl NpcReconciliationDecision {
     #[cfg(test)]
     pub(in crate::session) const fn contract_parts(
         &self,
-    ) -> (AccountId, OrderId, Option<&StockCode>, Option<&Intent>) {
+    ) -> (AccountId, OrderId, Option<&StockId>, Option<&Intent>) {
         match self {
             Self::Keep { account, order_id } => (*account, *order_id, None, None),
             Self::Cancel {
@@ -557,7 +557,7 @@ mod auction_identity_tests {
     #[test]
     fn kept_auction_order_consumes_its_raw_quote_by_order_id() {
         let account = AccountId(1);
-        let code = StockCode("600001".to_owned());
+        let code = StockId(0);
         let auction = [(
             code.clone(),
             AuctionOrderSnap {

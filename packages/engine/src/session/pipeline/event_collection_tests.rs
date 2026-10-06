@@ -1,9 +1,9 @@
 use super::event_collection::{collect_events, OwnedEventFact};
 use super::*;
-use crate::{AccountId, Event, Money, OrderId, Side, StockCode, TradingPhase};
+use crate::{AccountId, Event, Money, OrderId, Side, StockId, TradingPhase};
 
-fn code() -> StockCode {
-    StockCode("600001".to_owned())
+fn code() -> StockId {
+    StockId(0)
 }
 
 fn auction_tick(seq: u64) -> Event {

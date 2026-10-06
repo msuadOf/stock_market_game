@@ -29,7 +29,7 @@ pub struct DecisionAccountInput {
     strategy_state: StrategyState,
     account_risk: Option<AccountRiskObservation>,
     retail_experience: Option<Arc<RetailExperienceState>>,
-    retail_analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+    retail_analysis: Option<BTreeMap<crate::StockId, crate::plans::CandidateAssessment>>,
     failure_influence: Option<u16>,
 }
 
@@ -52,7 +52,7 @@ pub enum DecisionSnapshotError {
     #[error("retail account {account:?} analysis references unknown market stock {code:?}")]
     UnknownRetailAnalysisStock {
         account: AccountId,
-        code: crate::StockCode,
+        code: crate::StockId,
     },
     #[error("retail account {0:?} personal analysis requires a retail execution strategy")]
     InvalidRetailAnalysisStrategy(AccountId),
@@ -104,7 +104,7 @@ impl DecisionAccountInput {
 
     pub fn with_retail_analysis(
         mut self,
-        analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+        analysis: Option<BTreeMap<crate::StockId, crate::plans::CandidateAssessment>>,
     ) -> Self {
         self.retail_analysis = analysis;
         self
@@ -112,7 +112,7 @@ impl DecisionAccountInput {
 
     pub fn retail_analysis(
         &self,
-    ) -> Option<&BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>> {
+    ) -> Option<&BTreeMap<crate::StockId, crate::plans::CandidateAssessment>> {
         self.retail_analysis.as_ref()
     }
 

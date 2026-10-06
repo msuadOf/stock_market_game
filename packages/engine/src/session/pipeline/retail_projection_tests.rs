@@ -7,11 +7,11 @@ use super::{
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
-use crate::{AccountId, Money, OrderId, Position, RetailExperienceState, Side, StockCode};
+use crate::{AccountId, Money, OrderId, Position, RetailExperienceState, Side, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn code() -> StockCode {
-    StockCode("600001".to_owned())
+fn code() -> StockId {
+    StockId(0)
 }
 
 fn fill(index: u64, side: Side, order: u64, qty: u32, gross: i64) -> EnvelopeReceipt {
@@ -291,7 +291,7 @@ fn chained_buy_fill(
     }
 }
 
-fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
+fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockId, Position>> {
     BTreeMap::from([(
         AccountId(1),
         BTreeMap::from([(
@@ -681,7 +681,7 @@ fn retail_order_average_truncates_fractional_cents_without_changing_gross() {
 #[test]
 fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     let account = AccountId(1);
-    let held = StockCode("600002".to_owned());
+    let held = StockId(1);
     let mut second = fill(2, Side::Buy, 11, 100, 100_000);
     second.envelope.stock = held.clone();
     second.local_key = ReceiptLocalKey::new(
@@ -695,12 +695,12 @@ fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     .unwrap();
     let mut experience = RetailExperienceState::without_equity_reference();
     let unheld = (0..9)
-        .map(|index| StockCode(format!("watch-{index}")))
+        .map(|index| StockId(u32::MAX - 10 - index as u32))
         .collect::<Vec<_>>();
     for (index, stock) in unheld.iter().enumerate() {
         experience.observe_stock(stock, index as u64);
     }
-    let untouched = StockCode("600003".to_owned());
+    let untouched = StockId(2);
     experience
         .initialize_holding(
             &untouched,

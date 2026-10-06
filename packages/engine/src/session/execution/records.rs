@@ -6,7 +6,7 @@ impl GameSession {
     /// 母单进度仅由撮合结算成功后的实际成交推进。
     pub(in crate::session) fn record_parent_order_fills(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         fills: &[OrderFillSettlement],
     ) {
         let mut completed = Vec::new();
@@ -72,7 +72,7 @@ impl GameSession {
     pub(in crate::session) fn record_parent_order_submission(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         order_id: OrderId,
         qty: u32,
@@ -103,7 +103,7 @@ impl GameSession {
     pub(in crate::session) fn record_parent_order_canceled(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) {
         if let Some(plan) = self

@@ -5,7 +5,7 @@ impl GameSession {
         &self,
         cursor: &mut crate::session::plan_chain_candidates::QuotePlans,
         plans: &PlanBook,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Option<PlanExecutionRequest> {
         let id = cursor.account;
         let trading_day = u64::from(self.state.day);
@@ -100,13 +100,18 @@ impl GameSession {
                 .markets
                 .get(plan.code())
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a market", plan.code()));
+            let plan_code = self
+                .state
+                .stocks
+                .code(*plan.code())
+                .expect("plan stock must be cataloged");
             let stock = self
                 .state
                 .setup
                 .stocks
                 .iter()
-                .find(|stock| &stock.code == plan.code())
-                .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan.code()));
+                .find(|stock| stock.code.0 == *plan_code)
+                .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan_code));
             let (urgency, _) = self.plan_execution_urgency_at_view(
                 plan,
                 cursor.thirty_minute_bp.get(plan.code()).copied().flatten(),

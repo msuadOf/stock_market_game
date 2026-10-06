@@ -1,6 +1,6 @@
 use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
 use super::*;
-use crate::{AccountId, Money, Order, OrderId, Side, StockCode, TradingPhase};
+use crate::{AccountId, Money, Order, OrderId, Side, StockId, TradingPhase};
 
 #[test]
 fn continuous_inputs_capture_all_markets_without_preloaded_operations() {
@@ -9,8 +9,9 @@ fn continuous_inputs_capture_all_markets_without_preloaded_operations() {
         42,
     )
     .unwrap();
-    let first = StockCode("600888".to_owned());
-    let second = StockCode("600889".to_owned());
+    // 数值身份后无字符串可断言：two_stock_quote_setup 目录按代码序 rank 取 0/1。
+    let first = StockId(0);
+    let second = StockId(1);
     let before = game.session_state_hash().unwrap();
 
     let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
@@ -43,7 +44,8 @@ fn continuous_adapter_carries_only_tick_start_envelopes_matching_each_order_book
         42,
     )
     .unwrap();
-    let code = StockCode("600889".to_owned());
+    // 数值身份后无字符串可断言：two_stock_quote_setup 中 600889 按 rank 取 StockId(1)。
+    let code = StockId(1);
     let order = resting_buy(OrderId(91), AccountId(1));
     game.state
         .markets
@@ -70,7 +72,8 @@ fn continuous_adapter_carries_only_tick_start_envelopes_matching_each_order_book
 fn continuous_adapter_preserves_prior_fill_fee_audit_from_the_authoritative_ledger() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     let owner = AccountId(1);
     let order = Order {
         id: OrderId(92),
@@ -134,7 +137,8 @@ fn continuous_adapter_preserves_prior_fill_fee_audit_from_the_authoritative_ledg
 fn continuous_adapter_rejects_residual_auction_orders_in_continuous_phase() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     game.state
         .auction_orders
         .entry(code)
@@ -164,8 +168,9 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
         42,
     )
     .unwrap();
-    let first = StockCode("600888".to_owned());
-    let second = StockCode("600889".to_owned());
+    // 数值身份后无字符串可断言：two_stock_quote_setup 目录按代码序 rank 取 0/1。
+    let first = StockId(0);
+    let second = StockId(1);
     let first_market = game.state.markets.remove(&first).unwrap();
     game.state.markets.insert(second, first_market);
 
@@ -183,7 +188,8 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
 fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
     let mut missing =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     missing
         .state
         .markets
@@ -220,7 +226,8 @@ fn continuous_adapter_rejects_missing_or_stale_ledger_evidence() {
 fn continuous_adapter_rejects_underfunded_live_resources_with_matching_order_fields() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     let owner = AccountId(1);
     game.state
         .markets
@@ -265,7 +272,8 @@ fn continuous_adapter_rejects_underfunded_live_resources_with_matching_order_fie
 fn continuous_adapter_rejects_same_tick_envelopes_in_the_live_ledger() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     game.state.envelope_ledger = EnvelopeLedger::new(
         0,
         [Envelope::created_at_validation(
@@ -333,7 +341,8 @@ fn resting_buy(id: OrderId, owner: AccountId) -> Order {
 fn adapter_validates_order_resources_without_materializing_an_extra_projection_envelope() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -370,7 +379,8 @@ fn one_dense_stock_input_validates_on_multiple_workers_and_keeps_the_authoritati
     use std::sync::Mutex;
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     for index in 0..1024 {
         game.state
             .markets
@@ -420,7 +430,8 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
     for count in [511, 512, 513] {
         let mut source =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-        let code = StockCode("600888".to_owned());
+        // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
         for index in 0..count {
             source
                 .state
@@ -487,7 +498,8 @@ fn dense_descending_books_emit_ascending_envelope_keys() {
     // 供下游 PrivateStockLedger / 校验按序消费。融合排序方案不得改变这一契约。
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     for index in 0..1024 {
         game.state
             .markets
@@ -516,7 +528,8 @@ fn prepare_stock_input_stops_using_incremental_identity_set() {
     // 重构后 IDENTITY_SET_INSERTS 不再有递增点，若查重被改回增量插入并重新接线计数，此处会再次亮红。
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = StockId(0);
     for index in 0..1024 {
         game.state
             .markets

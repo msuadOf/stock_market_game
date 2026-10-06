@@ -37,7 +37,7 @@ impl GameSession {
         self.state.causal.record(time, kind);
     }
 
-    pub(super) fn causal_quote(&self, code: &StockCode) -> Quote {
+    pub(super) fn causal_quote(&self, code: &StockId) -> Quote {
         let market = &self.state.markets[code];
         Quote {
             code: code.clone(),
@@ -48,16 +48,16 @@ impl GameSession {
         }
     }
 
-    pub(super) fn causal_snapshot(&mut self, code: &StockCode) {
+    pub(super) fn causal_snapshot(&mut self, code: &StockId) {
         self.causal_snapshot_at(self.causal_time(), code);
     }
 
-    pub(super) fn causal_snapshot_at(&mut self, time: FactTime, code: &StockCode) {
+    pub(super) fn causal_snapshot_at(&mut self, time: FactTime, code: &StockId) {
         self.causal_record_at(time, CausalFactKind::Quote(self.causal_quote(code)));
     }
 
     #[cfg(test)]
-    pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockCode) {
+    pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockId) {
         let quote = self.causal_quote(code);
         self.causal_submitted_with_quote(order.owner, order.id, code, order.side, order.qty, quote);
     }
@@ -66,7 +66,7 @@ impl GameSession {
         &mut self,
         account: AccountId,
         order: OrderId,
-        code: &StockCode,
+        code: &StockId,
         side: crate::Side,
         qty: u32,
         quote: Quote,
@@ -94,7 +94,7 @@ impl GameSession {
     pub(super) fn causal_terminated(
         &mut self,
         order: (AccountId, OrderId, u32),
-        code: &StockCode,
+        code: &StockId,
         reason: Termination,
     ) {
         self.causal_terminated_at(self.causal_time(), order, code, reason);
@@ -104,7 +104,7 @@ impl GameSession {
         &mut self,
         time: FactTime,
         order: (AccountId, OrderId, u32),
-        code: &StockCode,
+        code: &StockId,
         reason: Termination,
     ) {
         self.causal_record_at(

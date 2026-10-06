@@ -258,7 +258,7 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     setup.ticks_per_day = 1;
     setup.history_len = 2;
     let mut third = setup.stocks[0].clone();
-    third.code = crate::StockCode("600890".to_owned());
+    third.code = crate::StockId("600890".to_owned());
     setup.stocks.push(third);
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
@@ -301,7 +301,7 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     assert!(!closing_quote_codes.contains(&codes[2]));
 }
 
-fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
+fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockId) {
     let mut game = session(ticks_per_day, 0);
     let code = game.state.markets.keys().next().unwrap().clone();
     // Existing player inventory avoids adding an account absent from the save setup.

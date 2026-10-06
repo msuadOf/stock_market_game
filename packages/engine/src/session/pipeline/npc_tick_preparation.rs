@@ -26,7 +26,7 @@ use super::{
 #[cfg(test)]
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::session::PendingNpcBatch;
-use crate::{AccountId, GameSession, Intent, StockCode};
+use crate::{AccountId, GameSession, Intent, StockId};
 #[cfg(test)]
 use rayon::join;
 use std::collections::BTreeMap;
@@ -365,7 +365,7 @@ fn projected_ordered_intents(
         }
     }
     let mut by_account = BTreeMap::<AccountId, Vec<Intent>>::new();
-    let mut reconciliation_cancels = BTreeMap::<(AccountId, StockCode), Vec<usize>>::new();
+    let mut reconciliation_cancels = BTreeMap::<(AccountId, StockId), Vec<usize>>::new();
     let mut local_dependencies = BTreeMap::<AccountId, Vec<(usize, usize)>>::new();
     for decision in projection.reconciliation_decisions() {
         let (account, code, order_id) = match decision {

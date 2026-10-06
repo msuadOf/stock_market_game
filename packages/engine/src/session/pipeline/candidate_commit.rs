@@ -296,14 +296,14 @@ fn invariant(description: String) -> StepFatal {
 #[cfg(test)]
 mod event_identity_tests {
     use super::*;
-    use crate::{AccountId, OrderId, StockCode};
+    use crate::{AccountId, OrderId, StockId};
 
     #[test]
     fn quote_expiry_cancel_and_same_account_projection_cancel_get_distinct_local_keys() {
         let canceled = |seq| crate::Event::OrderCanceled {
             seq,
             account: AccountId(3),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             id: OrderId(seq),
             remaining_qty: 100,
         };

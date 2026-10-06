@@ -90,40 +90,40 @@ impl serde::Serialize for DailyCandleHistory {
 /// 活动日 K 与完整历史的唯一 owner；对外存档仍分别投影两个 map。
 #[derive(Clone, Debug, Default)]
 pub(super) struct SessionCandleBook {
-    histories: BTreeMap<StockCode, DailyCandleHistory>,
-    active: BTreeMap<StockCode, DailyCandle>,
+    histories: BTreeMap<StockId, DailyCandleHistory>,
+    active: BTreeMap<StockId, DailyCandle>,
 }
 
 impl SessionCandleBook {
     pub(super) fn new(
-        histories: BTreeMap<StockCode, DailyCandleHistory>,
-        active: BTreeMap<StockCode, DailyCandle>,
+        histories: BTreeMap<StockId, DailyCandleHistory>,
+        active: BTreeMap<StockId, DailyCandle>,
     ) -> Self {
         Self { histories, active }
     }
 
-    pub(super) fn histories(&self) -> &BTreeMap<StockCode, DailyCandleHistory> {
+    pub(super) fn histories(&self) -> &BTreeMap<StockId, DailyCandleHistory> {
         &self.histories
     }
-    pub(super) fn active(&self) -> &BTreeMap<StockCode, DailyCandle> {
+    pub(super) fn active(&self) -> &BTreeMap<StockId, DailyCandle> {
         &self.active
     }
 
     #[cfg(test)]
-    pub(super) fn replace_history(&mut self, code: StockCode, history: DailyCandleHistory) {
+    pub(super) fn replace_history(&mut self, code: StockId, history: DailyCandleHistory) {
         self.histories.insert(code, history);
     }
 
-    pub(super) fn replace_histories(&mut self, histories: BTreeMap<StockCode, DailyCandleHistory>) {
+    pub(super) fn replace_histories(&mut self, histories: BTreeMap<StockId, DailyCandleHistory>) {
         self.histories = histories;
     }
 
-    pub(super) fn replace_active(&mut self, active: BTreeMap<StockCode, DailyCandle>) {
+    pub(super) fn replace_active(&mut self, active: BTreeMap<StockId, DailyCandle>) {
         self.active = active;
     }
 
     #[cfg(test)]
-    pub(super) fn set_active(&mut self, code: StockCode, candle: DailyCandle) {
+    pub(super) fn set_active(&mut self, code: StockId, candle: DailyCandle) {
         self.active.insert(code, candle);
     }
 }
@@ -132,7 +132,7 @@ impl SessionCandleBook {
     pub(super) fn record_trade_or_mark(
         &mut self,
         time: i64,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         added_volume: u64,
     ) {
@@ -177,7 +177,7 @@ impl SessionCandleBook {
         }
     }
 
-    pub(super) fn commit_active(&mut self) -> BTreeMap<StockCode, DailyCandle> {
+    pub(super) fn commit_active(&mut self) -> BTreeMap<StockId, DailyCandle> {
         let closed = std::mem::take(&mut self.active);
         for (code, candle) in &closed {
             let history = self.histories.entry(code.clone()).or_default();
@@ -190,7 +190,7 @@ impl SessionCandleBook {
 impl GameSession {
     pub(super) fn update_active_daily_candle(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         added_volume: u64,
     ) {
@@ -202,7 +202,7 @@ impl GameSession {
         );
     }
 
-    pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
+    pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockId, DailyCandle> {
         self.state.candle_book.commit_active()
     }
 }
@@ -213,13 +213,18 @@ const SECONDS_PER_DAY: i64 = 86_400;
 /// 生成与 session RNG 隔离的确定性历史，避免预置行情改变 NPC 的随机序列。
 pub(super) fn generate_preset_daily_candles(
     setup: &SessionSetup,
+    catalog: &crate::stock::StockCatalog,
     seed: u64,
-) -> Result<BTreeMap<StockCode, DailyCandleHistory>, SessionError> {
+) -> Result<BTreeMap<StockId, DailyCandleHistory>, SessionError> {
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()?;
     setup
         .stocks
         .iter()
         .map(|stock| {
+            // 边界代码 → 数值 id；RNG 种子仍按代码字符串派生，保持既有价格路径不变。
+            let id = catalog
+                .id(&stock.code.0)
+                .expect("配置股票必须已入目录");
             let dates = preset_candle_dates(&calendar, setup.start_date, stock.exchange)?;
             let mut rng =
                 SplitMix64::new(seed ^ stock_code_hash(&stock.code) ^ 0xD1A1_C4AD_1E50_0360);
@@ -264,7 +269,7 @@ pub(super) fn generate_preset_daily_candles(
                 );
             }
             newest_first.reverse();
-            Ok((stock.code.clone(), newest_first.into()))
+            Ok((id, newest_first.into()))
         })
         .collect()
 }
@@ -324,7 +329,7 @@ fn quantize_cents(cents: i64, tick: i64) -> i64 {
     ((cents.saturating_add(tick / 2)) / tick).max(1) * tick
 }
 
-/// 把 StockCode 哈希为 u64（用于派生每只股票的确定性 RNG 种子）。
+/// 把 StockId 哈希为 u64（用于派生每只股票的确定性 RNG 种子）。
 pub(super) fn stock_code_hash(code: &StockCode) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -386,7 +391,7 @@ mod candle_book_tests {
 
     #[test]
     fn no_trade_day_is_archived_without_becoming_a_traded_sample() {
-        let code = StockCode("600000".into());
+        let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.record_trade_or_mark(0, &code, Money::from_cents(1_000), 0);
         let closed = book.commit_active();
@@ -400,7 +405,7 @@ mod candle_book_tests {
     #[test]
     #[should_panic(expected = "daily candle volume overflow: engine state invariant violated")]
     fn active_candle_volume_overflow_stays_explicit() {
-        let code = StockCode("600000".into());
+        let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.set_active(
             code.clone(),
@@ -420,7 +425,7 @@ mod candle_book_tests {
     #[test]
     #[should_panic(expected = "daily trade turnover overflow: engine invariant violated")]
     fn active_candle_trade_statistics_overflow_stays_explicit() {
-        let code = StockCode("600000".into());
+        let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.set_active(
             code.clone(),
@@ -442,7 +447,7 @@ mod candle_book_tests {
 
     #[test]
     fn first_trade_replaces_mark_and_commit_archives_once() {
-        let code = StockCode("600000".into());
+        let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.record_trade_or_mark(2, &code, Money::from_cents(1_000), 0);
         book.record_trade_or_mark(2, &code, Money::from_cents(1_100), 100);

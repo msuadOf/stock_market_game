@@ -2,18 +2,18 @@
 
 use std::collections::BTreeSet;
 
-use crate::StockCode;
+use crate::StockId;
 
 pub(super) struct RetentionCandidates<'a> {
-    contacts: Vec<(u64, &'a StockCode)>,
-    protected: &'a BTreeSet<StockCode>,
+    contacts: Vec<(u64, &'a StockId)>,
+    protected: &'a BTreeSet<StockId>,
     cap: usize,
 }
 
 impl<'a> RetentionCandidates<'a> {
     pub(super) fn from_contacts(
-        contacts: impl Iterator<Item = (&'a StockCode, u64)>,
-        protected: &'a BTreeSet<StockCode>,
+        contacts: impl Iterator<Item = (&'a StockId, u64)>,
+        protected: &'a BTreeSet<StockId>,
         cap: usize,
     ) -> Self {
         Self {
@@ -23,7 +23,7 @@ impl<'a> RetentionCandidates<'a> {
         }
     }
 
-    pub(super) fn select_kept_unprotected(self) -> BTreeSet<StockCode> {
+    pub(super) fn select_kept_unprotected(self) -> BTreeSet<StockId> {
         let mut unprotected: Vec<_> = self
             .contacts
             .into_iter()
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn selection_caps_only_unprotected_contacts_and_breaks_ties_by_code() {
         let contacts: Vec<_> = (0..12)
-            .map(|index| (StockCode(format!("600{index:03}")), 7))
+            .map(|index| (StockId(index), 7))
             .collect();
         let protected = contacts[..3].iter().map(|(code, _)| code.clone()).collect();
         let kept = RetentionCandidates::from_contacts(

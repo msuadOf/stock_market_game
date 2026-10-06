@@ -5,6 +5,7 @@ use super::*;
 /// 同批 root 共享的只读事实；不包含市场簿、历史、个人状态 map 或委托游标。
 pub(in crate::session) struct RootReadContext {
     accounts: account_book::AccountBook,
+    stocks: crate::stock::StockCatalog,
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
     operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
     library: std::sync::Arc<crate::information::PublicLibrary>,
@@ -15,10 +16,21 @@ pub(in crate::session) struct RootReadContext {
 }
 
 impl RootReadContext {
+    /// 按数值 id 查发行人（公司域仍以 StockCode 关联，翻译在此完成）。
+    pub(in crate::session) fn issuer_of_stock(
+        &self,
+        id: StockId,
+    ) -> Option<&crate::company::CompanyId> {
+        let code = self.stocks.code(id)?;
+        self.company_registry
+            .issuer_of(&crate::account::StockCode(code.to_string()))
+    }
+
     pub(in crate::session) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         let accounts = session.state.accounts.clone();
         Ok(Self {
             accounts,
+            stocks: session.state.stocks.clone(),
             company_registry: session.state.company_registry.clone(),
             operations: session.state.operations.clone(),
             library: session.state.library.clone(),
@@ -33,7 +45,7 @@ impl RootReadContext {
         &self,
         id: AccountId,
         belief: &BeliefBook,
-        code: &StockCode,
+        code: &StockId,
         market: &MarketView,
         paused: Option<crate::plans::PauseReason>,
     ) -> crate::session::institutional_behavior::InstitutionBehavior {
@@ -66,11 +78,11 @@ impl RootReadContext {
         &self,
         id: AccountId,
         belief: &BeliefBook,
-        candidates: &BTreeSet<StockCode>,
+        candidates: &BTreeSet<StockId>,
         market_view: &MarketView,
-        price_paths: &BTreeMap<StockCode, crate::observation::PricePathObservation>,
-        technical: &BTreeMap<StockCode, TechnicalObservation>,
-    ) -> BTreeMap<StockCode, CandidateAssessment> {
+        price_paths: &BTreeMap<StockId, crate::observation::PricePathObservation>,
+        technical: &BTreeMap<StockId, TechnicalObservation>,
+    ) -> BTreeMap<StockId, CandidateAssessment> {
         let weights = belief.analysis().weights();
         let mut out = BTreeMap::new();
         for code in candidates {
@@ -101,7 +113,7 @@ impl RootReadContext {
         &self,
         id: AccountId,
         belief: &BeliefBook,
-        code: &StockCode,
+        code: &StockId,
         market_view: &MarketView,
         observations: CandidateObservations<'_>,
     ) -> Result<CandidateSignals, CandidateError> {
@@ -227,14 +239,14 @@ impl InstitutionDecisionRoot {
         id: AccountId,
         personal: &mut PlanPersonalState,
         market_view: &MarketView,
-        price_paths: &BTreeMap<StockCode, crate::observation::PricePathObservation>,
-        technical: &BTreeMap<StockCode, TechnicalObservation>,
+        price_paths: &BTreeMap<StockId, crate::observation::PricePathObservation>,
+        technical: &BTreeMap<StockId, TechnicalObservation>,
         now: crate::calendar::CivilInstant,
-        exposed: &BTreeSet<StockCode>,
+        exposed: &BTreeSet<StockId>,
         plans: &PlanBook,
         operations: &mut PlanChainOperationBatch,
     ) -> PlanRootDiagnostics {
-        let held: BTreeSet<StockCode> = context.accounts[&id].positions().keys().cloned().collect();
+        let held: BTreeSet<StockId> = context.accounts[&id].positions().keys().cloned().collect();
         let moment = crate::experience::ExperienceMoment {
             civil_date: context.civil_date,
             market_minute: context.market_minute,
@@ -305,7 +317,7 @@ impl InstitutionDecisionRoot {
         });
 
         // 1. 个体发现（消费注意力个体流；接受即写入关注列表）。
-        let protected: BTreeSet<StockCode> = held
+        let protected: BTreeSet<StockId> = held
             .iter()
             .cloned()
             .chain(plans.active_codes(id).cloned())
@@ -348,11 +360,11 @@ impl InstitutionDecisionRoot {
         #[cfg(feature = "simulation-diagnostics")]
         let mut causal_facts =
             vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];
-        let mut new_reports: Vec<(StockCode, PublicationId)> = Vec::new();
+        let mut new_reports: Vec<(StockId, PublicationId)> = Vec::new();
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         for code in &candidates {
-            let Some(company_id) = context.company_registry.issuer_of(code).cloned() else {
+            let Some(company_id) = context.issuer_of_stock(*code).cloned() else {
                 continue;
             };
             for publication_id in discovery_candidates(&context.library, &company_id, now) {
@@ -454,10 +466,10 @@ impl InstitutionDecisionRoot {
             NpcObservationContext::new(id, &personal.information, &context.library, market_view)
                 .unwrap_or_else(|error| panic!("observation context failed for {id:?}: {error}"));
         let as_of_trading_day = u64::from(context.day);
-        let issuer_inputs: Vec<(StockCode, BeliefInputs<'_, MarketView>)> = candidates
+        let issuer_inputs: Vec<(StockId, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
             .filter_map(|code| {
-                let company = context.company_registry.issuer_of(code).cloned()?;
+                let company = context.issuer_of_stock(*code).cloned()?;
                 let spec = context
                     .operations
                     .company(&company)

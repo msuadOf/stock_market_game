@@ -4,7 +4,7 @@ use super::{
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
 };
 use crate::{
-    AccountId, GameConfig, Market, Money, MoneyError, OrderId, Side, StockCode, StockExchange,
+    AccountId, GameConfig, Market, Money, MoneyError, OrderId, Side, StockId, StockExchange,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -92,14 +92,14 @@ pub(super) struct AuctionOperationOutput {
 /// 已受理 operations 按真实接收顺序应用。
 #[derive(Clone, Debug)]
 pub(super) struct StockAuctionState {
-    stock: StockCode,
+    stock: StockId,
     orders: Vec<AuctionOrder>,
     next_arrival_seq: u64,
     filled_market: Option<Market>,
 }
 
 impl StockAuctionState {
-    pub(super) const fn new(stock: StockCode) -> Self {
+    pub(super) const fn new(stock: StockId) -> Self {
         Self {
             stock,
             orders: Vec::new(),
@@ -237,7 +237,7 @@ fn cancel_rejected(
     }
 }
 
-fn validate_order(stock: &StockCode, order: &AuctionOrder) -> Result<(), StepFatal> {
+fn validate_order(stock: &StockId, order: &AuctionOrder) -> Result<(), StepFatal> {
     order.envelope.validate()?;
     let key = order.envelope.key();
     let audit = order.envelope.audit();

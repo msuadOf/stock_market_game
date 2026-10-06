@@ -4,7 +4,7 @@ use super::continuous_tick_transaction::{
 };
 use super::*;
 use crate::{
-    Account, AccountId, AccountKind, GameSession, Intent, Money, Order, OrderId, Side, StockCode,
+    Account, AccountId, AccountKind, GameSession, Intent, Money, Order, OrderId, Side, StockId,
     TradingPhase,
 };
 
@@ -233,10 +233,7 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
             .iter()
             .map(|execution| execution.stock().clone())
             .collect::<Vec<_>>(),
-        vec![
-            StockCode("600888".to_owned()),
-            StockCode("600889".to_owned())
-        ]
+        vec![StockId(0), StockId(1)]
     );
     assert!(finalizers.iter().all(|execution| {
         execution.auction_tail_passes() == 1
@@ -295,7 +292,7 @@ fn prepared_commit_keeps_quote_expiry_and_sealed_receipts_in_one_global_chain() 
         .expect("mixed PreSeal and SealedBatch receipts must be saveable after commit");
 }
 
-fn continuous_trade_session() -> (GameSession, StockCode) {
+fn continuous_trade_session() -> (GameSession, StockId) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
     let mut session = GameSession::new(setup, 42).unwrap();
@@ -340,8 +337,8 @@ fn continuous_trade_session() -> (GameSession, StockCode) {
     (session, code)
 }
 
-fn expiring_buy_session() -> (GameSession, StockCode, AccountId, OrderId) {
-    let code = StockCode("600888".to_owned());
+fn expiring_buy_session() -> (GameSession, StockId, AccountId, OrderId) {
+    let code = StockId(0);
     let account = AccountId(1);
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();

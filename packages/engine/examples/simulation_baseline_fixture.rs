@@ -6,7 +6,7 @@ use std::{env, process};
 use engine::calendar::CalendarExchange;
 use engine::{
     run_price_volume_baseline, CivilDate, FloatAllocation, GameConfig, GameSession, HotParams,
-    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode,
+    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockId,
     StockExchange, StockSpec, StrategyParams, TradingCalendar,
 };
 
@@ -324,7 +324,7 @@ fn stock(
     float_shares: u32,
 ) -> StockSpec {
     StockSpec {
-        code: StockCode(code.to_string()),
+        code: StockId(code.to_string()),
         exchange,
         initial_price: Money::from_cents(price_cents),
         category,

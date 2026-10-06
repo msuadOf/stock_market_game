@@ -95,8 +95,8 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
     .unwrap();
     let (_, template) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
-    let first = StockCode("600888".to_owned());
-    let second = StockCode("600889".to_owned());
+    let first = StockId(0);
+    let second = StockId(1);
     let mut ids = Vec::new();
     for code in [&first, &second] {
         ids.push(
@@ -209,7 +209,7 @@ fn adaptive_source_late_generation_overflow_is_typed_and_emits_no_candidate() {
 fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_cancel() {
     let (mut session, _) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     session.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
@@ -341,7 +341,7 @@ fn root_coordinator_disconnected_worker_is_explicit_failure() {
 #[test]
 fn stock_route_followups_consume_reconsideration_before_retry_without_erasing_it() {
     let (session, _) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let resource = (AccountId(1), StockCode("600888".to_owned()));
+    let resource = (AccountId(1), StockId(0));
     let market = session.build_market_view();
     let mut routes = StockRouteCoordination::default();
     routes.remember_retry(resource.clone(), market.clone());

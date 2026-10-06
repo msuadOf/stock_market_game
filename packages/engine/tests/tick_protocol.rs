@@ -1,5 +1,5 @@
 use engine::session::protocol::{TickBatch, TickFrame, TickTimeseriesPayload};
-use engine::{AccountId, Event, StockCode};
+use engine::{AccountId, Event, StockId};
 
 fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
     let mut frame = TickFrame {
@@ -11,7 +11,7 @@ fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
             .map(|seq| Event::IntentRejected {
                 seq,
                 account: AccountId(0),
-                code: StockCode("600001".into()),
+                code: StockId(0),
                 reason: engine::RejectionReason::UnknownStock,
             })
             .collect(),

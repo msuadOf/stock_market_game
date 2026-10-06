@@ -9,6 +9,7 @@ use engine::session::{
     StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+use engine::WithinKindDistribution;
 
 mod failures;
 mod gold;

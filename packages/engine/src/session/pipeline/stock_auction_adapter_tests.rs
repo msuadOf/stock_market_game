@@ -5,7 +5,7 @@ use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
 use crate::orderbook::js_safe_u64;
 use crate::{
-    AccountId, GameSession, Intent, Money, Order, OrderId, Side, StockCode, StockExchange,
+    AccountId, GameSession, Intent, Money, Order, OrderId, Side, StockId, StockExchange,
     TradingPhase,
 };
 
@@ -18,7 +18,7 @@ fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
         envelope: Envelope::created_at_validation(
             EnvelopeKey {
                 account: AccountId(0),
-                stock: StockCode("600888".to_owned()),
+                stock: StockId(0),
                 order: OrderId(9),
                 side: Side::Buy,
             },
@@ -44,8 +44,8 @@ fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
 #[test]
 fn opening_adapter_builds_stock_inputs_from_post_quote_expiry_state() {
     let mut game = two_stock_opening_game();
-    let first = StockCode("600888".to_owned());
-    let second = StockCode("600889".to_owned());
+    let first = StockId(0);
+    let second = StockId(1);
     install_auction_orders(
         &mut game,
         first.clone(),
@@ -103,7 +103,7 @@ fn opening_adapter_builds_stock_inputs_from_post_quote_expiry_state() {
 #[test]
 fn closing_adapter_keeps_continuous_book_out_of_auction_state_but_validates_its_ledger() {
     let mut game = closing_game();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -141,8 +141,8 @@ fn closing_adapter_keeps_continuous_book_out_of_auction_state_but_validates_its_
 #[test]
 fn adapter_rejects_cross_stock_market_identity() {
     let mut crossed = two_stock_opening_game();
-    let first = StockCode("600888".to_owned());
-    let second = StockCode("600889".to_owned());
+    let first = StockId(0);
+    let second = StockId(1);
     let first_market = crossed.state.markets.remove(&first).unwrap();
     crossed.state.markets.insert(second, first_market);
     let error = prepare_incremental_auction_inputs(&crossed).unwrap_err();
@@ -151,7 +151,7 @@ fn adapter_rejects_cross_stock_market_identity() {
 
 #[test]
 fn adapter_rejects_missing_stale_and_underfunded_ledger_evidence() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut missing = opening_game();
     install_auction_orders(
         &mut missing,
@@ -200,7 +200,7 @@ fn adapter_rejects_missing_stale_and_underfunded_ledger_evidence() {
 
 #[test]
 fn adapter_rejects_audit_and_conservation_evidence_drift() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut audit_drift = opening_game();
     install_auction_orders(
         &mut audit_drift,
@@ -242,7 +242,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
 
 #[test]
 fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut unordered = opening_game();
     install_auction_orders(
         &mut unordered,
@@ -288,7 +288,7 @@ fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
 #[test]
 fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
     let mut game = opening_game();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     game.state
         .accounts
         .get_mut(&AccountId(0))
@@ -326,8 +326,8 @@ fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
 
 #[test]
 fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
-    let code = StockCode("600888".to_owned());
-    let place = |code: StockCode| Intent::PlaceLimit {
+    let code = StockId(0);
+    let place = |code: StockId| Intent::PlaceLimit {
         code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(995)),
@@ -383,7 +383,7 @@ fn adapter_rejects_non_auction_phases_and_opening_continuous_residue() {
     assert_adapter_error(error, "auction phase");
 
     let mut opening = opening_game();
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     opening
         .state
         .markets
@@ -482,7 +482,7 @@ fn auction_order(
 
 fn install_auction_orders(
     game: &mut GameSession,
-    code: StockCode,
+    code: StockId,
     orders: Vec<crate::AuctionOrderSnap>,
 ) {
     assert!(game.state.auction_orders.insert(code, orders).is_none());

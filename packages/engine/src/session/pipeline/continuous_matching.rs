@@ -9,7 +9,7 @@ use super::{
 };
 use crate::market::MarketDelta;
 use crate::{
-    AccountId, GameConfig, Market, MarketError, Money, OrderId, RejectionReason, Side, StockCode,
+    AccountId, GameConfig, Market, MarketError, Money, OrderId, RejectionReason, Side, StockId,
     Trade, TradingPhase,
 };
 use rayon::prelude::*;
@@ -33,7 +33,7 @@ pub(super) struct ContinuousEnvelopeSnapshot {
 pub(super) struct ContinuousCancelOperation {
     pub(super) sealed_index: u64,
     pub(super) account: AccountId,
-    pub(super) code: StockCode,
+    pub(super) code: StockId,
     pub(super) order_id: OrderId,
 }
 
@@ -51,7 +51,7 @@ pub(super) enum ContinuousCancelFact {
     Canceled {
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         side: Side,
         remaining_qty: u32,
@@ -59,7 +59,7 @@ pub(super) enum ContinuousCancelFact {
     Rejected {
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         reason: ContinuousCancelRejection,
     },
@@ -102,7 +102,7 @@ pub(super) enum ContinuousPlaceFact {
     Resting {
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         side: Side,
         price: Money,
@@ -111,7 +111,7 @@ pub(super) enum ContinuousPlaceFact {
     Filled {
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         side: Side,
         filled_qty: u32,
@@ -119,7 +119,7 @@ pub(super) enum ContinuousPlaceFact {
     Rejected {
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         reason: RejectionReason,
     },
@@ -165,7 +165,7 @@ impl ContinuousExecutionFact {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ContinuousTradeFact {
-    pub(super) stock: StockCode,
+    pub(super) stock: StockId,
     pub(super) triggering_sealed_index: u64,
     pub(super) stock_local_trade_event_index: u64,
     pub(super) trade: Trade,
@@ -687,7 +687,7 @@ fn insert_unchanged_operation_quote(
 }
 
 pub(super) fn append_trade_facts(
-    stock: &StockCode,
+    stock: &StockId,
     triggering_sealed_index: u64,
     trades: &[Trade],
     next_index: &mut u64,

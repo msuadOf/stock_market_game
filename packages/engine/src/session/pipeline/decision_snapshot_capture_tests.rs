@@ -201,7 +201,8 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
 #[test]
 fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence() {
     let (_, mut shadow, account) = due_retail_shadow(42);
-    let code = shadow.state.setup.stocks[0].code.clone();
+    // 数值身份后无字符串可断言：retail_quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let price = shadow.state.markets[&code].last_price();
     let moment = crate::experience::ExperienceMoment {
         civil_date: shadow.civil_date(),
@@ -549,9 +550,9 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
             .unwrap();
     }
     // 两个持仓不占未持仓关注列表额度；九个未持仓项目中只移除最旧者。
-    let unheld = (0..9)
-        .map(|index| crate::StockCode(format!("watch-{index}")))
-        .collect::<Vec<_>>();
+    // 数值身份后无字符串可断言：未持仓哨兵取目录外连续 id（2..=10），
+    // 只要求彼此不同且不与目录内 0/1 冲突。
+    let unheld = (2..11).map(crate::StockId).collect::<Vec<_>>();
     for (index, code) in unheld.iter().enumerate() {
         experience.observe_stock(code, index as u64);
     }
@@ -640,7 +641,8 @@ fn capture_non_retail_experience_keeps_self_positions_without_retail_risk() {
 #[test]
 fn capture_missing_position_market_does_not_update_the_source_session() {
     let (mut source, _, account) = due_retail_shadow(61);
-    let code = crate::StockCode("600999".to_owned());
+    // 数值身份后无字符串可断言：目录外哨兵取 StockId(9)。
+    let code = crate::StockId(9);
     source
         .state
         .accounts

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use super::{AccountKind, GameSession, SessionError, StockCode};
+use super::{AccountKind, GameSession, SessionError, StockId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -25,7 +25,7 @@ pub struct InitialAllocationCategory {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct InitialStockAllocation {
-    pub code: StockCode,
+    pub code: StockId,
     pub float_shares: u32,
     pub unallocated_shares: u32,
     pub categories: Vec<InitialAllocationCategory>,
@@ -62,8 +62,13 @@ impl GameSession {
                 zero_holders: 0,
             });
             for account in self.state.accounts.values() {
+                let position_code = self
+                    .state
+                    .stocks
+                    .id(&spec.code.0)
+                    .expect("配置股票必须已入目录");
                 let quantity = account
-                    .position(&spec.code)
+                    .position(&position_code)
                     .map_or(0, |position| position.qty());
                 let category = match account.kind() {
                     AccountKind::Retail => &mut categories[0],
@@ -107,7 +112,11 @@ impl GameSession {
                 )));
             }
             stocks.push(InitialStockAllocation {
-                code: spec.code.clone(),
+                code: self
+                    .state
+                    .stocks
+                    .id(&spec.code.0)
+                    .expect("配置股票必须已入目录"),
                 float_shares: spec.float_shares,
                 unallocated_shares,
                 categories: categories.into(),

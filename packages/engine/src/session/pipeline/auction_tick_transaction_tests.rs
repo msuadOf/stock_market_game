@@ -42,7 +42,9 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
     setup.ticks_per_day = 15_300;
     let mut authority = GameSession::new(setup, 41).unwrap();
     let retail = AccountId(1);
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     authority
         .state
         .accounts
@@ -549,8 +551,8 @@ fn auction_plan_chain_accepts_cross_stock_fact_reordering() {
     let (_, template) = fixture();
     let mut roots = PlanChainOperationBatch::empty();
     for (account, code) in [
-        (AccountId(1), crate::StockCode("600888".to_owned())),
-        (AccountId(0), crate::StockCode("600889".to_owned())),
+        (AccountId(1), crate::StockId(0)),
+        (AccountId(0), crate::StockId(1)),
     ] {
         let plan_id = session
             .state
@@ -1005,6 +1007,6 @@ fn parent_transaction_applies_opening_completion_partial_fill_once() {
     assert!(authority.state.pending_plan_events.is_empty());
 }
 
-fn request_code(session: &GameSession) -> crate::StockCode {
+fn request_code(session: &GameSession) -> crate::StockId {
     session.state.markets.keys().next().unwrap().clone()
 }

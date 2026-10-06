@@ -168,8 +168,11 @@ fn closed_days_accrue_without_trading() {
     setup.stocks[0].category = SecurityCategory::StMainBoard;
     setup.stocks[0].limit_pct = setup.stocks[0].category.limit_pct();
     setup.npcs.inst_count = 20;
-    let code = setup.stocks[0].code.clone();
     let mut scenario = SpringFestivalScenario::with_setup(setup);
+    let code = scenario
+        .session
+        .stock_id("000812")
+        .expect("fixture stock must be in the catalog");
     let player = AccountId(0);
 
     // 休市起点不挪日期：开局 civil 日期就是 setup 声明的周五。

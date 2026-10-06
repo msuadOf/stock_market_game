@@ -30,7 +30,7 @@ pub(in crate::session) struct NpcDecisionAccountOutput {
     #[cfg(test)]
     strategy_state: Option<StrategyState>,
     strategy: Option<NpcStrategyUpdate>,
-    reviewed_stocks: BTreeSet<crate::StockCode>,
+    reviewed_stocks: BTreeSet<crate::StockId>,
     position_decision: Option<crate::behavior::PositionDecision>,
     execution_urgency: crate::plans::urgency::risk::RiskUrgencyAssessment,
     updates_working_quotes: bool,
@@ -59,7 +59,7 @@ impl NpcDecisionAccountOutput {
         self.strategy.take()
     }
 
-    pub(in crate::session) const fn reviewed_stocks(&self) -> &BTreeSet<crate::StockCode> {
+    pub(in crate::session) const fn reviewed_stocks(&self) -> &BTreeSet<crate::StockId> {
         &self.reviewed_stocks
     }
 

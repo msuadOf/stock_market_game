@@ -218,8 +218,9 @@ mod tests {
     }
 
     fn buy(game: &GameSession, stock: usize) -> Intent {
+        let spec_code = game.state.setup.stocks[stock].code.0.clone();
         Intent::PlaceLimit {
-            code: game.state.setup.stocks[stock].code.clone(),
+            code: game.stock_id(&spec_code).expect("setup stock must be in catalog"),
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -422,10 +423,11 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(
-                accepted,
-                vec![&game.state.setup.stocks[usize::from(!player_first)].code]
-            );
+            let winner_spec_code = game.state.setup.stocks[usize::from(!player_first)].code.0.clone();
+            let winner = game
+                .stock_id(&winner_spec_code)
+                .expect("setup stock must be in catalog");
+            assert_eq!(accepted, vec![&winner]);
             assert_eq!(events.iter().filter(|event| matches!(event, crate::Event::IntentRejected { account, reason: crate::RejectionReason::InsufficientCash, .. } if *account == AccountId(0))).count(), 1);
         }
     }

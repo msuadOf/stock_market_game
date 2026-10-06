@@ -43,6 +43,23 @@ use engine::session::{
 };
 use engine::LimitPrice;
 
+/// 单股 fixture（sample_setup，代码 "600101"）的数值 id：
+/// 目录按代码升序分配（ADR 0041），单股目录恒为 0。
+fn sid() -> engine::StockId {
+    engine::StockId(0)
+}
+
+/// 多股 fixture：按目录同款规则（代码升序）求 id。
+fn sid_of(codes: &[&str], code: &str) -> engine::StockId {
+    let mut sorted: Vec<&str> = codes.to_vec();
+    sorted.sort_unstable();
+    let index = sorted
+        .iter()
+        .position(|candidate| *candidate == code)
+        .unwrap_or_else(|| panic!("fixture 代码未入目录: {code}"));
+    engine::StockId(index as u32)
+}
+
 fn sample_setup() -> SessionSetup {
     SessionSetup {
         company_operations: None,
@@ -167,7 +184,7 @@ impl TestOrderSaveFixture {
         &mut self.save
     }
 
-    fn add_position(&mut self, owner: AccountId, code: StockCode, position: engine::PositionSnap) {
+    fn add_position(&mut self, owner: AccountId, code: engine::StockId, position: engine::PositionSnap) {
         self.save
             .snapshot
             .accounts
@@ -189,7 +206,7 @@ impl TestOrderSaveFixture {
         setup.config.starting_cash = Money::from_cents(player_cash);
         let mut fixture = Self::new(setup, 42);
         let save = fixture.save_mut();
-        let code = StockCode("600101".to_string());
+        let code = sid();
         let mut orders = Vec::new();
         for offset in 0..seller_count {
             let owner = AccountId(u64::from(offset) + 1);
@@ -393,7 +410,7 @@ impl TestOrderSaveFixture {
 
 #[test]
 fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut fixture = TestOrderSaveFixture::from_save(
         player_session_with_position(100, 1_000_000)
             .save()
@@ -460,7 +477,7 @@ fn event_and_setup_construct() {
     let e = Event::IntentRejected {
         seq: 5,
         account: engine::AccountId(1),
-        code: StockCode("600101".to_string()),
+        code: sid(),
         reason: RejectionReason::InsufficientCash,
     };
     assert!(matches!(
@@ -547,7 +564,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
     setup.config.starting_cash = Money::from_cents(1_000_000_000);
     setup.stocks[0].category = SecurityCategory::ChiNext;
     setup.stocks[0].limit_pct = 0.20;
-    let code = StockCode("300101".to_string());
+    let code = sid();
 
     for (intent, should_reject) in [
         (
@@ -602,7 +619,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
 
 #[test]
 fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     session
         .enqueue_player_intent(
@@ -662,7 +679,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: sid(),
                 side: engine::Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -675,7 +692,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: sid(),
                 side: engine::Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(979)),
                 qty: 100,
@@ -698,7 +715,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: sid(),
                 side: engine::Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
@@ -714,7 +731,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
 
 #[test]
 fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     // Observe the empty 10-yuan book before the earlier sell is admitted.
     let observed_buy = engine::Intent::PlaceLimit {
@@ -795,7 +812,7 @@ fn disabling_price_cage_allows_daily_limits_but_keeps_daily_band_validation() {
             .unwrap();
         save.setup.config.price_cage_enabled = false;
         let mut session = GameSession::restore(&save).unwrap();
-        let code = StockCode("600101".to_string());
+        let code = sid();
         session
             .enqueue_player_intent(
                 AccountId(0),
@@ -918,7 +935,7 @@ fn current_save_rejects_non_player_pending_intents() {
         .push(engine::ReceiptBearingIntent {
             owner: AccountId(1),
             intent: Intent::PlaceMarket {
-                code: StockCode("600101".to_string()),
+                code: sid(),
                 side: Side::Buy,
                 qty: 100,
             },
@@ -949,7 +966,7 @@ fn current_save_requires_complete_active_candles_only_after_continuous_trading_s
         .save()
         .expect("healthy save");
     unexpected.snapshot.active_daily_candles.insert(
-        StockCode("600101".to_string()),
+        sid(),
         engine::DailyCandle {
             time: 0,
             open: Money::from_cents(1_000),
@@ -1033,7 +1050,7 @@ fn current_save_json_requires_explicit_stock_fields() {
         let error = serde_json::from_value::<engine::SaveSlot>(injected).unwrap_err();
         assert!(error.to_string().contains(field));
     }
-    let market = current["snapshot"]["markets"]["600101"]
+    let market = current["snapshot"]["markets"]["0"]
         .as_object()
         .unwrap();
     for derived in ["best_bid", "best_ask", "bids", "asks"] {
@@ -1046,7 +1063,7 @@ fn current_save_json_requires_explicit_stock_fields() {
 
 #[test]
 fn restore_rebuilds_reservations_after_account_asset_edit() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(0, 10_000_000);
     session
         .enqueue_player_intent(
@@ -1157,7 +1174,7 @@ fn javascript_number_boundaries_reject_unsafe_u64_values() {
     let mut snapshot = GameSession::new(sample_setup(), 42).unwrap().snapshot();
     snapshot
         .markets
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap()
         .bids = vec![(Money::from_cents(1_000), 9_007_199_254_740_992)];
     assert!(serde_json::to_value(&snapshot).is_err());
@@ -1191,7 +1208,7 @@ fn restore_rejects_missing_deterministic_state() {
     let mut truncated = advanced.save().expect("healthy save");
     truncated
         .price_history
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap()
         .pop();
     assert!(matches!(
@@ -1203,7 +1220,7 @@ fn restore_rejects_missing_deterministic_state() {
     truncated_candles
         .snapshot
         .daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap()
         .pop();
     assert!(matches!(
@@ -1218,7 +1235,7 @@ fn restore_rejects_missing_deterministic_state() {
     let candles = wrong_candle_time
         .snapshot
         .daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     assert_eq!(candles.len(), 361);
     candles[180].time += 1;
@@ -1263,7 +1280,7 @@ fn auction_does_not_emit_regular_price_ticks_and_rejects_market_orders() {
         hot_count: 0,
         retail_cash_median: Money::ZERO,
     };
-    let code = setup.stocks[0].code.clone();
+    let code = sid();
     let mut session = GameSession::new(setup, 7).unwrap();
     session
         .enqueue_player_intent(
@@ -1374,12 +1391,12 @@ fn twenty_thousand_account_setup() -> SessionSetup {
     large_retail_account_setup(20_000)
 }
 
-type MarketResources = (i128, std::collections::BTreeMap<StockCode, u64>);
-type TradeTotals = std::collections::BTreeMap<StockCode, (u64, i128, u64)>;
+type MarketResources = (i128, std::collections::BTreeMap<engine::StockId, u64>);
+type TradeTotals = std::collections::BTreeMap<engine::StockId, (u64, i128, u64)>;
 
 fn market_resources(session: &GameSession, account_count: usize) -> MarketResources {
     let mut cash = 0i128;
-    let mut shares = std::collections::BTreeMap::<StockCode, u64>::new();
+    let mut shares = std::collections::BTreeMap::<engine::StockId, u64>::new();
     assert_eq!(session.account_count(), account_count);
     for id in 0..account_count {
         let account = session.account(AccountId(id as u64)).unwrap();
@@ -1402,7 +1419,8 @@ fn assert_tick_accounting(
     trade_totals: &mut TradeTotals,
 ) {
     use engine::session::pipeline::ReceiptKind;
-    let mut emitted = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
+    let mut emitted =
+        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
     for event in events {
         match event {
             Event::Trade {
@@ -1422,8 +1440,10 @@ fn assert_tick_accounting(
             _ => {}
         }
     }
-    let mut buy_fills = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
-    let mut sell_fills = std::collections::BTreeMap::<StockCode, (u64, i128)>::new();
+    let mut buy_fills =
+        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
+    let mut sell_fills =
+        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
     let mut charged_cents = 0i128;
     for receipt in receipts
         .iter()
@@ -1514,7 +1534,7 @@ fn full_day_accounting_fixture() -> (
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600101".to_owned()),
+                code: sid(),
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -1563,7 +1583,7 @@ fn full_day_accounting_rejects_tampered_shares() {
         .get_mut(&AccountId(0))
         .unwrap()
         .positions
-        .get_mut(&StockCode("600101".to_owned()))
+        .get_mut(&sid())
         .unwrap()
         .qty += 1;
     let tampered = GameSession::restore(&save).unwrap();
@@ -1906,7 +1926,7 @@ fn player_snapshot_excludes_private_npc_accounts_but_save_keeps_them() {
     let snap = s.snapshot();
     assert_eq!(snap.seq, 0);
     assert_eq!(snap.markets.len(), 1);
-    let ms = snap.markets.get(&StockCode("600101".to_string())).unwrap();
+    let ms = snap.markets.get(&sid()).unwrap();
     assert_eq!(ms.last_price.cents(), 1000);
     assert_eq!(snap.accounts.len(), 1);
     assert_eq!(s.save().expect("healthy save").snapshot.accounts.len(), 5);
@@ -1919,7 +1939,7 @@ fn player_snapshot_excludes_private_npc_accounts_but_save_keeps_them() {
 #[test]
 fn new_session_generates_360_authoritative_daily_candles() {
     let setup = sample_setup();
-    let code = setup.stocks[0].code.clone();
+    let code = sid();
     let initial_price = setup.stocks[0].initial_price;
     let calendar = engine::calendar::TradingCalendar::current_default_calendar().unwrap();
     let epoch = engine::calendar::CivilDate::from_iso("1970-01-01").unwrap();
@@ -1982,7 +2002,7 @@ fn dated_candles_bridge_virtual_prehistory_and_real_sessions_across_weekend() {
         session.end_civil_day_update().unwrap();
     }
     let snapshot = session.snapshot();
-    let candles = &snapshot.daily_candles[&StockCode("600101".into())];
+    let candles = &snapshot.daily_candles[&sid()];
     let epoch = engine::CivilDate::from_iso("1970-01-01").unwrap();
     let date_time =
         |date: &str| engine::CivilDate::from_iso(date).unwrap().days_since(epoch) * 86_400;
@@ -2010,7 +2030,7 @@ fn restore_rejects_relative_history_seconds_and_wrong_active_civil_date() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().unwrap();
     let save = session.save().unwrap();
-    let code = StockCode("600101".into());
+    let code = sid();
     let mut old_relative_history = save.clone();
     old_relative_history
         .snapshot
@@ -2052,7 +2072,7 @@ fn day_boundary_commits_engine_owned_daily_candle() {
         session.step().expect("healthy step");
     }
     let snapshot = session.snapshot();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let candles = snapshot.daily_candles.get(&code).unwrap();
 
     assert_eq!(candles.len(), 361, "the completed day extends full history");
@@ -2075,7 +2095,7 @@ fn restore_rejects_inconsistent_authoritative_daily_trade_statistics() {
     let candle = save
         .snapshot
         .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     candle.volume = 100;
     candle.trade_stats = Some(engine::DailyTradeStats::default());
@@ -2095,7 +2115,7 @@ fn restore_rejects_daily_turnover_above_the_ohlc_volume_bound() {
     let candle = save
         .snapshot
         .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     candle.volume = 100;
     candle.trade_stats = Some(engine::DailyTradeStats {
@@ -2118,7 +2138,7 @@ fn restore_rejects_missing_daily_statistics_for_positive_volume() {
     let candle = save
         .snapshot
         .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     candle.volume = 100;
     candle.trade_stats = None;
@@ -2138,7 +2158,7 @@ fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
     let candle = save
         .snapshot
         .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     candle.open = Money::from_cents(i64::MAX);
     candle.high = Money::from_cents(i64::MAX);
@@ -2165,7 +2185,7 @@ fn restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow()
     let candle = save
         .snapshot
         .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap();
     candle.high = Money::from_cents(i64::MAX);
     candle.volume = 3;
@@ -2182,7 +2202,7 @@ fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
     let mut setup = sample_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     let mut session = GameSession::new(setup, 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut final_tick_candle = None;
     let mut closed_candle = None;
 
@@ -2242,7 +2262,7 @@ fn runtime_snapshot_keeps_current_day_statistics_without_copying_history() {
 #[test]
 fn price_ticks_carry_current_top_five_order_book_depth() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     let events = session.step().expect("healthy step");
     let snapshot = session.runtime_snapshot();
@@ -2391,7 +2411,7 @@ fn enqueue_player_intent_executes_in_step() {
     s.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {
-            code: StockCode("600101".to_string()),
+            code: sid(),
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
@@ -2403,7 +2423,7 @@ fn enqueue_player_intent_executes_in_step() {
     assert!(s
         .snapshot()
         .markets
-        .get(&StockCode("600101".to_string()))
+        .get(&sid())
         .unwrap()
         .best_bid
         .is_some());
@@ -2415,7 +2435,7 @@ fn enqueue_unknown_player_errors() {
     let r = s.enqueue_player_intent(
         AccountId(999),
         Intent::PlaceLimit {
-            code: StockCode("600101".to_string()),
+            code: sid(),
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
@@ -2428,7 +2448,7 @@ fn enqueue_unknown_player_errors() {
 fn pending_player_intents_survive_a_large_burst_and_restore() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     let intent = Intent::PlaceMarket {
-        code: StockCode("600101".to_string()),
+        code: sid(),
         side: Side::Buy,
         qty: 100,
     };
@@ -2453,7 +2473,7 @@ fn enqueue_rejects_npc_account_instead_of_relabeling_it_as_player_zero() {
         .enqueue_player_intent(
             AccountId(1),
             Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: sid(),
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -2475,7 +2495,7 @@ fn step_rejects_insufficient_cash_player_intent() {
     s.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {
-            code: StockCode("600101".to_string()),
+            code: sid(),
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
@@ -2567,7 +2587,7 @@ fn audit_zero_npc_does_not_relax_invalid_allocation_parameter_guard() {
 }
 
 /// 通过已知 NPC id（1..=npc_count）求和持仓的辅助。account_count 含玩家(0)。
-fn npc_total_qty(s: &GameSession, code: &StockCode) -> u32 {
+fn npc_total_qty(s: &GameSession, code: &engine::StockId) -> u32 {
     (1..s.account_count() as u64)
         .filter_map(|id| s.account(AccountId(id)))
         .map(|a| a.positions().get(code).map(|p| p.qty()).unwrap_or(0))
@@ -2577,7 +2597,7 @@ fn npc_total_qty(s: &GameSession, code: &StockCode) -> u32 {
 #[test]
 fn seed_float_random_conserves_chips() {
     let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
-    let total = npc_total_qty(&s, &StockCode("600101".to_string()));
+    let total = npc_total_qty(&s, &sid());
     assert_eq!(total, 1_000_000, "筹码守恒：Σ NPC 持仓 == float_shares");
 }
 
@@ -2614,7 +2634,7 @@ fn by_kind_distribution_gives_individual_retailers_sparse_portfolios() {
     assert!(position_counts.iter().any(|count| *count < codes.len()));
     assert!(position_counts.iter().any(|count| *count > 1));
     for code in codes {
-        let code = StockCode(code.to_string());
+        let code = sid_of(&codes, code);
         assert_eq!(npc_total_qty(&session, &code), 1_000_000);
         let holders = (1..=100)
             .filter(|id| {
@@ -2645,14 +2665,14 @@ fn seed_float_deterministic() {
             .account(AccountId(id))
             .unwrap()
             .positions()
-            .get(&StockCode("600101".to_string()))
+            .get(&sid())
             .map(|p| p.qty())
             .unwrap_or(0);
         let qb = b
             .account(AccountId(id))
             .unwrap()
             .positions()
-            .get(&StockCode("600101".to_string()))
+            .get(&sid())
             .map(|p| p.qty())
             .unwrap_or(0);
         assert_eq!(qa, qb, "同种子同分配 (AccountId({}))", id);
@@ -2670,7 +2690,7 @@ fn seed_float_percentage_class_random_within_is_deterministic() {
     );
     let first = GameSession::new(setup.clone(), 0xA110_CA7E).unwrap();
     let second = GameSession::new(setup, 0xA110_CA7E).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     for id in 1..first.account_count() as u64 {
         let first_qty = first
@@ -2700,7 +2720,7 @@ fn seed_float_random_class_equal_within_is_deterministic() {
     };
     let first = GameSession::new(setup.clone(), 0xA110_CA7E).unwrap();
     let second = GameSession::new(setup, 0xA110_CA7E).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     for id in 1..first.account_count() as u64 {
         let first_qty = first
@@ -2725,7 +2745,7 @@ fn seed_float_random_class_equal_within_is_deterministic() {
 fn seed_float_cost_is_initial_price() {
     let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
     // 任一有持仓的 NPC：cost_price == initial_price(1000分)、t1_locked==0
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let holder = (1..s.account_count() as u64)
         .filter_map(|id| s.account(AccountId(id)))
         .find(|a| a.positions().contains_key(&code))
@@ -2749,7 +2769,7 @@ fn seed_float_zero_float_no_allocation() {
 // seed_float 类间 Percentage 分配（比例/缺类守恒/非法比例校验）。
 
 /// 按种类聚合 NPC（id!=0）对某股票的持仓。走公共 account() 访问器（accounts 字段私有）。
-fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -> u32 {
+fn total_by_kind(s: &GameSession, code: &engine::StockId, kind: engine::AccountKind) -> u32 {
     (0..s.account_count() as u64)
         .filter_map(|id| s.account(AccountId(id)))
         .filter(|a| a.id().0 != 0 && a.kind() == kind)
@@ -2770,7 +2790,7 @@ fn seed_float_percentage_ratios() {
     );
     // sample_setup: retail2, inst1, hot1
     let sess = GameSession::new(s, 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let retail_total = total_by_kind(&sess, &code, engine::AccountKind::Retail);
     let inst_total = total_by_kind(&sess, &code, engine::AccountKind::Inst);
     let hot_total = total_by_kind(&sess, &code, engine::AccountKind::Hot);
@@ -2812,7 +2832,7 @@ fn seed_float_percentage_missing_kind_redistributes() {
     );
     // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
     let sess = GameSession::new(s, 42).unwrap();
-    let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
+    let total = npc_total_qty(&sess, &sid());
     assert_eq!(total, 1_000_000, "缺类仍守恒");
 }
 
@@ -2904,7 +2924,7 @@ fn seed_float_supports_random_class_budgets_and_percentage_within_kind() {
     };
 
     let session = GameSession::new(setup, 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let retail = [1, 2].map(|id| {
         session
             .account(AccountId(id))
@@ -2931,7 +2951,7 @@ fn seed_float_random_class_budgets_within_kind_percentage_keeps_small_float_cons
     };
 
     let session = GameSession::new(setup, 7).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     assert_eq!(npc_total_qty(&session, &code), 1);
     assert!(session
         .account(AccountId(0))
@@ -2981,7 +3001,7 @@ fn allocated_market_produces_trades() {
         engine::WithinKindDistribution::Random,
     );
     let session = GameSession::new(s, 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let seller = AccountId(1);
     let mut fixture =
         TestOrderSaveFixture::from_save(session.save().expect("healthy allocated save"));
@@ -3084,7 +3104,10 @@ fn all_stocks_produce_trades_multistock() {
     let save = fixture.save_mut();
     let mut next_order_id = 1_u64;
     for code_value in &all {
-        let code = StockCode(code_value.clone());
+        let code = sid_of(
+            &["600101", "002156", "300260", "600610", "000812"],
+            code_value,
+        );
         let seller = save
             .snapshot
             .accounts
@@ -3126,24 +3149,39 @@ fn all_stocks_produce_trades_multistock() {
         sess.enqueue_player_intent(
             AccountId(0),
             Intent::PlaceMarket {
-                code: StockCode(code_value.clone()),
+                code: sid_of(&["600101", "002156", "300260", "600610", "000812"], code_value),
                 side: Side::Buy,
                 qty: 100,
             },
         )
         .unwrap();
     }
-    let traded: HashSet<String> = sess
+    let traded: std::collections::HashSet<engine::StockId> = sess
         .step()
         .expect("healthy five-stock matching step")
         .into_iter()
         .filter_map(|event| match event {
-            Event::Trade { code, .. } => Some(code.0),
+            Event::Trade { code, .. } => Some(code),
             _ => None,
         })
         .collect();
+    let all_ids: std::collections::HashSet<engine::StockId> = [
+        "600101",
+        "002156",
+        "300260",
+        "600610",
+        "000812",
+    ]
+    .into_iter()
+    .map(|code| {
+        sid_of(
+            &["600101", "002156", "300260", "600610", "000812"],
+            code,
+        )
+    })
+    .collect();
     assert_eq!(
-        traded, all,
+        traded, all_ids,
         "未全部成交（traded={:?}）——回归到「只有一只股票有成交」的 bug",
         traded
     );
@@ -3190,7 +3228,7 @@ fn game_session_is_send() {
 fn snapshot_depth_empty_initially_and_populated_after_order() {
     // float_shares=0 → 无持仓 → step 无成交；初始盘口空
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let snapshot_before_order = s.snapshot();
     let market_before_order = snapshot_before_order.markets.get(&code).unwrap();
     assert!(
@@ -3235,7 +3273,7 @@ fn player_session_with_position(qty: u32, cash: i64) -> GameSession {
     if qty > 0 {
         fixture.add_position(
             AccountId(0),
-            StockCode("600101".to_string()),
+            sid(),
             engine::PositionSnap {
                 qty,
                 t1_locked: 0,
@@ -3258,7 +3296,7 @@ fn sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
     };
     setup.config.starting_cash = Money::ZERO;
     setup.stocks[0].initial_price = Money::from_cents(1);
-    let code = setup.stocks[0].code.clone();
+    let code = sid();
     let session = GameSession::new(setup, 42).unwrap();
     let mut save = session.save().expect("healthy save");
     save.snapshot
@@ -3317,7 +3355,7 @@ fn sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
     };
     setup.config.starting_cash = Money::ZERO;
     setup.stocks[0].initial_price = Money::from_cents(1);
-    let code = setup.stocks[0].code.clone();
+    let code = sid();
     let session = GameSession::new(setup, 42).unwrap();
     let mut save = session.save().expect("healthy save");
     save.snapshot
@@ -3367,7 +3405,7 @@ fn sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
 
 #[test]
 fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     for first_side in [Side::Buy, Side::Sell] {
         let mut setup = sample_setup();
         setup.npcs = NpcSetup {
@@ -3457,7 +3495,7 @@ fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
 
 #[test]
 fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = TestOrderSaveFixture::with_resting_sellers(2, 200_502)
         .restore()
         .unwrap();
@@ -3501,7 +3539,7 @@ fn daily_trade_turnover_uses_a_lossless_decimal_string_in_json() {
     let mut session = TestOrderSaveFixture::with_resting_sellers(1, 100_502)
         .restore()
         .unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -3517,18 +3555,18 @@ fn daily_trade_turnover_uses_a_lossless_decimal_string_in_json() {
 
     let json = serde_json::to_value(session.snapshot()).unwrap();
     assert_eq!(
-        json["active_daily_candles"]["600101"]["trade_stats"]["turnover_cents"],
+        json["active_daily_candles"]["0"]["trade_stats"]["turnover_cents"],
         serde_json::Value::String("100000".to_string())
     );
     assert_eq!(
-        json["active_daily_candles"]["600101"]["trade_stats"]["trade_count"],
+        json["active_daily_candles"]["0"]["trade_stats"]["trade_count"],
         1
     );
 }
 
 #[test]
 fn partial_fill_never_commits_an_under_reserved_buy_order() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = TestOrderSaveFixture::with_resting_sellers(1, 200_502)
         .restore()
         .unwrap();
@@ -3552,7 +3590,7 @@ fn partial_fill_never_commits_an_under_reserved_buy_order() {
 
 #[test]
 fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 1,
@@ -3636,7 +3674,7 @@ fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
 
 #[test]
 fn resting_sell_orders_reserve_shares_at_acceptance() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     for _ in 0..2 {
         session
@@ -3699,7 +3737,7 @@ fn resting_sell_orders_reserve_shares_at_acceptance() {
 
 #[test]
 fn resting_buy_orders_reserve_cash_at_acceptance() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(0, 100_501);
     for _ in 0..2 {
         session
@@ -3734,7 +3772,7 @@ fn resting_buy_orders_reserve_cash_at_acceptance() {
 
 #[test]
 fn continuous_cancel_removes_order_and_releases_reserved_cash() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(0, 100_501);
     session
         .enqueue_player_intent(
@@ -3804,7 +3842,7 @@ fn continuous_cancel_removes_order_and_releases_reserved_cash() {
 
 #[test]
 fn unfilled_market_order_never_rests_in_the_book() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     session
         .enqueue_player_intent(
@@ -3833,7 +3871,7 @@ fn unfilled_market_order_never_rests_in_the_book() {
 
 #[test]
 fn day_boundary_clears_daily_orders_and_releases_reservations() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -3893,7 +3931,7 @@ fn day_boundary_clears_daily_orders_and_releases_reservations() {
 
 #[test]
 fn a_share_buy_quantity_must_be_a_board_lot() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(0, 10_000_000);
     session
         .enqueue_player_intent(
@@ -3922,7 +3960,7 @@ fn a_share_buy_quantity_must_be_a_board_lot() {
 
 #[test]
 fn a_share_odd_lot_sell_cannot_split_the_odd_lot_remainder() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(150, 10_000_000);
     session
         .enqueue_player_intent(
@@ -3960,7 +3998,7 @@ fn a_share_t1_locked_shares_unlock_at_the_day_boundary() {
     };
     setup.t1_enabled = true;
     let mut session = GameSession::new(setup, 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     for _ in 0..9 {
         session.step().expect("healthy step");
     }
@@ -3992,7 +4030,7 @@ fn a_share_t1_locked_shares_unlock_at_the_day_boundary() {
 #[test]
 fn save_restore_preserves_pending_player_intents() {
     let mut original = GameSession::new(sample_setup(), 42).unwrap();
-    let code = StockCode("600101".to_string());
+    let code = sid();
     original
         .enqueue_player_intent(
             AccountId(0),
@@ -4043,7 +4081,7 @@ fn save_restore_preserves_state() {
 
 #[test]
 fn save_restore_preserves_resting_orders_and_their_reservations() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut session = player_session_with_position(0, 100_501);
     session
         .enqueue_player_intent(
@@ -4115,7 +4153,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
 }
 
 fn assert_book_cursor_continues_after_cancel(empty_book: bool) {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let mut original = player_session_with_position(0, 10_000_000);
     let buy = Intent::PlaceLimit {
         code: code.clone(),
@@ -4187,7 +4225,7 @@ fn save_restore_keeps_the_historical_cursor_in_an_empty_book() {
 
 #[test]
 fn restore_preserves_sparse_same_price_fifo_before_matching() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let source = TestOrderSaveFixture::with_resting_sellers(2, 10_000_000)
         .restore()
         .unwrap();
@@ -4240,7 +4278,7 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
 
 #[test]
 fn restore_rejects_crossed_orders_instead_of_matching_while_loading() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let source = TestOrderSaveFixture::with_resting_sellers(2, 10_000_000)
         .restore()
         .unwrap();
@@ -4254,7 +4292,7 @@ fn restore_rejects_crossed_orders_instead_of_matching_while_loading() {
 
 #[test]
 fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let source = TestOrderSaveFixture::with_resting_sellers(1, 10_000_000)
         .restore()
         .unwrap();
@@ -4264,7 +4302,7 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
     let mut unknown = saved.clone();
     unknown
         .book_next_sequences
-        .insert(StockCode("UNKNOWN".to_owned()), 0);
+        .insert(engine::StockId(99), 0);
     for save in [missing, unknown] {
         assert!(
             matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(message))
@@ -4306,13 +4344,13 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
 
 #[test]
 fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let source = player_session_with_position(0, 10_000_000);
     let mut save = source.save().unwrap();
     for cursor in [0, 9_007_199_254_740_992, u64::MAX] {
         save.book_next_sequences.insert(code.clone(), cursor);
         let json = serde_json::to_value(&save).unwrap();
-        assert_eq!(json["book_next_sequences"][&code.0], cursor.to_string());
+        assert_eq!(json["book_next_sequences"][code.0.to_string()], cursor.to_string());
         let decoded: engine::SaveSlot = serde_json::from_value(json.clone()).unwrap();
         let restored = GameSession::restore(&decoded).unwrap().save().unwrap();
         assert_eq!(serde_json::to_value(restored).unwrap(), json);
@@ -4343,7 +4381,7 @@ fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
         serde_json::json!("18446744073709551616"),
     ] {
         let mut json = serde_json::to_value(&save).unwrap();
-        json["book_next_sequences"][&code.0] = invalid;
+        json["book_next_sequences"][code.0.to_string()] = invalid;
         assert!(serde_json::from_value::<engine::SaveSlot>(json).is_err());
     }
 }
@@ -4358,7 +4396,7 @@ fn restore_rejects_corrupted_position_invariants() {
         .unwrap()
         .positions
         .insert(
-            StockCode("600101".to_string()),
+            sid(),
             engine::PositionSnap {
                 qty: 100,
                 t1_locked: 101,
@@ -4394,7 +4432,7 @@ fn restore_rejects_missing_or_unknown_authoritative_entities() {
     unknown_market
         .snapshot
         .markets
-        .insert(StockCode("UNKNOWN".to_string()), market);
+        .insert(engine::StockId(99), market);
     assert!(matches!(
         GameSession::restore(&unknown_market),
         Err(engine::SessionError::InvalidSave(_))
@@ -4408,7 +4446,7 @@ fn restore_rejects_non_positive_prices() {
     bad_price
         .snapshot
         .markets
-        .get_mut(&StockCode("600101".to_string()))
+        .get_mut(&sid())
         .unwrap()
         .last_price = Money::ZERO;
     assert!(matches!(
@@ -4424,7 +4462,7 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
         original.step().expect("healthy step");
     }
     let saved = original.save().expect("healthy save");
-    assert!(!saved.price_history[&StockCode("600101".to_string())].is_empty());
+    assert!(!saved.price_history[&sid()].is_empty());
     assert_ne!(saved.rng_state, 0);
     assert_eq!(saved.npc_attention.len(), 4);
     assert_eq!(
@@ -4532,7 +4570,7 @@ fn session_persists_canonical_market_minutes_and_restores_their_observations() {
     }
 
     let saved = original.save().expect("healthy save");
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let minutes = &saved.market_minute_closes[&code];
     assert_eq!(minutes.len(), 31);
     assert_eq!(minutes.first().unwrap().absolute_trading_minute, 0);
@@ -4561,7 +4599,7 @@ fn session_intraday_return_requires_a_real_opening_trade_not_the_zero_volume_pla
     setup.history_len = 40;
     let mut no_trade = engine::GameSession::new(setup, 42).unwrap();
     no_trade.step().expect("healthy step");
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     let unavailable = no_trade.market_price_path_observations().unwrap();
     assert!(
@@ -4593,7 +4631,7 @@ fn compressed_session_days_still_cover_every_completed_market_minute() {
     for _ in 0..3 {
         session.step().expect("healthy step");
     }
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let saved = session.save().expect("healthy save");
     let minutes = &saved.market_minute_closes[&code];
     assert_eq!(
@@ -4614,7 +4652,7 @@ fn restore_rejects_missing_invalid_or_future_market_minute_history() {
     let mut session = engine::GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let save = session.save().expect("healthy save");
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     let mut missing = save.clone();
     missing.market_minute_closes.clear();
@@ -4768,7 +4806,7 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
 
 #[test]
 fn restore_rejects_inconsistent_retail_experience_lifecycles() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let retail = AccountId(1);
     let held_session = TestOrderSaveFixture::with_resting_sellers(1, 200_000)
         .restore()
@@ -4848,7 +4886,7 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         .unwrap()
         .stocks
         .insert(
-            StockCode("600101".to_string()),
+            sid(),
             engine::RetailStockExperience {
                 last_buy_price: Some(Money::from_cents(1_000)),
                 ..engine::RetailStockExperience::default()
@@ -4866,7 +4904,7 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
 
 #[test]
 fn restore_rejects_continuous_orders_during_call_auction() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -4906,7 +4944,7 @@ fn restore_rejects_continuous_orders_during_call_auction() {
 
 #[test]
 fn restore_rejects_unreachable_t1_locks() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     let session = GameSession::new(sample_setup(), 42).unwrap();
     let mut t0_save = session.save().expect("healthy save");
@@ -4962,7 +5000,7 @@ fn restore_rejects_unreachable_t1_locks() {
 
 #[test]
 fn restore_rejects_split_odd_lot_sell_orders() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let session = player_session_with_position(150, 10_000_000);
     let mut save = session.save().expect("healthy save");
     save.resting_orders.insert(
@@ -5005,7 +5043,7 @@ fn restore_rejects_split_odd_lot_sell_orders() {
 
 #[test]
 fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 1,
@@ -5095,7 +5133,7 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
 
 #[test]
 fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let session = player_session_with_position(175, 10_000_000);
     let early_odd_lot = engine::Order {
         id: engine::OrderId(1),
@@ -5135,7 +5173,7 @@ fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order
 
 #[test]
 fn restore_rejects_filled_value_without_matching_quantity_progress() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
     let session = player_session_with_position(0, 10_000_000);
     let mut save = session.save().expect("healthy save");
     save.resting_orders.insert(
@@ -5165,7 +5203,7 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
 
 #[test]
 fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() {
-    let code = StockCode("600101".to_string());
+    let code = sid();
 
     let buy_session = player_session_with_position(0, 10_000_000);
     let mut buy_save = buy_session.save().expect("healthy save");
@@ -5220,14 +5258,14 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
 
 fn symbolic_limit_request(side: Side, price: &str, qty: u32) -> Intent {
     serde_json::from_value(serde_json::json!({
-        "PlaceLimit": { "code": "600101", "side": side, "price": price, "qty": qty }
+        "PlaceLimit": { "code": 0, "side": side, "price": price, "qty": qty }
     }))
     .expect("the public limit-order API must accept a symbolic price")
 }
 
 #[test]
 fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixed_resting_price() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     let highest = symbolic_limit_request(Side::Buy, "Highest", 200);
     session
@@ -5278,7 +5316,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
 
 #[test]
 fn symbolic_highest_admitted_before_the_sell_can_move_its_price_cage() {
-    let code = StockCode("600101".to_owned());
+    let code = sid();
     let mut session = player_session_with_position(100, 10_000_000);
     session
         .enqueue_player_intent(
@@ -5350,8 +5388,8 @@ fn symbolic_price_supports_both_extremes_on_both_sides_with_or_without_a_cage() 
 
 #[test]
 fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
-    let first_code = StockCode("600101".to_owned());
-    let second_code = StockCode("600102".to_owned());
+    let first_code = sid();
+    let second_code = engine::StockId(1);
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 0,
@@ -5361,7 +5399,7 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
     };
     setup.config.starting_cash = Money::from_cents(112_000);
     let mut second = setup.stocks[0].clone();
-    second.code = second_code.clone();
+    second.code = StockCode("600102".to_owned());
     second.initial_price = Money::from_cents(50);
     setup.stocks.push(second);
     let config = setup.config.clone();

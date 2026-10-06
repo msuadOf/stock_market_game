@@ -37,7 +37,7 @@ use engine::information::{
 use engine::strategy::{
     AnalysisProfile, BeliefBook, BeliefCause, BeliefError, BeliefInputs, Rng, StrategyProfile,
 };
-use engine::{AccountId, StockCode};
+use engine::{AccountId, StockId};
 
 /// 披露域种子（测试固定值，确定性钉死）。
 pub(crate) const OPS_SEED: u64 = 21;
@@ -151,7 +151,7 @@ impl FundamentalBeliefCase {
 
     pub fn apply_cause(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         as_of: u64,
     ) -> Result<(), BeliefError> {

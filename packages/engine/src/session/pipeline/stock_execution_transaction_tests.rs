@@ -10,15 +10,15 @@ use super::*;
 use crate::session::account_book::AccountBook;
 use crate::{
     Account, AccountId, AccountKind, GameConfig, Intent, Market, Money, Order, OrderId,
-    SecurityCategory, Side, StockCode, TradingPhase,
+    SecurityCategory, Side, StockId, TradingPhase,
 };
 use std::collections::BTreeMap;
 
-fn code() -> StockCode {
-    StockCode("600888".to_owned())
+fn code() -> StockId {
+    StockId(0)
 }
 
-fn empty_market(code: &StockCode) -> Market {
+fn empty_market(code: &StockId) -> Market {
     Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -28,12 +28,12 @@ fn empty_market(code: &StockCode) -> Market {
     .unwrap()
 }
 
-fn account_validation_buy_operations(code: &StockCode) -> (Vec<ValidatedOperation>, GameConfig) {
+fn account_validation_buy_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameConfig) {
     account_validation_buy_operations_for_quantities(code, &[100])
 }
 
 fn account_validation_buy_operations_for_quantities(
-    code: &StockCode,
+    code: &StockId,
     quantities: &[u32],
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
@@ -84,13 +84,13 @@ fn account_validation_buy_operations_for_quantities(
     (validation.operations().to_vec(), config)
 }
 
-fn resting_sell_snapshot(market: &mut Market, code: &StockCode) -> ContinuousEnvelopeSnapshot {
+fn resting_sell_snapshot(market: &mut Market, code: &StockId) -> ContinuousEnvelopeSnapshot {
     resting_sell_snapshot_with_qty(market, code, 100)
 }
 
 fn resting_sell_snapshot_with_qty(
     market: &mut Market,
-    code: &StockCode,
+    code: &StockId,
     qty: u32,
 ) -> ContinuousEnvelopeSnapshot {
     let order = Order {
@@ -131,7 +131,7 @@ fn resting_sell_snapshot_with_qty(
     }
 }
 
-fn accounts_with_position(code: &StockCode) -> AccountBook {
+fn accounts_with_position(code: &StockId) -> AccountBook {
     let mut account = Account::new(
         AccountId(0),
         AccountKind::Player,

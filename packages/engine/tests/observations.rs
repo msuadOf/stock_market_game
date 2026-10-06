@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use engine::{
     build_account_risk_observation, build_equal_weight_market_observation,
     build_market_minute_closes, build_price_path_observation, completed_market_minute_count,
-    CompletedDayClose, MarketTickPrice, Money, RiskPositionInput, StockCode,
+    CompletedDayClose, MarketTickPrice, Money, RiskPositionInput, StockId,
     GAME_INTRADAY_MINUTES_PER_DAY,
 };
 
@@ -238,10 +238,10 @@ fn intraday_return_includes_the_auction_or_opening_gap_from_authoritative_open()
 #[test]
 fn equal_weight_market_observation_reports_breadth_and_missing_coverage() {
     let returns = BTreeMap::from([
-        (StockCode("000001".into()), Some(0.02)),
-        (StockCode("000002".into()), Some(-0.01)),
-        (StockCode("000003".into()), Some(0.0)),
-        (StockCode("000004".into()), None),
+        (StockId(0), Some(0.02)),
+        (StockId(1), Some(-0.01)),
+        (StockId(2), Some(0.0)),
+        (StockId(3), None),
     ]);
     let market = build_equal_weight_market_observation(&returns).unwrap();
 
@@ -253,7 +253,7 @@ fn equal_weight_market_observation_reports_breadth_and_missing_coverage() {
     assert_close(market.unchanged_fraction.unwrap(), 1.0 / 3.0);
 
     let unavailable = build_equal_weight_market_observation(&BTreeMap::from([(
-        StockCode("000001".into()),
+        StockId(0),
         None,
     )]))
     .unwrap();
@@ -264,13 +264,13 @@ fn equal_weight_market_observation_reports_breadth_and_missing_coverage() {
 #[test]
 fn equal_weight_market_observation_rejects_non_finite_inputs_and_sum() {
     assert!(build_equal_weight_market_observation(&BTreeMap::from([(
-        StockCode("000001".into()),
+        StockId(0),
         Some(f64::NAN),
     )]))
     .is_err());
     assert!(build_equal_weight_market_observation(&BTreeMap::from([
-        (StockCode("000001".into()), Some(f64::MAX)),
-        (StockCode("000002".into()), Some(f64::MAX)),
+        (StockId(0), Some(f64::MAX)),
+        (StockId(1), Some(f64::MAX)),
     ]))
     .is_err());
 }
@@ -279,7 +279,7 @@ fn equal_weight_market_observation_rejects_non_finite_inputs_and_sum() {
 fn account_risk_uses_each_accounts_cost_weight_and_explicit_references() {
     let positions = BTreeMap::from([
         (
-            StockCode("000001".into()),
+            StockId(0),
             RiskPositionInput {
                 qty: 1_000,
                 cost_price: Some(price(1_000)),
@@ -288,7 +288,7 @@ fn account_risk_uses_each_accounts_cost_weight_and_explicit_references() {
             },
         ),
         (
-            StockCode("000002".into()),
+            StockId(1),
             RiskPositionInput {
                 qty: 100,
                 cost_price: Some(price(600)),
@@ -309,19 +309,19 @@ fn account_risk_uses_each_accounts_cost_weight_and_explicit_references() {
     assert_close(risk.return_from_reference.unwrap(), -0.01818181818181818);
     assert_close(risk.drawdown_from_peak.unwrap(), -0.10);
 
-    let loss = &risk.positions[&StockCode("000001".into())];
+    let loss = &risk.positions[&StockId(0)];
     assert_close(loss.unrealized_return.unwrap(), -0.20);
     assert_close(loss.equity_weight.unwrap(), 800_000.0 / 1_080_000.0);
     assert_close(loss.drawdown_from_position_peak.unwrap(), -1.0 / 3.0);
 
-    let profit = &risk.positions[&StockCode("000002".into())];
+    let profit = &risk.positions[&StockId(1)];
     assert_close(profit.unrealized_return.unwrap(), 1.0 / 3.0);
     assert!(profit.drawdown_from_position_peak.is_none());
 }
 
 #[test]
 fn account_risk_accepts_nonpositive_net_cost_without_inventing_a_return() {
-    let code = StockCode("000001".into());
+    let code = StockId(0);
     for cost in [None, Some(i64::MIN), Some(-157), Some(0)] {
         let positions = BTreeMap::from([(
             code.clone(),
@@ -352,7 +352,7 @@ fn account_risk_accepts_nonpositive_net_cost_without_inventing_a_return() {
 
 #[test]
 fn account_risk_rejects_invalid_market_prices_peaks_and_references() {
-    let code = StockCode("000001".into());
+    let code = StockId(0);
     let invalid_price = BTreeMap::from([(
         code.clone(),
         RiskPositionInput {

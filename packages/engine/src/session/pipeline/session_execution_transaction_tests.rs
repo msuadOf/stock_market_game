@@ -3,7 +3,7 @@ use super::session_execution_transaction::{
     apply_session_execution_transaction, SessionExecutionTransactionError,
 };
 use super::*;
-use crate::{AccountId, Event, Intent, Market, Money, SecurityCategory, Side, StockCode};
+use crate::{AccountId, Event, Intent, Market, Money, SecurityCategory, Side, StockId};
 
 fn accepted_buy_worker(
     game: &GameSession,
@@ -240,7 +240,7 @@ fn split_receipt_cursor_is_rejected_before_any_candidate_work() {
 fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600999".to_owned());
+    let code = StockId(9);
     let worker = super::continuous_matching::ContinuousStockOutput {
         market: Market::new(code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap(),
         created_envelopes: Vec::new(),

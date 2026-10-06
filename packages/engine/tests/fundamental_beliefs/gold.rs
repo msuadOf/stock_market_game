@@ -10,7 +10,7 @@
 
 use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
-use engine::account::StockCode;
+use engine::StockId;
 use engine::accounting::AccountingAmount;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyKind;
@@ -22,8 +22,8 @@ use engine::strategy::{
 };
 use engine::Money;
 
-pub(crate) fn stock_code() -> StockCode {
-    StockCode("600101".to_string())
+pub(crate) fn stock_code() -> StockId {
+    StockId(0)
 }
 
 pub(crate) fn momentum_profile() -> StrategyProfile {

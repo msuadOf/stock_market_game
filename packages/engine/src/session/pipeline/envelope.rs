@@ -36,7 +36,7 @@ pub struct Envelope {
 #[derive(Clone, Copy, Debug)]
 pub(in crate::session) struct BorrowedTickStartEnvelope<'a> {
     pub account: crate::AccountId,
-    pub stock: &'a crate::StockCode,
+    pub stock: &'a crate::StockId,
     pub order: crate::OrderId,
     pub side: crate::Side,
     pub live: ResVec,
@@ -46,7 +46,7 @@ pub(in crate::session) struct BorrowedTickStartEnvelope<'a> {
 impl BorrowedTickStartEnvelope<'_> {
     pub(in crate::session) fn identity(
         &self,
-    ) -> (crate::AccountId, &crate::StockCode, crate::OrderId, u8) {
+    ) -> (crate::AccountId, &crate::StockId, crate::OrderId, u8) {
         (
             self.account,
             self.stock,
@@ -252,11 +252,12 @@ impl Envelope {
 #[cfg(test)]
 mod borrowed_projection_tests {
     use super::*;
-    use crate::{AccountId, OrderId, Side, StockCode};
+    use crate::{AccountId, OrderId, Side, StockId};
 
     #[test]
     fn borrowed_projection_matches_exact_owned_tick_start_payload_including_every_field() {
-        let stock = StockCode("600888".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let stock = StockId(0);
         let projection = BorrowedTickStartEnvelope {
             account: AccountId(1),
             stock: &stock,
@@ -292,7 +293,7 @@ mod borrowed_projection_tests {
             }};
         }
         changed!(key.account, AccountId(2));
-        changed!(key.stock, StockCode("600889".to_owned()));
+        changed!(key.stock, StockId(1));
         changed!(key.order, OrderId(10));
         changed!(key.side, Side::Sell);
         changed!(origin, EnvelopeOrigin::CreatedAtValidation);

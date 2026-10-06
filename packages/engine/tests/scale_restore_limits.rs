@@ -206,7 +206,9 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
 #[test]
 fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let mut session = GameSession::new(setup(1), 39).expect("fixture constructs");
-    let code = StockCode("600101".to_string());
+    let code = session
+        .stock_id("600101")
+        .expect("夹具股票必须在目录中");
     for _ in 0..2 {
         session
             .enqueue_player_intent(

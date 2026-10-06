@@ -10,7 +10,8 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
             SIMULATION_POLICY_ID,
         },
-        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StrategyParams,
+        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId,
+        StrategyParams,
     };
 
     crate::GameSession::new(
@@ -219,7 +220,7 @@ fn empty_and_nonempty_ingress_both_record_account_validation() {
                 .enqueue_player_intent(
                     crate::AccountId(0),
                     crate::Intent::PlaceLimit {
-                        code: crate::StockCode("600888".to_owned()),
+                        code: crate::StockId(0),
                         side: crate::Side::Buy,
                         price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                         qty: 100,

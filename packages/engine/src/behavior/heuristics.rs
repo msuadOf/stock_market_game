@@ -27,7 +27,7 @@ pub(super) fn select_observed_stock(
     own: &SelfView,
     experience: Option<&RetailExperienceState>,
     rng: &mut dyn Rng,
-) -> Option<StockCode> {
+) -> Option<StockId> {
     // 60% 优先查看持仓，40% 仍能从全市场发现股票；每个账户独立抽样。
     if !own.positions.is_empty() && rng.next_f64() < 0.60 {
         let index = rng.next_range_u32(0, own.positions.len() as u32) as usize;
@@ -54,7 +54,7 @@ pub(super) fn select_observed_stock(
 
 /// 单次仓位目标推导的借用上下文；权威持仓、权益和行情仍由输入 owner 保存。
 pub(super) struct RetailPositionDecisionContext<'a> {
-    code: &'a StockCode,
+    code: &'a StockId,
     market: &'a MarketView,
     account_risk: &'a AccountRiskObservation,
     pub(super) current_fraction: f64,
@@ -65,7 +65,7 @@ pub(super) struct RetailPositionDecisionContext<'a> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_personal_analysis(
     original: PositionDecision,
-    assessments: &BTreeMap<StockCode, crate::plans::CandidateAssessment>,
+    assessments: &BTreeMap<StockId, crate::plans::CandidateAssessment>,
     own: &SelfView,
     market: &MarketView,
     risk: &AccountRiskObservation,
@@ -162,7 +162,7 @@ pub(crate) fn apply_personal_analysis(
 
 impl<'a> RetailPositionDecisionContext<'a> {
     pub(super) fn from_observations(
-        code: &'a StockCode,
+        code: &'a StockId,
         own: &SelfView,
         market: &'a MarketView,
         account_risk: &'a AccountRiskObservation,
@@ -187,7 +187,7 @@ impl<'a> RetailPositionDecisionContext<'a> {
     }
 
     pub(super) fn from_position_inputs(
-        code: &'a StockCode,
+        code: &'a StockId,
         market: &'a MarketView,
         account_risk: &'a AccountRiskObservation,
         current_fraction: f64,
@@ -344,8 +344,8 @@ mod position_context_tests {
     use crate::strategy::StockView;
     use crate::Money;
 
-    fn inputs() -> (StockCode, MarketView, AccountRiskObservation) {
-        let code = StockCode("600101".to_owned());
+    fn inputs() -> (StockId, MarketView, AccountRiskObservation) {
+        let code = StockId(0);
         let market = MarketView {
             stocks: [(
                 code.clone(),

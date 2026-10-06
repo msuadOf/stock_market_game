@@ -101,7 +101,7 @@ fn diagnostic_metadata_changes_only_session_hash() {
         .last_retail_order_events
         .push(RetailOrderDiagnosticEvent::Rejected {
             account: AccountId(1),
-            code: StockCode("600888".to_owned()),
+            code: StockId(0),
             reason: RejectionReason::InsufficientCash,
         });
     assert_eq!(game.business_state_hash().unwrap(), business);
@@ -110,7 +110,7 @@ fn diagnostic_metadata_changes_only_session_hash() {
 
 #[test]
 fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let account = AccountId(1);
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state

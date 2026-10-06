@@ -16,7 +16,7 @@ use crate::{
         protocol::{CivilUpdate, EventFact, TickFrame},
         Event, SaveAccountSnap,
     },
-    AccountId, Money, Side, StockCode,
+    AccountId, Money, Side, StockId,
 };
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -42,8 +42,6 @@ pub const CONSERVATION_SCHEMA: &str = "escrow-conservation-snapshot";
 pub enum EvidenceError {
     #[error("Escrow 验证证据字段 {field} 不能为空")]
     EmptyField { field: &'static str },
-    #[error("Escrow 验证证据包含无效的六位股票代码：{code}")]
-    InvalidStockCode { code: String },
     #[error("Escrow 验证证据不能投影负金额，字段 {field}：{cents} 分")]
     NegativeMoney { field: &'static str, cents: i64 },
     #[error("receipt {receipt_index} does not belong to its projected envelope")]
@@ -68,7 +66,7 @@ pub enum EvidenceError {
     )]
     T1Overflow {
         account_id: String,
-        stock_code: String,
+        stock_code: StockId,
         qty: u32,
         locked: u32,
     },
@@ -113,7 +111,8 @@ pub struct ResourceProjection {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct EnvelopeKeyProjection {
     pub account_id: String,
-    pub stock_code: String,
+    #[serde(with = "crate::stock::stock_id_decimal")]
+    pub stock_code: StockId,
     pub order_id: String,
     pub side: &'static str,
 }
@@ -166,7 +165,8 @@ pub struct AccountAggregateProjection {
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct PositionProjection {
-    pub stock_code: String,
+    #[serde(with = "crate::stock::stock_id_decimal")]
+    pub stock_code: StockId,
     pub qty: String,
     pub t1_locked: String,
 }
@@ -208,7 +208,6 @@ pub fn project_conservation_snapshot(
 
     for chain in chains {
         let envelope = chain.envelope;
-        validate_stock(&envelope.key().stock)?;
         validate_envelope_axis(envelope)?;
         if !seen_keys.insert(envelope.key().clone()) {
             return Err(EvidenceError::EnvelopeFinalState);
@@ -349,17 +348,16 @@ pub fn project_conservation_snapshot(
         let cash = nonnegative_money(account.cash, "account.cash")?;
         let mut positions = Vec::with_capacity(account.positions.len());
         for (stock, position) in &account.positions {
-            validate_stock(stock)?;
             if position.t1_locked > position.qty {
                 return Err(EvidenceError::T1Overflow {
                     account_id: account_id.0.to_string(),
-                    stock_code: stock.0.clone(),
+                    stock_code: *stock,
                     qty: position.qty,
                     locked: position.t1_locked,
                 });
             }
             positions.push(PositionProjection {
-                stock_code: stock.0.clone(),
+                stock_code: *stock,
                 qty: position.qty.to_string(),
                 t1_locked: position.t1_locked.to_string(),
             });
@@ -534,7 +532,7 @@ fn nonnegative_money(value: Money, field: &'static str) -> Result<u64, EvidenceE
 fn project_envelope_key(key: &crate::session::pipeline::EnvelopeKey) -> EnvelopeKeyProjection {
     EnvelopeKeyProjection {
         account_id: key.account.0.to_string(),
-        stock_code: key.stock.0.clone(),
+        stock_code: key.stock,
         order_id: key.order.0.to_string(),
         side: side_name(key.side),
     }
@@ -940,7 +938,6 @@ fn event_key_entity(entity: &EntityTag) -> Result<String, EvidenceError> {
     match entity {
         EntityTag::Session => Ok("Session".to_owned()),
         EntityTag::Stock(code) => {
-            validate_stock(code)?;
             Ok(format!("Stock:{}", code.0))
         }
         EntityTag::Account(account) => Ok(format!("Account:{}", account.0)),
@@ -977,7 +974,6 @@ fn event_entity(event: &Event) -> Result<String, EvidenceError> {
         | Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
         | Event::PriceTick { code, .. } => {
-            validate_stock(code)?;
             Ok(format!("Stock:{}", code.0))
         }
         Event::IntentRejected { account, .. }
@@ -1160,9 +1156,8 @@ fn project_timeseries_payload(
         .markets
         .iter()
         .map(|(code, market)| {
-            validate_stock(code)?;
             Ok((
-                code.0.clone(),
+                code.to_string(),
                 serde_json::json!({
                     "last_price": market.last_price.cents().to_string(),
                     "last_close": market.last_close.cents().to_string(),
@@ -1178,7 +1173,6 @@ fn project_timeseries_payload(
         .auction_points
         .iter()
         .map(|(code, points)| {
-            validate_stock(code)?;
             let projected = points
                 .iter()
                 .map(|point| {
@@ -1196,16 +1190,15 @@ fn project_timeseries_payload(
                     }))
                 })
                 .collect::<Result<Vec<_>, EvidenceError>>()?;
-            Ok((code.0.clone(), Value::Array(projected)))
+            Ok((code.to_string(), Value::Array(projected)))
         })
         .collect::<Result<serde_json::Map<_, _>, EvidenceError>>()?;
     let continuous_points = payload
         .continuous_points
         .iter()
         .map(|(code, point)| {
-            validate_stock(code)?;
             Ok((
-                code.0.clone(),
+                code.to_string(),
                 serde_json::json!({
                     "tick": point.tick.to_string(),
                     "phase": trading_phase(point.phase),
@@ -1232,7 +1225,7 @@ fn project_civil_payload(update: &CivilUpdate) -> Result<Value, EvidenceError> {
         .securities
         .iter()
         .map(|security| {
-            validate_stock(&security.code)?;
+            // 边界代码字符串（来自配置规格）直接进证据文档；格式校验在目录构造时完成。
             Ok(security.code.0.clone())
         })
         .collect::<Result<Vec<_>, EvidenceError>>()?;
@@ -1271,7 +1264,6 @@ fn project_stable_key(
     let entity = match key.entity() {
         crate::session::pipeline::EntityTag::Session => serde_json::json!("Session"),
         crate::session::pipeline::EntityTag::Stock(code) => {
-            validate_stock(code)?;
             serde_json::json!({ "Stock": code.0 })
         }
         crate::session::pipeline::EntityTag::Account(account) => {
@@ -1330,13 +1322,12 @@ fn project_candle(candle: &crate::DailyCandle) -> Result<Value, EvidenceError> {
 }
 
 fn project_candle_map(
-    candles: &BTreeMap<StockCode, crate::DailyCandle>,
+    candles: &BTreeMap<StockId, crate::DailyCandle>,
 ) -> Result<Value, EvidenceError> {
     candles
         .iter()
         .map(|(code, candle)| {
-            validate_stock(code)?;
-            Ok((code.0.clone(), project_candle(candle)?))
+            Ok((code.to_string(), project_candle(candle)?))
         })
         .collect::<Result<serde_json::Map<_, _>, EvidenceError>>()
         .map(Value::Object)
@@ -1412,15 +1403,6 @@ fn trading_phase(phase: crate::TradingPhase) -> &'static str {
     }
 }
 
-fn validate_stock(code: &StockCode) -> Result<(), EvidenceError> {
-    if code.0.len() == 6 && code.0.bytes().all(|byte| byte.is_ascii_digit()) {
-        Ok(())
-    } else {
-        Err(EvidenceError::InvalidStockCode {
-            code: code.0.clone(),
-        })
-    }
-}
 
 pub trait Sha256Provider {
     fn digest_hex(&self, bytes: &[u8]) -> String;
@@ -1497,7 +1479,8 @@ pub struct ExecutionCoverage {
     pub auction_finalizations: u64,
     #[serde(serialize_with = "serialize_decimal")]
     pub day_end_finalizations: u64,
-    pub stock_codes: Vec<String>,
+    #[serde(with = "crate::stock::stock_id_decimal_vec")]
+    pub stock_codes: Vec<StockId>,
     pub multi_leg_order_ids: Vec<String>,
     pub restore_slots: Vec<RestoreSlotProjection>,
 }
@@ -1690,7 +1673,6 @@ fn project_execution_coverage(
             });
         }
         for envelope in &snapshot.envelopes {
-            validate_stock(&StockCode(envelope.key.stock_code.clone()))?;
             stock_codes.insert(envelope.key.stock_code.clone());
             if envelope
                 .receipts

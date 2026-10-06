@@ -6,7 +6,7 @@
 use super::revision::PlanRevision;
 use super::state::{PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget, TradingPlan};
 use super::PlanPolicy;
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
 
 /// 计划模块操作失败。绝不静默吞掉（铁律二），错误携带完整上下文。
@@ -15,7 +15,7 @@ pub enum PlanError {
     #[error("unknown plan id {plan_id:?}")]
     UnknownPlan { plan_id: PlanId },
     #[error("account {account:?} already has a non-terminal plan for {code:?}")]
-    DuplicateActivePlan { account: AccountId, code: StockCode },
+    DuplicateActivePlan { account: AccountId, code: StockId },
     #[error("invalid target: {reason}")]
     InvalidTarget { reason: &'static str },
     #[error("invalid confidence {value} bp: must be within 0..=10000")]

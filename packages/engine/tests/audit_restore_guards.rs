@@ -6,7 +6,7 @@ use engine::company::CompanyId;
 use engine::plans::{PlanBook, PlanOpen};
 use engine::session::{CivilClock, DueKind};
 use engine::{
-    AccountId, OpinionSource, PlanId, PlanOpinion, PlanPolicy, PlanTarget, Side, StockCode,
+    AccountId, OpinionSource, PlanId, PlanOpinion, PlanPolicy, PlanTarget, Side, StockId,
     TradingPlan, Urgency,
 };
 
@@ -17,7 +17,7 @@ fn date(text: &str) -> CivilDate {
 fn open(created_trading_day: u64, horizon_trading_days: u32) -> PlanOpen {
     PlanOpen {
         account: AccountId(7),
-        code: StockCode("600101".into()),
+        code: StockId(0),
         direction: Side::Buy,
         target: PlanTarget::ShareCount(100),
         opinion: PlanOpinion {

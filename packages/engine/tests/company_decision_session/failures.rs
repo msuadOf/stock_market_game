@@ -63,9 +63,10 @@ fn belief_snapshot(
     let mut out = Vec::new();
     for account in 13u64..23 {
         for code in ["600101", "002156", "300260", "600610", "000812"] {
-            if let Some(value) =
-                session.belief_debug(engine::AccountId(account), &StockCode(code.to_string()))
-            {
+            let id = session
+                .stock_id(code)
+                .expect("fixture stock must be in the catalog");
+            if let Some(value) = session.belief_debug(engine::AccountId(account), &id) {
                 out.push((account, code.to_string(), value));
             }
         }

@@ -16,7 +16,7 @@ impl GameSession {
         working: WorkingOrderSlices<'_>,
     ) -> Vec<Intent> {
         let lot_size = self.state.setup.config.lot_size;
-        let mut requested: BTreeMap<StockCode, (Side, Money, u32)> = BTreeMap::new();
+        let mut requested: BTreeMap<StockId, (Side, Money, u32)> = BTreeMap::new();
         let mut dynamic_codes = BTreeSet::new();
         let mut passthrough = Vec::new();
         for intent in intents {
@@ -47,7 +47,7 @@ impl GameSession {
             }
         }
 
-        let existing_codes: Vec<StockCode> = self
+        let existing_codes: Vec<StockId> = self
             .state
             .parent_orders
             .get(&account)
@@ -184,7 +184,7 @@ impl GameSession {
     pub(in crate::session) fn append_parent_child_or_working_intent(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         market_minute: u64,
         working: WorkingOrderSlices<'_>,
         desired: &mut Vec<Intent>,

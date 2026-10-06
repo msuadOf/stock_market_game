@@ -230,7 +230,7 @@ fn apply_session_auction_transaction(
     let boundary = AuctionTickBoundary::capture(candidate)?;
     let finish = finish_auction_shards(stock_execution, boundary).map_err(|source| {
         AuctionDayEndError::Worker {
-            code: crate::StockCode("<incremental>".to_owned()),
+            code: crate::StockId(u32::MAX),
             source,
         }
     })?;

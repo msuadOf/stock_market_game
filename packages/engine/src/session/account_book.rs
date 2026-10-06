@@ -33,7 +33,7 @@ struct AccountPage {
 }
 
 struct ResourceValidationCache {
-    prices: Arc<BTreeMap<crate::StockCode, crate::Money>>,
+    prices: Arc<BTreeMap<crate::StockId, crate::Money>>,
     reservations: Option<Arc<super::pipeline::ReservationPage>>,
 }
 
@@ -87,7 +87,7 @@ impl AccountBook {
     /// 在相同账户页、价格及预留事实下校验资源。
     pub(super) fn validate_resources(
         &self,
-        prices: &BTreeMap<crate::StockCode, crate::Money>,
+        prices: &BTreeMap<crate::StockId, crate::Money>,
         reservations: &super::pipeline::LiveReservations,
         validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
     ) -> Result<(), super::StepFatal> {
@@ -285,7 +285,7 @@ fn group_id(id: AccountId) -> u64 {
 mod tests {
     use super::*;
     use crate::strategy::{MomentumStrategy, StrategyState};
-    use crate::{AccountKind, Money, StockCode};
+    use crate::{AccountKind, Money, StockId};
 
     #[test]
     fn strategy_presence_reuses_unchanged_pages_and_rechecks_mutation() {
@@ -339,7 +339,7 @@ mod tests {
             calls.fetch_add(1, Ordering::Relaxed);
             Ok(())
         };
-        let mut prices = BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]);
+        let mut prices = BTreeMap::from([(StockId(0), Money::from_cents(100))]);
         let mut cash = BTreeMap::new();
         let mut sell = BTreeMap::new();
         accounts
@@ -370,7 +370,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
-        prices.insert(StockCode("600000".to_owned()), Money::from_cents(101));
+        prices.insert(StockId(0), Money::from_cents(101));
         shadow
             .validate_resources(
                 &prices,
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
         sell.insert(
             AccountId(0),
-            BTreeMap::from([(StockCode("600000".to_owned()), 100)]),
+            BTreeMap::from([(StockId(0), 100)]),
         );
         shadow
             .validate_resources(
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
         accounts
             .validate_resources(
-                &BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]),
+                &BTreeMap::from([(StockId(0), Money::from_cents(100))]),
                 &super::super::pipeline::LiveReservations::fixture(
                     &BTreeMap::new(),
                     &BTreeMap::new(),
@@ -425,7 +425,7 @@ mod tests {
             AccountId(0),
             Account::new(AccountId(0), AccountKind::Player, Money::ZERO),
         );
-        let prices = BTreeMap::from([(StockCode("600000".to_owned()), Money::from_cents(100))]);
+        let prices = BTreeMap::from([(StockId(0), Money::from_cents(100))]);
         let reservations =
             super::super::pipeline::LiveReservations::fixture(&BTreeMap::new(), &BTreeMap::new());
         let calls = AtomicUsize::new(0);
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn day_end_unlock_detaches_only_pages_with_locked_shares() {
-        let code = StockCode("600001".to_owned());
+        let code = StockId(0);
         let mut authority = AccountBook::default();
         for id in [1, 32] {
             let mut account = Account::new(AccountId(id), AccountKind::Player, Money::ZERO);

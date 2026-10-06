@@ -1,5 +1,5 @@
 use engine::session::pipeline::*;
-use engine::{AccountId, OrderId, Side, StockCode};
+use engine::{AccountId, OrderId, Side, StockId};
 
 #[test]
 fn step_phases_have_fixed_complete_rank_mapping() {
@@ -38,8 +38,8 @@ fn event_source_numeric_contract_and_entity_order_are_explicit() {
         [0, 1, 2, 3, 4]
     );
     let expected = vec![
-        EntityTag::Stock(StockCode("000001".into())),
-        EntityTag::Stock(StockCode("600001".into())),
+        EntityTag::Stock(StockId(0)),
+        EntityTag::Stock(StockId(1)),
         EntityTag::Account(AccountId(1)),
         EntityTag::Account(AccountId(2)),
         EntityTag::Session,
@@ -56,7 +56,7 @@ fn event_source_numeric_contract_and_entity_order_are_explicit() {
 fn receipt_payload_precedes_envelope_and_envelope_precedes_ordinal() {
     let envelope = EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".into()),
+        stock: StockId(1),
         order: OrderId(1),
         side: Side::Buy,
     };
@@ -91,7 +91,7 @@ fn receipt_payload_precedes_envelope_and_envelope_precedes_ordinal() {
 fn receipt_order_is_journal_source_payload_envelope_then_transition() {
     let envelope = EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".into()),
+        stock: StockId(1),
         order: OrderId(1),
         side: Side::Buy,
     };

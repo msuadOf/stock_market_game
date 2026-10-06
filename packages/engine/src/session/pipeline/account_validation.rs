@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     AccountId, GameConfig, Intent, LimitPrice, Money, OrderId, RejectionReason, SecurityCategory,
-    Side, StockCode,
+    Side, StockId,
 };
 use rayon::prelude::*;
 use std::{
@@ -51,12 +51,12 @@ impl StockValidation {
 /// AccountValidation 所需的不可变 tick 起点事实，明确不含会话引用。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountValidationContext {
-    stocks: BTreeMap<StockCode, StockValidation>,
+    stocks: BTreeMap<StockId, StockValidation>,
 }
 
 impl AccountValidationContext {
     pub fn new(
-        stocks: impl IntoIterator<Item = (StockCode, StockValidation)>,
+        stocks: impl IntoIterator<Item = (StockId, StockValidation)>,
     ) -> Result<Self, StepFatal> {
         let mut stock_map = BTreeMap::new();
         for (code, validation) in stocks {
@@ -67,7 +67,7 @@ impl AccountValidationContext {
         Ok(Self { stocks: stock_map })
     }
 
-    fn stock(&self, code: &StockCode) -> Option<StockValidation> {
+    fn stock(&self, code: &StockId) -> Option<StockValidation> {
         self.stocks.get(code).copied()
     }
 }
@@ -120,7 +120,7 @@ pub enum ValidatedOperation {
         candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
     },
 }
@@ -172,7 +172,7 @@ enum PreparedValidationStep {
         key: IntentCandidateKey,
         sealed_index: u64,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
     },
     Rejected {
@@ -185,8 +185,8 @@ enum PreparedValidationStep {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum AccountResourceLane {
     Cash(AccountId),
-    Shares(AccountId, StockCode),
-    Cancel(AccountId, StockCode, OrderId),
+    Shares(AccountId, StockId),
+    Cancel(AccountId, StockId, OrderId),
 }
 
 impl AccountResourceLane {
@@ -693,7 +693,7 @@ impl AccountValidationState {
     fn ensure_sellable_budget(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> Result<(), StepFatal> {
         let budget = self
             .budgets
@@ -809,7 +809,7 @@ impl AccountValidationState {
             .collect()
     }
 
-    pub(super) fn remaining_sellable(&self) -> BTreeMap<(AccountId, StockCode), u32> {
+    pub(super) fn remaining_sellable(&self) -> BTreeMap<(AccountId, StockId), u32> {
         self.budgets
             .iter()
             .flat_map(|(account, budget)| {
@@ -830,7 +830,7 @@ struct PlaceRequest<'candidate> {
     candidate: &'candidate super::IntentCandidate,
     key: IntentCandidateKey,
     sealed_index: u64,
-    code: &'candidate StockCode,
+    code: &'candidate StockId,
     side: Side,
     kind: PlaceKind,
     requested_price: Option<LimitPrice>,
@@ -880,7 +880,7 @@ fn accepted_cancel(
     key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
-    code: StockCode,
+    code: StockId,
     order_id: OrderId,
 ) -> ValidatedStep {
     let identity = ValidatedCandidateIdentity {
@@ -931,7 +931,7 @@ impl EnvelopeDraft {
         self.envelope_key.account
     }
 
-    pub const fn code(&self) -> &StockCode {
+    pub const fn code(&self) -> &StockId {
         &self.envelope_key.stock
     }
 
@@ -1074,7 +1074,7 @@ struct UnkeyedEnvelopeDraft {
     candidate_key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
-    code: StockCode,
+    code: StockId,
     side: Side,
     kind: PlaceKind,
     requested_price: Option<LimitPrice>,
@@ -1109,7 +1109,7 @@ impl UnkeyedEnvelopeDraft {
 #[derive(Clone, Debug)]
 struct AccountBudget {
     cash: Money,
-    sellable: BTreeMap<StockCode, u32>,
+    sellable: BTreeMap<StockId, u32>,
 }
 
 impl AccountBudget {
@@ -1126,7 +1126,7 @@ impl AccountBudget {
     fn ensure_sellable_from_snapshot(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         resources: &DecisionResourceSnapshot,
     ) -> Result<(), StepFatal> {
         if !self.sellable.contains_key(code) {
@@ -1149,7 +1149,7 @@ impl AccountBudget {
         self.cash = lane.cash;
     }
 
-    fn adopt_shares_lane(&mut self, code: StockCode, shares: u32) {
+    fn adopt_shares_lane(&mut self, code: StockId, shares: u32) {
         self.sellable.insert(code, shares);
     }
 }
@@ -1161,7 +1161,7 @@ struct PreparedReservation {
 
 enum BudgetUpdate {
     Cash { cash_after: Money },
-    Shares { code: StockCode, shares_after: u32 },
+    Shares { code: StockId, shares_after: u32 },
 }
 
 fn money(error: crate::MoneyError) -> StepFatal {

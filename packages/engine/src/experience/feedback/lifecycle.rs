@@ -11,7 +11,7 @@ impl RetailExperienceState {
     /// 机构本人观察：使用调用方冻结的独立门槛，协调 legacy 与 feedback 事实。
     pub fn observe_institution_position_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         moment: ExperienceMoment,
         adverse_move_threshold_bp: u32,
@@ -25,7 +25,7 @@ impl RetailExperienceState {
         self.feedback.ensure_moment_forward(moment)?;
         if !self.feedback.stocks.contains_key(code) || !self.stocks.contains_key(code) {
             return Err(ExperienceError::NoActiveEntry {
-                code: code.0.clone(),
+                code: *code,
             });
         }
 
@@ -56,7 +56,7 @@ impl RetailExperienceState {
     }
 
     /// 对账仅清理已不存在的持仓；不生成成交、退出或冷静期事实。
-    pub fn clear_stale_institutional_holding(&mut self, code: &StockCode) {
+    pub fn clear_stale_institutional_holding(&mut self, code: &StockId) {
         self.feedback.stocks.remove(code);
         if let Some(stock) = self.stocks.get_mut(code) {
             stock.entry_reference_price = None;
@@ -72,7 +72,7 @@ impl RetailExperienceState {
     #[allow(clippy::too_many_arguments)]
     pub fn record_institutional_fill_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         before_qty: u32,
@@ -104,17 +104,17 @@ impl RetailExperienceState {
         match side {
             Side::Buy if before_qty == 0 && has_epoch => {
                 return Err(ExperienceError::ActiveEntryAlreadyExists {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             Side::Buy if before_qty > 0 && !has_epoch => {
                 return Err(ExperienceError::NoActiveEntry {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             Side::Sell if !has_epoch => {
                 return Err(ExperienceError::NoActiveEntry {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             _ => {}
@@ -184,7 +184,7 @@ impl RetailExperienceState {
     /// 开局已分配持仓（真实持仓，非游戏内成交）：登记生命周期与首次本人所见。
     pub fn initialize_holding_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         entry_reference_price: Option<Money>,
         current_price: Money,
         moment: ExperienceMoment,
@@ -196,7 +196,7 @@ impl RetailExperienceState {
         self.feedback.ensure_moment_forward(moment)?;
         if self.feedback.stocks.contains_key(code) {
             return Err(ExperienceError::ActiveEntryAlreadyExists {
-                code: code.0.clone(),
+                code: *code,
             });
         }
         let epoch = PositionExperienceTransition::from_maps(
@@ -212,7 +212,7 @@ impl RetailExperienceState {
 
     pub fn initialize_institutional_holding_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         entry_reference_price: Option<Money>,
         current_price: Money,
         moment: ExperienceMoment,
@@ -230,7 +230,7 @@ impl RetailExperienceState {
     #[allow(clippy::too_many_arguments)]
     pub fn record_fill_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         before_qty: u32,
@@ -249,19 +249,19 @@ impl RetailExperienceState {
             Side::Buy if before_qty == 0 && has_epoch => {
                 // 上一段持仓从未清仓却又从零建仓：退出生命周期已丢失。
                 return Err(ExperienceError::ActiveEntryAlreadyExists {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             Side::Buy if before_qty > 0 && !has_epoch => {
                 // 加仓没有入场生命周期：入场事件已丢失。
                 return Err(ExperienceError::NoActiveEntry {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             Side::Sell if !has_epoch => {
                 // 减仓/清仓没有入场生命周期：入场事件已丢失。
                 return Err(ExperienceError::NoActiveEntry {
-                    code: code.0.clone(),
+                    code: *code,
                 });
             }
             _ => {}
@@ -334,7 +334,7 @@ impl RetailExperienceState {
     /// 受挫确认日期。仅限有持仓生命周期的股票；未持仓观察走关注列表语义。
     pub fn observe_position_dated(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
         moment: ExperienceMoment,
     ) -> Result<(), ExperienceError> {
@@ -342,7 +342,7 @@ impl RetailExperienceState {
         self.feedback.ensure_moment_forward(moment)?;
         if !self.feedback.stocks.contains_key(code) {
             return Err(ExperienceError::NoActiveEntry {
-                code: code.0.clone(),
+                code: *code,
             });
         }
         let stock = self.stocks.get(code);

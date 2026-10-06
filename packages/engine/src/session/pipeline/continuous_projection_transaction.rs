@@ -9,11 +9,11 @@ use super::{
     stock_execution_transaction::StockExecutionOutput,
     StepFatal,
 };
-use crate::StockCode;
+use crate::StockId;
 use std::collections::BTreeMap;
 
 pub(super) fn collect_continuous_transaction_events(
-    stocks: &BTreeMap<StockCode, StockExecutionOutput>,
+    stocks: &BTreeMap<StockId, StockExecutionOutput>,
     next_seq: u64,
     mut facts: Vec<OwnedEventFact>,
 ) -> Result<CollectedEvents, StepFatal> {

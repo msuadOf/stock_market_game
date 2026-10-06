@@ -8,7 +8,7 @@ use engine::{
     decide_retail_position_with_experience, AccountRiskObservation, BehaviorMarketObservation,
     DecisionReason, EqualWeightMarketObservation, HorizonReturn, MarketView, PositionAction,
     PositionRiskObservation, PositionView, PricePathObservation, RetailExperienceState,
-    RetailStyle, Rng, SelfView, StockCode, StockView, StrategyData,
+    RetailStyle, Rng, SelfView, StockId, StockView, StrategyData,
 };
 
 use super::{code, failed_round_trip, price};
@@ -185,7 +185,7 @@ fn same_pnl_different_experience_chooses_differently_under_one_style() {
 fn panic_exits_the_same_loss_that_long_term_holds() {
     // 同一深亏、同一经历状态：恐慌者止损离场，长期者继续持有——
     // 经历接线不得把所有人压成同一止损动作。
-    let code = StockCode("600101".into());
+    let code = StockId(0);
     let (market, observations) = market_and_observations();
     let own = SelfView {
         cash: price(10_000_000),

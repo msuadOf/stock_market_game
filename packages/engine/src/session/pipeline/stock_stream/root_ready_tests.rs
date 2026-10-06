@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn cancel(code: &str, id: u64) -> ValidatedOperation {
+fn cancel(code: StockId, id: u64) -> ValidatedOperation {
     ValidatedOperation::Cancel {
         candidate_key: super::super::IntentCandidateKey::player(id),
         sealed_index: id,
         account: crate::AccountId(id),
-        code: StockCode(code.to_owned()),
+        code,
         order_id: crate::OrderId(id),
     }
 }
@@ -57,11 +57,11 @@ fn completed_root_enters_idle_stock_before_unrelated_stock_finishes() {
     let root_completed = notifications.sender.clone();
     let shards = BTreeMap::from([
         (
-            StockCode("A".to_owned()),
+            StockId(0),
             WaitingShard::Independent { started: a_started },
         ),
         (
-            StockCode("B".to_owned()),
+            StockId(1),
             WaitingShard::Unrelated {
                 started: b_started,
                 independent_started: wait_for_a,
@@ -83,17 +83,17 @@ fn completed_root_enters_idle_stock_before_unrelated_stock_finishes() {
         pool.install(|| {
             drive_stock_stream(
                 shards,
-                vec![cancel("B", 1)],
+                vec![cancel(StockId(1), 1)],
                 notifications,
                 |_| Err(invariant("fixture must not create a detached book")),
                 |progress| {
                     if let StockStreamProgress::StockCompleted { code, round } = progress {
-                        if code.0 == "B" {
+                        if code.0 == 1 {
                             independent_started_before_b_finished = *round;
                         }
                     }
                     if root_ready.swap(false, Ordering::AcqRel) {
-                        Ok(vec![cancel("A", 2)])
+                        Ok(vec![cancel(StockId(0), 2)])
                     } else {
                         Ok(Vec::new())
                     }
@@ -131,13 +131,13 @@ fn consumed_notification_fixture(workers: usize) {
     pool.install(|| {
         drive_stock_stream(
             BTreeMap::from([(
-                StockCode("B".to_owned()),
+                StockId(1),
                 WaitingShard::Unrelated {
                     started: b_started,
                     independent_started: wait_for_release,
                 },
             )]),
-            vec![cancel("B", 1)],
+            vec![cancel(StockId(1), 1)],
             notifications,
             |_| Err(invariant("fixture must not create a detached book")),
             |progress| {
@@ -147,7 +147,7 @@ fn consumed_notification_fixture(workers: usize) {
                         release_b.send(()).unwrap();
                     }
                     StockStreamProgress::StockCompleted { code, round } => {
-                        assert_eq!(code.0, "B");
+                        assert_eq!(code.0, 1);
                         assert!(
                             *round,
                             "stock must continue after an empty root notification"

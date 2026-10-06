@@ -10,7 +10,7 @@ use super::{EnvelopeReceipt, StepFatal};
 use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
-    Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockCode,
+    Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -239,7 +239,7 @@ fn test_experience_moment(market_minute: u64) -> crate::experience::ExperienceMo
 fn positions_of_accounts(
     accounts: &AccountBook,
     experience_accounts: &BTreeSet<AccountId>,
-) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
+) -> BTreeMap<AccountId, BTreeMap<StockId, Position>> {
     experience_accounts
         .iter()
         .filter_map(|account_id| {

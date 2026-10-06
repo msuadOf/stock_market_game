@@ -8,7 +8,7 @@ use super::*;
 fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
     // 15 × 110% = 16.5：正数四舍五入应为 17，而不是银行家舍入到 16。
     let main = Market::new(
-        StockCode("ROUND".to_string()),
+        StockId(0),
         Money::from_cents(15),
         0.10,
         Money::from_cents(1),
@@ -19,7 +19,7 @@ fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
 
     // 2 × 105% 和 2 × 95% 都会舍入回 2；规则要求至少上下移动一个最小价位。
     let low_price_narrow_limit = Market::new(
-        StockCode("LOW_LIMIT".to_string()),
+        StockId(0),
         Money::from_cents(2),
         0.05,
         Money::from_cents(1),
@@ -75,7 +75,7 @@ fn continuous_price_cage_uses_the_exchange_reference_price_order() {
 #[test]
 fn continuous_price_cage_uses_the_wider_ten_tick_range_for_low_prices() {
     let market = Market::new(
-        StockCode("LOW_PRICE".to_string()),
+        StockId(0),
         Money::from_cents(285),
         0.10,
         Money::from_cents(1),

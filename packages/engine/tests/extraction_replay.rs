@@ -193,6 +193,9 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
         .map(|account| i128::from(account.cash.cents()))
         .sum();
     for stock in &initial_save.setup.stocks {
+        let stock_id = initial_save
+            .stock_id(&stock.code.0)
+            .expect("setup stock must be in the catalog");
         let donor = initial_save
             .snapshot
             .accounts
@@ -201,7 +204,7 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
             .find_map(|(_, account)| {
                 account
                     .positions
-                    .get_mut(&stock.code)
+                    .get_mut(&stock_id)
                     .filter(|position| position.qty >= 1_000)
             })
             .expect("initial float must supply the player fixture inventory");
@@ -216,7 +219,7 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
             .expect("initial player exists")
             .positions
             .insert(
-                stock.code.clone(),
+                stock_id,
                 engine::PositionSnap {
                     qty: 1_000,
                     t1_locked: 0,
@@ -258,12 +261,15 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
                 .setup
                 .stocks
             {
-                let price = session.snapshot().markets[&stock.code].last_close;
+                let stock_id = session
+                    .stock_id(&stock.code.0)
+                    .expect("setup stock must be in the catalog");
+                let price = session.snapshot().markets[&stock_id].last_close;
                 session
                     .enqueue_player_intent(
                         AccountId(0),
                         Intent::PlaceLimit {
-                            code: stock.code.clone(),
+                            code: stock_id,
                             side: Side::Sell,
                             price: LimitPrice::Fixed(price),
                             qty: 1_000,
@@ -353,13 +359,16 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
         engine::CivilDate::from_iso("2030-01-05").unwrap()
     );
     for stock in &save.setup.stocks {
+        let stock_id = save
+            .stock_id(&stock.code.0)
+            .expect("setup stock must be in the catalog");
         assert_eq!(
             save.snapshot
                 .accounts
                 .values()
                 .map(|account| account
                     .positions
-                    .get(&stock.code)
+                    .get(&stock_id)
                     .map_or(0u64, |position| u64::from(position.qty)))
                 .sum::<u64>(),
             u64::from(stock.float_shares)

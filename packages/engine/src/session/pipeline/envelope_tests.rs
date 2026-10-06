@@ -2,7 +2,7 @@ use super::{
     conservation::{ConservationBasis, ConservationRow},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeOrigin, FeeComponents, ReceiptDelta, ResVec,
 };
-use crate::{AccountId, Money, OrderId, Side, StockCode};
+use crate::{AccountId, Money, OrderId, Side, StockId};
 
 #[test]
 fn conservation_existing_envelope_when_fill_and_release_match_live() {
@@ -128,7 +128,8 @@ fn conservation_row_rejects_a_per_key_mismatch() {
 fn key(side: Side) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        stock: StockId(0),
         order: OrderId(1),
         side,
     }

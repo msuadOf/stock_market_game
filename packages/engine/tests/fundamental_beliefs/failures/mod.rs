@@ -6,7 +6,7 @@ mod guards;
 use crate::scenario;
 use crate::{assumptions_rng, hour_after, market, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
-use engine::account::StockCode;
+use engine::StockId;
 use engine::company::CompanyKind;
 use engine::information::AcquisitionError;
 use engine::orderbook::AccountId;
@@ -15,8 +15,8 @@ use engine::strategy::{
     StrategyProfile,
 };
 
-pub(crate) fn stock_code() -> StockCode {
-    StockCode("600101".to_string())
+pub(crate) fn stock_code() -> StockId {
+    StockId(0)
 }
 
 /// 无任何已获知年报的参与者 + CreditDefault 重估 ⇒ 类型化 NoOwnAnnualMaterial。

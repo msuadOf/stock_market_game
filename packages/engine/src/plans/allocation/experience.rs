@@ -1,10 +1,10 @@
 use crate::experience::{ExperienceError, ExperienceMoment, RetailExperienceState};
-use crate::{Money, StockCode};
+use crate::{Money, StockId};
 
 use super::types::AllocationExperience;
 
 pub struct ExperienceHolding<'a> {
-    pub code: &'a StockCode,
+    pub code: &'a StockId,
     pub cost: Money,
 }
 

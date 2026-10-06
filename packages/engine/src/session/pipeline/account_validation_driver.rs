@@ -4,7 +4,7 @@ use super::{
     DecisionResourceSnapshot, EnvelopeLedger, IntentCandidate, IntentCandidateKey, StepFatal,
     ValidatedOperation,
 };
-use crate::{AccountId, GameConfig, Money, OrderId, StockCode};
+use crate::{AccountId, GameConfig, Money, OrderId, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ pub struct AccountValidationCheckpoint {
     operation_count: usize,
     draft_count: usize,
     remaining_cash: BTreeMap<AccountId, Money>,
-    remaining_sellable: BTreeMap<(AccountId, StockCode), u32>,
+    remaining_sellable: BTreeMap<(AccountId, StockId), u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,7 +215,7 @@ impl AccountValidationCheckpoint {
             .or_else(|| self.resources.available_cash(account).ok())
     }
 
-    pub fn remaining_sellable(&self, account: AccountId, code: &StockCode) -> Option<u32> {
+    pub fn remaining_sellable(&self, account: AccountId, code: &StockId) -> Option<u32> {
         self.remaining_sellable
             .get(&(account, code.clone()))
             .copied()

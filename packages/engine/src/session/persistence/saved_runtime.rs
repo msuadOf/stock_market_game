@@ -31,7 +31,7 @@ pub struct SavedLiveEnvelope {
 #[serde(deny_unknown_fields)]
 pub struct SavedEnvelopeKey {
     pub account: AccountId,
-    pub stock: StockCode,
+    pub stock: StockId,
     pub order: OrderId,
     pub side: Side,
 }

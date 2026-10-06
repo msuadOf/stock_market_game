@@ -1,6 +1,6 @@
 use crate::company::CompanyId;
 use crate::plans::PlanId;
-use crate::{AccountId, CivilInstant, OrderId, Side, StockCode};
+use crate::{AccountId, CivilInstant, OrderId, Side, StockId};
 use serde::Serialize;
 
 mod aggregate;
@@ -32,7 +32,7 @@ pub struct FactTime {
 pub struct OrderOrigin {
     pub order: OrderId,
     pub account: AccountId,
-    pub code: StockCode,
+    pub code: StockId,
     pub company: Option<CompanyId>,
     pub plan: Option<PlanId>,
     #[serde(serialize_with = "decimal::optional")]
@@ -43,7 +43,7 @@ pub struct OrderOrigin {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Quote {
-    pub code: StockCode,
+    pub code: StockId,
     #[serde(serialize_with = "crate::money::cents_decimal::optional")]
     pub bid_cents: Option<i64>,
     #[serde(serialize_with = "crate::money::cents_decimal::optional")]
@@ -69,7 +69,7 @@ pub enum CausalFactKind {
     Filled {
         order: OrderId,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         qty: u32,
         #[serde(serialize_with = "crate::money::cents_decimal::serialize")]
         value_before: i64,
@@ -79,13 +79,13 @@ pub enum CausalFactKind {
     Terminated {
         order: OrderId,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         qty: u32,
         reason: Termination,
     },
     Quote(Quote),
     Execution {
-        code: StockCode,
+        code: StockId,
         maker: OrderId,
         taker: OrderId,
         side: Option<Side>,
@@ -158,7 +158,7 @@ impl CausalCollector {
         time: FactTime,
         order: OrderId,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         qty: u32,
         gross: i64,
     ) {
@@ -185,7 +185,7 @@ impl CausalCollector {
         time: FactTime,
         order: OrderId,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         qty: u32,
         value_before: i64,
         value_after: i64,
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn collector_filled_values_serialize_as_exact_decimal_cents() {
         let mut collector = CausalCollector::default();
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         collector.record_continuous_fill(time(), OrderId(1), AccountId(1), &code, 100, i64::MAX);
         let value = serde_json::to_value(collector).unwrap();
         assert_eq!(value["filled_values"]["1"], i64::MAX.to_string());
@@ -273,7 +273,7 @@ mod tests {
     fn collector_continuous_overflow_appends_without_advancing_value() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, i64::MAX);
         collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, 1);
         assert_eq!(collector.filled_values[&order], i64::MAX);
@@ -292,7 +292,7 @@ mod tests {
     fn collector_auction_arithmetic_failure_precedes_zero_entry_and_chain_check() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         assert_eq!(
             collector.record_auction_fill(
                 time(),
@@ -313,7 +313,7 @@ mod tests {
     fn collector_auction_chain_failure_keeps_entry_zero_without_appending() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         assert_eq!(
             collector.record_auction_fill(time(), order, AccountId(1), &code, 100, 1, 2),
             Err("auction causal fill value disagrees with the receipt chain")

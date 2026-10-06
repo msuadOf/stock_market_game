@@ -46,7 +46,7 @@ pub use validation::{reverse_crosses_threshold, PlanError};
 use std::collections::BTreeMap;
 use validation::{validate_open, validate_policy};
 
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId};
 
 /// 个人期限按风格为 5/20/60 交易日；风格→期限映射由分析档案派生，这里固定参数。
@@ -144,7 +144,7 @@ pub struct PlanBook {
     #[ts(as = "BTreeMap<PlanId, TradingPlan>")]
     plans: records::PlanRecords,
     #[ts(skip)]
-    by_account_stock: BTreeMap<AccountId, BTreeMap<StockCode, PlanId>>,
+    by_account_stock: BTreeMap<AccountId, BTreeMap<StockId, PlanId>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -224,7 +224,7 @@ impl PlanBook {
 
     /// Only live plans participate in decision roots. Historical plan records stay
     /// queryable in `plans` without making every observation scan them.
-    pub(crate) fn active_codes(&self, account: AccountId) -> impl Iterator<Item = &StockCode> {
+    pub(crate) fn active_codes(&self, account: AccountId) -> impl Iterator<Item = &StockId> {
         self.by_account_stock
             .get(&account)
             .into_iter()
@@ -382,7 +382,7 @@ impl PlanBook {
     }
 
     /// 账户+股票当前的非终止计划（无则 None）。
-    pub fn active_plan(&self, account: AccountId, code: &StockCode) -> Option<&TradingPlan> {
+    pub fn active_plan(&self, account: AccountId, code: &StockId) -> Option<&TradingPlan> {
         let plan_id = self.by_account_stock.get(&account)?.get(code)?;
         self.plans.get(plan_id)
     }
@@ -448,7 +448,7 @@ impl PlanBook {
         Ok(outcomes)
     }
 
-    fn remove_active_index(&mut self, account: AccountId, code: &StockCode) {
+    fn remove_active_index(&mut self, account: AccountId, code: &StockId) {
         if let Some(by_stock) = self.by_account_stock.get_mut(&account) {
             by_stock.remove(code);
             if by_stock.is_empty() {
@@ -514,10 +514,10 @@ mod atomic_event_tests {
     use super::*;
     use crate::Side;
 
-    fn open(code: &str) -> PlanOpen {
+    fn open(rank: u32) -> PlanOpen {
         PlanOpen {
             account: AccountId(1),
-            code: StockCode(code.to_owned()),
+            code: StockId(rank),
             direction: Side::Buy,
             target: PlanTarget::ShareCount(100),
             opinion: PlanOpinion {
@@ -535,7 +535,7 @@ mod atomic_event_tests {
     fn shadow_clone_shares_terminal_history_and_only_copies_touched_plan() {
         let mut plans = PlanBook::default();
         for _ in 0..300 {
-            let plan = plans.create(open("600101")).unwrap();
+            let plan = plans.create(open(0)).unwrap();
             plans
                 .apply(
                     plan,
@@ -546,7 +546,7 @@ mod atomic_event_tests {
                 )
                 .unwrap();
         }
-        let live = plans.create(open("600101")).unwrap();
+        let live = plans.create(open(0)).unwrap();
         let mut shadow = plans.clone();
         assert!(std::ptr::eq(
             plans.plan(PlanId(0)).unwrap(),
@@ -596,8 +596,8 @@ mod atomic_event_tests {
     #[test]
     fn invalid_later_plan_event_does_not_commit_an_earlier_plan_transition() {
         let mut plans = PlanBook::default();
-        let first = plans.create(open("600101")).unwrap();
-        let second = plans.create(open("600102")).unwrap();
+        let first = plans.create(open(0)).unwrap();
+        let second = plans.create(open(1)).unwrap();
         let before = plans.clone();
         let result = plans.apply_active_events_atomically(&[
             (
@@ -625,12 +625,12 @@ mod atomic_event_tests {
     #[test]
     fn active_index_ignores_terminal_history_and_survives_a_round_trip() {
         let mut plans = PlanBook::default();
-        let first = plans.create(open("600101")).unwrap();
-        let second = plans.create(open("600102")).unwrap();
+        let first = plans.create(open(0)).unwrap();
+        let second = plans.create(open(1)).unwrap();
         let other = plans
             .create(PlanOpen {
                 account: AccountId(2),
-                ..open("600101")
+                ..open(0)
             })
             .unwrap();
         plans
@@ -642,7 +642,7 @@ mod atomic_event_tests {
                 },
             )
             .unwrap();
-        let successor = plans.create(open("600101")).unwrap();
+        let successor = plans.create(open(0)).unwrap();
         assert_eq!(plans.active_plan_ids(), vec![second, other, successor]);
         assert_eq!(
             plans.active_plan_ids_for_account(AccountId(1)),
@@ -654,7 +654,7 @@ mod atomic_event_tests {
                 .active_codes(AccountId(1))
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![StockCode("600101".into()), StockCode("600102".into())]
+            vec![StockId(0), StockId(1)]
         );
         assert_eq!(
             plans.plan_ids().collect::<Vec<_>>(),
@@ -670,7 +670,7 @@ mod atomic_event_tests {
         );
         assert_eq!(
             restored
-                .active_plan(AccountId(1), &StockCode("600101".into()))
+                .active_plan(AccountId(1), &StockId(0))
                 .unwrap()
                 .plan_id(),
             successor
@@ -680,8 +680,8 @@ mod atomic_event_tests {
     #[test]
     fn atomic_completion_updates_the_active_index_only_after_success() {
         let mut plans = PlanBook::default();
-        let first = plans.create(open("600101")).unwrap();
-        let second = plans.create(open("600102")).unwrap();
+        let first = plans.create(open(0)).unwrap();
+        let second = plans.create(open(1)).unwrap();
         let accepted = PlanEvent::ChildOrderAccepted {
             order_id: crate::OrderId(1),
             trading_day: 0,

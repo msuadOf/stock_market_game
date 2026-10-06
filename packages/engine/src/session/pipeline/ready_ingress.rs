@@ -157,7 +157,9 @@ mod shared_receipt_tests {
         let mut session =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         let source = session.shared_ingress();
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session
+            .stock_id(&session.state.setup.stocks[0].code.0)
+            .unwrap();
         let intent = || Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,

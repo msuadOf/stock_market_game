@@ -26,7 +26,7 @@ pub struct RecoverySample {
 
 struct DirectionPersistenceAccumulator<'a> {
     facts: &'a [CausalFact],
-    directions: BTreeMap<StockCode, Side>,
+    directions: BTreeMap<StockId, Side>,
     pairs: u64,
     same: u64,
 }
@@ -62,7 +62,7 @@ impl<'a> DirectionPersistenceAccumulator<'a> {
 
 struct QuoteResponseAccumulator<'a> {
     facts: &'a [CausalFact],
-    prior_quotes: BTreeMap<StockCode, &'a Quote>,
+    prior_quotes: BTreeMap<StockId, &'a Quote>,
     impacts: Vec<ImpactSample>,
     recoveries: Vec<RecoverySample>,
 }
@@ -185,7 +185,7 @@ mod tests {
 
     fn quote(bid: Option<i64>, ask: Option<i64>, depth: u64) -> Quote {
         Quote {
-            code: StockCode("600101".to_owned()),
+            code: StockId("600101".to_owned()),
             bid_cents: bid,
             ask_cents: ask,
             bid_depth: depth,
@@ -217,7 +217,7 @@ mod tests {
                     .unwrap(),
                 },
                 kind: CausalFactKind::Execution {
-                    code: StockCode(code.to_owned()),
+                    code: StockId(code.to_owned()),
                     maker: OrderId(1),
                     taker: OrderId(2),
                     side,
@@ -238,7 +238,7 @@ mod tests {
     fn quote_response_uses_first_later_valid_quote_and_includes_current_recovery() {
         let kinds = [
             CausalFactKind::Execution {
-                code: StockCode("600101".to_owned()),
+                code: StockId("600101".to_owned()),
                 maker: OrderId(1),
                 taker: OrderId(2),
                 side: Some(Side::Buy),

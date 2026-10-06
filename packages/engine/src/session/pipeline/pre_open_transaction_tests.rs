@@ -40,7 +40,9 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: session.state.setup.stocks[0].code.clone(),
+                code: session
+                    .stock_id(&session.state.setup.stocks[0].code.0)
+                    .unwrap(),
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -110,7 +112,9 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
 fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_receipt() {
     let mut authority = player_only_pre_open_session();
     let player = AccountId(0);
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     let next_order_before = authority.state.next_order_id;
     let seq_before = authority.seq();
     authority
@@ -173,7 +177,7 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
 fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
     let mut authority = player_only_pre_open_session();
     let player = AccountId(0);
-    let unknown = crate::StockCode("999999".to_owned());
+    let unknown = crate::StockId(9);
     let next_order_before = authority.state.next_order_id;
     authority
         .enqueue_player_intent(
@@ -245,7 +249,9 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
     authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let player = AccountId(0);
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     authority
         .enqueue_player_intent(
             player,
@@ -306,7 +312,9 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
 fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_state() {
     let (mut authority, npc) = due_retail_pre_open_session();
     let player = AccountId(0);
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     authority
         .enqueue_player_intent(
             player,
@@ -423,7 +431,9 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
 #[test]
 fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and_events() {
     let (mut authority, npc) = due_retail_pre_open_session();
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     authority
         .enqueue_player_intent(
             AccountId(0),

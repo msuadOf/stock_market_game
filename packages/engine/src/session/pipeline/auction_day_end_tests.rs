@@ -6,7 +6,7 @@ use crate::plans::{
 use crate::session::pipeline::account_validation_context::build_account_validation_context;
 use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
 use crate::{
-    AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockCode, TradingPhase,
+    AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockId, TradingPhase,
 };
 
 #[test]
@@ -102,7 +102,7 @@ fn auction_market_order_is_rejected_after_account_validation_and_consumes_its_or
 
 #[test]
 fn opening_0920_boundary_and_every_closing_tick_reject_cancellation() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     for (mut session, expected_phase) in [
         (opening_session(300), TradingPhase::CallAuction),
         (closing_session(90), TradingPhase::ClosingAuction),
@@ -1119,14 +1119,14 @@ fn retail_closing_session(tick: u64) -> GameSession {
     session
 }
 
-fn only_code(session: &GameSession) -> StockCode {
+fn only_code(session: &GameSession) -> StockId {
     session.state.markets.keys().next().unwrap().clone()
 }
 
 fn create_linked_plan(
     session: &mut GameSession,
     account: AccountId,
-    code: StockCode,
+    code: StockId,
     direction: Side,
     target_qty: u32,
 ) -> PlanId {
@@ -1152,7 +1152,7 @@ fn create_linked_plan(
 
 fn install_auction_orders(
     session: &mut GameSession,
-    code: StockCode,
+    code: StockId,
     orders: Vec<crate::AuctionOrderSnap>,
 ) {
     assert!(session.state.auction_orders.insert(code, orders).is_none());
@@ -1161,7 +1161,7 @@ fn install_auction_orders(
 fn install_parent_with_id(
     session: &mut GameSession,
     account: AccountId,
-    code: StockCode,
+    code: StockId,
     side: Side,
     target_qty: u32,
     active: Option<(OrderId, u32)>,

@@ -37,11 +37,11 @@ pub struct PositionSnap {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct AccountSnap {
     pub cash: Money,
-    pub positions: BTreeMap<StockCode, PositionSnap>,
+    pub positions: BTreeMap<StockId, PositionSnap>,
     /// 已被当日全部未成交委托占用的资金。
     pub reserved_cash: Money,
     /// 已被当日未成交卖单占用的股数，按股票汇总。
-    pub reserved_sell_qty: BTreeMap<StockCode, u32>,
+    pub reserved_sell_qty: BTreeMap<StockId, u32>,
 }
 
 /// 完整玩家状态快照（首次连接/重连）。
@@ -56,19 +56,19 @@ pub struct Snapshot {
     pub tick: u64,
     pub day: u32,
     pub phase: TradingPhase,
-    pub markets: BTreeMap<StockCode, MarketSnap>,
+    pub markets: BTreeMap<StockId, MarketSnap>,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
     /// Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
-    pub daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
+    pub daily_candles: BTreeMap<StockId, Vec<DailyCandle>>,
     /// 当前交易日正在形成的日 K。
-    pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    pub active_daily_candles: BTreeMap<StockId, DailyCandle>,
 }
 
 /// 单次 Snapshot 构建中，由全部在簿订单派生的资源预留总额。
 #[derive(Default)]
 struct LiveOrderReservations {
     reserved_cash: BTreeMap<AccountId, Money>,
-    reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
+    reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockId, u32>>,
 }
 
 #[cfg(test)]
@@ -82,7 +82,7 @@ impl LiveOrderReservations {
     fn record_order(
         &mut self,
         owner: AccountId,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         remaining_qty: u32,
@@ -110,7 +110,7 @@ impl LiveOrderReservations {
             .expect("validated live cash reservations cannot exceed account cash");
     }
 
-    fn take_for(&mut self, account: AccountId) -> (Money, BTreeMap<StockCode, u32>) {
+    fn take_for(&mut self, account: AccountId) -> (Money, BTreeMap<StockId, u32>) {
         (
             self.reserved_cash.remove(&account).unwrap_or(Money::ZERO),
             self.reserved_sell_qty.remove(&account).unwrap_or_default(),
@@ -258,7 +258,7 @@ mod tests {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.npcs.inst_count = 1;
         let mut session = GameSession::new(setup, 42).unwrap();
-        let code = session.state.setup.stocks[0].code.clone();
+        let code = session.stock_id("600888").unwrap();
         for owner in [AccountId(0), AccountId(1)] {
             session.state.markets.get_mut(&code).unwrap().place(Order {
                 id: OrderId(owner.0 + 1), owner, side: Side::Buy,
@@ -291,11 +291,11 @@ mod tests {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.npcs.inst_count = 0;
         let mut second = setup.stocks[0].clone();
-        second.code = StockCode("600889".to_string());
+        second.code = StockCode("600889".to_owned());
         setup.stocks.push(second);
         let mut session = GameSession::new(setup, 42).unwrap();
-        let first = session.state.setup.stocks[0].code.clone();
-        let second = session.state.setup.stocks[1].code.clone();
+        let first = session.stock_id("600888").unwrap();
+        let second = session.stock_id("600889").unwrap();
         let owner = AccountId(0);
         for (code, id, side, price, qty, filled_qty, filled_value) in [
             (&first, 1, Side::Buy, 900, 150, 50, 45_000),
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn live_order_reservations_take_is_isolated_and_empty_accounts_have_zero() {
         let config = GameConfig::proposed_defaults();
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         reservations.record_order(
             AccountId(1),
@@ -398,7 +398,7 @@ mod tests {
     #[should_panic(expected = "validated live sell reservations cannot exceed u32 holdings")]
     fn live_order_reservations_sell_overflow_is_explicit() {
         let config = GameConfig::proposed_defaults();
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         for qty in [u32::MAX, 1] {
             reservations.record_order(
@@ -419,7 +419,7 @@ mod tests {
         let mut config = GameConfig::proposed_defaults();
         config.commission_rate = 0.0;
         config.commission_min = Money::ZERO;
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         for _ in 0..2 {
             reservations.record_order(

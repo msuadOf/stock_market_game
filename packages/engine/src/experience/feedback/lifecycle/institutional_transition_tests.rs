@@ -8,8 +8,8 @@ fn moment(minute: u64) -> ExperienceMoment {
     }
 }
 
-fn holding() -> (RetailExperienceState, StockCode) {
-    let code = StockCode("600101".to_owned());
+fn holding() -> (RetailExperienceState, StockId) {
+    let code = StockId(0);
     let mut state = RetailExperienceState::without_equity_reference();
     state
         .record_institutional_fill_dated(
@@ -70,7 +70,7 @@ fn institutional_observation_preserves_guards_threshold_and_personal_facts() {
                 800
             ),
             Err(ExperienceError::NoActiveEntry {
-                code: code.0.clone()
+                code
             })
         );
         assert_eq!(incomplete, untouched);
@@ -119,7 +119,7 @@ fn stale_institutional_holding_clear_preserves_history_and_unrelated_fields() {
     assert_eq!(state, expected);
     state.clear_stale_institutional_holding(&code);
     assert_eq!(state, expected);
-    state.clear_stale_institutional_holding(&StockCode("600102".to_owned()));
+    state.clear_stale_institutional_holding(&StockId(1));
     assert_eq!(state, expected);
 }
 #[test]
@@ -219,7 +219,7 @@ fn institutional_initialization_and_fee_failures_preserve_original_guard_order()
             None,
             moment(11),
             ExperienceError::ActiveEntryAlreadyExists {
-                code: code.0.clone(),
+                code,
             },
         ),
     ] {
@@ -320,7 +320,7 @@ fn dated_writers_keep_distinct_map_key_sets_and_original_acceptance() {
             moment(13)
         ),
         Err(ExperienceError::NoActiveEntry {
-            code: code.0.clone()
+            code
         })
     );
     assert_eq!(retail, before);

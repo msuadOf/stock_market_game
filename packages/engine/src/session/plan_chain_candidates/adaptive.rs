@@ -10,8 +10,8 @@ use crate::session::plan_execution::PlanRouteOutcome;
 /// Parent orders, PlanBook, information acquisition and attention remain private execution state.
 pub(in crate::session) struct FrozenPlanChainObservation {
     accounts: account_book::AccountBook,
-    markets: BTreeMap<StockCode, Market>,
-    auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
+    markets: BTreeMap<StockId, Market>,
+    auction_orders: BTreeMap<StockId, Vec<AuctionOrderSnap>>,
 }
 
 impl FrozenPlanChainObservation {
@@ -79,7 +79,7 @@ impl PlanChainOperationBatch {
         session: &mut GameSession,
         observation: &mut FrozenPlanChainObservation,
         blocking_roots: bool,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Result<Vec<PlanChainCandidateBatch>, StepFatal> {
         let mut ready = Vec::new();
         let mut deferred = VecDeque::new();
@@ -313,7 +313,7 @@ impl PlanChainOperationBatch {
         &self,
         operation: &PlanChainOperation,
         session: &GameSession,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Result<bool, StepFatal> {
         Ok(match operation {
             PlanChainOperation::ExecutionRoute(route) => {
@@ -362,7 +362,7 @@ impl PlanChainOperationBatch {
     pub(in crate::session) fn install_accepted_submit_parents(
         &self,
         session: &mut GameSession,
-        outcomes: &[(AccountId, StockCode, u64, PlanRouteOutcome)],
+        outcomes: &[(AccountId, StockId, u64, PlanRouteOutcome)],
     ) -> Result<(), StepFatal> {
         for (account, code, generation_index, outcome) in outcomes {
             let route = self
@@ -378,7 +378,7 @@ impl PlanChainOperationBatch {
     pub(in crate::session) fn resume_adaptive_candidates(
         &mut self,
         session: &mut GameSession,
-        outcomes: impl IntoIterator<Item = (AccountId, StockCode, u64, PlanRouteOutcome)>,
+        outcomes: impl IntoIterator<Item = (AccountId, StockId, u64, PlanRouteOutcome)>,
     ) -> Result<(), StepFatal> {
         let mut followups = Vec::new();
         for (account, code, generation_index, outcome) in outcomes {
@@ -476,7 +476,7 @@ impl PlanChainOperationBatch {
     }
 }
 
-fn route_resource(command: &PlanRouteCommand) -> (AccountId, StockCode) {
+fn route_resource(command: &PlanRouteCommand) -> (AccountId, StockId) {
     match command {
         PlanRouteCommand::Cancel { account, code, .. }
         | PlanRouteCommand::SubmitLimit { account, code, .. } => (*account, code.clone()),

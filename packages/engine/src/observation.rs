@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-use crate::{Money, MoneyError, StockCode};
+use crate::{Money, MoneyError, StockId};
 
 /// 当前游戏一天的盘中交易分钟桶数。
 ///
@@ -117,7 +117,7 @@ pub struct AccountRiskObservation {
     pub equity: Money,
     pub return_from_reference: Option<f64>,
     pub drawdown_from_peak: Option<f64>,
-    pub positions: BTreeMap<StockCode, PositionRiskObservation>,
+    pub positions: BTreeMap<StockId, PositionRiskObservation>,
 }
 
 #[derive(Debug, Error)]
@@ -149,10 +149,10 @@ pub enum ObservationError {
     #[error("total cash must be non-negative, got {cents} cents")]
     NegativeCash { cents: i64 },
     #[error("position {code} must have positive quantity")]
-    ZeroPositionQuantity { code: String },
+    ZeroPositionQuantity { code: StockId },
     #[error("position {code} peak {peak_cents} is below current price {last_cents}")]
     PeakBelowCurrent {
-        code: String,
+        code: StockId,
         peak_cents: i64,
         last_cents: i64,
     },
@@ -163,11 +163,11 @@ pub enum ObservationError {
     #[error("account peak equity {peak_cents} is below current equity {equity_cents}")]
     PeakEquityBelowCurrent { peak_cents: i64, equity_cents: i64 },
     #[error("market return for {code} must be finite and greater than -1, got {value}")]
-    InvalidMarketReturn { code: String, value: f64 },
+    InvalidMarketReturn { code: StockId, value: f64 },
     #[error("market return input must contain at least one stock")]
     EmptyMarket,
     #[error("equal-weight market return sum became non-finite after stock {code}")]
-    MarketReturnSumNonFinite { code: String },
+    MarketReturnSumNonFinite { code: StockId },
     #[error("absolute trading minute overflow for day {day}")]
     TradingMinuteOverflow { day: u32 },
     #[error(transparent)]
@@ -319,7 +319,7 @@ pub fn build_price_path_observation(
 
 /// 用具备完整窗口的股票构造游戏内等权市场收益与涨跌家数。
 pub fn build_equal_weight_market_observation(
-    stock_returns: &BTreeMap<StockCode, Option<f64>>,
+    stock_returns: &BTreeMap<StockId, Option<f64>>,
 ) -> Result<EqualWeightMarketObservation, ObservationError> {
     if stock_returns.is_empty() {
         return Err(ObservationError::EmptyMarket);
@@ -333,7 +333,7 @@ pub fn build_equal_weight_market_observation(
         let Some(value) = value else { continue };
         if !value.is_finite() || *value <= -1.0 {
             return Err(ObservationError::InvalidMarketReturn {
-                code: code.0.clone(),
+                code: *code,
                 value: *value,
             });
         }
@@ -341,7 +341,7 @@ pub fn build_equal_weight_market_observation(
         sum += value;
         if !sum.is_finite() {
             return Err(ObservationError::MarketReturnSumNonFinite {
-                code: code.0.clone(),
+                code: *code,
             });
         }
         if *value > 0.0 {
@@ -366,7 +366,7 @@ pub fn build_equal_weight_market_observation(
 /// 按每个独立账户自己的成本、持仓与净值构造风险观测。
 pub fn build_account_risk_observation(
     total_cash: Money,
-    positions: &BTreeMap<StockCode, RiskPositionInput>,
+    positions: &BTreeMap<StockId, RiskPositionInput>,
     reference_equity: Option<Money>,
     peak_equity: Option<Money>,
 ) -> Result<AccountRiskObservation, ObservationError> {
@@ -502,12 +502,12 @@ fn validate_reference_equity(
 }
 
 fn validate_position(
-    code: &StockCode,
+    code: &StockId,
     position: &RiskPositionInput,
 ) -> Result<(), ObservationError> {
     if position.qty == 0 {
         return Err(ObservationError::ZeroPositionQuantity {
-            code: code.0.clone(),
+            code: *code,
         });
     }
     validate_positive_price("position last price", position.last_price)?;
@@ -515,7 +515,7 @@ fn validate_position(
         validate_positive_price("position peak price", peak)?;
         if peak < position.last_price {
             return Err(ObservationError::PeakBelowCurrent {
-                code: code.0.clone(),
+                code: *code,
                 peak_cents: peak.cents(),
                 last_cents: position.last_price.cents(),
             });

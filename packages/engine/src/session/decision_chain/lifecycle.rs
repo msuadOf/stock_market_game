@@ -8,7 +8,7 @@ pub(super) struct PlanLifecycleReview<'a> {
     account: AccountId,
     market: &'a MarketView,
     plans: &'a PlanBook,
-    held_by_code: BTreeMap<StockCode, u32>,
+    held_by_code: BTreeMap<StockId, u32>,
     equity: Money,
     belief: &'a BeliefBook,
     chain_params: crate::strategy::BeliefChainParams,
@@ -59,7 +59,7 @@ impl<'a> PlanLifecycleReview<'a> {
 
     pub(super) fn collect(
         &self,
-        assessments: &BTreeMap<StockCode, CandidateAssessment>,
+        assessments: &BTreeMap<StockId, CandidateAssessment>,
     ) -> Vec<PlanLifecycleAction> {
         let mut actions = Vec::with_capacity(assessments.len());
         if self.equity.cents() <= 0 {
@@ -73,18 +73,24 @@ impl<'a> PlanLifecycleReview<'a> {
 
     fn compute_target_qty(
         &self,
-        code: &StockCode,
+        code: &StockId,
         current_weight_bp: u32,
         score: crate::plans::SignalScore,
         price: Money,
     ) -> u32 {
+        let code_str = self
+            .session
+            .state
+            .stocks
+            .code(*code)
+            .expect("candidate stock must be cataloged");
         let max_holdable_shares = self
             .session
             .state
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == *code)
+            .find(|stock| stock.code.0 == *code_str)
             .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
             .unwrap_or(0);
         crate::plans::CandidateTargetProposal::from_score(
@@ -111,7 +117,7 @@ impl<'a> PlanLifecycleReview<'a> {
 
     fn assess_one(
         &self,
-        code: &StockCode,
+        code: &StockId,
         assessment: &CandidateAssessment,
     ) -> Vec<PlanLifecycleAction> {
         let mut actions = Vec::new();

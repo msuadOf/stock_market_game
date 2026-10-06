@@ -508,7 +508,7 @@ impl EnvelopeLedger {
         }
         let mut key = EnvelopeKey {
             account: crate::AccountId(0),
-            stock: crate::StockCode(String::new()),
+            stock: crate::StockId(u32::MAX),
             order: crate::OrderId(0),
             side: crate::Side::Buy,
         };

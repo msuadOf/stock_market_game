@@ -12,7 +12,7 @@ use crate::plans::PlanId;
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ParentOrderPlan {
-    pub(in crate::session::execution) code: StockCode,
+    pub(in crate::session::execution) code: StockId,
     pub(in crate::session::execution) side: Side,
     pub(in crate::session::execution) target_qty: u32,
     pub(in crate::session::execution) filled_qty: u32,
@@ -50,7 +50,7 @@ pub(in crate::session) struct ParentFillTransition {
 impl ParentOrderPlan {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::session) fn from_facts(
-        code: StockCode,
+        code: StockId,
         side: Side,
         target_qty: u32,
         filled_qty: u32,
@@ -77,7 +77,7 @@ impl ParentOrderPlan {
     /// 恢复接缝保留尚未从 live order 重建的剩余数量，不提前改变存档校验顺序。
     #[allow(clippy::too_many_arguments)]
     pub(in crate::session) fn from_saved_facts(
-        code: StockCode,
+        code: StockId,
         side: Side,
         target_qty: u32,
         filled_qty: u32,
@@ -102,7 +102,7 @@ impl ParentOrderPlan {
         }
     }
 
-    pub fn code(&self) -> &StockCode {
+    pub fn code(&self) -> &StockId {
         &self.code
     }
     pub fn side(&self) -> Side {
@@ -295,7 +295,7 @@ mod parent_transition_tests {
 
     fn parent(linked: bool) -> ParentOrderPlan {
         ParentOrderPlan::from_facts(
-            StockCode("600000".into()),
+            StockId(0),
             Side::Buy,
             100,
             0,
@@ -364,7 +364,7 @@ mod parent_transition_tests {
     #[test]
     fn continuous_assert_and_auction_checked_fill_keep_distinct_failure_boundaries() {
         let mut continuous = ParentOrderPlan::from_facts(
-            StockCode("600000".into()),
+            StockId(0),
             Side::Buy,
             100,
             0,
@@ -400,7 +400,7 @@ mod parent_transition_tests {
         let mut session =
             GameSession::new(super::super::npc_working_quote_tests::quote_setup(0), 993).unwrap();
         let account = AccountId(1);
-        let code = StockCode("600888".into());
+        let code = StockId(0);
         let empty = WorkingOrderSlices {
             continuous: &[],
             auction: &[],
@@ -482,7 +482,7 @@ mod parent_transition_tests {
 
     #[test]
     fn closing_auction_never_duplicates_a_live_continuous_child_and_expiry_stops_intents() {
-        let code = StockCode("600000".into());
+        let code = StockId(0);
         let mut parent = parent(false);
         parent.record_submission(Side::Buy, OrderId(1), 100);
         let continuous = [(

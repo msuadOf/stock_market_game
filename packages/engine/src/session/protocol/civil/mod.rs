@@ -114,15 +114,27 @@ impl CivilUpdate {
         {
             return Err(ProtocolError::CivilBoundary);
         }
+        let catalog = crate::stock::StockCatalog::from_metas(
+            self.refresh
+                .securities
+                .iter()
+                .map(|stock| crate::stock::StockMeta::new(stock.code.0.clone()))
+                .collect(),
+        )
+        .map_err(|_| ProtocolError::CivilBoundary)?;
         let codes: std::collections::BTreeSet<_> = self
             .refresh
             .securities
             .iter()
-            .map(|stock| &stock.code)
+            .map(|stock| {
+                catalog
+                    .id(&stock.code.0)
+                    .expect("目录由同一批证券构造，必须命中")
+            })
             .collect();
         if codes.is_empty()
             || codes.len() != self.refresh.securities.len()
-            || codes != self.refresh.snapshot.markets.keys().collect()
+            || codes != self.refresh.snapshot.markets.keys().copied().collect()
         {
             return Err(ProtocolError::CivilBoundary);
         }

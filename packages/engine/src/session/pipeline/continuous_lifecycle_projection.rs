@@ -10,7 +10,7 @@ use super::{
     IntentCandidateBatch, IntentCandidateKey, ReceiptKind, ReceiptSource, StepFatal,
 };
 use crate::session::RetailOrderDiagnosticEvent;
-use crate::{GameSession, Intent, OrderId, RejectionReason, StockCode};
+use crate::{GameSession, Intent, OrderId, RejectionReason, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_continuous_retail_lifecycle(
@@ -396,7 +396,7 @@ fn validate_operation(
     }
 }
 
-fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockCode, crate::OrderId) {
+fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockId, crate::OrderId) {
     match fact {
         ContinuousPlaceFact::Resting {
             account,
@@ -419,7 +419,7 @@ fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockCode, 
     }
 }
 
-fn cancel_identity(fact: &ContinuousCancelFact) -> (crate::AccountId, &StockCode, crate::OrderId) {
+fn cancel_identity(fact: &ContinuousCancelFact) -> (crate::AccountId, &StockId, crate::OrderId) {
     match fact {
         ContinuousCancelFact::Canceled {
             account,
@@ -537,7 +537,7 @@ fn push_rejected_payload(
     session: &GameSession,
     events: &mut Vec<RetailOrderDiagnosticEvent>,
     account: crate::AccountId,
-    code: &StockCode,
+    code: &StockId,
     reason: RejectionReason,
 ) {
     if session.state.retail_experience.contains_key(&account) {
@@ -597,7 +597,8 @@ mod tests {
 
     #[test]
     fn fill_waits_for_its_own_new_submission_without_sorting_unrelated_orders() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let a = OrderId(10);
         let b = OrderId(11);
         let submitted = |order_id| RetailOrderDiagnosticEvent::Submitted {
@@ -634,7 +635,8 @@ mod tests {
 
     #[test]
     fn one_order_keeps_receipt_fill_order_when_results_arrive_reversed() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
@@ -662,7 +664,8 @@ mod tests {
 
     #[test]
     fn old_order_fill_precedes_its_cancel_even_when_results_are_reversed() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let filled = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
@@ -688,7 +691,8 @@ mod tests {
     }
     #[test]
     fn lifecycle_batch_preserves_quantity_and_dependency_first_errors() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
@@ -754,7 +758,7 @@ mod tests {
         let order_id = OrderId(10);
         let fill = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             side: Side::Buy,
             order_id,
             qty: 100,

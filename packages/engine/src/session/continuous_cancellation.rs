@@ -10,7 +10,7 @@ pub(super) enum ContinuousCancellationCause {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ContinuousCancellationFact {
     pub(super) account: AccountId,
-    pub(super) code: StockCode,
+    pub(super) code: StockId,
     pub(super) order_id: OrderId,
     pub(super) side: Side,
     pub(super) remaining_qty: u32,
@@ -29,7 +29,7 @@ impl GameSession {
     pub(super) fn cancel_continuous_order_state_only(
         &mut self,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         cause: ContinuousCancellationCause,
     ) -> Result<ContinuousCancellationFact, ContinuousCancellationError> {

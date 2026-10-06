@@ -84,11 +84,12 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
     let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let save = session.save().unwrap();
     let account = *save.belief_books.keys().next().unwrap();
-    let code = &save.setup.stocks[0].code;
+    let code = StockId(0);
     let company = save.company_operations.companies.keys().next().unwrap();
     for confidence in [0, 10_000, 10_001, 65_535] {
         let mut encoded = serde_json::to_value(&save).unwrap();
-        encoded["belief_books"][account.0.to_string()]["entries"][&code.0] = serde_json::json!({
+        encoded["belief_books"][account.0.to_string()]["entries"][code.0.to_string()] =
+            serde_json::json!({
             "company": company,
             "method": null,
             "forecast": { "growth_bp": null, "basis": "InitialWithoutHistory" },
@@ -118,7 +119,7 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
 fn saved_filled_identity_cannot_also_be_an_active_order() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session.stock_id("600888").unwrap();
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
@@ -176,10 +177,11 @@ fn save_validation_context_preserves_phase_boundaries_and_shared_domain_facts() 
             saved_day,
             day_tick,
             saved_phase,
-            save.setup
+            session
+                .state
                 .stocks
                 .iter()
-                .map(|stock| stock.code.clone())
+                .map(|(id, _meta)| id)
                 .collect(),
             1,
             current_market_minute,
@@ -226,7 +228,7 @@ struct SaveValidationContext<'a> {
     saved_day: u64,
     day_tick: u64,
     phase: TradingPhase,
-    stock_codes: BTreeSet<StockCode>,
+    stock_codes: BTreeSet<StockId>,
     issuer_ids: BTreeSet<&'a crate::company::CompanyId>,
     npc_count: u64,
     current_market_minute: u64,
@@ -238,7 +240,7 @@ impl<'a> SaveValidationContext<'a> {
         saved_day: u64,
         day_tick: u64,
         phase: TradingPhase,
-        stock_codes: BTreeSet<StockCode>,
+        stock_codes: BTreeSet<StockId>,
         npc_count: u64,
         current_market_minute: u64,
     ) -> Self {
@@ -301,31 +303,39 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let (saved_day, day_tick, auction_entry_ticks, saved_phase) =
         SaveValidationContext::derive_trading_clock(save)?;
 
-    let expected_markets: BTreeSet<StockCode> = save
+    let save_catalog = save
+        .setup
+        .stock_catalog()
+        .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
+    let expected_markets: BTreeSet<StockId> = save
         .setup
         .stocks
         .iter()
-        .map(|stock| stock.code.clone())
+        .map(|stock| {
+            save_catalog
+                .id(&stock.code.0)
+                .expect("目录由同一批规格构造，必须命中")
+        })
         .collect();
-    let actual_markets: BTreeSet<StockCode> = save.snapshot.markets.keys().cloned().collect();
+    let actual_markets: BTreeSet<StockId> = save.snapshot.markets.keys().cloned().collect();
     if actual_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "snapshot market set does not exactly match setup".to_string(),
         ));
     }
-    let sequence_markets: BTreeSet<StockCode> = save.book_next_sequences.keys().cloned().collect();
+    let sequence_markets: BTreeSet<StockId> = save.book_next_sequences.keys().cloned().collect();
     if sequence_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "book sequence market set does not exactly match setup".to_owned(),
         ));
     }
-    let resting_markets: BTreeSet<StockCode> = save.resting_orders.keys().cloned().collect();
+    let resting_markets: BTreeSet<StockId> = save.resting_orders.keys().cloned().collect();
     if !resting_markets.is_empty() && resting_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "resting-order market set does not exactly match setup".to_string(),
         ));
     }
-    let filled_markets: BTreeSet<StockCode> = save.filled_orders.keys().cloned().collect();
+    let filled_markets: BTreeSet<StockId> = save.filled_orders.keys().cloned().collect();
     if filled_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "filled-order market set does not exactly match setup".to_string(),
@@ -345,7 +355,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             }
         }
     }
-    let history_markets: BTreeSet<StockCode> = save.price_history.keys().cloned().collect();
+    let history_markets: BTreeSet<StockId> = save.price_history.keys().cloned().collect();
     if history_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "price-history market set does not exactly match setup".to_string(),
@@ -382,7 +392,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
-    let minute_markets: BTreeSet<StockCode> = save.market_minute_closes.keys().cloned().collect();
+    let minute_markets: BTreeSet<StockId> = save.market_minute_closes.keys().cloned().collect();
     if minute_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "market-minute history market set does not exactly match setup".to_string(),
@@ -839,7 +849,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
-    let daily_candle_markets: BTreeSet<StockCode> =
+    let daily_candle_markets: BTreeSet<StockId> =
         save.snapshot.daily_candles.keys().cloned().collect();
     if daily_candle_markets != *expected_markets {
         return Err(SessionError::InvalidSave(
@@ -874,7 +884,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .setup
             .stocks
             .iter()
-            .find(|stock| &stock.code == code)
+            .find(|stock| {
+                stock.code.0
+                    == save_catalog
+                        .code(*code)
+                        .expect("已验证的市场代码必须入目录")
+            })
             .expect("daily candle market is validated against setup");
         let exchange = session_calendar_exchange(stock.exchange);
         let mut expected_dates =
@@ -1012,7 +1027,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
     validate_pending_receipt_order(save)?;
-    let active_candle_markets: BTreeSet<StockCode> =
+    let active_candle_markets: BTreeSet<StockId> =
         save.snapshot.active_daily_candles.keys().cloned().collect();
     let active_candle_set_is_valid =
         if context.day_tick == 0 || context.day_tick < auction_entry_ticks {
@@ -1097,7 +1112,7 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
     #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
     enum ResourceLane {
         Cash(AccountId),
-        Shares(AccountId, StockCode),
+        Shares(AccountId, StockId),
     }
 
     let mut intents = save.pending_player.clone();
@@ -1111,7 +1126,7 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
     let player_len = intents.len() - npc_len;
     let mut edges = vec![BTreeSet::new(); intents.len()];
     let mut resource_lanes = BTreeMap::<ResourceLane, Vec<(usize, u64)>>::new();
-    let mut stock_lanes = BTreeMap::<StockCode, Vec<(usize, u64)>>::new();
+    let mut stock_lanes = BTreeMap::<StockId, Vec<(usize, u64)>>::new();
     for (index, received) in intents.iter().enumerate() {
         let code = match &received.intent {
             Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
@@ -1855,7 +1870,7 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
 }
 
 fn validate_candle(
-    code: &StockCode,
+    code: &StockId,
     candle: &DailyCandle,
     real_day: bool,
 ) -> Result<(), SessionError> {
@@ -1962,7 +1977,14 @@ pub(super) fn validate_saved_order_state(
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == *code)
+            .find(|stock| {
+                stock.code.0
+                    == session
+                        .state
+                        .stocks
+                        .code(*code)
+                        .expect("market code must be cataloged")
+            })
             .expect("market code must have a stock spec");
         let tick = stock.tick;
         let down = market
@@ -2037,7 +2059,14 @@ pub(super) fn validate_saved_order_state(
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == *code)
+            .find(|stock| {
+                stock.code.0
+                    == session
+                        .state
+                        .stocks
+                        .code(*code)
+                        .expect("market code must be cataloged")
+            })
             .expect("market code must have a stock spec");
         let tick = stock.tick;
         let down = market
@@ -2256,9 +2285,9 @@ pub(super) fn validate_saved_order_state(
 #[derive(Default)]
 struct SavedReservations {
     cash: BTreeMap<AccountId, i128>,
-    sells: BTreeMap<(AccountId, StockCode), u64>,
-    sell_filled_totals: BTreeMap<(AccountId, StockCode), u64>,
-    validated_odd_lot_sells: BTreeSet<(AccountId, StockCode)>,
+    sells: BTreeMap<(AccountId, StockId), u64>,
+    sell_filled_totals: BTreeMap<(AccountId, StockId), u64>,
+    validated_odd_lot_sells: BTreeSet<(AccountId, StockId)>,
 }
 
 struct ReservationOrder {
@@ -2282,7 +2311,7 @@ impl SavedReservations {
         &mut self,
         session: &GameSession,
         owner: AccountId,
-        code: &StockCode,
+        code: &StockId,
         quantity: SavedOrderQuantity,
     ) -> Result<(), SessionError> {
         let SavedOrderQuantity {
@@ -2389,7 +2418,7 @@ impl SavedReservations {
         &mut self,
         config: &GameConfig,
         owner: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: ReservationOrder,
     ) -> Result<(), SessionError> {
         match order.side {

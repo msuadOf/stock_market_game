@@ -18,7 +18,7 @@ use crate::session::pipeline::private_stock_ledger::PrivateStockLedger;
 use crate::session::pipeline::{
     EnvelopeKey, EnvelopeReceipt, IntentCandidateKey, StepFatal, ValidatedOperation,
 };
-use crate::{GameConfig, Market, Money, StockCode, TradingPhase};
+use crate::{GameConfig, Market, Money, StockId, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
@@ -44,7 +44,7 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
     #[cfg(any(test, feature = "simulation-diagnostics"))]
     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
-    pub(in crate::session::pipeline) projections: BTreeMap<StockCode, ContinuousStockProjection>,
+    pub(in crate::session::pipeline) projections: BTreeMap<StockId, ContinuousStockProjection>,
     #[cfg(feature = "simulation-diagnostics")]
     pub(in crate::session::pipeline) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
@@ -52,7 +52,7 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
 /// 调用方排空全部 adaptive route 后的累计 stock_processing 输出。
 pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
     pub(in crate::session::pipeline) workers: Vec<ContinuousStockOutput>,
-    pub(in crate::session::pipeline) prices: BTreeMap<StockCode, ContinuousClosingPrice>,
+    pub(in crate::session::pipeline) prices: BTreeMap<StockId, ContinuousClosingPrice>,
     pub(in crate::session::pipeline) execution_facts: Vec<ContinuousExecutionFact>,
     /// 无对应股票 worker 的 stock_processing 业务拒绝；当前仅包括 AccountValidation 接受的未知股票撤单。
     pub(in crate::session::pipeline) detached_facts: Vec<ContinuousExecutionFact>,
@@ -68,7 +68,7 @@ pub(in crate::session::pipeline) struct ContinuousClosingPrice {
 #[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     phase: Option<TradingPhase>,
-    stocks: BTreeMap<StockCode, IncrementalContinuousStockShadow>,
+    stocks: BTreeMap<StockId, IncrementalContinuousStockShadow>,
     detached_facts: Vec<ContinuousExecutionFact>,
     seen_candidate_keys: BTreeSet<IntentCandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
@@ -93,7 +93,7 @@ struct IncrementalContinuousStockShadow {
 }
 
 struct StockRoundResult {
-    code: StockCode,
+    code: StockId,
     shadow: IncrementalContinuousStockShadow,
     facts: Vec<ContinuousExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
@@ -208,7 +208,7 @@ impl IncrementalContinuousStockCoordinator {
             .checked_add(operations.len())
             .ok_or_else(|| invariant("增量 StockProcessing operation 数量溢出"))?;
 
-        let mut grouped = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
+        let mut grouped = BTreeMap::<StockId, Vec<ValidatedOperation>>::new();
         let mut detached = Vec::new();
         let mut new_candidate_keys = BTreeSet::new();
         let mut new_sealed_indices = BTreeSet::new();
@@ -267,7 +267,8 @@ impl IncrementalContinuousStockCoordinator {
             crate::session::pipeline::executor_perturbation::reorder(
                 crate::session::pipeline::ExecutorBoundary::ContinuousStockShards,
                 &mut work,
-                |(code, _, operations)| (code.0.clone(), operations.len()),
+                // ExecutorOrderRecord.identities 仍为 Vec<String>；StockId 按数值转字符串。
+                |(code, _, operations)| (code.0.to_string(), operations.len()),
             );
             work
         };
@@ -287,7 +288,7 @@ impl IncrementalContinuousStockCoordinator {
                 &mut results,
                 |(code, result)| {
                     (
-                        code.0.clone(),
+                        code.0.to_string(),
                         result.as_ref().map_or(0, |result| result.facts.len()),
                     )
                 },
@@ -395,7 +396,7 @@ impl IncrementalContinuousStockCoordinator {
 impl IncrementalContinuousStockShadow {
     fn apply_round(
         mut self,
-        code: StockCode,
+        code: StockId,
         operations: Vec<ValidatedOperation>,
     ) -> Result<StockRoundResult, StepFatal> {
         let step = process_continuous_stock_step_with_ledger(
@@ -548,7 +549,7 @@ fn validate_round_identities(
     Ok(())
 }
 
-fn operation_code(operation: &ValidatedOperation) -> &StockCode {
+fn operation_code(operation: &ValidatedOperation) -> &StockId {
     match operation {
         ValidatedOperation::Place(draft) => draft.code(),
         ValidatedOperation::Cancel { code, .. } => code,

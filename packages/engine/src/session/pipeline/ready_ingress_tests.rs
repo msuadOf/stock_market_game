@@ -1,7 +1,7 @@
 use super::*;
 use crate::session::pipeline::local_admission::{admit_ready_batch, AccountReceipt};
 use crate::session::pipeline::{IntentCandidateKey, TickWorkReady};
-use crate::{AccountId, Intent, Money, Side, StockCode};
+use crate::{AccountId, Intent, Money, Side, StockId};
 use std::time::Duration;
 
 #[test]
@@ -40,17 +40,17 @@ fn real_root_notifies_before_stock_stream_starts_with_one_or_several_workers() {
 #[test]
 fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
     let owner = AccountId(1);
-    let place = |stock: &str| Intent::PlaceLimit {
-        code: StockCode(stock.to_owned()),
+    let place = |stock: StockId| Intent::PlaceLimit {
+        code: stock,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(100)),
         qty: 100,
     };
     let ready = vec![
-        IntentCandidate::new(IntentCandidateKey::plan_chain(99), owner, place("600002")),
-        IntentCandidate::new(IntentCandidateKey::npc(owner, 0), owner, place("600001"))
+        IntentCandidate::new(IntentCandidateKey::plan_chain(99), owner, place(StockId(1))),
+        IntentCandidate::new(IntentCandidateKey::npc(owner, 0), owner, place(StockId(0)))
             .with_ingress_order(0, 0),
-        IntentCandidate::new(IntentCandidateKey::plan_chain(2), owner, place("600003")),
+        IntentCandidate::new(IntentCandidateKey::plan_chain(2), owner, place(StockId(2))),
     ];
     let mut receipts = AccountReceipts::default();
     let admitted = admit_ready_batch(ready, &mut receipts).unwrap();
@@ -69,7 +69,7 @@ fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
         .observe(&IntentCandidate::new(
             IntentCandidateKey::plan_chain(1),
             owner,
-            place("600004"),
+            place(StockId(3)),
         ))
         .unwrap();
     assert_eq!(following, AccountReceipt::ReadyThisTick(2));
@@ -86,7 +86,9 @@ fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
             let mut session =
                 GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42)
                     .unwrap();
-            let code = session.state.setup.stocks[0].code.clone();
+            let code = session
+                .stock_id(&session.state.setup.stocks[0].code.0)
+                .unwrap();
             session.state.pending_npc = None;
             session
                 .enqueue_player_intent(
@@ -135,8 +137,12 @@ fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
 fn same_account_cash_lane_uses_cross_source_receive_time() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 45).unwrap();
-    let first_stock = session.state.setup.stocks[0].code.clone();
-    let second_stock = session.state.setup.stocks[1].code.clone();
+    let first_stock = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
+    let second_stock = session
+        .stock_id(&session.state.setup.stocks[1].code.0)
+        .unwrap();
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -183,7 +189,9 @@ fn same_account_cash_lane_uses_cross_source_receive_time() {
 fn enqueue_after_tick_capture_is_deferred_to_the_next_capture() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     let intent = || Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -209,7 +217,9 @@ fn enqueue_after_tick_capture_is_deferred_to_the_next_capture() {
 fn failed_tick_keeps_external_queue_for_the_next_committed_attempt() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 43).unwrap();
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     let intent = Intent::PlaceLimit {
         code,
         side: Side::Buy,

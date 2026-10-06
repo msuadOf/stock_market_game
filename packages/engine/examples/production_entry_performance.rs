@@ -62,9 +62,13 @@ fn seed_active_plans(
         save.plans
             .create(PlanOpen {
                 account: *account,
-                code: save.setup.stocks[index % save.setup.stocks.len()]
-                    .code
-                    .clone(),
+                code: game
+                    .stock_id(
+                        &save.setup.stocks[index % save.setup.stocks.len()]
+                            .code
+                            .0,
+                    )
+                    .expect("计划股票必须已入目录"),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(10_000),
                 opinion: PlanOpinion {
@@ -106,7 +110,7 @@ fn execute(
             .setup
             .stocks
             .iter()
-            .map(|stock| stock.code.clone())
+            .map(|stock| game.stock_id(&stock.code.0).expect("工作负载股票必须已入目录"))
             .collect::<Vec<_>>();
         let run_start = Instant::now();
         let mut step_wall_ns = 0_u128;

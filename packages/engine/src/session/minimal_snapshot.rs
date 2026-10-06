@@ -1,4 +1,4 @@
-use super::{AccountId, DailyCandle, Money, PositionSnap, StockCode};
+use super::{AccountId, DailyCandle, Money, PositionSnap, StockId};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -12,7 +12,7 @@ pub struct SaveMarketSnap {
 #[serde(deny_unknown_fields)]
 pub struct SaveAccountSnap {
     pub cash: Money,
-    pub positions: BTreeMap<StockCode, PositionSnap>,
+    pub positions: BTreeMap<StockId, PositionSnap>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -25,8 +25,8 @@ pub struct SaveSnapshot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub tick: u64,
-    pub markets: BTreeMap<StockCode, SaveMarketSnap>,
+    pub markets: BTreeMap<StockId, SaveMarketSnap>,
     pub accounts: BTreeMap<AccountId, SaveAccountSnap>,
-    pub daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
-    pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    pub daily_candles: BTreeMap<StockId, Vec<DailyCandle>>,
+    pub active_daily_candles: BTreeMap<StockId, DailyCandle>,
 }

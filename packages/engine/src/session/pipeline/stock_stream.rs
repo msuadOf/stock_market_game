@@ -14,7 +14,7 @@ use super::{
 };
 #[cfg(any(test, feature = "verification-harness"))]
 use super::{executor_perturbation, ExecutorBoundary};
-use crate::{AccountId, StockCode, TradingPhase};
+use crate::{AccountId, StockId, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
@@ -51,7 +51,7 @@ pub(super) enum StockStreamProgress<'a, R> {
     /// 早先轮询可能已消费 root payload；仍有股票任务时只轮询，不等待 root。
     PlanRootReady,
     StockCompleted {
-        code: &'a StockCode,
+        code: &'a StockId,
         round: &'a mut R,
     },
 }
@@ -90,7 +90,7 @@ impl StockShard for IncrementalAuctionStockCoordinator {
 
 pub(super) fn continuous_shards(
     inputs: Vec<ContinuousStockInput>,
-) -> Result<BTreeMap<StockCode, IncrementalContinuousStockCoordinator>, StepFatal> {
+) -> Result<BTreeMap<StockId, IncrementalContinuousStockCoordinator>, StepFatal> {
     let mut initialized = inputs
         .into_par_iter()
         .map(|input| {
@@ -107,7 +107,7 @@ pub(super) fn continuous_shards(
 }
 
 pub(super) fn finish_continuous_shards(
-    shards: BTreeMap<StockCode, IncrementalContinuousStockCoordinator>,
+    shards: BTreeMap<StockId, IncrementalContinuousStockCoordinator>,
     ends_day: bool,
 ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
     let mut workers = Vec::new();
@@ -135,7 +135,7 @@ pub(super) fn finish_continuous_shards(
             &mut finished,
             |(code, result)| {
                 (
-                    code.0.clone(),
+                    code.to_string(),
                     result.execution_facts.len() + result.detached_facts.len(),
                 )
             },
@@ -166,7 +166,7 @@ pub(super) fn finish_continuous_shards(
 
 pub(super) fn auction_shards(
     inputs: Vec<AuctionStockInput>,
-) -> Result<BTreeMap<StockCode, IncrementalAuctionStockCoordinator>, StepFatal> {
+) -> Result<BTreeMap<StockId, IncrementalAuctionStockCoordinator>, StepFatal> {
     inputs
         .into_iter()
         .map(|input| {
@@ -178,7 +178,7 @@ pub(super) fn auction_shards(
 }
 
 pub(super) fn finish_auction_shards(
-    shards: BTreeMap<StockCode, IncrementalAuctionStockCoordinator>,
+    shards: BTreeMap<StockId, IncrementalAuctionStockCoordinator>,
     boundary: AuctionTickBoundary,
 ) -> Result<IncrementalAuctionFinish, StepFatal> {
     let mut workers = BTreeMap::new();
@@ -209,7 +209,7 @@ pub(super) fn finish_auction_shards(
             &mut finished,
             |(code, result)| {
                 (
-                    code.0.clone(),
+                    code.to_string(),
                     result.detached_lifecycle_facts.len()
                         + result
                             .workers
@@ -241,19 +241,19 @@ pub(super) fn finish_auction_shards(
 }
 
 pub(super) fn detached_continuous_shard(
-    _: &StockCode,
+    _: &StockId,
     phase: TradingPhase,
 ) -> Result<IncrementalContinuousStockCoordinator, StepFatal> {
     Ok(IncrementalContinuousStockCoordinator::detached(phase))
 }
 
 pub(super) fn detached_auction_shard(
-    _: &StockCode,
+    _: &StockId,
 ) -> Result<IncrementalAuctionStockCoordinator, StepFatal> {
     Ok(IncrementalAuctionStockCoordinator::detached())
 }
 
-pub(super) fn operation_code(operation: &ValidatedOperation) -> &StockCode {
+pub(super) fn operation_code(operation: &ValidatedOperation) -> &StockId {
     match operation {
         ValidatedOperation::Place(draft) => draft.code(),
         ValidatedOperation::Cancel { code, .. } => code,
@@ -269,37 +269,37 @@ pub(super) fn operation_owner(operation: &ValidatedOperation) -> AccountId {
 
 /// worker 独占股票簿与 typed facts；调用线程中的 coordinator 及时推进就绪工作。
 pub(super) fn drive_stock_stream<S, F, D>(
-    available: BTreeMap<StockCode, S>,
+    available: BTreeMap<StockId, S>,
     initial: Vec<ValidatedOperation>,
     notifications: StockStreamNotifications,
     detached: D,
     on_progress: F,
-) -> Result<BTreeMap<StockCode, S>, StepFatal>
+) -> Result<BTreeMap<StockId, S>, StepFatal>
 where
     S: StockShard,
     F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<ValidatedOperation>, StepFatal>
         + Send,
-    D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
+    D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
 {
     let mut coordinator = StockStreamCoordinator::new(available, notifications);
     coordinator.enqueue_ready(initial);
     coordinator.drive(detached, on_progress)
 }
 
-type StockCompletion<S> = (StockCode, S, Result<<S as StockShard>::Round, StepFatal>);
+type StockCompletion<S> = (StockId, S, Result<<S as StockShard>::Round, StepFatal>);
 
 /// 只拥有本 tick 的股票工作；不持有账户、结算或 session authority。
 struct StockStreamCoordinator<S: StockShard> {
-    available: BTreeMap<StockCode, S>,
-    pending: BTreeMap<StockCode, Vec<ValidatedOperation>>,
-    in_flight: BTreeSet<StockCode>,
+    available: BTreeMap<StockId, S>,
+    pending: BTreeMap<StockId, Vec<ValidatedOperation>>,
+    in_flight: BTreeSet<StockId>,
     sender: mpsc::Sender<StockCompletion<S>>,
     receiver: mpsc::Receiver<StockCompletion<S>>,
     notifications: StockStreamNotifications,
 }
 
 impl<S: StockShard> StockStreamCoordinator<S> {
-    fn new(available: BTreeMap<StockCode, S>, notifications: StockStreamNotifications) -> Self {
+    fn new(available: BTreeMap<StockId, S>, notifications: StockStreamNotifications) -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
             available,
@@ -327,7 +327,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
     ) -> Result<(), StepFatal>
     where
         S: 'scope,
-        D: FnMut(&StockCode) -> Result<S, StepFatal>,
+        D: FnMut(&StockId) -> Result<S, StepFatal>,
     {
         let dispatchable = self
             .pending
@@ -340,7 +340,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
             let mut dispatchable = dispatchable;
             if let Some(boundary) = S::DISPATCH_BOUNDARY {
                 executor_perturbation::reorder(boundary, &mut dispatchable, |code| {
-                    (code.0.clone(), self.pending[code].len())
+                    (code.to_string(), self.pending[code].len())
                 });
             }
             dispatchable
@@ -393,7 +393,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         }
     }
 
-    fn receive_completion(&mut self) -> Result<(StockCode, S::Round), StepFatal> {
+    fn receive_completion(&mut self) -> Result<(StockId, S::Round), StepFatal> {
         // Stock notification 在 payload 成功发送后发出；跨 worker 的两种 channel 顺序可不同。
         let (code, shard, round) = self
             .receiver
@@ -420,11 +420,11 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         mut self,
         mut detached: D,
         mut on_progress: F,
-    ) -> Result<BTreeMap<StockCode, S>, StepFatal>
+    ) -> Result<BTreeMap<StockId, S>, StepFatal>
     where
         F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<ValidatedOperation>, StepFatal>
             + Send,
-        D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
+        D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
     {
         // coordinator 留在宿主调用线程，避免多个宿主占满 Rayon worker 后互等。
         rayon::in_place_scope(move |scope| {
@@ -479,7 +479,7 @@ mod tests {
     }
 
     struct MockShard {
-        code: StockCode,
+        code: StockId,
         steps: usize,
         signals: Arc<Signals>,
     }
@@ -497,12 +497,12 @@ mod tests {
                 return Err(invariant("mock received an unexpected operation batch"));
             };
             self.steps += 1;
-            if self.code.0 == "A" && self.steps == 1 {
+            if self.code.0 == 0 && self.steps == 1 {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while !self.signals.b_running.load(Ordering::SeqCst) && Instant::now() < deadline {
                     std::thread::yield_now();
                 }
-            } else if self.code.0 == "A" {
+            } else if self.code.0 == 0 {
                 self.signals
                     .a_followup_started
                     .store(true, Ordering::SeqCst);
@@ -524,12 +524,12 @@ mod tests {
         }
     }
 
-    fn cancel(code: &str, id: u64) -> ValidatedOperation {
+    fn cancel(code: StockId, id: u64) -> ValidatedOperation {
         ValidatedOperation::Cancel {
             candidate_key: super::super::IntentCandidateKey::player(id),
             sealed_index: id,
             account: AccountId(id),
-            code: StockCode(code.to_owned()),
+            code,
             order_id: OrderId(id),
         }
     }
@@ -589,7 +589,7 @@ mod tests {
             BTreeMap::new(),
             StockStreamNotifications::new(),
         );
-        let code = StockCode("600001".to_owned());
+        let code = StockId(0);
         coordinator.in_flight.insert(code.clone());
         coordinator
             .sender
@@ -615,7 +615,7 @@ mod tests {
             BTreeMap::new(),
             StockStreamNotifications::new(),
         );
-        let code = StockCode("600001".to_owned());
+        let code = StockId(0);
         coordinator.in_flight.insert(code.clone());
         coordinator
             .sender
@@ -656,16 +656,16 @@ mod tests {
         let worker_sender = coordinator.sender.clone();
         drop(coordinator);
         assert!(worker_sender
-            .send((StockCode("600001".to_owned()), EmptyShard, Ok(())))
+            .send((StockId(0), EmptyShard, Ok(())))
             .is_err());
     }
 
     #[test]
     fn parallel_stock_initialization_reports_the_first_stock_error() {
-        let input = |code: &str| ContinuousStockInput {
+        let input = |code: StockId| ContinuousStockInput {
             phase: TradingPhase::Continuous,
             market: Market::new(
-                StockCode(code.to_owned()),
+                code,
                 Money::from_cents(1_000),
                 0.10,
                 Money::from_cents(1),
@@ -675,13 +675,13 @@ mod tests {
             operations: Vec::new(),
             config: GameConfig::proposed_defaults(),
         };
-        let mut first = input("600001");
-        first.operations.push(cancel("600001", 1));
-        let mut second = input("600002");
+        let mut first = input(StockId(0));
+        first.operations.push(cancel(StockId(0), 1));
+        let mut second = input(StockId(1));
         let envelope = Envelope::tick_start_existing(
             EnvelopeKey {
                 account: AccountId(1),
-                stock: StockCode("600002".to_owned()),
+                stock: StockId(1),
                 order: OrderId(2),
                 side: Side::Buy,
             },
@@ -720,13 +720,13 @@ mod tests {
             a_followup_started: AtomicBool::new(false),
             overlapped: AtomicBool::new(false),
         });
-        let shards = ["A", "B"]
+        let shards = [StockId(0), StockId(1)]
             .into_iter()
             .map(|code| {
                 (
-                    StockCode(code.to_owned()),
+                    code,
                     MockShard {
-                        code: StockCode(code.to_owned()),
+                        code,
                         steps: 0,
                         signals: Arc::clone(&signals),
                     },
@@ -741,14 +741,14 @@ mod tests {
             .install(|| {
                 drive_stock_stream(
                     shards,
-                    vec![cancel("A", 1), cancel("B", 2)],
+                    vec![cancel(StockId(0), 1), cancel(StockId(1), 2)],
                     StockStreamNotifications::new(),
                     |_| Err(invariant("mock must not request a detached stock")),
                     |progress| match progress {
                         StockStreamProgress::StockCompleted { code, round }
-                            if code.0 == "A" && round.order == OrderId(1) =>
+                            if code.0 == 0 && round.order == OrderId(1) =>
                         {
-                            Ok(vec![cancel("A", 3)])
+                            Ok(vec![cancel(StockId(0), 3)])
                         }
                         _ => Ok(Vec::new()),
                     },
@@ -756,8 +756,8 @@ mod tests {
             })
             .unwrap();
         assert!(signals.overlapped.load(Ordering::SeqCst));
-        assert_eq!(completed[&StockCode("A".to_owned())].steps, 2);
-        assert_eq!(completed[&StockCode("B".to_owned())].steps, 1);
+        assert_eq!(completed[&StockId(0)].steps, 2);
+        assert_eq!(completed[&StockId(1)].steps, 1);
     }
 
     #[test]
@@ -767,7 +767,7 @@ mod tests {
             a_followup_started: AtomicBool::new(false),
             overlapped: AtomicBool::new(false),
         });
-        let code = StockCode("A".to_owned());
+        let code = StockId(0);
         let shard = MockShard {
             code: code.clone(),
             steps: 0,
@@ -781,7 +781,7 @@ mod tests {
             .install(|| {
                 drive_stock_stream(
                     BTreeMap::from([(code.clone(), shard)]),
-                    vec![cancel("A", 1)],
+                    vec![cancel(StockId(0), 1)],
                     StockStreamNotifications::new(),
                     |_| Err(invariant("mock must not request a detached stock")),
                     |_| Ok(Vec::new()),
@@ -799,10 +799,10 @@ mod tests {
             for _ in 0..workers {
                 let entered = &entered;
                 threads.spawn(move || {
-                    let code = StockCode("A".to_owned());
+                    let code = StockId(0);
                     let finished = drive_stock_stream(
                         BTreeMap::new(),
-                        vec![cancel("A", 1)],
+                        vec![cancel(StockId(0), 1)],
                         StockStreamNotifications::new(),
                         |code| {
                             // 分派前对齐独立宿主的 coordinator；迁入共享 pool 会占满 worker。

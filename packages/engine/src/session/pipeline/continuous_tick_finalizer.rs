@@ -20,7 +20,7 @@ use crate::session::{
     completed_market_minute_count, MarketMinuteClose, PendingPlanEvent, RetailOrderDiagnosticEvent,
     GAME_INTRADAY_MINUTES_PER_DAY,
 };
-use crate::{Event, GameSession, Money, StockCode, TradingPhase};
+use crate::{Event, GameSession, Money, StockId, TradingPhase};
 
 pub(super) struct ContinuousTickBoundary {
     tick_after: u64,
@@ -246,7 +246,7 @@ struct ContinuousDayEndLifecycleProjection<'a> {
     #[cfg(feature = "simulation-diagnostics")]
     day_end_causal_time: crate::diagnostics::causal::FactTime,
     #[cfg(feature = "simulation-diagnostics")]
-    cleared_quote_codes: std::collections::BTreeSet<StockCode>,
+    cleared_quote_codes: std::collections::BTreeSet<StockId>,
 }
 
 impl<'a> ContinuousDayEndLifecycleProjection<'a> {
@@ -371,7 +371,7 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
 /// 保持既有 candle reducer 的首笔成交与 open 语义；先检查算术，使失败返回 typed fatal。
 fn checked_update_candle(
     session: &mut GameSession,
-    code: &StockCode,
+    code: &StockId,
     price: Money,
     qty: u64,
 ) -> Result<(), StepFatal> {
@@ -439,7 +439,7 @@ mod lifecycle_tests {
         GameSession::new(setup, 42).unwrap()
     }
 
-    fn release(code: StockCode, account: AccountId, order: u64) -> super::super::EnvelopeReceipt {
+    fn release(code: StockId, account: AccountId, order: u64) -> super::super::EnvelopeReceipt {
         let envelope = Envelope::tick_start_existing(
             EnvelopeKey {
                 account,
