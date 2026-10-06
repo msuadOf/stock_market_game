@@ -9,6 +9,7 @@ import {
   formatReportPeriod,
   formatReportKind,
   formatSecondOfDay,
+  reportRoeIndicators,
   reportStatementRows,
   reportViewState,
   selectVisibleReportId,
@@ -49,10 +50,36 @@ test("缺失同比保持明确原因而不伪造成零", () => {
   });
 });
 
+test("ROE 使用精确有理数格式化并明确展示不支持的口径和缺失原因", () => {
+  assert.deepEqual(reportRoeIndicators({
+    basis: "AttributableToOrdinaryShareholders",
+    ordinary_roe: { Available: { numerator: "8800", denominator: "104400" } },
+    adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } },
+    weighted_average_parent_equity_cents: { Unavailable: { reason: "IncompleteEquityEventHistory" } },
+  }), [
+    { label: "ROE 口径", value: "归属于普通股股东", unavailable: false },
+    { label: "加权平均净资产收益率（归母净利润）", value: "8.43%", unavailable: false },
+    { label: "加权平均净资产收益率（扣非归母净利润）", value: "不可用：缺少扣非归母利润事实", unavailable: true },
+  ]);
+  assert.equal(reportRoeIndicators({
+    basis: { Unsupported: { reason: "SameControlCombination" } },
+    ordinary_roe: { Unavailable: { reason: "SameControlCombination" } },
+    adjusted_roe: { Unavailable: { reason: "SameControlCombination" } },
+    weighted_average_parent_equity_cents: { Unavailable: { reason: "SameControlCombination" } },
+  })[0]?.value, "不可用：同一控制下企业合并特殊处理尚不支持");
+  assert.equal(reportRoeIndicators({
+    basis: "AttributableToOrdinaryShareholders",
+    ordinary_roe: { Available: { numerator: "1", denominator: "20000" } },
+    adjusted_roe: { Unavailable: { reason: "NonPositiveAverageEquity" } },
+    weighted_average_parent_equity_cents: { Unavailable: { reason: "NonPositiveAverageEquity" } },
+  })[1]?.value, "0.00%");
+});
+
 test("四张公开报表从完整已披露报表映射，并保留所有值为字符串", () => {
   const financials = publicReportGold().financials;
   Object.assign(financials.balance_sheet, { total_assets: "100.00", total_liabilities: "-20.00", total_equity: "120.00", closing_cash: "30.00" });
   Object.assign(financials.income.quarter, { net_income: "4.00", income_tax: "-1.00" });
+  Object.assign(financials.income.report_period, { net_income: "3.00", income_tax: "-0.50" });
   Object.assign(financials.income.cumulative, { net_income: "5.00", income_tax: "-1.00" });
   Object.assign(financials.cash_flow, { operating: "6.00", investing: "-7.00", financing: "8.00", net_change: "7.00" });
   financials.equity.net_income = "5.00";
@@ -64,7 +91,8 @@ test("四张公开报表从完整已披露报表映射，并保留所有值为�
     "所有者权益变动表",
   ]);
   assert.equal(rows[0]?.rows.find((row) => row.subject === "资产总计")?.amount, "100.00");
-  assert.equal(rows[1]?.rows.find((row) => row.subject === "所得税费用")?.amount, "-1.00");
+  assert.equal(rows[1]?.rows.find((row) => row.subject === "所得税费用")?.amount, "-0.50");
+  assert.deepEqual(rows[1]?.columns, ["报告窗口", "年初至今累计", "上年同期（报告窗口）"]);
   assert.equal(rows[2]?.rows[1]?.amount, "-7.00");
   assert.equal(rows[3]?.rows[1]?.amount, "5.00");
 });

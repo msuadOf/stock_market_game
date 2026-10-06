@@ -117,6 +117,9 @@ function selectionView(initialState: ReturnType<typeof fixture>["ready"], onAvai
 test("公司面板按钮调用宿主可用性查询并发送必填期间、类型与 scope", async () => {
   const view = selectionView(fixture().ready);
   let tree = view.render();
+  const reportText = view.textContent(tree);
+  assert.match(reportText, /加权平均净资产收益率（归母净利润）8\.43%/);
+  assert.match(reportText, /加权平均净资产收益率（扣非归母净利润）不可用：缺少扣非归母利润事实/);
   const controls = view.elements(tree);
   const period = controls.find((element) => element.props["aria-label"] === "报告期末");
   const kind = controls.find((element) => element.props["aria-label"] === "报告类型");

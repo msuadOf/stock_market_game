@@ -5,11 +5,13 @@ import type {
   PublicReportLine,
   PublicReportKind,
 } from "../../types/engine.ts";
+import type { ReportRoe, ReportRoeUnavailable, ReportRoeValue } from "../../save/schema/company/reports.ts";
 import type { DayStatus } from "../../types/generated/DayStatus.ts";
 
 export type ComparisonPresentation =
   | { readonly kind: "available"; readonly text: string }
   | { readonly kind: "unavailable"; readonly text: string };
+export type ReportIndicator = { readonly label: string; readonly value: string; readonly unavailable: boolean };
 
 export type StatementCell = string | { readonly kind: "unavailable"; readonly text: string };
 export type StatementRow = { readonly subject: string; readonly amount: StatementCell; readonly comparisons?: readonly StatementCell[] };
@@ -104,6 +106,46 @@ export function formatComparison(comparison: PublicComparativeAmount): Compariso
   }
 }
 
+function reportRoeUnavailableReason(reason: ReportRoeUnavailable): string {
+  switch (reason) {
+    case "NonPositiveAverageEquity": return "平均归母净资产非正"
+    case "MissingNonRecurringIncomeFacts": return "缺少扣非归母利润事实"
+    case "IncompleteEquityEventHistory": return "权益变动历史不完整"
+    case "SameControlCombination": return "同一控制下企业合并特殊处理尚不支持"
+    case "ComparativePeriodSpecialTreatment": return "比较期间特殊处理尚不支持"
+    case "UnclassifiedEquityEvent": return "存在未分类权益变动"
+    case "ConsolidatedAttributionFactsUnavailable": return "合并归母数据不可用"
+    default: return assertNever(reason)
+  }
+}
+
+function reportRoeValue(value: ReportRoeValue): { readonly text: string; readonly unavailable: boolean } {
+  if ("Unavailable" in value) return { text: `不可用：${reportRoeUnavailableReason(value.Unavailable.reason)}`, unavailable: true }
+  const numerator = BigInt(value.Available.numerator)
+  const denominator = BigInt(value.Available.denominator)
+  const negative = numerator < 0n
+  const magnitude = negative ? -numerator : numerator
+  const scaled = magnitude * 10_000n
+  let hundredths = scaled / denominator
+  const remainder = scaled % denominator
+  const doubledRemainder = remainder * 2n
+  if (doubledRemainder > denominator || (doubledRemainder === denominator && hundredths % 2n !== 0n)) hundredths += 1n
+  return { text: `${negative && hundredths !== 0n ? "-" : ""}${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}%`, unavailable: false }
+}
+
+export function reportRoeIndicators(roe: ReportRoe): readonly ReportIndicator[] {
+  const basis = typeof roe.basis === "string"
+    ? "归属于普通股股东"
+    : `不可用：${reportRoeUnavailableReason(roe.basis.Unsupported.reason)}`
+  const ordinary = reportRoeValue(roe.ordinary_roe)
+  const adjusted = reportRoeValue(roe.adjusted_roe)
+  return [
+    { label: "ROE 口径", value: basis, unavailable: typeof roe.basis !== "string" },
+    { label: "加权平均净资产收益率（归母净利润）", value: ordinary.text, unavailable: ordinary.unavailable },
+    { label: "加权平均净资产收益率（扣非归母净利润）", value: adjusted.text, unavailable: adjusted.unavailable },
+  ]
+}
+
 function unavailable(text: string): StatementCell {
   return { kind: "unavailable", text };
 }
@@ -144,12 +186,12 @@ export function reportStatementRows(financials: PublicReportFinancials): readonl
   ].map((row) => ({ ...row, comparisons: [priorBalanceRows === null
     ? unavailable("暂无上年年末：无上年历史") : lookup(priorBalanceRows, row.subject)] }));
   const income = financials.income;
-  const quarter = incomeRows(income.quarter);
+  const reportPeriod = incomeRows(income.report_period);
   const cumulative = incomeRows(income.cumulative);
   const priorIncomeRows = "Available" in income.prior_year ? incomeRows(income.prior_year.Available) : null;
-  const subjects = [...new Set([...quarter, ...cumulative, ...(priorIncomeRows === null ? [] : priorIncomeRows)].map((line) => line.subject))];
+  const subjects = [...new Set([...reportPeriod, ...cumulative, ...(priorIncomeRows === null ? [] : priorIncomeRows)].map((line) => line.subject))];
   const incomeStatementRows: StatementRow[] = subjects.map((subject) => ({
-    subject, amount: lookup(quarter, subject), comparisons: [lookup(cumulative, subject),
+    subject, amount: lookup(reportPeriod, subject), comparisons: [lookup(cumulative, subject),
       priorIncomeRows === null ? unavailable("暂无上年同期：无上年历史") : lookup(priorIncomeRows, subject)],
   }));
   const incomeDetails: PublicReportLine[] = [];
@@ -167,7 +209,7 @@ export function reportStatementRows(financials: PublicReportFinancials): readonl
   if (equity.closing_minority !== null) equityRows.push({ subject: "期末少数股东权益", amount: equity.closing_minority });
   return [
     { id: "balance", title: "资产负债表", columns: ["期末", "上年年末"], rows: balanceRows },
-    { id: "income", title: "利润表", columns: ["当季", "年初至今累计", "上年同期（报告窗口）"], rows: incomeStatementRows, details: incomeDetails },
+    { id: "income", title: "利润表", columns: ["报告窗口", "年初至今累计", "上年同期（报告窗口）"], rows: incomeStatementRows, details: incomeDetails },
     { id: "cash-flow", title: "现金流量表", rows: [
       { subject: "经营活动现金流量", amount: cash.operating }, { subject: "投资活动现金流量", amount: cash.investing },
       { subject: "筹资活动现金流量", amount: cash.financing }, { subject: "现金净增加额", amount: cash.net_change },

@@ -25,6 +25,10 @@
 .company-disclosure-list small { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .company-report-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--muted); font-size: 12px; }
 .company-report-summary button { margin-left: auto; padding: 3px 7px; border: 1px solid var(--border); border-radius: 3px; background: var(--card-bg); color: var(--accent); font: inherit; cursor: pointer; }
+.company-report-indicators { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; }
+.company-report-indicators p { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
+.company-report-indicators strong { color: var(--text); font-weight: 600; }
+.company-report-indicators .is-unavailable strong { color: var(--muted); font-weight: 400; }
 .company-statement-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); }
 .company-statement-tabs button { flex: 0 0 auto; padding: 6px 8px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .company-statement-tabs button[aria-selected="true"] { border-color: var(--up); color: var(--text); font-weight: 700; }

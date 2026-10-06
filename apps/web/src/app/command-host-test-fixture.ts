@@ -20,8 +20,7 @@ export function commandHostFixture(overrides: Partial<EngineHost> = {}): EngineH
   };
 }
 
-/** 命令边界 fixture 经过真实 schema 校验；不宣称已由 Rust 恢复验收。 */
+/** Engine 生成并完成休市日结的命令边界档案。 */
 export function commandDayEndArchiveFixture() {
-  const raw = currentSaveFixture();
-  return parseSaveSlot({ ...raw, civil_clock: { ...(raw.civil_clock as Record<string, unknown>), settled_through: "2029-12-31" } });
+  return parseSaveSlot(currentSaveFixture());
 }

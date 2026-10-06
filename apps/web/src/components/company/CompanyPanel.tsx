@@ -8,6 +8,7 @@ import {
   formatCalendarStatus,
   formatReportKind,
   formatReportPeriod,
+  reportRoeIndicators,
   reportStatementRows,
   reportViewState,
   selectVisibleReportId,
@@ -172,6 +173,9 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
             <button type="button" onClick={() => onReadingChange({ exactAmountsVisible: !exactAmountsVisible })} aria-pressed={exactAmountsVisible}>
               {exactAmountsVisible ? "显示缩写金额" : "查看精确值"}
             </button>
+          </div>
+          <div className="company-report-indicators" role="group" aria-label="报告窗口净资产收益率">
+            {reportRoeIndicators(report.financials.roe).map((indicator) => <p key={indicator.label} className={indicator.unavailable ? "is-unavailable" : undefined}><span>{indicator.label}</span><strong>{indicator.value}</strong></p>)}
           </div>
           <div className="company-statement-tabs" role="tablist" aria-label="财务报表">
             {statements.map((statement) => <button id={`company-statement-tab-${statement.id}`} key={statement.id} type="button" role="tab" aria-controls={`company-statement-panel-${statement.id}`} aria-selected={selectedStatement.id === statement.id} tabIndex={selectedStatement.id === statement.id ? 0 : -1} onKeyDown={(event) => moveTabFocus(event, statements.map((item) => item.id))} onClick={() => onReadingChange({ selectedStatementId: statement.id })}>{statement.title}</button>)}

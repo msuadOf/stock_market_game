@@ -61,9 +61,24 @@ test("CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法�
   assert.throws(() => parseCompanyOperations({ ...operations, payment_failures: { [operations.next_expected]: [{ company, what: "经营支付", amount: "1.00" }] } }), /payment_failures/)
 })
 
-test("公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期", () => {
-  const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, event: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } }
+test("公开 Shock 公告使用内容联合类型并保留 PaymentFailure 单日事实", { timeout: 10_000 }, () => {
+  const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, content: { kind: "Shock", value: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } } }
   const library = { next_seq: 1, reports: [], announcements: [announcement] }
-  assert.deepEqual(parsePublicLibrary(library), library)
-  for (const event of [{ ...announcement.event, amplitude_bp: 1 }, { ...announcement.event, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, event }] }), /event/)
+  assert.deepEqual(parsePublicLibrary(library).announcements[0]?.content, { Shock: announcement.content.value })
+  for (const value of [{ ...announcement.content.value, amplitude_bp: 1 }, { ...announcement.content.value, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "Shock", value } }] }), /content/)
+  assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, event: { ...announcement.content.value } }] }), /event/)
+})
+
+test("已批准现金分红公告严格保留方案与核准总额并校验身份、日期和金额", { timeout: 10_000 }, () => {
+  const plan = { plan_id: "DIV-1", issuer: "C-1", stock: "600101", exchange: "Shanghai", formula: "StandardCashOnly", approved_on: "2030-01-01", announced_on: "2030-01-02", registered_on: "2030-01-02", ex_dividend_on: "2030-01-03", payable_on: "2030-01-03", gross_per_share: "10", distributable_amount: "1000" }
+  const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-02", published_at: { date: "2030-01-03", second_of_day: 0 }, content: { kind: "CashDividend", value: { plan, total_gross: "100" } } }
+  const library = { next_seq: 1, reports: [], announcements: [announcement] }
+  assert.deepEqual(parsePublicLibrary(library).announcements[0]?.content, { CashDividend: announcement.content.value })
+  for (const invalid of [
+    { ...announcement.content.value, plan: { ...plan, issuer: "C-2" } },
+    { ...announcement.content.value, plan: { ...plan, announced_on: "2030-01-01" } },
+    { ...announcement.content.value, total_gross: "0" },
+    { ...announcement.content.value, total_gross: "1001" },
+    { ...announcement.content.value, plan: { ...plan, gross_per_share: "0" } },
+  ]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "CashDividend", value: invalid } }] }), /content/)
 })

@@ -228,7 +228,7 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
       assert.equal(f.ports.playerOrderRefreshGateRef.current.isCurrent(refresh), false); f.calls.push("load");
     };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "history", "orders-clear", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "history", "orders-clear", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
   }
@@ -346,7 +346,7 @@ test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同�
     f.calls.length = 0;
     f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "history", "orders-clear", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "history", "orders-clear", "orders-refresh"]);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/);
   }
 });

@@ -1,4 +1,4 @@
-import type { PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportSummary } from "../types/engine.ts";
+import type { PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportIncomeColumns, PublicReportPage, PublicReportSummary } from "../types/engine.ts";
 
 type Validator = (value: unknown, path: string) => void;
 type Shape = Record<string, Validator>;
@@ -27,6 +27,10 @@ function array(validate: Validator): Validator {
 }
 
 function optional(validate: Validator): Validator {
+  return (value, path) => { if (value !== null) validate(value, path); };
+}
+
+function nullable(validate: Validator): Validator {
   return (value, path) => { if (value !== null) validate(value, path); };
 }
 
@@ -76,11 +80,28 @@ function comparative(available: Validator): Validator {
   return tagged({ Available: available, Unavailable: object({ reason: choice(["NoPriorYearHistory"]) }) });
 }
 
+function incomeColumnsEqual(left: PublicReportIncomeColumns, right: PublicReportIncomeColumns): boolean {
+  const scalarFields = ["operating_subtotal", "investing_subtotal", "financing_subtotal", "discontinued_subtotal", "income_tax", "net_income"] as const;
+  if (scalarFields.some((field) => left[field] !== right[field])) return false;
+  const lineFields = ["operating", "investing", "financing", "discontinued"] as const;
+  return lineFields.every((field) => left[field].length === right[field].length && left[field].every((line, index) => line.subject === right[field][index]?.subject && line.amount === right[field][index]?.amount));
+}
+
 const line = object({ subject: text, amount });
 const lines = array(line);
 const incomeColumns = object({
   operating: lines, investing: lines, financing: lines, discontinued: lines,
   ...amounts(["operating_subtotal", "investing_subtotal", "financing_subtotal", "discontinued_subtotal", "income_tax", "net_income"]),
+});
+const roeUnavailable = ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory", "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent", "ConsolidatedAttributionFactsUnavailable"] as const;
+function rational(value: unknown, path: string): void {
+  const ratio = record(value, path);
+  object({ numerator: (entry, entryPath) => { if (typeof entry !== "string" || !/^(0|-?[1-9]\d*)$/.test(entry)) throw new TypeError(`${entryPath} 必须是规范有符号整数字符串`); }, denominator: (entry, entryPath) => { if (typeof entry !== "string" || !/^[1-9]\d*$/.test(entry)) throw new TypeError(`${entryPath} 必须是规范正整数字符串`); } })(ratio, path);
+}
+const reportRoeValue = tagged({ Available: rational, Unavailable: object({ reason: choice(roeUnavailable) }) });
+const reportRoe = object({
+  basis: (value, path) => { if (value !== "AttributableToOrdinaryShareholders") tagged({ Unsupported: object({ reason: choice(roeUnavailable) }) })(value, path); },
+  ordinary_roe: reportRoeValue, adjusted_roe: reportRoeValue, weighted_average_parent_equity_cents: reportRoeValue,
 });
 const note = object({
   code: text, name: text, target: tagged({ BalanceSheet: text, Income: text }),
@@ -98,13 +119,13 @@ const financials = object({
       lines, ...amounts(["total_assets", "total_liabilities", "total_equity", "equity_to_parent", "liabilities_and_equity"]),
     })),
   }),
-  income: object({ quarter: incomeColumns, cumulative: incomeColumns, prior_year: comparative(incomeColumns), minority_net_income: optional(amount), net_income_to_parent: optional(amount) }),
+  income: object({ report_period: incomeColumns, report_period_net_income_to_parent: nullable(amount), quarter: incomeColumns, cumulative: incomeColumns, prior_year: comparative(incomeColumns), minority_net_income: optional(amount), net_income_to_parent: optional(amount) }),
   cash_flow: object({ ...amounts(["operating", "investing", "financing", "net_change", "opening_cash", "closing_cash"]), indirect: lines }),
   equity: object({
     ...amounts(["opening_parent", "net_income", "other_comprehensive", "capital_contributions", "distributions", "closing_parent"]),
     opening_minority: optional(amount), minority_net_income: optional(amount), closing_minority: optional(amount),
   }),
-  notes: object({ items: array(note), consolidation_split_items: array(note) }),
+  notes: object({ items: array(note), consolidation_split_items: array(note) }), roe: reportRoe,
 });
 const report = object({
   source: choice(["SimpleGenerated", "SimulationAccounting"]),
@@ -112,7 +133,7 @@ const report = object({
   version_sequence: decimalId, supersedes: optional(decimalId), approved_date: date, approved_second_of_day: secondOfDay,
   published_date: date, published_second_of_day: secondOfDay,
   accounting: object({
-    ...amounts(["total_assets", "total_liabilities", "total_equity", "closing_cash", "quarter_net_income", "net_income", "income_tax", "operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "net_cash_change"]),
+    ...amounts(["total_assets", "total_liabilities", "total_equity", "closing_cash", "quarter_net_income", "report_period_net_income", "net_income", "income_tax", "operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "net_cash_change"]),
     prior_year_net_income: comparative(object({ amount })),
   }),
   financials,
@@ -125,12 +146,38 @@ function validateConsistency(value: PublicReportSummary): void {
   const cash = details.cash_flow;
   const summaryValues = {
     total_assets: balance.total_assets, total_liabilities: balance.total_liabilities, total_equity: balance.total_equity,
-    closing_cash: balance.closing_cash, quarter_net_income: income.quarter.net_income, net_income: income.cumulative.net_income,
+    closing_cash: balance.closing_cash, quarter_net_income: income.quarter.net_income, report_period_net_income: income.report_period.net_income, net_income: income.cumulative.net_income,
     income_tax: income.cumulative.income_tax, operating_cash_flow: cash.operating, investing_cash_flow: cash.investing,
     financing_cash_flow: cash.financing, net_cash_change: cash.net_change,
   };
   for (const key of Object.keys(summaryValues) as (keyof typeof summaryValues)[]) {
     if (value.accounting[key] !== summaryValues[key]) throw new TypeError(`WASM 公开报告.accounting.${key} 与已披露四表不一致`);
+  }
+  const flow = income.report_period;
+  const reportPeriodNetIncomeCents = BigInt(flow.operating_subtotal.replace(".", "")) + BigInt(flow.investing_subtotal.replace(".", "")) + BigInt(flow.financing_subtotal.replace(".", "")) + BigInt(flow.discontinued_subtotal.replace(".", "")) - BigInt(flow.income_tax.replace(".", ""));
+  if (reportPeriodNetIncomeCents !== BigInt(flow.net_income.replace(".", ""))) throw new TypeError("WASM 公开报告.financials.income.report_period 净利润与利润小计不一致");
+  const roe = details.roe;
+  if (("Consolidated" in details.scope) !== (income.report_period_net_income_to_parent !== null)) throw new TypeError("WASM 公开报告.financials.income 报告期间归母净利润必须与报告范围一致");
+  if (details.equity.net_income !== (income.report_period_net_income_to_parent ?? flow.net_income)) throw new TypeError("WASM 公开报告.financials.equity.net_income 与报告期间归母净利润不一致");
+  const unavailable = (value: typeof roe.ordinary_roe) => "Unavailable" in value ? value.Unavailable.reason : null;
+  if (typeof roe.basis !== "string") {
+    const reason = roe.basis.Unsupported.reason;
+    if (reason === "NonPositiveAverageEquity" || reason === "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe.basis unsupported reason 不能表示具体 ROE 指标不可用");
+    if ([roe.ordinary_roe, roe.adjusted_roe, roe.weighted_average_parent_equity_cents].some((value) => unavailable(value) !== reason)) throw new TypeError("WASM 公开报告.financials.roe unsupported 口径及不可用原因不一致");
+  } else {
+    if ("Consolidated" in details.scope) throw new TypeError("WASM 公开报告.financials.roe 合并报告缺少归母权益事件明细，不支持 ROE");
+    if (unavailable(roe.adjusted_roe) !== "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe 扣非指标缺少事实时必须明确不可用");
+    if (!("Available" in roe.weighted_average_parent_equity_cents)) throw new TypeError("WASM 公开报告.financials.roe 缺少平均归母权益精确值");
+    const average = roe.weighted_average_parent_equity_cents.Available;
+    const averageNumerator = BigInt(average.numerator);
+    if (averageNumerator <= 0n) {
+      if (unavailable(roe.ordinary_roe) !== "NonPositiveAverageEquity") throw new TypeError("WASM 公开报告.financials.roe 非正平均权益必须明确不可用");
+    } else {
+      if (!("Available" in roe.ordinary_roe)) throw new TypeError("WASM 公开报告.financials.roe 正平均权益下普通 ROE 必须可用");
+      const ordinary = roe.ordinary_roe.Available;
+      const profitCents = BigInt((income.report_period_net_income_to_parent ?? flow.net_income).replace(".", ""));
+      if (BigInt(ordinary.numerator) * averageNumerator !== profitCents * BigInt(average.denominator) * BigInt(ordinary.denominator)) throw new TypeError("WASM 公开报告.financials.roe 普通 ROE 与报告窗口利润及平均归母权益不一致");
+    }
   }
   const prior = income.prior_year;
   const summaryPrior = value.accounting.prior_year_net_income;
@@ -139,9 +186,21 @@ function validateConsistency(value: PublicReportSummary): void {
   }
   const approval = `${value.approved_date} ${value.approved_second_of_day.toString().padStart(5, "0")}`;
   const publication = `${value.published_date} ${value.published_second_of_day.toString().padStart(5, "0")}`;
-  if (details.window_start > details.window_end || details.window_end !== value.period || details.window_end >= value.approved_date || approval > publication) {
+  const periodMonth = Number(value.period.slice(5, 7));
+  const quarterStartMonth = Math.floor((periodMonth - 1) / 3) * 3 + 1;
+  const expectedWindowStart = value.kind === "Monthly"
+    ? `${value.period.slice(0, 7)}-01`
+    : value.kind === "Quarter" && periodMonth % 3 === 0
+      ? `${value.period.slice(0, 4)}-${quarterStartMonth.toString().padStart(2, "0")}-01`
+      : value.kind === "HalfYear" && (periodMonth === 6 || periodMonth === 12)
+        ? `${value.period.slice(0, 4)}-${periodMonth === 6 ? "01" : "07"}-01`
+        : value.kind === "Annual" && periodMonth === 12
+          ? `${value.period.slice(0, 4)}-01-01`
+          : null;
+  if (details.window_start > details.window_end || details.window_end !== value.period || details.window_end >= value.approved_date || approval > publication || details.window_start !== expectedWindowStart) {
     throw new TypeError("WASM 公开报告.financials.window 报告期间不一致或批准/发布时序非法");
   }
+  if ((value.kind === "Quarter" && !incomeColumnsEqual(income.report_period, income.quarter)) || ((value.kind === "HalfYear" || value.kind === "Annual") && !incomeColumnsEqual(income.report_period, income.cumulative))) throw new TypeError("WASM 公开报告.financials.income.report_period 与报告类型窗口不一致");
   if ((details.version_kind === "Original") !== (value.supersedes === null)
     || (details.version_kind === "Original") !== (details.version_supersedes === null)) throw new TypeError("WASM 公开报告.financials.version_kind 更正关系不一致");
   const minority = [income.minority_net_income, income.net_income_to_parent, details.equity.opening_minority, details.equity.minority_net_income, details.equity.closing_minority];

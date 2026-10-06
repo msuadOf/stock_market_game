@@ -89,7 +89,13 @@ test("save snapshot accepts only raw account and market facts", () => {
   const snapshot = save.snapshot as Record<string, unknown>
   const market = (snapshot.markets as Record<string, Record<string, unknown>>)["600101"]
   const account = (snapshot.accounts as Record<string, Record<string, unknown>>)["0"]
-  assert.deepEqual(Object.keys(market ?? {}).sort(), ["last_close", "last_price"])
+  assert.deepEqual(Object.keys(market ?? {}).sort(), [
+    "cash_ex_reference_pending_trade",
+    "day_market_activity",
+    "last_cash_ex_reference",
+    "last_close",
+    "last_price",
+  ])
   assert.deepEqual(Object.keys(account ?? {}).sort(), ["cash", "positions"])
   assert.throws(() => parseSaveSlot({
     ...save,
@@ -122,6 +128,7 @@ test("runtime envelope persists identity and actual charges only", () => {
     charged,
   }
   const runtime = {
+    active_minute_history: {},
     poisoned: false,
     next_receipt_base: "0",
     live_envelopes: [envelope],
@@ -136,6 +143,30 @@ test("runtime envelope persists identity and actual charges only", () => {
       live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: "0", shares: 1 } : 1 }],
     }), new RegExp(`live_envelopes\\[0\\]\\.${field}`))
   }
+})
+
+test("runtime schema accepts a complete Momentum StrategyState payload", () => {
+  const runtime = {
+    active_minute_history: {},
+    poisoned: false,
+    next_receipt_base: "0",
+    live_envelopes: [],
+    retail_projection_seen: [],
+    personal_trade_confirmations: {},
+    strategy_states: {
+      "1": {
+        Momentum: {
+          style: "Momentum",
+          lookback: 2,
+          trend_threshold: "3f847ae147ae147b",
+          order_size: 100,
+          volume_confirmation: "3ff0000000000000",
+          base_observation_probability: "3ff0000000000000",
+        },
+      },
+    },
+  }
+  assert.deepEqual(parseSaveRuntime(runtime), runtime)
 })
 
 test("saved parent plans omit child remaining quantity and reject injected mirrors", () => {
@@ -518,6 +549,7 @@ test("当前存档使用 runtime_state，不含实施代号与版本标记", () 
 
 test("SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签", () => {
   const runtime = {
+    active_minute_history: {},
     poisoned: false, next_receipt_base: "1", live_envelopes: [], strategy_states: {},
     retail_projection_seen: [{ ...validReceipt(), local_key: { ...validReceipt().local_key as object, source: { QuoteExpiry: 7 } } }],
     personal_trade_confirmations: {},

@@ -15,6 +15,7 @@ export function publicReportGold(): PublicReportSummary {
     accounting: {
       total_assets: "1620.00", total_liabilities: "532.00", total_equity: "1088.00", closing_cash: "1620.00",
       quarter_net_income: "88.00", net_income: "88.00", income_tax: "22.00", operating_cash_flow: "120.00",
+      report_period_net_income: "88.00",
       investing_cash_flow: "0.00", financing_cash_flow: "500.00", net_cash_change: "620.00",
       prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } },
     },
@@ -35,9 +36,16 @@ export function publicReportGold(): PublicReportSummary {
         } },
       },
       income: {
-        quarter: structuredClone(columns), cumulative: structuredClone(columns),
+        report_period: structuredClone(columns), quarter: structuredClone(columns), cumulative: structuredClone(columns),
+        report_period_net_income_to_parent: null,
         prior_year: { Unavailable: { reason: "NoPriorYearHistory" as const } },
         minority_net_income: null, net_income_to_parent: null,
+      },
+      roe: {
+        basis: "AttributableToOrdinaryShareholders",
+        ordinary_roe: { Available: { numerator: "8800", denominator: "104400" } },
+        adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } },
+        weighted_average_parent_equity_cents: { Available: { numerator: "104400", denominator: "1" } },
       },
       cash_flow: {
         operating: "120.00", investing: "0.00", financing: "500.00", net_change: "620.00",

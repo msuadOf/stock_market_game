@@ -46,6 +46,61 @@ test("公开报告拒绝摘要与四表跨层漂移，以及单体少数股东�
   assert.throws(() => normalizePublicReportById(minority), /scope.*少数股东/);
 });
 
+test("公开报告要求真实窗口净利润和一致的 ROE ratio，不让错误值流入消费者", () => {
+  const wrongPeriodSummary = publicReportGold();
+  wrongPeriodSummary.accounting.report_period_net_income = "87.00";
+  assert.throws(() => normalizePublicReportById(wrongPeriodSummary), /report_period_net_income.*不一致/);
+  const wrongRoe = publicReportGold();
+  wrongRoe.financials.roe.ordinary_roe = { Available: { numerator: "8801", denominator: "104400" } };
+  assert.throws(() => normalizePublicReportById(wrongRoe), /普通 ROE.*不一致/);
+  const missingAdjustedFacts = publicReportGold();
+  missingAdjustedFacts.financials.roe.adjusted_roe = { Available: { numerator: "0", denominator: "1" } };
+  assert.throws(() => normalizePublicReportById(missingAdjustedFacts), /扣非指标.*不可用/);
+  for (const reason of ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts"] as const) {
+    const invalidUnsupportedBasis = publicReportGold();
+    invalidUnsupportedBasis.financials.roe = {
+      basis: { Unsupported: { reason } }, ordinary_roe: { Unavailable: { reason } },
+      adjusted_roe: { Unavailable: { reason } }, weighted_average_parent_equity_cents: { Unavailable: { reason } },
+    };
+    assert.throws(() => normalizePublicReportById(invalidUnsupportedBasis), /basis.*unsupported reason/);
+  }
+});
+
+test("报告期间归母净利润必须是同窗值且仅合并口径提供", () => {
+  const standalone = publicReportGold();
+  Object.assign(standalone.financials.income, { report_period_net_income_to_parent: "88.00" });
+  assert.throws(() => normalizePublicReportById(standalone), /报告期间归母净利润必须与报告范围一致/);
+  const consolidated = publicReportGold();
+  Object.assign(consolidated.financials, { scope: { Consolidated: { root_entity_id: "C-600101" } } });
+  Object.assign(consolidated.financials.income, { report_period_net_income_to_parent: "88.00", minority_net_income: "0.00", net_income_to_parent: "88.00" });
+  Object.assign(consolidated.financials.equity, { opening_minority: "0.00", minority_net_income: "0.00", closing_minority: "0.00" });
+  assert.throws(() => normalizePublicReportById(consolidated), /合并报告.*不支持 ROE/);
+  const validConsolidated = publicReportGold();
+  Object.assign(validConsolidated.financials, { scope: { Consolidated: { root_entity_id: "C-600101" } } });
+  Object.assign(validConsolidated.financials.income, { report_period_net_income_to_parent: "88.00", minority_net_income: "0.00", net_income_to_parent: "88.00" });
+  Object.assign(validConsolidated.financials.equity, { opening_minority: "0.00", minority_net_income: "0.00", closing_minority: "0.00" });
+  Object.assign(validConsolidated.financials.roe, {
+    basis: { Unsupported: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+    ordinary_roe: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+    adjusted_roe: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+    weighted_average_parent_equity_cents: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+  });
+  assert.doesNotThrow(() => normalizePublicReportById(validConsolidated));
+  const wrongWindow = structuredClone(validConsolidated);
+  Object.assign(wrongWindow.financials.income, { report_period_net_income_to_parent: "87.00" });
+  assert.throws(() => normalizePublicReportById(wrongWindow), /equity.net_income.*不一致/);
+});
+
+test("利润表窗口按公开报告实际期间显示并和季度窗口一致", () => {
+  const wrongWindow = publicReportGold();
+  wrongWindow.financials.window_start = "2030-02-01";
+  assert.throws(() => normalizePublicReportById(wrongWindow), /window.*报告期间/);
+  const wrongQuarterFlow = publicReportGold();
+  wrongQuarterFlow.financials.income.quarter.net_income = "89.00";
+  wrongQuarterFlow.accounting.quarter_net_income = "89.00";
+  assert.throws(() => normalizePublicReportById(wrongQuarterFlow), /report_period.*报告类型窗口/);
+});
+
 test("公开报告拒绝不存在日期、未结束窗口与更正关系漂移", () => {
   const invalidDate = publicReportGold();
   invalidDate.approved_date = "2030-02-30";

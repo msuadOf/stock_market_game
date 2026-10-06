@@ -18,5 +18,7 @@ test("day-end candidate matches both completed civil date and committed sequence
   assert.deepEqual(validateDayEndCandidate(candidate(), reference), candidate());
   assert.throws(() => validateDayEndCandidate(candidate(), { ...reference, seq: 2 }), /日终候选不属于/);
   assert.throws(() => validateDayEndCandidate(candidate(), { ...reference, settledDate: "2030-01-02" }), /日终候选不属于/);
-  assert.throws(() => validateDayEndCandidate(currentSaveFixture(), reference), /日终候选不属于/);
+  const uncommitted = currentSaveFixture();
+  (uncommitted.snapshot as Record<string, unknown>).seq = 0;
+  assert.throws(() => validateDayEndCandidate(uncommitted, reference), /日终候选不属于/);
 });
