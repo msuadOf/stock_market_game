@@ -571,7 +571,36 @@ fn validate_ledger_evidence(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
 fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
     #[cfg(test)]
     EVIDENCE_VALIDATION_COUNT.with(|count| count.set(count.get() + 1));
-    ledger_conservation::validate(ledger)?;
+    let dense_checked = if ledger.envelopes.len() >= 512
+        || ledger.terminal_envelopes.len() >= 512 - ledger.envelopes.len()
+    {
+        let rows: Vec<_> = ledger
+            .envelopes
+            .iter()
+            .chain(ledger.terminal_envelopes.iter())
+            .collect();
+        let checked = ledger_conservation::map_rows(&rows, |(key, envelope)| {
+            let state = ledger
+                .conservation
+                .get(key)
+                .ok_or_else(|| ledger_validation::invariant("missing conservation row"))?;
+            let totals = ledger_conservation::check_row(envelope, state)?;
+            // evidence 首错先保存；原序守恒和 checked 全局汇总优先报告。
+            Ok((
+                totals,
+                validate_ledger_evidence_row_with_conservation(ledger, key, envelope, Some(state)),
+            ))
+        });
+        ledger_conservation::validate_checked_rows(
+            checked
+                .iter()
+                .map(|result| result.as_ref().map(|row| row.0).map_err(Clone::clone)),
+        )?;
+        Some(checked)
+    } else {
+        ledger_conservation::validate(ledger)?;
+        None
+    };
     if ledger
         .envelopes
         .values()
@@ -600,7 +629,11 @@ fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), Step
             "ledger evidence rows do not match envelope rows",
         ));
     }
-    if expected_rows < 512 {
+    if let Some(checked) = dense_checked {
+        for result in checked {
+            result?.1?;
+        }
+    } else {
         for (key, envelope) in ledger
             .envelopes
             .iter()
@@ -608,18 +641,6 @@ fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), Step
         {
             validate_ledger_evidence_row(ledger, key, envelope)?;
         }
-        return Ok(());
-    }
-    let rows: Vec<_> = ledger
-        .envelopes
-        .iter()
-        .chain(ledger.terminal_envelopes.iter())
-        .map(|(key, envelope)| (key, envelope))
-        .collect();
-    for row in ledger_conservation::map_rows(&rows, |(key, envelope)| {
-        validate_ledger_evidence_row(ledger, key, envelope)
-    }) {
-        row?;
     }
     Ok(())
 }
@@ -628,6 +649,20 @@ fn validate_ledger_evidence_row(
     ledger: &EnvelopeLedger,
     key: &EnvelopeKey,
     envelope: &Envelope,
+) -> Result<(), StepFatal> {
+    validate_ledger_evidence_row_with_conservation(
+        ledger,
+        key,
+        envelope,
+        ledger.conservation.get(key),
+    )
+}
+
+fn validate_ledger_evidence_row_with_conservation(
+    ledger: &EnvelopeLedger,
+    key: &EnvelopeKey,
+    envelope: &Envelope,
+    conservation: Option<&ConservationState>,
 ) -> Result<(), StepFatal> {
     envelope.validate()?;
     if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
@@ -640,7 +675,7 @@ fn validate_ledger_evidence_row(
             "envelope audit row disagrees with envelope",
         ));
     }
-    if !ledger.conservation.contains_key(key) {
+    if conservation.is_none() {
         return Err(ledger_validation::invariant(
             "envelope has no conservation row",
         ));

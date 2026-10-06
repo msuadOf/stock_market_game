@@ -8,8 +8,13 @@ use rayon::prelude::*;
 const PARALLEL_ROW_THRESHOLD: usize = 512;
 const ROW_CHUNK_SIZE: usize = 64;
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static ROW_MAPPING_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy)]
-struct RowTotals {
+pub(super) struct RowTotals {
     basis: ConservationBasis,
     sealed_spent: ResVec,
     sealed_released: ResVec,
@@ -45,16 +50,7 @@ pub(super) fn record_state(
 pub(super) fn validate_owned_rows(
     rows: &[(&Envelope, &ConservationState)],
 ) -> Result<(), StepFatal> {
-    let checked = map_rows(rows, |(envelope, state)| {
-        let row = row(envelope, state)?;
-        row.validate_with_preseal(state.expiry_released)?;
-        Ok(RowTotals {
-            basis: row.basis,
-            sealed_spent: row.sealed_spent,
-            sealed_released: row.sealed_released,
-            commit_live: row.commit_live,
-        })
-    });
+    let checked = map_rows(rows, |(envelope, state)| check_row(envelope, state));
     let mut totals = [ResVec::ZERO; 5];
     for row in checked {
         accumulate_totals(&mut totals, row?)?;
@@ -103,14 +99,7 @@ pub(super) fn validate_with_observer(
             .conservation
             .get(key)
             .ok_or_else(|| super::ledger_validation::invariant("missing conservation row"))?;
-        let row = row(envelope, state)?;
-        row.validate_with_preseal(state.expiry_released)?;
-        Ok(RowTotals {
-            basis: row.basis,
-            sealed_spent: row.sealed_spent,
-            sealed_released: row.sealed_released,
-            commit_live: row.commit_live,
-        })
+        check_row(envelope, state)
     });
 
     for row in validated {
@@ -124,6 +113,32 @@ pub(super) fn validate_with_observer(
                 commit_live: row.commit_live,
             },
         )?;
+    }
+    validate_aggregate(totals)
+}
+
+/// 单行方程仍使用原 ConservationRow；完整门禁复用结果，不重复创建并行映射。
+pub(super) fn check_row(
+    envelope: &Envelope,
+    state: &ConservationState,
+) -> Result<RowTotals, StepFatal> {
+    let row = row(envelope, state)?;
+    row.validate_with_preseal(state.expiry_released)?;
+    Ok(RowTotals {
+        basis: row.basis,
+        sealed_spent: row.sealed_spent,
+        sealed_released: row.sealed_released,
+        commit_live: row.commit_live,
+    })
+}
+
+/// 按原始源序执行 checked 汇总；较早总额溢出仍先于较晚行错误。
+pub(super) fn validate_checked_rows(
+    rows: impl IntoIterator<Item = Result<RowTotals, StepFatal>>,
+) -> Result<(), StepFatal> {
+    let mut totals = [ResVec::ZERO; 5];
+    for row in rows {
+        accumulate_totals(&mut totals, row?)?;
     }
     validate_aggregate(totals)
 }
@@ -178,6 +193,8 @@ where
     T: Sync,
     R: Send,
 {
+    #[cfg(test)]
+    ROW_MAPPING_PASSES.with(|count| count.set(count.get() + 1));
     if rows.len() < PARALLEL_ROW_THRESHOLD {
         return rows.iter().map(validate_row).collect();
     }

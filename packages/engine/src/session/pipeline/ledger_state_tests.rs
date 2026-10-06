@@ -1088,3 +1088,81 @@ fn rebase_proof_handles_exact_cash_share_totals_and_all_terminal_removal() {
     );
     assert_eq!(ledger, EnvelopeLedger::new(42, []).unwrap());
 }
+
+#[test]
+fn dense_complete_evidence_uses_one_parallel_row_mapping_without_changing_the_ledger() {
+    let rows = (0..513).map(|index| {
+        let mut envelope_key = key();
+        envelope_key.account = crate::AccountId(index);
+        envelope_key.order = crate::OrderId(index);
+        existing(envelope_key, Money::from_cents(1))
+    });
+    let ledger = EnvelopeLedger::new(0, rows).unwrap();
+    let before = ledger.clone();
+    super::ledger_conservation::ROW_MAPPING_PASSES.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    super::ledger_conservation::ROW_MAPPING_PASSES.with(|count| {
+        assert_eq!(
+            count.get(),
+            1,
+            "完整门禁应在一轮并行映射中保留守恒和证据校验，避免重复枚举与等待"
+        )
+    });
+    assert_eq!(ledger, before);
+}
+
+#[test]
+fn complete_evidence_defers_early_audit_error_until_conservation_resources_and_shape_pass() {
+    for count in [511, 512, 513] {
+        let rows = (0..count).map(|index| {
+            let mut envelope_key = key();
+            envelope_key.account = crate::AccountId(index);
+            envelope_key.order = crate::OrderId(index);
+            existing(envelope_key, Money::from_cents(1))
+        });
+        let source = EnvelopeLedger::new(0, rows).unwrap();
+        let first = source.envelopes.keys().next().unwrap().clone();
+        let last = source.envelopes.keys().next_back().unwrap().clone();
+        for fault in 0..4 {
+            let mut ledger = source.clone();
+            ledger.audits.get_mut(&first).unwrap().limit = Money::from_cents(2);
+            let description = match fault {
+                0 => {
+                    ledger.conservation.remove(&last);
+                    "missing conservation row"
+                }
+                1 => {
+                    ledger
+                        .envelopes
+                        .insert(last.clone(), existing(last.clone(), Money::ZERO));
+                    "live envelope row has no live resources"
+                }
+                2 => {
+                    let envelope = ledger.envelopes.remove(&last).unwrap();
+                    ledger.terminal_envelopes.insert(last.clone(), envelope);
+                    "terminal envelope row still has live resources"
+                }
+                3 => {
+                    ledger.audits.remove(&last);
+                    "ledger evidence rows do not match envelope rows"
+                }
+                _ => unreachable!(),
+            };
+            let before = ledger.clone();
+            for threads in [1, 4] {
+                let error = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap()
+                    .install(|| ledger.validate_complete_evidence())
+                    .unwrap_err();
+                assert_eq!(
+                    error,
+                    super::ledger_validation::invariant(description),
+                    "{count}行/{threads}worker/fault{fault}应保留全门禁错误优先级"
+                );
+                assert_eq!(ledger, before);
+            }
+        }
+    }
+}
