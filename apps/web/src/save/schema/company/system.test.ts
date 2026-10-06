@@ -13,9 +13,9 @@ function fixture() {
   return {
     issuers: { "C-600101": { id: "C-600101", name: "虚拟公司", industry: "listed-simple", kind: "Industrial", listed_stock: "600101", issued_shares: "1000", group_parent: null } },
     implementation: { mode: "Simple", state: {
-      config: { environment: { initial_change_bp: 0, persistence_bp: 0, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } }, companies: [{ company: "C-600101", kind: "Industrial", generation: { initial_revenue: "1000.00", initial_fixed_expense: "300.00", revenue_trend: { kind: "Fixed", annual_growth_bp: 0 }, demand_sensitivity_bp: 0, revenue_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, fixed_expense_trend: { kind: "Fixed", annual_growth_bp: 0 }, fixed_expense_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, variable_expense: { rule: "RevenueRatio", ratio_bp: 4000, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } } }, finance: financeConfig }], prehistory_periods: 0, settlement_cycle: "Monthly" },
+      config: { environment: { initial_change_bp: 0, persistence_bp: 0, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } }, companies: [{ company: "C-600101", kind: "Industrial", generation: { initial_revenue: "1000.00", initial_fixed_expense: "300.00", revenue_trend: { kind: "Fixed", annual_growth_bp: 0 }, demand_sensitivity_bp: 0, revenue_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, fixed_expense_trend: { kind: "Fixed", annual_growth_bp: 0 }, fixed_expense_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, variable_expense: { rule: "RevenueRatio", ratio_bp: 4000, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } } }, finance: financeConfig, preferences: { cash_dividend: null, stock_distribution: null } }], prehistory_periods: 0, settlement_cycle: "Monthly" },
       history_start: "2030-01-01", advanced_through: "2030-01-31", environment_change_bp: 0, environment_rng: { state: "18446744073709551615" },
-      companies: { "C-600101": { generation: { amounts, rng: { state: "19" }, revenue_trend: { annual_growth_bp: 0, remaining_months: 0 }, fixed_expense_trend: { annual_growth_bp: 0, remaining_months: 0 }, variable_expense_trend: null }, finance: { company: "C-600101", kind: "Industrial", config: financeConfig, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "2", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, stock_distributions: {}, legal_facts: null }, pending_restart: null } },
+      companies: { "C-600101": { generation: { amounts, rng: { state: "19" }, revenue_trend: { annual_growth_bp: 0, remaining_months: 0 }, fixed_expense_trend: { annual_growth_bp: 0, remaining_months: 0 }, variable_expense_trend: null }, finance: { company: "C-600101", kind: "Industrial", config: financeConfig, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "2", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, stock_distributions: {}, legal_facts: null }, pending_restart: null, preference_ledger: { rejections: [] } } },
       history: [{ company: "C-600101", period_start: "2030-01-01", period_end: "2030-01-31", amounts, explanation: { previous: amounts, cycle: "Monthly", environment_change_bp: 0, demand_contribution_bp: 0, revenue_segments: [{ annual_growth_bp: 0, months: 1 }], fixed_expense_segments: [{ annual_growth_bp: 0, months: 1 }], variable_expense_segments: [], revenue_noise_bp: 0, fixed_expense_noise_bp: 0, variable_expense_noise_bp: 0, restart_revenue: null, restart_source: null } }],
     } },
   };
@@ -24,7 +24,7 @@ function fixture() {
 test("Simple 保存月度金额与独立汇总财务，不保存旧指标或客户仿真", { timeout: 10000 }, () => { assert.deepEqual(parseCompanySystemState(fixture()), fixture()); });
 
 test("Simple 拒绝缺失 nullable、旧字段和不匹配模式", { timeout: 10000 }, () => {
-  for (const key of ["pending_restart", "generation", "finance"]) {
+  for (const key of ["pending_restart", "generation", "finance", "preference_ledger"]) {
     const value = fixture(); Reflect.deleteProperty(value.implementation.state.companies["C-600101"], key);
     assert.throws(() => parseCompanySystemState(value), new RegExp(key));
   }
@@ -33,6 +33,52 @@ test("Simple 拒绝缺失 nullable、旧字段和不匹配模式", { timeout: 10
     assert.throws(() => parseCompanySystemState(value), new RegExp(field));
   }
   const other = fixture(); Reflect.set(other.implementation, "mode", "Simulation"); assert.throws(() => parseCompanySystemState(other), /模式/);
+});
+
+test("公司行为偏好按严格域解析：缺失、越域与非正门槛显式拒绝", { timeout: 10000 }, () => {
+  const withCash = fixture();
+  (withCash.implementation.state.config.companies[0] as { preferences: unknown }).preferences = {
+    cash_dividend: { target_payout_bp: 3000, min_distributable_profit: "100", cycles_between_proposals: 1 },
+    stock_distribution: { min_distributable_profit: "1000", shares_per_existing_share_micros: 100000, max_cumulative_expansion_micros: 1000000, cycles_between_proposals: 2 },
+  };
+  assert.deepEqual(parseCompanySystemState(withCash), withCash);
+  const missing = fixture();
+  Reflect.deleteProperty(missing.implementation.state.config.companies[0], "preferences");
+  assert.throws(() => parseCompanySystemState(missing), /preferences/);
+  for (const [name, preferences] of [
+    ["零派息比例", { cash_dividend: { target_payout_bp: 0, min_distributable_profit: "100", cycles_between_proposals: 1 }, stock_distribution: null }],
+    ["超上限派息比例", { cash_dividend: { target_payout_bp: 10001, min_distributable_profit: "100", cycles_between_proposals: 1 }, stock_distribution: null }],
+    ["零门槛", { cash_dividend: { target_payout_bp: 3000, min_distributable_profit: "0", cycles_between_proposals: 1 }, stock_distribution: null }],
+    ["零间隔周期", { cash_dividend: { target_payout_bp: 3000, min_distributable_profit: "100", cycles_between_proposals: 0 }, stock_distribution: null }],
+    ["零送转比例", { cash_dividend: null, stock_distribution: { min_distributable_profit: "1", shares_per_existing_share_micros: 0, max_cumulative_expansion_micros: 1000000, cycles_between_proposals: 1 } }],
+  ] as const) {
+    const value = fixture();
+    (value.implementation.state.config.companies[0] as { preferences: unknown }).preferences =
+      structuredClone(preferences);
+    assert.throws(() => parseCompanySystemState(value), new RegExp(name === "零送转比例" ? "shares_per_existing_share_micros" : name === "零门槛" ? "min_distributable_profit" : name === "零间隔周期" ? "cycles_between_proposals" : "target_payout_bp"), `${name} 必须被拒绝`);
+  }
+});
+
+test("偏好提案拒绝台账要求键唯一、日期合法与身份一致", { timeout: 10000 }, () => {
+  const rejection = { company: "C-600101", evaluated_on: "2030-01-31", kind: "CashDividend", detail: "决议总额超过已核定的 Simple 可分配利润" };
+  const setLedger = (value: ReturnType<typeof fixture>, rejections: unknown[]) => {
+    (value.implementation.state.companies["C-600101"] as { preference_ledger: unknown }).preference_ledger = { rejections };
+  };
+  const withRejection = fixture();
+  setLedger(withRejection, [structuredClone(rejection)]);
+  assert.deepEqual(parseCompanySystemState(withRejection), withRejection);
+  const duplicate = fixture();
+  setLedger(duplicate, [structuredClone(rejection), { ...rejection, detail: "另一原因" }]);
+  assert.throws(() => parseCompanySystemState(duplicate), /重复/);
+  const future = fixture();
+  setLedger(future, [{ ...rejection, evaluated_on: "2030-02-01" }]);
+  assert.throws(() => parseCompanySystemState(future), /已推进日/);
+  const foreign = fixture();
+  setLedger(foreign, [{ ...rejection, company: "C-Other" }]);
+  assert.throws(() => parseCompanySystemState(foreign), /公司身份与所属公司状态不一致/);
+  const unknownKind = fixture();
+  setLedger(unknownKind, [{ ...rejection, kind: "Rights" }]);
+  assert.throws(() => parseCompanySystemState(unknownKind), /kind/);
 });
 
 test("Simple 交叉核验发行人、月史连续性、最新状态和日期", { timeout: 10000 }, () => {

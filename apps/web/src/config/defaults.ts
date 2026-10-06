@@ -79,6 +79,9 @@ function simpleCompany(code: string, revenueGrowth: number, fixedExpenseGrowth: 
       tax_policy: { version: 1, vat: { output_rate_bp: 1300, input_rate_bp: 1300, deductible_share_bp: 10000 }, income_tax: { rate_bp: 2500, loss_carryforward_years: 5 } },
       summary_rule: "ReceivableRevenuePayableExpenses" as const,
     },
+    // 默认新局不配置任何公司行为偏好（ADR-0037：未配置=不自动产生方案，
+    // 安全默认；偏好配置 UI 入口归后续批次）。
+    preferences: { cash_dividend: null, stock_distribution: null },
   };
 }
 
