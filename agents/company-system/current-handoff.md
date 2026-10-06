@@ -30,17 +30,20 @@
 | 现金贷记、披露 ROE 一般公式与股份登记精度 | Account 5 项、法定 ROE 一般公式 13 项、股份登记含 i128 边界 15 项通过；非作者限定复核通过 | `.tmp/company-system/session-actions/fresh-0.log`、`fresh-1.log`、`review-fix-0.log` |
 | 开局股价反推虚拟基本面与预览消费 | 14 项通过，覆盖四周期、seed 边界、PE/PB 舍入勾稽、编辑保留；不保证开盘无涨跌 | `.tmp/company-system/session-actions/seed-price-confirmation.log` |
 | 现金分红候选接线与严格存档增量 | Finance 18 项、Session Simple 14 项通过；正规 typegen 135 项通过。完整披露、税务及宿主操作仍未完成 | `.tmp/company-system/session-actions/connected-0.log`、`connected-1.log`、`typegen-review-fix.log` |
+| 报告窗口及公开披露 ROE 接线 | 报告期间 10 项、公式适配 3 项、官方一般公式 13 项、合并窗口 10 项、公开投影 5 项通过；新类型正规导出 140 项通过 | `.tmp/company-system/session-actions/final-period.log`、`final-report-adapter.log`、`latest-official-roe.log`、`final-consolidated.log`、`public-projection-assert-green.log`、`latest-typegen-shard-*.log` |
+| 现金分红公开公告与本人信息不足 | Session Simple 16 项、信息交付 10 项、中期材料及到期 1 项通过；合法缺年报不阻断中期获知，损坏引用仍回滚 | `.tmp/company-system/session-actions/final-announcements.log`、`legal-monthly-final-green.log`、`final-interim.log` |
+| 送转分配基础与回购专户来源 | Registry 21 项、分配算法 9 项、Web 严格来源解析 11 项通过；尚非实际送转结算 | `.tmp/company-system/session-actions/final-registry.log`、`final-allocation.log`、`latest-web-registry-green.log` |
 
 本机旧 Corepack 直接启动 pnpm 时失败，原日志保留于 `.tmp/checklist-wave4/host75-frontend-build.log`；实际构建使用 Node 启动已缓存的同版 pnpm 11.19.0，之后仍运行原 WASM／Web 构建和发布产物检查步骤。没有修改系统工具或用失败结果冒充通过。
 
-新增定向检查也暴露了尚未迁移的手工 `currentSaveFixture`：`save-schema-contract.test.ts` 仍因缺少严格必填的 `company_system` 失败，日志为 `.tmp/company-system/session-actions/legacy-fixture-contract-limit.log`。正式 Engine 生成存档的解析通过不能替代这份测试；修复时须提供完整当前事实，不做兼容填充或弱化断言。共享 Protocol fixture 的 MarketSnap 新字段遗漏已单独补齐，`protocol-parse` 与 `protocol-runtime-store` 重跑 14 项通过，证据为 `.tmp/company-system/session-actions/protocol-anchor-verified.log`。
+手工 `currentSaveFixture` 已迁移为当前 release Engine 正规生成的最小日终档；主档、休市档与最小档均由真实创建、日结和恢复／重存验证生成。三份完整新契约档经 Web `parseSaveSlot` 解析后与原 JSON 深度相等，证据为 `.tmp/company-system/session-actions/final-generated-three-strict.log`；不做兼容填充或手补 JSON。早先缺 `company_system` 的失败日志 `legacy-fixture-contract-limit.log` 保留作为迁移前证据，不代表当前档状态。独立手写 schema fixture 的迁移与各消费者短测仍按[迁移记录](current-save-fixture-migration.md)核验，不能以完整档解析替代全部消费者验证。共享 Protocol fixture 的 MarketSnap 新字段遗漏已单独补齐，`protocol-parse` 与 `protocol-runtime-store` 重跑 14 项通过，证据为 `.tmp/company-system/session-actions/protocol-anchor-verified.log`。
 
 主存档与休市存档由 release Engine 正规生成，验证真实恢复深等；主场景另验证恢复前后继续三个 frame 都产生真实 NPC 受理。没有手补 JSON。旧经济轨迹的密封 hash、长期回归、Windows／macOS runtime 及完整浏览器验收不在本批通过范围。
 
 ## 未完成边界
 
-共同股本行为仍未完整交付。当前候选接线已在显式登记名册、法定事实与获批现金方案下验证 Session 真实税前到账、公司应付清偿及同日合计除息锚；失败不提交部分状态，重复执行不重复到账或扣减除息参考价。现金分红尚缺公开公告/NPC 获知、实际股息税收缴及宿主/UI 操作入口，到账事实明确标为 `TreatmentNotConfigured`，不能称为税后结清。默认开局名册与税务身份未定，公司行为偏好、自动方案、送转、配股、增发和回购仍未完成，`cash_settlement=false` 不因底层测试通过而改为完整可用。获批特殊除息调整仍明确拒绝，基础计算及候选接线分别见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)。
+共同股本行为仍未完整交付。当前候选接线已在显式登记名册、法定事实与获批现金方案下验证 Session 真实税前到账、公司应付清偿及同日合计除息锚；失败不提交部分状态，重复执行不重复到账或扣减除息参考价。公开 typed 分红公告、NPC 本人获知和公告／批准财务金额恢复勾稽已接通；实际股息税收缴及宿主/UI 操作入口仍缺，到账事实明确标为 `TreatmentNotConfigured`，不能称为税后结清。默认开局名册与税务身份未定，公司行为偏好、自动方案、送转实际登记、配股、增发和回购仍未完成，`cash_settlement=false` 不因分配算法或底层测试通过而改为完整可用。获批特殊除息调整仍明确拒绝，基础计算及候选接线分别见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)。
 
-`cash_dividend` 提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；状态机本身只记录付款执行者返回的事实，实际账户贷记由 Session 候选事务执行。恢复显式提供日历调用 `validate_with_calendar`，不默认补齐日历，并校验 Book、公司应付凭证、实际到账及除息锚的跨域对应，详见[分红基础复核](cash-dividend-book-review.md)与[财务接线复核](simple-dividend-finance-review.md)。`accounting::period_roe` 仍是同范围、同权益归属的时间加权分析基础，不冒充法定披露 ROE；新增 `accounting::disclosure_roe` 只实现证监会规则9一般公式，同一控制合并/比较期间特殊处理及报表消费者尚未接通，详见[期间权益分析复核](period-roe-review.md)与[法定一般公式复核](official-roe-review.md)。
+`cash_dividend` 提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；状态机本身只记录付款执行者返回的事实，实际账户贷记由 Session 候选事务执行。恢复显式提供日历调用 `validate_with_calendar`，不默认补齐日历，并校验 Book、公司应付凭证、实际到账及除息锚的跨域对应，详见[分红基础复核](cash-dividend-book-review.md)与[财务接线复核](simple-dividend-finance-review.md)。`accounting::period_roe` 仍是同范围、同权益归属的时间加权分析基础，不冒充法定披露 ROE；`accounting::disclosure_roe` 一般公式已进入真实报告窗口、公开 DTO 与 Web 报表消费。同一控制合并／比较期间特殊处理、合并归属逐项权益事件及扣非事实仍明确不可用，详见[期间权益分析复核](period-roe-review.md)、[法定一般公式复核](official-roe-review.md)与[报告接线复核](simple-report-roe-review.md)。合法本人中期资料缺同范围年报及其到期不再阻断日结；损坏材料引用仍失败回滚。合法信用违约公告缺本人年报的路径尚未修复，见[个人信息边界审计](missing-annual-belief-audit.md)。
 
 完整经营、客户有限现金和行业业务由后续 `company/simulation/` 分支实现。旧集团／冲击经营 Session 的特定集成原文已归档；现有独立账务用例不等于这些旧接线仍存在或全部已验收。具体状态按[实施清单](implementation-checklist.md)和[历史审计总账](../implementation-audit/implementation-audit-2026-10-02.md)继续推进，不从归档或编译成功推断全部功能完成。

@@ -18,9 +18,9 @@
 
 ### 1. 盘清身份与复用边界
 
-- **1.1（清单第 28 行）—部分实现。** `CompanyId`、发行人身份映射和股本匹配已有 `packages/engine/src/company/identity.rs`、`packages/engine/src/company/spec.rs` 及 `packages/engine/src/company/system.rs`。但旧实体 `Company` / `CompanyConfig` 仍在 `packages/engine/src/company/mod.rs` 强制持有 `Books`、`CounterpartyLedger`、`ContractBook`、`OperatingBudget`；共同跨模式公司行为也没有实现。短测证据：`packages/engine/src/session/company_simple_session_tests.rs` 的身份、显式 `CompanyKind`、缺失/重复配置与股份匹配相关用例。结论只覆盖身份基础，不覆盖解耦及共同行为。
-- **1.4（第 31 行）—财务部分已实现，公司行为复用仍缺。** 唯一账簿和报表算法由 `packages/engine/src/accounting/` 提供；Simple 财务使用 `Books`、`income_tax` 和 report generator，见 `packages/engine/src/company/simple/finance.rs`、`finance_posting.rs`。`ShareRegistry` 提供股份登记，不提供分红/认购/回购完整执行，见 `packages/engine/src/company/share_registry.rs`。因此会计算法未见 Simple 复制，但“识别并复用共同股本行为实现”仍缺。
-- **1.5（第 32 行）—真实缺口。** Q14 说明的持久设计入口仍为 `packages/engine/src/company/economy/system_sim/README.md` 与 `DESIGN.md`；新父目录接口虽已有代码，设计入口迁移、引用修正和旧入口删除尚未完成。该项不是 Simulation 分支阻塞，而是文档路径迁移项。
+- **“复用 `CompanyId`、发行人映射、股份数量及真正跨模式的公司行为规则；盘点当前 `Company`／`CompanyConfig` 对账簿、合同、对手方和预算的强耦合”（清单第 28 行）—部分实现。** `CompanyId`、发行人身份映射和股本匹配已有 `packages/engine/src/company/identity.rs`、`packages/engine/src/company/spec.rs` 及 `packages/engine/src/company/system.rs`。但旧实体 `Company` / `CompanyConfig` 仍在 `packages/engine/src/company/mod.rs` 强制持有 `Books`、`CounterpartyLedger`、`ContractBook`、`OperatingBudget`；共同跨模式公司行为也没有实现。短测证据：`packages/engine/src/session/company_simple_session_tests.rs` 的身份、显式 `CompanyKind`、缺失/重复配置与股份匹配相关用例。结论只覆盖身份基础，不覆盖解耦及共同行为。
+- **“继续由 `accounting` 实现唯一账簿、税务、报表算法；识别股本登记/公司行为实现中的可复用逻辑并避免复制”（清单第 31 行）—财务部分已实现，公司行为复用仍缺。** 唯一账簿和报表算法由 `packages/engine/src/accounting/` 提供；Simple 财务使用 `Books`、`income_tax` 和 report generator，见 `packages/engine/src/company/simple/finance.rs`、`finance_posting.rs`。`ShareRegistry` 提供股份登记，不提供分红/认购/回购完整执行，见 `packages/engine/src/company/share_registry.rs`。因此会计算法未见 Simple 复制，但“识别并复用共同股本行为实现”仍缺。
+- **“按新蓝图迁移持久设计入口及调用方时，修正引用并删除旧入口；不保留长期兼容别名”（清单第 32 行）—审计快照时缺口；本轮迁移待独立 review。** 在本记录的审计基准 `edd435a81cad6aeb561ce630a0f9eb00ee254322`，Q14 指向的持久设计入口仍为 `packages/engine/src/company/economy/system_sim/README.md` 与 `DESIGN.md`。后续清单/工作区已记录迁移；本记录不据此历史快照结论判断当前入口状态，迁移是否完成应以独立复核为准。
 
 ### 2. 定义共同契约
 
@@ -33,9 +33,9 @@
 
 ### 3. 实现 SimpleFundamentals 收入费用与汇总财务
 
-- **3.3（第 47 行）—部分实现。** `packages/engine/src/company/simple/finance_posting.rs` 将周期收入及费用映射到账簿并计提所得税，报表由 `accounting` 派生；`packages/engine/src/company/simple/finance.rs` 通过候选状态保证财务变更原子。当前生成输入只含营收、固定费用、变动费用（`packages/engine/src/company/simple/period.rs`）；没有利息、折旧和其他明确项目的 Simple 生成输入，也没有 ROE/平均权益计算。
-- **3.4（第 48 行）—勾稽有实现；公司行为不覆盖尚无从验证。** `packages/engine/src/company/simple/finance_tests.rs` 验证平衡报表、净利润、权益和账面现金不随汇总摘要冒充真实收付款；但实际股本操作尚未进入此账簿/状态，因而不能声称已验证其不被下一结算覆盖。
-- **3.6（第 50 行）—已有多项短测，整项未完成。** 周期和年化换算、周期独立噪声、趋势状态与恢复见 `packages/engine/src/company/simple/period.rs`、`growth.rs` 中的测试；同长度基准、亏损、零基数/显式复业、失败原子性见 `packages/engine/src/company/simple/tests.rs`；财务税务、重复期间拒绝、财报勾稽见 `finance_tests.rs`、`finance_period_tests.rs`。ROE 期间/平均权益及公司行为前后权益测试缺失。既有交接记载 Simple 等组 85 项短测通过，日志为 `.tmp/checklist-wave4/host70-simple-short.log`；本次未重跑。
+- **“由收入、费用、利息、折旧、税费及其他明确项目生成分录/汇总事实，再派生税前利润、净利润、净资产、同期间 ROE 和共同报表”（清单第 47 行）—部分实现。** `packages/engine/src/company/simple/finance_posting.rs` 将周期收入及费用映射到账簿并计提所得税，报表由 `accounting` 派生；`packages/engine/src/company/simple/finance.rs` 通过候选状态保证财务变更原子。当前生成输入只含营收、固定费用、变动费用（`packages/engine/src/company/simple/period.rs`）；没有利息、折旧和其他明确项目的 Simple 生成输入，也没有 ROE/平均权益计算。
+- **“汇总财务使用明确的账面规则支撑报表勾稽；实际股本操作不能被下一结算周期重新生成的账面值覆盖”（清单第 48 行）—勾稽有实现；公司行为不覆盖尚无从验证。** `packages/engine/src/company/simple/finance_tests.rs` 验证平衡报表、净利润、权益和账面现金不随汇总摘要冒充真实收付款；但实际股本操作尚未进入此账簿/状态，因而不能声称已验证其不被下一结算覆盖。
+- **“TDD 覆盖四种结算周期与年化换算……失败原子性”（清单第 50 行）—已有多项短测，整项未完成。** 周期和年化换算、周期独立噪声、趋势状态与恢复见 `packages/engine/src/company/simple/period.rs`、`growth.rs` 中的测试；同长度基准、亏损、零基数/显式复业、失败原子性见 `packages/engine/src/company/simple/tests.rs`；财务税务、重复期间拒绝、财报勾稽见 `finance_tests.rs`、`finance_period_tests.rs`。ROE 期间/平均权益及公司行为前后权益测试缺失。既有交接记载 Simple 等组 85 项短测通过，日志为 `.tmp/checklist-wave4/host70-simple-short.log`；本次未重跑。
 
 ### 4. 隔离账面公司财务与投资者实际结算
 
@@ -53,7 +53,7 @@
 
 ### 6. 新局、自然日及严格存档接线
 
-- **6.1（第 73 行）—Simple 日结主体已实现，原清单状态偏旧；公司行为日结仍缺。** `packages/engine/src/company/simple/state.rs::advance_day` 连续推进自然日，非结算日更新日期，结算日基于候选状态生成并提交周期事实；Session 接线见 `packages/engine/src/session/company_assembly.rs`、`company_simple_session_tests.rs`。CivilClock 自身日结失败不提交的事务边界见 `packages/engine/src/session/civil_clock.rs` 与 GameSession 日结实现。Simple 尚无待处理/到期公司行为可在其余自然日执行。既有 handoff 记录 Simple/Session 短测结果；本次未运行。
+- **“`CivilClock` 自然日日结按候选状态调用实现……Simple 按配置周期结算”（清单第 73 行）—Simple 日结主体已实现，原清单状态偏旧；公司行为日结仍缺。** `packages/engine/src/company/simple/state.rs::advance_day` 连续推进自然日，非结算日更新日期，结算日基于候选状态生成并提交周期事实；Session 接线见 `packages/engine/src/session/company_assembly.rs`、`company_simple_session_tests.rs`。CivilClock 自身日结失败不提交的事务边界见 `packages/engine/src/session/civil_clock.rs` 与 GameSession 日结实现。Simple 尚无待处理/到期公司行为可在其余自然日执行。既有 handoff 记录 Simple/Session 短测结果；本次未运行。
 - **6.2（第 74 行）—Simple 状态保存与恢复已实现，公司行为状态缺失。** `simple/state.rs` 序列化配置、随机状态、期间事实、历史及复业动作；`company/persistence.rs` 严格校验恢复；`simple_session_tests.rs` 覆盖真实 Session 保存/恢复。交接文档记载 release Engine 生成档案并验证恢复续行。由于公司行为没有接线，不能勾选其未完成行为恢复及幂等部分。
 - **6.3（第 75 行）—共享 Engine 契约基础和部分宿主验证存在，完整多宿主行为未证实。** 当前 Session 持有同一 `CompanySystem` 状态；handoff 记录 ts-rs 128 类型导出、workspace 调用方检查及 WASM/Web 构建。没有公司行为 DTO/结算字段可验证跨 Server/Desktop 的完整语义，因此本项只可判部分实现。
 - **6.4（第 76 行）—Simple 选择、restore 和日结相关测试存在，公司行为资金幂等缺失。** `packages/engine/src/session/company_simple_session_tests.rs` 覆盖显式模式、Simulation 请求拒绝、严格恢复和日结恢复；`packages/engine/src/company/simple/tests.rs` 覆盖失败不提交。公司行为/资金幂等无实现/测试，不能整项勾选。既有 handoff 记载短测和构建，不含全量回归；本次未运行。
@@ -70,4 +70,4 @@
 
 ## 审计结论
 
-当前 Simple 的周期生成、财务汇总、披露和严格存档有代码与定向短测证据。身份/模式/日结条目中有部分已实现却仍未勾选，适合拆分清单并更新状态。共同公司行为的实际投资者结算、ROE/平均权益、账面完整规则、旧持久设计入口迁移及公司行为官方规则依据仍是明确缺口。Simulation 后续工作按用户分支约定排除于本轮阻塞。工作区当前新增但尚未验收的模块不计入以上实现结论。
+在 `edd435a8` 审计快照中，Simple 的周期生成、财务汇总、披露和严格存档已有代码与定向短测证据；共同公司行为的实际投资者结算、ROE/平均权益、账面完整规则及公司行为官方规则依据仍有缺口。后续普通披露 ROE、真实报告窗口及部分分红接线已推进，当前状态与仍未闭合的扣非、特殊合并和实际股本结算边界以[当前交接](current-handoff.md)及[实施清单](implementation-checklist.md)为准，不沿用历史快照否定后续实现。身份/模式/日结的复合条目仍需逐项核验，不能仅凭部分代码整体勾选。旧持久设计入口迁移也是快照时的缺口；迁移本身须另经独立复核。Simulation 后续工作按用户分支约定排除于本轮阻塞，未经验证的新模块不计为完成。
