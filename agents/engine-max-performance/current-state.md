@@ -226,3 +226,7 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 ## 追加：E7-X2 旧状态延后析构已撤回（2026-10-06）
 
 commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367µs/tick）析构：TDD 红绿齐全、65 个定向测试绿，但锚定交错配对（threads=4、0-15 核占用 8%）mean +2.71% 且 pair3 为负、区间重叠，判定不过撤回。机制结论："移出 tick 线程"≠"移出关键路径"——worker=4 小池内 spawn 的析构与下一 tick 并行突发共用车道（与 P0-dirtykey"省的活在并行车道不挡路"互为镜像）。重试方向：专用析构线程（不进 rayon 池），且须与 X1 投机 prep 的池容量竞争一并设计。probe 已重建绑定 HEAD（34084792…）。详见 deferred-drop-findings.md。顺带登记 HEAD 既有 company_scenarios 集成测试编译失败（WithinKindDistribution 未定义，与本实验无关）。
+
+## 追加：E7-X1 跨 tick 投机预计算本周期不实现（2026-10-06）
+
+三前提（rebase 重排等价、rebase 后投机 prepare 2084/2084 等价、尾部窗口 1133µs≥prepare 1020µs）均已实证，但真实现卡在借用死结：投机 prepare 需与 queue_npc 同时持有同一 GameSession 的 & 与 &mut，绕行方案（scope/protocol 外层提前/回调写缓冲/分支拆分）全部不可行或降级至 ~+10% 以下。前置条件=专门的 NPC 决策管线借用解耦重构（queue_npc 读写集显式化为字段组参数 + capture/stream 全链路签名收窄 + AccountBook 页 COW 并发断言），重构与投机实现各需一个完整周期，语义红线沿 E5 教训。详见 speculative-precompute-findings.md。
