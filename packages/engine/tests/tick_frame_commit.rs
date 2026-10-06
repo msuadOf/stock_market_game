@@ -57,6 +57,7 @@ fn session_on(date: &str) -> ProtocolSession {
             float_allocation: FloatAllocation::random(),
             start_date: CivilDate::from_iso(date).unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
+            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
         },
         42,
     )

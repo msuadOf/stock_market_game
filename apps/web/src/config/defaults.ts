@@ -145,6 +145,9 @@ export const DEFAULT_SETUP: SessionSetup = {
   },
   start_date: "2030-01-01",
   simulation_policy_id: "a-share-simulation",
+  // 新局默认税务模式：大 A 个人差别化（2026-10-06 产品决策）；
+  // 新局创建界面可显式改为不扣税。
+  dividend_tax_mode: "IndividualPublicMarket",
   company_system: {
     mode: "Simple",
     config: {

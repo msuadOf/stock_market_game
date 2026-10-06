@@ -166,6 +166,7 @@ fn replay_setup() -> SessionSetup {
         // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     }
 }
 

@@ -14,6 +14,25 @@ pub enum DividendTaxProfile {
     NonResident,
 }
 
+/// 新局现金分红税务模式（开局产品选项，2026-10-06 决策登记）。
+///
+/// - 默认 [`CashDividendTaxMode::IndividualPublicMarket`]：大 A 个人差别化口径，
+///   装配期配置股东名册时为每个「个人」身份账户（玩家与自然人散户 NPC）自动配置
+///   `IndividualPublicMarket` 税账；机构/游资等非个人身份保持 `TreatmentNotConfigured`
+///   （企业/机构计税未实现，见 `TaxpayerIdentity` 的显式扩展位）。
+/// - 可选 [`CashDividendTaxMode::Exempt`]：不扣税，引擎装配期不为任何身份配置税账
+///   （宿主仍可用显式装配期命令配置，既有入口语义不变）。
+///
+/// 该模式作为严格持久化状态随 `SessionSetup` 进存档契约：新档必填、无 serde 默认，
+/// 缺失该字段的旧档在反序列化时被显式拒绝，恢复后语义不变。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum CashDividendTaxMode {
+    IndividualPublicMarket,
+    Exempt,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum StatutoryRestrictedBasis {

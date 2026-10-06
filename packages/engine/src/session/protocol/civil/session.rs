@@ -279,6 +279,19 @@ impl ProtocolSession {
         &self.state.game
     }
 
+    /// 显式配置账户在指定证券下的现金分红税务身份（宿主显式入口）。
+    /// 仅限装配期语义：名册已有历史日结回执或已登记分红时由 engine 显式拒绝。
+    pub fn configure_cash_dividend_tax_book(
+        &mut self,
+        account: crate::AccountId,
+        stock: crate::StockCode,
+        profile: crate::company::cash_dividend_tax::DividendTaxProfile,
+    ) -> Result<(), crate::session::SessionCorporateActionsError> {
+        self.state
+            .game
+            .configure_cash_dividend_tax_book(account, stock, profile)
+    }
+
     pub fn report_correction_epoch(&self) -> crate::session::ReportCorrectionEpoch {
         self.state.game.report_correction_epoch()
     }

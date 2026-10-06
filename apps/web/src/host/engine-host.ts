@@ -24,6 +24,9 @@ import type { MarketHistoryRequest, MarketHistoryPage } from "./market-history.t
 export type { MarketHistoryRequest, MarketHistoryPage };
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 export type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse };
+import type { AccountDividendTaxStatusView } from "../types/generated/AccountDividendTaxStatusView";
+import type { DividendTaxOutstandingView } from "../types/generated/DividendTaxOutstandingView";
+export type { AccountDividendTaxStatusView, DividendTaxOutstandingView };
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -142,4 +145,8 @@ export interface EngineHost {
   queryPublicReportAvailability?(query: PublicReportAvailabilityQuery): Promise<PublicReportAvailability>;
   publicReportById?(id: string): Promise<PublicReportSummary>;
   npcDecisionTrace?(account: string): Promise<readonly NpcDecisionTraceRecord[]>;
+  /** 仅支持本地 WASM 宿主：本人股息税状态查询（owner 隔离）。缺失表示该宿主明确不支持，UI 须显式提示。 */
+  dividendTaxStatus?(): Promise<AccountDividendTaxStatusView>;
+  /** 仅支持本地 WASM 宿主：本人股息税未清税额视图（owner 隔离）。缺失表示该宿主明确不支持。 */
+  dividendTaxOutstanding?(): Promise<readonly DividendTaxOutstandingView[]>;
 }

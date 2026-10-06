@@ -41,6 +41,8 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly calculate_intraday_average_curve?: (samples: unknown) => unknown;
   readonly personal_trade_confirmations?: (handle: number, beforeReceipt: string | null) => unknown;
   readonly personal_trade_history?: (handle: number, query: unknown) => unknown;
+  readonly owner_dividend_tax_status?: (handle: number) => unknown;
+  readonly owner_dividend_tax_outstanding_views?: (handle: number) => unknown;
   readonly market_history?: (handle: number, query: unknown) => unknown;
   readonly current_minute_history?: (handle: number, query: unknown) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -499,6 +501,22 @@ ctx.addEventListener("message", (event) => {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
           ctx.postMessage({ type: "publicReportById", requestId: message.requestId, generation: requestedGeneration, report: normalizePublicReportById(wasm.public_report_by_id(session, String(message.id))) });
+          return;
+        }
+        case "dividendTaxStatus": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const queryStatus = (wasm as WasmTransportExtensions).owner_dividend_tax_status;
+          if (queryStatus === undefined) throw new Error("当前 WASM bindings 不支持股息税状态查询，请重建 bindings");
+          ctx.postMessage({ type: "dividendTaxStatus", requestId: message.requestId, generation: requestedGeneration, status: queryStatus(session) });
+          return;
+        }
+        case "dividendTaxOutstanding": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const queryOutstanding = (wasm as WasmTransportExtensions).owner_dividend_tax_outstanding_views;
+          if (queryOutstanding === undefined) throw new Error("当前 WASM bindings 不支持股息税未清税额查询，请重建 bindings");
+          ctx.postMessage({ type: "dividendTaxOutstanding", requestId: message.requestId, generation: requestedGeneration, views: queryOutstanding(session) });
           return;
         }
         case "drop": {

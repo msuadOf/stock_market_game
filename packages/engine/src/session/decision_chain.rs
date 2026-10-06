@@ -5153,6 +5153,7 @@ mod chain_restructure_tests {
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
         };
         GameSession::new(setup, 42).unwrap()
     }

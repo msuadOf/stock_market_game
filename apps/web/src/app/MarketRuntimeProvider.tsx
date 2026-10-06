@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "../host/engine-host.ts";
+import type { AccountDividendTaxStatusView, DividendTaxOutstandingView, PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "../host/engine-host.ts";
 import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
@@ -42,6 +42,8 @@ interface MarketRuntimeActions {
   queryMarketHistory: (request: MarketHistoryRequest) => Promise<MarketHistoryPage>;
   queryCurrentMinuteHistory: (request: CurrentMinuteHistoryRequest) => Promise<CurrentMinuteHistoryResponse>;
   queryPublicReportAvailability: (query: PublicReportAvailabilityQuery) => Promise<PublicReportAvailability>;
+  queryDividendTaxStatus: () => Promise<AccountDividendTaxStatusView>;
+  queryDividendTaxOutstanding: () => Promise<readonly DividendTaxOutstandingView[]>;
   calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
   calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
@@ -128,6 +130,28 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("公开报告可用性响应属于已切换的宿主或市场");
     return result;
   }, [hostRef]);
+  const queryDividendTaxStatus = useCallback(async () => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询股息税状态");
+    if (host.dividendTaxStatus === undefined) throw new Error("当前宿主不支持股息税状态查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.dividendTaxStatus();
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("股息税状态响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const queryDividendTaxOutstanding = useCallback(async () => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询股息税未清税额");
+    if (host.dividendTaxOutstanding === undefined) throw new Error("当前宿主不支持股息税未清税额查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.dividendTaxOutstanding();
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("股息税未清税额响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
   const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
     const host = hostRef.current;
     if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
@@ -150,6 +174,8 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryMarketHistory,
     queryCurrentMinuteHistory,
     queryPublicReportAvailability,
+    queryDividendTaxStatus,
+    queryDividendTaxOutstanding,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   }), [
@@ -168,6 +194,8 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryMarketHistory,
     queryCurrentMinuteHistory,
     queryPublicReportAvailability,
+    queryDividendTaxStatus,
+    queryDividendTaxOutstanding,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   ]);

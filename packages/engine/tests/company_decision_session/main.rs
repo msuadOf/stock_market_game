@@ -77,6 +77,7 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
         float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso(start_iso).unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     }
 }
 

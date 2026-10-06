@@ -19,6 +19,8 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "account_gross_receipts",
         "external_receipts",
         "applied_ex_dividend_groups",
+        // 新局默认税务模式为大 A 个人差别化；未配置股东名册时不得产生任何税账。
+        "dividend_tax_books",
     ] {
         if actions
             .get(field)
@@ -188,6 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         report_frequency: engine::information::ReportFrequency::Quarterly,
         start_date: CivilDate::from_iso("2026-01-01")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
     };
     setup.validate()?;
 

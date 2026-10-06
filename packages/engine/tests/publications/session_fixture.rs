@@ -59,5 +59,6 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: start,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     }
 }

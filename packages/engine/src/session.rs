@@ -17,6 +17,8 @@ mod company_groups;
 #[cfg(test)]
 mod company_simple_session_tests;
 mod corporate_actions;
+#[cfg(test)]
+mod dividend_tax_mode_tests;
 mod exchange_calendar;
 #[cfg(test)]
 mod exchange_calendar_tests;
@@ -1227,6 +1229,11 @@ pub struct SessionSetup {
     /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
+    /// 新局现金分红税务模式（2026-10-06 产品决策）：默认大 A 个人差别化
+    /// （装配期自动为个人身份账户配置 `IndividualPublicMarket` 税账），
+    /// 可选不扣税。严格持久化字段：新档必填、无 serde 默认，缺失该字段的
+    /// 旧档被显式拒绝；恢复后自动配置与计税语义不变。
+    pub dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
 }
 
 impl SessionSetup {
@@ -2356,6 +2363,10 @@ impl GameSession {
     }
 
     /// 配置某只证券的完整股东登记事实；账户、外部股东及股份来源必须由调用方明确提供。
+    /// 默认税务模式（大 A 个人差别化）下，登记成功后立即为每个「个人」身份的账户持有人
+    /// （玩家与自然人散户 NPC）走既有 `configure_cash_dividend_tax_book` 自动配置
+    /// `IndividualPublicMarket` 税账；机构/游资保持 `TreatmentNotConfigured`
+    /// （企业/机构税未实现）。名册与税账在同一候选副本上落账，任一步失败都不留半配置状态。
     pub fn configure_share_registry(
         &mut self,
         registry: crate::company::share_registry::ShareRegistry,
@@ -2375,11 +2386,91 @@ impl GameSession {
                 )
             })
             .collect();
-        self.state.corporate_actions.configure_registry(
-            registry,
+        let mut candidate = self.state.corporate_actions.clone();
+        candidate.configure_registry(
+            registry.clone(),
             &positions,
             self.state.company_system.issuers(),
-        )
+        )?;
+        if self.state.setup.dividend_tax_mode
+            == crate::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket
+        {
+            let stock = registry.stock().clone();
+            let personal_accounts: Vec<AccountId> = registry
+                .holdings()
+                .iter()
+                .filter_map(|holding| {
+                    let crate::company::share_registry::HolderId::Account(account) =
+                        &holding.holder
+                    else {
+                        return None;
+                    };
+                    Some(*account)
+                })
+                .filter(|account| {
+                    matches!(
+                        corporate_actions::taxpayer_identity_of_kind(
+                            self.state
+                                .accounts
+                                .get(account)
+                                .expect("configure_registry 已验证名册持有人账户存在")
+                                .kind()
+                        ),
+                        corporate_actions::TaxpayerIdentity::Personal
+                    )
+                })
+                .collect();
+            for account in personal_accounts {
+                candidate.configure_cash_dividend_tax_book(
+                    account,
+                    stock.clone(),
+                    crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
+                )?;
+            }
+        }
+        self.state.corporate_actions = candidate;
+        Ok(())
+    }
+
+    /// 查询单账户的现金分红税务状态：会话税务模式、按账户种类映射的纳税人身份
+    /// 与每个已配置完整名册证券上的税账状态。只读汇总既有事实，不产生新事实；
+    /// 未知账户显式报错，不静默返回空视图。
+    pub fn account_dividend_tax_status(
+        &self,
+        account: AccountId,
+    ) -> Result<corporate_actions::AccountDividendTaxStatusView, SessionError> {
+        let identity = corporate_actions::taxpayer_identity_of_kind(
+            self.state
+                .accounts
+                .get(&account)
+                .map(Account::kind)
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!("查询股息税状态的账户 {account:?} 不存在"))
+                })?,
+        );
+        let stocks =
+            self.state
+                .corporate_actions
+                .registries
+                .iter()
+                .map(
+                    |registry| corporate_actions::AccountStockDividendTaxStatus {
+                        stock: registry.stock().clone(),
+                        status: if self.state.corporate_actions.dividend_tax_books.iter().any(
+                            |book| book.account() == account && book.stock() == registry.stock(),
+                        ) {
+                            corporate_actions::DividendTaxStatus::IndividualPublicMarket
+                        } else {
+                            corporate_actions::DividendTaxStatus::TreatmentNotConfigured
+                        },
+                    },
+                )
+                .collect();
+        Ok(corporate_actions::AccountDividendTaxStatusView {
+            mode: self.state.setup.dividend_tax_mode,
+            identity,
+            stocks,
+        })
     }
 
     /// 显式配置账户在指定证券下的现金分红税务身份；调用方不得由账户类型或策略风格推断。
@@ -3844,6 +3935,7 @@ mod candle_open_tests {
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
         }
     }
 
@@ -4152,6 +4244,7 @@ mod npc_working_quote_tests {
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
         }
     }
 

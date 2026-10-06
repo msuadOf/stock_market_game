@@ -2018,6 +2018,7 @@ mod tests {
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
         (

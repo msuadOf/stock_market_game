@@ -153,5 +153,6 @@ pub(super) fn setup() -> crate::SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.into(),
+        dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     }
 }

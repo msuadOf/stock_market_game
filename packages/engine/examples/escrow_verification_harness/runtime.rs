@@ -568,6 +568,7 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02").map_err(|error| error.to_string())?,
         simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     };
     setup
         .validate()

@@ -32,6 +32,7 @@ import { exact } from "./protocol/guards.ts";
 import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult, normalizeIntradayAverageInput, normalizeIntradayAverageResult, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage } from "./personal-trade-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
+import { parseAccountDividendTaxStatusView, parseDividendTaxOutstandingViews } from "./dividend-tax.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 
@@ -633,6 +634,20 @@ export function createWorkerHost(
         async publicReportById(id: string): Promise<PublicReportSummary> {
           const response = await requests.request({ type: "publicReportById", requestId: requests.nextRequestId(), generation: currentGeneration, id }, "publicReportById");
           return normalizePublicReportById(response.report);
+        },
+        async dividendTaxStatus() {
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "dividendTaxStatus", requestId: requests.nextRequestId(), generation: requestedGeneration }, "dividendTaxStatus");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("股息税状态查询属于已过期 generation");
+          return parseAccountDividendTaxStatusView(response.status);
+        },
+        async dividendTaxOutstanding() {
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "dividendTaxOutstanding", requestId: requests.nextRequestId(), generation: requestedGeneration }, "dividendTaxOutstanding");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("股息税未清税额查询属于已过期 generation");
+          return parseDividendTaxOutstandingViews(response.views);
         },
       };
     }
