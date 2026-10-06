@@ -111,3 +111,68 @@ c06151ac已经本地提交并通过全新Sol独立审查，真实server约127–
 ## 追加：正式 server Cargo feature 基准纠正
 
 rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认旧apps/server example因dev-dependency打开engine verification-harness/Tokio test-util：真实actor路径是真的，编译配置含验证工具，不能冒充普通server配置。已建立agents/engine-max-performance/production-server-probe独立普通binary，main.rs与旧探针逐字节相同、依赖版本/source/checksum完全沿用root Cargo.lock，actual compiler artifact engine[]/server[]/Tokio无test-util；verify-build.py阻止旧源码/feature/依赖版本混用。正式baseline两次159.72x/163.22x，SHA5b3d306aa910c778b701f43d3c81663375108c77d9152b2f8eb2700eb9f3ad5e，独立binary .tmp/server-production-normal-10f8d9ae。旧带harness的164x及1/4/32worker诊断如实保留，不混作正式binary基准。首次独立manifest升级transitive的构建已废弃、从未测量；重新复制root lock并--locked构建exit0后才测。全新Luna限定工具review通过，无阻塞；可选executable target-dir限制未补。详细production-build-feature-findings.md/production-probe-independent-review.md。今后真实server主验收走普通binary、保留3000tick与CPU记录，不再用dev example配置替代。1000x依旧active、frontend继续暂停。
+
+
+## 追加：本轮当前稳定状态与已否决的 coordinator 实验
+
+最新生产优化提交10f8d9ae（rebase证明）、基准配置工具提交0e139d7b。正式非harness普通binary才是后续主验收：engine/server features=[]、Tokio无test-util、依赖root lock原版本，固定16物理核0–15/Rayon16/Tokio2/default5股20007NPC seed42。三次正式基线159.72x/163.22x/163.23x，最近窗口107–110x；CPU约4.2–4.3核。SHA5b3d306aa910c778b701f43d3c81663375108c77d9152b2f8eb2700eb9f3ad5e，独立binary .tmp/server-production-normal-10f8d9ae，主构建路径 .tmp/production-probe-target/release/production-server-max-probe。正式普通bin构建与verifier流程见production-server-probe/README.md。旧example164x属于harness配置，不再混为正式binary。
+
+曾试server整step进入globalRayon pool，TDD线程上下文/精确Result红绿、fatal11/interval6绿色，candidate161.89x vs相邻HEAD163.23x无收益，已四份source/manifest/lock原字节恢复并删除本实验新helper测试（已归档）。原型未审未提交不补形式review，证据coordinator-pool-experiment.md/coordinator-pool-rollback-proof.json。现在正在重编普通bin/server lib test，完成后须确认两个handle exit0及SHA回到稳定baseline；不能用实验artifact验收。
+
+本轮属于实际progress：生产state改变（10f8d9ae）并修正Cargo测量配置（0e139d7b）；目标1000x仍未完成、frontend暂停。后续避免继续仅尝试减少worker/切换caller/全局有序join：已测4worker173.5x与32worker133.3x（harness诊断）说明线程增加不等于更快，整个tick进pool已正式配置否决。较大剩余重复成本在每tick全量hydrate/input/snapshot/ledger/private book验证；可设计共用不可变page粒度事实/证据以减少重建与重复校验，但必须保留资源checked/首错/费用/原子性并用正式bin控制测量。不能恢复旧page proof/SharedRows<Envelope>等无收益复杂原型。
+
+恢复构建两个handle已确认exit0（server test8.98s、正式probe23.32s，debug/release各-j8总16job/299s deadline）。普通probe verifier全部通过，主binary SHA与已审查独立baseline逐字相同5b3d306aa910c778b701f43d3c81663375108c77d9152b2f8eb2700eb9f3ad5e；最新server lib test .tmp/server-tests/debug/deps/server-02e6531ddd7290a4。恢复后fatal11/interval6短测绿色。无已知在途任务，唯一tracked diff为本工作记录追加，生产源码/manifest/lock diff为空。
+
+
+## 追加：coarse snapshot撤回与连续结果缓冲区候选
+
+整批snapshot/cache/sparse private ledger实验四次相邻只有约2%改善，15个tracked源码已逐字节恢复HEAD，新模块已归档并移出生产路径。详情coarse-snapshot-findings.md/rollback.patch/rollback-proof.json。未复核/未提交已撤回生产实验。当前候选只改ledger_conservation::map_rows收集布局，全部门禁保留；独占真实普通server168.515x/168.227x，相邻baseline161.531x，约4.1–4.3%改善。首170.073x样本与短测重叠已排除。详情flat-row-findings.md。debug/release各-j8重新编译并确认两个handle exit0，release feature/lock verifier通过；ledger_conservation6/ledger_state28/private6/continuous tick19短测通过。新建一次性Luna限定独立review在途，尚未提交。目标1000x仍未达，CPU约4核，frontend继续暂停。
+
+
+连续结果缓冲区已通过新建Luna high限定独立复核（无阻塞），本地提交35bbfbd6，仅1文件+5/-5。当前稳定普通binary .tmp/server-flat-row-frozen-candidate，SHA7a6b1ac2b1da647476383ffb2b1e012078b9ab8585d82f49d4fbb3e60dd7fb6e；主正式binary同SHA。最新GDB启动本任务子进程48组/864线程栈已exit0；perf受perf_event_paranoid4拒绝，未修改系统。栈原始文件server-production-flat-row-stack-samples.log，仅用于等待/热点诊断，不作吞吐证据。下一实验只合并完整账本门禁的两轮并行映射，保留原序gate/checked汇总；目前仅新增成本红灯测试和cfg(test)计数，在途编译，尚无候选生产实现。
+
+
+## 追加：当前可提交的完整门禁共同映射
+
+当前diff仅ledger.rs/ledger_conservation.rs/ledger_state_tests.rs，dense门禁只映射一次，结构错误延迟到原守恒/checked全局累加、资源、基数门禁之后选首错，小输入仍原行为。两成本/组合用例红绿/边界通过；state30/conservation6/continuous tick19/auction tick14/receipt20/envelope9/hash14短测全部绿，匹配0的错误auction filter不计。最终debug21.59s/release53.88s（各-j8，总16job）均exit0，普通server feature/lock/source verifier通过。最终同SHA59ee89cd9dd0629f75ae534495dba31223229dacfb116900f1929c1327267567测169.976x/173.919x，相邻独立稳定35bbfbd6测168.169x，约1.1–3.4%且有波动；不能混用旧原型SHA172.5–172.8x。CPU约4核，未达1000x/满16核。全新一次性Luna high完整三文件diff独立复核无阻塞，报告combined-evidence-independent-review.md。准备聚焦本地提交；frontend/WASM/HTTPWS/full workspace/full day仍未验收。
+
+
+共同映射批次已本地提交 **0ed22904**，上一连续结果提交 **35bbfbd6**；当前生产源码/manifest/lock无未提交diff，唯一tracked任务记录仍为本文件追加。正式普通binary主路径与冻结候选同SHA59ee89cd9dd0629f75ae534495dba31223229dacfb116900f1929c1327267567，已绑定最终源码。所有本轮build/benchmark/GDB handle均终态exit0（首次红灯/编译失败/沙箱GDB失败如前述日志单列），无已知在途长任务。两个独立Luna reviewer均新建且已结束，未复用。未推送，主工作区未改。目标仍active，1000x未达，继续Rust server优先；不要仅凭这次约170–174x或实际4.4核宣告目标完成。
+
+下一轮需转向更大的完整tick成本：已有每股输入准备/owned snapshot/stock initialization以及最终private book/ledger验证仍每tick遍历全部live order；全局分页三map点查询和短Rayon屏障也仍存在。先采样/计时确认实际CPU成本与逐阶段caller等待，不重新恢复已否决的全局join、粗粒度snapshot cache或pageproof原型。StockCode仍是拥有String的newtype，批量key clone存在分配但目前没有精确allocation profile，不应仅凭该事实做大范围Arc/内联字符串API迁移；若追此方向需先证实全局成本，并保留所有字符串值、排序、wire/hash和异常输入语义。perf被系统配置拒绝且未修改设置，可继续使用仅针对本任务子进程的GDB或可完整撤回的阶段插桩。frontend/WASM/HTTPWS/fullworkspace/full day及既有save_contract错误仍未处理。
+
+
+## 追加：股内行校验并行批次已提交（2026-10-06）
+
+最新稳定本地提交 **68db9414**，默认5股/20007NPC/seed42/Rayon16/Tokio2/16物理核0–15普通真实server。最终同SHA **a643e60b516d207a8652b16ea9c58c70cfd0accf91fca6d16f9580b2f6d95c4f**，主路径 .tmp/production-probe-target/release/production-server-max-probe 与冻结 .tmp/server-stock-row-parallel-final-candidate 一致。正式最终190.625x /192.653x，相邻独立旧版0ed22904为171.314x，约11.3%/12.5%；CPU约5.4核，最近半秒141–144x。1000x仍未达，不调用goal complete/blocked，前端继续暂停。
+
+本批只改continuous adapter/private market gate两处>=512独立行用Rayon with_min_len128/map_init并行，小输入保持原循环；所有Envelope/origin/audit/fee/resource/count与checked数学/首错门禁保留。adapter按book原序预标duplicate但错误仍本行原位置选；Result保序收集，不改变撮合或受理顺序。两1024行真实多worker红绿测试+511/512/513×1/4worker反序OrderId首错与失败无权威mutation测试通过；adapter12/matching29/private6/state30/continuous tick19/auction tick14/hash14/stock execution6短测绿色，普通命令9s TERM+1s KILL。debug/release各-j8总16job最终14.40s/53.81s，确认exit0及probe feature/lock/source verifier通过后才顺序独占基准；最终仅去除多重借用与调整import，不混旧原型SHA的188–191.6x。新建一次性Luna high完整四文件独立复核无阻塞，已结束。详情stock-row-parallel-findings.md/stock-row-parallel-independent-review.md。
+
+本轮两个临时profile原字节均撤回27份源码并移出新增module，诊断substage-profile-0ed-findings.md/fields-findings.md；不要用插桩binary做吞吐。thread CPU/allocator wrapper统计当前同步span线程，不包含其他child worker，parent span重叠不可相加；realloc计新分配+旧释放，不等于RSS。字段clone采样：npc_order_lifecycles11.32m allocations但CPU0.222s，attention_scheduler请求2162MiB但CPU0.136s，ingress cursors0.211s；未优先做Arc迁移。一次性Luna固定三字段类型/mutation清单已结束，未参与实现。编译前途曾无Default/Market无Serialize红build已修，再取得真实行为红灯，没用编译失败冒充TDD。
+
+下一步针对其他已量到的全量构造：continuous initial snapshot validation会复制完整resting_orders并构造OrderId BTreeMap（旧profile约1.2CPU秒/956k alloc/1497MiB）；可以小实验评估只用于按id查找/remove、无迭代输出的临时索引布局（比如保留完整validation顺序与对外Result的HashMap或紧凑有序索引），必须验证duplicate/missing/extra/cross-owner/stock/audit首错，不能因随机hash迭代改变输出。尚无该实验源码，不要把下一方向当已实现。当前生产/manifest/lock无diff，唯一tracked current-state.md追加，无在途长任务；主工作区未改，未推送。
+
+
+## 2026-10-06 后端控制变量续排查：全部本轮原型已撤回
+
+仍以稳定提交 **68db9414** 为生产实现；普通 Rust server、默认5股/20007NPC/seed42、16物理核0–15、Rayon16/Tokio2。1000x目标保持active，frontend继续暂停，不宣告完成。
+
+本轮按价位COW实验189.2985x，对照189.9049x；补准确size_hint后185.0682x，无收益，完整撤回两tracked源码和未跟踪price_rows模块，归档完整patch/hash/module，见price-level-cow-findings.md。新迭代长度测试真实失败(0,None)对(4,Some(4))，修正后通过；普通短测保持9s TERM+1s KILL。
+
+稳定冻结同一SHA的worker数控制实验，均固定affinity0–15、Tokio2、3000ticks，顺序独占不重叠：1worker169.3808x/CPU1.079核，4worker200.3265x/2.190核，8worker204.6854x/3.202核，16worker191.0120x/5.331核。CPU均值排除结束时线程消失窗口，不是runnable数；单次worker扩展回退不当统计结论，不改变生产worker配置。证据stable-worker-scaling-findings.md。一次性新Luna high只读检查四个并行段，未改文件或自行找任务，非独立复核角色；指出账户页粒度与股内/守恒嵌套扇出为待测假说。
+
+账户页with_min_len8仅一行调度实验191.6495x对191.0120x（约0.33%），短测账户6/resources11/continuous tick19/auction tick14绿，撤回，无独立复核或生产提交。到达序排序消除实验保持同seq稳定首错和所有费用/ledger门禁，新增两个回归测试及hydration6绿；候选185.3714x对183.5473x（约0.99%），无明确收益，完整撤回，未独立复核/提交。两者是性能重构实验，没有编造功能红灯。记录account-page-grain-findings.md / arrival-sort-findings.md及patch/hash。
+
+新的68d阶段诊断未改allocator，36span、仅wall/当前同步线程CPU；-j16构建51.47s exit0，feature/lock/source verifier通过，独占诊断exit0。private market gate wall约0.919s，stock input2.254s，continuous initialization1.916s，live projection1.762s，NPC snapshot1.858s/3000ticks，parent overlap不得相加，CPU不含其他child worker。27源码完整按保存字节撤回，新增module移出生产路径；substage-profile-68d-findings.md。
+
+所有实验撤回后debug38.65s/release构建确认exit0，各-j8共16job/299s外部deadline；普通probe verifier通过，主release与冻结稳定binary SHA比较见restored-68d-build-binding.json。生产源码/manifest/lock无diff；唯一tracked仍current-state.md历史追加，没有已知在途长任务。未改主工作区、未推送，WASM/真实frontend/HTTPWS/fullworkspace/全天验收仍未完成，save_contract旧日历失败未改。
+
+下一步优先查调度额外CPU：同一binary的16worker CPU消费约5.33核而1worker约1.08核，吞吐只改善169→191x；记录user/system CPU、worker runnable/wchan和临界段有效工作，区分Rayon spin/wake、任务拆分与真实业务计算，不能把这几个CPU统计直接当成已证明的根因。再考虑最小范围提高粒度/减少重复准备；不要恢复无收益的价位COW、账户grain8、arrival排序消除、旧page/整股缓存或全tick入池实验。
+
+## 追加：read-only Continuous start 并行准备（2026-10-06）
+
+当前未提交批次新增 `session/pipeline/read_only_start.rs` 并接线 `plan_tick`：当且仅当 `Continuous`、live ledger 非空且不存在 `expires_market_minute <= current` 时，用嵌套 `rayon::join` 只读并行准备 live projection hydration、`DecisionResourceSnapshot::seal` 与 incremental stock inputs；空 ledger、到期报价和其他交易阶段完整回退原 expiry/allocation 顺序。stock input 错误保留为 `Result`，延迟到原 DecisionShadow 入口/context 校验之后传播；hydration/resources 仍按原优先级消费。`envelope_projection.rs` 只为测试暴露逐行 observer，`docs/architecture.md` 登记契约，相关测试覆盖 eligibility、并行交错、1/4 worker 全字段一致、混合错误优先级与 authority hash 不变。
+
+最终 review 修复后 release 构建绑定 `read-only-start-review-fix-production-build-binding.json`，verify-build 全部通过，binary SHA `eac5e6f2fa225cf0944c757cd31e1097ff3a08f02d7acd010485da968d10b796`。定向短测 read_only_start 5、continuous transaction 19、quote expiry 12、decision resources 11、phase timing 12、hash contract 14、auction transaction 14 全绿；每条命令 9s TERM + 1s KILL，RAYON4/test4 并行。四条正式 3000 tick benchmark 顺序独占：candidate 222.757x/216.501x，相邻稳定 68db9414 baseline 189.914x/189.614x；均值 219.629x 对 189.764x，提升 15.74%，candidate CPU 约 5.98 核。详见 `read-only-start-final-benchmarks.md`。
+
+复核：第一次 review 的有效发现已修复并重新构建/复测；最终全新一次性 gpt-6-luna 只读 reviewer（Codex task `01a10f91-e405-7c51-85d9-1c1aebeda3ed`）结论 PASS、无阻塞语义问题，记录 `read-only-start-final-review.md`。此前 4 次新建 collaboration reviewer 均因平台 `thinking_signature_invalid` 未开始，未复用任何 reviewer。本批准备本地提交 `perf(engine): parallelize read-only continuous start preparation`；1000x 仍未达成，frontend/WASM/HTTP/WS/full workspace/全天验收继续暂停，不调用 goal complete/blocked。

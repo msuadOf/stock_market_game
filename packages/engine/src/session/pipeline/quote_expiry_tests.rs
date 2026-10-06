@@ -272,6 +272,7 @@ fn quote_expiry_rejects_a_second_application() {
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,
+        precomputed_stock_inputs: None,
     };
 
     quote_expiry::plan_expiry(&mut shadow).unwrap();

@@ -147,6 +147,12 @@ panic 是进程级故障，不使用 catch_unwind 冒充可恢复 tick。
 失败的禁排序实验必须有同输入启用排序成功的对照、明确错误、零部分事件及完整状态回滚；
 公开 JSON 重排不是执行器扰动证据。
 
+在 `Continuous` 且 live ledger 非空、没有报价到期的起点，完整 live 投影、资源密封与股票
+输入捕获读取相同不可变事实，可提前并行计算。结果仍按原门禁消费：先验证 `ExpiryShadow`
+投影，再接收 `SealAllocationSnapshot`；股票输入的错误留到原 `DecisionShadow` 入口与
+context 校验之后传播。空 ledger、到期报价及其他交易阶段使用原准备顺序；预计算结果
+仅属于可丢弃 tick candidate，不发布事件或改变权威状态。
+
 股票流使用 `rayon::in_place_scope`：从宿主或测试线程进入时，协调循环留在调用线程，
 股票任务才进入共享 Rayon 池，避免多个协调者占满 worker 后阻塞等待自己的任务。
 这不创建额外线程，也不改变同股受理顺序或完成后的续行。已知边界仍在：若调用者本已在

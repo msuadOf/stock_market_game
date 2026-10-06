@@ -7,7 +7,7 @@
 use super::{
     account_validation_context::build_account_validation_context,
     candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
-    continuous_matching::ContinuousExecutionRound,
+    continuous_matching::{ContinuousExecutionRound, ContinuousStockInput},
     continuous_matching_adapter::prepare_incremental_continuous_inputs,
     continuous_tick_finalizer::{
         finalize_continuous_tick, ContinuousLifecycleProjectionInput, ContinuousTickBoundary,
@@ -162,6 +162,7 @@ fn apply_tick_shadow_continuous_transaction_with_roots(
         resources,
         roots_override,
         &preceding_receipts,
+        plan.precomputed_stock_inputs.take(),
     )?;
     plan.state.restore_success(candidate)?;
     plan.receipt_keys.extend(
@@ -182,6 +183,7 @@ fn apply_session_continuous_transaction(
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[EnvelopeReceipt],
+    precomputed_stock_inputs: Option<Result<Vec<ContinuousStockInput>, StepFatal>>,
 ) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     let sources = ReadyIngress::capture_sources(candidate)?;
@@ -192,7 +194,10 @@ fn apply_session_continuous_transaction(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
             let context = build_account_validation_context(frozen_candidate)?;
-            let stock_inputs = prepare_incremental_continuous_inputs(frozen_candidate)?;
+            let stock_inputs = match precomputed_stock_inputs {
+                Some(prepared) => prepared?,
+                None => prepare_incremental_continuous_inputs(frozen_candidate)?,
+            };
             let ledger = frozen_candidate.state.envelope_ledger.clone();
             let next_order_id = frozen_candidate.state.next_order_id;
             let config = frozen_candidate.state.setup.config.clone();

@@ -54,7 +54,16 @@ impl GameSession {
         self.state.envelope_ledger.hydrate_or_validate(projected)
     }
 
-    fn validate_existing_live_envelope_projection(&self) -> Result<(), StepFatal> {
+    pub(in crate::session) fn validate_existing_live_envelope_projection(
+        &self,
+    ) -> Result<(), StepFatal> {
+        self.validate_existing_live_projection_with_observer(|| {})
+    }
+
+    pub(in crate::session) fn validate_existing_live_projection_with_observer(
+        &self,
+        observe_projected_row: impl Fn() + Sync,
+    ) -> Result<(), StepFatal> {
         let mut projected = Vec::new();
         for (code, market) in &self.state.markets {
             // 保留旧投影的到达序，多个计算错误仍报告相同的首错。
@@ -71,6 +80,7 @@ impl GameSession {
                     filled_qty: order.filled_qty,
                     filled_value: order.filled_value,
                 })?);
+                observe_projected_row();
             }
         }
         for (code, orders) in &self.state.auction_orders {

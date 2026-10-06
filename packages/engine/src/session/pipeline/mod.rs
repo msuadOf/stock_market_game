@@ -51,6 +51,7 @@ mod phase;
 mod pre_open_transaction;
 mod price_resolution;
 pub(in crate::session) mod quote_expiry;
+mod read_only_start;
 mod ready_ingress;
 mod ready_stock_stream;
 mod receipt_aggregation;
@@ -207,6 +208,8 @@ pub struct TickShadowPlan {
     expiry: ExpiryOutput,
     expiry_applied: bool,
     decision_resources: Option<DecisionResourceSnapshot>,
+    precomputed_stock_inputs:
+        Option<Result<Vec<continuous_matching::ContinuousStockInput>, StepFatal>>,
 }
 
 impl TickShadowPlan {
@@ -253,6 +256,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,
+        precomputed_stock_inputs: None,
     };
     shadow.state.execute(|game| {
         if game
@@ -270,9 +274,22 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         Ok(())
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
-    shadow.expiry = quote_expiry::plan_expiry(&mut shadow)?;
-    crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
-    decision_resources::plan_allocation(&mut shadow)?;
+    let read_only = shadow.state.execute(|session| {
+        Ok(read_only_start::can_prepare(session).then(|| read_only_start::prepare(session)))
+    })?;
+    if let Some(prepared) = read_only {
+        prepared.hydration?;
+        // 已确认没有到期报价；全部资源与输入来自同一个不可变 post-expiry 起点。
+        shadow.expiry_applied = true;
+        crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
+        shadow.decision_resources = Some(prepared.resources?);
+        // 输入错误延迟到原 DecisionShadow 捕获位置，保留入口/context 的首错优先级。
+        shadow.precomputed_stock_inputs = Some(prepared.stock_inputs);
+    } else {
+        shadow.expiry = quote_expiry::plan_expiry(&mut shadow)?;
+        crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
+        decision_resources::plan_allocation(&mut shadow)?;
+    }
     Ok(shadow)
 }
 
