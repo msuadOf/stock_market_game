@@ -502,6 +502,386 @@ fn old_save_without_preferences_fields_is_explicitly_rejected() {
     assert!(serde_json::from_value::<SaveSlot>(encoded).is_ok());
 }
 
+/// 测试侧独立推导：公告日（=批准日）后的（登记日, 除息/除权日）。
+/// 独立于评估函数实现（直接逐步查日历），避免与实现共用同一推导而循环自证。
+fn schedule_after_announcement(
+    calendar: &crate::calendar::TradingCalendar,
+    exchange: crate::calendar::CalendarExchange,
+    announced_on: CivilDate,
+) -> (CivilDate, CivilDate) {
+    let registered = calendar.next_trading_day(exchange, announced_on).unwrap();
+    let ex = calendar.next_trading_day(exchange, registered).unwrap();
+    (registered, ex)
+}
+
+/// 测试侧独立计数：(from_exclusive, to_inclusive] 区间内的交易所交易日数，
+/// 即提案锚收盘后到登记日收盘之间各自最多再跌一个跌停幅度的敞露日数。
+fn exposed_trading_days(
+    calendar: &crate::calendar::TradingCalendar,
+    exchange: crate::calendar::CalendarExchange,
+    from_exclusive: CivilDate,
+    to_inclusive: CivilDate,
+) -> u32 {
+    let mut count = 0_u32;
+    let mut cursor = from_exclusive;
+    while cursor < to_inclusive {
+        cursor = cursor.next().unwrap();
+        if calendar.is_trading_day(exchange, cursor).unwrap() {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// 在当日盘中制造一笔按 `price` 的真实成交：机构账户挂一笔直接置入订单簿的
+/// 限价买单（复用既有税务用例的 fixture 手法，冻结 NPC 注意力避免策略干扰），
+/// 玩家卖出 `qty` 股，步进**一个** tick 并断言真实成交发生。当日剩余 tick 由
+/// 调用方步进（保持每交易日恰好 `ticks_per_day` 次 step）。
+fn force_trade_at_price(session: &mut GameSession, stock: &StockCode, price: Money, qty: u32) {
+    let institution = crate::orderbook::AccountId(1);
+    session
+        .state
+        .npc_attention
+        .get_mut(&institution)
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
+    session.state.attention_scheduler = [(u64::MAX, institution)].into_iter().collect();
+    let buyer_order_id = session.state.next_order_id;
+    session
+        .state
+        .markets
+        .get_mut(stock)
+        .unwrap()
+        .place(crate::Order {
+            id: crate::OrderId(buyer_order_id),
+            side: crate::Side::Buy,
+            price,
+            qty,
+            original_qty: qty,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: institution,
+            seq: buyer_order_id,
+        })
+        .unwrap();
+    session.state.next_order_id += 1;
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    session
+        .enqueue_player_intent(
+            crate::orderbook::AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: stock.clone(),
+                side: crate::Side::Sell,
+                price: crate::LimitPrice::Fixed(price),
+                qty,
+            },
+        )
+        .unwrap();
+    let events = session.step().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::Event::Trade { .. })),
+        "fixture 必须在 {price:?} 制造一笔真实成交"
+    );
+    assert_eq!(
+        session.state.markets.get(stock).unwrap().last_price(),
+        price,
+        "成交价必须更新最新价"
+    );
+}
+
+#[test]
+fn auto_proposal_at_cap_survives_consecutive_limit_downs_to_ex_date() {
+    // 门禁复核 major 边界用例：提案按「日程跌停敞口余量」封顶生成后，
+    // 公告→登记之间每个敞露交易日连续一字跌停，走到除息日时除息参考价仍为正、
+    // 日结（含派发）正常、会话不 poison。旧封顶口径「收盘价 − 1 分」在本场景
+    // 以 NonPositiveReferencePrice 使除息日首 tick 致命失败（红测证据见台账）。
+    let (mut session, issuer, stock) =
+        session_with_registry(cash_preference(10_000, 1, 1), 205, 10_000_000);
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 冻结唯一 NPC（机构）注意力：01-20 → 01-31 无任何成交，提案锚 = 初始价。
+    let institution = crate::orderbook::AccountId(1);
+    session
+        .state
+        .npc_attention
+        .get_mut(&institution)
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
+    session.state.attention_scheduler = [(u64::MAX, institution)].into_iter().collect();
+    advance_through_first_period_end(&mut session);
+    assert_eq!(session.state.corporate_actions.dividends.len(), 1);
+    let plan = session.state.corporate_actions.dividends[0].plan().clone();
+    assert_eq!(plan.approved_on, d("2030-02-01"));
+    // 敞露交易日数 n 由日程推导（本日程：公告日 2030-02-01 为交易日 + 登记日）。
+    let n = exposed_trading_days(&calendar, exchange, d("2030-01-31"), plan.registered_on);
+    assert_eq!(n, 2, "公告→登记间应有 2 个敞露交易日");
+    // 封顶 = floor(锚 × (1 − n×涨跌幅)) − 1 分；10% 涨跌幅下 = 799 分。
+    let expected_cap = 1_000_i128 * (10_000 - i128::from(n) * 1_000) / 10_000 - 1;
+    assert_eq!(
+        i128::from(plan.gross_per_share.cents()),
+        expected_cap,
+        "目标派息（30 万bp 远超余量）应被日程跌停余量封顶"
+    );
+    assert!(rejections(&session, &issuer).is_empty());
+    // 公告→登记间逐个敞露交易日以真实成交打到跌停价（一字跌停）。
+    // 卖出数量遵守现行申报数量规则：首日两整手 200 股，末日余额零股 5 股
+    // 一次性卖出（沪市《交易规则（2026 年修订）》3.3.8）。
+    let mut remaining_sells = [200_u32, 5_u32].into_iter();
+    while session.civil_date() < plan.ex_dividend_on {
+        let today = session.civil_date();
+        let exposed = (today == plan.approved_on
+            && calendar.is_trading_day(exchange, today).unwrap())
+            || today == plan.registered_on;
+        let mut stepped = 0_u64;
+        let mut exposed_stop = None;
+        if exposed && session.state.civil_clock.phase() == CivilPhase::IntradayTrading {
+            let down_stop = session
+                .state
+                .markets
+                .get(&stock)
+                .unwrap()
+                .down_stop()
+                .unwrap();
+            let qty = remaining_sells.next().expect("敞露交易日数与卖出批次一致");
+            force_trade_at_price(&mut session, &stock, down_stop, qty);
+            exposed_stop = Some(down_stop);
+            stepped = 1;
+        }
+        if session.state.civil_clock.phase() == CivilPhase::IntradayTrading {
+            for _ in stepped..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+        if let Some(stop) = exposed_stop {
+            // 日终把昨收对齐到当日最新成交：敞露日收盘恰好为当日跌停价。
+            assert_eq!(
+                session.state.markets.get(&stock).unwrap().last_close(),
+                stop,
+                "敞露交易日收盘应恰好为当日跌停价"
+            );
+        }
+    }
+    assert_eq!(session.civil_date(), plan.ex_dividend_on);
+    // 除息日首 tick 安装除息参考价：登记日收盘（两日连续跌停 810 分）− 每股
+    // 红利 799 分 = 11 分，仍为正；旧口径（999 分）在此 poison。
+    let first_step = session.step();
+    assert!(
+        first_step.is_ok(),
+        "除息日首 tick 不得致命失败：{:?}",
+        first_step.err()
+    );
+    for _ in 1..session.state.setup.ticks_per_day {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    assert!(
+        session.poison_reason().is_none(),
+        "除息日日结不得 poison：{:?}",
+        session.poison_reason()
+    );
+    let reference = session
+        .state
+        .markets
+        .get(&stock)
+        .unwrap()
+        .last_cash_ex_reference()
+        .expect("除息日必须安装除息参考价");
+    assert_eq!(reference.ex_date, plan.ex_dividend_on);
+    assert_eq!(reference.reference_price, Money::from_cents(11));
+    // 除息日 = 派发日：日结完成真实派发，状态机照常推进。
+    assert_eq!(
+        session.state.corporate_actions.dividends[0].status(),
+        &crate::company::cash_dividend::CashDividendStatus::Paid
+    );
+}
+
+#[test]
+fn auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin() {
+    // 门禁复核 major 边界用例：既有显式方案与自动提案同除息日且已占满跌停
+    // 余量封顶时，新自动提案被拒并如实记入台账（同除息日 gross 合并口径）。
+    let (mut session, issuer, stock) =
+        session_with_registry(cash_preference(10_000, 1, 1), 5, 10_000_000);
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 显式方案须在自动提案的**上一个**结算周期批准（同月显式批准会以频率
+    // 归并口径抑制本周期自动评估），除息日程与第二周期自动提案重合。
+    advance_to(&mut session, d("2030-01-21"));
+    let (registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
+    // 显式方案每股 799 分：恰好占满 floor(1000×(1−2×10%)) − 1 的封顶。
+    let explicit_plan = crate::company::cash_dividend::CashDividendPlan::new(
+        "explicit-same-ex-date".into(),
+        issuer.clone(),
+        stock.clone(),
+        exchange,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        d("2030-01-21"),
+        d("2030-03-01"),
+        registered_on,
+        ex_on,
+        ex_on,
+        Money::from_cents(799),
+        Money::from_cents(10_000_000),
+        &calendar,
+    )
+    .unwrap();
+    session
+        .approve_cash_dividend(
+            DividendDeclaration {
+                plan_id: explicit_plan.plan_id.clone(),
+                approved_on: d("2030-01-21"),
+                total_gross: crate::accounting::AccountingAmount::from_cents(799 * 6),
+                registered_capital: crate::accounting::AccountingAmount::from_cents(10_000_000),
+            },
+            explicit_plan,
+        )
+        .unwrap();
+    // 推进过第二个月度周期末日（2030-02-28）日结：自动评估在 03-01 提案。
+    advance_to(&mut session, d("2030-03-01"));
+    assert_eq!(session.civil_date(), d("2030-03-01"));
+    // 一月内的显式批准同时以频率归并口径抑制第一周期自动评估，第二周期
+    //（02-28）到期评估被合并封顶拒绝：全程只保留显式方案一本账簿。
+    assert_eq!(
+        session.state.corporate_actions.dividends.len(),
+        1,
+        "余量被同除息日显式方案占满时不得再产生自动方案"
+    );
+    assert!(
+        !session
+            .state
+            .corporate_actions
+            .dividends
+            .iter()
+            .any(|book| book.plan().plan_id.starts_with("simple-preference:")),
+        "被拒周期不得留下自动方案"
+    );
+    let rows = rejections(&session, &issuer);
+    assert_eq!(rows.len(), 1, "同周期恰好一条拒绝记录");
+    assert_eq!(rows[0].kind, SimplePreferenceProposalKind::CashDividend);
+    assert!(
+        rows[0].detail.contains("封顶"),
+        "拒绝原因应指向合并封顶：{}",
+        rows[0].detail
+    );
+    // 拒绝不令日结失败；显式方案自身满足封顶口径，日程照常走完不 poison。
+    advance_to(&mut session, ex_on.next().unwrap());
+    assert!(session.poison_reason().is_none());
+    assert_eq!(
+        session.state.corporate_actions.dividends[0].status(),
+        &crate::company::cash_dividend::CashDividendStatus::Paid
+    );
+}
+
+#[test]
+fn auto_proposal_merges_same_ex_date_explicit_gross_into_cap() {
+    // 同除息日合并口径的正例：显式方案每股 500 分后，自动提案每股被压到
+    // floor(1000×(1−2×10%)) − 1 − 500 = 299 分；合并 gross 恰好回到封顶。
+    let (mut session, issuer, stock) =
+        session_with_registry(cash_preference(10_000, 1, 1), 5, 10_000_000);
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 同测试 B：显式方案上一周期批准，除息日程与第二周期自动提案重合。
+    advance_to(&mut session, d("2030-01-21"));
+    let (registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
+    let explicit_plan = crate::company::cash_dividend::CashDividendPlan::new(
+        "explicit-partial-margin".into(),
+        issuer.clone(),
+        stock.clone(),
+        exchange,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        d("2030-01-21"),
+        d("2030-03-01"),
+        registered_on,
+        ex_on,
+        ex_on,
+        Money::from_cents(500),
+        Money::from_cents(10_000_000),
+        &calendar,
+    )
+    .unwrap();
+    session
+        .approve_cash_dividend(
+            DividendDeclaration {
+                plan_id: explicit_plan.plan_id.clone(),
+                approved_on: d("2030-01-21"),
+                total_gross: crate::accounting::AccountingAmount::from_cents(500 * 6),
+                registered_capital: crate::accounting::AccountingAmount::from_cents(10_000_000),
+            },
+            explicit_plan,
+        )
+        .unwrap();
+    advance_to(&mut session, d("2030-03-01"));
+    // 一月内的显式批准抑制第一周期自动评估；第二周期（02-28）自动提案被
+    // 压到 299 分并批准：显式 + 自动共两本。
+    assert_eq!(session.state.corporate_actions.dividends.len(), 2);
+    let auto_plan = session
+        .state
+        .corporate_actions
+        .dividends
+        .iter()
+        .map(|book| book.plan())
+        .find(|plan| plan.plan_id == "simple-preference:C-600888:dividend:2030-02-28")
+        .unwrap()
+        .clone();
+    assert_eq!(auto_plan.gross_per_share, Money::from_cents(299));
+    assert_eq!(auto_plan.ex_dividend_on, ex_on);
+    assert!(rejections(&session, &issuer).is_empty());
+    // 无跌停行情下合并参考价 = 1000 − 799 = 201 分，日程走完不 poison。
+    advance_to(&mut session, ex_on.next().unwrap());
+    assert!(session.poison_reason().is_none());
+}
+
+#[test]
+fn auto_stock_proposal_rejected_when_same_ex_date_explicit_event_exists() {
+    // 同除息/除权日既存在显式送转事件时，自动送转提案被拒：两起送转事件的
+    // 合并除权口径未核实，除权日日结会显式失败，自动提案不得叠加。
+    let (mut session, issuer, stock) = session_with_registry(
+        stock_preference(1, 100_000, 1_000_000_000, 1),
+        205,
+        10_000_000,
+    );
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 同上：显式送转事件上一周期批准，除权日程与第二周期自动提案重合。
+    advance_to(&mut session, d("2030-01-21"));
+    let (registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
+    let explicit_event = crate::company::stock_distribution::StockDistributionEventPlan {
+        event_id: "explicit-same-ex-rights".into(),
+        approval_reference: "explicit fixture event".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange,
+        kind: crate::company::stock_distribution::StockDistributionKind::BonusShares,
+        approved_on: d("2030-01-21"),
+        announced_on: d("2030-03-01"),
+        registered_on,
+        ex_rights_on: ex_on,
+        shares_per_existing_share_micros: 100_000,
+        approved_total_new_shares: 1,
+    };
+    session.approve_stock_distribution(explicit_event).unwrap();
+    advance_to(&mut session, d("2030-03-01"));
+    assert_eq!(
+        session.state.corporate_actions.stock_distributions.len(),
+        1,
+        "同除权日已有显式送转事件时不得再叠加自动送转"
+    );
+    let rows = rejections(&session, &issuer);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].kind,
+        SimplePreferenceProposalKind::StockDistribution
+    );
+    assert!(
+        rows[0].detail.contains("同除权日"),
+        "拒绝原因应指向同除权日送转叠加：{}",
+        rows[0].detail
+    );
+    assert!(session.poison_reason().is_none());
+}
+
 #[test]
 fn preference_configuration_validates_through_setup() {
     let mut setup = preference_setup(cash_preference(0, 1, 1));

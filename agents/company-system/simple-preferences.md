@@ -21,8 +21,10 @@
 - 提案节奏：批准日 = 公告日 = 周期末日次日；登记日为公告日后首个交易日且不与公告日
   同日（否则 typed 公告在披露时已推进为 Registered 而永久错过公告通道——本轮红→绿
   发现并修复）；除息/除权 = 登记日次一交易日；派发 = 除息日。
-- 游戏化派息封顶：每股 ≤ 最新收盘价 − 1 分，防止除息参考价非正令除息日日结致命失败
-  （本轮红→绿发现的第二个真实缺陷：偏好自动方案不得把局推向不可结算状态）。
+- 游戏化派息封顶：每股派息按「实际日程推导的跌停敞口余量」封顶（敞露交易日数 n ×
+  涨跌幅限制推导的最坏登记日收盘下界，合并同除息日既有方案 gross；修复轮改写，
+  详见下文「门禁复核修复轮」与 `docs/trading-rules.md`），防止除息参考价非正令除息日
+  日结致命失败（偏好自动方案不得把局推向不可结算状态）。
 - 拒绝台账（`SimplePreferenceLedger`）：记录公司/评估日/类别/原因；同键同因幂等、
   同键异因显式报错；接受事实由 finance 分红/送转事实与 Session 账簿承载，不重复。
 - 频率：`cycles_between_proposals` 按自然月差 × 结算周期月数计算完整周期间隔；上一
@@ -81,6 +83,82 @@
   DEFAULT_SETUP 漂移）为本批之前即存在的 main 基线，未顺手修复以免混入无关改动。
 - M 批（配股/增发/回购）在另一 worktree 平行开发；`SimpleCompanyPreferences` 的扩展位
   注释即为其预留，落地时按 ADR-0037「偏好自动 + 显式 API」双入口接入。
+
+## 门禁复核修复轮（2026-10-07，fix-round）
+
+P 批门禁复核 findings 的修复记录（复核意见全文见主对话；下述按 finding 归纳）：
+
+### major：派息封顶跌停敞口（已修）
+
+- **缺陷确认**：原封顶「每股 ≤ 收盘价 − 1 分」在提案时点取锚，而除息日
+  `prepare_ex_references_for_current_date`（session/failure.rs）用**登记日**收盘算
+  `previous_close − gross_per_share`；公告→登记间 1–2 个交易日内跌停幅度内的下跌即可把
+  参考价压到非正 → `NonPositiveReferencePrice` → StepFatal → poison 阻断存档，自动提案
+  每周期重试必然复现。文档宣称「防止不可结算」与实际保护不符。
+- **修复口径**（`company/simple/preferences.rs` + `session.rs` 接线 +
+  `docs/trading-rules.md` 同步改写）：
+  1. 封顶改为按**实际日程推导的跌停敞口余量**：敞露交易日数 n = `(周期末, 登记日]`
+     内的交易所交易日（本日程结构下恒为 1 或 2，公告日休市时 1——禁止固定 2 天），
+     封顶 = floor(锚收盘 × (1 − n×limit_bps/10000)) − 必留正参考价分子；余量耗尽
+     （n×limit ≥ 10000，现行板块限制下不可达，防御性拒绝）或封顶非正时如实记录拒绝。
+     数学依据：单日跌停价 = 昨收×(1−p) 四舍五入（偏上）且 ≥ 1 价位，n 日连续跌停后
+     收盘 ≥ 锚×(1−p)^n ≥ 锚×(1−np)（Bernoulli），线性下界向下取整只会更保守。
+  2. **同除息日合并口径**：既有方案（显式 + 自动）的 `gross_per_share` 求和后必须仍
+     满足封顶；同除息日存在送转事件时分子须保留 `1 + ceil(ratio/10^6)` 分（合并除权
+     参考 = 分子/(1+ratio) 银行家舍入到分，商 0 时舍入不保证 ≥1 分）。Session 侧
+     （`same_ex_date_preference_context`）按本周期日程推导除息日并扫描既有账簿。
+  3. **送转侧同族保护**（同一「自动提案不得把局推向不可结算状态」不变式）：同除权日
+     已存在送转事件 → 自动送转提案拒绝（两起送转合并除权口径未核实，叠加会在除权日
+     日结显式失败）；同除权日现金红利合并后余量不足 → 拒绝。现金偏好先评估、送转后
+     评估，同周期刚批准的自动现金方案在送转评估时已入账簿、计入合并（见代码注释）。
+  4. `target_payout_bp` 配置域**维持 1..=10000bp 不加严**：价格安全已由日程余量封顶
+     保证；派息比例另受「决议总额 ≤ 可分配利润」制度校验约束，收紧 bp 域只会无据
+     限制玩法，不消除任何真实风险。
+- **红→绿证据**（均在 `.tmp/company-system/simple-preferences/`，命令带
+  `run-with-deadline.mjs 10000` 外部 deadline）：
+  - 红：`fix-round-red.log`——4 个新 Session 用例在旧代码上全部行为红：
+    A 连续跌停场景旧封顶 999 ≠ 799（即敞口缺陷本体）；B 同除息日显式方案占满余量时
+    旧代码照样批准第二个方案（0 条拒绝记录）；C 旧代码不合并 gross（999 ≠ 299）；
+    D 旧代码自动送转与显式送转同除权日叠加（2 本账簿）。
+  - 绿：`fix-round-green-session.log`（Session 偏好 13/13：9 既有 + 4 新增）、
+    `company::simple` 86/86（偏好单元 14/14 含新增敞口/合并边界与 500 公司性能用例）、
+    Session Simple 36/36、`corporate_actions` 12/12、`dividend_tax_mode` 8/8、
+    `market::` 8/8、`fix-round-cargo-check.log`（workspace --exclude stock-market-game
+    通过）、`fix-round-web-system.log`（Web `system.test.ts` 16/16；相邻 schema 组
+    simple-finance/reports/annual-growth 13/13）。
+  - 新增 Session 边界用例：`auto_proposal_at_cap_survives_consecutive_limit_downs_to_ex_date`
+    （按封顶生成后公告→登记**真实连续一字跌停**（每敞露日以机构挂单+玩家卖出在跌停价
+    成交）走到除息日，断言参考价 = 810−799 = 11 分为正、当日再日结到 Paid、全程无
+    poison）、`auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin`、
+    `auto_proposal_merges_same_ex_date_explicit_gross_into_cap`（合并后 500+299=799 恰
+    回封顶）、`auto_stock_proposal_rejected_when_same_ex_date_explicit_event_exists`。
+    测试侧日程/敞口计数独立实现（逐自然日查日历），不与实现共用推导。
+  - 完整 `engine --lib` 回归：`fix-round-engine-lib-full.log` 1469 passed / 257 failed；
+    stash 复跑基线 1463/257——**失败集与本批无关且数量一致**（该 worktree 基线即有
+    257 项失败，P 批原台账只登记了定向组），本修复 +6 通过、0 新增失败。
+  - 过程事故（如实登记）：曾对本批 5 个 Rust 文件单独运行 `rustfmt`，其默认递归
+    格式化了 `session.rs` 引入的全部子模块共 49 个非目标文件；已逐一 `git checkout`
+    还原为仅保留本批 7 个目标文件的改动，还原后全组测试与 cargo check 复跑通过
+    （`fix-round-green-final.log`）。未执行被禁止的 `cargo fmt --all`。
+- **文档**：`docs/trading-rules.md`「公司行为偏好自动提案」封顶条目按上述口径改写，
+  含除息日当日跌停为何安全（安装的参考价即当日昨收，跌停下限按昨收×(1−p) 四舍五入
+  且最低一个价位，恒 ≥1 分）与剩余边界（显式 API 不受游戏化封顶；两起**显式**送转
+  同除权日仍显式失败——既有显式侧行为，未改变）。
+
+### note：性能（已修）
+
+`session.rs` 每公司每周期末 `dividend_plan_facts`/`stock_distribution_facts` 原各取两次
+（幂等判定一次、频率归并一次）且各克隆一个 Vec——改为每公司每类别**只取一次**并在
+两处复用（`last_simple_proposal_period_end` 改收 `approved_on` 迭代器）；行为不变，
+`company::simple`（含 500 公司性能用例）与 Session 组全绿佐证。
+
+### note：`last_simple_proposal_period_end` ±1 天归并口径（维持，登记不改）
+
+接受的提案按「批准日的前一自然日」就近归并周期末：显式方案批准在周期中段时会把
+归并日提前到上一周期（例如 01-21 批准 → 归并 01-20，属 1 月；若上一周期末为 12-31
+则归并错周期一日）。复核认定该口径只影响频率判定早晚一个周期、无正确性影响
+（提案间隔语义本就是「至少间隔 N 个完整周期」的保守近似），**维持不改**；同月内
+显式批准会抑制同周期自动评估的连带行为已在新 Session 用例中固定（见 B/C 用例注释）。
 
 ## 与 M 批的预期冲突面
 

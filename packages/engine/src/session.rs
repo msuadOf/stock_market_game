@@ -2903,22 +2903,56 @@ impl GameSession {
                 .ok_or_else(|| {
                     SessionCorporateActionsError::Invalid("偏好评估可分红股数溢出".into())
                 })?;
-            // 已有现金分红提案（接受或被拒）所属结算周期末日：接受的提案按
-            // 「批准日的前一自然日」归并周期（自动提案批准日 = 周期末日次日），
-            // 被拒提案直接取台账评估日。
-            let last_cash_proposal_on = self.last_simple_proposal_period_end(
-                &company,
-                SimplePreferenceProposalKind::CashDividend,
-            )?;
+            // 每公司每类别每周期只取一次事实向量并在幂等判定、频率归并间复用
+            // （行为不变；避免同一周期对 facts 的重复取用与 Vec 克隆）。
+            let dividend_facts = match &preference.cash_dividend {
+                Some(_) => Some(
+                    self.state
+                        .company_system
+                        .dividend_plan_facts(&company)
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?,
+                ),
+                None => None,
+            };
+            let stock_facts = match &preference.stock_distribution {
+                Some(_) => Some(
+                    self.state
+                        .company_system
+                        .stock_distribution_facts(&company)
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?,
+                ),
+                None => None,
+            };
+            // 行情敞口上下文：提案锚收盘、涨跌幅限制，以及按本周期日程推导的
+            // 除息/除权日上既有的同日方案（显式 + 自动）合并事实。日程推导失败
+            // 时返回 None，由评估函数自行推导日程并以同一失败原因如实拒绝。
+            let market_anchor = self
+                .state
+                .markets
+                .get(&stock)
+                .map(|market| (market.last_close(), market.limit_bps()));
+            let same_ex_date =
+                self.same_ex_date_preference_context(&stock, exchange, approve_on)?;
+            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event) =
+                same_ex_date.unwrap_or((Money::ZERO, None, false));
             if let Some(cash_preference) = preference.cash_dividend.clone() {
+                let facts = dividend_facts
+                    .as_ref()
+                    .expect("配置了现金分红偏好时必须已取分红事实");
                 let plan_id = preference_api::cash_dividend_plan_id(&company, settled_date);
-                let already_proposed = self
-                    .state
-                    .company_system
-                    .dividend_plan_facts(&company)
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-                    .iter()
-                    .any(|fact| fact.plan_id == plan_id);
+                let already_proposed = facts.iter().any(|fact| fact.plan_id == plan_id);
+                // 已有现金分红提案（接受或被拒）所属结算周期末日：接受的提案按
+                // 「批准日的前一自然日」归并周期（自动提案批准日 = 周期末日次日），
+                // 被拒提案直接取台账评估日。
+                let last_cash_proposal_on = self.last_simple_proposal_period_end(
+                    &company,
+                    SimplePreferenceProposalKind::CashDividend,
+                    facts.iter().map(|fact| fact.approved_on),
+                )?;
                 let distributable = self.state.company_system.distributable_profit(&company);
                 let legal_capital = self
                     .state
@@ -2926,11 +2960,14 @@ impl GameSession {
                     .dividend_legal_facts(&company)
                     .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
                     .map(|facts| facts.registered_capital);
-                let last_close = self
-                    .state
-                    .markets
-                    .get(&stock)
-                    .map(|market| market.last_close());
+                let exposure = market_anchor.map(|(last_close, limit_bps)| {
+                    preference_api::SimpleCashDividendExposure {
+                        last_close,
+                        limit_bps,
+                        same_ex_date_gross_per_share: same_ex_gross,
+                        same_ex_date_ratio_micros: same_ex_ratio_micros,
+                    }
+                });
                 let rejection = match distributable {
                     Ok(distributable) => {
                         let input = preference_api::SimpleCashDividendEvaluation {
@@ -2943,7 +2980,7 @@ impl GameSession {
                             calendar: self.state.civil_clock.calendar(),
                             distributable,
                             eligible_shares,
-                            last_close,
+                            exposure,
                             registered_capital: legal_capital,
                             last_proposal_period_end: last_cash_proposal_on,
                             cycle_months,
@@ -2979,12 +3016,10 @@ impl GameSession {
                 }
             }
             if let Some(stock_preference) = preference.stock_distribution.clone() {
+                let facts = stock_facts
+                    .as_ref()
+                    .expect("配置了送转偏好时必须已取送转事实");
                 let event_id = preference_api::stock_distribution_event_id(&company, settled_date);
-                let facts = self
-                    .state
-                    .company_system
-                    .stock_distribution_facts(&company)
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
                 let already_proposed = facts.iter().any(|fact| fact.event_id == event_id);
                 let cumulative_shares = facts
                     .iter()
@@ -2995,6 +3030,7 @@ impl GameSession {
                 let last_stock_proposal_on = self.last_simple_proposal_period_end(
                     &company,
                     SimplePreferenceProposalKind::StockDistribution,
+                    facts.iter().map(|fact| fact.approved_on),
                 )?;
                 let initial_issued_shares = self
                     .state
@@ -3008,6 +3044,21 @@ impl GameSession {
                             "偏好评估缺少 {stock:?} 的开局发行股数"
                         ))
                     })?;
+                // 行情敞口上下文：同除权日现金红利按**当前**账簿重扫合计——现金
+                // 分红偏好先评估，若本轮刚批准自动现金方案，其 gross 已入账簿
+                // 并被计入（显式 + 自动合并口径）。
+                let same_ex_cash_gross = self
+                    .same_ex_date_preference_context(&stock, exchange, approve_on)?
+                    .map(|(gross, _ratio, _event)| gross)
+                    .unwrap_or(Money::ZERO);
+                let exposure = market_anchor.map(|(last_close, limit_bps)| {
+                    preference_api::SimpleStockDistributionExposure {
+                        last_close,
+                        limit_bps,
+                        same_ex_date_gross_per_share: same_ex_cash_gross,
+                        same_ex_date_stock_event: same_ex_stock_event,
+                    }
+                });
                 // 现金分红批准会核减可分配利润，送转评估必须读取最新账面。
                 let distributable = self.state.company_system.distributable_profit(&company);
                 let rejection = match distributable {
@@ -3024,6 +3075,7 @@ impl GameSession {
                             eligible_shares,
                             initial_issued_shares,
                             cumulative_distributed_shares: cumulative_shares,
+                            exposure,
                             last_proposal_period_end: last_stock_proposal_on,
                             cycle_months,
                             suppress_duplicate: already_proposed,
@@ -3059,43 +3111,65 @@ impl GameSession {
         Ok(())
     }
 
+    /// 按本周期自动提案日程推导的除息/除权日上，既有同日方案（显式 + 自动）
+    /// 的合并事实：(同日现金分红合计税前每股红利, 同日送转事件比例, 是否已
+    /// 存在同日送转事件)。日程推导失败返回 `None`（评估函数会以同一失败原因
+    /// 如实拒绝，不静默）。
+    fn same_ex_date_preference_context(
+        &self,
+        stock: &crate::account::StockCode,
+        exchange: crate::calendar::CalendarExchange,
+        approve_on: crate::calendar::CivilDate,
+    ) -> Result<Option<(Money, Option<u64>, bool)>, SessionCorporateActionsError> {
+        use crate::company::simple::preferences as preference_api;
+        let Some((_registered_on, ex_on)) = preference_api::preference_ex_dates(
+            self.state.civil_clock.calendar(),
+            exchange,
+            approve_on,
+        )
+        .ok() else {
+            return Ok(None);
+        };
+        let mut cash_gross = Money::ZERO;
+        let mut stock_ratio_micros = None;
+        let mut stock_event_exists = false;
+        for book in &self.state.corporate_actions.dividends {
+            let plan = book.plan();
+            if plan.stock == *stock && plan.ex_dividend_on == ex_on {
+                cash_gross = cash_gross
+                    .add(plan.gross_per_share)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            }
+        }
+        for book in &self.state.corporate_actions.stock_distributions {
+            let plan = book.plan();
+            if plan.stock == *stock && plan.ex_rights_on == ex_on {
+                stock_event_exists = true;
+                stock_ratio_micros = Some(plan.shares_per_existing_share_micros);
+            }
+        }
+        Ok(Some((cash_gross, stock_ratio_micros, stock_event_exists)))
+    }
+
     /// 该公司该类别最近一次提案（接受或被拒）所属结算周期末日。
     /// 接受的提案以「批准日的前一自然日」归并（自动提案批准日 = 周期末日次日；
     /// 显式方案按其批准日的前一日就近归并），被拒提案取台账评估日。
+    /// 批准日序列由调用方传入（facts 每周期已取一次，避免重复取用与克隆）。
     fn last_simple_proposal_period_end(
         &self,
         company: &crate::company::CompanyId,
         kind: crate::company::simple::preferences::SimplePreferenceProposalKind,
+        approved_on_dates: impl Iterator<Item = crate::calendar::CivilDate>,
     ) -> Result<Option<crate::calendar::CivilDate>, SessionCorporateActionsError> {
         let map_err = |error: crate::company::CompanySystemError| {
             SessionCorporateActionsError::Invalid(error.to_string())
-        };
-        let fact_dates: Vec<crate::calendar::CivilDate> = match kind {
-            crate::company::simple::preferences::SimplePreferenceProposalKind::CashDividend => {
-                self.state
-                    .company_system
-                    .dividend_plan_facts(company)
-                    .map_err(map_err)?
-                    .iter()
-                    .map(|fact| fact.approved_on)
-                    .collect()
-            }
-            crate::company::simple::preferences::SimplePreferenceProposalKind::StockDistribution => {
-                self.state
-                    .company_system
-                    .stock_distribution_facts(company)
-                    .map_err(map_err)?
-                    .iter()
-                    .map(|fact| fact.approved_on)
-                    .collect()
-            }
         };
         let mut latest = self
             .state
             .company_system
             .last_preference_rejection_on(company, kind)
             .map_err(map_err)?;
-        for approved_on in fact_dates {
+        for approved_on in approved_on_dates {
             let proposal_day = approved_on
                 .prev()
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;

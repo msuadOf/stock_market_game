@@ -279,6 +279,12 @@ impl Market {
         self.last_close
     }
 
+    /// 涨跌幅限制（整数基点，10% = 1000）。构造期由 `limit_pct` 转换的权威
+    /// 整数值；公司行为偏好提案的跌停余量封顶按该整数推导（只读）。
+    pub const fn limit_bps(&self) -> u32 {
+        self.limit_bps
+    }
+
     /// 在调用方确认该证券除息日首次开市前安装已核验的除息参考价。
     /// 仅更新行情前收/涨跌停锚，不覆盖真实最新成交，不生成行情或成交。
     pub fn prepare_ex_date_reference(
@@ -826,11 +832,9 @@ mod price_limit_state_tests {
             ex_date,
             reference_price: Money::from_cents(900),
         };
-        assert!(
-            market
-                .prepare_ex_date_reference(mismatched_date, valid)
-                .is_err()
-        );
+        assert!(market
+            .prepare_ex_date_reference(mismatched_date, valid)
+            .is_err());
         assert_eq!(market.last_close(), Money::from_cents(1000));
         assert_eq!(market.last_cash_ex_reference(), None);
 
@@ -912,54 +916,46 @@ mod price_limit_state_tests {
             ex_date,
             reference_price: Money::from_cents(900),
         };
-        assert!(
-            Market::validate_restored_facts(
-                &code,
-                ex_date,
-                Money::from_cents(1000),
-                Money::from_cents(900),
-                true,
-                None,
-                Money::from_cents(1),
-            )
-            .is_err()
-        );
-        assert!(
-            Market::validate_restored_facts(
-                &code,
-                ex_date,
-                Money::from_cents(1000),
-                Money::from_cents(890),
-                true,
-                Some(reference),
-                Money::from_cents(1),
-            )
-            .is_err()
-        );
-        assert!(
-            Market::validate_restored_facts(
-                &code,
-                ex_date,
-                Money::from_cents(1000),
-                Money::from_cents(900),
-                true,
-                Some(reference),
-                Money::from_cents(1),
-            )
-            .is_ok()
-        );
+        assert!(Market::validate_restored_facts(
+            &code,
+            ex_date,
+            Money::from_cents(1000),
+            Money::from_cents(900),
+            true,
+            None,
+            Money::from_cents(1),
+        )
+        .is_err());
+        assert!(Market::validate_restored_facts(
+            &code,
+            ex_date,
+            Money::from_cents(1000),
+            Money::from_cents(890),
+            true,
+            Some(reference),
+            Money::from_cents(1),
+        )
+        .is_err());
+        assert!(Market::validate_restored_facts(
+            &code,
+            ex_date,
+            Money::from_cents(1000),
+            Money::from_cents(900),
+            true,
+            Some(reference),
+            Money::from_cents(1),
+        )
+        .is_ok());
         let earlier_date = crate::calendar::CivilDate::from_ymd(2026, 10, 6).unwrap();
-        assert!(
-            Market::validate_restored_facts(
-                &code,
-                earlier_date,
-                Money::from_cents(1000),
-                Money::from_cents(900),
-                true,
-                Some(reference),
-                Money::from_cents(1),
-            )
-            .is_err()
-        );
+        assert!(Market::validate_restored_facts(
+            &code,
+            earlier_date,
+            Money::from_cents(1000),
+            Money::from_cents(900),
+            true,
+            Some(reference),
+            Money::from_cents(1),
+        )
+        .is_err());
     }
 }

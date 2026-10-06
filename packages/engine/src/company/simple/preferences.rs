@@ -284,6 +284,20 @@ pub(crate) fn stock_distribution_event_id(company: &CompanyId, period_end: Civil
     )
 }
 
+/// 现金分红提案封顶的行情敞口上下文（游戏化保护，非官方规则；口径登记于
+/// `docs/trading-rules.md`「公司行为偏好自动提案」）。
+pub(crate) struct SimpleCashDividendExposure {
+    /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
+    pub last_close: Money,
+    /// 该股适用涨跌幅限制（整数基点，如 10% = 1000）。
+    pub limit_bps: u32,
+    /// 同除息日既有现金分红方案（显式 + 自动）合计税前每股红利：同除息日的
+    /// gross 在除息日按组合并计算参考价，必须一并计入封顶。
+    pub same_ex_date_gross_per_share: Money,
+    /// 同除息日既有送转事件的股份变动比例（合并除权组对分子有更严的下界）。
+    pub same_ex_date_ratio_micros: Option<u64>,
+}
+
 /// 现金分红偏好评估输入：全部为既有事实的只读快照，评估本身不产生副作用。
 pub(crate) struct SimpleCashDividendEvaluation<'a> {
     pub preference: &'a SimpleCashDividendPreference,
@@ -299,11 +313,12 @@ pub(crate) struct SimpleCashDividendEvaluation<'a> {
     pub distributable: DistributableProfit,
     /// 名册非库藏股股数（与 `approve_cash_dividend` 同口径）。
     pub eligible_shares: u64,
-    /// 提案时点的最新收盘价（行情锚）。游戏化保护（非官方规则，登记于
-    /// `docs/trading-rules.md`）：每股派息按「收盘价 − 一个最小价位」封顶，
+    /// 行情敞口上下文。游戏化保护（非官方规则，登记于 `docs/trading-rules.md`）：
+    /// 每股派息按「实际日程推导的跌停敞口余量」封顶——锚收盘 ×
+    /// (1 − n×涨跌幅) − 必留正参考价分子，n 为公告→登记间敞露交易日数，
     /// 防止偏好自动方案的除息参考价非正（参考价非正会使除息日日结致命失败，
-    /// 自动提案不得把局推向不可结算状态）。
-    pub last_close: Option<Money>,
+    /// 自动提案不得把局推向不可结算状态）。缺行情锚时无法约束上限，如实拒绝。
+    pub exposure: Option<SimpleCashDividendExposure>,
     /// 已显式绑定的注册资本法定事实；缺省时无法构造决议。
     pub registered_capital: Option<AccountingAmount>,
     /// 该公司现金分红最近一次提案（接受或被拒）所属结算周期末日。
@@ -358,41 +373,10 @@ pub(crate) fn evaluate_cash_dividend_preference(
     } else {
         i64::try_from(target_cents / i128::from(input.eligible_shares)).unwrap_or(0)
     };
-    // 游戏化保护：每股派息封顶为「最新收盘价 − 一个最小价位（1 分）」，
-    // 保证除息参考价（前收盘价 − 每股税前红利）严格为正。
-    let per_share_cap = input
-        .last_close
-        .map(|close| close.cents().saturating_sub(1));
-    let per_share = match per_share_cap {
-        Some(cap) => per_share.min(cap),
-        None => {
-            return SimpleCashDividendOutcome::Rejected {
-                detail: "现金分红提案缺少行情前收锚，无法约束每股派息上限".into(),
-            };
-        }
-    };
-    if per_share <= 0 {
-        return SimpleCashDividendOutcome::Rejected {
-            detail: format!(
-                "目标派息额 {} 分摊到 {} 股（或受收盘价封顶）后每股不足一分，\
-                 无法构造整数分方案",
-                target_cents, input.eligible_shares
-            ),
-        };
-    }
-    let gross_cents = i128::from(per_share)
-        .checked_mul(i128::from(input.eligible_shares))
-        .unwrap_or(i128::MAX);
-    let (total_money, authorized_money) =
-        match (i64::try_from(gross_cents), i64::try_from(available_cents)) {
-            (Ok(gross), Ok(authorized)) => (gross, authorized),
-            _ => {
-                return SimpleCashDividendOutcome::Rejected {
-                    detail: "现金分红提案金额超出 Money 分值域".into(),
-                };
-            }
-        };
-    let per_share_money = Money::from_cents(per_share);
+    // 游戏化保护：先按方案日程推导（登记日, 除息日），再按敞露交易日数与
+    // 涨跌幅限制推导「公告→登记间连续跌停」后登记日收盘的可保证下界，
+    // 每股派息（连同同除息日既有方案的 gross 合并）封顶在该下界以内，
+    // 保证除息日参考价在最坏行情下仍严格为正。
     let announcement_on = input.approve_on;
     let registered_on =
         match preference_registered_on(input.calendar, input.exchange, announcement_on) {
@@ -414,6 +398,85 @@ pub(crate) fn evaluate_cash_dividend_preference(
             };
         }
     };
+    let Some(exposure) = input.exposure.as_ref() else {
+        return SimpleCashDividendOutcome::Rejected {
+            detail: "现金分红提案缺少行情前收锚，无法约束每股派息上限".into(),
+        };
+    };
+    let exposure_days = match exposure_trading_days(
+        input.calendar,
+        input.exchange,
+        input.period_end,
+        registered_on,
+    ) {
+        Ok(days) => days,
+        Err(error) => {
+            return SimpleCashDividendOutcome::Rejected {
+                detail: format!("现金分红提案跌停敞口交易日推导失败：{error}"),
+            };
+        }
+    };
+    let Some(margin_floor_cents) = limit_down_margin_floor_cents(
+        exposure.last_close.cents(),
+        exposure.limit_bps,
+        exposure_days,
+    ) else {
+        return SimpleCashDividendOutcome::Rejected {
+            detail: format!(
+                "现金分红提案跌停敞口余量耗尽：收盘 {} 分在公告→登记间 {} 个交易日\
+                 （涨跌幅限制 {}bp）连续跌停后无正参考价余量",
+                exposure.last_close.cents(),
+                exposure_days,
+                exposure.limit_bps
+            ),
+        };
+    };
+    let combined_ratio_micros = exposure.same_ex_date_ratio_micros.unwrap_or(0);
+    let required_positive_cents = combined_group_required_positive_cents(combined_ratio_micros);
+    // 同除息日合计税前每股红利（既有显式/自动方案 + 本提案）的封顶。
+    let gross_cap_cents = margin_floor_cents - required_positive_cents;
+    if gross_cap_cents <= 0 {
+        return SimpleCashDividendOutcome::Rejected {
+            detail: format!(
+                "现金分红提案跌停余量封顶非正：最坏登记日收盘下界 {} 分不足以\
+                 保留 {} 分正参考价分子",
+                margin_floor_cents, required_positive_cents
+            ),
+        };
+    }
+    let existing_gross_cents = i128::from(exposure.same_ex_date_gross_per_share.cents());
+    let per_share_cap_cents = gross_cap_cents - existing_gross_cents;
+    if per_share_cap_cents <= 0 {
+        return SimpleCashDividendOutcome::Rejected {
+            detail: format!(
+                "同除息日既有方案税前每股 {} 分已占满/超出跌停余量封顶 {} 分，\
+                 本周期提案每股不足一分，无法构造整数分方案",
+                existing_gross_cents, gross_cap_cents
+            ),
+        };
+    }
+    let per_share = per_share.min(i64::try_from(per_share_cap_cents).unwrap_or(i64::MAX));
+    if per_share <= 0 {
+        return SimpleCashDividendOutcome::Rejected {
+            detail: format!(
+                "目标派息额 {} 分摊到 {} 股（或受跌停余量封顶）后每股不足一分，\
+                 无法构造整数分方案",
+                target_cents, input.eligible_shares
+            ),
+        };
+    }
+    let gross_cents = i128::from(per_share)
+        .checked_mul(i128::from(input.eligible_shares))
+        .unwrap_or(i128::MAX);
+    let authorized_money = match (i64::try_from(gross_cents), i64::try_from(available_cents)) {
+        (Ok(_gross), Ok(authorized)) => authorized,
+        _ => {
+            return SimpleCashDividendOutcome::Rejected {
+                detail: "现金分红提案金额超出 Money 分值域".into(),
+            };
+        }
+    };
+    let per_share_money = Money::from_cents(per_share);
     let payable_on = ex_dividend_on;
     let plan_id = cash_dividend_plan_id(input.company, input.period_end);
     let plan = match CashDividendPlan::new(
@@ -449,6 +512,21 @@ pub(crate) fn evaluate_cash_dividend_preference(
     }
 }
 
+/// 送转提案的行情敞口上下文（游戏化保护；与现金分红封顶同口径推导，登记于
+/// `docs/trading-rules.md`「公司行为偏好自动提案」）。
+pub(crate) struct SimpleStockDistributionExposure {
+    /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
+    pub last_close: Money,
+    /// 该股适用涨跌幅限制（整数基点）。
+    pub limit_bps: u32,
+    /// 同除权日既有现金分红方案（显式 + 自动，含本周期刚批准的自动现金提案）
+    /// 合计税前每股红利：合并除权组的参考价 = (前收 − 该红利)/(1 + 变动比例)。
+    pub same_ex_date_gross_per_share: Money,
+    /// 同除权日已存在送转事件：两起送转事件的合并除权口径未核实，除权日日结
+    /// 会显式失败（`prepare_ex_references_for_current_date`），自动提案不得叠加。
+    pub same_ex_date_stock_event: bool,
+}
+
 /// 送转偏好评估输入。
 pub(crate) struct SimpleStockDistributionEvaluation<'a> {
     pub preference: &'a SimpleStockDistributionPreference,
@@ -465,6 +543,8 @@ pub(crate) struct SimpleStockDistributionEvaluation<'a> {
     pub initial_issued_shares: u64,
     /// 既有送转事实（含已批准未入账）累计新增股数。
     pub cumulative_distributed_shares: u64,
+    /// 行情敞口上下文；缺行情锚时无法推导除权参考价安全余量，如实拒绝。
+    pub exposure: Option<SimpleStockDistributionExposure>,
     pub last_proposal_period_end: Option<CivilDate>,
     pub cycle_months: u8,
     /// 本周期已由偏好产生过送转提案（确定性 event_id 已存在）。
@@ -527,6 +607,9 @@ pub(crate) fn evaluate_stock_distribution_preference(
             };
         }
     };
+    // 游戏化保护：自动送转不得把局推向除权日不可结算状态。同除权日既有送转
+    // 事件的合并除权口径未核实（叠加会在除权日显式失败）；与同除权日现金红利
+    // 合并成组时，最坏行情（公告→登记连续跌停）下的合并参考价必须仍 ≥1 分。
     let announcement_on = input.approve_on;
     let registered_on =
         match preference_registered_on(input.calendar, input.exchange, announcement_on) {
@@ -548,6 +631,63 @@ pub(crate) fn evaluate_stock_distribution_preference(
             };
         }
     };
+    let Some(exposure) = input.exposure.as_ref() else {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: "送转提案缺少行情前收锚，无法推导除权参考价安全余量".into(),
+        };
+    };
+    if exposure.same_ex_date_stock_event {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: format!(
+                "同除权日 {} 已存在送转事件，两起送转的合并除权口径未核实，\
+                 自动提案不叠加",
+                ex_rights_on
+            ),
+        };
+    }
+    let exposure_days = match exposure_trading_days(
+        input.calendar,
+        input.exchange,
+        input.period_end,
+        registered_on,
+    ) {
+        Ok(days) => days,
+        Err(error) => {
+            return SimpleStockDistributionOutcome::Rejected {
+                detail: format!("送转提案跌停敞口交易日推导失败：{error}"),
+            };
+        }
+    };
+    let Some(margin_floor_cents) = limit_down_margin_floor_cents(
+        exposure.last_close.cents(),
+        exposure.limit_bps,
+        exposure_days,
+    ) else {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: format!(
+                "送转提案跌停敞口余量耗尽：收盘 {} 分在公告→登记间 {} 个交易日\
+                 （涨跌幅限制 {}bp）连续跌停后无正参考价余量",
+                exposure.last_close.cents(),
+                exposure_days,
+                exposure.limit_bps
+            ),
+        };
+    };
+    let required_positive_cents =
+        combined_group_required_positive_cents(input.preference.shares_per_existing_share_micros);
+    let combined_numerator_floor =
+        margin_floor_cents - i128::from(exposure.same_ex_date_gross_per_share.cents());
+    if combined_numerator_floor < required_positive_cents {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: format!(
+                "同除权日合并除权参考价安全余量不足：最坏登记日收盘下界 {} 分 − \
+                 同日现金红利 {} 分 < 保留 {} 分正参考价分子所需",
+                margin_floor_cents,
+                exposure.same_ex_date_gross_per_share.cents(),
+                required_positive_cents
+            ),
+        };
+    }
     SimpleStockDistributionOutcome::Proposal {
         plan: crate::company::stock_distribution::StockDistributionEventPlan {
             event_id: stock_distribution_event_id(input.company, input.period_end),
@@ -596,4 +736,62 @@ fn preference_registered_on(
         return calendar.next_trading_day(exchange, first);
     }
     Ok(first)
+}
+
+/// 自动提案的（登记日, 除息/除权日）：Session 侧扫描同除息日既有方案与
+/// 评估函数内部构造方案共用同一推导，避免两侧日程口径漂移。
+pub(crate) fn preference_ex_dates(
+    calendar: &TradingCalendar,
+    exchange: CalendarExchange,
+    announced_on: CivilDate,
+) -> Result<(CivilDate, CivilDate), crate::calendar::CalendarError> {
+    let registered_on = preference_registered_on(calendar, exchange, announced_on)?;
+    let ex_on = calendar.next_trading_day(exchange, registered_on)?;
+    Ok((registered_on, ex_on))
+}
+
+/// 提案锚收盘日（周期末日）到登记日之间的跌停敞露交易日数：区间
+/// `(period_end, registered_on]` 内的交易所交易日。评估发生在周期末日结后、
+/// 批准日开市前，锚即该区间前最后一个交易日的收盘价；区间内每个交易日的
+/// 收盘相对前一收盘最多再跌一个跌停幅度。按日程逐日推导，不拍脑袋固定
+/// 天数（公告日为交易日时 n=2：公告日与登记日；公告日休市时 n=1）。
+pub(crate) fn exposure_trading_days(
+    calendar: &TradingCalendar,
+    exchange: CalendarExchange,
+    period_end: CivilDate,
+    registered_on: CivilDate,
+) -> Result<u32, crate::calendar::CalendarError> {
+    let mut count = 0_u32;
+    let mut cursor = period_end;
+    while cursor < registered_on {
+        cursor = calendar.next_trading_day(exchange, cursor)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// 连续 `n` 个交易日跌停后登记日收盘价的可保证下界（整数分，向下取整）。
+///
+/// 单日跌停价 = 昨收 × (1 − limit_bps/10000) 向最近价位四舍五入（向上方），
+/// 因此 n 日连续跌停后的收盘 ≥ 锚 × (1−p)^n；由 Bernoulli 不等式
+/// (1−p)^n ≥ 1−n·p，取线性下界再向下取整即得整数分保证下界。
+/// 余量耗尽（n × limit_bps ≥ 10000）时返回 `None`，由调用方如实拒绝。
+pub(crate) fn limit_down_margin_floor_cents(
+    last_close_cents: i64,
+    limit_bps: u32,
+    exposure_days: u32,
+) -> Option<i128> {
+    let factor_bp = 10_000_i128 - i128::from(exposure_days) * i128::from(limit_bps);
+    if factor_bp <= 0 {
+        return None;
+    }
+    Some(i128::from(last_close_cents) * factor_bp / 10_000)
+}
+
+/// 合并除权除息组要得到 ≥1 分的除权参考价，「前收盘 − 同日合计税前每股
+/// 现金红利」的分子必须 ≥ ceil((10^6 + ratio_micros)/10^6) 分：参考价 =
+/// 分子 × 10^6 / (10^6 + ratio) 银行家舍入到分，商为 0 时舍入无法保证 ≥1。
+/// 纯现金组（ratio = 0）即熟悉的「至少留 1 分」。
+pub(crate) fn combined_group_required_positive_cents(ratio_micros: u64) -> i128 {
+    1 + i128::from((ratio_micros + SHARE_RATIO_DENOMINATOR - 1) / SHARE_RATIO_DENOMINATOR)
 }

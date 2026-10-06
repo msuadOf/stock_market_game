@@ -3,10 +3,13 @@
 //! `session/simple_preferences_session_tests.rs`。
 
 use super::preferences::{
-    evaluate_cash_dividend_preference, evaluate_stock_distribution_preference, proposal_due,
-    SimpleCashDividendEvaluation, SimpleCashDividendOutcome, SimpleCashDividendPreference,
-    SimpleCompanyPreferences, SimplePreferenceProposalKind, SimpleStockDistributionEvaluation,
-    SimpleStockDistributionOutcome, SimpleStockDistributionPreference,
+    combined_group_required_positive_cents, evaluate_cash_dividend_preference,
+    evaluate_stock_distribution_preference, exposure_trading_days, limit_down_margin_floor_cents,
+    proposal_due, SimpleCashDividendEvaluation, SimpleCashDividendExposure,
+    SimpleCashDividendOutcome, SimpleCashDividendPreference, SimpleCompanyPreferences,
+    SimplePreferenceProposalKind, SimpleStockDistributionEvaluation,
+    SimpleStockDistributionExposure, SimpleStockDistributionOutcome,
+    SimpleStockDistributionPreference,
 };
 use crate::account::StockCode;
 use crate::accounting::AccountingAmount;
@@ -83,6 +86,15 @@ fn stock_preference(
     }
 }
 
+fn cash_exposure(last_close_cents: i64) -> SimpleCashDividendExposure {
+    SimpleCashDividendExposure {
+        last_close: Money::from_cents(last_close_cents),
+        limit_bps: 1_000,
+        same_ex_date_gross_per_share: Money::ZERO,
+        same_ex_date_ratio_micros: None,
+    }
+}
+
 fn cash_input<'a>(
     preference: &'a SimpleCashDividendPreference,
     distributable: DistributableProfit,
@@ -96,18 +108,38 @@ fn cash_input<'a>(
         company: fixture_ids().0,
         stock: fixture_ids().1,
         exchange: CalendarExchange::Sse,
-        // 2030-01-31 为月度结算周期末日；次日为批准/公告日。
+        // 2030-01-31 为月度结算周期末日；次日为批准/公告日（2030-02-01 为
+        // 周五交易日，登记日为其下一交易日，敞露交易日数 n = 2）。
         period_end: d("2030-01-31"),
         approve_on: d("2030-02-01"),
         calendar: trading_calendar(),
         distributable,
         eligible_shares,
-        last_close: Some(Money::from_cents(1_000)),
+        exposure: Some(cash_exposure(1_000)),
         registered_capital,
         last_proposal_period_end,
         cycle_months: 1,
         suppress_duplicate,
     }
+}
+
+/// 测试侧独立计数：(from_exclusive, to_inclusive] 内的交易所交易日数。
+/// 独立于实现（逐自然日查询日历），避免与 `exposure_trading_days` 循环自证。
+fn independent_exposed_days(
+    exchange: CalendarExchange,
+    from_exclusive: CivilDate,
+    to_inclusive: CivilDate,
+) -> u32 {
+    let calendar = trading_calendar();
+    let mut count = 0_u32;
+    let mut cursor = from_exclusive;
+    while cursor < to_inclusive {
+        cursor = cursor.next().unwrap();
+        if calendar.is_trading_day(exchange, cursor).unwrap() {
+            count += 1;
+        }
+    }
+    count
 }
 
 #[test]
@@ -216,33 +248,187 @@ fn cash_evaluation_rounds_down_per_share_total() {
 }
 
 #[test]
-fn cash_evaluation_caps_per_share_below_last_close() {
-    // 游戏化保护：每股派息封顶为「收盘价 − 1 分」，保证除息参考价为正。
+fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
+    // 游戏化保护：每股派息封顶 = floor(锚收盘 × (1 − n×涨跌幅)) − 必留正参考价
+    // 分子，n 为 (周期末, 登记日] 的交易日数（本日程公告日 2030-02-01 为交易
+    // 日，n=2）。锚 1120 分、10% 限制：floor(1120×0.8) − 1 = 895 分。
     let preference = cash_preference(10_000, 1, 1);
     let mut input = cash_input(
         &preference,
-        profit(100_000),
+        profit(10_000_000),
         1,
         Some(AccountingAmount::from_cents(1_000_000)),
         None,
         false,
     );
-    input.last_close = Some(Money::from_cents(1_120));
+    input.exposure = Some(cash_exposure(1_120));
+    let expected_days = independent_exposed_days(CalendarExchange::Sse, d("2030-01-31"), {
+        let registered = preference_registered_on(CalendarExchange::Sse, d("2030-02-01"));
+        registered
+    });
+    assert_eq!(expected_days, 2, "公告日为交易日时敞露 2 个交易日");
+    let expected_cap = 1_120_i128 * (10_000 - i128::from(expected_days) * 1_000) / 10_000 - 1;
     let SimpleCashDividendOutcome::Proposal { declaration, plan } =
         evaluate_cash_dividend_preference(&input)
     else {
         panic!("应构造出现金分红提案");
     };
-    assert_eq!(plan.gross_per_share, Money::from_cents(1_119));
-    assert_eq!(declaration.total_gross, AccountingAmount::from_cents(1_119));
+    assert_eq!(
+        i128::from(plan.gross_per_share.cents()),
+        expected_cap,
+        "目标派息远超余量时应按日程跌停余量封顶"
+    );
+    // 单股基数：决议总额 = 每股红利 × 1 股，反乘保持精确相等。
+    assert_eq!(
+        declaration.total_gross,
+        AccountingAmount::from_cents(i128::from(plan.gross_per_share.cents()))
+    );
+
+    // 公告日休市（2030-02-02 为周六）：敞露交易日数降为 1（仅登记日），
+    // 封顶随之放宽——证明 n 按日程推导而非拍脑袋固定 2 天。
+    let input = SimpleCashDividendEvaluation {
+        period_end: d("2030-02-01"),
+        approve_on: d("2030-02-02"),
+        exposure: Some(cash_exposure(1_120)),
+        ..input
+    };
+    let registered = preference_registered_on(CalendarExchange::Sse, d("2030-02-02"));
+    let expected_days =
+        independent_exposed_days(CalendarExchange::Sse, d("2030-02-01"), registered);
+    assert_eq!(expected_days, 1, "公告日休市时仅登记日 1 个敞露交易日");
+    let expected_cap = 1_120_i128 * (10_000 - i128::from(expected_days) * 1_000) / 10_000 - 1;
+    let SimpleCashDividendOutcome::Proposal { plan, .. } =
+        evaluate_cash_dividend_preference(&input)
+    else {
+        panic!("应构造出现金分红提案");
+    };
+    assert_eq!(i128::from(plan.gross_per_share.cents()), expected_cap);
+
+    // 同除息日既有方案 gross 合并计入：既有 500 分时本提案被封到
+    // floor(1120×0.8) − 1 − 500 = 395 分。
+    let mut input = cash_input(
+        &preference,
+        profit(10_000_000),
+        1,
+        Some(AccountingAmount::from_cents(1_000_000)),
+        None,
+        false,
+    );
+    input.exposure = Some(SimpleCashDividendExposure {
+        last_close: Money::from_cents(1_120),
+        limit_bps: 1_000,
+        same_ex_date_gross_per_share: Money::from_cents(500),
+        same_ex_date_ratio_micros: None,
+    });
+    let SimpleCashDividendOutcome::Proposal { plan, .. } =
+        evaluate_cash_dividend_preference(&input)
+    else {
+        panic!("应构造出现金分红提案");
+    };
+    assert_eq!(plan.gross_per_share, Money::from_cents(395));
+
+    // 既有 gross 占满封顶：每股不足一分，如实拒绝。
+    input.exposure = Some(SimpleCashDividendExposure {
+        last_close: Money::from_cents(1_120),
+        limit_bps: 1_000,
+        same_ex_date_gross_per_share: Money::from_cents(895),
+        same_ex_date_ratio_micros: None,
+    });
+    match evaluate_cash_dividend_preference(&input) {
+        SimpleCashDividendOutcome::Rejected { detail } => {
+            assert!(
+                detail.contains("占满") && detail.contains("封顶"),
+                "拒绝原因应指向合并封顶：{detail}"
+            );
+        }
+        other => panic!("应记录拒绝，实际 {other:?}"),
+    }
+
+    // 同除息日既有送转事件（10 送 10）：合并除权组的分子须保留
+    // 1 + ceil(1e6/1e6) = 2 分，封顶收紧 1 分。
+    input.exposure = Some(SimpleCashDividendExposure {
+        last_close: Money::from_cents(1_120),
+        limit_bps: 1_000,
+        same_ex_date_gross_per_share: Money::ZERO,
+        same_ex_date_ratio_micros: Some(1_000_000),
+    });
+    let SimpleCashDividendOutcome::Proposal { plan, .. } =
+        evaluate_cash_dividend_preference(&input)
+    else {
+        panic!("应构造出现金分红提案");
+    };
+    assert_eq!(plan.gross_per_share, Money::from_cents(894));
 
     // 缺行情锚：无法约束上限，如实记录拒绝。
     let mut input = input;
-    input.last_close = None;
+    input.exposure = None;
     assert!(matches!(
         evaluate_cash_dividend_preference(&input),
         SimpleCashDividendOutcome::Rejected { .. }
     ));
+}
+
+#[test]
+fn limit_down_margin_helpers_match_schedule_and_reject_exhausted_margin() {
+    // 敞口计数与日程一致：公告日为交易日 n=2；公告日休市 n=1。
+    let registered_trading_announce =
+        preference_registered_on(CalendarExchange::Sse, d("2030-02-01"));
+    assert_eq!(
+        exposure_trading_days(
+            trading_calendar(),
+            CalendarExchange::Sse,
+            d("2030-01-31"),
+            registered_trading_announce
+        )
+        .unwrap(),
+        2
+    );
+    let registered_after_weekend = preference_registered_on(CalendarExchange::Sse, d("2030-02-02"));
+    assert_eq!(
+        exposure_trading_days(
+            trading_calendar(),
+            CalendarExchange::Sse,
+            d("2030-02-01"),
+            registered_after_weekend
+        )
+        .unwrap(),
+        1
+    );
+    // 线性下界：floor(1120 × (1 − 2×10%)) = 896；n=1 时 floor(1120×0.9) = 1008。
+    assert_eq!(limit_down_margin_floor_cents(1_120, 1_000, 2), Some(896));
+    assert_eq!(limit_down_margin_floor_cents(1_120, 1_000, 1), Some(1_008));
+    // 余量耗尽（n × limit ≥ 10000）返回 None，调用方如实拒绝。
+    assert_eq!(limit_down_margin_floor_cents(1_120, 5_000, 2), None);
+    // 合并组分子下界：ratio=0 → 1；0 < ratio ≤ 1e6 → 2；2e6 < ratio ≤ 3e6 → 4。
+    assert_eq!(combined_group_required_positive_cents(0), 1);
+    assert_eq!(combined_group_required_positive_cents(1), 2);
+    assert_eq!(combined_group_required_positive_cents(1_000_000), 2);
+    assert_eq!(combined_group_required_positive_cents(2_000_001), 4);
+    // 组合出的极端敞口（n=2、50% 涨跌幅）下余量耗尽的评估拒绝。
+    let preference = cash_preference(10_000, 1, 1);
+    let mut input = cash_input(
+        &preference,
+        profit(10_000_000),
+        1,
+        Some(AccountingAmount::from_cents(1_000_000)),
+        None,
+        false,
+    );
+    input.exposure = Some(SimpleCashDividendExposure {
+        last_close: Money::from_cents(1_120),
+        limit_bps: 5_000,
+        same_ex_date_gross_per_share: Money::ZERO,
+        same_ex_date_ratio_micros: None,
+    });
+    match evaluate_cash_dividend_preference(&input) {
+        SimpleCashDividendOutcome::Rejected { detail } => {
+            assert!(
+                detail.contains("余量耗尽"),
+                "拒绝原因应如实说明敞口：{detail}"
+            );
+        }
+        other => panic!("应记录拒绝，实际 {other:?}"),
+    }
 }
 
 #[test]
@@ -335,6 +521,15 @@ fn proposal_due_counts_full_settlement_cycles() {
     assert!(proposal_due(Some(d("2029-12-31")), d("2030-03-31"), 1, 3));
 }
 
+fn stock_exposure() -> SimpleStockDistributionExposure {
+    SimpleStockDistributionExposure {
+        last_close: Money::from_cents(10_000),
+        limit_bps: 1_000,
+        same_ex_date_gross_per_share: Money::ZERO,
+        same_ex_date_stock_event: false,
+    }
+}
+
 #[test]
 fn stock_evaluation_sizes_by_ratio_and_honors_expansion_cap() {
     let preference = stock_preference(1, 100_000, 1_000_000, 1);
@@ -350,6 +545,7 @@ fn stock_evaluation_sizes_by_ratio_and_honors_expansion_cap() {
         eligible_shares: 10_000,
         initial_issued_shares: 12_000,
         cumulative_distributed_shares: 0,
+        exposure: Some(stock_exposure()),
         last_proposal_period_end: None,
         cycle_months: 1,
         suppress_duplicate: false,
@@ -410,6 +606,7 @@ fn stock_evaluation_records_rejection_when_ratio_yields_no_share() {
         eligible_shares: 500_000,
         initial_issued_shares: 600_000,
         cumulative_distributed_shares: 0,
+        exposure: Some(stock_exposure()),
         last_proposal_period_end: None,
         cycle_months: 1,
         suppress_duplicate: false,
@@ -421,6 +618,64 @@ fn stock_evaluation_records_rejection_when_ratio_yields_no_share() {
         }
         other => panic!("应记录拒绝，实际 {other:?}"),
     }
+}
+
+#[test]
+fn stock_evaluation_rejects_same_ex_date_event_and_insufficient_combined_margin() {
+    // 同除权日已存在送转事件（显式或自动）：合并除权口径未核实，叠加会在
+    // 除权日日结显式失败，自动提案必须拒绝。
+    let preference = stock_preference(1, 100_000, 1_000_000_000, 1);
+    let mut input = SimpleStockDistributionEvaluation {
+        preference: &preference,
+        company: fixture_ids().0,
+        stock: fixture_ids().1,
+        exchange: CalendarExchange::Sse,
+        period_end: d("2030-01-31"),
+        approve_on: d("2030-02-01"),
+        calendar: trading_calendar(),
+        distributable: profit(1_000_000_00),
+        eligible_shares: 10_000,
+        initial_issued_shares: 12_000,
+        cumulative_distributed_shares: 0,
+        exposure: Some(SimpleStockDistributionExposure {
+            same_ex_date_stock_event: true,
+            ..stock_exposure()
+        }),
+        last_proposal_period_end: None,
+        cycle_months: 1,
+        suppress_duplicate: false,
+    };
+    match evaluate_stock_distribution_preference(&input) {
+        SimpleStockDistributionOutcome::Rejected { detail } => {
+            assert!(
+                detail.contains("同除权日"),
+                "拒绝原因应指向同除权日送转叠加：{detail}"
+            );
+        }
+        other => panic!("应记录拒绝，实际 {other:?}"),
+    }
+    // 同除权日现金红利吃掉大部分余量：10 送 1（ratio=1e5）需保留
+    // 1 + ceil(1e5/1e6) = 2 分分子，而 floor(10000×(1−2×10%)) − 9999
+    // = 8000 − 9999 < 0 < 2 分 → 拒绝。
+    input.exposure = Some(SimpleStockDistributionExposure {
+        same_ex_date_gross_per_share: Money::from_cents(9_999),
+        ..stock_exposure()
+    });
+    match evaluate_stock_distribution_preference(&input) {
+        SimpleStockDistributionOutcome::Rejected { detail } => {
+            assert!(
+                detail.contains("安全余量不足"),
+                "拒绝原因应指向合并除权余量：{detail}"
+            );
+        }
+        other => panic!("应记录拒绝，实际 {other:?}"),
+    }
+    // 缺行情锚：无法推导安全余量，如实拒绝。
+    input.exposure = None;
+    assert!(matches!(
+        evaluate_stock_distribution_preference(&input),
+        SimpleStockDistributionOutcome::Rejected { .. }
+    ));
 }
 
 #[test]
@@ -498,7 +753,7 @@ fn preference_evaluation_of_500_companies_stays_lightweight() {
             calendar: trading_calendar(),
             distributable: profit(1_000_000_00),
             eligible_shares: 1_000_000,
-            last_close: Some(Money::from_cents(10_000)),
+            exposure: Some(cash_exposure(10_000)),
             registered_capital: Some(capital),
             last_proposal_period_end: None,
             cycle_months: 1,
@@ -522,6 +777,7 @@ fn preference_evaluation_of_500_companies_stays_lightweight() {
             eligible_shares: 1_000_000,
             initial_issued_shares: 1_200_000,
             cumulative_distributed_shares: 0,
+            exposure: Some(stock_exposure()),
             last_proposal_period_end: None,
             cycle_months: 1,
             suppress_duplicate: false,
