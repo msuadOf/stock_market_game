@@ -174,7 +174,8 @@ impl StrategyFactory {
                 );
                 Ok(Some(Box::new(strategy)))
             }
-            AccountKind::Player => Ok(None),
+            // 玩家与发行人回购账户都不注入策略；回购委托由回购方案执行器产生。
+            AccountKind::Player | AccountKind::IssuerRepurchase => Ok(None),
         }
     }
 }

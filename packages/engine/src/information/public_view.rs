@@ -67,6 +67,38 @@ fn validate_announcement_content(
             }
             Ok(())
         }
+        AnnouncementContent::RightsOffering(rights) => {
+            rights
+                .plan
+                .validate()
+                .map_err(|error| InformationError::InconsistentLibrary {
+                    detail: format!("invalid rights offering announcement: {error}"),
+                })?;
+            if &rights.plan.issuer != company || rights.plan.announced_on != occurred_on {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!(
+                        "rights offering announcement does not match issuer/date on {occurred_on}"
+                    ),
+                });
+            }
+            Ok(())
+        }
+        AnnouncementContent::IssuerRepurchase(repurchase) => {
+            repurchase
+                .plan
+                .validate()
+                .map_err(|error| InformationError::InconsistentLibrary {
+                    detail: format!("invalid issuer repurchase announcement: {error}"),
+                })?;
+            if &repurchase.plan.issuer != company || repurchase.plan.announced_on != occurred_on {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!(
+                        "issuer repurchase announcement does not match issuer/date on {occurred_on}"
+                    ),
+                });
+            }
+            Ok(())
+        }
     }
 }
 

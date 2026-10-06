@@ -518,7 +518,7 @@ fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
         })
         .collect();
     assert!(
-        matches!(corrupt_actions.validate(&positions, &restored.state.company_system, restored.civil_date()), Err(crate::session::SessionCorporateActionsError::Invalid(message)) if message.contains("到账日期晚于"))
+        matches!(corrupt_actions.validate(&positions, &restored.state.company_system, restored.civil_date(), None), Err(crate::session::SessionCorporateActionsError::Invalid(message)) if message.contains("到账日期晚于"))
     );
     let saved = restored.save().unwrap();
     let mut paid_restore = GameSession::restore(&saved).unwrap();
@@ -1985,7 +1985,7 @@ fn validate_rejects_nontrading_receipt_without_credited_stock_distribution_book(
     let rejection = session
         .state
         .corporate_actions
-        .validate(&positions, &session.state.company_system, day)
+        .validate(&positions, &session.state.company_system, day, None)
         .unwrap_err();
     assert!(
         rejection.to_string().contains("非交易过户回执"),
@@ -2007,6 +2007,7 @@ fn validate_fails_when_registered_book_missed_ex_rights_credit_date() {
             &positions,
             &session.state.company_system,
             crate::CivilDate::from_iso("2030-01-08").unwrap(),
+            None,
         )
         .unwrap_err();
     assert!(
@@ -2706,6 +2707,7 @@ fn validate_rejects_registry_receipt_missing_from_dividend_tax_book() {
             &positions,
             &session.state.company_system,
             crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            None,
         )
         .unwrap_err();
     assert!(

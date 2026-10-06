@@ -7,6 +7,15 @@ export type SessionCorporateActions = {
     import("../../save/schema/corporate-actions").CashDividendTaxBook[];
   stock_distributions:
     import("../../save/schema/corporate-actions").StockDistributionBook[];
+  rights_offerings:
+    import("../../save/schema/corporate-actions").RightsOfferingBook[];
+  /**
+   * 盘中显式认购排队（玩家／宿主当日提交，日终划扣后转入账簿）。
+   */
+  rights_subscription_queue:
+    import("../../save/schema/corporate-actions").QueuedRightsSubscription[];
+  issuer_repurchases:
+    import("../../save/schema/corporate-actions").IssuerRepurchaseBook[];
   account_gross_receipts:
     import("../../save/schema/corporate-actions").AccountDividendGrossReceipt[];
   external_receipts:

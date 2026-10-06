@@ -1296,6 +1296,42 @@ where
     Option::<RegistrationSnapshot>::deserialize(deserializer)
 }
 
+/// Simple 账面配股／增发募集的声明输入（ADR-0035/0039：发行人侧只记账面事实，
+/// 不追踪真实公司资金链；投资者侧真实现金由 Session 结算）。
+///
+/// 面值口径与送转一致（恒定面值）：注册资本按 面值×新增股数 演进；发行价高于
+/// 面值的溢价部分 Simple 账面未建模资本公积科目，不虚构科目归属（登记边界）。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RightsOfferingDeclaration {
+    pub event_id: String,
+    pub approval_reference: String,
+    pub approved_on: CivilDate,
+    pub price_per_share: Money,
+    pub par_value_per_share: Money,
+    pub registered_capital_at_approval: crate::accounting::AccountingAmount,
+}
+
+/// Simple 账面配股／增发事实投影：声明即冻结，结算后回填实际认购股数与募集资金。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RightsOfferingFinanceFact {
+    pub event_id: String,
+    pub approval_reference: String,
+    pub approved_on: CivilDate,
+    pub price_per_share: Money,
+    pub par_value_per_share: Money,
+    pub registered_capital_at_approval: crate::accounting::AccountingAmount,
+    pub settled_on: Option<CivilDate>,
+    /// 实际认购并缴款的新增股数（结算回填；声明时为 0）。
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub issued_shares: u64,
+    /// 实际募集资金（结算回填；发行失败为 0）。
+    pub proceeds: Option<crate::accounting::AccountingAmount>,
+    /// 注册资本增加额 = 面值 × 实际新增股数（结算回填）。
+    pub capital_increase: Option<crate::accounting::AccountingAmount>,
+}
+
 #[cfg(test)]
 #[path = "rights_offering_tests.rs"]
 mod tests;

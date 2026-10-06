@@ -58,6 +58,10 @@ pub(super) struct SimpleDayEndDisclosureCtx<'a> {
     pub system: &'a crate::company::CompanySystem,
     pub seed: u64,
     pub dividends: &'a [crate::company::cash_dividend::CashDividendBook],
+    pub rights_offerings:
+        &'a [crate::company::rights_offering::RightsOfferingBook],
+    pub issuer_repurchases:
+        &'a [crate::company::issuer_repurchase::IssuerRepurchaseBook],
     pub library: &'a mut PublicLibrary,
 }
 
@@ -136,6 +140,43 @@ impl DisclosureDispatch {
                         crate::information::CashDividendAnnouncement {
                             plan: book.plan().clone(),
                             total_gross,
+                        },
+                    ),
+                })?;
+                announcements_published.push(id);
+            }
+        }
+        // 配股／增发与回购方案公告：复用现金分红公告通道（同日 18:00 相位、
+        // 恰好一次语义；NPC 经公开库按既有注意力规则获知）。
+        for book in ctx.rights_offerings {
+            if book.status() == &crate::company::rights_offering::RightsOfferingStatus::Announced
+                && book.plan().announced_on == ctx.report.settled_date
+            {
+                let id = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: book.plan().issuer.clone(),
+                    occurred_on: ctx.report.settled_date,
+                    published_at: ctx.report.disclosure_instant,
+                    content: AnnouncementContent::RightsOffering(
+                        crate::information::RightsOfferingAnnouncement {
+                            plan: book.plan().clone(),
+                        },
+                    ),
+                })?;
+                announcements_published.push(id);
+            }
+        }
+        for book in ctx.issuer_repurchases {
+            if book.status()
+                == &crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
+                && book.plan().announced_on == ctx.report.settled_date
+            {
+                let id = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: book.plan().issuer.clone(),
+                    occurred_on: ctx.report.settled_date,
+                    published_at: ctx.report.disclosure_instant,
+                    content: AnnouncementContent::IssuerRepurchase(
+                        crate::information::IssuerRepurchaseAnnouncement {
+                            plan: book.plan().clone(),
                         },
                     ),
                 })?;

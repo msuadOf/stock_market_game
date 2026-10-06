@@ -61,7 +61,8 @@ fn effective_observation_probability(kind: AccountKind, base_probability: f64, s
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        AccountKind::Player => 0.0,
+        // 玩家与发行人回购账户都不做自主观察采样；回购账户不进入关注集。
+        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
     };
     (base_probability * (1.0 + sensitivity * signal)).min(1.0)
 }
@@ -71,7 +72,7 @@ pub(super) fn maximum_observation_probability(kind: AccountKind, base_probabilit
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        AccountKind::Player => 0.0,
+        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
     };
     (base_probability * (1.0 + sensitivity * 3.0)).min(1.0)
 }

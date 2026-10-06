@@ -21,6 +21,10 @@ mod company_simple_session_tests;
 mod corporate_actions;
 #[cfg(test)]
 mod dividend_tax_mode_tests;
+#[cfg(test)]
+mod issuer_repurchase_session_tests;
+#[cfg(test)]
+mod rights_offering_session_tests;
 mod exchange_calendar;
 #[cfg(test)]
 mod exchange_calendar_tests;
@@ -1608,7 +1612,8 @@ fn sample_npc_cash(
         AccountKind::Retail => (1.0, 1.0),
         AccountKind::Inst => (25_000.0, 0.35),
         AccountKind::Hot => (5_000.0, 0.50),
-        AccountKind::Player => (1.0, 0.0),
+        // 玩家与回购账户不从该采样入口生成现金（各自由显式配置/合成入账）。
+        AccountKind::Player | AccountKind::IssuerRepurchase => (1.0, 0.0),
     };
     let mut rng = SplitMix64::new(
         seed ^ account.0.wrapping_mul(0xD1B5_4A32_D192_ED03) ^ 0xC45A_5EED_5CA1_E001,
@@ -1760,6 +1765,10 @@ impl GameSession {
         let mut civil_clock = civil_clock;
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
+        let issuer_repurchase_enabled_at_creation = setup.issuer_repurchase_enabled;
+        let issuer_repurchase_npc_count_at_creation = u64::from(setup.npcs.retail_count)
+            + u64::from(setup.npcs.inst_count)
+            + u64::from(setup.npcs.hot_count);
         let mut sess = GameSession {
             report_correction_epoch: std::sync::Arc::new(()),
             ingress: None,
@@ -1822,6 +1831,16 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
         sess.populate_npcs(AccountKind::Hot)?;
+        if issuer_repurchase_enabled_at_creation {
+            // 发行人回购专用账户（ADR-0038）：确定性创建于 NPC 序列之后，零现金
+            // 起步；获批回购计划时按额度合成入账。名册身份为 IssuerTreasury。
+            let npc_count = issuer_repurchase_npc_count_at_creation;
+            let repurchase_id = AccountId(npc_count.saturating_add(1));
+            sess.accounts_insert_with_history_reads(
+                repurchase_id,
+                Account::new(repurchase_id, AccountKind::IssuerRepurchase, Money::ZERO),
+            );
+        }
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
         sess.initialize_retail_experience()?;
         sess.reconcile_institutional_holdings()?;
@@ -2138,7 +2157,7 @@ impl GameSession {
                         AccountKind::Retail => 1.5,
                         AccountKind::Inst => 2.0,
                         AccountKind::Hot => 1.7,
-                        AccountKind::Player => 3.0,
+                        AccountKind::Player | AccountKind::IssuerRepurchase => 3.0,
                     };
                     self.split_random_with_tail(kind_float, &eligible_ids, tail_exponent)
                 }
@@ -2190,6 +2209,15 @@ impl GameSession {
         out
     }
 
+    /// 插入账户并同步建立历史读取台账（存档契约要求两集合恰好一致）。
+    fn accounts_insert_with_history_reads(&mut self, id: AccountId, account: Account) {
+        self.state.accounts.insert(id, account);
+        self.state.history_reads.insert(
+            id,
+            crate::experience::PersonalHistoryReadLedger::default(),
+        );
+    }
+
     /// 按 `kind` 生成 NPC 账户并注入策略。
     ///
     /// `next_id = accounts.keys().max() + 1`：保证 id 单调递增且不冲突。
@@ -2199,7 +2227,7 @@ impl GameSession {
             AccountKind::Retail => self.state.setup.npcs.retail_count,
             AccountKind::Inst => self.state.setup.npcs.inst_count,
             AccountKind::Hot => self.state.setup.npcs.hot_count,
-            AccountKind::Player => 0,
+            AccountKind::Player | AccountKind::IssuerRepurchase => 0,
         };
         let first_id = self
             .state
@@ -2815,6 +2843,670 @@ impl GameSession {
             .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
         Ok(())
     }
+    /// 发行人回购专用账户 id（开关开启时创建于 NPC 序列之后）；未启用为 None。
+    pub fn issuer_repurchase_account_id(&self) -> Option<AccountId> {
+        self.state
+            .setup
+            .issuer_repurchase_enabled
+            .then(|| {
+                let npc_count = u64::from(self.state.setup.npcs.retail_count)
+                    + u64::from(self.state.setup.npcs.inst_count)
+                    + u64::from(self.state.setup.npcs.hot_count);
+                AccountId(npc_count.saturating_add(1))
+            })
+            .filter(|id| self.state.accounts.contains_key(id))
+    }
+
+    /// 汇总发行人回购账户当日买入成交（真实回执；卖出恒不可能——回购只买不卖）。
+    fn collect_issuer_repurchase_fills(
+        &self,
+        day: crate::calendar::CivilDate,
+    ) -> Result<Vec<crate::company::issuer_repurchase::RepurchaseFillRecord>, StepFatal> {
+        let Some(account) = self.issuer_repurchase_account_id() else {
+            return Ok(Vec::new());
+        };
+        let mut by_stock = std::collections::BTreeMap::<StockCode, (u64, i64, i64)>::new();
+        if let Some(confirmations) = self.state.personal_trade_confirmations.get(&account) {
+            for confirmation in confirmations.iter() {
+                if confirmation.civil_date != day
+                    || confirmation.side != crate::orderbook::Side::Buy
+                {
+                    continue;
+                }
+                let entry = by_stock
+                    .entry(confirmation.code.clone())
+                    .or_insert((0, 0, 0));
+                entry.0 += u64::from(confirmation.quantity_shares);
+                entry.1 += confirmation.gross.cents();
+                entry.2 += confirmation
+                    .actual_fees
+                    .total()
+                    .map(|fees| fees.cents())
+                    .map_err(|fatal| {
+                        StepFatal::InvariantViolation {
+                            description: format!("回购成交费用汇总失败：{fatal}"),
+                            location: "GameSession::collect_issuer_repurchase_fills".into(),
+                        }
+                    })?;
+            }
+        }
+        Ok(by_stock
+            .into_iter()
+            .filter(|(_, (shares, _, _))| *shares > 0)
+            .map(|(stock, (shares, gross, fees))| {
+                crate::company::issuer_repurchase::RepurchaseFillRecord {
+                    stock,
+                    day,
+                    shares,
+                    gross: Money::from_cents(gross),
+                    fees: Money::from_cents(fees),
+                }
+            })
+            .collect())
+    }
+
+    /// 受理配股／增发方案（显式计划入口；新局开关 `rights_offering_enabled`）。
+    ///
+    /// 面值口径与送转一致：首次声明由「已绑定注册资本法定事实 ÷ 名册当前发行股数」
+    /// 整除推导并固定；发行价不得低于面值（《公司法》第 148 条）。发行人侧只记
+    /// Simple 账面声明事实（ADR-0035/0039），真实现金只在缴款期日终从投资者划扣。
+    pub fn approve_rights_offering(
+        &mut self,
+        plan: crate::company::rights_offering::RightsOfferingEventPlan,
+    ) -> Result<(), SessionError> {
+        if !self.state.setup.rights_offering_enabled {
+            return Err(SessionError::InvalidSetup(
+                "本局未启用配股／增发机制（新局开关 rights_offering_enabled=false），显式拒绝"
+                    .into(),
+            ));
+        }
+        plan.validate()
+            .map_err(|error| SessionError::InvalidSetup(format!("配股方案非法：{error}")))?;
+        if let crate::company::rights_offering::RightsSubscriptionStrategy::StrategyBased =
+            plan.npc_subscription_strategy
+        {
+            return Err(SessionError::InvalidSetup(
+                "配股 NPC 认购策略 StrategyBased 未实现：当前仅支持默认足额认购（FullByDefault）"
+                    .into(),
+            ));
+        }
+        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
+            return Err(SessionError::InvalidSetup(
+                "配股方案的批准日期或公告日期与当前会话日期不一致".into(),
+            ));
+        }
+        plan.validate_calendar(self.state.civil_clock.calendar())
+            .map_err(|error| SessionError::InvalidSetup(format!("配股日程非法：{error}")))?;
+        if self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .any(|existing| existing.plan().event_id == plan.event_id)
+        {
+            return Err(SessionError::InvalidSetup("配股事件 id 已存在".into()));
+        }
+        let registry = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
+            .ok_or_else(|| {
+                SessionError::InvalidSetup("配股需要已显式配置的完整股东名册".into())
+            })?;
+        if registry.settled_on() > self.civil_date() {
+            return Err(SessionError::InvalidSetup(
+                "股东名册日期晚于当前会话日期".into(),
+            ));
+        }
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        let issuer = candidate_system
+            .issuers()
+            .get(&plan.issuer)
+            .ok_or_else(|| SessionError::InvalidSetup("配股计划发行人不存在".into()))?;
+        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+            return Err(SessionError::InvalidSetup("配股计划证券与发行人不匹配".into()));
+        }
+        let legal_facts = candidate_system
+            .dividend_legal_facts(&plan.issuer)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
+            .ok_or_else(|| {
+                SessionError::InvalidSetup(
+                    "配股面值推导需要先显式绑定公司注册资本法定事实".into(),
+                )
+            })?;
+        // 面值口径：优先沿用送转/配股已绑定面值，否则整除推导并就此固定。
+        let par_cents = if let Some(first) = candidate_system
+            .stock_distribution_facts(&plan.issuer)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
+            .first()
+        {
+            i128::from(first.par_value_per_share.cents())
+        } else if let Some(first) = candidate_system
+            .rights_offering_facts(&plan.issuer)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
+            .first()
+        {
+            i128::from(first.par_value_per_share.cents())
+        } else {
+            let registered_capital_cents = i128::from(
+                legal_facts
+                    .registered_capital
+                    .to_money()
+                    .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
+                    .cents(),
+            );
+            let shares = i128::from(registry.issued_shares());
+            if registered_capital_cents % shares != 0 {
+                return Err(SessionError::InvalidSetup(
+                    "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
+                ));
+            }
+            registered_capital_cents / shares
+        };
+        let par_value_per_share = Money::from_cents(
+            i64::try_from(par_cents)
+                .map_err(|_| SessionError::InvalidSetup("每股面值溢出".into()))?,
+        );
+        if par_value_per_share <= Money::ZERO || plan.price_per_share < par_value_per_share {
+            return Err(SessionError::InvalidSetup(
+                "配股发行价不得低于推导出的每股面值（面值必须为正）".into(),
+            ));
+        }
+        candidate_system
+            .declare_rights_offering(
+                &plan.issuer,
+                crate::company::rights_offering::RightsOfferingDeclaration {
+                    event_id: plan.event_id.clone(),
+                    approval_reference: plan.approval_reference.clone(),
+                    approved_on: plan.approved_on,
+                    price_per_share: plan.price_per_share,
+                    par_value_per_share,
+                    registered_capital_at_approval: legal_facts.registered_capital,
+                },
+            )
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        let book = crate::company::rights_offering::RightsOfferingBook::new(plan)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.rights_offerings.push(book);
+        self.state
+            .corporate_actions
+            .rights_offerings
+            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
+        Ok(())
+    }
+
+    /// 玩家／宿主显式认购配股（缴款期内当日日终划扣；现金不足时部分放弃并如实记录）。
+    pub fn subscribe_rights_offering(
+        &mut self,
+        event_id: &str,
+        account: AccountId,
+        shares: u64,
+    ) -> Result<(), SessionError> {
+        if !self.state.setup.rights_offering_enabled {
+            return Err(SessionError::InvalidSetup(
+                "本局未启用配股／增发机制（新局开关 rights_offering_enabled=false），显式拒绝"
+                    .into(),
+            ));
+        }
+        if shares == 0 {
+            return Err(SessionError::InvalidSetup("认购股数必须为正数".into()));
+        }
+        let book = self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .find(|book| book.plan().event_id == event_id)
+            .ok_or_else(|| SessionError::InvalidSetup(format!("未知配股事件 {event_id}")))?;
+        let plan = book.plan().clone();
+        let today = self.civil_date();
+        if !plan.payment_window_contains(today) {
+            return Err(SessionError::InvalidSetup(
+                "认购只能在缴款期窗口内提交".into(),
+            ));
+        }
+        if book.status()
+            != &crate::company::rights_offering::RightsOfferingStatus::Entitled
+        {
+            return Err(SessionError::InvalidSetup(
+                "配股尚未完成权证派发或已关窗".into(),
+            ));
+        }
+        let account_state = self
+            .state
+            .accounts
+            .get(&account)
+            .ok_or(SessionError::UnknownPlayer(account))?;
+        let cost = Money::from_cents(
+            i64::try_from(
+                u128::from(shares) * u128::from(plan.price_per_share.cents().unsigned_abs()),
+            )
+            .map_err(|_| SessionError::InvalidSetup("认购金额溢出".into()))?,
+        );
+        if account_state.cash() < cost {
+            return Err(SessionError::InvalidSetup(format!(
+                "认购金额 {cost:?} 超过账户真实现金（不足显式拒绝，不补认购资金）"
+            )));
+        }
+        // 权利额度预检（日终复核）：具名权利或公开配售额度。
+        let entitlement = book
+            .entitlement()
+            .ok_or_else(|| SessionError::InvalidSetup("配股缺少权证回执".into()))?;
+        let holder = crate::company::share_registry::HolderId::Account(account);
+        if let Some(holder_rights) = entitlement
+            .entitlements
+            .iter()
+            .find(|entry| entry.holder == holder)
+        {
+            if shares > holder_rights.rights_shares {
+                return Err(SessionError::InvalidSetup(
+                    "认购股数超过持有权利（不超权利认购）".into(),
+                ));
+            }
+        } else if entitlement.open_subscription_shares == 0 {
+            return Err(SessionError::InvalidSetup(
+                "该账户无配股权利且方案无公开配售额度".into(),
+            ));
+        }
+        if self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .any(|book| {
+                book.subscriptions()
+                    .iter()
+                    .any(|record| record.holder == holder)
+                    && book.plan().event_id == event_id
+            })
+            || self
+                .state
+                .corporate_actions
+                .rights_subscription_queue
+                .iter()
+                .any(|queued| {
+                    queued.event_id == event_id && queued.account == account
+                })
+        {
+            return Err(SessionError::InvalidSetup(
+                "同一持有人只能提交一条净认购记录".into(),
+            ));
+        }
+        self.state
+            .corporate_actions
+            .rights_subscription_queue
+            .push(crate::session::corporate_actions::QueuedRightsSubscription {
+                event_id: event_id.to_owned(),
+                account,
+                requested_shares: shares,
+                submitted_on: today,
+            });
+        Ok(())
+    }
+
+    /// 受理发行人回购方案（独立开关 `issuer_repurchase_enabled`；ADR-0038）。
+    ///
+    /// 批准即按计划额度向发行人回购专用账户合成入账结算资金（凭空生成、专款
+    /// 语义）；其后由执行器在窗口内以真实委托进入既有订单簿（不伪造成交、
+    /// 不绕过涨跌停/笼子/撮合规则），卖方投资者真实收到资金。
+    pub fn approve_issuer_repurchase(
+        &mut self,
+        plan: crate::company::issuer_repurchase::IssuerRepurchasePlan,
+    ) -> Result<(), SessionError> {
+        if !self.state.setup.issuer_repurchase_enabled {
+            return Err(SessionError::InvalidSetup(
+                "本局未启用发行人回购机制（新局开关 issuer_repurchase_enabled=false），显式拒绝"
+                    .into(),
+            ));
+        }
+        plan.validate()
+            .map_err(|error| SessionError::InvalidSetup(format!("回购方案非法：{error}")))?;
+        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
+            return Err(SessionError::InvalidSetup(
+                "回购方案的批准日期或公告日期与当前会话日期不一致".into(),
+            ));
+        }
+        plan.validate_calendar(self.state.civil_clock.calendar())
+            .map_err(|error| SessionError::InvalidSetup(format!("回购日程非法：{error}")))?;
+        if self
+            .state
+            .corporate_actions
+            .issuer_repurchases
+            .iter()
+            .any(|existing| existing.plan().event_id == plan.event_id)
+        {
+            return Err(SessionError::InvalidSetup("回购方案 id 已存在".into()));
+        }
+        let repurchase_account = self.issuer_repurchase_account_id().ok_or_else(|| {
+            SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
+        })?;
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        let issuer = candidate_system
+            .issuers()
+            .get(&plan.issuer)
+            .ok_or_else(|| SessionError::InvalidSetup("回购计划发行人不存在".into()))?;
+        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+            return Err(SessionError::InvalidSetup("回购计划证券与发行人不匹配".into()));
+        }
+        let registry_index = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .position(|registry| registry.stock() == &plan.stock)
+            .ok_or_else(|| {
+                SessionError::InvalidSetup("回购需要已显式配置的完整股东名册".into())
+            })?;
+        // 非减资用途：合计持有不得超过已发行股份 10%（63 号第 17 条）；
+        // 减资注销用途不受 10% 限制（注销不长期持有）。
+        if !matches!(
+            plan.purpose,
+            crate::company::issuer_repurchase::RepurchasePurpose::ReduceCapital
+        ) && plan.max_shares * 10 > self.state.corporate_actions.registries[registry_index].issued_shares()
+        {
+            return Err(SessionError::InvalidSetup(
+                "非减资用途回购数量上限超过已发行股份 10%（证监会回购规则第 17 条）".into(),
+            ));
+        }
+        // 建立回购专户事实（bind-once）：已存在则幂等沿用；在候选副本上执行，
+        // 后续任何失败都不留部分状态。
+        let account_reference = format!("issuer-repurchase-account-{}", repurchase_account.0);
+        let mut candidate_registry = self.state.corporate_actions.registries[registry_index].clone();
+        candidate_registry
+            .set_issuer_repurchase_account(crate::company::share_registry::IssuerRepurchaseAccountFacts {
+                account_reference,
+                source_evidence: plan.event_id.clone(),
+                established_on: plan.approved_on,
+            })
+            .map_err(|error| {
+                SessionError::InvalidSetup(format!("回购专户事实非法：{error}"))
+            })?;
+        candidate_system
+            .declare_issuer_repurchase(
+                &plan.issuer,
+                crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact {
+                    event_id: plan.event_id.clone(),
+                    approval_reference: plan.approval_reference.clone(),
+                    approved_on: plan.approved_on,
+                    synthetic_funding: crate::accounting::AccountingAmount::from_money(
+                        plan.total_budget,
+                    ),
+                    purpose: plan.purpose.clone(),
+                    spent: None,
+                    withdrawn_remainder: None,
+                    completed_on: None,
+                    cancelled_shares: 0,
+                    cancelled_on: None,
+                    capital_reduction: None,
+                },
+            )
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        // 合成资金凭空入账（ADR-0038：获批计划额度；投资者资金池注入的唯一来源侧）。
+        let synthetic_budget = plan.total_budget;
+        let book = crate::company::issuer_repurchase::IssuerRepurchaseBook::new(plan)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        self.state.corporate_actions.registries[registry_index] = candidate_registry;
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.issuer_repurchases.push(book);
+        self.state
+            .corporate_actions
+            .issuer_repurchases
+            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
+        self.state
+            .accounts
+            .get_mut(&repurchase_account)
+            .ok_or_else(|| {
+                SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
+            })?
+            .credit_cash(synthetic_budget)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        Ok(())
+    }
+
+    /// 执行回购注销（减资用途）：核减专户股份、总股本与注册资本；不除权
+    /// （无官方除权条文，市场实践不除权——登记口径见 docs/trading-rules.md）。
+    pub fn execute_issuer_repurchase_cancellation(
+        &mut self,
+        event_id: &str,
+        shares: u64,
+        on: crate::calendar::CivilDate,
+    ) -> Result<(), SessionError> {
+        let repurchase_account = self
+            .issuer_repurchase_account_id()
+            .ok_or_else(|| SessionError::InvalidSetup("本局未启用发行人回购机制".into()))?;
+        let index = self
+            .state
+            .corporate_actions
+            .issuer_repurchases
+            .iter()
+            .position(|book| book.plan().event_id == event_id)
+            .ok_or_else(|| SessionError::InvalidSetup(format!("未知回购方案 {event_id}")))?;
+        let stock = self.state.corporate_actions.issuer_repurchases[index]
+            .plan()
+            .stock
+            .clone();
+        let issuer = self.state.corporate_actions.issuer_repurchases[index]
+            .plan()
+            .issuer
+            .clone();
+        // 先按候选事务执行名册与账户核减，任何失败整体回滚（借用 clone 兜底）。
+        let registry_checkpoint = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &stock)
+            .cloned()
+            .ok_or_else(|| SessionError::InvalidSetup("回购注销缺少股东名册".into()))?;
+        let issued_before = registry_checkpoint.issued_shares();
+        let mut candidate_registry = registry_checkpoint.clone();
+        candidate_registry
+            .close_day(crate::company::share_registry::ShareDayRequest {
+                event_id: format!("issuer-repurchase-cancellation:{event_id}"),
+                day: on,
+                scope: crate::company::share_registry::MovementScope::IssuerRepurchaseCancellation {
+                    basis: self.state.corporate_actions.issuer_repurchases[index]
+                        .plan()
+                        .approval_reference
+                        .clone(),
+                },
+                changes: vec![crate::company::share_registry::DayNetChange {
+                    holder: crate::company::share_registry::HolderId::IssuerTreasury,
+                    change: -i128::try_from(shares).map_err(|_| {
+                        SessionError::InvalidSetup("回购注销股数超出范围".to_string())
+                    })?,
+                    acquisition: None,
+                }],
+            })
+            .map_err(|error| SessionError::InvalidSetup(format!("回购注销名册核减失败：{error}")))?;
+        let mut candidate_accounts = self.state.accounts.clone();
+        candidate_accounts
+            .get_mut(&repurchase_account)
+            .ok_or_else(|| {
+                SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
+            })?
+            .write_down_position_shares(stock.clone(), shares)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        candidate_system
+            .record_issuer_repurchase_cancellation(
+                &issuer,
+                event_id,
+                on,
+                shares,
+                issued_before,
+            )
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        // 全部成功后一次性安装候选状态并推进账簿状态机。
+        let registry_index = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .position(|registry| registry.stock() == &stock)
+            .expect("registry presence was checked above");
+        self.state.corporate_actions.registries[registry_index] = candidate_registry;
+        self.state.accounts = candidate_accounts;
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.issuer_repurchases[index]
+            .record_cancellation(on, shares)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        Ok(())
+    }
+
+    /// 回购执行器：窗口内每个交易日的连续竞价阶段以真实委托进入既有订单簿。
+    ///
+    /// 委托约束（63 号第 30 条）：申报价格不得为当日涨幅限制价格——取
+    /// min(方案价格上限, 涨停价−1 个最小价位)；不得在集合竞价时段申报（仅
+    /// Continuous 阶段执行）。数量按剩余额度（预留费用余量）、数量上限与
+    /// 单笔上限取整手。每日至多一单（`last_order_day` 幂等去重）。
+    pub(super) fn place_issuer_repurchase_orders(&mut self) -> Result<(), StepFatal> {
+        if !self.state.setup.issuer_repurchase_enabled {
+            return Ok(());
+        }
+        if self.phase() != TradingPhase::Continuous {
+            return Ok(());
+        }
+        let Some(repurchase_account) = self.issuer_repurchase_account_id() else {
+            return Ok(());
+        };
+        let day = self.civil_date();
+        let lot_size = u64::from(self.state.setup.config.lot_size.max(1));
+        let mut orders = Vec::new();
+        for book in &self.state.corporate_actions.issuer_repurchases {
+            let plan = book.plan();
+            if !matches!(
+                book.status(),
+                crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
+                    | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Executing
+            ) || !plan.window_contains(day)
+                || book.last_order_day() == Some(day)
+            {
+                continue;
+            }
+            let Ok(remaining) = book.remaining_budget() else {
+                continue;
+            };
+            let share_room = plan
+                .max_shares
+                .saturating_sub(book.total_filled_shares());
+            if share_room == 0 {
+                continue;
+            }
+            let market = match self.state.markets.get(&plan.stock) {
+                Some(market) => market,
+                None => continue,
+            };
+            // 委托价上界取三者最小：方案价格上限、涨停价−1 个最小价位（63 号
+            // 第 30 条（一）：申报价格不得为当日涨幅限制的价格）、连续竞价买入
+            // 价格笼子上界（不绕过既有申报规则）。
+            let up_stop = match market.up_stop() {
+                Ok(up_stop) => up_stop,
+                Err(_) => continue,
+            };
+            // 最小价位取自该证券的显式配置（不猜测市场内部状态）。
+            let tick = self
+                .state
+                .setup
+                .stocks
+                .iter()
+                .find(|spec| spec.code == plan.stock)
+                .map(|spec| spec.tick)
+                .unwrap_or(Money::from_cents(1));
+            // 价格笼子上界：max(参考价×102%, 参考价+10 个最小价位)（既有交易规则）。
+            let reference = market.continuous_limit_reference(crate::orderbook::Side::Buy);
+            let cage_upper = reference
+                .apply_rate(1.02)
+                .unwrap_or(reference)
+                .max(
+                    reference
+                        .add(tick.mul_shares(10).unwrap_or(tick))
+                        .unwrap_or(reference),
+                );
+            let cap = plan
+                .price_cap_per_share
+                .min(up_stop.sub(tick).unwrap_or(plan.price_cap_per_share))
+                .min(cage_upper);
+            if cap <= Money::ZERO {
+                continue;
+            }
+            // 预留 0.5% 费用余量后按剩余额度取整手。
+            let usable = (remaining.cents().max(0) as u128) * 995 / 1000;
+            let mut qty = (usable / (u128::from(cap.cents().unsigned_abs()) * u128::from(lot_size)))
+                * u128::from(lot_size);
+            qty = qty.min(u128::from(share_room));
+            // 主板单笔上限 1,000,000 股（既有申报规则的保守钳制；实际由受理校验）。
+            qty = qty.min(1_000_000);
+            if qty < u128::from(lot_size) {
+                continue;
+            }
+            orders.push((
+                plan.stock.clone(),
+                cap,
+                u32::try_from(qty).map_err(|_| StepFatal::InvariantViolation {
+                    description: "回购委托数量超出 u32 申报域".into(),
+                    location: "GameSession::place_issuer_repurchase_orders".into(),
+                })?,
+            ));
+        }
+        for (stock, price, qty) in orders {
+            let event_ids: Vec<String> = self
+                .state
+                .corporate_actions
+                .issuer_repurchases
+                .iter()
+                .filter(|book| {
+                    let plan = book.plan();
+                    plan.stock == stock
+                        && plan.window_contains(day)
+                        && book.last_order_day() != Some(day)
+                        && matches!(
+                            book.status(),
+                            crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
+                                | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Executing
+                        )
+                })
+                .map(|book| book.plan().event_id.clone())
+                .collect();
+            let intent = crate::strategy::Intent::PlaceLimit {
+                code: stock.clone(),
+                side: crate::orderbook::Side::Buy,
+                price: crate::strategy::LimitPrice::Fixed(price),
+                qty,
+            };
+            self.validate_player_calendar(&intent).map_err(|error| {
+                StepFatal::InvariantViolation {
+                    description: format!("回购委托日历校验失败：{error}"),
+                    location: "GameSession::place_issuer_repurchase_orders".into(),
+                }
+            })?;
+            let received = self
+                .state
+                .ingress_receipt_cursors
+                .receive(repurchase_account, intent)
+                .map_err(|error| StepFatal::InvariantViolation {
+                    description: format!("回购委托回执登记失败：{error}"),
+                    location: "GameSession::place_issuer_repurchase_orders".into(),
+                })?;
+            self.state.pending_player.push(received);
+            for event_id in event_ids {
+                if let Some(book) = self
+                    .state
+                    .corporate_actions
+                    .issuer_repurchases
+                    .iter_mut()
+                    .find(|book| book.plan().event_id == event_id)
+                {
+                    book.set_last_order_day(day);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 当前 tick（从 0 起，step 后自增）。
     pub fn tick(&self) -> u64 {
         self.state.tick
@@ -3045,6 +3737,7 @@ impl GameSession {
                 report.settled_date,
                 &account_positions,
                 &self.state.personal_trade_confirmations,
+                self.issuer_repurchase_account_id(),
             )
             .map_err(|error| SessionError::InvalidSave(format!("股东名册日终推进失败：{error}")))?;
         let correction_publications = self.apply_report_corrections_at_day_end(&report)?;
@@ -3068,6 +3761,30 @@ impl GameSession {
                 &mut self.state.accounts,
             )
             .map_err(|error| SessionError::InvalidSave(format!("送转日终结算失败：{error}")))?;
+        self.state
+            .corporate_actions
+            .process_rights_offerings_on_day_end(
+                report.settled_date,
+                self.state.civil_clock.calendar(),
+                std::sync::Arc::make_mut(&mut self.state.company_system),
+                &mut self.state.accounts,
+            )
+            .map_err(|error| SessionError::InvalidSave(format!("配股日终结算失败：{error}")))?;
+        let issuer_fills = self.collect_issuer_repurchase_fills(report.settled_date)?;
+        let repurchase_account_id = self.issuer_repurchase_account_id();
+        let repurchase_lot_size = self.state.setup.config.lot_size;
+        let repurchase_account_for_validate = repurchase_account_id;
+        self.state
+            .corporate_actions
+            .process_issuer_repurchases_on_day_end(
+                report.settled_date,
+                &issuer_fills,
+                &mut self.state.accounts,
+                repurchase_account_id,
+                repurchase_lot_size,
+                Some(std::sync::Arc::make_mut(&mut self.state.company_system)),
+            )
+            .map_err(|error| SessionError::InvalidSave(format!("发行人回购日终结算失败：{error}")))?;
         let account_positions = self
             .state
             .accounts
@@ -3089,6 +3806,7 @@ impl GameSession {
                 &account_positions,
                 &self.state.company_system,
                 report.settled_date,
+                repurchase_account_for_validate,
             )
             .map_err(|error| {
                 SessionError::InvalidSave(format!("日终公司行为与Simple账务勾稽失败：{error}"))
@@ -3105,6 +3823,8 @@ impl GameSession {
                 system: &self.state.company_system,
                 seed: self.state.seed,
                 dividends: &self.state.corporate_actions.dividends,
+                rights_offerings: &self.state.corporate_actions.rights_offerings,
+                issuer_repurchases: &self.state.corporate_actions.issuer_repurchases,
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;
@@ -3404,7 +4124,9 @@ impl GameSession {
             AccountKind::Retail => 18_u64,
             AccountKind::Inst => 36_u64,
             AccountKind::Hot => 8_u64,
-            AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
+            AccountKind::Player | AccountKind::IssuerRepurchase => {
+                panic!("player/issuer orders must not receive NPC quote lifecycles")
+            }
         };
         let tick_cents = self
             .state

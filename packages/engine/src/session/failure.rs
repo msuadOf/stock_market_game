@@ -64,13 +64,20 @@ impl GameSession {
             }
         }
         if self.state.accounts.values().any(|account| {
-            account.kind() != crate::AccountKind::Player && account.strategy().is_none()
+            account.kind() != crate::AccountKind::Player
+                && account.kind() != crate::AccountKind::IssuerRepurchase
+                && account.strategy().is_none()
         }) {
             let fatal = StepFatal::InvariantViolation {
                 description: "non-player account has no authoritative strategy".to_owned(),
                 location: "GameSession::step".to_owned(),
             };
             return Err(self.poison_failed_step(fatal));
+        }
+        // 回购执行器：窗口内连续竞价阶段以真实委托进入既有订单簿（每日至多一单）。
+        // 发行人回购账户不是策略主体，其委托由获批方案确定性产生。
+        if self.state.setup.issuer_repurchase_enabled {
+            self.place_issuer_repurchase_orders()?;
         }
         // 每个生产交易阶段均进入同一 Escrow 完整 tick 事务。
         // 只有完成不会失败的权威状态交换后才交付结果。
@@ -92,6 +99,9 @@ impl GameSession {
             ratio_micros: u64,
             cash_plan_ids: Vec<String>,
             stock_event_ids: Vec<String>,
+            rights_event_ids: Vec<String>,
+            rights_price_per_share: Option<crate::money::Money>,
+            rights_ratio_micros: u64,
         }
         let mut combined = std::collections::BTreeMap::<crate::account::StockCode, CombinedExEvent>::new();
         for book in &self.state.corporate_actions.dividends {
@@ -152,6 +162,73 @@ impl GameSession {
             entry.ratio_micros = plan.shares_per_existing_share_micros;
             entry.stock_event_ids.push(plan.event_id.clone());
         }
+        for book in &self.state.corporate_actions.rights_offerings {
+            let plan = book.plan();
+            if plan.ex_rights_on != date || book.registration().is_none() {
+                continue;
+            }
+            // 配股除权须已关窗（实际认购在 L 日确定；沪 4.3.1 公式的变动比例是
+            // 实际比例）。未关窗即到除权日属于日程错误，显式失败。
+            if book.status()
+                == &crate::company::rights_offering::RightsOfferingStatus::Entitled
+            {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!(
+                        "配股事件 {} 除权日 {} 前未关缴款窗口",
+                        plan.event_id, date
+                    ),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            // 实际认购为零：股份未变动，不产生除权锚（发行失败事实由结算回执
+            // 承载）；跳过而不套用除权公式，也不向组合事件插入任何分量。
+            let paid = book
+                .subscriptions()
+                .iter()
+                .map(|record| record.paid_shares)
+                .sum::<u64>();
+            let issued_before = book
+                .entitlement()
+                .map(|receipt| receipt.issued_shares_before)
+                .unwrap_or(0);
+            if issued_before == 0 {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("配股事件 {} 缺少配股前股数事实", plan.event_id),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            let ratio = u64::try_from((u128::from(paid) * 1_000_000_u128) / u128::from(issued_before))
+                .map_err(|_| StepFatal::InvariantViolation {
+                    description: format!("配股事件 {} 的实际比例溢出", plan.event_id),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                })?;
+            if ratio == 0 {
+                continue;
+            }
+            let entry = combined.entry(plan.stock.clone()).or_default();
+            if entry.exchange.is_some_and(|known| known != plan.exchange) {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("证券 {} 的同日除权除息事件交易所不一致", plan.stock.0),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            // 同日多起配股、或配股与送转同日的合并除权口径（比例相加还是复合）
+            // 未在官方材料核实：显式拒绝，不近似。
+            if !entry.rights_event_ids.is_empty() || !entry.stock_event_ids.is_empty() {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!(
+                        "证券 {} 的同日多起配股或配股×送转合并除权口径未核实，显式拒绝",
+                        plan.stock.0
+                    ),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            entry.exchange = Some(plan.exchange);
+            entry.rights_price_per_share = Some(plan.price_per_share);
+            // 实际配股比例 = 实际认购新增股份 ÷ 配股前股份（百万分之一股，整数截位）。
+            entry.rights_ratio_micros = ratio;
+            entry.rights_event_ids.push(plan.event_id.clone());
+        }
         if combined.is_empty() {
             return Ok(());
         }
@@ -164,12 +241,9 @@ impl GameSession {
                     location: "GameSession::prepare_ex_references_for_current_date".into(),
                 });
             };
-            let Some(registered_on) = event.registered_on else {
-                return Err(StepFatal::InvariantViolation {
-                    description: format!("证券 {} 的除权除息组缺少登记日事实", stock.0),
-                    location: "GameSession::prepare_ex_references_for_current_date".into(),
-                });
-            };
+            // 配股事件的登记日事实可选：其除权锚定缴款截止日 L（见下方公式分支）；
+            // 纯现金与送转事件仍要求登记日事实。
+            let registered_on = event.registered_on.unwrap_or(date);
             event.cash_plan_ids.sort();
             event.stock_event_ids.sort();
             let market = candidate_markets.get_mut(&stock).ok_or_else(|| StepFatal::InvariantViolation {
@@ -179,6 +253,7 @@ impl GameSession {
             if let Some(group) = applied_groups.iter().find(|group| group.date == date && group.stock == stock) {
                 if group.cash_plan_ids != event.cash_plan_ids
                     || group.stock_event_ids != event.stock_event_ids
+                    || group.rights_event_ids != event.rights_event_ids
                     || market.last_cash_ex_reference() != Some(group.reference)
                 {
                     return Err(StepFatal::InvariantViolation {
@@ -194,7 +269,36 @@ impl GameSession {
                     location: "GameSession::prepare_ex_references_for_current_date".into(),
                 });
             }
-            let reference = if event.ratio_micros == 0 {
+            let reference = if event.rights_ratio_micros > 0 {
+                // 配股除权：缴款截止日 L 的次一交易日；公式含配股价分量与可选
+                // 同日现金红利（沪 4.3.1／深 4.4.1 公式形态）。
+                let rights_price = event.rights_price_per_share.expect(
+                    "rights ratio is set together with the rights price",
+                );
+                let payment_deadline = calendar
+                    .previous_trading_day(exchange, date)
+                    .map_err(|error| StepFatal::InvariantViolation {
+                        description: error.to_string(),
+                        location: "GameSession::prepare_ex_references_for_current_date".into(),
+                    })?;
+                let formula = match exchange {
+                    crate::calendar::CalendarExchange::Sse => crate::company::ex_reference_price::RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                        ratio_micros: event.rights_ratio_micros,
+                    },
+                    crate::calendar::CalendarExchange::Szse => crate::company::ex_reference_price::RightsOfferingExRightsFormula::ShenzhenRightsShareChange {
+                        ratio_micros: event.rights_ratio_micros,
+                    },
+                };
+                crate::company::ex_reference_price::rights_offering_ex_rights_reference_price(
+                    &calendar,
+                    exchange,
+                    formula,
+                    payment_deadline,
+                    market.last_close(),
+                    event.gross_per_share,
+                    rights_price,
+                )
+            } else if event.ratio_micros == 0 {
                 crate::company::ex_reference_price::cash_dividend_ex_reference_price(
                     &calendar,
                     exchange,
@@ -233,6 +337,7 @@ impl GameSession {
                 stock,
                 cash_plan_ids: event.cash_plan_ids,
                 stock_event_ids: event.stock_event_ids,
+                rights_event_ids: event.rights_event_ids,
                 reference,
             });
         }
