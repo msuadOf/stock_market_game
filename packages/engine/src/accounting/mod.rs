@@ -24,6 +24,7 @@ mod journal;
 mod ledger;
 mod period;
 pub mod period_roe;
+pub mod disclosure_roe;
 mod receivables;
 pub mod reports;
 mod tax;
