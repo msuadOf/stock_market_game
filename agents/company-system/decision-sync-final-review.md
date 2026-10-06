@@ -42,4 +42,6 @@
 
 按委托只核对了 `implementation-checklist.md` 当前开头三段及 checkbox 状态，不重审其余正文。当前已实现范围包括 identity/owner 拆分、四周期汇总生成、新局 seed/价格初始化、严格模式状态及财务/披露消费者。最新 Session candidate 在显式登记名册、法定事实和获批现金方案下，已有真实税前账户到账、Simple 应付清偿、同日多方案现金除息锚、失败原子性及恢复/重复调用幂等的定向证据；但 `TreatmentNotConfigured` 表明尚未税后结清，公告/NPC 获知、实际股息税收缴、宿主/UI 入口和其他股本行为未完成，`cash_settlement=false` 保持诚实。集团／冲击旧 Session 接线及完整回归仍留后续门禁。没有把底层登记、税或候选付款能力扩称为共同股本行为完整可用。
 
-当前勾选聚焦于身份/owner 拆分、四种周期与期间输入、生成状态保存、simple 账面边界、材料查询/披露消费者、新局校准及严格模式状态。根据委托提供的验证证据，勾选与未勾项目边界一致；实际投资者股本结算、共同公司行为、报表完整勾稽、披露期间汇总及自然日日结完整原子链仍未勾，未见过度核销。没有发现需要报告的状态标记不足；此状态复核依赖根任务提供的验证结果，不自行宣称重跑了构建或短测。
+Finance 18/18、Session Simple 14/14、typegen 135/135、开局 seed/价格校准 14/14、Web cross-domain 40/40、正确 cwd 的 market fixture 63/63 与 app/node TypeScript 检查通过；既有 Rust 85 项、Web 45 项、默认 features workspace 检查、WASM/Web release 构建、真实存档生成/恢复/续行也按各自命令范围报告。当前勾选与未完成边界一致：实际投资者股本结算与共同公司行为全链、报表完整勾稽、披露期间汇总及自然日日结完整原子链仍未勾，未见过度核销。以上证据由 root 提供，本 reviewer 未重跑构建或短测。
+
+handoff 已准确记录 Web fixture 合同限制：`.tmp/company-system/session-actions/legacy-fixture-contract-limit.log` 中 `save-schema-contract.test.ts` 为 32 项 2 通过、30 失败，原因是旧手工 `currentSaveFixture` 缺 strict 必填 `company_system`；正式 Engine 生成存档 gold 通过不能替代该套件，需迁移 fixture 后按原断言重跑，不加兼容默认或弱化断言。之前的 `protocol-anchor-final.log` 已被重跑覆盖，不再引用其中 46 项混合结果；当前 `protocol-anchor-verified.log` 为 14/14。handoff 对两项分别报告，没有混淆；该限制准确。
