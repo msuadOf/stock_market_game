@@ -2656,6 +2656,7 @@ impl GameSession {
                 report: &report,
                 system: &self.state.company_system,
                 seed: self.state.seed,
+                dividends: &self.state.corporate_actions.dividends,
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;

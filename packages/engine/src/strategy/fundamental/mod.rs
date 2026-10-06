@@ -100,6 +100,8 @@ fn sample_i32_inclusive(rng: &mut dyn Rng, lo: i32, hi: i32) -> i32 {
 pub enum ValuationUnavailable {
     #[error("fundamental method disabled: zero fundamental weight in the analysis profile")]
     MethodDisabled,
+    #[error("own-known annual baseline is unavailable for this report scope")]
+    AnnualBaselineNotOwnKnown,
     #[error("report company {report:?} does not match the expected issuer {expected:?}")]
     CompanyMismatch {
         expected: CompanyId,

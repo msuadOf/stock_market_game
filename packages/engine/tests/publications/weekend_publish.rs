@@ -1,15 +1,15 @@
 //! 周末发布金样：非交易日 18:00 照常公布、零撮合零市场事件零 RNG
 //! 消费；开局后首次排期经 live 派发落地；提前读取被类型化拒绝。
 
-use crate::fixture::{history_start_of, plus_days, single_company_config, INDUSTRIAL_ID, OPS_SEED};
-use crate::session_fixture::{civil_setup, TICKS_PER_DAY};
-use engine::accounting::reports::ReportKind;
+use crate::fixture::{INDUSTRIAL_ID, OPS_SEED, history_start_of, plus_days, single_company_config};
+use crate::session_fixture::{TICKS_PER_DAY, civil_setup};
 use engine::accounting::AccountingPeriod;
+use engine::accounting::reports::ReportKind;
 use engine::calendar::{CalendarExchange, CivilInstant, TradingCalendar, Weekday};
 use engine::company::{ActiveShock, CompanyId, ShockKind};
 use engine::information::{
-    assemble_seeded_prehistory, scheduled_instant, stable_company_offset, InformationError,
-    PublicationOrigin, ScheduledReportKind,
+    InformationError, PublicationOrigin, ScheduledReportKind, assemble_seeded_prehistory,
+    scheduled_instant, stable_company_offset,
 };
 use engine::session::{
     CivilDayEndReport, CompanyDisclosureKind, DayEndDisclosureCtx, DayEndDisclosures,
@@ -58,7 +58,9 @@ impl WeekendScenario {
                     .prev()
                     .expect("as_of before history"),
             ),
-            friday, engine::information::ReportFrequency::Quarterly)
+            friday,
+            engine::information::ReportFrequency::Quarterly,
+        )
         .expect("prehistory assembles");
         let session =
             GameSession::new(civil_setup(friday), OPS_SEED).expect("compact session valid");
@@ -301,13 +303,13 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
         announcement.published_at,
         saturday_report.disclosure_instant
     );
-    assert_eq!(announcement.event.kind, ShockKind::ContractWon);
-    assert_eq!(announcement.event.amplitude_bp, 1_500);
-    assert_eq!(announcement.event.starts_on, saturday);
-    assert_eq!(
-        announcement.event.expires_on,
-        plus_days(saturday, 5).unwrap()
-    );
+    let engine::information::AnnouncementContent::Shock(event) = &announcement.content else {
+        panic!("operating event must be a shock announcement");
+    };
+    assert_eq!(event.kind, ShockKind::ContractWon);
+    assert_eq!(event.amplitude_bp, 1_500);
+    assert_eq!(event.starts_on, saturday);
+    assert_eq!(event.expires_on, plus_days(saturday, 5).unwrap());
     // 未来现金流是预测：公告类型上只有事件条款，无任何「已实现」金额声明。
     let friday_night =
         CivilInstant::from_hms(friday_report.settled_date, 23, 59, 59).expect("23:59:59 valid");
@@ -323,7 +325,7 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
     let again = scenario
         .dispatch
         .run_day_end(DayEndDisclosureCtx {
-                report_frequency: engine::information::ReportFrequency::Quarterly,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &saturday_report,
             ops: &scenario.seeded.ops,

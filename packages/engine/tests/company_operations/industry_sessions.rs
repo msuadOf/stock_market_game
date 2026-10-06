@@ -55,29 +55,38 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
     assert!(announcements.iter().all(|announcement| {
         announcement.occurred_on == date
             && announcement.published_at == day_end.disclosure_instant
-            && announcement.event.kind.applies_to(kind)
+            && matches!(&announcement.content, engine::information::AnnouncementContent::Shock(event) if event.kind.applies_to(kind))
     }));
     let economic_announcements: Vec<_> = announcements
         .iter()
         .filter(|announcement| {
             !matches!(
-                &announcement.event.kind,
-                ShockKind::PaymentFailure { .. }
+                &announcement.content,
+                engine::information::AnnouncementContent::Shock(
+                    engine::information::AnnouncedEvent {
+                        kind: ShockKind::PaymentFailure { .. },
+                        ..
+                    }
+                )
             )
         })
         .collect();
     assert!(!economic_announcements.is_empty());
     assert!(economic_announcements.iter().all(|announcement| !matches!(
-        &announcement.event.kind,
-        ShockKind::ProductionInterruption | ShockKind::AssetImpairmentSignal
+        &announcement.content,
+        engine::information::AnnouncementContent::Shock(engine::information::AnnouncedEvent {
+            kind: ShockKind::ProductionInterruption | ShockKind::AssetImpairmentSignal,
+            ..
+        })
     )));
     if kind == CompanyKind::Bank {
-        assert!(economic_announcements
-            .iter()
-            .all(|announcement| matches!(
-                &announcement.event.kind,
-                ShockKind::CreditDeterioration
-            )));
+        assert!(economic_announcements.iter().all(|announcement| matches!(
+            &announcement.content,
+            engine::information::AnnouncementContent::Shock(engine::information::AnnouncedEvent {
+                kind: ShockKind::CreditDeterioration,
+                ..
+            })
+        )));
     }
 }
 

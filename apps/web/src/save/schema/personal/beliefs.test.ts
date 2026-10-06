@@ -81,6 +81,35 @@ test("belief confidence rejects values above 10000 at the save boundary", () => 
     assert.throws(() => parseBeliefBook(withConfidence(confidence), "book"), /confidence_bp/)
   }
 })
+
+test("annual baseline unavailable belief variants round-trip strictly", () => {
+  const entry = {
+    company: "company", method: null,
+    forecast: { growth_bp: null, basis: "AnnualBaselineUnavailable" },
+    valuation: { Unavailable: { reason: "AnnualBaselineNotOwnKnown" } },
+    confidence_bp: 0, used_report_ids: [1], anchor_trading_day: 1,
+    horizon_trading_days: 1, last_cause: null, applied_experience_orders: [],
+  } as const
+  const book = { ...base, entries: { "600001": entry } }
+
+  assert.deepEqual(parseBeliefBook(book, "book"), book)
+  assert.throws(() => parseBeliefBook({
+    ...book,
+    entries: { "600001": { ...entry, forecast: { ...entry.forecast, basis: { FutureVariant: {} } } } },
+  }, "book"), /不是已知预测依据/)
+  assert.throws(() => parseBeliefBook({
+    ...book,
+    entries: { "600001": { ...entry, forecast: { ...entry.forecast, basis: "FutureVariant" } } },
+  }, "book"), /forecast\.basis/)
+  assert.throws(() => parseBeliefBook({
+    ...book,
+    entries: { "600001": { ...entry, valuation: { Unavailable: { reason: { FutureVariant: {} } } } } },
+  }, "book"), /无效估值不可用原因/)
+  assert.throws(() => parseBeliefBook({
+    ...book,
+    entries: { "600001": { ...entry, valuation: { Unavailable: { reason: "FutureVariant" } } } },
+  }, "book"), /Unavailable\.reason/)
+})
 const withExitFact = {
   ...base,
   experience: {

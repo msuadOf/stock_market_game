@@ -99,12 +99,14 @@ fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
         company: crate::company::CompanyId("digest-fixture".to_owned()),
         occurred_on,
         published_at: crate::calendar::CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
-        event: crate::information::AnnouncedEvent {
-            kind: crate::company::ShockKind::CreditDeterioration,
-            amplitude_bp,
-            starts_on: occurred_on,
-            expires_on: occurred_on,
-        },
+        content: crate::information::AnnouncementContent::Shock(
+            crate::information::AnnouncedEvent {
+                kind: crate::company::ShockKind::CreditDeterioration,
+                amplitude_bp,
+                starts_on: occurred_on,
+                expires_on: occurred_on,
+            },
+        ),
     };
 
     cloned.publish_announcement(request(501)).unwrap();
@@ -163,7 +165,8 @@ fn tick_shadow_commit_preserves_retail_projection_cursor() {
 
 fn zero_revenue_game() -> GameSession {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
-    let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system else {
+    let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system
+    else {
         panic!("测试明确选择 Simple");
     };
     config.companies[0].generation.initial_revenue = crate::accounting::AccountingAmount::ZERO;
@@ -182,10 +185,22 @@ fn restart_command(revenue_cents: i128) -> crate::company::api::CompanyCommand {
 fn simple_tick_shadow_shares_selected_system_and_public_history_without_changing_hashes() {
     let game = game();
     let shadow = game.clone_for_tick_shadow().unwrap();
-    assert!(std::sync::Arc::ptr_eq(&game.state.company_system, &shadow.state.company_system));
-    assert!(std::sync::Arc::ptr_eq(&game.state.library, &shadow.state.library));
-    assert_eq!(shadow.business_state_hash().unwrap(), game.business_state_hash().unwrap());
-    assert_eq!(shadow.session_state_hash().unwrap(), game.session_state_hash().unwrap());
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.company_system,
+        &shadow.state.company_system
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.library,
+        &shadow.state.library
+    ));
+    assert_eq!(
+        shadow.business_state_hash().unwrap(),
+        game.business_state_hash().unwrap()
+    );
+    assert_eq!(
+        shadow.session_state_hash().unwrap(),
+        game.session_state_hash().unwrap()
+    );
 }
 
 #[test]
@@ -193,12 +208,23 @@ fn simple_shadow_shares_selected_system_until_authoritative_command() {
     let game = zero_revenue_game();
     let before = game.business_state_hash().unwrap();
     let mut shadow = game.clone_for_tick_shadow().unwrap();
-    assert!(std::sync::Arc::ptr_eq(&game.state.company_system, &shadow.state.company_system));
-    std::sync::Arc::make_mut(&mut shadow.state.company_system).submit_command(restart_command(100_000)).unwrap();
-    assert!(!std::sync::Arc::ptr_eq(&game.state.company_system, &shadow.state.company_system));
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.company_system,
+        &shadow.state.company_system
+    ));
+    std::sync::Arc::make_mut(&mut shadow.state.company_system)
+        .submit_command(restart_command(100_000))
+        .unwrap();
+    assert!(!std::sync::Arc::ptr_eq(
+        &game.state.company_system,
+        &shadow.state.company_system
+    ));
     assert_eq!(game.business_state_hash().unwrap(), before);
     assert_ne!(shadow.business_state_hash().unwrap(), before);
-    assert!(std::sync::Arc::ptr_eq(&game.state.library, &shadow.state.library));
+    assert!(std::sync::Arc::ptr_eq(
+        &game.state.library,
+        &shadow.state.library
+    ));
 }
 
 #[test]
@@ -206,7 +232,9 @@ fn simple_hash_cache_is_invalidated_by_authoritative_command_and_day_advance() {
     let mut game = zero_revenue_game();
     let before = game.business_state_hash().unwrap();
     assert_eq!(game.business_state_hash().unwrap(), before);
-    std::sync::Arc::make_mut(&mut game.state.company_system).submit_command(restart_command(100_000)).unwrap();
+    std::sync::Arc::make_mut(&mut game.state.company_system)
+        .submit_command(restart_command(100_000))
+        .unwrap();
     let after_command = game.business_state_hash().unwrap();
     assert_ne!(after_command, before);
     assert_eq!(game.business_state_hash().unwrap(), after_command);
@@ -223,9 +251,13 @@ fn simple_projection_is_stable_across_repeated_hashes_clone_and_restore() {
     assert_eq!(game.business_state_hash().unwrap(), first);
     let mut shadow = game.clone_for_tick_shadow().unwrap();
     assert_eq!(shadow.business_state_hash().unwrap(), first);
-    std::sync::Arc::make_mut(&mut shadow.state.company_system).submit_command(restart_command(200_000)).unwrap();
+    std::sync::Arc::make_mut(&mut shadow.state.company_system)
+        .submit_command(restart_command(200_000))
+        .unwrap();
     assert_eq!(game.business_state_hash().unwrap(), first);
-    std::sync::Arc::make_mut(&mut game.state.company_system).submit_command(restart_command(100_000)).unwrap();
+    std::sync::Arc::make_mut(&mut game.state.company_system)
+        .submit_command(restart_command(100_000))
+        .unwrap();
     let authority_after = game.business_state_hash().unwrap();
     let shadow_after = shadow.business_state_hash().unwrap();
     assert_ne!(authority_after, first);
@@ -233,7 +265,10 @@ fn simple_projection_is_stable_across_repeated_hashes_clone_and_restore() {
     assert_ne!(authority_after, shadow_after);
     let restored_authority = GameSession::restore(&game.save().unwrap()).unwrap();
     let restored_shadow = GameSession::restore(&shadow.save().unwrap()).unwrap();
-    assert_eq!(restored_authority.business_state_hash().unwrap(), authority_after);
+    assert_eq!(
+        restored_authority.business_state_hash().unwrap(),
+        authority_after
+    );
     assert_eq!(restored_shadow.business_state_hash().unwrap(), shadow_after);
 }
 

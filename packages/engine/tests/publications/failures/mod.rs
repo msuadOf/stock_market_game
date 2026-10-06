@@ -7,16 +7,16 @@ mod publication_failures;
 
 use crate::books_fixture::correction_books;
 use crate::fixture::OPS_SEED;
+use engine::accounting::AccountingPeriod;
 use engine::accounting::closing::ClosingEngine;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{IndustryPresentation, ReportKind};
-use engine::accounting::AccountingPeriod;
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
-    AnnouncementRequest, InformationError, PublicLibrary, PublicLibrarySave, PublicationOrigin,
-    PublicationRequest, ScheduledReportKind,
+    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
+    PublicLibrarySave, PublicationOrigin, PublicationRequest, ScheduledReportKind,
+    scheduled_instant, stable_company_offset,
 };
 
 const COMPANY: &str = "C-FAIL";
@@ -119,12 +119,12 @@ fn early_read_rejected() {
             company: CompanyId(COMPANY.to_string()),
             occurred_on: base.q1_instant.date(),
             published_at: base.q1_instant,
-            event: AnnouncedEvent {
+            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 100,
                 starts_on: base.q1_instant.date(),
                 expires_on: base.q1_instant.date(),
-            },
+            }),
         })
         .expect("announcement publishes at its phase");
     assert!(matches!(

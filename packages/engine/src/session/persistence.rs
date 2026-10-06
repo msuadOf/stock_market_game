@@ -1275,9 +1275,70 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             return Err(SessionError::InvalidSave("公开报告引用未知发行人".into()));
         }
     }
+    let mut cash_dividend_announcements = std::collections::BTreeSet::new();
     for announcement in &library.announcements {
         if save.company_system.issuers().get(&announcement.company).is_none() {
             return Err(SessionError::InvalidSave("公开公告引用未知发行人".into()));
+        }
+        if let crate::information::AnnouncementContent::CashDividend(dividend) = &announcement.content {
+            let identity = (announcement.company.clone(), dividend.plan.plan_id.clone());
+            if !cash_dividend_announcements.insert(identity.clone()) {
+                return Err(SessionError::InvalidSave(format!(
+                    "现金分红计划 {} 存在重复公开公告",
+                    dividend.plan.plan_id
+                )));
+            }
+            let book = save.corporate_actions.dividends.iter().find(|book| {
+                book.plan().issuer == announcement.company
+                    && book.plan().plan_id == dividend.plan.plan_id
+            }).ok_or_else(|| SessionError::InvalidSave(format!(
+                "现金分红公告 {} 缺少对应公司行为账簿",
+                dividend.plan.plan_id
+            )))?;
+            if book.plan() != &dividend.plan
+                || book.status() == &crate::company::cash_dividend::CashDividendStatus::Approved
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "现金分红公告 {} 与已批准计划或生命周期不一致",
+                    dividend.plan.plan_id
+                )));
+            }
+            let finance_plan = save.company_system.dividend_plan_facts(&announcement.company)
+                .map_err(|error| SessionError::InvalidSave(format!(
+                    "现金分红公告 {} 查询批准财务事实失败：{error}",
+                    dividend.plan.plan_id
+                )))?
+                .into_iter()
+                .find(|fact| fact.plan_id == dividend.plan.plan_id)
+                .ok_or_else(|| SessionError::InvalidSave(format!(
+                    "现金分红公告 {} 缺少 Simple 批准财务事实",
+                    dividend.plan.plan_id
+                )))?;
+            let approved_gross = finance_plan.total_gross.to_money()
+                .map_err(|error| SessionError::InvalidSave(format!(
+                    "现金分红公告 {} 批准金额无法表示为 Money：{error}",
+                    dividend.plan.plan_id
+                )))?;
+            if dividend.total_gross != approved_gross {
+                return Err(SessionError::InvalidSave(format!(
+                    "现金分红公告 {} 税前总额与 Simple 批准金额不一致",
+                    dividend.plan.plan_id
+                )));
+            }
+        }
+    }
+    for book in &save.corporate_actions.dividends {
+        let announced = cash_dividend_announcements.contains(&(
+            book.plan().issuer.clone(),
+            book.plan().plan_id.clone(),
+        ));
+        if announced
+            != (book.status() != &crate::company::cash_dividend::CashDividendStatus::Approved)
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "现金分红计划 {} 的公告与生命周期状态不一致",
+                book.plan().plan_id
+            )));
         }
     }
     crate::information::PublicLibrary::from_parts(library)

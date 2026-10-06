@@ -1937,12 +1937,14 @@ mod chain_restructure_tests {
                 company: company.clone(),
                 occurred_on: date,
                 published_at: crate::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
-                event: crate::information::AnnouncedEvent {
-                    kind: crate::company::ShockKind::ContractWon,
-                    amplitude_bp: 100,
-                    starts_on: date,
-                    expires_on,
-                },
+                content: crate::information::AnnouncementContent::Shock(
+                    crate::information::AnnouncedEvent {
+                        kind: crate::company::ShockKind::ContractWon,
+                        amplitude_bp: 100,
+                        starts_on: date,
+                        expires_on,
+                    },
+                ),
             })
             .unwrap();
         let market = session.build_market_view();

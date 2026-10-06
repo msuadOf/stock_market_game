@@ -13,10 +13,10 @@ export type FundamentalMethod = "earnings_multiple" | "cash_flow" | "equity_roe"
 export type PersonalAssumptions = { readonly growth_deviation_bp: number; readonly quality_coefficient_bp: number; readonly pe_multiple: number; readonly equity_cost_bp: number; readonly terminal_growth_bp: number; readonly roe_deviation_bp: number }
 export type BeliefEntry = { readonly company: string; readonly method: FundamentalMethod | null; readonly forecast: ForecastState; readonly confidence_bp: number; readonly valuation: ValuationOutcome; readonly used_report_ids: readonly number[]; readonly anchor_trading_day: number; readonly horizon_trading_days: number; readonly last_cause: CauseRecord | null; readonly applied_experience_orders: readonly number[] }
 export type ForecastState = { readonly growth_bp: number | null; readonly basis: ForecastBasis }
-export type ForecastBasis = { readonly InitialTwoYear: { readonly observed_bp: number } } | "InitialWithoutHistory" | { readonly Revised: { readonly observed_bp: number } } | "Degenerate"
+export type ForecastBasis = { readonly InitialTwoYear: { readonly observed_bp: number } } | "InitialWithoutHistory" | { readonly Revised: { readonly observed_bp: number } } | "Degenerate" | "AnnualBaselineUnavailable"
 export type ValuationOutcome = { readonly Available: { readonly total_equity_estimate: string; readonly per_share: PerShareRange } } | { readonly Unavailable: { readonly reason: ValuationUnavailable } }
 export type PerShareRange = { readonly pessimistic: string; readonly optimistic: string }
-export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: string; readonly report: string } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
+export type ValuationUnavailable = "MethodDisabled" | "AnnualBaselineNotOwnKnown" | { readonly CompanyMismatch: { readonly expected: string; readonly report: string } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
 export type CauseRecord = { readonly cause: BeliefCause; readonly as_of_trading_day: number }
 export type BeliefCause = { readonly NewMaterial: { readonly report: number } } | { readonly Correction: { readonly report: number } } | { readonly CreditDefault: { readonly announcement: number } } | "HorizonExpired" | { readonly ExperienceFailure: { readonly order: number } } | { readonly ProfitableExit: { readonly order: number } }
 
@@ -24,7 +24,7 @@ const RETAIL = ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"]
 const INSTITUTION = ["DeepValue", "Growth", "Balanced", "Defensive", "ActiveTrader"] as const
 const HOT = ["Momentum", "Reversal"] as const
 const METHODS = ["earnings_multiple", "cash_flow", "equity_roe"] as const
-const UNAVAILABLE_UNITS = ["MethodDisabled", "NonPositiveNetIncome", "NonPositiveBookEquity", "NonPositiveAverageEquity", "NonPositiveValuationEstimate", "GrowthPriorUnavailable", "FinancingSplitUndeterminable", "ConsolidatedCashFlowAttributionUnavailable", "ConsolidatedNetIncomeAttributionUnavailable", "ZeroIssuedShares", "PerShareOutOfRange"] as const
+const UNAVAILABLE_UNITS = ["MethodDisabled", "AnnualBaselineNotOwnKnown", "NonPositiveNetIncome", "NonPositiveBookEquity", "NonPositiveAverageEquity", "NonPositiveValuationEstimate", "GrowthPriorUnavailable", "FinancingSplitUndeterminable", "ConsolidatedCashFlowAttributionUnavailable", "ConsolidatedNetIncomeAttributionUnavailable", "ZeroIssuedShares", "PerShareOutOfRange"] as const
 
 export function parseBeliefBooks(value: unknown, path = "belief_books"): StringMap<BeliefBook> {
   return map(value, path, accountKey, parseBeliefBook)
@@ -76,7 +76,7 @@ function parseForecast(value: unknown, path: string): ForecastState {
 }
 
 function parseForecastBasis(value: unknown, path: string): ForecastBasis {
-  if (value === "InitialWithoutHistory" || value === "Degenerate") return value
+  if (value === "InitialWithoutHistory" || value === "Degenerate" || value === "AnnualBaselineUnavailable") return value
   const [tag, payload] = tagged(value, path)
   if (tag !== "InitialTwoYear" && tag !== "Revised") throw new Error(`存档 ${path}.${tag} 不是已知预测依据`)
   exact(payload, ["observed_bp"], `${path}.${tag}`)
@@ -99,6 +99,7 @@ function parseUnavailable(value: unknown, path: string): ValuationUnavailable {
     const unit = oneOf(value, path, UNAVAILABLE_UNITS)
     switch (unit) {
       case "MethodDisabled": return "MethodDisabled"
+      case "AnnualBaselineNotOwnKnown": return "AnnualBaselineNotOwnKnown"
       case "NonPositiveNetIncome": return "NonPositiveNetIncome"
       case "NonPositiveBookEquity": return "NonPositiveBookEquity"
       case "NonPositiveAverageEquity": return "NonPositiveAverageEquity"

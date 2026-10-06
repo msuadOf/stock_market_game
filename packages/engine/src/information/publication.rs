@@ -14,13 +14,13 @@
 //! 该时点已确认事实（事件条款）；未来合同现金流是预测，类型上就没有
 //! 「已实现」标记位。
 
+use crate::accounting::AccountingPeriod;
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::{ReportKind, ReportSet};
-use crate::accounting::AccountingPeriod;
 use crate::calendar::{CivilDate, CivilInstant};
 use crate::company::CompanyId;
 use crate::information::{
-    scheduled_instant, InformationError, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
+    InformationError, SCHEDULE_OFFSET_MAX, ScheduledReportKind, scheduled_instant,
 };
 
 /// 批准时点的游戏约定（公布日 08:00；排期/装配/派发统一使用）。
@@ -181,7 +181,23 @@ pub struct Announcement {
     pub company: CompanyId,
     pub occurred_on: CivilDate,
     pub published_at: CivilInstant,
-    pub event: AnnouncedEvent,
+    pub content: AnnouncementContent,
+}
+
+/// 公告内容按业务事实类型区分；现金分红不是经营冲击。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value", deny_unknown_fields)]
+pub enum AnnouncementContent {
+    Shock(AnnouncedEvent),
+    CashDividend(CashDividendAnnouncement),
+}
+
+/// 已批准现金分红方案公告；实际总额与授权上限分别保留。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CashDividendAnnouncement {
+    pub plan: crate::company::cash_dividend::CashDividendPlan,
+    pub total_gross: crate::money::Money,
 }
 
 /// 定期报告公布请求（显式时点——类型上无默认值，杜绝补默认日期）。
@@ -206,7 +222,7 @@ pub struct AnnouncementRequest {
     pub company: CompanyId,
     pub occurred_on: CivilDate,
     pub published_at: CivilInstant,
-    pub event: AnnouncedEvent,
+    pub content: AnnouncementContent,
 }
 
 /// 报告期末自然日（窗口末月的最后一天）。
@@ -363,11 +379,21 @@ pub(crate) fn ensure_report_shape(report: &PublishedReport) -> Result<(), Inform
     ensure_origin_supersedes(&report.origin, report.supersedes)?;
     let corrected = matches!(report.origin, PublicationOrigin::Correction);
     match &report.reports.version.kind {
-        crate::accounting::reports::VersionKind::Original if !corrected && report.reports.version.supersedes.is_none() => {}
-        crate::accounting::reports::VersionKind::Correction { reason } if corrected
-            && !reason.trim().is_empty()
-            && report.reports.version.supersedes.is_some_and(|previous| previous < report.reports.version.sequence) => {}
-        _ => return Err(InformationError::InconsistentLibrary { detail: "公开更正来源与报表版本关系不一致".into() }),
+        crate::accounting::reports::VersionKind::Original
+            if !corrected && report.reports.version.supersedes.is_none() => {}
+        crate::accounting::reports::VersionKind::Correction { reason }
+            if corrected
+                && !reason.trim().is_empty()
+                && report
+                    .reports
+                    .version
+                    .supersedes
+                    .is_some_and(|previous| previous < report.reports.version.sequence) => {}
+        _ => {
+            return Err(InformationError::InconsistentLibrary {
+                detail: "公开更正来源与报表版本关系不一致".into(),
+            });
+        }
     }
     ensure_scope_mirrors_company(&report.company, &report.reports.scope)?;
     ensure_schedule_window(&report.origin, report.reports.period)?;

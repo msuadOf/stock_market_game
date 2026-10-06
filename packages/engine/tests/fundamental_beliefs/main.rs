@@ -23,13 +23,13 @@ use engine::accounting::{
     JournalEntry, JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::industrial::industrial_account_chart;
 use engine::company::CompanyKind;
+use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
-    AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
-    ScheduledReportKind,
+    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, PublicLibrary, PublicationId,
+    PublicationOrigin, PublicationRequest, ScheduledReportKind, scheduled_instant,
+    stable_company_offset,
 };
 use engine::information::{
     AcquisitionError, AcquisitionOutcome, NpcInformationState, NpcObservationContext,
@@ -93,6 +93,7 @@ pub(crate) fn market(float_shares: u64) -> BeliefMarket {
 }
 
 /// 完整披露场景：四年度账套 + 逐年结账公开 + 一条临时公告。
+#[derive(Clone)]
 pub(crate) struct Scenario {
     pub company: CompanyId,
     pub library: PublicLibrary,
@@ -259,12 +260,12 @@ pub(crate) fn scenario() -> Scenario {
             company: company.clone(),
             occurred_on: announcement_date,
             published_at: CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("phase"),
-            event: AnnouncedEvent {
+            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1_200,
                 starts_on: announcement_date,
                 expires_on: d("2031-04-10"),
-            },
+            }),
         })
         .expect("announcement publishes");
 

@@ -26,35 +26,36 @@ mod publication;
 mod queries;
 mod simple_disclosures;
 pub use simple_disclosures::publish_simple_scheduled;
+mod schedule;
 #[cfg(test)]
 mod source_tests;
-mod schedule;
 
 pub use acquisition::{
-    discovery_candidates, AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord,
-    NpcInformationState, NpcInformationStateSave,
+    AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord, NpcInformationState,
+    NpcInformationStateSave, discovery_candidates,
 };
 pub use npc_view::{AcquiredEntry, NpcObservationContext};
 pub use prehistory::{
-    assemble_seeded_prehistory, ensure_original_registered, industry_presentation, SeededPrehistory,
+    SeededPrehistory, assemble_seeded_prehistory, ensure_original_registered, industry_presentation,
 };
 pub use public_view::{PublicLibrary, PublicLibrarySave};
 pub(crate) use publication::period_end_date;
 pub use publication::{
-    AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementRequest, PublicationId,
-    PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
+    APPROVAL_HOUR, AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementContent,
+    AnnouncementRequest, CashDividendAnnouncement, DISCLOSURE_PHASE_SECOND, PublicationId,
+    PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport,
 };
 mod monthly_schedule;
 pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};
 pub use schedule::{
-    scheduled_instant, stable_company_offset, ReportFrequency, ScheduledReportKind,
-    SCHEDULE_OFFSET_MAX,
+    ReportFrequency, SCHEDULE_OFFSET_MAX, ScheduledReportKind, scheduled_instant,
+    stable_company_offset,
 };
 
+use crate::accounting::AccountingPeriod;
 use crate::accounting::closing::ClosingError;
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::ReportError;
-use crate::accounting::AccountingPeriod;
 use crate::calendar::{CivilDateError, CivilInstant};
 use crate::company::operations::OperationsError;
 use thiserror::Error;
@@ -150,7 +151,9 @@ pub enum InformationError {
     /// 更正目标不在库中。
     #[error("correction target {target:?} is not in the library")]
     CorrectionTargetUnknown { target: PublicationId },
-    #[error("集团更正公布时点早于被更正报告 {original:?}：原时点 {original_at:?}，请求时点 {published_at:?}")]
+    #[error(
+        "集团更正公布时点早于被更正报告 {original:?}：原时点 {original_at:?}，请求时点 {published_at:?}"
+    )]
     CorrectionPrecedesOriginal {
         original: PublicationId,
         original_at: CivilInstant,

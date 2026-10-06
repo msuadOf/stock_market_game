@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use engine::StockCode;
 use engine::accounting::{
     AccountingAmount, Books, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry,
     JournalLine, LedgerAccountId, PostingSide,
@@ -20,11 +21,10 @@ use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::experience::PersonalWatchlist;
 use engine::information::{
-    discovery_candidates, AnnouncedEvent, AnnouncementRequest, PublicLibrary,
+    AnnouncedEvent, AnnouncementRequest, PublicLibrary, discovery_candidates,
 };
 use engine::session::NpcAttentionState;
 use engine::strategy::MarketView;
-use engine::StockCode;
 
 use super::{attention, code, market_of, view};
 
@@ -106,12 +106,12 @@ impl AnnouncementExposureFixture {
                 company: company_of(&code("600101")),
                 occurred_on: occurred,
                 published_at: published,
-                event: AnnouncedEvent {
+                content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                     kind: ShockKind::ContractWon,
                     amplitude_bp: 1_200,
                     starts_on: occurred,
                     expires_on: d("2030-06-20"),
-                },
+                }),
             })
             .expect("announcement publishes");
         let codes = vec![code("600101"), code("600102")];

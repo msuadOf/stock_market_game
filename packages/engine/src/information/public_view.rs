@@ -12,12 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::accounting::Books;
 use crate::accounting::closing::{
     ClosingEngine, CorrectionRequest, CorrectionTransactionError, ReportHandle,
 };
 use crate::accounting::consolidation::MemberId;
 use crate::accounting::reports::IndustryPresentation;
-use crate::accounting::Books;
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::publication::{
@@ -26,8 +26,8 @@ use crate::information::publication::{
     ensure_scope_mirrors_company,
 };
 use crate::information::{
-    Announcement, AnnouncementRequest, InformationError, PublicationId, PublicationRequest,
-    PublishedReport,
+    Announcement, AnnouncementContent, AnnouncementRequest, InformationError, PublicationId,
+    PublicationRequest, PublishedReport,
 };
 
 /// 不可变公开信息库。
@@ -38,6 +38,36 @@ pub struct PublicLibrary {
     pub(in crate::information) announcements: BTreeMap<PublicationId, Announcement>,
     pub(in crate::information) by_company: BTreeMap<CompanyId, BTreeSet<PublicationId>>,
     content_digest: u64,
+}
+
+fn validate_announcement_content(
+    content: &AnnouncementContent,
+    company: &CompanyId,
+    occurred_on: crate::calendar::CivilDate,
+) -> Result<(), InformationError> {
+    match content {
+        AnnouncementContent::Shock(event) => event.validate_payment_failure(occurred_on),
+        AnnouncementContent::CashDividend(dividend) => {
+            dividend
+                .plan
+                .validate()
+                .map_err(|error| InformationError::InconsistentLibrary {
+                    detail: format!("invalid cash dividend announcement: {error}"),
+                })?;
+            if &dividend.plan.issuer != company
+                || dividend.plan.announced_on != occurred_on
+                || dividend.total_gross.cents() <= 0
+                || dividend.total_gross > dividend.plan.distributable_amount
+            {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!(
+                        "cash dividend announcement does not match issuer/date/authorized amount on {occurred_on}"
+                    ),
+                });
+            }
+            Ok(())
+        }
+    }
 }
 
 const CONTENT_DIGEST_SEED: u64 = 0xcbf29ce484222325;
@@ -75,7 +105,11 @@ impl PublicLibrary {
         closing: &crate::accounting::closing::ClosingEngine,
         request: PublicationRequest,
     ) -> Result<PublicationId, InformationError> {
-        self.publish_closed_with_source(closing, request, super::PublicationSource::SimulationAccounting)
+        self.publish_closed_with_source(
+            closing,
+            request,
+            super::PublicationSource::SimulationAccounting,
+        )
     }
 
     pub fn publish_simple_closed(
@@ -375,16 +409,14 @@ impl PublicLibrary {
         request: AnnouncementRequest,
     ) -> Result<PublicationId, InformationError> {
         ensure_announcement_timing(request.occurred_on, request.published_at)?;
-        request
-            .event
-            .validate_payment_failure(request.occurred_on)?;
+        validate_announcement_content(&request.content, &request.company, request.occurred_on)?;
         let id = PublicationId::new(self.next_seq);
         let announcement = Announcement {
             id,
             company: request.company.clone(),
             occurred_on: request.occurred_on,
             published_at: request.published_at,
-            event: request.event,
+            content: request.content,
         };
         let content_digest = extend_content_digest(self.content_digest, b'A', id, &announcement)?;
         self.next_seq += 1;
@@ -428,9 +460,11 @@ impl PublicLibrary {
                 });
             }
             ensure_announcement_timing(announcement.occurred_on, announcement.published_at)?;
-            announcement
-                .event
-                .validate_payment_failure(announcement.occurred_on)?;
+            validate_announcement_content(
+                &announcement.content,
+                &announcement.company,
+                announcement.occurred_on,
+            )?;
             let company = announcement.company.clone();
             let id = announcement.id;
             if library.announcements.insert(id, announcement).is_some() {
@@ -507,7 +541,12 @@ impl PublicLibrary {
         if self.reports.contains_key(&id) || self.announcements.contains_key(&id) {
             return Err(InformationError::DuplicatePublicationId { id });
         }
-        let following = id.value().checked_add(1).ok_or_else(|| InformationError::InconsistentLibrary { detail: "公开材料 ID 空间耗尽".into() })?;
+        let following =
+            id.value()
+                .checked_add(1)
+                .ok_or_else(|| InformationError::InconsistentLibrary {
+                    detail: "公开材料 ID 空间耗尽".into(),
+                })?;
         let content_digest = if id.value() == self.next_seq {
             extend_content_digest(self.content_digest, b'R', id, &report)?
         } else {
@@ -521,19 +560,37 @@ impl PublicLibrary {
     }
 
     fn validate_correction_target(&self, report: &PublishedReport) -> Result<(), InformationError> {
-        let Some(target) = report.supersedes else { return Ok(()); };
-        let original = self.reports.get(&target).ok_or(InformationError::CorrectionTargetUnknown { target })?;
-        if original.company != report.company || original.source != report.source
-            || original.reports.scope != report.reports.scope || original.reports.period != report.reports.period
-            || original.reports.kind != report.reports.kind || target >= report.id
+        let Some(target) = report.supersedes else {
+            return Ok(());
+        };
+        let original = self
+            .reports
+            .get(&target)
+            .ok_or(InformationError::CorrectionTargetUnknown { target })?;
+        if original.company != report.company
+            || original.source != report.source
+            || original.reports.scope != report.reports.scope
+            || original.reports.period != report.reports.period
+            || original.reports.kind != report.reports.kind
+            || target >= report.id
             || original.reports.version.sequence >= report.reports.version.sequence
             || !matches!(&report.reports.version.kind, crate::accounting::reports::VersionKind::Correction { reason } if !reason.trim().is_empty())
-            || !report.reports.version.supersedes.is_some_and(|prior| prior >= original.reports.version.sequence && prior < report.reports.version.sequence)
+            || !report.reports.version.supersedes.is_some_and(|prior| {
+                prior >= original.reports.version.sequence
+                    && prior < report.reports.version.sequence
+            })
         {
-            return Err(InformationError::CorrectionTargetMismatch { target, company: report.company.clone() });
+            return Err(InformationError::CorrectionTargetMismatch {
+                target,
+                company: report.company.clone(),
+            });
         }
         if original.published_at > report.published_at {
-            return Err(InformationError::CorrectionPrecedesOriginal { original: target, original_at: original.published_at, published_at: report.published_at });
+            return Err(InformationError::CorrectionPrecedesOriginal {
+                original: target,
+                original_at: original.published_at,
+                published_at: report.published_at,
+            });
         }
         Ok(())
     }
@@ -542,11 +599,17 @@ impl PublicLibrary {
         self.content_digest_including(None)
     }
 
-    fn recompute_content_digest_with_report(&self, report: &PublishedReport) -> Result<u64, InformationError> {
+    fn recompute_content_digest_with_report(
+        &self,
+        report: &PublishedReport,
+    ) -> Result<u64, InformationError> {
         self.content_digest_including(Some(report))
     }
 
-    fn content_digest_including(&self, additional: Option<&PublishedReport>) -> Result<u64, InformationError> {
+    fn content_digest_including(
+        &self,
+        additional: Option<&PublishedReport>,
+    ) -> Result<u64, InformationError> {
         let mut publications = self
             .reports
             .keys()
@@ -562,9 +625,11 @@ impl PublicLibrary {
                 b'R' => {
                     let report = if additional.is_some_and(|report| report.id == id) {
                         additional.expect("额外报告 ID 已验证")
-                    } else { &self.reports[&id] };
+                    } else {
+                        &self.reports[&id]
+                    };
                     extend_content_digest(digest, kind, id, report)
-                },
+                }
                 b'A' => extend_content_digest(digest, kind, id, &self.announcements[&id]),
                 _ => unreachable!("publication digest kind is closed"),
             })
@@ -628,12 +693,12 @@ mod tests {
             company: CompanyId("digest-fixture".to_owned()),
             occurred_on,
             published_at: CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
-            event: AnnouncedEvent {
+            content: AnnouncementContent::Shock(AnnouncedEvent {
                 kind: ShockKind::CreditDeterioration,
                 amplitude_bp,
                 starts_on: occurred_on,
                 expires_on: occurred_on,
-            },
+            }),
         }
     }
 
@@ -654,5 +719,57 @@ mod tests {
         assert_eq!(different.next_seq, first.next_seq);
         assert_eq!(different.announcements.len(), first.announcements.len());
         assert_ne!(different.hash_projection(), first.hash_projection());
+    }
+
+    #[test]
+    fn cash_dividend_announcement_is_typed_validated_and_restore_stable() {
+        let announced_on = CivilDate::from_iso("2030-04-20").unwrap();
+        let mut plan = crate::company::cash_dividend::CashDividendPlan {
+            plan_id: "dividend-1".into(),
+            issuer: CompanyId("issuer-1".into()),
+            stock: crate::account::StockCode("600001".into()),
+            exchange: crate::calendar::CalendarExchange::Sse,
+            formula: crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+            approved_on: CivilDate::from_iso("2030-04-01").unwrap(),
+            announced_on,
+            registered_on: announced_on.next().unwrap(),
+            ex_dividend_on: CivilDate::from_iso("2030-04-22").unwrap(),
+            payable_on: CivilDate::from_iso("2030-04-23").unwrap(),
+            gross_per_share: crate::money::Money::from_cents(10),
+            distributable_amount: crate::money::Money::from_cents(1000),
+        };
+        let request =
+            |company: CompanyId, plan: crate::company::cash_dividend::CashDividendPlan| {
+                AnnouncementRequest {
+                    company,
+                    occurred_on: announced_on,
+                    published_at: CivilInstant::from_hms(announced_on, 18, 0, 0).unwrap(),
+                    content: AnnouncementContent::CashDividend(
+                        crate::information::CashDividendAnnouncement {
+                            plan,
+                            total_gross: crate::money::Money::from_cents(100),
+                        },
+                    ),
+                }
+            };
+        let mut library = PublicLibrary::new();
+        let invalid_company = request(CompanyId("other-issuer".into()), plan.clone());
+        let before = library.clone();
+        assert!(library.publish_announcement(invalid_company).is_err());
+        assert_eq!(library, before);
+        let valid_plan = plan.clone();
+        plan.announced_on = announced_on.next().unwrap();
+        assert!(
+            library
+                .publish_announcement(request(CompanyId("issuer-1".into()), plan))
+                .is_err()
+        );
+        assert_eq!(library, before);
+        library
+            .publish_announcement(request(CompanyId("issuer-1".into()), valid_plan))
+            .unwrap();
+        let restored: PublicLibrary =
+            serde_json::from_slice(&serde_json::to_vec(&library).unwrap()).unwrap();
+        assert_eq!(restored, library);
     }
 }

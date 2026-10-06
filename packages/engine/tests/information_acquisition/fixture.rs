@@ -17,9 +17,9 @@ use engine::calendar::{CivilDate, CivilInstant};
 use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
-    AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
-    ScheduledReportKind,
+    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, PublicLibrary, PublicationId,
+    PublicationOrigin, PublicationRequest, ScheduledReportKind, scheduled_instant,
+    stable_company_offset,
 };
 use engine::orderbook::AccountId;
 use std::collections::BTreeMap;
@@ -237,12 +237,12 @@ impl Scenario {
                 company: company.clone(),
                 occurred_on: announcement_date,
                 published_at: announcement_instant,
-                event: AnnouncedEvent {
+                content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                     kind: ShockKind::ContractWon,
                     amplitude_bp: 1_200,
                     starts_on: announcement_date,
                     expires_on: d("2031-04-10"),
-                },
+                }),
             })
             .expect("announcement publishes");
 

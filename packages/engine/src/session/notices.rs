@@ -138,11 +138,15 @@ pub(super) fn credit_default_cause(
 ) -> Result<Option<BeliefCause>, crate::information::InformationError> {
     let announcement = library.announcement(id, now)?;
     Ok(matches!(
-        announcement.event.kind,
-        crate::company::ShockKind::PaymentFailure {
-            obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
+        &announcement.content,
+        crate::information::AnnouncementContent::Shock(crate::information::AnnouncedEvent {
+            kind: crate::company::ShockKind::PaymentFailure {
+                obligation_status:
+                    crate::company::events::PaymentObligationStatus::ContractualOverdue,
+                ..
+            },
             ..
-        }
+        })
     )
     .then_some(BeliefCause::CreditDefault { announcement: id }))
 }
@@ -226,7 +230,11 @@ impl GameSession {
                     let ctx =
                         NpcObservationContext::new(id, &information, &self.state.library, &market)
                             .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
-                    let spec = self.state.company_system.issuers().get(company)
+                    let spec = self
+                        .state
+                        .company_system
+                        .issuers()
+                        .get(company)
                         .expect("发行人身份存在");
                     let inputs = BeliefInputs {
                         ctx: &ctx,
@@ -349,7 +357,8 @@ mod tests {
             let code = session.state.setup.stocks[0].code.clone();
             let company = session
                 .state
-                .company_system.issuers()
+                .company_system
+                .issuers()
                 .issuer_of(&code)
                 .unwrap()
                 .clone();
@@ -410,19 +419,25 @@ mod tests {
                         .qty(),
                     100
                 ),
-                "watched" => assert!(session.state.belief_participants[&account]
-                    .watchlist()
-                    .stock(&code)
-                    .is_some()),
-                "active_plan" => assert!(session.state.plans.active_plan(account, &code).is_some()),
-                "faded" => {
-                    assert!(!session.state.accounts[&account]
-                        .positions()
-                        .contains_key(&code));
-                    assert!(session.state.belief_participants[&account]
+                "watched" => assert!(
+                    session.state.belief_participants[&account]
                         .watchlist()
                         .stock(&code)
-                        .is_none());
+                        .is_some()
+                ),
+                "active_plan" => assert!(session.state.plans.active_plan(account, &code).is_some()),
+                "faded" => {
+                    assert!(
+                        !session.state.accounts[&account]
+                            .positions()
+                            .contains_key(&code)
+                    );
+                    assert!(
+                        session.state.belief_participants[&account]
+                            .watchlist()
+                            .stock(&code)
+                            .is_none()
+                    );
                     assert!(session.state.plans.active_plan(account, &code).is_none());
                 }
                 _ => unreachable!(),
@@ -438,7 +453,9 @@ mod tests {
             );
             session.state.library = std::sync::Arc::new(library);
             let mut day_end = session.end_civil_day().unwrap();
-            session.record_company_disclosure_events(&mut day_end, confirmed).unwrap();
+            session
+                .record_company_disclosure_events(&mut day_end, confirmed)
+                .unwrap();
             let publication = day_end
                 .events
                 .iter()
@@ -459,17 +476,24 @@ mod tests {
                         .unwrap();
                     (issuer == &company
                         && matches!(
-                            announcement.event.kind,
-                            crate::company::ShockKind::ContractWon
+                            announcement.content,
+                            crate::information::AnnouncementContent::Shock(
+                                crate::information::AnnouncedEvent {
+                                    kind: crate::company::ShockKind::ContractWon,
+                                    ..
+                                }
+                            )
                         ))
                     .then_some(*publication_id)
                 })
                 .expect("真实日终经营公告必须已公开");
             let participant = &session.state.belief_participants[&account];
             if qualification == "faded" {
-                assert!(!session.state.accounts[&account]
-                    .positions()
-                    .contains_key(&code));
+                assert!(
+                    !session.state.accounts[&account]
+                        .positions()
+                        .contains_key(&code)
+                );
                 assert!(participant.watchlist().stock(&code).is_none());
                 assert!(session.state.plans.active_plan(account, &code).is_none());
                 assert_eq!(
@@ -632,24 +656,26 @@ mod tests {
                     company: crate::company::CompanyId("C-1".into()),
                     occurred_on: date,
                     published_at: now,
-                    event: AnnouncedEvent {
+                    content: crate::information::AnnouncementContent::Shock(AnnouncedEvent {
                         kind,
                         amplitude_bp: 0,
                         starts_on: date,
                         expires_on: date,
-                    },
+                    }),
                 })
                 .unwrap();
             assert_eq!(
                 credit_default_cause(&library, id, now).unwrap().is_some(),
                 expected
             );
-            assert!(credit_default_cause(
-                &library,
-                id,
-                crate::CivilInstant::new(date, 17 * 3600).unwrap()
-            )
-            .is_err());
+            assert!(
+                credit_default_cause(
+                    &library,
+                    id,
+                    crate::CivilInstant::new(date, 17 * 3600).unwrap()
+                )
+                .is_err()
+            );
         }
     }
 
@@ -734,7 +760,8 @@ mod tests {
         let code = session.state.setup.stocks[0].code.clone();
         let company = session
             .state
-            .company_system.issuers()
+            .company_system
+            .issuers()
             .issuer_of(&code)
             .unwrap()
             .clone();
@@ -765,13 +792,17 @@ mod tests {
             0
         );
         let mut day_end = session.end_civil_day().unwrap();
-        session.record_company_disclosure_events(&mut day_end, confirmed).unwrap();
+        session
+            .record_company_disclosure_events(&mut day_end, confirmed)
+            .unwrap();
         let information = session.state.belief_participants[&id].information();
         assert!(information.acquired_count() > 0);
-        assert!(information
-            .companies()
-            .flat_map(|(_, records)| records)
-            .all(|record| record.observed_at == day_end.disclosure_instant));
+        assert!(
+            information
+                .companies()
+                .flat_map(|(_, records)| records)
+                .all(|record| record.observed_at == day_end.disclosure_instant)
+        );
         assert_eq!(session.state.accounts[&id].cash(), cash);
         assert_eq!(session.state.next_order_id, next_order);
         assert!(session.state.history_reads[&id].stocks.is_empty());
@@ -785,22 +816,60 @@ mod tests {
     }
 
     #[test]
-    fn information_revaluation_failure_rolls_back_entire_day_end() {
+    fn corrupt_acquisition_reference_rolls_back_entire_day_end() {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         setup.start_date = crate::CivilDate::from_ymd(2032, 1, 31).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
         let id = AccountId(1);
         let code = session.state.setup.stocks[0].code.clone();
-        let company = session.state.company_system.issuers().issuer_of(&code).unwrap().clone();
+        let company = session
+            .state
+            .company_system
+            .issuers()
+            .issuer_of(&code)
+            .unwrap()
+            .clone();
         let settled = session.civil_date();
+        let observed_at = session.observation_civil_instant();
+        let annual = session
+            .state
+            .library
+            .reports_for_company(&company, observed_at)
+            .into_iter()
+            .find(|report| report.reports.kind == crate::accounting::reports::ReportKind::Annual)
+            .expect("fixture has a public annual report")
+            .id;
         let period = crate::accounting::AccountingPeriod::of_date(settled);
         let scope = crate::accounting::consolidation::ScopeId::Standalone(
             crate::accounting::consolidation::MemberId(company.0.clone()),
         );
         let finance = session.state.company_system.finance(&company).unwrap();
-        assert!(!finance.books().journal().entries().any(|entry| entry.date == settled));
-        assert!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).is_empty());
+        assert!(
+            !finance
+                .books()
+                .journal()
+                .entries()
+                .any(|entry| entry.date == settled)
+        );
+        assert!(
+            finance
+                .closing()
+                .versions(
+                    &scope,
+                    period,
+                    crate::accounting::reports::ReportKind::Monthly
+                )
+                .is_empty()
+        );
+        session
+            .state
+            .belief_participants
+            .get_mut(&id)
+            .unwrap()
+            .information_mut()
+            .record_acquisition(id, &session.state.library, annual, observed_at)
+            .unwrap();
         session
             .state
             .belief_participants
@@ -813,14 +882,14 @@ mod tests {
         let mut public = original_library.save();
         public
             .reports
-            .retain(|report| report.reports.kind != crate::accounting::reports::ReportKind::Annual);
+            .retain(|report| report.id != annual);
         session.state.library = std::sync::Arc::new(PublicLibrary::from_parts(public).unwrap());
         let before = session.business_state_hash().unwrap();
         let save = serde_json::to_value(session.save().unwrap()).unwrap();
         let error = session.end_civil_day().unwrap_err();
         assert!(
             matches!(&error, SessionError::InvalidSave(message)
-                if message.contains("公告重估失败") && message.contains("no own-known annual material")),
+                if message.contains("no publication")),
             "{error}"
         );
         assert_eq!(session.business_state_hash().unwrap(), before);
@@ -829,23 +898,148 @@ mod tests {
         let completed = session.end_civil_day().unwrap();
         assert_eq!(completed.settled_date, settled);
         let finance = session.state.company_system.finance(&company).unwrap();
-        let summaries = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::SimplePeriodSummary).collect::<Vec<_>>();
+        let summaries = finance
+            .books()
+            .journal()
+            .entries()
+            .filter(|entry| {
+                entry.date == settled
+                    && entry.kind == crate::accounting::BusinessKind::SimplePeriodSummary
+            })
+            .collect::<Vec<_>>();
         assert_eq!(summaries.len(), 1);
-        assert!(summaries[0].lines.iter().all(|line| line.amount.is_positive()));
-        let taxes = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::TaxAccrual).collect::<Vec<_>>();
+        assert!(
+            summaries[0]
+                .lines
+                .iter()
+                .all(|line| line.amount.is_positive())
+        );
+        let taxes = finance
+            .books()
+            .journal()
+            .entries()
+            .filter(|entry| {
+                entry.date == settled && entry.kind == crate::accounting::BusinessKind::TaxAccrual
+            })
+            .collect::<Vec<_>>();
         assert_eq!(taxes.len(), 1);
         assert!(taxes[0].lines.iter().all(|line| line.amount.is_positive()));
-        assert_eq!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).len(), 1);
-        let report = finance.report(period, crate::accounting::reports::ReportKind::Monthly).unwrap();
-        assert!(report.income.quarter.line_amount(crate::accounting::reports::IncomeLine::OperatingRevenue).unwrap().is_positive());
+        assert_eq!(
+            finance
+                .closing()
+                .versions(
+                    &scope,
+                    period,
+                    crate::accounting::reports::ReportKind::Monthly
+                )
+                .len(),
+            1
+        );
+        let report = finance
+            .report(period, crate::accounting::reports::ReportKind::Monthly)
+            .unwrap();
+        assert!(
+            report
+                .income
+                .quarter
+                .line_amount(crate::accounting::reports::IncomeLine::OperatingRevenue)
+                .unwrap()
+                .is_positive()
+        );
         assert!(report.income.quarter.income_tax.is_positive());
         let committed = session.business_state_hash().unwrap();
         let mut repeated = session.state.company_system.export_state();
         let repeated_before = serde_json::to_value(&repeated).unwrap();
-        assert!(matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::Invalid(message))
-            if message.contains("日期必须连续推进") && message.contains(&settled.to_iso())));
+        assert!(
+            matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::Invalid(message))
+            if message.contains("日期必须连续推进") && message.contains(&settled.to_iso()))
+        );
         assert_eq!(serde_json::to_value(repeated).unwrap(), repeated_before);
         assert_eq!(session.business_state_hash().unwrap(), committed);
+    }
+
+    #[test]
+    fn own_known_monthly_without_own_annual_keeps_day_end_running() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_ymd(2032, 2, 2).unwrap();
+        setup.report_frequency = crate::information::ReportFrequency::Monthly {
+            schedule: crate::information::MonthlyReportSchedule::Custom {
+                day: 1,
+                second_of_day: 18 * 3600,
+                delay: crate::information::MonthlyReportDelay::None,
+            },
+        };
+        setup.ticks_per_day = 1;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let original_library = session.state.library.clone();
+        let mut public = original_library.save();
+        public
+            .reports
+            .retain(|report| report.reports.kind != crate::accounting::reports::ReportKind::Annual);
+        session.state.library = std::sync::Arc::new(PublicLibrary::from_parts(public).unwrap());
+        let id = AccountId(1);
+        let code = session.state.setup.stocks[0].code.clone();
+        let company = session
+            .state
+            .company_system
+            .issuers()
+            .issuer_of(&code)
+            .unwrap()
+            .clone();
+        let expected_method = session.state.belief_participants[&id]
+            .belief()
+            .analysis()
+            .method_for_company_kind(
+                session.state.company_system.issuers().get(&company).unwrap().kind,
+            );
+        session
+            .state
+            .belief_participants
+            .get_mut(&id)
+            .unwrap()
+            .watchlist_mut()
+            .record_attention(&code, 0, 0)
+            .unwrap();
+        assert!(session.state.belief_participants[&id].information().records_for_company(
+            session.state.company_system.issuers().issuer_of(&code).unwrap()
+        ).iter().all(|record| record.kind != AcquiredKind::Report));
+
+        let settled = session.civil_date();
+        session.step().unwrap();
+        let completed = session.end_civil_day().unwrap();
+        assert_eq!(completed.settled_date, settled);
+        let participant = &session.state.belief_participants[&id];
+        let acquired = participant.information().records_for_company(&company);
+        assert!(acquired.iter().any(|record| {
+            record.kind == AcquiredKind::Report
+                && session.state.library.report(record.id, session.observation_civil_instant())
+                    .is_ok_and(|report| report.reports.kind == crate::accounting::reports::ReportKind::Monthly)
+        }));
+        assert!(acquired.iter().all(|record| {
+            record.kind != AcquiredKind::Report
+                || session.state.library.report(record.id, session.observation_civil_instant())
+                    .is_ok_and(|report| report.reports.kind != crate::accounting::reports::ReportKind::Annual)
+        }));
+        let belief = participant.belief().entry(&code).unwrap();
+        assert_eq!(belief.method, expected_method);
+        assert_eq!(belief.used_report_ids.len(), 1);
+        let used = belief.used_report_ids[0];
+        assert!(acquired.iter().any(|record| record.id == used));
+        assert!(matches!(
+            belief.valuation,
+            crate::strategy::ValuationOutcome::Unavailable {
+                reason: crate::strategy::ValuationUnavailable::AnnualBaselineNotOwnKnown
+            }
+        ));
+        assert!(matches!(
+            belief.last_cause.as_ref().map(|record| &record.cause),
+            Some(BeliefCause::NewMaterial { report }) if *report == used
+        ));
+        let saved = session.save().unwrap();
+        assert_eq!(
+            serde_json::to_value(GameSession::restore(&saved).unwrap().save().unwrap()).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
     }
 
     #[test]
@@ -854,7 +1048,12 @@ mod tests {
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         let id = AccountId(1);
         let code = session.state.setup.stocks[0].code.clone();
-        let company = session.state.company_system.issuers().issuer_of(&code).unwrap();
+        let company = session
+            .state
+            .company_system
+            .issuers()
+            .issuer_of(&code)
+            .unwrap();
         let now = session.observation_civil_instant();
         let older = session
             .state

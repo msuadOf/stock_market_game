@@ -1,6 +1,6 @@
 use super::fixtures::*;
-use engine::company::operations::{CompanyOperations, CompanyOperationsConfig, FlowParams};
 use engine::company::CompanyId;
+use engine::company::operations::{CompanyOperations, CompanyOperationsConfig, FlowParams};
 
 #[test]
 fn newly_recognized_insurance_claim_is_payable_not_contractual_overdue() {
@@ -94,7 +94,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     let mut dispatch = DisclosureDispatch::new(Some(report.disclosure_instant));
     let outcome = dispatch
         .run_day_end(DayEndDisclosureCtx {
-                report_frequency: engine::information::ReportFrequency::Quarterly,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,
@@ -112,7 +112,11 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         assert_eq!(announcement.occurred_on, date);
         assert_eq!(announcement.published_at, report.disclosure_instant);
         assert_eq!(
-            announcement.event.kind,
+            match &announcement.content {
+                engine::information::AnnouncementContent::Shock(event) => event.kind.clone(),
+                engine::information::AnnouncementContent::CashDividend(_) =>
+                    panic!("payment failure must be a shock announcement"),
+            },
             engine::company::ShockKind::PaymentFailure {
                 obligation_status: failure.obligation_status,
                 what: failure.what.clone(),
@@ -124,7 +128,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     assert_eq!(restored.save(), library.save());
     let repeated = dispatch
         .run_day_end(DayEndDisclosureCtx {
-                report_frequency: engine::information::ReportFrequency::Quarterly,
+            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,
@@ -171,11 +175,13 @@ fn insolvent_bank_keeps_due_deposit_and_retries_without_rescue() {
     ops.advance_civil_day(date).unwrap();
     for day in [date.next().unwrap(), date.next().unwrap().next().unwrap()] {
         let report = ops.advance_civil_day(day).unwrap();
-        assert!(report
-            .payment_failures
-            .iter()
-            .any(|failure| failure.what == "overdue deposit principal:DEP-1"
-                && failure.amount == yuan(1_000)));
+        assert!(
+            report
+                .payment_failures
+                .iter()
+                .any(|failure| failure.what == "overdue deposit principal:DEP-1"
+                    && failure.amount == yuan(1_000))
+        );
         let books = ops.bank_books(&CompanyId("C-BANK".into())).unwrap();
         assert_eq!(
             books
@@ -230,7 +236,7 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
             company: CompanyId("C-IND-A".into()),
             occurred_on: date,
             published_at: engine::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
-            event: AnnouncedEvent {
+            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                 kind: engine::company::ShockKind::PaymentFailure {
                     obligation_status:
                         engine::company::events::PaymentObligationStatus::ContractualOverdue,
@@ -240,11 +246,16 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
                 amplitude_bp: 0,
                 starts_on: date,
                 expires_on: date,
-            },
+            }),
         })
         .unwrap();
     let mut saved = library.save();
-    saved.announcements[0].event.kind = engine::company::ShockKind::PaymentFailure {
+    let engine::information::AnnouncementContent::Shock(event) =
+        &mut saved.announcements[0].content
+    else {
+        panic!("payment failure must be a shock announcement");
+    };
+    event.kind = engine::company::ShockKind::PaymentFailure {
         obligation_status: engine::company::events::PaymentObligationStatus::ContractualOverdue,
         what: "overdue principal".into(),
         amount: amt(0),

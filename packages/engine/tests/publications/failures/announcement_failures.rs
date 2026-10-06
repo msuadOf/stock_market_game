@@ -25,7 +25,7 @@ fn announcement_timing_rejected() {
         company: CompanyId(COMPANY.to_string()),
         occurred_on: d("2030-04-21"),
         published_at: phase,
-        event: event.clone(),
+        content: engine::information::AnnouncementContent::Shock(event.clone()),
     };
     assert!(matches!(
         library.publish_announcement(req.clone()).unwrap_err(),

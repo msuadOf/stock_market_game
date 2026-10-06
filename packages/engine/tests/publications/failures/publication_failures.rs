@@ -6,10 +6,10 @@
 use super::{Base, OTHER};
 use crate::books_fixture::correction_books;
 use crate::fixture::d;
+use engine::accounting::AccountingPeriod;
 use engine::accounting::closing::ClosingEngine;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{IndustryPresentation, ReportKind};
-use engine::accounting::AccountingPeriod;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::{

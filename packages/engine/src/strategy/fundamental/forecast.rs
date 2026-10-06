@@ -62,6 +62,8 @@ pub enum ForecastBasis {
     Revised { observed_bp: i32 },
     /// 退化（增长先验无定义——依赖增长的方法显式不可用）。
     Degenerate,
+    /// 未本人获知同范围年报，不能用中期报告建立或修订年度基准。
+    AnnualBaselineUnavailable,
 }
 
 /// 个人增长预测状态。

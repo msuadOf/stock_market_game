@@ -1,0 +1,63 @@
+    #[test]
+    fn information_revaluation_failure_rolls_back_entire_day_end() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_ymd(2032, 1, 31).unwrap();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
+        let id = AccountId(1);
+        let code = session.state.setup.stocks[0].code.clone();
+        let company = session.state.company_system.issuers().issuer_of(&code).unwrap().clone();
+        let settled = session.civil_date();
+        let period = crate::accounting::AccountingPeriod::of_date(settled);
+        let scope = crate::accounting::consolidation::ScopeId::Standalone(
+            crate::accounting::consolidation::MemberId(company.0.clone()),
+        );
+        let finance = session.state.company_system.finance(&company).unwrap();
+        assert!(!finance.books().journal().entries().any(|entry| entry.date == settled));
+        assert!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).is_empty());
+        session
+            .state
+            .belief_participants
+            .get_mut(&id)
+            .unwrap()
+            .watchlist_mut()
+            .record_attention(&code, 0, 0)
+            .unwrap();
+        let original_library = session.state.library.clone();
+        let mut public = original_library.save();
+        public
+            .reports
+            .retain(|report| report.reports.kind != crate::accounting::reports::ReportKind::Annual);
+        session.state.library = std::sync::Arc::new(PublicLibrary::from_parts(public).unwrap());
+        let before = session.business_state_hash().unwrap();
+        let save = serde_json::to_value(session.save().unwrap()).unwrap();
+        let error = session.end_civil_day().unwrap_err();
+        assert!(
+            matches!(&error, SessionError::InvalidSave(message)
+                if message.contains("公告重估失败") && message.contains("no own-known annual material")),
+            "{error}"
+        );
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), save);
+        session.state.library = original_library;
+        let completed = session.end_civil_day().unwrap();
+        assert_eq!(completed.settled_date, settled);
+        let finance = session.state.company_system.finance(&company).unwrap();
+        let summaries = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::SimplePeriodSummary).collect::<Vec<_>>();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].lines.iter().all(|line| line.amount.is_positive()));
+        let taxes = finance.books().journal().entries().filter(|entry| entry.date == settled && entry.kind == crate::accounting::BusinessKind::TaxAccrual).collect::<Vec<_>>();
+        assert_eq!(taxes.len(), 1);
+        assert!(taxes[0].lines.iter().all(|line| line.amount.is_positive()));
+        assert_eq!(finance.closing().versions(&scope, period, crate::accounting::reports::ReportKind::Monthly).len(), 1);
+        let report = finance.report(period, crate::accounting::reports::ReportKind::Monthly).unwrap();
+        assert!(report.income.quarter.line_amount(crate::accounting::reports::IncomeLine::OperatingRevenue).unwrap().is_positive());
+        assert!(report.income.quarter.income_tax.is_positive());
+        let committed = session.business_state_hash().unwrap();
+        let mut repeated = session.state.company_system.export_state();
+        let repeated_before = serde_json::to_value(&repeated).unwrap();
+        assert!(matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::Invalid(message))
+            if message.contains("日期必须连续推进") && message.contains(&settled.to_iso())));
+        assert_eq!(serde_json::to_value(repeated).unwrap(), repeated_before);
+        assert_eq!(session.business_state_hash().unwrap(), committed);
+    }

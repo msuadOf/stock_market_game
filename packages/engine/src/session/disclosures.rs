@@ -11,13 +11,13 @@
 
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
-use crate::company::operations::CompanyOperations;
 use crate::company::CompanyId;
+use crate::company::operations::CompanyOperations;
 
 use crate::information::{
-    ensure_original_registered, industry_presentation, AccountingPolicyRef, AnnouncedEvent,
-    AnnouncementRequest, InformationError, PublicLibrary, PublicationId, PublicationRequest,
-    ScheduledReportKind,
+    AccountingPolicyRef, AnnouncedEvent, AnnouncementContent, AnnouncementRequest,
+    InformationError, PublicLibrary, PublicationId, PublicationRequest, ScheduledReportKind,
+    ensure_original_registered, industry_presentation,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
 use thiserror::Error;
@@ -57,6 +57,7 @@ pub(super) struct SimpleDayEndDisclosureCtx<'a> {
     pub report: &'a CivilDayEndReport,
     pub system: &'a crate::company::CompanySystem,
     pub seed: u64,
+    pub dividends: &'a [crate::company::cash_dividend::CashDividendBook],
     pub library: &'a mut PublicLibrary,
 }
 
@@ -78,8 +79,14 @@ pub struct DisclosureDispatch {
 }
 
 impl DisclosureDispatch {
-    pub(super) fn run_simple_day_end(&mut self, ctx: SimpleDayEndDisclosureCtx<'_>) -> Result<DayEndDisclosures, DisclosureError> {
-        let through = if matches!(ctx.report_frequency, crate::information::ReportFrequency::Monthly { .. }) {
+    pub(super) fn run_simple_day_end(
+        &mut self,
+        ctx: SimpleDayEndDisclosureCtx<'_>,
+    ) -> Result<DayEndDisclosures, DisclosureError> {
+        let through = if matches!(
+            ctx.report_frequency,
+            crate::information::ReportFrequency::Monthly { .. }
+        ) {
             CivilInstant::new(ctx.report.settled_date, 86399)?
         } else {
             ctx.report.disclosure_instant
@@ -91,14 +98,69 @@ impl DisclosureDispatch {
             seed: ctx.seed,
             library: ctx.library,
         })?;
+        let mut announcements_published = Vec::new();
+        for book in ctx.dividends {
+            if book.status() == &crate::company::cash_dividend::CashDividendStatus::Announced
+                && book.plan().announced_on == ctx.report.settled_date
+            {
+                let finance_plan = ctx
+                    .system
+                    .dividend_plan_facts(&book.plan().issuer)
+                    .map_err(|error| InformationError::InconsistentLibrary {
+                        detail: format!(
+                            "cash dividend {} approved amount unavailable: {error}",
+                            book.plan().plan_id
+                        ),
+                    })?
+                    .into_iter()
+                    .find(|fact| fact.plan_id == book.plan().plan_id)
+                    .ok_or_else(|| InformationError::InconsistentLibrary {
+                        detail: format!(
+                            "cash dividend {} has no matching approved finance fact",
+                            book.plan().plan_id
+                        ),
+                    })?;
+                let total_gross = finance_plan.total_gross.to_money().map_err(|error| {
+                    InformationError::InconsistentLibrary {
+                        detail: format!(
+                            "cash dividend {} approved amount cannot be represented as Money: {error}",
+                            book.plan().plan_id
+                        ),
+                    }
+                })?;
+                let id = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: book.plan().issuer.clone(),
+                    occurred_on: ctx.report.settled_date,
+                    published_at: ctx.report.disclosure_instant,
+                    content: AnnouncementContent::CashDividend(
+                        crate::information::CashDividendAnnouncement {
+                            plan: book.plan().clone(),
+                            total_gross,
+                        },
+                    ),
+                })?;
+                announcements_published.push(id);
+            }
+        }
         self.announced_through = Some(ctx.report.settled_date);
-        Ok(DayEndDisclosures { announcements_published: Vec::new(), reports_published })
+        Ok(DayEndDisclosures {
+            announcements_published,
+            reports_published,
+        })
     }
 
-    pub(super) fn run_simple_scheduled(&mut self, ctx: SimpleScheduledDisclosureCtx<'_>) -> Result<Vec<PublicationId>, DisclosureError> {
+    pub(super) fn run_simple_scheduled(
+        &mut self,
+        ctx: SimpleScheduledDisclosureCtx<'_>,
+    ) -> Result<Vec<PublicationId>, DisclosureError> {
         let publications = crate::information::publish_simple_scheduled(
-            ctx.system, ctx.report_frequency, ctx.seed, self.published_through,
-            ctx.through, ctx.library, false,
+            ctx.system,
+            ctx.report_frequency,
+            ctx.seed,
+            self.published_through,
+            ctx.through,
+            ctx.library,
+            false,
         )?;
         self.published_through = Some(ctx.through);
         Ok(publications)
@@ -156,7 +218,7 @@ impl DisclosureDispatch {
                         company: id.clone(),
                         occurred_on: settled,
                         published_at: phase,
-                        event: AnnouncedEvent::from_active(shock),
+                        content: AnnouncementContent::Shock(AnnouncedEvent::from_active(shock)),
                     })?;
                     out.announcements_published.push(announcement);
                 }
@@ -166,7 +228,7 @@ impl DisclosureDispatch {
                     company: failure.company.clone(),
                     occurred_on: settled,
                     published_at: phase,
-                    event: AnnouncedEvent {
+                    content: AnnouncementContent::Shock(AnnouncedEvent {
                         kind: crate::company::ShockKind::PaymentFailure {
                             obligation_status: failure.obligation_status,
                             what: failure.what.clone(),
@@ -175,7 +237,7 @@ impl DisclosureDispatch {
                         amplitude_bp: 0,
                         starts_on: settled,
                         expires_on: settled,
-                    },
+                    }),
                 })?;
                 out.announcements_published.push(announcement);
             }
