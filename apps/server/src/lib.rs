@@ -138,3 +138,59 @@ pub fn init_tracing() {
         .try_init()
         .ok();
 }
+
+/// 生产默认 Rayon worker 数。
+///
+/// 依据 `agents/engine-max-performance/worker-count-findings.md`：16 核机器上
+/// 4 worker 吞吐显著优于 16 worker（三会话配对方向一致，均值约 +10%；
+/// 活载形态为短脉冲并行段，worker 过多时唤醒/自旋开销反噬）。
+pub const DEFAULT_RAYON_WORKERS: usize = 4;
+
+/// 解析 `RAYON_NUM_THREADS` 环境变量得到 Rayon worker 数。
+///
+/// 未设置或非法（非正整数，含 `0`、非数字、带空白）时返回生产默认值。
+/// 本函数为纯函数，便于并发安全地单测。
+pub fn resolve_rayon_workers(env_value: Option<&str>) -> usize {
+    match env_value.and_then(|value| value.parse::<usize>().ok()) {
+        Some(workers) if workers > 0 => workers,
+        _ => DEFAULT_RAYON_WORKERS,
+    }
+}
+
+/// 在首次使用 Rayon 前固定生产 worker 数；应在 main 早期、任何 session 开始前调用一次。
+///
+/// 采用 `build_global`（Rayon 官方的早期初始化入口，线程安全），不改动进程环境变量。
+/// 用户显式设置的合法值（如 `RAYON_NUM_THREADS=16`）原样保留。
+/// 返回 Err 说明 Rayon 全局池已被更早使用方初始化——显式上抛，不静默吞。
+pub fn init_rayon_workers() -> Result<(), rayon::ThreadPoolBuildError> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(resolve_rayon_workers(
+            std::env::var("RAYON_NUM_THREADS").ok().as_deref(),
+        ))
+        .build_global()
+}
+
+#[cfg(test)]
+mod rayon_workers_tests {
+    use super::resolve_rayon_workers;
+
+    #[test]
+    fn 未设置时返回生产默认4() {
+        assert_eq!(resolve_rayon_workers(None), 4);
+    }
+
+    #[test]
+    fn 合法用户值原样保留() {
+        assert_eq!(resolve_rayon_workers(Some("8")), 8);
+        assert_eq!(resolve_rayon_workers(Some("1")), 1);
+        assert_eq!(resolve_rayon_workers(Some("4")), 4);
+    }
+
+    #[test]
+    fn 非法值回退生产默认4() {
+        assert_eq!(resolve_rayon_workers(Some("0")), 4);
+        assert_eq!(resolve_rayon_workers(Some("abc")), 4);
+        assert_eq!(resolve_rayon_workers(Some(" 4")), 4);
+        assert_eq!(resolve_rayon_workers(Some("-1")), 4);
+    }
+}

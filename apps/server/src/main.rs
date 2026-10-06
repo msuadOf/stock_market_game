@@ -4,6 +4,11 @@ use server::init_tracing;
 #[tokio::main]
 async fn main() {
     init_tracing();
+    // 首次使用 Rayon 前固定生产 worker 数（默认 4，见 lib.rs 依据）；失败显式退出不静默。
+    if let Err(error) = server::init_rayon_workers() {
+        eprintln!("rayon worker 初始化失败: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = run().await {
         eprintln!("server startup failed: {error}");
         std::process::exit(1);

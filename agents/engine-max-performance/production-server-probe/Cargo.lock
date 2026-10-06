@@ -755,6 +755,7 @@ dependencies = [
  "dashmap",
  "engine",
  "futures-util",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
