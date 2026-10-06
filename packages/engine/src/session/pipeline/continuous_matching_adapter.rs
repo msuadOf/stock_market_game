@@ -73,14 +73,22 @@ fn prepare_stock_input(
     }
     let mut envelopes = Vec::with_capacity(market.resting_order_count());
     let mut matched_keys = BTreeSet::new();
+    // 同股循环复用 lookup key；重复身份集合仍包含该股全部 account/order/side 事实。
+    let mut key = EnvelopeKey {
+        account: crate::AccountId(0),
+        stock: code.clone(),
+        order: crate::OrderId(0),
+        side: crate::Side::Buy,
+    };
     for order in market.resting_order_refs() {
-        let key = EnvelopeKey {
-            account: order.owner,
-            stock: code.clone(),
-            order: order.id,
-            side: order.side,
+        key.account = order.owner;
+        key.order = order.id;
+        key.side = order.side;
+        let side_rank = match order.side {
+            crate::Side::Buy => 0_u8,
+            crate::Side::Sell => 1,
         };
-        if !matched_keys.insert(key.clone()) {
+        if !matched_keys.insert((order.owner, order.id, side_rank)) {
             return Err(invariant(
                 "continuous order books repeat an envelope identity",
             ));
@@ -96,7 +104,7 @@ fn prepare_stock_input(
                 "报价过期后的 live ledger 包含 origin 非 TickStart 的 envelope",
             ));
         }
-        let projected = session.project_continuous_envelope(code, order)?;
+        let projected = session.project_continuous_envelope_facts(code, order)?;
         let audit = envelope.audit();
         if envelope.pending_price().is_some()
             || audit.limit != order.price
@@ -108,7 +116,7 @@ fn prepare_stock_input(
                 "continuous order books disagree with envelope audit",
             ));
         }
-        if envelope.live() != projected.live() {
+        if envelope.live() != projected.live {
             return Err(invariant(
                 "continuous order books disagree with live envelope resources",
             ));

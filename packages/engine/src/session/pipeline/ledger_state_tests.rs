@@ -866,3 +866,55 @@ fn charged_component_discontinuity_is_rejected_transactionally() {
     assert!(ledger.apply(&mut receipts).is_err());
     assert_eq!(ledger, before);
 }
+
+#[test]
+fn borrowed_projection_gate_preserves_owned_gate_errors_and_map_key_checks() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let field = existing(key(), Money::from_cents(101));
+    let audit = Envelope::tick_start_existing(
+        key(),
+        Money::from_cents(100),
+        0,
+        EnvelopeAudit {
+            limit: Money::from_cents(2),
+            ..first.audit()
+        },
+    );
+    let mut terminal = authority.clone();
+    terminal
+        .terminal_envelopes
+        .insert(first.key().clone(), first.clone());
+    let mut wrong_map_key = authority.clone();
+    *wrong_map_key.envelopes.get_mut(first.key()).unwrap() = second.clone();
+    for source in [authority, terminal, wrong_map_key] {
+        for mut projections in [
+            vec![first.clone(), second.clone()],
+            vec![field.clone(), second.clone()],
+            vec![audit.clone(), second.clone()],
+            vec![first.clone()],
+            vec![first.clone(), extra()],
+            vec![first.clone(), first.clone()],
+            vec![],
+        ] {
+            projections.sort_by(|left, right| left.key().cmp(right.key()));
+            let borrowed = projections
+                .iter()
+                .map(|envelope| super::BorrowedTickStartEnvelope {
+                    account: envelope.key().account,
+                    stock: &envelope.key().stock,
+                    order: envelope.key().order,
+                    side: envelope.key().side,
+                    live: envelope.live(),
+                    audit: envelope.audit(),
+                })
+                .collect::<Vec<_>>();
+            let mut owned_candidate = source.clone();
+            let owned_result = owned_candidate.hydrate_or_validate(projections.clone());
+            let borrowed_result = source.validate_borrowed_tick_start_projection(&borrowed);
+            assert_eq!(borrowed_result, owned_result);
+        }
+    }
+}

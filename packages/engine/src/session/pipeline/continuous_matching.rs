@@ -877,13 +877,17 @@ pub(super) fn validate_private_market_ledger(
     config: &GameConfig,
 ) -> Result<(), StepFatal> {
     let mut matched = 0_usize;
+    // 该校验只处理一个 market，stock 字符串可在全部查询中复用。
+    let mut key = EnvelopeKey {
+        account: AccountId(0),
+        stock: market.code().clone(),
+        order: OrderId(0),
+        side: Side::Buy,
+    };
     for order in market.resting_order_refs() {
-        let key = EnvelopeKey {
-            account: order.owner,
-            stock: market.code().clone(),
-            order: order.id,
-            side: order.side,
-        };
+        key.account = order.owner;
+        key.order = order.id;
+        key.side = order.side;
         let envelope = ledger
             .get(&key)
             .map_err(|_| invariant("stock round left a resting order without a live envelope"))?;

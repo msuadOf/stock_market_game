@@ -80,3 +80,17 @@ c06151ac已经本地提交并通过全新Sol独立审查，真实server约127–
 
 
 最终release source binding重新构建后正式复测142.419x /3000tick /21.0646s，SHA bf08dda9941d3b66a82cc4b457b652807eb1bed73a5e1eae17c3f463503fbbb5，最近窗口91.28x；全部构建/基准handle已exit0。完整生产Sol复核+新增测试固定Luna复核无阻塞；可选组合未穷尽覆盖如实登记。准备本地提交，不推送。后续继续优先真实Rust server >=1000，frontend暂停。子步骤显示Continuous输入准备2.78s、每tickhydrate2.41s和stock初始化2.26s仍有重复key/projection/clone工作；下批可评估重复校验事实的共同表示与复用，不能删checked或验证门禁。substage-profile-instrument.py只适配旧c06151ac的globalmap源码，不能直接在新的LiveReservations源码上重跑；计时产物保留并已撤回其全部插桩。
+
+
+## 追加：借用Envelope投影批次（2026-10-06）
+
+共享payload与仅charged setter两实验均无显著收益，已保存patch/hash并完整撤回。当前稳定候选以BorrowedTickStartEnvelope借用身份/Copy审计验证已有ledger，避免整批owned Envelope/String构建；empty hydration与公开owned API保持原实现，adapter复用同一费用数学facts，lookup key按股复用。全部资源/费用/字段/map-key/terminal/首错与失败原子性门禁保留。详见borrowed-envelope-findings.md。最终source binding真实server153.147x/155.449x（同SHA5a51e9122c9bf1c6e13431bd8bcaad28b18dae0cf484068d983d543642858306），相邻HEAD139.278x；此前候选148–149x也保留，目标1000x仍远未达成，CPU约4.31核，未满16核。独立frozen candidate .tmp/server-borrowed-projection-frozen-candidate。
+
+全新Sol完整diff独立复核通过、无阻塞；可选混合错误首错fixture未穷尽登记。TDD两个allocation红绿与逐字段Eq/owned门禁精确Result边界通过；宽continuous命令曾9s超时，之后已拆独立套件固定RAYON4四进程并行，每命令<=3.2s。最终hyd11/borrowed2/adapter10/ledger_state25/hash14/expiry12/stock execution6均通过，filter有重叠不累加；ledger_tests filter匹配0不算证据。所有本轮build/benchmark handle已exit0。frontend/WASM/HTTPWS/full workspace/full day未验收；既有save_contract未改。后续继续先优化Rust server，准备更新热点诊断，避免继续追微小迭代器/缓存收益。不调用goal complete/blocked。
+
+
+## 追加：借用Envelope投影批次（2026-10-06）
+
+共享payload与仅charged setter两实验均无显著收益，已保存patch/hash并完整撤回。当前稳定候选以BorrowedTickStartEnvelope借用身份/Copy审计验证已有ledger，避免整批owned Envelope/String构建；empty hydration与公开owned API保持原实现，adapter复用同一费用数学facts，lookup key按股复用。全部资源/费用/字段/map-key/terminal/首错与失败原子性门禁保留。详见borrowed-envelope-findings.md。最终source binding真实server153.147x/155.449x（同SHA5a51e9122c9bf1c6e13431bd8bcaad28b18dae0cf484068d983d543642858306），相邻HEAD139.278x；此前候选148–149x也保留，目标1000x仍远未达成，CPU约4.31核，未满16核。独立frozen candidate .tmp/server-borrowed-projection-frozen-candidate。
+
+全新Sol完整diff独立复核通过、无阻塞；可选混合错误首错fixture未穷尽登记。TDD两个allocation红绿与逐字段Eq/owned门禁精确Result边界通过；宽continuous命令曾9s超时，之后已拆独立套件固定RAYON4四进程并行，每命令<=3.2s。最终hyd11/borrowed2/adapter10/ledger_state25/hash14/expiry12/stock execution6均通过，filter有重叠不累加；ledger_tests filter匹配0不算证据。所有本轮build/benchmark handle已exit0。frontend/WASM/HTTPWS/full workspace/full day未验收；既有save_contract未改。后续继续先优化Rust server，准备更新热点诊断，避免继续追微小迭代器/缓存收益。不调用goal complete/blocked。

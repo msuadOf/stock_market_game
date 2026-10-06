@@ -477,6 +477,47 @@ impl EnvelopeLedger {
         Ok(())
     }
 
+    /// 调用方按完整 EnvelopeKey 排序，先核对 nominal 与 charged；此门禁保留完整字段比较。
+    pub(in crate::session) fn validate_borrowed_tick_start_projection(
+        &self,
+        projected: &[super::BorrowedTickStartEnvelope<'_>],
+    ) -> Result<(), StepFatal> {
+        if projected
+            .windows(2)
+            .any(|pair| pair[0].identity() >= pair[1].identity())
+        {
+            return Err(ledger_validation::invariant("duplicate envelope"));
+        }
+        let mut key = EnvelopeKey {
+            account: crate::AccountId(0),
+            stock: crate::StockCode(String::new()),
+            order: crate::OrderId(0),
+            side: crate::Side::Buy,
+        };
+        for projection in projected {
+            projection.copy_key_into(&mut key);
+            if self.terminal_envelopes.contains_key(&key) {
+                return Err(ledger_validation::invariant(
+                    "live projection overlaps terminal envelope evidence",
+                ));
+            }
+        }
+        if projected.len() != self.envelopes.len()
+            || self
+                .envelopes
+                .iter()
+                .zip(projected)
+                .any(|((key, envelope), projection)| {
+                    !projection.matches_key(key) || !projection.matches(envelope)
+                })
+        {
+            return Err(ledger_validation::invariant(
+                "live envelope projection disagrees with ledger",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate_conservation(&self) -> Result<(), StepFatal> {
         ledger_conservation::validate(self)
     }

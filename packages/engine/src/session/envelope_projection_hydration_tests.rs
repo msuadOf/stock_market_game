@@ -309,3 +309,32 @@ fn assert_envelope(
         }
     );
 }
+
+#[test]
+fn existing_ledger_validation_does_not_rebuild_owned_envelope_projections() {
+    let mut game = fixture();
+    let code = game.state.setup.stocks[0].code.clone();
+    place(&mut game, &code, OrderId(61), 100);
+    game.state.auction_orders.insert(
+        code.clone(),
+        vec![AuctionOrderSnap {
+            owner: AccountId(2),
+            side: Side::Sell,
+            limit: Money::from_cents(1_100),
+            qty: 100,
+            order_id: 62,
+        }],
+    );
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let before = game.business_state_hash().unwrap();
+    let ledger = game.state.envelope_ledger.clone();
+    super::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.set(0));
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    assert_eq!(
+        super::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.get()),
+        0,
+        "已有权威账本的只读校验不应重新构造 owned Envelope"
+    );
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    assert_eq!(game.state.envelope_ledger, ledger);
+}

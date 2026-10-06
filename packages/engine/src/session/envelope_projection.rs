@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static OWNED_PROJECTION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct LiveOrderProjection<'a> {
     code: &'a StockCode,
     owner: AccountId,
@@ -35,36 +40,11 @@ impl GameSession {
     }
 
     pub fn hydrate_or_validate_envelope_ledger(&mut self) -> Result<(), StepFatal> {
-        let mut projected = self.project_live_envelopes()?;
-        let has_authoritative_ledger = self.state.envelope_ledger.iter().next().is_some();
-        if has_authoritative_ledger {
-            // Resting orders independently project identity, resources, remaining quantity,
-            // cumulative fills and nominal fees. Only ADR-0017 #9's actually charged seller fee
-            // history is ledger-owned. Validate that history before preserving it for the strict
-            // full-envelope comparison; missing/extra identities still fail closed below.
-            for envelope in &mut projected {
-                let Ok(authoritative) = self.state.envelope_ledger.get(envelope.key()) else {
-                    continue;
-                };
-                let projected_audit = envelope.audit();
-                let authoritative_audit = authoritative.audit();
-                if authoritative_audit.nominal != projected_audit.nominal {
-                    return Err(invariant(
-                        "live-order nominal fee audit disagrees with cumulative filled value",
-                    ));
-                }
-                validate_hydrated_charged_audit(envelope.key().side, authoritative_audit)?;
-                *envelope = pipeline::Envelope::tick_start_existing(
-                    envelope.key().clone(),
-                    envelope.live().cash,
-                    envelope.live().shares,
-                    pipeline::EnvelopeAudit {
-                        charged: authoritative_audit.charged,
-                        ..projected_audit
-                    },
-                );
-            }
-        } else if projected.iter().any(|envelope| {
+        if self.state.envelope_ledger.iter().next().is_some() {
+            return self.validate_existing_live_envelope_projection();
+        }
+        let projected = self.project_live_envelopes()?;
+        if projected.iter().any(|envelope| {
             envelope.key().side == Side::Sell && envelope.audit().filled_value > Money::ZERO
         }) {
             return Err(invariant(
@@ -74,12 +54,95 @@ impl GameSession {
         self.state.envelope_ledger.hydrate_or_validate(projected)
     }
 
+    fn validate_existing_live_envelope_projection(&self) -> Result<(), StepFatal> {
+        let mut projected = Vec::new();
+        for (code, market) in &self.state.markets {
+            // 保留旧投影的到达序，多个计算错误仍报告相同的首错。
+            let mut orders = market.resting_order_refs().collect::<Vec<_>>();
+            orders.sort_by_key(|order| order.seq);
+            for order in orders {
+                projected.push(self.project_borrowed_envelope(LiveOrderProjection {
+                    code,
+                    owner: order.owner,
+                    id: order.id,
+                    side: order.side,
+                    limit: order.price,
+                    qty: order.qty,
+                    filled_qty: order.filled_qty,
+                    filled_value: order.filled_value,
+                })?);
+            }
+        }
+        for (code, orders) in &self.state.auction_orders {
+            for order in orders {
+                projected.push(self.project_borrowed_envelope(LiveOrderProjection {
+                    code,
+                    owner: order.owner,
+                    id: OrderId(order.order_id),
+                    side: order.side,
+                    limit: order.limit,
+                    qty: order.qty,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                })?);
+            }
+        }
+        projected.sort_by(|left, right| left.identity().cmp(&right.identity()));
+        if projected
+            .windows(2)
+            .any(|pair| pair[0].identity() == pair[1].identity())
+        {
+            return Err(invariant("live orders project duplicate envelope identity"));
+        }
+        let mut key = pipeline::EnvelopeKey {
+            account: AccountId(0),
+            stock: StockCode(String::new()),
+            order: OrderId(0),
+            side: Side::Buy,
+        };
+        for projection in &mut projected {
+            projection.copy_key_into(&mut key);
+            let Ok(authoritative) = self.state.envelope_ledger.get(&key) else {
+                // 缺失身份继续进入完整比较门禁，保留既有错误选择顺序。
+                continue;
+            };
+            let audit = authoritative.audit();
+            if audit.nominal != projection.audit.nominal {
+                return Err(invariant(
+                    "live-order nominal fee audit disagrees with cumulative filled value",
+                ));
+            }
+            validate_hydrated_charged_audit(projection.side, audit)?;
+            projection.audit.charged = audit.charged;
+        }
+        self.state
+            .envelope_ledger
+            .validate_borrowed_tick_start_projection(&projected)
+    }
+
     pub(in crate::session) fn project_continuous_envelope(
         &self,
         code: &StockCode,
         order: &Order,
     ) -> Result<pipeline::Envelope, StepFatal> {
         self.project_envelope(LiveOrderProjection {
+            code,
+            owner: order.owner,
+            id: order.id,
+            side: order.side,
+            limit: order.price,
+            qty: order.qty,
+            filled_qty: order.filled_qty,
+            filled_value: order.filled_value,
+        })
+    }
+
+    pub(in crate::session) fn project_continuous_envelope_facts<'a>(
+        &self,
+        code: &'a StockCode,
+        order: &Order,
+    ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
+        self.project_borrowed_envelope(LiveOrderProjection {
             code,
             owner: order.owner,
             id: order.id,
@@ -112,8 +175,27 @@ impl GameSession {
         &self,
         order: LiveOrderProjection<'_>,
     ) -> Result<pipeline::Envelope, StepFatal> {
-        // ADR-0017 #9 settles a seller's fees from gross proceeds, so the
-        // escrow ledger never reserves seller cash.
+        let projection = self.project_borrowed_envelope(order)?;
+        #[cfg(test)]
+        OWNED_PROJECTION_COUNT.with(|count| count.set(count.get() + 1));
+        Ok(pipeline::Envelope::tick_start_existing(
+            pipeline::EnvelopeKey {
+                account: projection.account,
+                stock: projection.stock.clone(),
+                order: projection.order,
+                side: projection.side,
+            },
+            projection.live.cash,
+            projection.live.shares,
+            projection.audit,
+        ))
+    }
+
+    fn project_borrowed_envelope<'a>(
+        &self,
+        order: LiveOrderProjection<'a>,
+    ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
+        // ADR-0017 #9：卖方费用从成交所得实收，cash 预留恒为零。
         let cash = match order.side {
             Side::Buy => buy_order_reservation(
                 &self.state.setup.config,
@@ -130,23 +212,19 @@ impl GameSession {
         };
         let nominal =
             cumulative_nominal_fees(&self.state.setup.config, order.side, order.filled_value)?;
-        // Buyer actual fees always equal nominal fees. Seller charges are path-dependent because
-        // every fill leg is gross-capped; only the authoritative ledger can supply that history.
+        // Buy 实收等于 nominal；Sell 的逐腿封顶历史由权威 ledger 提供。
         let charged = if order.side == Side::Buy {
             nominal
         } else {
             pipeline::FeeComponents::ZERO
         };
-        Ok(pipeline::Envelope::tick_start_existing(
-            pipeline::EnvelopeKey {
-                account: order.owner,
-                stock: order.code.clone(),
-                order: order.id,
-                side: order.side,
-            },
-            cash,
-            shares,
-            pipeline::EnvelopeAudit {
+        Ok(pipeline::BorrowedTickStartEnvelope {
+            account: order.owner,
+            stock: order.code,
+            order: order.id,
+            side: order.side,
+            live: pipeline::ResVec::new(cash, shares),
+            audit: pipeline::EnvelopeAudit {
                 limit: order.limit,
                 remaining_qty: order.qty,
                 filled_qty: order.filled_qty,
@@ -154,7 +232,7 @@ impl GameSession {
                 nominal,
                 charged,
             },
-        ))
+        })
     }
 }
 

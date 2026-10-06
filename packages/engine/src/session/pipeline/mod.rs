@@ -81,6 +81,7 @@ pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
 pub use decision_snapshot::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
 pub use envelope::{Envelope, EnvelopeAudit, EnvelopeOrigin};
+pub(in crate::session) use envelope::BorrowedTickStartEnvelope;
 pub use event_key::*;
 #[cfg(any(test, feature = "verification-harness"))]
 pub use executor_perturbation::{

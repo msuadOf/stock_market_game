@@ -328,3 +328,39 @@ fn resting_buy(id: OrderId, owner: AccountId) -> Order {
         seq: 0,
     }
 }
+
+#[test]
+fn adapter_validates_order_resources_without_materializing_an_extra_projection_envelope() {
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let code = StockCode("600888".to_owned());
+    game.state
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(resting_buy(OrderId(401), AccountId(1)))
+        .unwrap();
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    let (inputs, owned_projections) = pool.install(|| {
+        crate::session::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.set(0));
+        let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
+        let count =
+            crate::session::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.get());
+        (inputs, count)
+    });
+    assert_eq!(
+        owned_projections, 0,
+        "adapter 只读取投影资源，不应额外构造 owned Envelope"
+    );
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].envelopes.len(), 1);
+    let envelope = &inputs[0].envelopes[0].envelope;
+    assert_eq!(
+        envelope,
+        game.state.envelope_ledger.get(envelope.key()).unwrap()
+    );
+}
