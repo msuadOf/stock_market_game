@@ -68,9 +68,9 @@
 
 ## Claude 跨会话记忆目录
 
-- Claude Code 的跨会话记忆（用户偏好、协作方式、项目主线状态）实体存放在本仓库 `.claude/memory/`，随 git 一起版本化；`MEMORY.md` 为索引，其余为单条记忆文件。
-- 本机通过软链接接入：`~/.claude/projects/<项目路径哈希>/memory` → 本仓库 `.claude/memory`（Claude Code 的自动加载机制读固定路径，软链接保证行为不变）。
-- 新机器接入时执行一次：`mkdir -p ~/.claude/projects/<项目路径哈希> && ln -s <仓库绝对路径>/.claude/memory ~/.claude/projects/<项目路径哈希>/memory`。
+- Claude Code 的跨会话记忆（用户偏好、协作方式、项目主线状态）实体存放在本仓库 `memory/`，随 git 一起版本化；`MEMORY.md` 为索引，其余为单条记忆文件。
+- 本机通过软链接接入：`~/.claude/projects/<项目路径哈希>/memory` → 本仓库 `memory`（Claude Code 的自动加载机制读固定路径，软链接保证行为不变）。
+- 新机器接入时执行一次：`mkdir -p ~/.claude/projects/<项目路径哈希> && ln -s <仓库绝对路径>/memory ~/.claude/projects/<项目路径哈希>/memory`。
 - 该目录是 Claude 的工作记忆而非正式文档：任务结论需要成为规范时仍应同步到 `docs/`，不要用记忆替代。
 
 ## 多核测试与资源利用
