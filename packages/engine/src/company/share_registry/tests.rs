@@ -104,9 +104,11 @@ fn registered_entitlement_does_not_follow_later_sale_or_include_treasury() {
     assert_eq!(snapshot.entitled_holdings().count(), 2);
     registry.close_day(transfer(50)).unwrap();
     assert_eq!(registry.registration("dividend"), Some(&snapshot));
-    assert!(registry
-        .register("backdated".into(), day("2030-01-01"))
-        .is_err());
+    assert!(
+        registry
+            .register("backdated".into(), day("2030-01-01"))
+            .is_err()
+    );
     assert_eq!(
         registry
             .register("dividend".into(), day("2030-01-01"))
@@ -126,6 +128,133 @@ fn restore_rejects_invalid_lot_dates_and_preserves_max_account_id_string() {
     let mut corrupt = json;
     corrupt["holdings"][0]["lots"][0]["acquired_on"] = serde_json::json!("2031-01-01");
     assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+}
+
+#[test]
+fn share_quantities_and_signed_changes_use_exact_canonical_decimal_strings() {
+    let quantity = 9_007_199_254_741_117u64;
+    let capital = u64::MAX;
+    let mut registry = ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId("issuer-A".into()),
+        capital,
+        day("2030-01-01"),
+        vec![
+            ShareHolding {
+                holder: account(1),
+                lots: vec![lot("large", quantity, "2029-01-01")],
+            },
+            ShareHolding {
+                holder: HolderId::External("remainder".into()),
+                lots: vec![lot("remainder-lot", capital - quantity, "2029-01-01")],
+            },
+        ],
+    )
+    .unwrap();
+    let request = ShareDayRequest {
+        event_id: "large-transfer".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::PublicMarket,
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: -i128::from(quantity),
+                acquisition: None,
+            },
+            DayNetChange {
+                holder: account(2),
+                change: quantity as i128,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "large-buyer".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "large-transfer".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+            },
+        ],
+    };
+    let serialized_request = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        serialized_request["changes"][0]["change"],
+        format!("-{quantity}")
+    );
+    assert_eq!(
+        serialized_request["changes"][1]["change"],
+        quantity.to_string()
+    );
+    assert_eq!(
+        serde_json::from_value::<ShareDayRequest>(serialized_request.clone()).unwrap(),
+        request
+    );
+    registry.close_day(request).unwrap();
+
+    let json = serde_json::to_value(&registry).unwrap();
+    assert_eq!(json["issued_shares"], capital.to_string());
+    assert_eq!(json["holdings"][0]["lots"], serde_json::json!([]));
+    let buyer = json["holdings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|holding| holding["holder"] == serde_json::json!({"Account": "2"}))
+        .unwrap();
+    assert_eq!(buyer["lots"][0]["qty"], quantity.to_string());
+    assert_eq!(
+        json["receipts"][0]["disposals"][0]["lot"]["qty"],
+        quantity.to_string()
+    );
+    let restored: ShareRegistry = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, registry);
+}
+
+#[test]
+fn share_registry_wire_rejects_numeric_and_noncanonical_share_counts() {
+    let registry = registry();
+    let valid = serde_json::to_value(registry).unwrap();
+    for invalid in [
+        serde_json::json!(100),
+        serde_json::json!("0100"),
+        serde_json::json!("+100"),
+    ] {
+        let mut corrupt = valid.clone();
+        corrupt["issued_shares"] = invalid;
+        assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+    }
+
+    let mut lot_numeric = valid.clone();
+    lot_numeric["holdings"][0]["lots"][0]["qty"] = serde_json::json!(30);
+    assert!(serde_json::from_value::<ShareRegistry>(lot_numeric).is_err());
+
+    let mut request = serde_json::to_value(transfer(5)).unwrap();
+    request["changes"][0]["change"] = serde_json::json!(-5);
+    assert!(serde_json::from_value::<ShareDayRequest>(request).is_err());
+}
+
+#[test]
+fn signed_share_change_codec_roundtrips_i128_bounds_and_rejects_invalid_values() {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct SignedValue {
+        #[serde(with = "super::canonical_i128_decimal")]
+        value: i128,
+    }
+
+    for value in [i128::MIN, i128::MAX] {
+        let encoded = serde_json::to_string(&SignedValue { value }).unwrap();
+        assert_eq!(encoded, format!("{{\"value\":\"{value}\"}}"));
+        assert_eq!(
+            serde_json::from_str::<SignedValue>(&encoded).unwrap().value,
+            value
+        );
+    }
+
+    for invalid in [
+        "\"-0\"",
+        "\"-170141183460469231731687303715884105729\"",
+        "\"170141183460469231731687303715884105728\"",
+    ] {
+        let encoded = format!("{{\"value\":{invalid}}}");
+        assert!(serde_json::from_str::<SignedValue>(&encoded).is_err());
+    }
 }
 
 #[test]

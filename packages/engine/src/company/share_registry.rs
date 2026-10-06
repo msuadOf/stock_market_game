@@ -6,6 +6,41 @@ use thiserror::Error;
 use super::CompanyId;
 use crate::{account::StockCode, calendar::CivilDate, orderbook::AccountId};
 
+mod canonical_i128_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let bytes = value.as_bytes();
+        let digits = if bytes.first() == Some(&b'-') {
+            &bytes[1..]
+        } else {
+            bytes
+        };
+        let canonical = digits == b"0"
+            || (digits
+                .first()
+                .is_some_and(|byte| (b'1'..=b'9').contains(byte))
+                && digits.iter().all(u8::is_ascii_digit));
+        if !canonical || (bytes.first() == Some(&b'-') && digits == b"0") {
+            return Err(serde::de::Error::custom(
+                "股数变动必须使用规范有符号十进制字符串",
+            ));
+        }
+        value.parse::<i128>().map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum HolderId {
@@ -36,6 +71,7 @@ pub enum ShareRestriction {
 #[serde(deny_unknown_fields)]
 pub struct ShareLot {
     pub id: String,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub qty: u64,
     pub acquired_on: CivilDate,
     pub source: AcquisitionSource,
@@ -61,6 +97,7 @@ pub struct NetAcquisition {
 #[serde(deny_unknown_fields)]
 pub struct DayNetChange {
     pub holder: HolderId,
+    #[serde(with = "canonical_i128_decimal")]
     pub change: i128,
     #[serde(deserialize_with = "required_acquisition")]
     pub acquisition: Option<NetAcquisition>,
@@ -104,6 +141,7 @@ pub struct RegistrationSnapshot {
     stock: StockCode,
     issuer: CompanyId,
     registered_on: CivilDate,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
     holdings: Vec<ShareHolding>,
 }
@@ -115,6 +153,7 @@ struct SnapshotState {
     stock: StockCode,
     issuer: CompanyId,
     registered_on: CivilDate,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
     holdings: Vec<ShareHolding>,
 }
@@ -141,6 +180,7 @@ impl TryFrom<SnapshotState> for RegistrationSnapshot {
 pub struct ShareRegistry {
     stock: StockCode,
     issuer: CompanyId,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
     settled_on: CivilDate,
     holdings: Vec<ShareHolding>,
@@ -153,6 +193,7 @@ pub struct ShareRegistry {
 struct RegistryState {
     stock: StockCode,
     issuer: CompanyId,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     issued_shares: u64,
     settled_on: CivilDate,
     holdings: Vec<ShareHolding>,
@@ -184,7 +225,9 @@ pub enum ShareRegistryError {
     InvalidFact { detail: String },
     #[error("share registry: unsupported movement scope {scope:?}")]
     UnsupportedMovementScope { scope: MovementScope },
-    #[error("share registry: holder {holder:?} needs {requested} transferable shares, only {available} available")]
+    #[error(
+        "share registry: holder {holder:?} needs {requested} transferable shares, only {available} available"
+    )]
     InsufficientTransferableShares {
         holder: HolderId,
         requested: u64,
@@ -353,7 +396,9 @@ impl ShareRegistry {
             return Err(error("empty registration event identity"));
         }
         if registered_on != self.settled_on {
-            return Err(error("registration must capture the current completed day, not a historical or future balance"));
+            return Err(error(
+                "registration must capture the current completed day, not a historical or future balance",
+            ));
         }
         self.validate()?;
         self.registrations.push(RegistrationSnapshot {
@@ -614,7 +659,9 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
                 AcquisitionSource::SecondaryMarket { .. }
             ) || acquisition.restriction != ShareRestriction::Unrestricted
             {
-                return Err(error("public market acquisition requires secondary-market source and unrestricted shares"));
+                return Err(error(
+                    "public market acquisition requires secondary-market source and unrestricted shares",
+                ));
             }
             let lot = ShareLot {
                 id: acquisition.lot_id.clone(),
