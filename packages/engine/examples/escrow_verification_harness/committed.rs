@@ -528,13 +528,32 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
         // Two sell legs and one incoming buy per stock guarantee an actual
         // multi-leg receipt chain, including the opening auction. Self crossing
         // is the existing game simplification, not a claim about A-share legality.
-        for (code, price) in [("600101", 1_120), ("000812", 885)] {
+        // 目录 id 按代码升序分配（"000812"=0、"600101"=1）；必须动态解析而非硬编码，
+        // 否则双股多腿链会静默退化为单股（独立复核 P0-1）。
+        let stock_ids: Vec<(engine::StockId, i64)> = [("600101", 1_120_i64), ("000812", 885)]
+            .into_iter()
+            .map(|(code, price)| {
+                (
+                    session
+                        .game()
+                        .stock_id(code)
+                        .unwrap_or_else(|| panic!("harness 股票必须全部在目录内: {code}")),
+                    price,
+                )
+            })
+            .collect();
+        assert!(
+            stock_ids.iter().any(|(id, _)| id.0 == 0)
+                && stock_ids.iter().any(|(id, _)| id.0 == 1),
+            "harness 双股必须解析到不同目录 id，防单股退化回归"
+        );
+        for (id, price) in stock_ids {
             for (side, qty) in [(Side::Sell, 100), (Side::Sell, 200), (Side::Buy, 300)] {
                 session
                     .enqueue_player_intent(
                         AccountId(0),
                         Intent::PlaceLimit {
-                            code: StockId(0),
+                            code: id,
                             side,
                             price: engine::LimitPrice::Fixed(Money::from_cents(price)),
                             qty,

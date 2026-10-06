@@ -329,7 +329,8 @@ fn quantize_cents(cents: i64, tick: i64) -> i64 {
     ((cents.saturating_add(tick / 2)) / tick).max(1) * tick
 }
 
-/// 把 StockId 哈希为 u64（用于派生每只股票的确定性 RNG 种子）。
+/// 把边界代码 StockCode（字符串）哈希为 u64（用于派生每只股票的确定性 RNG 种子；
+/// 数值身份后仍按代码字符串哈希以保持既有价格路径，ADR 0041）。
 pub(super) fn stock_code_hash(code: &StockCode) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

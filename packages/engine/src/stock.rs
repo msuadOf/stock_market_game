@@ -203,6 +203,12 @@ impl<'de> Deserialize<'de> for StockCatalog {
             by_code: BTreeMap::new(),
         };
         catalog.rebuild_index();
+        // 显式重复校验：索引数量必须与元数据一致（上游升序校验的防御兜底）。
+        if catalog.by_code.len() != catalog.metas.len() {
+            return Err(serde::de::Error::custom(
+                "股票目录包含重复代码，存档损坏或版本不符",
+            ));
+        }
         Ok(catalog)
     }
 }
