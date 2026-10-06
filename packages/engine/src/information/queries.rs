@@ -42,7 +42,7 @@ impl PublicLibrary {
             .map(|raw| {
                 raw.parse::<u32>()
                     .map_err(|_| InformationError::InvalidPublicReportCursor {
-                        cursor: raw.to_string(),
+                        cursor: 0,
                         company: query.company_id.clone(),
                     })
             })
@@ -55,7 +55,7 @@ impl PublicLibrary {
                 .is_some_and(|report| report.company == company && report.published_at <= as_of);
             if !valid {
                 return Err(InformationError::InvalidPublicReportCursor {
-                    cursor: cursor.to_string(),
+                    cursor,
                     company: query.company_id.clone(),
                 });
             }
@@ -90,7 +90,7 @@ impl PublicLibrary {
         let value = id
             .parse::<u32>()
             .map_err(|_| InformationError::InvalidPublicReportCursor {
-                cursor: id,
+                cursor: 0,
                 company: "report lookup".to_string(),
             })?;
         self.report(PublicationId::new(value), as_of)

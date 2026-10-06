@@ -88,7 +88,9 @@ pub enum InformationError {
     InvalidPublicReportPageSize { page_size: u16, max: u16 },
     /// 游标不是当前公司的一条已公开报告 id，或不是十进制 id。
     #[error("invalid public report cursor {cursor:?} for company {company}")]
-    InvalidPublicReportCursor { cursor: String, company: String },
+    /// 公开报告游标非法；cursor=已解析的 PublicationId 数值（解析失败时 0），
+    /// company=公司字符串身份（待 CompanyId 数值化后改数值）。
+    InvalidPublicReportCursor { cursor: u32, company: String },
 
     /// 结账登记簿不存在该版本（期间未结账/序号越界 = 未定稿，不可公开）。
     #[error("no finalized version for {scope:?} {period} {kind:?} sequence {sequence}")]
