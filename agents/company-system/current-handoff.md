@@ -5,6 +5,7 @@
 `packages/engine/src/company/` 是共同入口，`simple/` 已独立承接基本面生成与汇总财务；`GameSession` 不再运行旧 `CompanyOperations` 后台。`Simulation` 当前明确拒绝创建，后续由用户另开分支实现，不做默认降级、格式兼容或 schema 迁移。
 
 - 按月、季度、半年或年结算，年化趋势按自然月复合，四种周期独立配置扰动；利润由收入、费用和税务推导。
+- 分红方案、法定事实、结果与事实类型已上移到 `company::dividend` 共同契约，Session 不再依赖 `simple::` 私有类型；这只完成类型面，查询、能力与完整公司行为契约仍未完成。
 - `CompanyKind` 从配置显式传入，发行人、财务 owner 与科目表严格一致。四类基础科目表上的五个 `simple_*` 科目仅表示虚拟汇总，不冒充贷款、保费、赔付或真实公司收付款。
 - 新局可编辑虚拟 preset；允许开局股价、总股本及虚拟 PE／PB 倍率的一次性初始化校准。预览和创建消费同份 seed／配置，后续结算与恢复不重新锚定，不保证开盘无涨跌。
 - 报告来自实际已结算期间，未公开材料不泄漏；长周期不能伪造短周期资料。月末更正、所得税和公开版本使用候选事务，失败不留下部分过账。
@@ -44,6 +45,6 @@
 
 共同股本行为仍未完整交付。当前候选接线已在显式登记名册、法定事实与获批现金方案下验证 Session 真实税前到账、公司应付清偿及同日合计除息锚；失败不提交部分状态，重复执行不重复到账或扣减除息参考价。公开 typed 分红公告、NPC 本人获知和公告／批准财务金额恢复勾稽已接通；实际股息税收缴及宿主/UI 操作入口仍缺，到账事实明确标为 `TreatmentNotConfigured`，不能称为税后结清。默认开局名册与税务身份未定，公司行为偏好、自动方案、送转实际登记、配股、增发和回购仍未完成，`cash_settlement=false` 不因分配算法或底层测试通过而改为完整可用。获批特殊除息调整仍明确拒绝，基础计算及候选接线分别见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)。
 
-`cash_dividend` 提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；状态机本身只记录付款执行者返回的事实，实际账户贷记由 Session 候选事务执行。恢复显式提供日历调用 `validate_with_calendar`，不默认补齐日历，并校验 Book、公司应付凭证、实际到账及除息锚的跨域对应，详见[分红基础复核](cash-dividend-book-review.md)与[财务接线复核](simple-dividend-finance-review.md)。`accounting::period_roe` 仍是同范围、同权益归属的时间加权分析基础，不冒充法定披露 ROE；`accounting::disclosure_roe` 一般公式已进入真实报告窗口、公开 DTO 与 Web 报表消费。同一控制合并／比较期间特殊处理、合并归属逐项权益事件及扣非事实仍明确不可用，详见[期间权益分析复核](period-roe-review.md)、[法定一般公式复核](official-roe-review.md)与[报告接线复核](simple-report-roe-review.md)。合法本人中期资料缺同范围年报及其到期不再阻断日结；损坏材料引用仍失败回滚。合法信用违约公告缺本人年报的路径尚未修复，见[个人信息边界审计](missing-annual-belief-audit.md)。
+`cash_dividend` 提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；状态机本身只记录付款执行者返回的事实，实际账户贷记由 Session 候选事务执行。恢复显式提供日历调用 `validate_with_calendar`，不默认补齐日历，并校验 Book、公司应付凭证、实际到账及除息锚的跨域对应，详见[分红基础复核](cash-dividend-book-review.md)与[财务接线复核](simple-dividend-finance-review.md)。`accounting::period_roe` 仍是同范围、同权益归属的时间加权分析基础，不冒充法定披露 ROE；`accounting::disclosure_roe` 一般公式已进入真实报告窗口、公开 DTO 与 Web 报表消费。同一控制合并／比较期间特殊处理、合并归属逐项权益事件及扣非事实仍明确不可用，详见[期间权益分析复核](period-roe-review.md)、[法定一般公式复核](official-roe-review.md)与[报告接线复核](simple-report-roe-review.md)。合法本人中期资料缺同范围年报及其到期不再阻断日结；损坏材料引用仍失败回滚。合法信用违约公告缺本人年报时会记录年度基线不可用并保留公告因果；非正基本面估值区间对候选信号表现为 `FundamentalUnavailable`，不伪装成 0 元，见[个人信息边界审计](missing-annual-belief-audit.md)。
 
 完整经营、客户有限现金和行业业务由后续 `company/simulation/` 分支实现。旧集团／冲击经营 Session 的特定集成原文已归档；现有独立账务用例不等于这些旧接线仍存在或全部已验收。具体状态按[实施清单](implementation-checklist.md)和[历史审计总账](../implementation-audit/implementation-audit-2026-10-02.md)继续推进，不从归档或编译成功推断全部功能完成。
