@@ -15,6 +15,8 @@ mod company_assembly;
 mod company_corrections;
 mod company_groups;
 #[cfg(test)]
+mod company_mechanism_switch_tests;
+#[cfg(test)]
 mod company_simple_session_tests;
 mod corporate_actions;
 #[cfg(test)]
@@ -1234,6 +1236,16 @@ pub struct SessionSetup {
     /// 可选不扣税。严格持久化字段：新档必填、无 serde 默认，缺失该字段的
     /// 旧档被显式拒绝；恢复后自动配置与计税语义不变。
     pub dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
+    /// 新局「配股／增发」机制开关（2026-10-07 产品决策，ADR-0039）：
+    /// 关闭（UI 默认）时配股／增发机制不触发，显式 API 调用被显式拒绝
+    /// （错误指明本局未启用）。严格持久化字段：新档必填、无 serde 默认，
+    /// 缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
+    pub rights_offering_enabled: bool,
+    /// 新局「发行人回购」机制开关（2026-10-07 产品决策，ADR-0038）：
+    /// 独立于配股／增发开关，默认关闭。关闭时回购机制不触发，显式 API
+    /// 调用被显式拒绝（错误指明本局未启用）。严格持久化字段：新档必填、
+    /// 无 serde 默认，缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
+    pub issuer_repurchase_enabled: bool,
 }
 
 impl SessionSetup {
@@ -4106,6 +4118,8 @@ mod candle_open_tests {
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         }
     }
 
@@ -4415,6 +4429,8 @@ mod npc_working_quote_tests {
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         }
     }
 

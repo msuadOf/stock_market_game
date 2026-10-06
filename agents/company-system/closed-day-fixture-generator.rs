@@ -196,6 +196,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         start_date: CivilDate::from_iso("2026-01-01")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     };
     setup.validate()?;
 

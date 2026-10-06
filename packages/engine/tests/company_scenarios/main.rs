@@ -104,6 +104,8 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     }
 }
 

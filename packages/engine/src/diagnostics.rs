@@ -2019,6 +2019,8 @@ mod tests {
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
         (

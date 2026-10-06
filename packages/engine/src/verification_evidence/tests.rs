@@ -830,6 +830,8 @@ fn civil_protocol_session() -> ProtocolSession {
             start_date: CivilDate::from_iso("2030-01-05").unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         },
         42,
     )

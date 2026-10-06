@@ -81,6 +81,8 @@ pub(super) fn session_with_company(
             start_date: date,
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
             dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         },
         1,
     )

@@ -60,5 +60,7 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
         start_date: start,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     }
 }
