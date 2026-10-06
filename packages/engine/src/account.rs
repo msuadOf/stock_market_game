@@ -47,6 +47,8 @@ pub enum AccountKind {
 /// 账户操作失败。绝不静默吞掉（铁律二），错误携带上下文。
 #[derive(Debug, Error)]
 pub enum AccountError {
+    #[error("cash credit must be positive, got {amount:?}")]
+    InvalidCashCredit { amount: Money },
     /// 买入资金不足：成交额+佣金 > 现金。
     #[error("insufficient cash: needed {needed:?}, have {have:?}")]
     InsufficientCash { needed: Money, have: Money },
@@ -123,6 +125,15 @@ impl Account {
 
     pub fn cash(&self) -> Money {
         self.state.cash
+    }
+
+    pub(crate) fn credit_cash(&mut self, amount: Money) -> Result<(), AccountError> {
+        if amount <= Money::ZERO {
+            return Err(AccountError::InvalidCashCredit { amount });
+        }
+        let credited_cash = self.state.cash.add(amount)?;
+        Arc::make_mut(&mut self.state).cash = credited_cash;
+        Ok(())
     }
 
     pub fn strategy(&self) -> Option<&StoredStrategy> {
@@ -703,6 +714,33 @@ fn round_half_to_even_i64(n: i64, d: u32) -> i64 {
 mod shadow_tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn cash_credit_updates_only_candidate_cash_and_preserves_positions() {
+        let code = StockCode("600888".to_owned());
+        let mut authority = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
+        authority.grant_position(code, 100, Money::from_cents(10)).unwrap();
+        let positions = authority.positions().clone();
+        let mut shadow = authority.clone_for_shadow().unwrap();
+        shadow.credit_cash(Money::from_cents(250)).unwrap();
+        assert_eq!(shadow.cash(), Money::from_cents(1_250));
+        assert_eq!(authority.cash(), Money::from_cents(1_000));
+        assert_eq!(serde_json::to_value(shadow.positions()).unwrap(), serde_json::to_value(&positions).unwrap());
+        assert!(!Arc::ptr_eq(&authority.state, &shadow.state));
+    }
+
+    #[test]
+    fn rejected_or_overflowing_cash_credit_does_not_mutate_candidate() {
+        let authority = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(i64::MAX));
+        let mut shadow = authority.clone_for_shadow().unwrap();
+        for amount in [Money::ZERO, Money::from_cents(-1)] {
+            assert!(matches!(shadow.credit_cash(amount), Err(AccountError::InvalidCashCredit { .. })));
+            assert!(Arc::ptr_eq(&authority.state, &shadow.state));
+        }
+        assert!(matches!(shadow.credit_cash(Money::from_cents(1)), Err(AccountError::MoneyErr(_))));
+        assert!(Arc::ptr_eq(&authority.state, &shadow.state));
+        assert_eq!(shadow.cash(), Money::from_cents(i64::MAX));
+    }
 
     #[test]
     fn quiet_shadow_shares_account_until_its_own_state_changes() {
