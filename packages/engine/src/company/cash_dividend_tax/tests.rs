@@ -599,3 +599,85 @@ fn dividend_received_before_statutory_unlock_is_ten_percent_and_not_retaxed() {
         serde_json::from_value(serde_json::to_value(&book).unwrap()).unwrap();
     assert_eq!(restored, book);
 }
+
+/// 同日「先公开市场后送转」的税账日结：送转到账作为同日正向续记合法入账，
+/// 事件身份独立于公开市场日结；同日负向或零净变动不得作为续记。
+#[test]
+fn same_day_positive_continuation_records_distribution_credit_after_market_day() {
+    let mut book = book();
+    book.record_net_day("market-2030-01-02".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    let credit = DividendTaxLot {
+        id: "tax:stock-distribution:d1:account-0".into(),
+        qty: 3,
+        acquired_on: date("2030-01-02"),
+        source: TaxAcquisitionSource::CorporateAction { event: "d1".into() },
+        class: TaxShareClass::PublicMarket,
+    };
+    book.record_net_day(
+        "stock-distribution:d1:0".into(),
+        date("2030-01-02"),
+        3,
+        Some(credit),
+    )
+    .unwrap();
+    assert_eq!(book.settled_on(), date("2030-01-02"));
+    assert_eq!(book.tax_day_receipts().len(), 2);
+    assert_eq!(book.lots().iter().map(|lot| lot.qty).sum::<u64>(), 23);
+    // 幂等重放同事实不报错、不重复。
+    book.record_net_day(
+        "stock-distribution:d1:0".into(),
+        date("2030-01-02"),
+        3,
+        Some(DividendTaxLot {
+            id: "tax:stock-distribution:d1:account-0".into(),
+            qty: 3,
+            acquired_on: date("2030-01-02"),
+            source: TaxAcquisitionSource::CorporateAction { event: "d1".into() },
+            class: TaxShareClass::PublicMarket,
+        }),
+    )
+    .unwrap();
+    assert_eq!(book.tax_day_receipts().len(), 2);
+    // 次日正常推进不受同日续记影响。
+    book.record_net_day("market-2030-01-03".into(), date("2030-01-03"), 0, None)
+        .unwrap();
+    assert_eq!(book.tax_day_receipts().len(), 3);
+}
+
+/// 同日续记的防御边界：首条日结不得等于开账日；同日零或负净变动、
+/// 事实不一致的同日复用、跳日都必须显式拒绝。
+#[test]
+fn same_day_continuation_rejects_nonpositive_net_and_first_day_equals_opening() {
+    let mut book = book();
+    let rejection = book
+        .record_net_day("market-opening-day".into(), date("2030-01-01"), 0, None)
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("tax day"),
+        "开账日当日不得作为首个日结：{rejection}"
+    );
+    book.record_net_day("market-2030-01-02".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    let rejection = book
+        .record_net_day("ghost-zero".into(), date("2030-01-02"), 0, None)
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("tax day"),
+        "同日零净变动续记必须拒绝：{rejection}"
+    );
+    let rejection = book
+        .record_net_day("ghost-negative".into(), date("2030-01-02"), -1, None)
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("tax day"),
+        "同日负净变动续记必须拒绝（处置每日只按公开市场净额一次）：{rejection}"
+    );
+    let rejection = book
+        .record_net_day("skip-day".into(), date("2030-01-04"), 0, None)
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("tax day"),
+        "跳日日结必须拒绝：{rejection}"
+    );
+}

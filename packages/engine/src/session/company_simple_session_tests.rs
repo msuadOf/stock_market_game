@@ -1456,15 +1456,17 @@ fn disclosure_checkpoint_handles_open_close_and_closed_day_without_relaxing_publ
 
 fn session_with_approved_stock_distribution(
     mixed_restriction: bool,
-) -> (GameSession, crate::company::CompanyId, crate::account::StockCode) {
+) -> (
+    GameSession,
+    crate::company::CompanyId,
+    crate::account::StockCode,
+) {
     use crate::account::Position;
     use crate::accounting::AccountingAmount;
     use crate::company::share_registry::{
         AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
     };
-    use crate::company::stock_distribution::{
-        StockDistributionEventPlan, StockDistributionKind,
-    };
+    use crate::company::stock_distribution::{StockDistributionEventPlan, StockDistributionKind};
     use crate::orderbook::AccountId;
 
     let mut setup = simple_setup();
@@ -1591,7 +1593,9 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
     let player_award = receipt
         .holders
         .iter()
-        .find(|holder| holder.holder == crate::company::share_registry::HolderId::Account(AccountId(0)))
+        .find(|holder| {
+            holder.holder == crate::company::share_registry::HolderId::Account(AccountId(0))
+        })
         .unwrap()
         .whole_shares;
     assert_eq!(player_award, 2);
@@ -1600,10 +1604,16 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
     session.end_civil_day().unwrap();
     // 01-07（R+1）首个 tick 安装除权参考价：1000 分 / 1.25 = 800 分。
     session.step().unwrap();
-    assert_eq!(session.state.markets[&stock].last_close(), Money::from_cents(800));
+    assert_eq!(
+        session.state.markets[&stock].last_close(),
+        Money::from_cents(800)
+    );
     let groups = &session.corporate_actions().applied_ex_reference_groups;
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].date, crate::CivilDate::from_iso("2030-01-07").unwrap());
+    assert_eq!(
+        groups[0].date,
+        crate::CivilDate::from_iso("2030-01-07").unwrap()
+    );
     assert!(groups[0].cash_plan_ids.is_empty());
     assert_eq!(groups[0].stock_event_ids, vec!["distribution-1".to_owned()]);
     assert_eq!(groups[0].reference.reference_price, Money::from_cents(800));
@@ -1614,13 +1624,22 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
     let credit_receipt = registry
         .receipt_by_event("stock-distribution:distribution-1")
         .expect("非交易过户回执必须存在");
-    assert_eq!(credit_receipt.request.day, crate::CivilDate::from_iso("2030-01-07").unwrap());
+    assert_eq!(
+        credit_receipt.request.day,
+        crate::CivilDate::from_iso("2030-01-07").unwrap()
+    );
     assert!(matches!(
         credit_receipt.request.scope,
         crate::company::share_registry::MovementScope::NonTradingTransfer { .. }
     ));
-    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 8);
-    assert_eq!(session.account(AccountId(0)).unwrap().sellable_qty(&stock), 8);
+    assert_eq!(
+        session.account(AccountId(0)).unwrap().positions()[&stock].qty(),
+        8
+    );
+    assert_eq!(
+        session.account(AccountId(0)).unwrap().sellable_qty(&stock),
+        8
+    );
     assert_eq!(
         session
             .state
@@ -1636,7 +1655,10 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
         book.status(),
         &crate::company::stock_distribution::StockDistributionStatus::Credited
     );
-    assert_eq!(book.credited_on(), Some(crate::CivilDate::from_iso("2030-01-07").unwrap()));
+    assert_eq!(
+        book.credited_on(),
+        Some(crate::CivilDate::from_iso("2030-01-07").unwrap())
+    );
     let fact = session
         .state
         .company_system
@@ -1645,8 +1667,14 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
         .into_iter()
         .find(|fact| fact.event_id == "distribution-1")
         .unwrap();
-    assert_eq!(fact.credited_on, Some(crate::CivilDate::from_iso("2030-01-07").unwrap()));
-    assert_eq!(fact.capital_increase, crate::accounting::AccountingAmount::from_cents(2));
+    assert_eq!(
+        fact.credited_on,
+        Some(crate::CivilDate::from_iso("2030-01-07").unwrap())
+    );
+    assert_eq!(
+        fact.capital_increase,
+        crate::accounting::AccountingAmount::from_cents(2)
+    );
     // 严格恢复后继续一天不重复入账，锚点事实保持。
     let save = session.save().unwrap();
     let mut restored = GameSession::restore(&save).unwrap();
@@ -1658,8 +1686,14 @@ fn stock_distribution_credits_registry_accounts_issuer_and_ex_rights_anchor() {
         restored.step().unwrap();
     }
     restored.end_civil_day().unwrap();
-    assert_eq!(restored.corporate_actions().registries[0].issued_shares(), total_shares + 2);
-    assert_eq!(restored.account(AccountId(0)).unwrap().positions()[&stock].qty(), 8);
+    assert_eq!(
+        restored.corporate_actions().registries[0].issued_shares(),
+        total_shares + 2
+    );
+    assert_eq!(
+        restored.account(AccountId(0)).unwrap().positions()[&stock].qty(),
+        8
+    );
     assert_eq!(restored.corporate_actions().registries.len(), 1);
 }
 
@@ -1690,7 +1724,10 @@ fn stock_distribution_delivery_rolls_back_whole_day_on_mixed_restriction_sources
     assert!(registry
         .receipt_by_event("stock-distribution:distribution-1")
         .is_none());
-    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 6);
+    assert_eq!(
+        session.account(AccountId(0)).unwrap().positions()[&stock].qty(),
+        6
+    );
     assert_eq!(
         session.corporate_actions().stock_distributions[0].status(),
         &crate::company::stock_distribution::StockDistributionStatus::Registered
@@ -1732,9 +1769,7 @@ fn account_position_projection(
 
 #[test]
 fn consecutive_stock_distributions_keep_par_constant_and_evolve_registered_capital() {
-    use crate::company::stock_distribution::{
-        StockDistributionEventPlan, StockDistributionKind,
-    };
+    use crate::company::stock_distribution::{StockDistributionEventPlan, StockDistributionKind};
     use crate::orderbook::AccountId;
 
     let (mut session, issuer, stock) = session_with_approved_stock_distribution(false);
@@ -1809,7 +1844,10 @@ fn consecutive_stock_distributions_keep_par_constant_and_evolve_registered_capit
     session.end_civil_day().unwrap();
     let registry = &session.corporate_actions().registries[0];
     assert_eq!(registry.issued_shares(), total_shares + 5);
-    assert_eq!(session.account(AccountId(0)).unwrap().positions()[&stock].qty(), 11);
+    assert_eq!(
+        session.account(AccountId(0)).unwrap().positions()[&stock].qty(),
+        11
+    );
     assert_eq!(
         session
             .state
@@ -1868,9 +1906,7 @@ fn consecutive_stock_distributions_keep_par_constant_and_evolve_registered_capit
 
 #[test]
 fn second_stock_distribution_on_same_ex_rights_day_is_rejected_at_approval() {
-    use crate::company::stock_distribution::{
-        StockDistributionEventPlan, StockDistributionKind,
-    };
+    use crate::company::stock_distribution::{StockDistributionEventPlan, StockDistributionKind};
 
     let (mut session, _issuer, stock) = session_with_approved_stock_distribution(false);
     let date = |value| crate::CivilDate::from_iso(value).unwrap();
@@ -1997,5 +2033,683 @@ fn day_end_processing_fails_when_registered_book_missed_ex_rights_date() {
     assert!(
         failure.to_string().contains("错过入账日"),
         "已过入账日仍 Registered 的送转事件在日结处理中必须显式失败：{failure}"
+    );
+}
+
+/// 集成修复轮（送转×税账）共用 fixture：默认 `IndividualPublicMarket` 模式装配
+/// 完整名册，玩家持 `player_lots`（自动开个人税账），机构 NPC(1) 作潜在买方，
+/// 另含两个具名 External 与 Treasury。送转方案 10送3、获批 3 股全部归玩家
+/// （外部股东每户 0.3 股不足整股，获批数恰等于逐户 floor 合计，无碎股补整）。
+fn session_with_distribution_tax_interaction(
+    player_lots: Vec<crate::company::share_registry::ShareLot>,
+    player_qty: u64,
+    plan_dates: (&str, &str, &str, &str),
+    ticks_per_day: u64,
+    freeze_npc: bool,
+) -> (
+    GameSession,
+    crate::company::CompanyId,
+    crate::account::StockCode,
+) {
+    use crate::accounting::AccountingAmount;
+    use crate::company::share_registry::{HolderId, ShareHolding, ShareRegistry, ShareRestriction};
+    use crate::company::stock_distribution::{StockDistributionEventPlan, StockDistributionKind};
+
+    let mut setup = simple_setup();
+    setup.ticks_per_day = ticks_per_day;
+    setup.npcs.inst_count = 1;
+    // 默认大 A 个人差别化：装配名册即自动为玩家开个人税账。
+    setup.dividend_tax_mode =
+        crate::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket;
+    setup.start_date = crate::CivilDate::from_iso(plan_dates.0).unwrap();
+    if let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system {
+        config.prehistory_periods = 24;
+        config.settlement_cycle = crate::company::simple::period::SettlementCycle::Monthly;
+    }
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    let approved_on = date(plan_dates.0);
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    // 面值 0.01 元：注册资本 = 发行股数 × 1 分，保证整除。
+    let capital = AccountingAmount::from_cents(i128::from(total_shares));
+    session
+        .define_dividend_legal_facts(&issuer, capital, "explicit test legal fact".into())
+        .unwrap();
+    session
+        .state
+        .accounts
+        .get_mut(&crate::orderbook::AccountId(0))
+        .unwrap()
+        .fixture_insert_position(
+            stock.clone(),
+            crate::account::Position::from_restored_parts(
+                u32::try_from(player_qty).unwrap(),
+                0,
+                1_000,
+                0,
+            ),
+        );
+    let unrestricted = |id: &str, qty: u64| crate::company::share_registry::ShareLot {
+        id: id.into(),
+        qty,
+        acquired_on: approved_on,
+        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+            evidence: "fixture".into(),
+        },
+        restriction: ShareRestriction::Unrestricted,
+    };
+    let registry = ShareRegistry::new(
+        stock.clone(),
+        issuer.clone(),
+        total_shares,
+        approved_on,
+        vec![
+            ShareHolding {
+                holder: HolderId::Account(crate::orderbook::AccountId(0)),
+                lots: player_lots,
+            },
+            ShareHolding {
+                holder: HolderId::External("external-a".into()),
+                lots: vec![unrestricted("external-a-lot", 1)],
+            },
+            ShareHolding {
+                holder: HolderId::External("external-b".into()),
+                lots: vec![unrestricted("external-b-lot", 1)],
+            },
+            ShareHolding {
+                holder: HolderId::IssuerTreasury,
+                lots: vec![unrestricted("treasury-lot", total_shares - player_qty - 2)],
+            },
+        ],
+    )
+    .unwrap();
+    // 默认大 A 模式：登记成功即自动为玩家开个人税账。
+    session.configure_share_registry(registry).unwrap();
+    if freeze_npc {
+        let institution = crate::orderbook::AccountId(1);
+        session
+            .state
+            .npc_attention
+            .get_mut(&institution)
+            .unwrap()
+            .next_attention_candidate_tick = u64::MAX;
+        session.state.attention_scheduler = [(u64::MAX, institution)].into_iter().collect();
+    }
+    let plan = StockDistributionEventPlan {
+        event_id: "distribution-1".into(),
+        approval_reference: "shareholders-resolution-1".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: StockDistributionKind::BonusShares,
+        approved_on,
+        announced_on: date(plan_dates.1),
+        registered_on: date(plan_dates.2),
+        ex_rights_on: date(plan_dates.3),
+        shares_per_existing_share_micros: 300_000,
+        approved_total_new_shares: 3,
+    };
+    session.approve_stock_distribution(plan).unwrap();
+    (session, issuer, stock)
+}
+
+/// 逐自然日推进到送转入账日 R+1：交易日走满全部 tick，非交易日仅日终；
+/// 到达 R+1 当日走满 tick（首个 tick 安装除权锚）并完成当日日终入账。
+fn advance_through_distribution_credit(session: &mut GameSession, ex_rights_on: &str) {
+    let target = crate::CivilDate::from_iso(ex_rights_on).unwrap();
+    while session.civil_date() < target {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    assert_eq!(
+        session.civil_date().to_string(),
+        ex_rights_on,
+        "fixture 必须恰在除权/入账日到达"
+    );
+    for _ in 0..session.state.setup.ticks_per_day {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+}
+
+/// 当日交易辅助：假定当前处于交易日开盘前，先走首 tick 安装当日锚点，
+/// 再挂机构买单与玩家卖单，走完剩余 tick 并完成日终。
+fn trade_on_current_day(
+    session: &mut GameSession,
+    stock: &crate::account::StockCode,
+    price_cents: i64,
+    qty: u64,
+) -> Vec<crate::Event> {
+    session.step().unwrap();
+    let institution = crate::orderbook::AccountId(1);
+    let buyer_order_id = session.state.next_order_id;
+    session
+        .state
+        .markets
+        .get_mut(stock)
+        .unwrap()
+        .place(crate::Order {
+            id: crate::OrderId(buyer_order_id),
+            side: crate::Side::Buy,
+            price: Money::from_cents(price_cents),
+            qty: u32::try_from(qty).unwrap(),
+            original_qty: u32::try_from(qty).unwrap(),
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: institution,
+            seq: buyer_order_id,
+        })
+        .unwrap();
+    session.state.next_order_id += 1;
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    session
+        .enqueue_player_intent(
+            crate::orderbook::AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: stock.clone(),
+                side: crate::Side::Sell,
+                price: crate::LimitPrice::Fixed(Money::from_cents(price_cents)),
+                qty: u32::try_from(qty).unwrap(),
+            },
+        )
+        .unwrap();
+    let mut events = Vec::new();
+    for _ in 1..session.state.setup.ticks_per_day {
+        events.extend(session.step().unwrap());
+    }
+    session.end_civil_day().unwrap();
+    events
+}
+
+fn distribution_tax_book(
+    session: &GameSession,
+    stock: &crate::account::StockCode,
+) -> crate::company::cash_dividend_tax::CashDividendTaxBook {
+    session
+        .corporate_actions()
+        .dividend_tax_books
+        .iter()
+        .find(|book| book.account() == crate::orderbook::AccountId(0) && book.stock() == stock)
+        .cloned()
+        .expect("默认大 A 模式装配名册后玩家必须自动开个人税账")
+}
+
+/// 送转新股必须在 R+1 到账当日以独立税批次进入税账 FIFO：
+/// 取得日 = 到账日（财税〔2012〕85号第六条（八）+第一条第二款），
+/// 来源为 CorporateAction，不与原股份视为同一批次。
+#[test]
+fn stock_distribution_credit_day_becomes_tax_lot_acquisition_day() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        1,
+        true,
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let book = distribution_tax_book(&session, &stock);
+    let lots = book.lots();
+    assert_eq!(
+        lots.iter().map(|lot| lot.qty).sum::<u64>(),
+        13,
+        "送转新股必须进入税账：{lots:?}"
+    );
+    let credit_lot = lots
+        .iter()
+        .find(|lot| lot.id == "tax:stock-distribution:distribution-1:account-0")
+        .expect("送转税批次必须以回执 lot 身份落账");
+    assert_eq!(credit_lot.qty, 3);
+    assert_eq!(
+        credit_lot.acquired_on,
+        crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        "送转股份税法取得日必须是 R+1 到账日"
+    );
+    assert_eq!(
+        credit_lot.source,
+        crate::company::cash_dividend_tax::TaxAcquisitionSource::CorporateAction {
+            event: "distribution-1".into()
+        }
+    );
+    assert_eq!(
+        credit_lot.class,
+        crate::company::cash_dividend_tax::TaxShareClass::PublicMarket
+    );
+    assert!(
+        book.receipt_by_event("stock-distribution:distribution-1:0")
+            .is_some(),
+        "税账必须以非交易过户回执自身事件身份入账，而不是与同日公开市场回执撞车被跳过"
+    );
+}
+
+/// 组合链路：默认税账 + 送转入账 + 其后现金分红 + 含送转股全额卖出。
+/// 月末取得边界：旧批次 01-31 取得，2 月无 31 日钳制到 02-28；
+/// 手算期望税额 = 旧 10 股 × 10 分 × 10%（已过 1 个月）+ 送转 3 股 × 10 分 × 20%
+/// （02-14 取得，03-04 卖出未满 1 个月）= 10 + 6 = 16 分。
+#[test]
+fn dividend_after_stock_distribution_taxes_full_snapshot_shares_with_month_end_boundary() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-31").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-02-11", "2030-02-12", "2030-02-13", "2030-02-14"),
+        2,
+        true,
+    );
+    advance_through_distribution_credit(&mut session, "2030-02-14");
+    assert_eq!(
+        session
+            .account(crate::orderbook::AccountId(0))
+            .unwrap()
+            .positions()[&stock]
+            .qty(),
+        13
+    );
+    // 入账次日批准现金分红（此时名册 eligible = 玩家 13 + 外部 2 = 15 股）。
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    let capital = crate::accounting::AccountingAmount::from_cents(i128::from(total_shares + 3));
+    let plan = crate::company::cash_dividend::CashDividendPlan::new(
+        "dividend-after-distribution".into(),
+        issuer.clone(),
+        stock.clone(),
+        crate::calendar::CalendarExchange::Sse,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        date("2030-02-15"),
+        date("2030-02-18"),
+        date("2030-02-19"),
+        date("2030-02-20"),
+        date("2030-02-21"),
+        Money::from_cents(10),
+        Money::from_cents(150),
+        session.state.civil_clock.calendar(),
+    )
+    .unwrap();
+    session
+        .approve_cash_dividend(
+            crate::company::DividendDeclaration {
+                plan_id: plan.plan_id.clone(),
+                approved_on: date("2030-02-15"),
+                total_gross: crate::accounting::AccountingAmount::from_cents(150),
+                registered_capital: capital,
+            },
+            plan,
+        )
+        .unwrap();
+    // 推进到发放日 02-21：玩家税前到账 13 × 10 = 130 分。
+    while session.civil_date() <= date("2030-02-21") {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    assert!(
+        session
+            .corporate_actions()
+            .account_gross_receipts
+            .iter()
+            .any(|receipt| receipt.account == crate::orderbook::AccountId(0)),
+        "fixture 必须到达现金分红发放日"
+    );
+    // 推进到 03-04（周二）：旧批次已过 1 个月（01-31 → 02-28 钳制），
+    // 送转批次 02-14 取得未满 1 个月（03-14 前）。全额卖出 13 股不卡日终。
+    while session.civil_date() < date("2030-03-04") {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    // 卖价取 02-20 现金除息锚：送转锚 769 − 每股红利 10 = 759 分。
+    let events = trade_on_current_day(&mut session, &stock, 759, 13);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::Event::Trade { .. })),
+        "fixture 必须产生含送转股的 13 股真实成交：{events:?}"
+    );
+    let book = distribution_tax_book(&session, &stock);
+    assert_eq!(
+        book.lots().iter().map(|lot| lot.qty).sum::<u64>(),
+        0,
+        "全额卖出后税账 FIFO 必须清零"
+    );
+    let last_collection = book.collections().last().expect("卖出日终必须收缴税款");
+    assert_eq!(
+        last_collection.collected,
+        Money::from_cents(16),
+        "税额必须按手算口径对全部 13 股求值（旧 10 股 10% + 送转 3 股 20%）"
+    );
+}
+
+/// 限售继承：原批次全部限售时送转新股继承限售属性，税账按 StatutoryRestricted
+/// 口径在解禁前对现金分红立即按 10% 计税（财税〔2012〕85号第四条）。
+/// 手算期望：13 股 × 10 分 × 10% = 13 分（集成修复前税账缺送转股只收 10 分）。
+#[test]
+fn restricted_stock_distribution_lot_keeps_statutory_tax_class_and_pays_ten_percent() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Restricted {
+                reason: "nonfloat-lock".into(),
+                release_on: crate::CivilDate::from_iso("2030-09-01").unwrap(),
+            },
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        1,
+        true,
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let book = distribution_tax_book(&session, &stock);
+    let credit_lot = book
+        .lots()
+        .iter()
+        .find(|lot| lot.id == "tax:stock-distribution:distribution-1:account-0")
+        .expect("限售送转新股必须进入税账");
+    assert_eq!(
+        credit_lot.class,
+        crate::company::cash_dividend_tax::TaxShareClass::StatutoryRestricted {
+            release_on: crate::CivilDate::from_iso("2030-09-01").unwrap(),
+            basis: crate::company::cash_dividend_tax::StatutoryRestrictedBasis::FinanceTax2009167,
+            qualification_evidence: "nonfloat-lock".to_string(),
+        },
+        "送转税批次必须继承限售类与解禁日"
+    );
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    let date = |value| crate::CivilDate::from_iso(value).unwrap();
+    let capital = crate::accounting::AccountingAmount::from_cents(i128::from(total_shares + 3));
+    let plan = crate::company::cash_dividend::CashDividendPlan::new(
+        "dividend-restricted".into(),
+        issuer.clone(),
+        stock.clone(),
+        crate::calendar::CalendarExchange::Sse,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        date("2030-01-08"),
+        date("2030-01-09"),
+        date("2030-01-10"),
+        date("2030-01-11"),
+        date("2030-01-14"),
+        Money::from_cents(10),
+        Money::from_cents(150),
+        session.state.civil_clock.calendar(),
+    )
+    .unwrap();
+    session
+        .approve_cash_dividend(
+            crate::company::DividendDeclaration {
+                plan_id: plan.plan_id.clone(),
+                approved_on: date("2030-01-08"),
+                total_gross: crate::accounting::AccountingAmount::from_cents(150),
+                registered_capital: capital,
+            },
+            plan,
+        )
+        .unwrap();
+    while session.civil_date() <= date("2030-01-14") {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    let book = distribution_tax_book(&session, &stock);
+    let last_collection = book
+        .collections()
+        .last()
+        .expect("解禁前分红必须当日按 10% 立即收缴");
+    assert_eq!(
+        last_collection.collected,
+        Money::from_cents(13),
+        "限售送转股必须并入 10% 立即计税基数：13 股 × 10 分 × 10%"
+    );
+}
+
+/// 同日「先公开市场后送转」：R+1 当天玩家先全额卖出旧股，日终两条回执都
+/// 必须入账且顺序确定（市场回执在前、送转回执在后），税账 lots = 0 + 3 = 3。
+#[test]
+fn same_day_market_sell_and_distribution_credit_both_recorded_in_order() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        2,
+        true,
+    );
+    // 推进到 R+1（01-07 周一）开盘前：01-02..01-04 完成公告与登记，
+    // 周末两日仅日结。
+    let target = crate::CivilDate::from_iso("2030-01-07").unwrap();
+    while session.civil_date() < target {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    assert_eq!(session.civil_date(), target);
+    // R+1 当天：首 tick 安装除权锚（1000/1.3 → 769 分）后全额卖出 10 股旧股，
+    // 日终同日追加送转 +3 入账。
+    let events = trade_on_current_day(&mut session, &stock, 769, 10);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, crate::Event::Trade { .. })),
+        "fixture 必须在除权日产生 10 股真实卖出：{events:?}"
+    );
+    let book = distribution_tax_book(&session, &stock);
+    let days = book.tax_day_receipts();
+    let same_day: Vec<&crate::company::cash_dividend_tax::TaxDayReceipt> = days
+        .iter()
+        .filter(|receipt| receipt.day == target)
+        .collect();
+    assert_eq!(
+        same_day.len(),
+        2,
+        "同日公开市场与送转两条回执都必须入账：{same_day:?}"
+    );
+    assert_eq!(
+        same_day[0].event_id,
+        format!("session-market:{}:0:2030-01-07", stock.0)
+    );
+    assert_eq!(same_day[0].net_change, -10);
+    assert!(
+        !same_day[0].dispositions.is_empty(),
+        "市场回执必须携带 FIFO 处置事实"
+    );
+    assert_eq!(
+        same_day[1].event_id, "stock-distribution:distribution-1:0",
+        "送转回执必须以自身事件身份入账且排在公开市场之后"
+    );
+    assert_eq!(same_day[1].net_change, 3);
+    assert_eq!(
+        book.lots().iter().map(|lot| lot.qty).sum::<u64>(),
+        3,
+        "税账持股必须等于 10 − 10 + 3（同日先市场后送转）"
+    );
+}
+
+/// 送转税账事实必须经严格存档往返保持：恢复后深等、税批次仍在，
+/// 继续日终不重复入账。
+#[test]
+fn stock_distribution_tax_facts_survive_strict_restore() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        1,
+        true,
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let before = distribution_tax_book(&session, &stock);
+    let saved = session.save().unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    assert_eq!(
+        restored.business_state_hash().unwrap(),
+        session.business_state_hash().unwrap(),
+        "送转税账事实必须可严格恢复"
+    );
+    let after = distribution_tax_book(&restored, &stock);
+    assert_eq!(before, after);
+    assert!(after
+        .receipt_by_event("stock-distribution:distribution-1:0")
+        .is_some());
+    for _ in 0..restored.state.setup.ticks_per_day {
+        restored.step().unwrap();
+    }
+    restored.end_civil_day().unwrap();
+    let continued = distribution_tax_book(&restored, &stock);
+    // 次日新增的只能是常规公开市场日结；送转税事实必须仍然恰好一条，不重复入账。
+    assert_eq!(
+        continued
+            .tax_day_receipts()
+            .iter()
+            .filter(|receipt| receipt.event_id == "stock-distribution:distribution-1:0")
+            .count(),
+        1,
+        "恢复后继续日终不得重复入账送转税事实"
+    );
+    assert_eq!(
+        continued.tax_day_receipts().len(),
+        after.tax_day_receipts().len() + 1
+    );
+}
+
+/// 恢复勾稽防御：名册已有非交易过户回执而税账缺少对应日结事实时必须显式失败，
+/// 不允许静默缺股（铁律 2；集成修复前该状态校验通过即为漏洞）。
+#[test]
+fn validate_rejects_registry_receipt_missing_from_dividend_tax_book() {
+    use crate::company::cash_dividend_tax::{
+        CashDividendTaxBook, DividendTaxLot, DividendTaxProfile,
+    };
+
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        1,
+        true,
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    // 重建一个只回放公开市场日结、缺少送转回执事实的税账。
+    let mut rebuilt = CashDividendTaxBook::new(
+        crate::orderbook::AccountId(0),
+        stock.clone(),
+        DividendTaxProfile::IndividualPublicMarket,
+        crate::CivilDate::from_iso("2030-01-02").unwrap(),
+        vec![DividendTaxLot {
+            id: "tax:player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::cash_dividend_tax::TaxAcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            class: crate::company::cash_dividend_tax::TaxShareClass::PublicMarket,
+        }],
+    )
+    .unwrap();
+    for day in [
+        "2030-01-03",
+        "2030-01-04",
+        "2030-01-05",
+        "2030-01-06",
+        "2030-01-07",
+    ] {
+        rebuilt
+            .record_net_day(
+                format!("session-market:{}:0:{day}", stock.0),
+                crate::CivilDate::from_iso(day).unwrap(),
+                0,
+                None,
+            )
+            .unwrap();
+    }
+    session.state.corporate_actions.dividend_tax_books[0] = rebuilt;
+    let positions = account_position_projection(&session);
+    let rejection = session
+        .state
+        .corporate_actions
+        .validate(
+            &positions,
+            &session.state.company_system,
+            crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        )
+        .unwrap_err();
+    assert!(
+        rejection.to_string().contains("送转"),
+        "税账缺少名册回执日结事实必须显式指向送转×税账交互：{rejection}"
     );
 }

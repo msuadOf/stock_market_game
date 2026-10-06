@@ -651,9 +651,14 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
     }
   }
   let dayCursor = book.opened_on
+  let seenAnyDay = false
   for (const [index, day] of book.days.entries()) {
     const dayPath = `${path}.days[${index}]`
-    if (addCivilDays(dayCursor, 1) !== day.day) throw new SaveSchemaError(`${dayPath}.day`, "税账日结必须紧邻开账日或前一日结的下一自然日")
+    // 同日正向续记：R+1 送转到账在当日公开市场日结之后追加一条正向净增
+    // （财税〔2012〕85号第三条每日期末净增事实）；除此之外日结仍须逐日连续，
+    // 首条日结必须紧邻开账日的下一自然日（seenAnyDay=false 时续记不可用）。
+    const sameDayContinuation = seenAnyDay && day.day === dayCursor && BigInt(day.net_change) > 0n
+    if (!sameDayContinuation && addCivilDays(dayCursor, 1) !== day.day) throw new SaveSchemaError(`${dayPath}.day`, "税账日结必须紧邻开账日或前一日结的下一自然日（同日仅允许正向公司行为续记）")
     if ((BigInt(day.net_change) > 0n) !== (day.acquisition !== null)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账日净变动与新增批次不一致")
     if (day.acquisition !== null && (day.acquisition.acquired_on !== day.day || day.acquisition.qty !== day.net_change)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账新增批次日期或数量不一致")
     let disposed = 0n
@@ -661,7 +666,12 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
       if (disposition.disposed_on !== day.day) throw new SaveSchemaError(`${dayPath}.dispositions`, "税账处置日期与日结日期不一致")
       disposed += BigInt(disposition.lot.qty)
     }
-    if (disposed !== -BigInt(day.net_change)) throw new SaveSchemaError(`${dayPath}.dispositions`, "税账处置数量与日净减持不一致")
+    // 处置数量只对净减持日等于减持量；净增日（市场买入或送转到账续记）处置必须为零，
+    // 与引擎 validate 的 `expected = net < 0 ? -net : 0` 同构（附带修复：原实现对
+    // 正向净增日恒要求负处置量，任何含买入日结的真实存档都会被误拒）。
+    const expectedDisposed = BigInt(day.net_change) < 0n ? -BigInt(day.net_change) : 0n
+    if (disposed !== expectedDisposed) throw new SaveSchemaError(`${dayPath}.dispositions`, "税账处置数量与日净减持不一致")
+    seenAnyDay = true
     dayCursor = day.day
   }
   const replayed = book.opening_lots.map(lot => ({ ...lot }))

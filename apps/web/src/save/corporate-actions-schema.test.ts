@@ -421,3 +421,25 @@ test("送转账簿严格解析并交叉核对入账非交易过户回执", () =>
   missingReceipt.registries[0]!.holdings[0]!.lots = missingReceipt.registries[0]!.holdings[0]!.lots.filter(lot => lot.id !== "stock-distribution:distribution-1:account-0")
   assert.throws(() => parseSessionCorporateActions(missingReceipt, { ...context, issuers: { "C-600101": { listed_stock: "600101", issued_shares: "10" } }, snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: { "0": { positions: { "600101": { qty: 6 } } } } } }), /送转入账股数与非交易过户增发合计不一致/)
 })
+
+test("税账日结允许同日正向公司行为续记且拒绝同日非正向续记", () => {
+  const taxLot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, class: "PublicMarket" }
+  const creditLot = { id: "tax:stock-distribution:d1:account-0", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, class: "PublicMarket" }
+  const marketDay = { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "0", acquisition: null, dispositions: [] }
+  const creditDay = { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: creditLot, dispositions: [] }
+  const book = { operation_seq: 2, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-03", opening_lots: [taxLot], settled_on: "2030-01-04", lots: [taxLot, creditLot], days: [marketDay, creditDay], dividends: [], collections: [] }
+  const registry = { ...validRegistry("13"), settled_on: "2030-01-04", holdings: [{ holder: { Account: "0" }, lots: [{ id: "account-lot", qty: "13", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }] }] }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [book], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [] }
+  const context = { ...registryContext("13"), currentDate: "2030-01-05", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 13 } } } } } }
+  assert.deepEqual(parseSessionCorporateActions(actions, context).dividend_tax_books, [book])
+  // 同日零净变动不得作为续记：送转到账必须是正向净增。
+  const zeroContinuation = { ...book, days: [marketDay, { ...creditDay, net_change: "0", acquisition: null }] }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [zeroContinuation] }, context), /税账日结必须紧邻/)
+  // 同日负向续记（同日第二笔处置）必须拒绝。
+  const negativeContinuation = { ...book, days: [marketDay, { ...creditDay, net_change: "-1", acquisition: null }] }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [negativeContinuation] }, context), /税账日结必须紧邻/)
+  // 首条日结不得等于开账日。
+  const firstDayEqualsOpening = { ...book, opened_on: "2030-01-04", settled_on: "2030-01-04", days: [{ ...creditDay, operation_seq: 1 }], opening_lots: [taxLot, creditLot], operation_seq: 1 }
+  const firstDayRegistry = { ...registry, settled_on: "2030-01-04" }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [firstDayRegistry], dividend_tax_books: [firstDayEqualsOpening] }, context), /税账日结必须紧邻/)
+})

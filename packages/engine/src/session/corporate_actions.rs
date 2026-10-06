@@ -149,9 +149,7 @@ fn holder_key(holder: &HolderId) -> String {
 }
 
 /// 汇总非交易过户回执的股数；负数或超 `u64` 的数量显式报错，不静默取 0。
-fn sum_nontrading_changes(
-    changes: &[DayNetChange],
-) -> Result<u64, SessionCorporateActionsError> {
+fn sum_nontrading_changes(changes: &[DayNetChange]) -> Result<u64, SessionCorporateActionsError> {
     changes.iter().try_fold(0_u64, |total, change| {
         let qty = u64::try_from(change.change).map_err(|_| {
             SessionCorporateActionsError::Invalid("非交易过户回执出现负数或溢出股数".into())
@@ -160,6 +158,13 @@ fn sum_nontrading_changes(
             SessionCorporateActionsError::Invalid("非交易过户回执股数合计溢出".into())
         })
     })
+}
+
+/// 送转非交易过户回执在税账的日结事件 id：以回执自身事件身份加账户派生，
+/// 与公开市场日结（按证券+账户+自然日）分列，避免同日两条回执在税账撞车
+/// 被幂等跳过（集成修复轮 major 的根因）。
+fn nontrading_tax_day_event_id(receipt_event_id: &str, account: AccountId) -> String {
+    format!("{receipt_event_id}:{}", account.0)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -426,7 +431,9 @@ impl SessionCorporateActions {
                 if day == plan.announced_on {
                     self.stock_distributions[index]
                         .announce(day)
-                        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
                 }
             }
             // 已过入账日仍停留在 Registered 的账簿属于错过入账：显式失败而不是
@@ -456,9 +463,7 @@ impl SessionCorporateActions {
                         registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
                     })
                     .ok_or_else(|| {
-                        SessionCorporateActionsError::Invalid(
-                            "送转登记日缺少匹配股东名册".into(),
-                        )
+                        SessionCorporateActionsError::Invalid("送转登记日缺少匹配股东名册".into())
                     })?;
                 let snapshot = self.registries[registry_index]
                     .register(plan.event_id.clone(), day)
@@ -471,9 +476,7 @@ impl SessionCorporateActions {
                     .receipt()
                     .map(|receipt| receipt.approved_total_new_shares)
                     .ok_or_else(|| {
-                        SessionCorporateActionsError::Invalid(
-                            "送转登记后缺少分配回执".into(),
-                        )
+                        SessionCorporateActionsError::Invalid("送转登记后缺少分配回执".into())
                     })?;
                 let finance_fact = company_system
                     .stock_distribution_facts(&plan.issuer)
@@ -481,9 +484,7 @@ impl SessionCorporateActions {
                     .into_iter()
                     .find(|fact| fact.event_id == plan.event_id)
                     .ok_or_else(|| {
-                        SessionCorporateActionsError::Invalid(
-                            "送转登记缺少Simple声明事实".into(),
-                        )
+                        SessionCorporateActionsError::Invalid("送转登记缺少Simple声明事实".into())
                     })?;
                 if finance_fact.new_shares != approved_shares {
                     return Err(SessionCorporateActionsError::Invalid(
@@ -564,6 +565,51 @@ impl SessionCorporateActions {
                 account_state
                     .credit_position_shares(plan.stock.clone(), lot.qty)
                     .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            }
+            // 送转新股当日进入税账（R+1 到账日即税法取得日：财税〔2012〕85号
+            // 第六条（八）将股份股利与公积金转增股本列为个人取得的股票、
+            // 第一条第二款持股期限自取得之日起算、第三条按每日日终净增与
+            // 取得日先后先进先出——送转批次不与原股份视为同一批次）。
+            // 以非交易过户回执自身事件身份作为同日正向续记落账，与当日
+            // 公开市场日结（先落账）分列；限售继承经 convert_tax_class 映射为
+            // StatutoryRestricted（85号第四条解禁前 10%、档期自解禁日起算）。
+            for lot in &credit_lots {
+                let HolderId::Account(account) = &lot.holder else {
+                    continue;
+                };
+                let account = *account;
+                let Some(book) = self
+                    .dividend_tax_books
+                    .iter_mut()
+                    .find(|book| book.account() == account && book.stock() == &plan.stock)
+                else {
+                    // 未配置个人税账的持有人（机构/游资/TreatmentNotConfigured）
+                    // 不产生个人税事实，显式跳过而非虚构税账。
+                    continue;
+                };
+                let receipt_event_id = format!("stock-distribution:{}", plan.event_id);
+                let acquisition = crate::company::cash_dividend_tax::DividendTaxLot {
+                    id: format!(
+                        "tax:stock-distribution:{}:{}",
+                        plan.event_id,
+                        holder_key(&lot.holder)
+                    ),
+                    qty: lot.qty,
+                    acquired_on: day,
+                    source: crate::company::cash_dividend_tax::convert_tax_source(
+                        &AcquisitionSource::CorporateAction {
+                            event: plan.event_id.clone(),
+                        },
+                    ),
+                    class: crate::company::cash_dividend_tax::convert_tax_class(&lot.restriction),
+                };
+                book.record_net_day(
+                    nontrading_tax_day_event_id(&receipt_event_id, account),
+                    day,
+                    i128::from(lot.qty),
+                    Some(acquisition),
+                )
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             }
             company_system
                 .record_stock_distribution_credit(
@@ -727,10 +773,19 @@ impl SessionCorporateActions {
             .collect();
         for (account, stock) in tax_book_keys {
             for (receipt_stock, receipt) in receipts.iter().filter(|(known, _)| known == &stock) {
-                let event_id = format!(
-                    "session-market:{}:{}:{}",
-                    receipt_stock.0, account.0, receipt.request.day
-                );
+                // 税账事件 id 按 scope 分列：公开市场日结沿用「证券+账户+自然日」，
+                // 非交易过户（送转到账）以回执自身事件身份派生。穷尽 match 使
+                // 未来新增 MovementScope 变体在此编译期强制显式决策，不允许
+                // 未知 scope 静默跳过（铁律 2）。
+                let event_id = match &receipt.request.scope {
+                    MovementScope::PublicMarket => format!(
+                        "session-market:{}:{}:{}",
+                        receipt_stock.0, account.0, receipt.request.day
+                    ),
+                    MovementScope::NonTradingTransfer { .. } => {
+                        nontrading_tax_day_event_id(&receipt.request.event_id, account)
+                    }
+                };
                 let existing_day = self
                     .dividend_tax_books
                     .iter()
@@ -807,6 +862,51 @@ impl SessionCorporateActions {
                 return Err(SessionCorporateActionsError::Invalid(
                     "股息税账缺少对应的股东登记持有人".into(),
                 ));
+            }
+        }
+        // 送转×税账勾稽：每个已配置税账的名册回执（公开市场与非交易过户，
+        // 穷尽 match，未来 scope 变体编译期强制显式决策）都必须已按对应
+        // 事件 id 入账。缺失说明同步被静默跳过或存档被篡改，恢复时显式
+        // 失败而不是让税基悄悄缺股（集成修复轮 major 的防御面）。
+        for tax_book in &self.dividend_tax_books {
+            let account = tax_book.account();
+            let Some(registry) = self
+                .registries
+                .iter()
+                .find(|registry| registry.stock() == tax_book.stock())
+            else {
+                // 名册存在性已由上方校验保证，此处不可达；防御式显式失败。
+                return Err(SessionCorporateActionsError::Invalid(
+                    "股息税账缺少对应的股东名册".into(),
+                ));
+            };
+            for receipt in registry.receipts() {
+                if !receipt
+                    .request
+                    .changes
+                    .iter()
+                    .any(|change| change.holder == HolderId::Account(account))
+                {
+                    continue;
+                }
+                let expected_event_id = match &receipt.request.scope {
+                    MovementScope::PublicMarket => format!(
+                        "session-market:{}:{}:{}",
+                        registry.stock().0,
+                        account.0,
+                        receipt.request.day
+                    ),
+                    MovementScope::NonTradingTransfer { .. } => {
+                        nontrading_tax_day_event_id(&receipt.request.event_id, account)
+                    }
+                };
+                if tax_book.receipt_by_event(&expected_event_id).is_none() {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "账户 {account:?} 的股息税账缺少名册回执 {} 的日结事实：\
+                         送转×税账交互未入账，拒绝静默缺股",
+                        receipt.request.event_id
+                    )));
+                }
             }
         }
         let mut seen = BTreeSet::new();
@@ -889,7 +989,8 @@ impl SessionCorporateActions {
                 ));
             }
             // 恢复校验对称防护：已过入账日的 Registered 账簿属于错过入账，显式失败。
-            if book.status() == &crate::company::stock_distribution::StockDistributionStatus::Registered
+            if book.status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Registered
                 && current_date > book.plan().ex_rights_on
             {
                 return Err(SessionCorporateActionsError::Invalid(format!(

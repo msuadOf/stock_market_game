@@ -69,3 +69,38 @@
 - ts-rs：`export_bindings` 147 项通过，生成物含 B1 `AppliedExReferenceGroup`/`StockDistributionExRightsFormula` 与 B2 六个新税类型。
 
 集成验证（各组 10000ms 外部 deadline；编译/typegen 用 300000ms 长验收）：finance 送转 4/4、`company::simple` 69/69、Session Simple 30/30（两批用例合集）、送转基础 13/13、Registry 24/24、除权公式 17/17、`session::corporate_actions` 12/12（B1 时 7 项 + B2 新增 5 个税类型导出）、`dividend_tax_mode_tests` 8/8、`cash_dividend_tax` 16/16、Web corporate-actions schema 19/19、system schema 11/11、simple-finance 7/7、save-contract/save-commands/fixture 消费者 28/28、`cargo check --workspace --all-targets` 通过。基线对照：合并树与合并前 main 在独立 worktree 各跑全量 `cargo test -p engine --lib -- --test-threads=32`，失败集合逐项一致（280 条全同、各自 257 failed；合并树多 23 个通过即 B1 新增用例）；`session::persistence` 13、`session::failure` 3 与文档基线一致；Web 全批在两树均有的失败集一致，`public-financials-render` 的利润表用例经单树隔离复跑确认为 main 既有失败（非合并引入）。日志在 `.tmp/company-system/integration/`。B1 遗留的 15 个 tsc 类型错误（本测试文件 exchange 联合收窄等）由后续独立修复提交处理。
+
+## 集成修复轮：送转×税账交互（2026-10-06，集成修复 subagent）
+
+### 缺陷（集成复核 major，静态确认 + 红测试复现）
+
+`session/corporate_actions.rs` 的 `sync_dividend_tax_days` 对所有名册回执不分 scope 一律派生税账事件 id `session-market:{stock}:{account}:{day}`。除权日 R+1 当日：`close_registries_through` 先落 PublicMarket 回执并记入税账 → `process_stock_distributions_on_day_end` 追加同日 NonTradingTransfer 回执 → 下次 sync 派生 id 与已记录公开市场日撞车，被 `existing_day` 幂等跳过——**送转新股永远不进入税账 FIFO lots**。三个后果（均有红测试或红测试中的失败形态对应）：(a) 默认 `IndividualPublicMarket` 自动开账 + 送转入账后，现金分红 per_share 按名册快照（含送转股）计算，税额只对不含送转股的 lots 求值，且税账 `register_dividend` 的「received ≤ per_share×lots」校验在付款日直接失败（红测试中表现为 `received cash exceeds registered gross entitlement` 卡日终）；(b) 含送转股全额净卖出时 `apply_net_change` 报 insufficient shares，日终永久卡死；(c) 税账 lots 清零而名册仍持送转股时 `register_dividend` 报 needs held shares。
+
+### 官方口径研究结论（结论 A：法规明文组合）
+
+核心问题：个人差别化股息税下送股/转增股份的持股期限起算日。结论：**自送转股份到账日（R+1）起算，不与原股份视为同一批次；FIFO 按 R+1 当日净增排序在所有更早取得日之后**。依据链（全部为法规/结算指南明文，原文已在本仓 `.tmp/` 取证）：
+
+1. 财税〔2012〕85号**第六条第（八）项**：本通知所称「个人从公开发行和转让市场取得的上市公司股票」包括「取得发行的股票、配股、**股份股利及公积金转增股本**」——送股与转增并列列为「取得的股票」，两口径一致无区分（两税种差异只在送转本身是否计税：送股按面值计税、溢价转增不征税，该差异本项目已显式登记未实现）。
+2. 85号**第一条第二款**：持股期限指个人取得上市公司股票之日至转让交割该股票之日前一日的持有时间——锚定「取得之日」。
+3. 85号**第三条**：股份按每日日终净增（减）数、取得日先后先进先出——送转到账是 R+1 当日净增。
+4. 沪业字〔2024〕6号 / 深业〔2025〕68号 2.5节：送转新增股份上市日为 R+1——「取得之日」即到账日。
+5. 旁证：沪指南 2.5.3 注意事项 7/8/9 对「连续持股」作列举式例外规定（约定购回不连续、资管/两融划转连续、确权登记重新起算），送转不在连续持股例外清单内，反证默认按新取得日起算。
+
+诚实例外说明：未检索到单句直接表述（如中国结算《上市公司股息红利差别化个人所得税政策常见问题解答》原文），但结论由上述条文组合直接推出、无解释空隙，且未发现任何相反权威表述；已按 A 级登记并在 `docs/trading-rules.md` 写明推理链与「FAQ 单句原文未取得」的事实。
+
+### 修复设计（TDD 红→绿）
+
+- `company/cash_dividend_tax.rs`：`record_net_day` 允许**同日正向续记**（`day == settled_on && net_change > 0`，仅限已有日结记录之后；首条日结仍须紧邻开账日下一自然日），`validate` 同构放宽。处置仍每日只按公开市场净额一次（同日负/零续记显式拒绝）。`TaxDayReceipt`/`TaxDisposition` 字段提升 `pub(crate)` 并新增 `tax_day_receipts()` 只读视图。
+- `session/corporate_actions.rs`：`sync_dividend_tax_days` 以穷尽 `match MovementScope` 派生税账事件 id（PublicMarket 沿用 `session-market:{stock}:{account}:{day}`；NonTradingTransfer 用回执自身事件身份 `{receipt.event_id}:{account}`）——未来新增 scope 变体编译期强制显式决策，铁律 2 的最强形态。`process_stock_distributions_on_day_end` 在非交易过户落账与投资者加股之后**当日立即**为每个持税账的 Account 持有人落同日续记（取得日 = R+1、来源 `CorporateAction`、限售继承经 `convert_tax_class` 映射 `StatutoryRestricted`），保证日终 validate 时覆盖完整、不依赖次日 sync 补账。`SessionCorporateActions::validate` 新增**税账↔名册回执覆盖勾稽**：每个已配置税账的名册回执（含非交易过户）都必须有对应事件 id 的日结事实，缺失显式报「送转×税账交互未入账」。
+- Web `schema/corporate-actions.ts`：`validateTaxBookReplay` 同步允许同日正向续记；**附带修复**（本批暴露的潜伏缺陷）：原实现对正向净增日恒要求 `disposed === -net_change`（负数），任何含买入日结或送转续记的真实存档都会被误拒——改为与引擎 `expected = net < 0 ? -net : 0` 同构。存档 fixtures 的税账均为空数组、不含送转事件，无需重生成。
+- 顺序保证：同日「先公开市场后送转」两条回执按名册回执插入顺序分列两条税账日结（市场在前）；同日两条的取得日相同，FIFO 之间顺序不影响档期，仅保证确定性。
+
+### 已登记的实现口径偏差
+
+85号第三条为逐日净额口径；本引擎对同日公开市场与送转分列两条事实、不做事前净额合并。当同日既有卖出又有送转到账时（例如持 100 股旧股、R+1 卖 100 股、当日到账 30 股）：净额口径为 −70（FIFO 处置 70、留存 30 股旧取得日），本实现处置 100、留存 30 股 R+1 新取得日。差异方向偏向多计处置、新股按新取得日记档；已在 `docs/trading-rules.md` 登记为待后续批次校正的偏差。事前净额合并需要重排日终管线（送转先于分红登记）或改单日多批次事实模型，超出本修复轮最小范围。
+
+### 验证证据（红→绿，各组 10000ms 外部 deadline、组内多线程；日志 `.tmp/company-system/integration/interaction-fix-*.log`）
+
+- 红：Session Simple 新增 6 用例全红（缺税批次/缺回执/同日单条/恢复缺事实/validate 静默通过/付款日 received-exceeds 卡死）；`cash_dividend_tax` 同日续记单测红；Web 同日续记解析红（原报「税账日结必须紧邻」）。
+- 绿：Session Simple 36/36（30 存量 + 6 新增）、`company::cash_dividend_tax` 17/17、`session::corporate_actions` 12/12、`company::simple` 69/69、`dividend_tax_mode_tests` 8/8、送转基础 13/13、Registry 24/24、Web corporate-actions schema 20/20、Web simple-finance 7/7、`cargo check --workspace --all-targets` 通过。基线对照：`session::persistence` 13 失败、`session::failure` 3 失败与文档化 main 基线逐项一致（均为 runtime envelope/费用/NPC 域，与税账无关）。
+- 新增组合用例覆盖：默认 `IndividualPublicMarket` 自动开账 + 送转入账（取得日 = R+1、月末钳制边界 01-31→02-28、限售继承 10% 立即计税、同日先市场后送转顺序）+ 其后现金分红税额手算精确断言（16 分 / 13 分）+ 含送转股全额卖出不卡日终 + 严格恢复深等与继续日终不重复入账 + 税账↔名册覆盖勾稽负例。

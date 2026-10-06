@@ -210,7 +210,7 @@ pub enum DividendTaxError {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TaxDisposition {
+pub(crate) struct TaxDisposition {
     lot: DividendTaxLot,
     disposed_on: CivilDate,
 }
@@ -219,14 +219,14 @@ struct TaxDisposition {
 #[serde(deny_unknown_fields)]
 pub struct TaxDayReceipt {
     #[serde(with = "crate::orderbook::js_safe_u64")]
-    operation_seq: u64,
-    event_id: String,
-    day: CivilDate,
+    pub(crate) operation_seq: u64,
+    pub(crate) event_id: String,
+    pub(crate) day: CivilDate,
     #[serde(with = "crate::company::share_registry::canonical_i128_decimal")]
-    net_change: i128,
+    pub(crate) net_change: i128,
     #[serde(deserialize_with = "required_lot")]
-    acquisition: Option<DividendTaxLot>,
-    dispositions: Vec<TaxDisposition>,
+    pub(crate) acquisition: Option<DividendTaxLot>,
+    pub(crate) dispositions: Vec<TaxDisposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -405,9 +405,17 @@ impl CashDividendTaxBook {
             }
             return Err(invalid("tax day identity reused with different facts"));
         }
-        if event_id.trim().is_empty() || day.days_since(self.settled_on) != 1 {
+        if event_id.trim().is_empty() {
+            return Err(invalid("tax day identity must be a non-empty string"));
+        }
+        // 同日续记：R+1 到账的送转新股在当日公开市场日结之后追加一条正向
+        // 净增（财税〔2012〕85号第三条的每日期末净增事实），事件身份独立于
+        // 公开市场日结；处置仍每日只按公开市场净额发生一次，故续记必须为正。
+        let day_gap = day.days_since(self.settled_on);
+        let same_day_continuation = !self.days.is_empty() && day_gap == 0 && net_change > 0;
+        if !same_day_continuation && day_gap != 1 {
             return Err(invalid(
-                "tax day must follow previous completed natural day",
+                "tax day must follow previous completed natural day or continue it with a positive corporate-action credit",
             ));
         }
         if (net_change > 0) != acquisition.is_some() {
@@ -571,6 +579,10 @@ impl CashDividendTaxBook {
         self.days
             .iter()
             .find(|receipt| receipt.event_id == event_id)
+    }
+    /// 日结回执只读视图（含同日续记的完整顺序），供 Session 层勾稽与测试断言使用。
+    pub(crate) fn tax_day_receipts(&self) -> &[TaxDayReceipt] {
+        &self.days
     }
     pub(crate) fn dividend_event_by_id(&self, event_id: &str) -> Option<&RegisteredTaxDividend> {
         self.dividends
@@ -761,16 +773,22 @@ impl CashDividendTaxBook {
         let mut day_ids = BTreeSet::new();
         let mut acquired_ids = BTreeSet::new();
         let mut previous_day = self.opened_on;
+        let mut seen_any_day = false;
         for day in &self.days {
+            // 首条日结必须紧邻开账日的下一自然日；其后允许「同日正向续记」
+            // （R+1 送转到账在公开市场日结之后追加），除此之外仍须逐日连续。
+            let day_gap = day.day.days_since(previous_day);
+            let same_day_continuation = seen_any_day && day_gap == 0 && day.net_change > 0;
             if day.event_id.trim().is_empty()
                 || !day_ids.insert(&day.event_id)
-                || day.day.days_since(previous_day) != 1
+                || (!same_day_continuation && day_gap != 1)
                 || day.day > self.settled_on
             {
                 return Err(invalid(
                     "tax day receipts need unique identities and consecutive dates",
                 ));
             }
+            seen_any_day = true;
             previous_day = day.day;
             if (day.net_change > 0) != day.acquisition.is_some() {
                 return Err(invalid(
