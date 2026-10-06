@@ -222,3 +222,7 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 2026-10-06 worker=4 复测（放宽核规则：选占用<10% 核段、锚定漂移≤5%、6 对交错）：0-15 段占用 0.9% 沿用；块状 e6r3 因脚本排序错误作废（登记警示）；正式 e6r4 十四跑 mean(d)=+10.58%、6/6 d>1、统计显著性过、锚定漂 3.08%，**唯区间分离差 0.151（h1 240.384 vs c3 240.233，约 0.06%）未过——按预登记规则不落地，生产保持 Rayon16**。方向证据三会话同向（+7.6% 作废轮 / 8/8 高于 H 均值 / 6/6 d>1），真实效应估 +5~10%，C 臂 2.36 核 vs H 臂 5.87 核；H 臂对环境负载更敏感是规则五边缘失败的结构性原因。落地决策交主 agent/用户（改动一行可逆、保留 env 覆盖）或安静窗口用 .tmp/e6-rerun/run-seq.py 复跑（4 分钟）。详见 worker-count-findings.md 复测段。
 
 2026-10-06 worker=4 已落地：`server::init_rayon_workers` 以 build_global 显式初始化（未设/非法 RAYON_NUM_THREADS→4，合法值保留），main 早期调用；TDD+34/34 短测+verify-build 全过，提交 563a390e（含 probe lock 刷新）。依据与口径见 worker-count-findings.md 落地段；正式基准今后默认 worker=4，历史 16w 数字对比需注明。独立 subagent 复核待主线补做。
+
+## 追加：E7-X2 旧状态延后析构已撤回（2026-10-06）
+
+commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367µs/tick）析构：TDD 红绿齐全、65 个定向测试绿，但锚定交错配对（threads=4、0-15 核占用 8%）mean +2.71% 且 pair3 为负、区间重叠，判定不过撤回。机制结论："移出 tick 线程"≠"移出关键路径"——worker=4 小池内 spawn 的析构与下一 tick 并行突发共用车道（与 P0-dirtykey"省的活在并行车道不挡路"互为镜像）。重试方向：专用析构线程（不进 rayon 池），且须与 X1 投机 prep 的池容量竞争一并设计。probe 已重建绑定 HEAD（34084792…）。详见 deferred-drop-findings.md。顺带登记 HEAD 既有 company_scenarios 集成测试编译失败（WithinKindDistribution 未定义，与本实验无关）。
