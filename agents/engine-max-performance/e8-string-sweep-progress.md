@@ -247,3 +247,39 @@ H = 阶段一末（254c50b0，StockId 落地后）冻结 binary；C = 阶段二�
 ## CompanyId 数值化：待独立 session
 
 209 处非测试引用、15+ 文件、BTreeMap 迭代序/存档 schema/跨域全牵动——规模与 StockId 相当，需专注 session 执行。设计 spec 已写在上一节。当前已完成至光标数值化（95e70407）。
+
+## CompanyId 数值化执行档（2026-10-07 收尾棒）
+
+**核心已完成（lib 编译 0 错误）**：spec.rs（CompanyId(u32)+CompanyCatalog/CompanyMeta/CompanyCatalogError+Display；CompanySpec 去 id 加 code，group_parent 变代码字符串）、mod.rs（Company 持 id；Registry 持 catalog，new() 按代码序分配）、error.rs（配置级变体 company_code:String；运行时 UnknownMaturityReference/InterestAccrualWithoutDebtModel 保留数值 CompanyId）、operations（Config+catalog 字段；RNG/offset 一律按 spec.code 字符串派生保行为；advance_flow_day 加 id 参数）、consolidation MemberId(u32)、claim_identity 编解码数字段、query/info DTO 数值化（PublicReportQuery/Summary/Scope company_id u32）、customer_finance/company_groups/sales 经 ops.catalog() 翻译内部对手方。
+
+**改写配方（测试侧）**：
+- T1 `CompanyId("C-x".to_string())` → `CompanyId(0)`（单公司 fixture；多公司按代码序 0,1,...）
+- T2 有 session/registry：`registry.catalog().id("C-x").expect(...)` 或 `ops.catalog().id(...)`
+- T3 `spec.id` → `spec.code`（断言/消息）或改用 map key/company.id()
+- T4 `CompanySpec { id: CompanyId(...), ... }` → `code: "C-x".to_string()`（group_parent 同步字符串）
+- T5 CompanyOperationsConfig fixture 补 `catalog: CompanyCatalog::from_metas(vec![...]).unwrap()`（或 Default）
+- T6 claim_identity 测试 From<&str> 站点 → 数值构造
+- 服务器/wasm/web 侧 CompanyId 引用随 DTO 数值化跟进
+
+**剩余**：83 处 --all-targets 错误（tests/session_company_assembly 26、consolidated_gold 14、fixture 11、day.rs 内联测试 11、company_query_contract 8、company_groups/tests 8、claim_identity 7、customer_finance 7、closing/mod 7、fundamental/update 5、notices 5、consolidated_window 5、publications/fixture 4、company_operations/fixtures 4、verification_evidence/tests 4 + 零散）；随后 server/wasm/desktop/web 跟进、全量测试对照、基准、ADR/inventory 终稿。
+
+## CompanyId 收尾棒中断存档（2026-10-07，fork 轮数告急）
+
+**状态**：`cargo check -p engine --lib` **0 错误**（生产侧设计完成）；`--all-targets` 剩 ~101 处测试错误（最新清单 `.tmp/e8-final/errors-tests5.txt`，历史清单 errors-tests*.txt 同目录）。工作区未提交（测试未编译通过不可提交）。前棒"核心已完成"章节的设计仍有效。
+
+**本轮新增**：
+- CompanyCatalog 补 `from_codes(&[&str])` 便捷构造（测试夹具用）+ CompanyId Display impl（thiserror as_display 需要）。
+- 已修：claim_identity 测试全绿路径（unicode/碰撞/JSON 样本数值化）、company_groups/tests（spec code 字符串+from_codes 目录）、industry_reports/fixture（GROUP_ROOT=0/GROUP_SUB=1 常量）、publications/fixture（spec id→code、目录 ["C-BANK","C-IND-A"]）、closing/mod member 闭包数值化、operations/error 运行时两变体保留数值 CompanyId、advance_flow_day 加 id 参数、injections rng 重派生按 catalog.code。
+- 批量脚本已跑：`CompanyId("X".to_string()/.into()/String::from)` → 按文件内代码排序编号 `CompanyId(N)`（21 文件）。
+
+**风险登记（重要）**：
+1. 逐文件编号只对"自建夹具"安全；**对照真实装配 session 的断言必须改用 `session.state.company_registry.catalog().id("C-x")` 或 operations catalog 查询**，不能凭空 CompanyId(N)（默认五股目录 C-000812..C-600888 排序后 C-600101 是 1 不是 0）。跑测试时逐个核对。
+2. 批量替换曾销毁 spec 字面量原字符串，group_parent/spec.code 修复依赖 git diff 逆映射——已完成 day.rs，其余文件若再遇 `code:`/group_parent 字符串缺失，从 `git diff` 删除行找原文。
+3. IndustryId(pub String) 与 CounterpartyId(pub String) 仍是字符串 id（CompanyId 之外的两个标识，21+ 处）——本棒未动，清单 A 表补登。
+
+**剩余工作**（下一棒按序）：
+1. errors-tests5.txt 逐文件清零（大头 consolidated_gold 13、payment_risks/maturities/consolidated_window/closing 各 5、scale_restore_limits/company_operations fixtures 各 4）；配方 T1-T6 + 上述风险 1。
+2. `cargo check --workspace --all-targets`（server/wasm/desktop/web 随 DTO 数值化跟进，PublicReportQuery/Summary/Scope 的 company_id 已改 u32）。
+3. 全量测试与基线逐一对照（基线失败名单不变）；跑通后核对风险 1。
+4. 锚定交错配对基准（预期中性）。
+5. ADR 0041 补 CompanyId/MemberId/光标章节；inventory A 表 CompanyId 行完成、补登 IndustryId/CounterpartyId 行；独立复核；分笔提交（引擎核心一笔、宿主/web 跟进一笔）。
