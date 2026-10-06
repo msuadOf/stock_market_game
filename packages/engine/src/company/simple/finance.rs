@@ -13,6 +13,9 @@ use crate::company::dividend::{
     DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
 };
 use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
+use crate::company::stock_distribution::{
+    StockDistributionDeclaration, StockDistributionFinanceFact,
+};
 use crate::company::{CompanyId, CompanyKind};
 #[path = "finance_dividend.rs"]
 mod dividend;
@@ -24,6 +27,8 @@ mod posting;
 mod report_validation;
 #[path = "finance_state.rs"]
 mod state;
+#[path = "finance_stock_distribution.rs"]
+mod stock_distribution;
 #[path = "finance_validation.rs"]
 mod validation;
 
@@ -51,6 +56,10 @@ pub enum SimpleFinanceError {
     DividendUnsupported(String),
     #[error("Simple 分红状态非法：{0}")]
     DividendInvalid(String),
+    #[error("Simple 送转状态非法：{0}")]
+    StockDistributionInvalid(String),
+    #[error("Simple 送转事件标识已被不同内容占用：{0}")]
+    StockDistributionConflict(String),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -100,10 +109,16 @@ pub struct SimpleFinanceState {
     income_tax_position: IncomeTaxPosition,
     recognized_periods: Vec<(CivilDate, CivilDate)>,
     dividends: std::collections::BTreeMap<String, DividendPlanState>,
+    stock_distributions:
+        std::collections::BTreeMap<String, StockDistributionFinanceFact>,
     #[serde(deserialize_with = "deserialize_required_option")]
     legal_facts: RequiredOption<DividendLegalFacts>,
 }
 impl SimpleFinanceState {
+    pub fn legal_facts(&self) -> &Option<DividendLegalFacts> {
+        &self.legal_facts.0
+    }
+
     pub fn apply_month(
         &mut self,
         date: CivilDate,

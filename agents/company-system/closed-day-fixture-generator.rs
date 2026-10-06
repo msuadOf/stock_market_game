@@ -16,9 +16,10 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
     for field in [
         "registries",
         "dividends",
+        "stock_distributions",
         "account_gross_receipts",
         "external_receipts",
-        "applied_ex_dividend_groups",
+        "applied_ex_reference_groups",
     ] {
         if actions
             .get(field)
@@ -70,9 +71,13 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
                 .get("dividends")
                 .and_then(Value::as_object)
                 .is_none_or(|rows| !rows.is_empty())
+            || finance
+                .get("stock_distributions")
+                .and_then(Value::as_object)
+                .is_none_or(|rows| !rows.is_empty())
         {
             return Err(format!(
-                "休市 Simple company {company} 的 legal_facts 必须为 null 且 dividends 必须为空对象"
+                "休市 Simple company {company} 的 legal_facts 必须为 null 且 dividends 与 stock_distributions 必须为空对象"
             )
             .into());
         }

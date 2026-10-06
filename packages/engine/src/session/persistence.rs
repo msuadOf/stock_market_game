@@ -1242,6 +1242,77 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
     Ok(())
 }
 
+/// 送转等公司行为会真实增加已发行股数；恢复时发行人身份除 `issued_shares` 外
+/// 必须与 setup 完全一致，且超出 setup 的股数逐证券等于股东名册中非交易过户
+/// 增发回执的合计，防止任意改写发行股数。
+pub(super) fn issuer_increase_matches_non_trading_issuance(
+    save: &SaveSlot,
+    setup_issuers: &crate::company::identity::IssuerRegistry,
+) -> Result<bool, SessionError> {
+    let saved_issuers = save.company_system.issuers();
+    let mut saved_count = 0usize;
+    for (company, spec) in saved_issuers.iter() {
+        saved_count += 1;
+        let Some(setup_spec) = setup_issuers.get(company) else {
+            return Ok(false);
+        };
+        if spec.id != setup_spec.id
+            || spec.name != setup_spec.name
+            || spec.industry != setup_spec.industry
+            || spec.kind != setup_spec.kind
+            || spec.listed_stock != setup_spec.listed_stock
+            || spec.group_parent != setup_spec.group_parent
+            || spec.issued_shares < setup_spec.issued_shares
+        {
+            return Ok(false);
+        }
+        let Some(stock) = &spec.listed_stock else {
+            if spec.issued_shares != setup_spec.issued_shares {
+                return Ok(false);
+            }
+            continue;
+        };
+        let issuance = save
+            .corporate_actions
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == stock)
+            .map(|registry| {
+                let mut total = 0_u64;
+                for receipt in registry.receipts() {
+                    if !matches!(
+                        receipt.request.scope,
+                        crate::company::share_registry::MovementScope::NonTradingTransfer { .. }
+                    ) {
+                        continue;
+                    }
+                    for change in &receipt.request.changes {
+                        let quantity = u64::try_from(change.change).map_err(|_| {
+                            SessionError::InvalidSave("非交易过户增发数量超出 u64".into())
+                        })?;
+                        total = total.checked_add(quantity).ok_or_else(|| {
+                            SessionError::InvalidSave("非交易过户增发数量合计溢出".into())
+                        })?;
+                    }
+                }
+                Ok(total)
+            })
+            .transpose()
+            .map_err(|error: SessionError| error)?
+            .unwrap_or(0);
+        if spec.issued_shares
+            != setup_spec
+                .issued_shares
+                .checked_add(issuance)
+                .ok_or_else(|| SessionError::InvalidSave("发行人股数与增发合计溢出".into()))?
+        {
+            return Ok(false);
+        }
+    }
+    let setup_count = setup_issuers.iter().count();
+    Ok(saved_count == setup_count)
+}
+
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     save.company_system.validate_restored().map_err(|error| SessionError::InvalidSave(format!("公司系统状态非法：{error}")))?;
     if save.company_system.config() != save.setup.company_system {
@@ -1251,11 +1322,26 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
         .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
     let issuers = crate::company::identity::IssuerRegistry::new(specs)
         .map_err(|error| SessionError::InvalidSave(format!("发行人身份非法：{error}")))?;
-    if save.company_system.issuers() != &issuers {
+    let issuers_match_setup = save.company_system.issuers() == &issuers;
+    if !issuers_match_setup
+        && !issuer_increase_matches_non_trading_issuance(save, &issuers)?
+    {
         return Err(SessionError::InvalidSave("公司系统发行人身份与股票配置不一致".into()));
     }
-    save.company_system.issuers().validate_issuer_mapping(&save.setup.stocks.iter().map(|stock| (stock.code.clone(), stock.total_shares)).collect::<Vec<_>>())
-        .map_err(|error| SessionError::InvalidSave(format!("发行人映射非法：{error}")))?;
+    if issuers_match_setup {
+        save.company_system.issuers().validate_issuer_mapping(&save.setup.stocks.iter().map(|stock| (stock.code.clone(), stock.total_shares)).collect::<Vec<_>>())
+            .map_err(|error| SessionError::InvalidSave(format!("发行人映射非法：{error}")))?;
+    } else {
+        // 已发生送转增发时总股数必然大于 setup；发行人→证券映射本身不可变，
+        // 此处只核对每只 setup 股票仍有唯一发行人，数量差异已由增发回放核对。
+        for stock in &save.setup.stocks {
+            if save.company_system.issuers().issuer_of(&stock.code).is_none() {
+                return Err(SessionError::InvalidSave(
+                    "发行人映射非法：存在没有发行人的股票".into(),
+                ));
+            }
+        }
+    }
     let account_positions = save.snapshot.accounts.iter().map(|(id, account)| {
         (*id, account.positions.iter().map(|(code, position)| (code.clone(), u64::from(position.qty))).collect())
     }).collect();

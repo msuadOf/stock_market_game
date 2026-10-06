@@ -49,6 +49,9 @@ pub enum AccountKind {
 pub enum AccountError {
     #[error("cash credit must be positive, got {amount:?}")]
     InvalidCashCredit { amount: Money },
+    /// 公司行为送股入账数量必须为正且不超出 u32 持仓域。
+    #[error("share credit must be positive and fit u32 for {code:?}, got {qty}")]
+    InvalidShareCredit { code: StockCode, qty: u64 },
     /// 买入资金不足：成交额+佣金 > 现金。
     #[error("insufficient cash: needed {needed:?}, have {have:?}")]
     InsufficientCash { needed: Money, have: Money },
@@ -133,6 +136,45 @@ impl Account {
         }
         let credited_cash = self.state.cash.add(amount)?;
         Arc::make_mut(&mut self.state).cash = credited_cash;
+        Ok(())
+    }
+
+    /// 公司行为送转股入账：只增加持仓数量，不动现金、invested/recovered 累计
+    /// （净投入口径下成本自然摊薄），也不进入 T+1 锁定（送转股非当日买入）。
+    /// 无持仓时新建零成本持仓（持有人在登记日持有原股，入账前可能已全部卖出）。
+    pub(crate) fn credit_position_shares(
+        &mut self,
+        code: StockCode,
+        qty: u64,
+    ) -> Result<(), AccountError> {
+        let added = u32::try_from(qty).map_err(|_| AccountError::InvalidShareCredit {
+            code: code.clone(),
+            qty,
+        })?;
+        if added == 0 {
+            return Err(AccountError::InvalidShareCredit { code, qty });
+        }
+        let state = Arc::make_mut(&mut self.state);
+        match state.positions.get_mut(&code) {
+            Some(position) => {
+                let new_qty = position
+                    .qty
+                    .checked_add(added)
+                    .ok_or(AccountError::InvalidShareCredit { code, qty })?;
+                position.qty = new_qty;
+            }
+            None => {
+                state.positions.insert(
+                    code,
+                    Position {
+                        qty: added,
+                        t1_locked: 0,
+                        invested_cents: 0,
+                        recovered_cents: 0,
+                    },
+                );
+            }
+        }
         Ok(())
     }
 
@@ -739,6 +781,41 @@ fn round_half_to_even_i64(n: i64, d: u32) -> i64 {
 mod shadow_tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn share_credit_dilutes_existing_position_or_creates_zero_cost_position() {
+        let code = StockCode("600888".to_owned());
+        let mut authority =
+            Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
+        authority
+            .grant_position(code.clone(), 100, Money::from_cents(10))
+            .unwrap();
+        authority
+            .credit_position_shares(code.clone(), 50)
+            .unwrap();
+        assert_eq!(authority.positions()[&code].qty(), 150);
+        assert_eq!(authority.positions()[&code].t1_locked(), 0);
+        assert_eq!(authority.positions()[&code].invested_cents(), 1_000);
+        assert_eq!(authority.positions()[&code].recovered_cents(), 0);
+        assert_eq!(
+            authority.cost_price(&code),
+            Some(Money::from_cents(7))
+        );
+
+        let fresh_code = StockCode("600999".to_owned());
+        authority.credit_position_shares(fresh_code.clone(), 30).unwrap();
+        assert_eq!(authority.positions()[&fresh_code].qty(), 30);
+        assert_eq!(authority.cost_price(&fresh_code), Some(Money::from_cents(0)));
+
+        assert!(matches!(
+            authority.credit_position_shares(fresh_code, 0),
+            Err(AccountError::InvalidShareCredit { .. })
+        ));
+        assert!(matches!(
+            authority.credit_position_shares(StockCode("600888".to_owned()), u64::from(u32::MAX) + 1),
+            Err(AccountError::InvalidShareCredit { .. })
+        ));
+    }
 
     #[test]
     fn cash_credit_updates_only_candidate_cash_and_preserves_positions() {

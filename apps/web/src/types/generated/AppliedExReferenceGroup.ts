@@ -3,9 +3,14 @@ import type { CivilDate } from "./CivilDate";
 import type { ExReferencePrice } from "./ExReferencePrice";
 import type { StockCode } from "./StockCode";
 
-export type AppliedCashExDividendGroup = {
+/**
+ * 已应用到行情前收锚的除权除息组：同一证券同一除权日只产生一个参考价，
+ * 组合事实同时列出参与合计的现金分红计划与送转事件。
+ */
+export type AppliedExReferenceGroup = {
   date: CivilDate;
   stock: StockCode;
-  plan_ids: Array<string>;
+  cash_plan_ids: Array<string>;
+  stock_event_ids: Array<string>;
   reference: ExReferencePrice;
 };

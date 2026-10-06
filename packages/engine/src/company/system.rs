@@ -114,6 +114,137 @@ impl CompanySystem {
         Ok(self.finance(company)?.dividend_plan_facts()?)
     }
 
+    pub fn dividend_legal_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Option<super::dividend::DividendLegalFacts>, CompanySystemError> {
+        Ok(self.finance(company)?.legal_facts().clone())
+    }
+
+    pub fn stock_distribution_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Vec<super::stock_distribution::StockDistributionFinanceFact>, CompanySystemError>
+    {
+        Ok(self.finance(company)?.stock_distribution_facts()?)
+    }
+
+    /// 冻结 Simple 账面送转展示事实；不做借贷过账、不产生现金。
+    pub fn declare_stock_distribution(
+        &mut self,
+        company: &CompanyId,
+        declaration: super::stock_distribution::StockDistributionDeclaration,
+    ) -> Result<bool, CompanySystemError> {
+        let already_declared = self
+            .finance_mut(company)?
+            .declare_stock_distribution(declaration)?;
+        Ok(already_declared)
+    }
+
+    /// 真实新股入账后回填账面事实并同步发行人已发行股数；两者在同一候选上变更。
+    pub fn record_stock_distribution_credit(
+        &mut self,
+        company: &CompanyId,
+        event_id: &str,
+        credited_on: CivilDate,
+        new_shares: u64,
+    ) -> Result<bool, CompanySystemError> {
+        let already_credited = self
+            .finance_mut(company)?
+            .record_stock_distribution_credit(event_id, credited_on, new_shares)?;
+        if !already_credited {
+            self.issuers.record_share_issuance(company, new_shares)?;
+        }
+        Ok(already_credited)
+    }
+
+    /// 校验 Session 送转账簿与 Simple 账面事实的跨域对应。
+    pub fn validate_stock_distribution_books(
+        &self,
+        books: &[super::stock_distribution::StockDistributionBook],
+    ) -> Result<(), CompanySystemError> {
+        use std::collections::{BTreeMap, BTreeSet};
+        let mut seen_events = BTreeSet::new();
+        for book in books {
+            let plan = book.plan();
+            if !seen_events.insert(plan.event_id.clone()) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "送转事件 {} 重复出现账簿",
+                    plan.event_id
+                )));
+            }
+            let issuer = self
+                .issuers
+                .get(&plan.issuer)
+                .ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "送转账簿引用未知发行人 {}",
+                        plan.issuer.0
+                    ))
+                })?;
+            if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "送转事件 {} 的证券与发行人不匹配",
+                    plan.event_id
+                )));
+            }
+            let fact = self
+                .stock_distribution_facts(&plan.issuer)?
+                .into_iter()
+                .find(|fact| fact.event_id == plan.event_id)
+                .ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "送转事件 {} 缺少 Simple 声明事实",
+                        plan.event_id
+                    ))
+                })?;
+            if fact.approved_on != plan.approved_on
+                || fact.approval_reference != plan.approval_reference
+                || fact.kind != plan.kind
+                || fact.new_shares != plan.approved_total_new_shares
+            {
+                return Err(CompanySystemError::Invalid(format!(
+                    "送转事件 {} 与 Simple 声明的日期、引用、类别或股数不一致",
+                    plan.event_id
+                )));
+            }
+            match (book.credited_on(), fact.credited_on) {
+                (Some(book_date), Some(fact_date)) if book_date == fact_date => {}
+                (None, None) => {}
+                _ => {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "送转事件 {} 的入账事实与 Simple 账面回填不一致",
+                        plan.event_id
+                    )));
+                }
+            }
+        }
+        let declared: BTreeMap<_, _> = self
+            .issuers
+            .iter()
+            .filter_map(|(company, _)| {
+                self.stock_distribution_facts(company)
+                    .ok()
+                    .map(|facts| (company.clone(), facts))
+            })
+            .collect();
+        let mut bound_events = BTreeSet::new();
+        for book in books {
+            bound_events.insert(book.plan().event_id.clone());
+        }
+        for (company, facts) in declared {
+            for fact in facts {
+                if !bound_events.contains(&fact.event_id) {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "公司 {} 存在未绑定账簿的送转声明 {}",
+                        company.0, fact.event_id
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn dividend_payment_facts(
         &self,
         company: &CompanyId,

@@ -249,7 +249,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         decision_resources: None,
     };
     shadow.state.execute(|game| {
-        game.prepare_cash_ex_references_for_current_date()?;
+        game.prepare_ex_references_for_current_date()?;
         if game
             .state
             .tick

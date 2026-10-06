@@ -34,6 +34,7 @@
 | 报告窗口及公开披露 ROE 接线 | 报告期间 10 项、公式适配 3 项、官方一般公式 13 项、合并窗口 10 项、公开投影 5 项通过；新类型正规导出 140 项通过 | `.tmp/company-system/session-actions/final-period.log`、`final-report-adapter.log`、`latest-official-roe.log`、`final-consolidated.log`、`public-projection-assert-green.log`、`latest-typegen-shard-*.log` |
 | 现金分红公开公告与本人信息不足 | Session Simple 16 项、信息交付 10 项、中期材料及到期 1 项通过；合法缺年报不阻断中期获知，损坏引用仍回滚 | `.tmp/company-system/session-actions/final-announcements.log`、`legal-monthly-final-green.log`、`final-interim.log` |
 | 送转分配基础与回购专户来源 | Registry 21 项、分配算法 9 项、Web 严格来源解析 11 项通过；尚非实际送转结算 | `.tmp/company-system/session-actions/final-registry.log`、`final-allocation.log`、`latest-web-registry-green.log` |
+| 送转实际登记全链路（B1） | Registry 24/24、送转 18/18、除权公式 15/15、Session Simple 19/19、corporate_actions 7/7、simple finance 65/65；Web corporate-actions schema 16/16 及 save/公司 schema 消费组全绿；三 fixture 由 release Engine 重生成；基线四组预存失败与本批无关 | `.tmp/company-system/stock-distribution/` |
 
 本机旧 Corepack 直接启动 pnpm 时失败，原日志保留于 `.tmp/checklist-wave4/host75-frontend-build.log`；实际构建使用 Node 启动已缓存的同版 pnpm 11.19.0，之后仍运行原 WASM／Web 构建和发布产物检查步骤。没有修改系统工具或用失败结果冒充通过。
 
@@ -43,7 +44,7 @@
 
 ## 未完成边界
 
-共同股本行为仍未完整交付。当前候选接线已在显式登记名册、法定事实与获批现金方案下验证 Session 真实税前到账、公司应付清偿及同日合计除息锚；失败不提交部分状态，重复执行不重复到账或扣减除息参考价。公开 typed 分红公告、NPC 本人获知和公告／批准财务金额恢复勾稽已接通；个人公开市场税务身份可在 Session 显式配置，税账记录每笔分红与真实 FIFO 卖出，卖出不足一个月时用真实卖出净额收缴 20% 补税，恢复和 Web 严格 parser 校验同一税账事实。宿主/UI 配置入口仍缺，企业、基金、非居民身份显式不支持，未配置身份仍为 `TreatmentNotConfigured`。默认开局名册与税务身份未定，公司行为偏好、自动方案、送转实际登记、配股、增发和回购仍未完成，`cash_settlement=false` 不因个人税或底层测试通过而改为完整可用。获批特殊除息调整仍明确拒绝，基础计算及候选接线分别见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)。
+共同股本行为仍未完整交付。当前候选接线已在显式登记名册、法定事实与获批现金方案下验证 Session 真实税前到账、公司应付清偿及同日合计除息锚；失败不提交部分状态，重复执行不重复到账或扣减除息参考价。公开 typed 分红公告、NPC 本人获知和公告／批准财务金额恢复勾稽已接通；个人公开市场税务身份可在 Session 显式配置，税账记录每笔分红与真实 FIFO 卖出，卖出不足一个月时用真实卖出净额收缴 20% 补税，恢复和 Web 严格 parser 校验同一税账事实。送转（股票股利与资本公积转增）已接通实际登记全链路：显式方案→R 日冻结碎股分配→R+1 非交易过户落账新股、投资者账户真实加股、发行股数守恒与沪深分列除权锚；限售继承按同限售类整批继承（深市明文、沪市证据缺口登记），混合来源显式拒绝；Simple 侧只做面值展示事实、不过账。送转个税、送转公开公告、转增资本公积账面前置校验、配股、增发和回购仍未完成，`cash_settlement=false` 不因上述接通而改为完整可用。宿主/UI 配置入口仍缺，企业、基金、非居民税务身份显式不支持，未配置身份仍为 `TreatmentNotConfigured`，默认开局名册与税务身份未定。获批特殊除息调整仍明确拒绝，基础计算及候选接线分别见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)与[送转基础与登记记录](stock-distribution.md)。
 
 `cash_dividend` 提供明确方案、不可变登记权利与付款结果状态机，连续失败、技术重试和严格 JSON 恢复有短测；状态机本身只记录付款执行者返回的事实，实际账户贷记由 Session 候选事务执行。恢复显式提供日历调用 `validate_with_calendar`，不默认补齐日历，并校验 Book、公司应付凭证、实际到账及除息锚的跨域对应，详见[分红基础复核](cash-dividend-book-review.md)与[财务接线复核](simple-dividend-finance-review.md)。`accounting::period_roe` 仍是同范围、同权益归属的时间加权分析基础，不冒充法定披露 ROE；`accounting::disclosure_roe` 一般公式已进入真实报告窗口、公开 DTO 与 Web 报表消费。同一控制合并／比较期间特殊处理、合并归属逐项权益事件及扣非事实仍明确不可用，详见[期间权益分析复核](period-roe-review.md)、[法定一般公式复核](official-roe-review.md)与[报告接线复核](simple-report-roe-review.md)。合法本人中期资料缺同范围年报及其到期不再阻断日结；损坏材料引用仍失败回滚。合法信用违约公告缺本人年报时会记录年度基线不可用并保留公告因果；非正基本面估值区间对候选信号表现为 `FundamentalUnavailable`，不伪装成 0 元，见[个人信息边界审计](missing-annual-belief-audit.md)。
 

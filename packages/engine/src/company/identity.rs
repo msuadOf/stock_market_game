@@ -23,6 +23,31 @@ impl IssuerRegistry {
     pub fn get(&self, company: &CompanyId) -> Option<&CompanySpec> {
         self.0.get(company)
     }
+
+    /// 记录一次真实公司行为新股入账带来的已发行股数增加。
+    ///
+    /// 调用方必须已按事件身份幂等去重（同一事件只允许调用一次）；本登记表不
+    /// 追踪事件身份，重复调用会重复增加股数并破坏守恒。
+    pub fn record_share_issuance(
+        &mut self,
+        company: &CompanyId,
+        added: u64,
+    ) -> Result<(), CompanySystemError> {
+        if added == 0 {
+            return Err(CompanySystemError::Invalid(
+                "公司行为入账新增股数必须为正数".into(),
+            ));
+        }
+        let spec = self
+            .0
+            .get_mut(company)
+            .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0)))?;
+        spec.issued_shares = spec
+            .issued_shares
+            .checked_add(added)
+            .ok_or_else(|| CompanySystemError::Invalid("已发行股数溢出".into()))?;
+        Ok(())
+    }
     pub fn iter(&self) -> impl Iterator<Item = (&CompanyId, &CompanySpec)> {
         self.0.iter()
     }

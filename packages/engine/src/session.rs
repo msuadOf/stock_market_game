@@ -114,7 +114,7 @@ pub use civil_clock::{
 pub use company_groups::{GroupHolding, GroupStructure};
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
 pub use corporate_actions::{
-    AppliedCashExDividendGroup, ExternalDividendReceipt, SessionCorporateActions,
+    AppliedExReferenceGroup, ExternalDividendReceipt, SessionCorporateActions,
     SessionCorporateActionsError,
 };
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
@@ -2543,6 +2543,119 @@ impl GameSession {
             .sort_by(|left, right| left.plan().plan_id.cmp(&right.plan().plan_id));
         Ok(())
     }
+
+    /// 以 SimpleFinanceState 的显式注册资本面值事实受理送转方案（显式计划入口）。
+    ///
+    /// 每股面值由已绑定注册资本法定事实与当前发行股数推导，二者必须整除；
+    /// 送股（股票股利）额外受可分配利润上限约束（Simple 账面只做面值展示登记，
+    /// 不做借贷过账，不产生投资者现金）。
+    pub fn approve_stock_distribution(
+        &mut self,
+        plan: crate::company::stock_distribution::StockDistributionEventPlan,
+    ) -> Result<(), SessionCorporateActionsError> {
+        plan.validate()
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
+            return Err(SessionCorporateActionsError::Invalid(
+                "送转方案的批准日期或公告日期与当前会话日期不一致".into(),
+            ));
+        }
+        let registry = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid("送转需要已显式配置的完整股东名册".into())
+            })?;
+        if registry.settled_on() > self.civil_date() {
+            return Err(SessionCorporateActionsError::Invalid(
+                "股东名册日期晚于当前会话日期".into(),
+            ));
+        }
+        plan.validate_calendar(self.state.civil_clock.calendar())
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        let issuer = candidate_system
+            .issuers()
+            .get(&plan.issuer)
+            .ok_or_else(|| SessionCorporateActionsError::Invalid("送转计划发行人不存在".into()))?;
+        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+            return Err(SessionCorporateActionsError::Invalid(
+                "送转计划证券与发行人不匹配".into(),
+            ));
+        }
+        let issued_shares = registry.issued_shares();
+        let legal_facts = candidate_system
+            .dividend_legal_facts(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(
+                    "送转面值推导需要先显式绑定公司注册资本法定事实".into(),
+                )
+            })?;
+        let registered_capital_cents = legal_facts
+            .registered_capital
+            .to_money()
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+            .cents();
+        let capital_cents_i128 = i128::from(registered_capital_cents);
+        let shares_i128 = i128::from(issued_shares);
+        if capital_cents_i128 % shares_i128 != 0 {
+            return Err(SessionCorporateActionsError::Invalid(
+                "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
+            ));
+        }
+        let par_cents = capital_cents_i128 / shares_i128;
+        let par_value_per_share = Money::from_cents(
+            i64::try_from(par_cents)
+                .map_err(|_| SessionCorporateActionsError::Invalid("每股面值溢出".into()))?,
+        );
+        if par_value_per_share <= Money::ZERO {
+            return Err(SessionCorporateActionsError::Invalid(
+                "推导出的每股面值必须为正数".into(),
+            ));
+        }
+        let capital_increase_cents = par_cents
+            .checked_mul(i128::from(plan.approved_total_new_shares))
+            .ok_or_else(|| SessionCorporateActionsError::Invalid("送转股本增加金额溢出".into()))?;
+        let declaration = crate::company::stock_distribution::StockDistributionDeclaration {
+            event_id: plan.event_id.clone(),
+            approval_reference: plan.approval_reference.clone(),
+            kind: plan.kind.clone(),
+            approved_on: plan.approved_on,
+            new_shares: plan.approved_total_new_shares,
+            par_value_per_share,
+            capital_increase: crate::accounting::AccountingAmount::from_cents(
+                capital_increase_cents,
+            ),
+            registered_capital_at_approval: legal_facts.registered_capital,
+        };
+        candidate_system
+            .declare_stock_distribution(&plan.issuer, declaration)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        if self
+            .state
+            .corporate_actions
+            .stock_distributions
+            .iter()
+            .any(|existing| existing.plan().event_id == plan.event_id)
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "送转事件 id 已存在".into(),
+            ));
+        }
+        let book = crate::company::stock_distribution::StockDistributionBook::new(plan)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.stock_distributions.push(book);
+        self.state
+            .corporate_actions
+            .stock_distributions
+            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
+        Ok(())
+    }
     /// 当前 tick（从 0 起，step 后自增）。
     pub fn tick(&self) -> u64 {
         self.state.tick
@@ -2787,6 +2900,15 @@ impl GameSession {
                 &mut self.state.accounts,
             )
             .map_err(|error| SessionError::InvalidSave(format!("现金分红日终结算失败：{error}")))?;
+        self.state
+            .corporate_actions
+            .process_stock_distributions_on_day_end(
+                report.settled_date,
+                self.state.civil_clock.calendar(),
+                std::sync::Arc::make_mut(&mut self.state.company_system),
+                &mut self.state.accounts,
+            )
+            .map_err(|error| SessionError::InvalidSave(format!("送转日终结算失败：{error}")))?;
         let account_positions = self
             .state
             .accounts
@@ -3687,7 +3809,12 @@ impl GameSession {
         // 权威状态连续性（完整存档）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
         // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
-        if sess.state.company_system.issuers() != save.company_system.issuers() {
+        if sess.state.company_system.issuers() != save.company_system.issuers()
+            && !persistence::issuer_increase_matches_non_trading_issuance(
+                save,
+                sess.state.company_system.issuers(),
+            )?
+        {
             return Err(SessionError::InvalidSave(
                 "saved company set does not exactly match the issuers rebuilt from setup"
                     .to_string(),
