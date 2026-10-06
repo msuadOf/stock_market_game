@@ -9,7 +9,7 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         seq,
         tick,
         phase: TradingPhase::ClosingAuction,
-        code: StockCode("600101".into()),
+        code: engine::StockId(0),
         indicative_price: Some(Money::from_cents(1001)),
         matched_volume: 100,
         imbalance: 0,

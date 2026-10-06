@@ -5,7 +5,7 @@ use super::*;
 
 fn ingress_cancel(id: u64) -> Intent {
     Intent::Cancel {
-        code: engine::StockCode("600101".into()),
+        code: engine::StockId(0),
         id: engine::OrderId(id),
     }
 }
@@ -17,7 +17,7 @@ fn registry_token_producer_and_session_share_receipts_across_threads() {
     let token = registry.create(setup, 71).unwrap();
     let initial = registry.with_session(token, |session| session.game().save()).unwrap().unwrap();
     let account_baseline = initial.ingress_receipt_cursors.next_account_ordinal.get(&AccountId(0)).copied().unwrap_or(0);
-    let stock_code = engine::StockCode("600101".into());
+    let stock_code = engine::StockId(0);
     let stock_baseline = initial.ingress_receipt_cursors.next_stock_ordinal.get(&stock_code).copied().unwrap_or(0);
     let producer = ingress_operation(|services| Ok(services[&token].clone())).unwrap();
     std::thread::scope(|scope| {
@@ -434,7 +434,7 @@ fn registry_restore_failure_preserves_existing_session_and_civil_barrier() {
     let restored = registry.restore(&slot).unwrap();
     let count = registry.sessions.len();
     let mut invalid = slot.clone();
-    let code = engine::StockCode("600101".into());
+    let code = engine::StockId(0);
     invalid
         .ingress_receipt_cursors
         .next_account_ordinal

@@ -25,7 +25,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     game.enqueue_player_intent(
         engine::AccountId(0),
         engine::Intent::PlaceLimit {
-            code: engine::StockCode("600101".into()),
+            code: engine::StockId(0),
             side: engine::Side::Buy,
             price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
             qty: 100,
@@ -87,7 +87,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: StockCode("600101".into()),
+                code: engine::StockId(0),
                 id: engine::OrderId(1)
             }
         )

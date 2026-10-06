@@ -19,7 +19,7 @@ import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SaveParentOrderPlan } from "./SaveParentOrderPlan";
 import type { SaveSnapshot } from "./SaveSnapshot";
 import type { SessionSetup } from "./SessionSetup";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 import type { UrgencyPolicy } from "./UrgencyPolicy";
 
 /**
@@ -39,11 +39,11 @@ export type SaveSlot = {
   /**
    * 日内存档恢复集合竞价所需的完整委托队列。
    */
-  auction_orders: { [key in StockCode]: Array<AuctionOrderSnap> };
+  auction_orders: { [key in StockId]: Array<AuctionOrderSnap> };
   /**
    * 连续竞价未成交委托。
    */
-  resting_orders: { [key in StockCode]: Array<Order> };
+  resting_orders: { [key in StockId]: Array<Order> };
   /**
    * 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
    * 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
@@ -52,16 +52,16 @@ export type SaveSlot = {
   /**
    * 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
    */
-  filled_orders: { [key in StockCode]: Array<FilledOrderSnap> };
+  filled_orders: { [key in StockId]: Array<FilledOrderSnap> };
   /**
    * 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
    */
-  price_history: { [key in StockCode]: Array<Money> };
+  price_history: { [key in StockId]: Array<Money> };
   /**
    * 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
    * 到日界后清空，跨日窗口读取已经完成的日 K。
    */
-  market_minute_closes: { [key in StockCode]: Array<MarketMinuteClose> };
+  market_minute_closes: { [key in StockId]: Array<MarketMinuteClose> };
   /**
    * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
    */
@@ -79,7 +79,7 @@ export type SaveSlot = {
    * 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
    */
   parent_orders: {
-    [key in AccountId]: { [key in StockCode]: SaveParentOrderPlan };
+    [key in AccountId]: { [key in StockId]: SaveParentOrderPlan };
   };
   /**
    * NPC 连续竞价普通限价单的可恢复主动撤单时间。
@@ -90,7 +90,7 @@ export type SaveSlot = {
    */
   pending_player: Array<ReceiptBearingIntent>;
   /**
-   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
+   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求；日界处尚未生成。
    */
   pending_npc: PendingNpcBatch | null;
   ingress_receipt_cursors: IngressReceiptCursors;

@@ -3,13 +3,13 @@ import type { Money } from "./Money";
 import type { OrderId } from "./OrderId";
 import type { PlanId } from "./PlanId";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 /**
  * 可恢复的大资金母单：目标与实际成交分离，后续子单不得超过 remaining_qty。
  */
 export type ParentOrderPlan = {
-  code: StockCode;
+  code: StockId;
   side: Side;
   target_qty: number;
   filled_qty: number;

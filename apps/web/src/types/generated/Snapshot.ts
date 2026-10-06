@@ -3,7 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { AccountSnap } from "./AccountSnap";
 import type { DailyCandle } from "./DailyCandle";
 import type { MarketSnap } from "./MarketSnap";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 import type { TradingPhase } from "./TradingPhase";
 
 /**
@@ -14,14 +14,14 @@ export type Snapshot = {
   tick: number;
   day: number;
   phase: TradingPhase;
-  markets: { [key in StockCode]: MarketSnap };
+  markets: { [key in StockId]: MarketSnap };
   accounts: { [key in AccountId]: AccountSnap };
   /**
    * Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
    */
-  daily_candles: { [key in StockCode]: Array<DailyCandle> };
+  daily_candles: { [key in StockId]: Array<DailyCandle> };
   /**
    * 当前交易日正在形成的日 K。
    */
-  active_daily_candles: { [key in StockCode]: DailyCandle };
+  active_daily_candles: { [key in StockId]: DailyCandle };
 };

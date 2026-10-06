@@ -3,10 +3,10 @@ import type { Money } from "./Money";
 import type { OrderId } from "./OrderId";
 import type { PlanId } from "./PlanId";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 export type SaveParentOrderPlan = {
-  code: StockCode;
+  code: StockId;
   side: Side;
   target_qty: number;
   filled_qty: number;

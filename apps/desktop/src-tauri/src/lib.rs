@@ -141,7 +141,7 @@ async fn query_stock_history(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
-    code: engine::StockCode,
+    code: engine::StockId,
 ) -> Result<actor::GenerationResponse<engine::session::HistoricalStockData>, String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles.query_stock_history(parse_generation(generation)?, code).await.map_err(map_send_error)

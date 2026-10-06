@@ -41,7 +41,7 @@ export type GameConfig = {
    */
   lot_size: number;
   /**
-   * 初始资金（ref 提议: 100000.00 元 = 10_000_000 分）。
+   * 初始资金（默认 100 亿元 = 1_000_000_000_000 分）。
    */
   starting_cash: Money;
 };

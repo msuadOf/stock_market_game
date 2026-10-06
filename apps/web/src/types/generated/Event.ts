@@ -11,7 +11,7 @@ import type { OrderId } from "./OrderId";
 import type { PublicationId } from "./PublicationId";
 import type { RejectionReason } from "./RejectionReason";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 import type { TradingPhase } from "./TradingPhase";
 
 /**
@@ -21,7 +21,7 @@ import type { TradingPhase } from "./TradingPhase";
 export type Event = {
   "Trade": {
     seq: number;
-    code: StockCode;
+    code: StockId;
     price: Money;
     qty: number;
     maker: AccountId;
@@ -35,7 +35,7 @@ export type Event = {
      * `CallAuction`（开盘）或 `ClosingAuction`（收盘）；消费者不得按事件名猜测时段。
      */
     phase: TradingPhase;
-    code: StockCode;
+    code: StockId;
     indicative_price: Money | null;
     matched_volume: number;
     imbalance: number;
@@ -48,7 +48,7 @@ export type Event = {
      * 完成这一笔集合竞价的交易阶段。
      */
     phase: TradingPhase;
-    code: StockCode;
+    code: StockId;
     clearing_price: Money | null;
     matched_volume: number;
   };
@@ -59,7 +59,7 @@ export type Event = {
      * 权威游戏世界 tick；宿主压缩事件后仍可恢复交易分钟位置。
      */
     tick: number;
-    code: StockCode;
+    code: StockId;
     last_price: Money;
     /**
      * Rust 聚合的权威当日日 K；宿主只同步，不再自行重算 OHLCV。
@@ -81,7 +81,7 @@ export type Event = {
     /**
      * 刚刚收盘的每股日 K，供增量客户端提交历史而无需拉取 360 日全量快照。
      */
-    closed_daily_candles: { [key in StockCode]: DailyCandle };
+    closed_daily_candles: { [key in StockId]: DailyCandle };
   };
 } | {
   "CivilDateAdvanced": {
@@ -102,21 +102,21 @@ export type Event = {
   "IntentRejected": {
     seq: number;
     account: AccountId;
-    code: StockCode;
+    code: StockId;
     reason: RejectionReason;
   };
 } | {
   "SettlementError": {
     seq: number;
     account: AccountId;
-    code: StockCode;
+    code: StockId;
     reason: string;
   };
 } | {
   "OrderCanceled": {
     seq: number;
     account: AccountId;
-    code: StockCode;
+    code: StockId;
     id: OrderId;
     remaining_qty: number;
   };
@@ -124,7 +124,7 @@ export type Event = {
   "OrderAccepted": {
     seq: number;
     account: AccountId;
-    code: StockCode;
+    code: StockId;
     id: OrderId;
     side: Side;
     price: Money;

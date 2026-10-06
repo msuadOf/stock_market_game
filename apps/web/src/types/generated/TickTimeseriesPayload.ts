@@ -3,12 +3,12 @@ import type { AuctionPoint } from "./AuctionPoint";
 import type { ContinuousPoint } from "./ContinuousPoint";
 import type { DailyCandle } from "./DailyCandle";
 import type { MarketSnap } from "./MarketSnap";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 export type TickTimeseriesPayload = {
-  markets: { [key in StockCode]: MarketSnap };
-  active_daily_candles: { [key in StockCode]: DailyCandle };
-  closed_daily_candles: { [key in StockCode]: DailyCandle };
-  auction_points: { [key in StockCode]: Array<AuctionPoint> };
-  continuous_points: { [key in StockCode]: ContinuousPoint };
+  markets: { [key in StockId]: MarketSnap };
+  active_daily_candles: { [key in StockId]: DailyCandle };
+  closed_daily_candles: { [key in StockId]: DailyCandle };
+  auction_points: { [key in StockId]: Array<AuctionPoint> };
+  continuous_points: { [key in StockId]: ContinuousPoint };
 };

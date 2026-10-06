@@ -423,7 +423,7 @@ pub struct PlayerWorkingOrdersQuery {
 pub struct StockHistoryQuery {
     pub session_id: String,
     pub generation: u64,
-    pub code: engine::StockCode,
+    pub code: engine::StockId,
 }
 
 #[derive(Debug, Deserialize)]

@@ -592,7 +592,7 @@ async fn snapshot_returns_snapshot_json() {
         "客户端快照只含玩家账户，不泄露 NPC 私有资产"
     );
     assert_eq!(
-        snap["daily_candles"]["600101"].as_array().map(Vec::len),
+        snap["daily_candles"]["0"].as_array().map(Vec::len),
         Some(360),
         "HTTP 连接快照应同步 Rust 生成的 360 日日 K"
     );
@@ -913,7 +913,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
 
 fn player_buy_intent() -> Value {
     serde_json::to_value(&Intent::PlaceLimit {
-        code: StockCode("600101".to_string()),
+        code: engine::StockId(0),
         side: Side::Buy,
         price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
@@ -1185,7 +1185,7 @@ fn large_pending_player_queue_survives_engine_save_restore_exactly() {
             .enqueue_player_intent(
                 engine::AccountId(0),
                 Intent::PlaceLimit {
-                    code: StockCode("600101".to_string()),
+                    code: engine::StockId(0),
                     side: Side::Buy,
                     price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
@@ -1233,7 +1233,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
             .enqueue_player_intent(
                 engine::AccountId(0),
                 Intent::PlaceLimit {
-                    code: StockCode("600101".to_string()),
+                    code: engine::StockId(0),
                     side: Side::Buy,
                     price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,

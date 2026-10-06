@@ -2,19 +2,14 @@
 import type { LimitPrice } from "./LimitPrice";
 import type { OrderId } from "./OrderId";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 /**
  * 策略决策产物。account/market 层据此执行（下单/撤单）；返回空 Vec 表示本 tick 不动作。
  */
 export type Intent =
   | {
-    "PlaceLimit": {
-      code: StockCode;
-      side: Side;
-      price: LimitPrice;
-      qty: number;
-    };
+    "PlaceLimit": { code: StockId; side: Side; price: LimitPrice; qty: number };
   }
-  | { "PlaceMarket": { code: StockCode; side: Side; qty: number } }
-  | { "Cancel": { code: StockCode; id: OrderId } };
+  | { "PlaceMarket": { code: StockId; side: Side; qty: number } }
+  | { "Cancel": { code: StockId; id: OrderId } };

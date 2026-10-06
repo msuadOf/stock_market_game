@@ -3,7 +3,7 @@ import type { ExitRecord } from "./ExitRecord";
 import type { ExperienceMoment } from "./ExperienceMoment";
 import type { FailureEventRecord } from "./FailureEventRecord";
 import type { HoldingEpoch } from "./HoldingEpoch";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 /**
  * 逐账户经历反馈事实。默认空 = 新账户或尚未接双时钟事件。
@@ -20,7 +20,7 @@ export type ExperienceFeedback = {
   /**
    * 每股当前持仓生命周期（未持仓/仅关注列表的股票没有条目）。
    */
-  stocks: { [key in StockCode]: HoldingEpoch };
+  stocks: { [key in StockId]: HoldingEpoch };
   /**
    * 清仓退出历史（追加式，含冷静期截止与盈亏事实）。
    */

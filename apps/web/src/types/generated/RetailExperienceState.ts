@@ -2,7 +2,7 @@
 import type { ExperienceFeedback } from "./ExperienceFeedback";
 import type { Money } from "./Money";
 import type { RetailStockExperience } from "./RetailStockExperience";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 /**
  * 每个自然人散户独立持有的最小经历；不与其他账户共享。
@@ -11,7 +11,7 @@ export type RetailExperienceState = {
   reference_equity: Money | null;
   peak_equity: Money | null;
   consecutive_failed_buys: number;
-  stocks: { [key in StockCode]: RetailStockExperience };
+  stocks: { [key in StockId]: RetailStockExperience };
   /**
    * 经历反馈事实：受挫事件日期、持仓生命周期、退出/冷静期
    * 历史。默认空表示新账户或尚未登记双时钟事件，序列化时省略空反馈；

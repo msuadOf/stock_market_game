@@ -252,7 +252,7 @@ pub enum SessionCommand {
     },
     StockHistory {
         generation: u64,
-        code: StockCode,
+        code: engine::StockId,
         reply: oneshot::Sender<Result<GenerationResponse<HistoricalStockData>, SessionError>>,
     },
     InitialAllocation {
@@ -405,7 +405,7 @@ impl SessionHandles {
     pub async fn query_stock_history(
         &self,
         generation: u64,
-        code: StockCode,
+        code: engine::StockId,
     ) -> Result<GenerationResponse<HistoricalStockData>, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
@@ -1299,8 +1299,8 @@ fn compact_fastest_events(
     }
     let mut keep = HashSet::new();
     let mut trade_indices = Vec::new();
-    let mut active_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
-    let mut auction_slot_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
+    let mut active_minute_ticks: HashMap<(engine::StockId, u64), usize> = HashMap::new();
+    let mut auction_slot_ticks: HashMap<(engine::StockId, u64), usize> = HashMap::new();
     let safe_ticks_per_day = ticks_per_day.max(1);
 
     for (index, event) in events.iter().enumerate() {
@@ -1619,7 +1619,7 @@ mod tests {
         let price_tick = |seq, tick| Event::PriceTick {
             seq,
             tick,
-            code: StockCode("AAA".into()),
+            code: engine::StockId(0),
             last_price: Money::from_cents(1_000_000_000),
             daily_candle: DailyCandle {
                 time: 0,
@@ -1675,7 +1675,7 @@ mod tests {
             seq,
             tick,
             phase: engine::TradingPhase::CallAuction,
-            code: StockCode("AAA".into()),
+            code: engine::StockId(0),
             indicative_price: Some(Money::from_cents(100)),
             matched_volume: seq,
             imbalance: 0,
@@ -1684,7 +1684,7 @@ mod tests {
             seq: 4,
             tick: 900,
             phase: engine::TradingPhase::CallAuction,
-            code: StockCode("AAA".into()),
+            code: engine::StockId(0),
             clearing_price: Some(Money::from_cents(100)),
             matched_volume: 3,
         };

@@ -9,7 +9,7 @@ import type { ResumeReason } from "./ResumeReason";
 import type { ReviewConditions } from "./ReviewConditions";
 import type { RevisionRecord } from "./RevisionRecord";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 import type { Urgency } from "./Urgency";
 
 /**
@@ -18,7 +18,7 @@ import type { Urgency } from "./Urgency";
 export type TradingPlan = {
   plan_id: PlanId;
   account: AccountId;
-  code: StockCode;
+  code: StockId;
   direction: Side;
   target: PlanTarget;
   /**

@@ -99,7 +99,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
     let session_id = created["session_id"].as_str().unwrap();
     let session_token = created["session_token"].as_str().unwrap();
     let intent = serde_json::to_value(Intent::PlaceLimit {
-        code: StockCode("600101".to_owned()),
+        code: engine::StockId(0),
         side: Side::Buy,
         price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
@@ -122,7 +122,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         ),
         (
             "GET",
-            &format!("/api/stock-history?session_id={session_id}&generation=0&code=600101"),
+            &format!("/api/stock-history?session_id={session_id}&generation=0&code=0"),
             Value::Null,
         ),
         (
@@ -232,7 +232,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         request(
             app.clone(),
             "GET",
-            &format!("/api/stock-history?session_id={session_id}&generation=1&code=600101"),
+            &format!("/api/stock-history?session_id={session_id}&generation=1&code=0"),
             None,
             Some(session_token),
         )
@@ -244,7 +244,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         request(
             app.clone(),
             "GET",
-            &format!("/api/stock-history?session_id={session_id}&generation=1&code=600101&account=1"),
+            &format!("/api/stock-history?session_id={session_id}&generation=1&code=0&account=1"),
             None,
             Some(session_token),
         )

@@ -40,7 +40,7 @@ fn sample_setup() -> SessionSetup {
         company_operations: None,
         groups: Vec::new(),
         stocks: vec![StockSpec {
-            code: StockCode("600101".to_string()),
+            code: engine::StockCode("600101".to_owned()),
             exchange: StockExchange::Shanghai,
             initial_price: Money::from_cents(1000),
             category: SecurityCategory::MainBoard,
@@ -187,9 +187,9 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
         .retail_experience
         .get_mut(&AccountId(1))
         .expect("首个散户必须有经历状态")
-        .observe_stock(&StockCode("600101".to_string()), 0);
+        .observe_stock(&engine::StockId(0), 0);
     assert_eq!(
-        before.retail_experience[&AccountId(1)].stocks[&StockCode("600101".to_string())]
+        before.retail_experience[&AccountId(1)].stocks[&engine::StockId(0)]
             .last_observed_market_minute,
         0,
         "测试必须跨 actor 恢复非默认经历字段"
@@ -472,7 +472,7 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
     // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
     handles
         .enqueue(1, Intent::PlaceLimit {
-            code: StockCode("600101".to_string()),
+            code: engine::StockId(0),
             side: Side::Buy,
             price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
@@ -526,7 +526,7 @@ async fn actor_market_goes_live_produces_trade_events() {
         let pending_npc = slot.pending_npc.as_mut().expect("开局应保留当前观察截点");
         pending_npc.intents.clear();
         pending_npc.dependencies.clear();
-        let code = StockCode("600101".to_string());
+        let code = engine::StockId(0);
         let totals = |slot: &engine::session::SaveSlot| {
             slot.snapshot
                 .accounts
@@ -598,7 +598,7 @@ async fn actor_market_goes_live_produces_trade_events() {
         }
         handles
             .enqueue(2, Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: engine::StockId(0),
                 side: Side::Sell,
                 price: engine::LimitPrice::Lowest,
                 qty: 100,
@@ -637,7 +637,7 @@ async fn actor_market_goes_live_produces_trade_events() {
                             *maker == AccountId(0) || *taker == AccountId(0),
                             "真实成交必须包含提供开局库存卖单的玩家"
                         );
-                        assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
+                        assert_eq!(code.0, 0, "成交股票 id 应匹配 setup（ADR 0041 数值身份）");
                         handles
                             .set_running(false)
                             .await

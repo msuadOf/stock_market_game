@@ -17,7 +17,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
         handles.enqueue(
             1,
             engine::Intent::PlaceLimit {
-                code: engine::StockCode("600101".into()),
+                code: engine::StockId(0),
                 side: engine::Side::Buy,
                 price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
                 qty: 100,
@@ -33,7 +33,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
             1,
             AccountId(999),
             Intent::Cancel {
-                code: StockCode("600101".into()),
+                code: engine::StockId(0),
                 id: engine::OrderId(1),
             },
         )
@@ -66,7 +66,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
     };
     let previous = handles.ingress.read().unwrap().1.clone();
     let intent = Intent::PlaceLimit {
-        code: StockCode("600101".into()),
+        code: engine::StockId(0),
         side: engine::Side::Buy,
         price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
         qty: 100,

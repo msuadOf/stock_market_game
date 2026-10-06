@@ -23,7 +23,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
         handles.enqueue(
             1,
             engine::Intent::PlaceLimit {
-                code: engine::StockCode("600101".into()),
+                code: engine::StockId(0),
                 side: engine::Side::Buy,
                 price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
                 qty: 100,
@@ -39,7 +39,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
             1,
             AccountId(999),
             Intent::Cancel {
-                code: engine::StockCode("600101".into()),
+                code: engine::StockId(0),
                 id: engine::OrderId(1),
             },
         )
@@ -167,7 +167,7 @@ async fn capture(successful_steps: usize) {
     game.enqueue_player_intent(
         engine::AccountId(0),
         engine::Intent::PlaceLimit {
-            code: engine::StockCode("600101".into()),
+            code: engine::StockId(0),
             side: engine::Side::Buy,
             price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
             qty: 100,
@@ -237,7 +237,7 @@ async fn capture(successful_steps: usize) {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: engine::StockCode("600101".into()),
+                code: engine::StockId(0),
                 id: engine::OrderId(1)
             }
         )
@@ -274,7 +274,7 @@ async fn capture(successful_steps: usize) {
         .handle_command(SessionCommand::Enqueue {
             player_id: AccountId(0),
             intent: Intent::PlaceLimit {
-                code: engine::StockCode("600101".into()),
+                code: engine::StockId(0),
                 side: engine::Side::Buy,
                 price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
                 qty: 100,
@@ -413,7 +413,7 @@ async fn stale_preferences_leave_actor_settings_unchanged() {
     let old_ingress = handles.ingress.read().unwrap().1.clone();
     handles.restore(slot).await.unwrap();
     let intent = Intent::PlaceLimit {
-        code: engine::StockCode("600101".into()),
+        code: engine::StockId(0),
         side: engine::Side::Buy,
         price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
         qty: 100,
@@ -557,7 +557,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
             (
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: engine::StockCode("600101".into()),
+                    code: engine::StockId(0),
                     side: engine::Side::Buy,
                     price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
                     qty: lot_count * 100,

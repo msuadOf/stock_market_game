@@ -231,10 +231,10 @@ pub struct PublicBaselineSnapshot {
     pub tick: u64,
     pub day: u32,
     pub phase: engine::TradingPhase,
-    pub markets: std::collections::BTreeMap<engine::StockCode, engine::MarketSnap>,
+    pub markets: std::collections::BTreeMap<engine::StockId, engine::MarketSnap>,
     pub accounts: std::collections::BTreeMap<AccountId, engine::AccountSnap>,
-    pub daily_candles: std::collections::BTreeMap<engine::StockCode, Vec<engine::DailyCandle>>,
-    pub active_daily_candles: std::collections::BTreeMap<engine::StockCode, engine::DailyCandle>,
+    pub daily_candles: std::collections::BTreeMap<engine::StockId, Vec<engine::DailyCandle>>,
+    pub active_daily_candles: std::collections::BTreeMap<engine::StockId, engine::DailyCandle>,
 }
 
 impl From<Snapshot> for PublicBaselineSnapshot {
@@ -421,7 +421,7 @@ pub enum SessionCommand {
     },
     StockHistory {
         generation: u64,
-        code: StockCode,
+        code: engine::StockId,
         reply: oneshot::Sender<Result<(u64, engine::session::HistoricalStockData), SendCommandError>>,
     },
     InitialAllocation {
@@ -694,7 +694,7 @@ impl SessionHandles {
     pub async fn query_stock_history(
         &self,
         generation: u64,
-        code: StockCode,
+        code: engine::StockId,
     ) -> Result<(u64, engine::session::HistoricalStockData), SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
