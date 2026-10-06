@@ -227,3 +227,52 @@ test("回购专户事实按建立日期绑定到不可变登记快照", () => {
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, registrations: [], issuer_repurchase_account: { ...facts, established_on: "2200-01-01" } }] }, { ...registryContext(), currentDate: "2199-12-31" }), /CivilDate.*1900–2199/)
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, issuer_repurchase_account: { ...facts, account_reference: " " } }] }, registryContext()), /不能为空/)
 })
+
+test("税账首个日结必须紧邻开账日下一自然日", () => {
+  const taxLot = { id: "tax-account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, class: "PublicMarket" }
+  const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const makeActions = (settledOn: string, firstDay: string) => {
+    const registry = { ...validRegistry(), settled_on: settledOn, holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
+    const taxBook = {
+      operation_seq: 1, account: "0", stock: "600101", profile: "IndividualPublicMarket",
+      opened_on: "2030-01-03", opening_lots: [taxLot], settled_on: settledOn, lots: [taxLot],
+      days: [{ operation_seq: 1, event_id: "day-a", day: firstDay, net_change: "0", acquisition: null, dispositions: [] }],
+      dividends: [], collections: [],
+    }
+    return { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  }
+  const context = { ...registryContext(), currentDate: "2030-01-05", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
+  assert.doesNotThrow(() => parseSessionCorporateActions(makeActions("2030-01-04", "2030-01-04"), context), "紧邻开账日的首个日结必须被接受")
+  assert.throws(() => parseSessionCorporateActions(makeActions("2030-01-05", "2030-01-05"), context), /税账日结必须.*自然日/)
+})
+
+test("精确税额分数必须完整约简（gcd=1），非仅拒绝可整除", () => {
+  const taxBook = {
+    operation_seq: 1, account: "0", stock: "600101", profile: "IndividualPublicMarket",
+    opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-03", lots: [], days: [], dividends: [],
+    collections: [{ operation_seq: 1, event_id: "col-a", day: "2030-01-03", available_cash: "10", collected: "0", remaining_cash: "10", outstanding: { numerator: "2", denominator: "4" }, needs_funds: true }],
+  }
+  const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const registry = { ...validRegistry(), settled_on: "2030-01-03", holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [taxBook], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] }
+  const context = { ...registryContext(), snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
+  assert.throws(() => parseSessionCorporateActions(actions, context), /已约简非负分数/)
+  const reduced = structuredClone(taxBook)
+  reduced.collections = [{ ...reduced.collections[0]!, outstanding: { numerator: "1", denominator: "2" } }]
+  assert.doesNotThrow(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [reduced] }, context))
+})
+
+test("股息税未划收查询视图按严格 parser 校验余额与原因一致性", async () => {
+  const view = { account: "0", stock: "600101", outstanding: { numerator: "3", denominator: "1" }, needs_funds: true, cause: "InsufficientAvailableCash" }
+  const { parseDividendTaxOutstandingView } = await import("./schema/corporate-actions.ts")
+  assert.deepEqual(parseDividendTaxOutstandingView(view), view)
+  assert.throws(() => parseDividendTaxOutstandingView({ ...view, needs_funds: false }), /资金不足标志与未划收税额不一致/)
+  assert.throws(() => parseDividendTaxOutstandingView({ ...view, cause: "Cleared" }), /原因与余额不一致/)
+  assert.throws(() => parseDividendTaxOutstandingView({ ...view, cause: "Unknown" }), /cause.*枚举/)
+  assert.throws(() => parseDividendTaxOutstandingView({ ...view, outstanding: { numerator: "2", denominator: "4" } }), /已约简非负分数/)
+  assert.throws(() => parseDividendTaxOutstandingView({ ...view, account: "-1" }), /account/)
+  assert.deepEqual(
+    parseDividendTaxOutstandingView({ account: "0", stock: "600101", outstanding: { numerator: "0", denominator: "1" }, needs_funds: false, cause: "Cleared" }),
+    { account: "0", stock: "600101", outstanding: { numerator: "0", denominator: "1" }, needs_funds: false, cause: "Cleared" },
+  )
+})

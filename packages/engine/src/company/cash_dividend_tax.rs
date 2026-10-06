@@ -161,6 +161,20 @@ impl ExactDividendTaxAmount {
             .ok_or_else(|| overflow("exact tax denominator"))?;
         Self::new(numerator, denominator)
     }
+    /// 四舍五入（half-up）到整数分。收缴边界按“持有人每笔分红合计应纳税额
+    /// 四舍五入到分”的登记口径取整；登记与评估事实仍保留精确分数。
+    fn round_half_up_cents(&self) -> Result<i128, DividendTaxError> {
+        let numerator = u128::try_from(self.numerator).map_err(|_| overflow("tax rounding"))?;
+        let denominator = u128::from(self.denominator);
+        let doubled_denominator = denominator
+            .checked_mul(2)
+            .ok_or_else(|| overflow("tax rounding denominator"))?;
+        let scaled = numerator
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(denominator))
+            .ok_or_else(|| overflow("tax rounding numerator"))?;
+        i128::try_from(scaled / doubled_denominator).map_err(|_| overflow("tax rounding cents"))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -173,10 +187,6 @@ pub enum DividendTaxError {
     UnsupportedProfile { profile: DividendTaxProfile },
     #[error("cash dividend tax: mixed restricted tax lots require verified classification rules")]
     UnsupportedMixedRestrictedTaxLots,
-    #[error("cash dividend tax: exact sub-cent liability needs verified rounding evidence")]
-    NeedRoundingEvidence,
-    #[error("cash dividend tax: natural month/year boundary has no corresponding calendar date")]
-    NeedHoldingPeriodBoundaryEvidence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -468,14 +478,20 @@ impl CashDividendTaxBook {
         *self = candidate;
         Ok(())
     }
+    /// 当前未划收税额（分）。每笔分红按持有人合计应纳税额先精确求值、再按登记口径
+    /// 四舍五入到整数分，最后扣除已划收金额；结果恒为整数分。
     pub fn outstanding(&self) -> Result<ExactDividendTaxAmount, DividendTaxError> {
         let collected = self.collections.iter().try_fold(0i128, |total, receipt| {
             total
                 .checked_add(i128::from(receipt.collected.cents()))
                 .ok_or_else(|| overflow("collected tax sum"))
         })?;
-        self.assessed_through(self.settled_on, self.operation_seq)?
-            .subtract_cents(collected)
+        let cents = self
+            .assessed_cents_through(self.settled_on, self.operation_seq)?
+            .checked_sub(collected)
+            .ok_or_else(|| overflow("outstanding tax subtraction"))?;
+        // 负值说明已划收金额超过当前评估税额，属不变量破坏；new 会显式拒绝而非静默钳位。
+        ExactDividendTaxAmount::new(cents, 1)
     }
     pub fn collect_due(
         &mut self,
@@ -488,7 +504,7 @@ impl CashDividendTaxBook {
             .iter()
             .find(|receipt| receipt.event_id == event_id)
         {
-            if existing.day == day && existing.remaining_cash == available_cash {
+            if existing.day == day && existing.available_cash == available_cash {
                 return Ok(existing.clone());
             }
             return Err(invalid(
@@ -501,9 +517,6 @@ impl CashDividendTaxBook {
             ));
         }
         let due = self.outstanding()?;
-        if due.denominator != 1 {
-            return Err(DividendTaxError::NeedRoundingEvidence);
-        }
         let cents = i64::try_from(due.numerator.min(i128::from(available_cash.cents())))
             .map_err(|_| overflow("tax collection cash"))?;
         let receipt = TaxCollectionReceipt {
@@ -551,6 +564,21 @@ impl CashDividendTaxBook {
             .flat_map(|dividend| &dividend.payments)
             .find(|payment| payment.payment_id == payment_id)
     }
+    /// 指定自然日是否有新到账的税前分红（用于日终决定是否留税额回执）。
+    pub(crate) fn has_payment_on(&self, day: CivilDate) -> bool {
+        self.dividends.iter().any(|dividend| {
+            dividend
+                .payments
+                .iter()
+                .any(|payment| payment.paid_on == day)
+        })
+    }
+    /// 指定自然日是否发生 FIFO 处置（用于日终决定是否留税额回执）。
+    pub(crate) fn has_disposition_on(&self, day: CivilDate) -> bool {
+        self.days
+            .iter()
+            .any(|receipt| receipt.day == day && !receipt.dispositions.is_empty())
+    }
     pub fn account(&self) -> AccountId {
         self.account
     }
@@ -574,18 +602,21 @@ impl CashDividendTaxBook {
                 .iter()
                 .any(|event| event.lots.iter().any(|lot| lot.id == id))
     }
-    fn assessed_through(
+    /// 截至指定日期与操作序号、按“每笔分红合计应纳税额四舍五入到分”口径
+    /// 计算的整分应纳税额。每笔分红内部仍用精确分数求值，仅在汇总后取整。
+    fn assessed_cents_through(
         &self,
         through: CivilDate,
         operation_seq: u64,
-    ) -> Result<ExactDividendTaxAmount, DividendTaxError> {
-        let mut assessed = ExactDividendTaxAmount::zero();
+    ) -> Result<i128, DividendTaxError> {
+        let mut total_cents = 0i128;
         for dividend in self
             .dividends
             .iter()
             .filter(|dividend| dividend.operation_seq <= operation_seq)
         {
             let quantity = total_quantity(&dividend.lots)?;
+            let mut assessed = ExactDividendTaxAmount::zero();
             for payment in dividend.payments.iter().filter(|payment| {
                 payment.paid_on <= through && payment.operation_seq <= operation_seq
             }) {
@@ -621,8 +652,11 @@ impl CashDividendTaxBook {
                     }
                 }
             }
+            total_cents = total_cents
+                .checked_add(assessed.round_half_up_cents()?)
+                .ok_or_else(|| overflow("assessed tax cents"))?;
         }
-        Ok(assessed)
+        Ok(total_cents)
     }
     pub fn validate(&self) -> Result<(), DividendTaxError> {
         let mut operations = Vec::new();
@@ -840,19 +874,15 @@ impl CashDividendTaxBook {
             }
             last_collection_day = collection.day;
             let due = self
-                .assessed_through(collection.day, collection.operation_seq)?
-                .subtract_cents(collected)?;
-            if due.denominator != 1 {
-                return Err(DividendTaxError::NeedRoundingEvidence);
-            }
-            let expected = due
-                .numerator
-                .min(i128::from(collection.available_cash.cents()));
+                .assessed_cents_through(collection.day, collection.operation_seq)?
+                .checked_sub(collected)
+                .ok_or_else(|| overflow("collection due subtraction"))?;
+            let expected = due.min(i128::from(collection.available_cash.cents()));
             if i128::from(collection.collected.cents()) != expected
                 || collection.remaining_cash.cents()
                     != collection.available_cash.cents() - collection.collected.cents()
-                || collection.outstanding != due.subtract_cents(expected)?
-                || collection.needs_funds != (due.numerator > expected)
+                || collection.outstanding != ExactDividendTaxAmount::new(due - expected, 1)?
+                || collection.needs_funds != (due > expected)
             {
                 return Err(invalid(
                     "collection breaks actual cash or outstanding tax conservation",
@@ -914,6 +944,10 @@ pub(crate) fn convert_tax_class(
     }
 }
 
+/// 个人流通股现金分红差别化税率：持股期限以转让交割日前一日截止，
+/// “一个月”指上月某日至本月同日前一日（财税〔2012〕85号第八条）。
+/// 目标月无对应日（如1月31日→2月、2月29日取得跨平年）时，按《民法典》
+/// 期间计算规则把边界钳制到目标月最后一日，而不是对整类批次报错。
 pub fn personal_cash_dividend_rate(
     acquired_on: CivilDate,
     disposed_on: CivilDate,
@@ -921,24 +955,28 @@ pub fn personal_cash_dividend_rate(
     if disposed_on < acquired_on {
         return Err(invalid("disposal must follow acquisition"));
     }
-    let next_year = acquired_on.year() + i32::from(acquired_on.month() == 12);
-    let next_month = if acquired_on.month() == 12 {
-        1
-    } else {
-        acquired_on.month() + 1
-    };
-    let month_boundary = CivilDate::from_ymd(next_year, next_month, acquired_on.day())
-        .map_err(|_| DividendTaxError::NeedHoldingPeriodBoundaryEvidence)?;
-    if disposed_on <= month_boundary {
+    if disposed_on <= clamped_anniversary(acquired_on, 1)? {
         return Ok(20);
     }
-    let year_boundary = CivilDate::from_ymd(
-        acquired_on.year() + 1,
-        acquired_on.month(),
-        acquired_on.day(),
-    )
-    .map_err(|_| DividendTaxError::NeedHoldingPeriodBoundaryEvidence)?;
+    let year_boundary = clamped_anniversary(acquired_on, 12)?;
     Ok(if disposed_on <= year_boundary { 10 } else { 0 })
+}
+
+/// 取得日加 `add_months` 个自然月后的对应日；无对应日时取目标月最后一日。
+fn clamped_anniversary(
+    acquired_on: CivilDate,
+    add_months: u32,
+) -> Result<CivilDate, DividendTaxError> {
+    let total_months = i64::from(acquired_on.month()) - 1 + i64::from(add_months);
+    let year = i64::from(acquired_on.year())
+        .checked_add(total_months.div_euclid(12))
+        .ok_or_else(|| overflow("holding period anniversary year"))?;
+    let month = u8::try_from(total_months.rem_euclid(12) + 1)
+        .map_err(|_| invalid("holding period anniversary month"))?;
+    let year = i32::try_from(year).map_err(|_| invalid("holding period anniversary year range"))?;
+    let last_day = crate::calendar::days_in_month(year, month);
+    CivilDate::from_ymd(year, month, acquired_on.day().min(last_day))
+        .map_err(|error| invalid(&format!("holding period anniversary date: {error}")))
 }
 
 fn total_quantity(lots: &[DividendTaxLot]) -> Result<u64, DividendTaxError> {

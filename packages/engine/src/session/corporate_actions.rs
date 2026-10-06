@@ -41,6 +41,46 @@ pub enum DividendTaxStatus {
     TreatmentNotConfigured,
 }
 
+/// 个人现金分红税未划收税额的原因。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum DividendTaxOutstandingCause {
+    /// 截至最近日终，应纳税额已全部划收，无未清税额。
+    Cleared,
+    /// 已评估应纳税额超过资金账户可用现金，按可用现金部分划收；
+    /// 待资金补足后由后续日终继续追缴（财税〔2012〕85号第二条）。
+    InsufficientAvailableCash,
+}
+
+/// 精确分数税额的查询投影：规范非负十进制字符串分子 + 规范 u64 十进制字符串分母，
+/// 序列化形态与 `ExactDividendTaxAmount` 及 Web 严格 parser 的 `ExactDividendTaxAmount` 一致。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExactDividendTaxFraction {
+    #[serde(with = "crate::company::share_registry::canonical_i128_decimal")]
+    pub numerator: i128,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub denominator: u64,
+}
+
+/// 单账户单证券的个人现金分红税未划收状态查询视图；只汇总税账既有事实，不产生新事实。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct DividendTaxOutstandingView {
+    #[ts(type = "string")]
+    pub account: AccountId,
+    pub stock: StockCode,
+    /// 尚未划收的应纳税额（分，已约简非负分数；按每笔分红合计四舍五入到分后汇总）。
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").ExactDividendTaxAmount")]
+    pub outstanding: ExactDividendTaxFraction,
+    /// 划收时资金不足导致部分收缴（等价于当前存在未划收税额）。
+    pub needs_funds: bool,
+    /// 未清税额原因。
+    pub cause: DividendTaxOutstandingCause,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -776,6 +816,37 @@ impl SessionCorporateActions {
         Ok(())
     }
 
+    /// 查询各已配置个人股息税账的当前未划收税额与资金不足原因。
+    /// 每次日终收缴后未清余额仅在资金不足时存在，故 `needs_funds` 等价于余额非零；
+    /// 本方法只读汇总，不落任何新事实，UI 呈现由后续批次接线。
+    pub fn dividend_tax_outstanding_views(
+        &self,
+    ) -> Result<Vec<DividendTaxOutstandingView>, SessionCorporateActionsError> {
+        let mut views = Vec::new();
+        for book in &self.dividend_tax_books {
+            let outstanding = book
+                .outstanding_tax()
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            let outstanding = ExactDividendTaxFraction {
+                numerator: outstanding.numerator(),
+                denominator: outstanding.denominator(),
+            };
+            let needs_funds = outstanding.numerator > 0;
+            views.push(DividendTaxOutstandingView {
+                account: book.account(),
+                stock: book.stock().clone(),
+                needs_funds,
+                cause: if needs_funds {
+                    DividendTaxOutstandingCause::InsufficientAvailableCash
+                } else {
+                    DividendTaxOutstandingCause::Cleared
+                },
+                outstanding,
+            });
+        }
+        Ok(views)
+    }
+
     pub(crate) fn configure_cash_dividend_tax_book(
         &mut self,
         account: crate::orderbook::AccountId,
@@ -800,6 +871,19 @@ impl SessionCorporateActions {
                     "账户 {account:?} 不是 {stock:?} 的登记股东，不能配置股息税"
                 ))
             })?;
+        // 装配期守卫：名册已有历史日结回执或已登记分红时拒绝配置。
+        // 税账以名册日结事实重建 FIFO 批次；事后配置会丢失历史取得/处置事实，
+        // 且首个历史回执无法满足“紧邻开账日下一自然日”，令后续每次日终永久失败。
+        if !registry.receipts().is_empty()
+            || self
+                .dividends
+                .iter()
+                .any(|book| book.plan().stock == stock && book.registration().is_some())
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "股息税账只能在名册装配期配置：名册已有历史日结回执或已登记分红".into(),
+            ));
+        }
         if self
             .dividend_tax_books
             .iter()
@@ -908,13 +992,6 @@ impl SessionCorporateActions {
                 .iter()
                 .position(|item| item.account() == account && *item.stock() == stock)
                 .expect("tax book key came from the same collection");
-            let collected_tax = self.dividend_tax_books[tax_index]
-                .collections()
-                .iter()
-                .try_fold(crate::money::Money::ZERO, |total, receipt| {
-                    total.add(receipt.collected)
-                })
-                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             for dividend_book in &self.dividends {
                 if dividend_book.plan().stock != stock {
                     continue;
@@ -1024,6 +1101,18 @@ impl SessionCorporateActions {
 
             let index = tax_index;
             let settled_on = self.dividend_tax_books[index].settled_on();
+            let outstanding = self.dividend_tax_books[index]
+                .outstanding_tax()
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            // 零税额且当日无新付款/处置时不落收缴回执，消除逐日零税回执的存档膨胀；
+            // 有付款或处置事件的日照常留痕，未清税额由后续日终继续追缴。
+            // 同日幂等重放由 collect_due 对既有 event_id 的事实比较满足。
+            if outstanding.numerator() == 0
+                && !self.dividend_tax_books[index].has_payment_on(settled_on)
+                && !self.dividend_tax_books[index].has_disposition_on(settled_on)
+            {
+                continue;
+            }
             let available_cash = accounts
                 .get(&account)
                 .map(|account| account.cash())
@@ -1032,11 +1121,8 @@ impl SessionCorporateActions {
                 })?;
             let collection_id =
                 format!("dividend-tax-collect:{account:?}:{}:{settled_on}", stock.0);
-            let base_available_cash = available_cash
-                .add(collected_tax)
-                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             let collection = self.dividend_tax_books[index]
-                .collect_due(collection_id, settled_on, base_available_cash)
+                .collect_due(collection_id, settled_on, available_cash)
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             if collection.collected.cents() > 0 {
                 accounts

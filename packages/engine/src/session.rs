@@ -2383,6 +2383,8 @@ impl GameSession {
     }
 
     /// 显式配置账户在指定证券下的现金分红税务身份；调用方不得由账户类型或策略风格推断。
+    /// 仅限会话装配期调用：名册已有历史日结回执或已登记分红时会拒绝，
+    /// 因为事后配置无法重建 FIFO 税事实并会令后续日终永久失败。
     pub fn configure_cash_dividend_tax_book(
         &mut self,
         account: AccountId,
@@ -2392,6 +2394,17 @@ impl GameSession {
         self.state
             .corporate_actions
             .configure_cash_dividend_tax_book(account, stock, profile)
+    }
+
+    /// 查询各账户证券的个人现金分红税未划收税额与资金不足原因；
+    /// 只读汇总税账既有事实，不产生新事实，UI 呈现由后续批次接线。
+    pub fn dividend_tax_outstanding_views(
+        &self,
+    ) -> Result<Vec<corporate_actions::DividendTaxOutstandingView>, SessionCorporateActionsError>
+    {
+        self.state
+            .corporate_actions
+            .dividend_tax_outstanding_views()
     }
 
     /// 显式绑定公司注册资本及其来源证据；不会从股本或账户持仓推断法定事实。

@@ -35,6 +35,26 @@ export type AccountDividendGrossReceipt = { readonly payment_id: string; readonl
 export type ExternalDividendReceipt = { readonly payment_id: string; readonly plan_id: string; readonly holder: { readonly External: string }; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_dividend_groups: readonly AppliedCashExDividendGroup[] }
 export type AppliedCashExDividendGroup = { readonly date: string; readonly stock: string; readonly plan_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
+export type DividendTaxOutstandingCause = "Cleared" | "InsufficientAvailableCash"
+export type DividendTaxOutstandingView = { readonly account: string; readonly stock: string; readonly outstanding: ExactDividendTaxAmount; readonly needs_funds: boolean; readonly cause: DividendTaxOutstandingCause }
+
+// 解析 engine `DividendTaxOutstandingView` 查询投影：与 Rust 侧 ts-rs 正规导出的
+// `apps/web/src/types/generated/DividendTaxOutstandingView.ts` 共享同一序列化形态。
+// 该视图是运行时查询结果，不进入日终存档；宿主/UI 接线由后续批次完成。
+export function parseDividendTaxOutstandingView(value: unknown, path = "dividend_tax_outstanding"): DividendTaxOutstandingView {
+  const view = record(value, path)
+  exact(view, ["account", "stock", "outstanding", "needs_funds", "cause"], path)
+  const account = accountId(view.account, `${path}.account`)
+  const stock = string(view.stock, `${path}.stock`)
+  if (stock.trim() === "") throw new SaveSchemaError(`${path}.stock`, "税股代码不能为空")
+  const outstanding = parseExactAmount(view.outstanding, `${path}.outstanding`)
+  const needs_funds = boolean(view.needs_funds, `${path}.needs_funds`)
+  const cause = oneOf(view.cause, `${path}.cause`, ["Cleared", "InsufficientAvailableCash"] as const)
+  const hasOutstanding = BigInt(outstanding.numerator) > 0n
+  if (needs_funds !== hasOutstanding) throw new SaveSchemaError(`${path}.needs_funds`, "税账资金不足标志与未划收税额不一致")
+  if (cause !== (hasOutstanding ? "InsufficientAvailableCash" : "Cleared")) throw new SaveSchemaError(`${path}.cause`, "税账未划收原因与余额不一致")
+  return { account, stock, outstanding, needs_funds, cause }
+}
 
 type Context = {
   readonly issuers: Readonly<Record<string, { readonly listed_stock: string | null; readonly issued_shares: string }>>
@@ -411,12 +431,21 @@ function parseTaxLot(value: unknown, path: string): DividendTaxLot {
   }
 }
 
+function greatestCommonDivisor(left: bigint, right: bigint): bigint {
+  while (right !== 0n) {
+    const remainder = left % right
+    left = right
+    right = remainder
+  }
+  return left
+}
+
 function parseExactAmount(value: unknown, path: string): ExactDividendTaxAmount {
   const amount = record(value, path)
   exact(amount, ["numerator", "denominator"], path)
   const numerator = signedI128Fraction(amount.numerator, `${path}.numerator`)
   const denominator = decimal(amount.denominator, `${path}.denominator`)
-  if (denominator === "0" || BigInt(numerator) < 0n || (BigInt(numerator) % BigInt(denominator) === 0n && BigInt(denominator) !== 1n)) throw new SaveSchemaError(path, "精确税额必须为已约简非负分数")
+  if (denominator === "0" || BigInt(numerator) < 0n || greatestCommonDivisor(BigInt(numerator), BigInt(denominator)) !== 1n) throw new SaveSchemaError(path, "精确税额必须为已约简非负分数")
   return { numerator, denominator }
 }
 
@@ -532,7 +561,7 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
   let dayCursor = book.opened_on
   for (const [index, day] of book.days.entries()) {
     const dayPath = `${path}.days[${index}]`
-    if (day.day <= dayCursor || (index > 0 && addCivilDays(dayCursor, 1) !== day.day)) throw new SaveSchemaError(`${dayPath}.day`, "税账日结必须按自然日连续递增")
+    if (addCivilDays(dayCursor, 1) !== day.day) throw new SaveSchemaError(`${dayPath}.day`, "税账日结必须紧邻开账日或前一日结的下一自然日")
     if ((BigInt(day.net_change) > 0n) !== (day.acquisition !== null)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账日净变动与新增批次不一致")
     if (day.acquisition !== null && (day.acquisition.acquired_on !== day.day || day.acquisition.qty !== day.net_change)) throw new SaveSchemaError(`${dayPath}.acquisition`, "税账新增批次日期或数量不一致")
     let disposed = 0n

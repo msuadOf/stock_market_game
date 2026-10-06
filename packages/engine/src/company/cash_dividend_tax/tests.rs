@@ -107,25 +107,105 @@ fn nonindividual_profile_is_not_silently_taxed_as_individual() {
 }
 
 #[test]
-fn exact_subcent_tax_is_not_rounded_or_erased() {
+fn per_dividend_tax_rounds_half_up_to_whole_cents_at_collection() {
+    // 财税〔2012〕85号口径下的常见组合：每股 7 分 × 3 股 × 20% = 4.2 分，
+    // 按持有人每笔分红合计应纳税额四舍五入到分 → 收缴 4 分，不再以亚分证据拒绝。
     let mut book = CashDividendTaxBook::new(
         AccountId(u64::MAX),
         StockCode("600001".into()),
         DividendTaxProfile::IndividualPublicMarket,
         date("2030-01-01"),
-        vec![lot("fractional", 3, "2029-12-01")],
+        vec![lot("fractional", 3, "2029-12-15")],
     )
     .unwrap();
     book.register_dividend(
         "fraction".into(),
         date("2030-01-01"),
-        ExactDividendTaxAmount::new(1, 3).unwrap(),
+        ExactDividendTaxAmount::new(7, 1).unwrap(),
     )
     .unwrap();
-    book.record_net_day("sell".into(), date("2030-01-02"), -1, None)
+    book.record_net_day("sell".into(), date("2030-01-02"), -3, None)
         .unwrap();
     book.record_payment(
         "fraction",
+        "actual-cash-receipt".into(),
+        date("2030-01-02"),
+        Money::from_cents(21),
+        "actual-cash-receipt".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        book.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(4, 1).unwrap(),
+        "7 cents x 3 shares x 20% = 4.2 cents rounds half-down to 4 cents"
+    );
+    assert_eq!(
+        book.collect_due("collect".into(), date("2030-01-02"), Money::from_cents(100))
+            .unwrap()
+            .collected,
+        Money::from_cents(4)
+    );
+    assert_eq!(
+        book.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(0, 1).unwrap()
+    );
+}
+
+#[test]
+fn half_cent_per_dividend_tax_rounds_up_and_sub_half_cent_rounds_to_zero() {
+    // 5 分/股 × 1 股 × 10% = 0.5 分 → 四舍五入到分为 1 分（half-up）。
+    let mut half_up = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![lot("half", 1, "2029-12-01")],
+    )
+    .unwrap();
+    half_up
+        .register_dividend(
+            "half".into(),
+            date("2030-01-01"),
+            ExactDividendTaxAmount::new(5, 1).unwrap(),
+        )
+        .unwrap();
+    half_up
+        .record_net_day("sell".into(), date("2030-01-02"), -1, None)
+        .unwrap();
+    half_up
+        .record_payment(
+            "half",
+            "actual-receipt".into(),
+            date("2030-01-02"),
+            Money::from_cents(5),
+            "actual-cash-receipt".into(),
+        )
+        .unwrap();
+    assert_eq!(
+        half_up.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(1, 1).unwrap(),
+        "0.5 cent rounds half-up to 1 cent"
+    );
+
+    // 每股 1/3 分 × 1 股 × 10% = 1/30 分 < 0.5 分 → 该笔分红合计税额四舍五入为 0 分。
+    let mut tiny = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![lot("tiny", 3, "2029-12-01")],
+    )
+    .unwrap();
+    tiny.register_dividend(
+        "tiny".into(),
+        date("2030-01-01"),
+        ExactDividendTaxAmount::new(1, 3).unwrap(),
+    )
+    .unwrap();
+    tiny.record_net_day("sell".into(), date("2030-01-02"), -1, None)
+        .unwrap();
+    tiny.record_payment(
+        "tiny",
         "actual-one-cent".into(),
         date("2030-01-02"),
         Money::from_cents(1),
@@ -133,15 +213,19 @@ fn exact_subcent_tax_is_not_rounded_or_erased() {
     )
     .unwrap();
     assert_eq!(
-        book.outstanding().unwrap(),
-        ExactDividendTaxAmount::new(1, 30).unwrap()
+        tiny.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(0, 1).unwrap(),
+        "1/30 cent rounds to zero under the registered per-dividend rounding rule"
     );
-    let before = book.clone();
     assert_eq!(
-        book.collect_due("collect".into(), date("2030-01-02"), Money::from_cents(100)),
-        Err(DividendTaxError::NeedRoundingEvidence)
+        tiny.collect_due("collect".into(), date("2030-01-02"), Money::from_cents(100))
+            .unwrap()
+            .collected,
+        Money::from_cents(0)
     );
-    assert_eq!(book, before);
+    let restored: CashDividendTaxBook =
+        serde_json::from_value(serde_json::to_value(&tiny).unwrap()).unwrap();
+    assert_eq!(restored, tiny);
 }
 
 #[test]
@@ -348,7 +432,7 @@ fn tax_restore_rejects_conflicting_metadata_sequence_and_cash_and_failures_are_a
 }
 
 #[test]
-fn mixed_restricted_tax_disposal_and_unverified_month_end_boundary_are_explicit() {
+fn mixed_restricted_tax_disposal_is_explicitly_unsupported() {
     let mut restricted = lot("restricted", 5, "2029-01-01");
     restricted.class = TaxShareClass::StatutoryRestricted {
         release_on: date("2031-01-01"),
@@ -369,10 +453,52 @@ fn mixed_restricted_tax_disposal_and_unverified_month_end_boundary_are_explicit(
         Err(DividendTaxError::UnsupportedMixedRestrictedTaxLots)
     );
     assert_eq!(book, before);
-    assert_eq!(
-        personal_cash_dividend_rate(date("2030-01-31"), date("2030-03-01")),
-        Err(DividendTaxError::NeedHoldingPeriodBoundaryEvidence)
-    );
+}
+
+#[test]
+fn month_end_acquisition_clamps_period_boundary_to_target_month_end() {
+    // 1月31日取得：一个月边界钳制为2月28/29日（对应日不存在时取目标月最后一日），
+    // 而不是对整类月末取得批次报 NeedHoldingPeriodBoundaryEvidence 卡死日结。
+    for (acquired, disposed, rate) in [
+        ("2030-01-31", "2030-02-27", 20),
+        ("2030-01-31", "2030-02-28", 20),
+        ("2030-01-31", "2030-03-01", 10),
+        ("2030-01-31", "2031-01-31", 10),
+        ("2030-01-31", "2031-02-01", 0),
+        // 闰年 1月31日取得的月边界钳制到 2月29日。
+        ("2028-01-31", "2028-02-29", 20),
+        ("2028-01-31", "2028-03-01", 10),
+        // 8月31日取得 → 9月无31日，钳制到 9月30日；一年边界 2030-08-31 存在。
+        ("2029-08-31", "2029-09-30", 20),
+        ("2029-08-31", "2029-10-01", 10),
+        ("2029-08-31", "2030-08-31", 10),
+        ("2029-08-31", "2030-09-01", 0),
+    ] {
+        assert_eq!(
+            personal_cash_dividend_rate(date(acquired), date(disposed)).unwrap(),
+            rate,
+            "{acquired} -> {disposed}"
+        );
+    }
+}
+
+#[test]
+fn leap_day_acquisition_clamps_year_boundary_across_non_leap_years() {
+    // 2月29日取得：平年一年边界无对应日，钳制到 2月28日。
+    for (acquired, disposed, rate) in [
+        ("2028-02-29", "2028-03-29", 20),
+        ("2028-02-29", "2028-03-30", 10),
+        ("2028-02-29", "2029-02-28", 10),
+        ("2028-02-29", "2029-03-01", 0),
+        // 跨非闰年 2月：1月31日取得，一年边界 2030-01-31 之后卖出免税。
+        ("2029-01-31", "2030-02-28", 0),
+    ] {
+        assert_eq!(
+            personal_cash_dividend_rate(date(acquired), date(disposed)).unwrap(),
+            rate,
+            "{acquired} -> {disposed}"
+        );
+    }
 }
 
 #[test]

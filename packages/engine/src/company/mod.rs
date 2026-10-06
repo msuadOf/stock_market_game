@@ -45,6 +45,7 @@ mod spec;
 pub mod share_registry;
 pub mod stock_distribution;
 pub mod cash_dividend_tax;
+pub use cash_dividend_tax::{CashDividendTaxBook, DividendTaxProfile};
 pub mod cash_dividend;
 pub mod ex_reference_price;
 #[cfg(test)]
