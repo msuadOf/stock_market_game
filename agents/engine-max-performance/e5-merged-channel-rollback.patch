@@ -1,0 +1,461 @@
+diff --git a/packages/engine/src/session/decision_chain.rs b/packages/engine/src/session/decision_chain.rs
+index 17277a9d..bd61456a 100644
+--- a/packages/engine/src/session/decision_chain.rs
++++ b/packages/engine/src/session/decision_chain.rs
+@@ -58,7 +58,7 @@ mod quote;
+ mod retail_analysis;
+ mod roots;
+ mod urgency;
+-use personal_state::PlanPersonalState;
++pub(in crate::session) use personal_state::PlanPersonalState;
+ pub(in crate::session) use roots::{InstitutionDecisionRoot, RootReadContext};
+ 
+ /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
+diff --git a/packages/engine/src/session/decision_chain/retail_analysis.rs b/packages/engine/src/session/decision_chain/retail_analysis.rs
+index 97c3bee8..a56b80cb 100644
+--- a/packages/engine/src/session/decision_chain/retail_analysis.rs
++++ b/packages/engine/src/session/decision_chain/retail_analysis.rs
+@@ -5,11 +5,71 @@ use crate::observation::{
+ };
+ use crate::strategy::{PositionView, SelfView, Strategy, StrategyState};
+ 
++/// 整批 retail 分析共享的观察根。
++pub(in crate::session) struct RetailAnalysisObservation {
++    observation: DecisionChainObservation,
++    thirty_minute_market: crate::observation::EqualWeightMarketObservation,
++}
++
+ impl GameSession {
+     pub(in crate::session) fn capture_retail_analysis(
+         &mut self,
+         observed: &[AccountId],
+         market: &MarketView,
++    ) -> Result<BTreeMap<AccountId, BTreeMap<StockCode, CandidateAssessment>>, StepFatal> {
++        self.capture_retail_analysis_with_observer(observed, market, &|_| {})
++    }
++
++    /// 构建整批 retail 分析共享的观察根（市场、路径、技术面、等权市场）。
++    /// 只读取共享不可变状态，可与逐账户 experience 捕获并行执行。
++    pub(in crate::session) fn capture_retail_observation(
++        &self,
++        market: MarketView,
++    ) -> Result<RetailAnalysisObservation, StepFatal> {
++        let observation = DecisionChainObservation::capture_for_roots(self, market)?;
++        let returns = observation
++            .paths
++            .iter()
++            .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
++            .collect();
++        let thirty_minute_market =
++            build_equal_weight_market_observation(&returns).map_err(|error| {
++                StepFatal::InvariantViolation {
++                    description: error.to_string(),
++                    location: "decision_chain::retail_analysis_market".to_owned(),
++                }
++            })?;
++        Ok(RetailAnalysisObservation {
++            observation,
++            thirty_minute_market,
++        })
++    }
++
++    /// 在共享观察根上分析单个 retail 账户；`experience` 由调用方提供，
++    /// pipeline 合并通道传入本 tick 刚捕获的同一账户 experience 状态。
++    pub(in crate::session) fn observe_retail_account(
++        &self,
++        id: AccountId,
++        personal: &mut PlanPersonalState,
++        observation: &RetailAnalysisObservation,
++        experience: &crate::RetailExperienceState,
++    ) -> Result<BTreeMap<StockCode, CandidateAssessment>, StepFatal> {
++        self.observe_retail_analysis(
++            id,
++            personal,
++            &observation.observation,
++            &observation.thirty_minute_market,
++            experience,
++        )
++    }
++
++    /// 与 `capture_retail_analysis` 相同，另在每账户 retail 分析启动时通知观察者；
++    /// 仅供 pipeline 的捕获路径用于证明与 experience 捕获的重叠执行。
++    pub(in crate::session) fn capture_retail_analysis_with_observer(
++        &mut self,
++        observed: &[AccountId],
++        market: &MarketView,
++        on_retail: &(dyn Fn(AccountId) + Sync),
+     ) -> Result<BTreeMap<AccountId, BTreeMap<StockCode, CandidateAssessment>>, StepFatal> {
+         let accounts = observed
+             .iter()
+@@ -24,19 +84,7 @@ impl GameSession {
+         if accounts.is_empty() {
+             return Ok(BTreeMap::new());
+         }
+-        let observation = DecisionChainObservation::capture_for_roots(self, market.clone())?;
+-        let returns = observation
+-            .paths
+-            .iter()
+-            .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
+-            .collect();
+-        let thirty_minute_market =
+-            build_equal_weight_market_observation(&returns).map_err(|error| {
+-                StepFatal::InvariantViolation {
+-                    description: error.to_string(),
+-                    location: "decision_chain::retail_analysis_market".to_owned(),
+-                }
+-            })?;
++        let observation = self.capture_retail_observation(market.clone())?;
+         let work = accounts
+             .into_iter()
+             .map(|id| (id, PlanPersonalState::take(self, id)))
+@@ -44,12 +92,17 @@ impl GameSession {
+         let results = work
+             .into_par_iter()
+             .map(|(id, mut personal)| {
+-                let assessments = self.observe_retail_analysis(
+-                    id,
+-                    &mut personal,
+-                    &observation,
+-                    &thirty_minute_market,
+-                )?;
++                on_retail(id);
++                // 本入口消费已安装在 map 中的 experience 状态；
++                // pipeline 的合并通道改为传入本 tick 刚捕获的同一状态。
++                let experience = self.state.retail_experience.get(&id).ok_or_else(|| {
++                    StepFatal::InvariantViolation {
++                        description: format!("retail {id:?} has no personal experience"),
++                        location: "decision_chain::retail_analysis".to_owned(),
++                    }
++                })?;
++                let assessments =
++                    self.observe_retail_account(id, &mut personal, &observation, experience)?;
+                 Ok((id, personal, assessments))
+             })
+             .collect::<Vec<Result<_, StepFatal>>>()
+@@ -69,6 +122,7 @@ impl GameSession {
+         personal: &mut PlanPersonalState,
+         observation: &DecisionChainObservation,
+         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
++        experience: &crate::RetailExperienceState,
+     ) -> Result<BTreeMap<StockCode, CandidateAssessment>, StepFatal> {
+         let invariant = |description: String| StepFatal::InvariantViolation {
+             description,
+@@ -235,11 +289,6 @@ impl GameSession {
+                     .map_err(|error| invariant(error.to_string()))?;
+             }
+         }
+-        let experience = self
+-            .state
+-            .retail_experience
+-            .get(&id)
+-            .ok_or_else(|| invariant(format!("retail {id:?} has no personal experience")))?;
+         if checks_information {
+             personal
+                 .attention
+@@ -256,7 +305,14 @@ impl GameSession {
+         let mut assessments = BTreeMap::new();
+         for code in &candidates {
+             let signals = self
+-                .retail_candidate_signals(id, code, personal, observation, thirty_minute_market)
++                .retail_candidate_signals(
++                    id,
++                    code,
++                    personal,
++                    observation,
++                    thirty_minute_market,
++                    experience,
++                )
+                 .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
+             personal
+                 .price_memory
+@@ -279,6 +335,7 @@ impl GameSession {
+         personal: &PlanPersonalState,
+         observation: &DecisionChainObservation,
+         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
++        experience: &crate::RetailExperienceState,
+     ) -> Result<CandidateSignals, String> {
+         use crate::plans::{
+             fundamental_signal, normalized_score, price_volume_signal, technical_signal,
+@@ -329,7 +386,7 @@ impl GameSession {
+         let experience = if personal.belief.analysis().weights().experience_cost_bp() == 0 {
+             SignalContribution::unavailable(SignalUnavailableReason::ZeroWeight)
+         } else {
+-            self.retail_cost_signal(id, code, observation, thirty_minute_market)?
++            self.retail_cost_signal(id, code, observation, thirty_minute_market, experience)?
+         };
+         Ok(CandidateSignals {
+             fundamental,
+@@ -346,6 +403,7 @@ impl GameSession {
+         code: &StockCode,
+         observation: &DecisionChainObservation,
+         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
++        experience: &crate::RetailExperienceState,
+     ) -> Result<SignalContribution, String> {
+         let account = &self.state.accounts[&id];
+         let StrategyState::ZiNoise(retail) = account
+@@ -356,11 +414,6 @@ impl GameSession {
+         else {
+             return Err(format!("retail {id:?} has no retail execution strategy"));
+         };
+-        let experience = self
+-            .state
+-            .retail_experience
+-            .get(&id)
+-            .ok_or_else(|| format!("retail {id:?} has no personal experience"))?;
+         let inputs = account
+             .positions()
+             .iter()
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+index 7ededb39..bd99c732 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+@@ -3,12 +3,13 @@
+ //! 只推进密封 strategy 输入所需的 attention/retail-observation 状态。
+ //! 不路由 intent，不修改订单簿。
+ 
+-use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
++use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError, StepFatal};
+ use crate::behavior::BehaviorMarketObservation;
+ use crate::observation::{
+     build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
+     ObservationError, RiskPositionInput,
+ };
++use crate::session::decision_chain::PlanPersonalState;
+ use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
+ use crate::strategy::{PositionView, SelfView, StrategyStateError};
+ use crate::{
+@@ -18,6 +19,35 @@ use rayon::prelude::*;
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
++/// 合并通道单账户的全部产物；`retail` 与 `personal` 仅 retail 账户携带。
++struct CapturedItem {
++    account: AccountId,
++    input: DecisionAccountInput,
++    experience: Option<Arc<RetailExperienceState>>,
++    personal: Option<PlanPersonalState>,
++    retail: Option<BTreeMap<StockCode, crate::plans::CandidateAssessment>>,
++}
++
++/// 区分 experience 侧与 retail 侧错误以保持原首错序。
++enum CapturedItemError {
++    Experience(DecisionSnapshotCaptureError),
++    Retail(StepFatal),
++}
++
++impl From<DecisionSnapshotCaptureError> for CapturedItemError {
++    fn from(error: DecisionSnapshotCaptureError) -> Self {
++        Self::Experience(error)
++    }
++}
++
++fn is_retail_account(shadow: &super::GameSession, account: &AccountId) -> bool {
++    shadow
++        .state
++        .accounts
++        .get(account)
++        .is_some_and(|entry| entry.kind() == AccountKind::Retail)
++}
++
+ #[derive(Debug)]
+ pub(in crate::session) struct CapturedDecisionSnapshot {
+     pub(super) snapshot: Arc<DecisionSnapshot>,
+@@ -87,11 +117,22 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
+ pub(in crate::session) fn capture_decision_snapshot(
+     shadow: &mut super::GameSession,
+ ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
+-    capture_decision_snapshot_in_place(shadow)
++    capture_decision_snapshot_with_observer(shadow, &|_| {}, &|_| {})
++}
++
++/// 测试观察每账户 experience 捕获与 retail 分析的启动时刻，用于证明两者重叠执行。
++pub(in crate::session) fn capture_decision_snapshot_with_observer(
++    shadow: &mut super::GameSession,
++    on_experience: &(impl Fn(AccountId) + Sync),
++    on_retail: &(dyn Fn(AccountId) + Sync),
++) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
++    capture_decision_snapshot_in_place(shadow, on_experience, on_retail)
+ }
+ 
+ fn capture_decision_snapshot_in_place(
+     shadow: &mut super::GameSession,
++    on_experience: &(impl Fn(AccountId) + Sync),
++    on_retail: &(dyn Fn(AccountId) + Sync),
+ ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
+     let tick = shadow.state.tick;
+     let phase = shadow.phase();
+@@ -162,24 +203,40 @@ fn capture_decision_snapshot_in_place(
+     let behavior_market = has_retail_observer
+         .then(|| build_behavior_market_checked(shadow))
+         .transpose()?;
+-    let prepared = accepted_due_npc_ids
+-        .par_iter()
++    // retail 个人状态提前取出；计划态（attention/watchlist/belief 等）与
++    // experience 捕获读取的状态域不相交，提前取出不改变任何账户的观察值。
++    let items: Vec<(AccountId, Option<PlanPersonalState>)> = accepted_due_npc_ids
++        .iter()
+         .map(|account| {
++            let personal = (has_retail_observer && is_retail_account(shadow, account))
++                .then(|| PlanPersonalState::take(shadow, *account));
++            (*account, personal)
++        })
++        .collect();
++    // 共享观察根同样只依赖不可变市场状态，可与逐账户捕获并行准备。
++    let retail_observation = has_retail_observer
++        .then(|| shadow.capture_retail_observation(market.clone()))
++        .transpose()
++        .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
++    let prepared = items
++        .into_par_iter()
++        .map(|(account, mut personal)| {
++            on_experience(account);
+             let entry = shadow
+                 .state
+                 .accounts
+-                .get(account)
+-                .ok_or(DecisionSnapshotCaptureError::MissingAccount(*account))?;
++                .get(&account)
++                .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
+             let observation =
+-                CapturedExperienceObservation::capture(shadow, *account, market_minute)?;
++                CapturedExperienceObservation::capture(shadow, account, market_minute)?;
+             let CapturedAccountObservation {
+                 self_view,
+                 account_risk,
+                 experience,
+-            } = observation.consume(*account, entry.kind(), entry.cash(), |self_positions| {
++            } = observation.consume(account, entry.kind(), entry.cash(), |self_positions| {
+                 build_self_view_for(
+                     shadow,
+-                    *account,
++                    account,
+                     phase,
+                     &working_continuous,
+                     &working_auction,
+@@ -188,10 +245,10 @@ fn capture_decision_snapshot_in_place(
+             })?;
+             let strategy_state = entry
+                 .strategy()
+-                .ok_or(DecisionSnapshotCaptureError::MissingStrategy(*account))?
++                .ok_or(DecisionSnapshotCaptureError::MissingStrategy(account))?
+                 .production_state()
+                 .map_err(|source| DecisionSnapshotCaptureError::StrategyState {
+-                    account: *account,
++                    account,
+                     source,
+                 })?;
+             let input = DecisionAccountInput::new_shared(
+@@ -206,26 +263,75 @@ fn capture_decision_snapshot_in_place(
+                 .filter(|_| entry.kind() == AccountKind::Retail)
+             {
+                 input.with_failure_influence(state.failure_influence(&moment).map_err(
+-                    |source| DecisionSnapshotCaptureError::Experience {
+-                        account: *account,
+-                        source,
+-                    },
++                    |source| DecisionSnapshotCaptureError::Experience { account, source },
+                 )?)
+             } else {
+                 input
+             };
+-            Ok((*account, input, experience))
++            // 同一通道内联执行该账户的 retail 个人分析：与原串行布局不同，
++            // 这里消费的是本 tick 刚捕获、稍后统一安装的同一 experience 状态，
++            // 因此每个 retail 账户的分析不再等待其他账户的 experience 捕获结束。
++            let retail = match (
++                personal.as_mut(),
++                retail_observation.as_ref(),
++                experience.as_ref(),
++            ) {
++                (Some(personal), Some(observation), Some(experience)) => {
++                    on_retail(account);
++                    Some(
++                        shadow
++                            .observe_retail_account(account, personal, observation, experience)
++                            .map_err(CapturedItemError::Retail)?,
++                    )
++                }
++                _ => None,
++            };
++            Ok(CapturedItem {
++                account,
++                input,
++                experience,
++                personal,
++                retail,
++            })
+         })
+-        .collect::<Vec<Result<_, DecisionSnapshotCaptureError>>>()
+-        .into_iter()
+-        .collect::<Result<Vec<_>, _>>()?;
++        .collect::<Vec<Result<CapturedItem, CapturedItemError>>>();
++    // 首错序与原实现一致：experience 侧错误（账户序）先于 experience 安装错误，
++    // 再先于 retail 侧错误（账户序）；任一错误发生时所有安装均未执行。
++    let mut prepared_ok = Vec::with_capacity(prepared.len());
++    let mut first_retail_error = None;
++    for item in prepared {
++        match item {
++            Ok(item) => prepared_ok.push(item),
++            Err(CapturedItemError::Experience(error)) => return Err(error),
++            Err(CapturedItemError::Retail(error)) => {
++                if first_retail_error.is_none() {
++                    first_retail_error = Some(error);
++                }
++            }
++        }
++    }
+     let mut accounts = BTreeMap::new();
+     let mut experience_updates = Vec::new();
+-    for (account, input, experience) in prepared {
++    let mut personal_installs = Vec::new();
++    let mut retail_analysis = BTreeMap::new();
++    for CapturedItem {
++        account,
++        input,
++        experience,
++        personal,
++        retail,
++    } in prepared_ok
++    {
+         accounts.insert(account, input);
+         if let Some(experience) = experience {
+             experience_updates.push((account, experience));
+         }
++        if let Some(personal) = personal {
++            personal_installs.push((account, personal));
++        }
++        if let Some(assessments) = retail {
++            retail_analysis.insert(account, assessments);
++        }
+     }
+ 
+     shadow
+@@ -233,9 +339,12 @@ fn capture_decision_snapshot_in_place(
+         .retail_experience
+         .replace_existing_shared_parallel(experience_updates)
+         .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
+-    let mut retail_analysis = shadow
+-        .capture_retail_analysis(&accepted_due_npc_ids, &market)
+-        .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
++    if let Some(error) = first_retail_error {
++        return Err(DecisionSnapshotCaptureError::RetailAnalysis(error));
++    }
++    for (account, personal) in personal_installs {
++        personal.install(shadow, account);
++    }
+     let accounts = accounts
+         .into_iter()
+         .map(|(account, input)| {
+diff --git a/packages/engine/src/session/pipeline/mod.rs b/packages/engine/src/session/pipeline/mod.rs
+index 13d1b62b..03341fa0 100644
+--- a/packages/engine/src/session/pipeline/mod.rs
++++ b/packages/engine/src/session/pipeline/mod.rs
+@@ -137,6 +137,8 @@ mod continuous_trade_acceptance_tests;
+ #[cfg(test)]
+ mod decision_resources_tests;
+ #[cfg(test)]
++mod decision_snapshot_capture_merging_tests;
++#[cfg(test)]
+ mod decision_snapshot_capture_tests;
+ #[cfg(test)]
+ mod decision_snapshot_tests;
