@@ -918,3 +918,173 @@ fn borrowed_projection_gate_preserves_owned_gate_errors_and_map_key_checks() {
         }
     }
 }
+
+#[test]
+fn active_tick_rebase_carries_complete_evidence_proof_into_the_next_read_only_gate() {
+    let first = existing(key(), Money::from_cents(100));
+    let mut untouched_key = key();
+    untouched_key.stock = crate::StockCode("600003".to_owned());
+    untouched_key.order = crate::OrderId(3);
+    let untouched = existing(untouched_key, Money::from_cents(200));
+    let mut ledger = EnvelopeLedger::new(41, [first.clone(), untouched.clone()]).unwrap();
+    let mut receipt = expiry_release(first.key().clone(), ResVec::new(Money::from_cents(100), 0));
+    ledger.apply(std::slice::from_mut(&mut receipt)).unwrap();
+    ledger
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    ledger.rebase_private_for_tick_commit().unwrap();
+    let before = ledger.clone();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0,
+        "rebase 已校验来源与全部变化行，应复用这份完整证据而非立即再次扫描"
+    );
+    assert_eq!(ledger, before);
+    assert_eq!(ledger.get(untouched.key()).unwrap(), &untouched);
+    assert_eq!(ledger.terminal_count(), 0);
+    assert_eq!(ledger.next_receipt_index(), 42);
+}
+
+#[test]
+fn rebase_proof_preserves_seller_fee_debt_and_invalidates_on_each_map_mutation() {
+    let config = GameConfig::proposed_defaults();
+    let seller_key = second_key();
+    let mut ledger = EnvelopeLedger::new(
+        41,
+        [Envelope::created_at_validation(
+            seller_key.clone(),
+            Money::ZERO,
+            3,
+            EnvelopeAudit {
+                limit: Money::from_cents(1000),
+                remaining_qty: 3,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                nominal: FeeComponents::ZERO,
+                charged: FeeComponents::ZERO,
+            },
+        )],
+    )
+    .unwrap();
+    let mut receipt = seller_fill_receipt(
+        &config,
+        seller_key.clone(),
+        ledger.get(&seller_key).unwrap().audit(),
+        100,
+    );
+    ledger.apply(std::slice::from_mut(&mut receipt)).unwrap();
+    let audit = ledger.get(&seller_key).unwrap().audit();
+    assert!(audit.nominal.total().unwrap() > audit.charged.total().unwrap());
+    ledger.rebase_private_for_tick_commit().unwrap();
+    let expected = EnvelopeLedger::new(
+        42,
+        [Envelope::tick_start_existing(
+            seller_key.clone(),
+            Money::ZERO,
+            2,
+            audit,
+        )],
+    )
+    .unwrap();
+    assert_eq!(ledger, expected);
+    assert_eq!(
+        serde_json::to_vec(&ledger.hash_projection()).unwrap(),
+        serde_json::to_vec(&expected.hash_projection()).unwrap()
+    );
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0
+    );
+    // 独立新建的等值 ledger 没有该构造证明，必须执行原完整门禁。
+    expected.validate_complete_evidence().unwrap();
+    let corruptions: [fn(&mut EnvelopeLedger, &EnvelopeKey); 4] = [
+        |ledger, key| {
+            ledger.envelopes.remove(key);
+        },
+        |ledger, key| {
+            ledger.audits.remove(key);
+        },
+        |ledger, key| {
+            ledger.conservation.remove(key);
+        },
+        |ledger, key| {
+            let row = ledger.envelopes.get(key).unwrap().clone();
+            ledger.terminal_envelopes.insert(key.clone(), row);
+        },
+    ];
+    for corrupt in corruptions {
+        let mut changed = ledger.clone();
+        corrupt(&mut changed, &seller_key);
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+        assert!(changed.validate_complete_evidence().is_err());
+        assert_eq!(
+            super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+            1
+        );
+        ledger.validate_complete_evidence().unwrap();
+        assert_eq!(ledger, expected);
+    }
+}
+
+#[test]
+fn rebase_proof_handles_exact_cash_share_totals_and_all_terminal_removal() {
+    for shares in [false, true] {
+        let identity = if shares { second_key() } else { key() };
+        let mut ledger = EnvelopeLedger::new(
+            77,
+            [Envelope::created_at_validation(
+                identity.clone(),
+                if shares {
+                    Money::ZERO
+                } else {
+                    Money::from_cents(i64::MAX)
+                },
+                if shares { u32::MAX } else { 0 },
+                audit(),
+            )],
+        )
+        .unwrap();
+        ledger.rebase_private_for_tick_commit().unwrap();
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+        ledger.validate_complete_evidence().unwrap();
+        assert_eq!(
+            super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+            0
+        );
+        let expected = EnvelopeLedger::new(
+            77,
+            [Envelope::tick_start_existing(
+                identity,
+                if shares {
+                    Money::ZERO
+                } else {
+                    Money::from_cents(i64::MAX)
+                },
+                if shares { u32::MAX } else { 0 },
+                audit(),
+            )],
+        )
+        .unwrap();
+        expected.validate_complete_evidence().unwrap();
+        assert_eq!(ledger, expected);
+    }
+    let first = existing(key(), Money::from_cents(100));
+    let mut ledger = EnvelopeLedger::new(41, [first.clone()]).unwrap();
+    let mut release = expiry_release(first.key().clone(), first.live());
+    ledger.apply(std::slice::from_mut(&mut release)).unwrap();
+    ledger
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    ledger.rebase_private_for_tick_commit().unwrap();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0
+    );
+    assert_eq!(ledger, EnvelopeLedger::new(42, []).unwrap());
+}

@@ -82,6 +82,17 @@ struct EvidenceCache {
     conservation: Weak<LedgerPagedMap<ConservationState>>,
 }
 
+impl EvidenceCache {
+    fn capture(ledger: &EnvelopeLedger) -> Self {
+        Self {
+            envelopes: ledger.envelopes.identity(),
+            terminal: ledger.terminal_envelopes.identity(),
+            audits: ledger.audits.identity(),
+            conservation: ledger.conservation.identity(),
+        }
+    }
+}
+
 impl PartialEq for EnvelopeLedger {
     fn eq(&self, other: &Self) -> bool {
         self.envelopes == other.envelopes
@@ -417,6 +428,13 @@ impl EnvelopeLedger {
         }
         self.terminal_envelopes.clear();
         self.seen_local_keys.clear();
+        // 输入完整证明已覆盖非负资源与 checked 全局总额；rebase 不增加 live，
+        // 只把 basis 设为 live、清空守恒增量并删除 terminal，audit 保持原值。
+        // 全部变化 Envelope 已逐行校验，可保留该构造证明供下一只读门禁复用。
+        let mut cache = self.evidence_cache.lock().map_err(|error| {
+            ledger_validation::invariant(&format!("ledger 审计缓存锁失败：{error}"))
+        })?;
+        *cache = Some(EvidenceCache::capture(self));
         Ok(())
     }
 
@@ -546,12 +564,7 @@ fn validate_ledger_evidence(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
         return Ok(());
     }
     validate_ledger_evidence_uncached(ledger)?;
-    *cache = Some(EvidenceCache {
-        envelopes: ledger.envelopes.identity(),
-        terminal: ledger.terminal_envelopes.identity(),
-        audits: ledger.audits.identity(),
-        conservation: ledger.conservation.identity(),
-    });
+    *cache = Some(EvidenceCache::capture(ledger));
     Ok(())
 }
 

@@ -94,3 +94,15 @@ c06151ac已经本地提交并通过全新Sol独立审查，真实server约127–
 共享payload与仅charged setter两实验均无显著收益，已保存patch/hash并完整撤回。当前稳定候选以BorrowedTickStartEnvelope借用身份/Copy审计验证已有ledger，避免整批owned Envelope/String构建；empty hydration与公开owned API保持原实现，adapter复用同一费用数学facts，lookup key按股复用。全部资源/费用/字段/map-key/terminal/首错与失败原子性门禁保留。详见borrowed-envelope-findings.md。最终source binding真实server153.147x/155.449x（同SHA5a51e9122c9bf1c6e13431bd8bcaad28b18dae0cf484068d983d543642858306），相邻HEAD139.278x；此前候选148–149x也保留，目标1000x仍远未达成，CPU约4.31核，未满16核。独立frozen candidate .tmp/server-borrowed-projection-frozen-candidate。
 
 全新Sol完整diff独立复核通过、无阻塞；可选混合错误首错fixture未穷尽登记。TDD两个allocation红绿与逐字段Eq/owned门禁精确Result边界通过；宽continuous命令曾9s超时，之后已拆独立套件固定RAYON4四进程并行，每命令<=3.2s。最终hyd11/borrowed2/adapter10/ledger_state25/hash14/expiry12/stock execution6均通过，filter有重叠不累加；ledger_tests filter匹配0不算证据。所有本轮build/benchmark handle已exit0。frontend/WASM/HTTPWS/full workspace/full day未验收；既有save_contract未改。后续继续先优化Rust server，准备更新热点诊断，避免继续追微小迭代器/缓存收益。不调用goal complete/blocked。
+
+
+## 追加：当前有序联合实验已撤回
+
+最新已审查提交f0ac8317的真实server155.45x/153.15x，独立binary .tmp/server-borrowed-projection-frozen-candidate。其后29子阶段profile已22文件原字节撤回，诊断substage-profile-f0ac-findings.md；GDB48组864线程栈见borrowed-stack-findings.md。最新有序联合ledger实验虽然point lookups2565→0且短测绿色，却真实candidate139.45x、相邻HEAD154.28x，故已4文件原字节恢复；详见ordered-evidence-findings.md。不继续堆无收益cache/局部扫描，也不把少查询当成已优化。原型未审/未提交；下一步需检查并行caller准备与真实资源瓶颈。正在重新编译HEAD release/test恢复artifact绑定。1000x仍未完成、frontend暂停，goal保持active。
+
+恢复构建已确认两个handle exit0：debug37.17s、release54.96s，各-j8/总16job/299s deadline。当前主release SHA与独立已审查f0ac frozen binary逐字一致5a51e9122c9bf1c6e13431bd8bcaad28b18dae0cf484068d983d543642858306；主test也已重编HEAD。恢复后ledger57/hydration11/adapter10/hash14四进程RAYON4/test4短测通过，无已知在途任务。当前唯一tracked diff为本工作记录追加，生产diff为空。
+
+
+## 追加：rebase完整构造证明批次
+
+已审查f0ac8317上发现rebase成功后input门禁重复扫描；完整输入校验和逐变化Envelope.validate保留，成功构造输出后向既有Weak四map EvidenceCache保留证明，后续mutation照常失效。两文件窄diff（ledger生产+19/-6、测试3case）全新一次性Luna high独立审核通过。ledger60/hash14/continuous tick19/auction transaction14短测通过；真实candidate163.98x、同SHA确认164.41x，相邻原版155.04x，CPU约4.22核，1000x仍未达成。frozen binary .tmp/server-rebase-proof-frozen-candidate，SHAa7a2b34cf8eccdb49eb11786e316d0c9385ba3da623aff55e9f71f6f4fc30c31。详情rebase-evidence-proof-findings.md/rebase-proof-independent-review.md。所有handles exit0，frontend暂停；准备聚焦本地提交。下轮可实测已有OrderId identity索引避免cancel的完整簿find，以及expiry生命周期的完整ledger find；不能只凭更少lookup就认定收益。
